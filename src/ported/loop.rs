@@ -36,6 +36,76 @@ static CONT_FLAG: AtomicI32 = AtomicI32::new(0);
 /// each enclosing loop on exit.
 static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 
+// ===========================================================
+// C `Src/loop.c` — wordcode VM helpers for control flow.
+//
+// In C zsh, these seven functions run as part of the wordcode VM in
+// `Src/exec.c`: each consumes an `Estate` / wordcode cursor (not a
+// separate AST interpreter in the parser).
+//
+// zshrs lowers shell constructs to fusevm bytecode
+// (see `tree_walker_absent.rs` / `no_tree_walker_dispatch.rs`
+// invariant tests), so these entries exist to satisfy ABI/name
+// parity. The actual control-flow lowering happens in the
+// fusevm compiler (`crate::fusevm::compile`) where every
+// `for`/`while`/`if`/`case`/`select`/`repeat`/`try` AST node
+// becomes a fusevm `Op`.
+// ===========================================================
+
+// The seven entries below are zsh's `Src/loop.c` wordcode VM hooks.
+// zshrs lowers shell constructs to fusevm bytecode — every `for`/`while`/`if`/`case`/`select`/
+// `repeat`/`try` AST node lowers to a fusevm Op in
+// `src/extensions/compile_zsh.rs`. These entries exist purely for
+// C-name parity (drift gate enforces every Rust fn maps to a C fn).
+//
+// The 96-test architectural invariant in `tree_walker_absent.rs` +
+// `no_tree_walker_dispatch.rs` proves these are never reached in
+// production. Each body is `unreachable!()` so ANY caller fails
+// loudly rather than silently returning 0 — if a port regresses
+// the bytecode lowering, we want the test suite to crash, not pass.
+//
+// Faithful per-fn port of the C bodies is intentionally NOT done:
+// they read `Wordcode` / `Estate` cursors that zshrs doesn't model.
+// The semantic equivalent lives in:
+//   execfor    → compile_zsh.rs::compile_for
+//   execselect → compile_zsh.rs::compile_select
+//   execwhile  → compile_zsh.rs::compile_while
+//   execrepeat → compile_zsh.rs::compile_repeat
+//   execif     → compile_zsh.rs::compile_if
+//   execcase   → compile_zsh.rs::compile_case
+//   exectry    → compile_zsh.rs::compile_try
+
+/// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
+/// zshrs does not call this from production; fusevm lowers `for` in compile_zsh.rs. This entry is
+/// `unreachable!()` to crash if regressed.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
+pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
+    unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
+}
+
+// Note: dead `ForIterator` / `CForState` / `TryState` aggregates
+// removed per PORT_PLAN Phase 2. None had production callers (only
+// internal test references). The actual control flow is lowered in
+// the fusevm compiler — every `for`/`while`/`select`/`repeat`/`try`
+// AST node becomes a fusevm Op (see `src/extensions/compile_zsh.rs`).
+//
+// C source's relevant try-block file-globals (loop.c:719-727):
+//
+//     zlong try_errflag = -1;       // line 719 (TRY_BLOCK_ERROR)
+//     zlong try_interrupt = -1;     // line 727 (TRY_BLOCK_INTERRUPT)
+//
+// Exported via `IPDEF6` paramdef in `Src/params.c:364`, so they're
+// cross-compilation-unit globals → PORT_PLAN Phase 3 bucket-2
+// (Arc<RwLock>) work, not the Phase 2 bucket-1 (thread_local!) wave.
+
+
+
+/// Port of `execselect(Estate state, UNUSED(int do_exec))` from `Src/loop.c:217`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
+pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
+    unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
+}
+
 // Note: dead `LoopState` aggregate (and impl/tests) deleted per
 // PORT_PLAN Phase 2. It was a Rust-only invention that double-tracked
 // the same data already living in the file-statics LOOP_DEPTH /
@@ -144,92 +214,6 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
     if t1 < colsz { t1 } else { 0 }                                      // c:415 return
 }
 
-// Note: dead `ForIterator` / `CForState` / `TryState` aggregates
-// removed per PORT_PLAN Phase 2. None had production callers (only
-// internal test references). The actual control flow is lowered in
-// the fusevm compiler — every `for`/`while`/`select`/`repeat`/`try`
-// AST node becomes a fusevm Op (see `src/extensions/compile_zsh.rs`).
-//
-// C source's relevant try-block file-globals (loop.c:719-727):
-//
-//     zlong try_errflag = -1;       // line 719 (TRY_BLOCK_ERROR)
-//     zlong try_interrupt = -1;     // line 727 (TRY_BLOCK_INTERRUPT)
-//
-// Exported via `IPDEF6` paramdef in `Src/params.c:364`, so they're
-// cross-compilation-unit globals → PORT_PLAN Phase 3 bucket-2
-// (Arc<RwLock>) work, not the Phase 2 bucket-1 (thread_local!) wave.
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_selectlist_returns_zero_when_full_fits() {
-        // selectlist now matches C: writes to stderr and returns
-        // 0 when the whole list fits in one page.
-        let items = ["one", "two", "three"];
-        // start = 0; in a sufficiently tall terminal, all rows fit
-        // and the function returns 0.
-        let r = selectlist(&items, 0);
-        // Either 0 (all fit) or a non-zero next-page offset
-        // (terminal tiny). Both are valid C-side outputs.
-        assert!(r < items.len() || r == 0);
-    }
-}
-
-// ===========================================================
-// C `Src/loop.c` — wordcode VM helpers for control flow.
-//
-// In C zsh, these seven functions run as part of the wordcode VM in
-// `Src/exec.c`: each consumes an `Estate` / wordcode cursor (not a
-// separate AST interpreter in the parser).
-//
-// zshrs lowers shell constructs to fusevm bytecode
-// (see `tree_walker_absent.rs` / `no_tree_walker_dispatch.rs`
-// invariant tests), so these entries exist to satisfy ABI/name
-// parity. The actual control-flow lowering happens in the
-// fusevm compiler (`crate::fusevm::compile`) where every
-// `for`/`while`/`if`/`case`/`select`/`repeat`/`try` AST node
-// becomes a fusevm `Op`.
-// ===========================================================
-
-// The seven entries below are zsh's `Src/loop.c` wordcode VM hooks.
-// zshrs lowers shell constructs to fusevm bytecode — every `for`/`while`/`if`/`case`/`select`/
-// `repeat`/`try` AST node lowers to a fusevm Op in
-// `src/extensions/compile_zsh.rs`. These entries exist purely for
-// C-name parity (drift gate enforces every Rust fn maps to a C fn).
-//
-// The 96-test architectural invariant in `tree_walker_absent.rs` +
-// `no_tree_walker_dispatch.rs` proves these are never reached in
-// production. Each body is `unreachable!()` so ANY caller fails
-// loudly rather than silently returning 0 — if a port regresses
-// the bytecode lowering, we want the test suite to crash, not pass.
-//
-// Faithful per-fn port of the C bodies is intentionally NOT done:
-// they read `Wordcode` / `Estate` cursors that zshrs doesn't model.
-// The semantic equivalent lives in:
-//   execfor    → compile_zsh.rs::compile_for
-//   execselect → compile_zsh.rs::compile_select
-//   execwhile  → compile_zsh.rs::compile_while
-//   execrepeat → compile_zsh.rs::compile_repeat
-//   execif     → compile_zsh.rs::compile_if
-//   execcase   → compile_zsh.rs::compile_case
-//   exectry    → compile_zsh.rs::compile_try
-
-/// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
-/// zshrs does not call this from production; fusevm lowers `for` in compile_zsh.rs. This entry is
-/// `unreachable!()` to crash if regressed.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
-    unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
-}
-
-/// Port of `execselect(Estate state, UNUSED(int do_exec))` from `Src/loop.c:217`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
-    unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
-}
-
 /// Port of `execwhile(Estate state, UNUSED(int do_exec))` from `Src/loop.c:413`.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execwhile(_do_exec: i32) -> i32 {                                 // c:413
@@ -258,4 +242,22 @@ pub fn execcase(_do_exec: i32) -> i32 {                                  // c:60
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
     unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_selectlist_returns_zero_when_full_fits() {
+        // selectlist now matches C: writes to stderr and returns
+        // 0 when the whole list fits in one page.
+        let items = ["one", "two", "three"];
+        // start = 0; in a sufficiently tall terminal, all rows fit
+        // and the function returns 0.
+        let r = selectlist(&items, 0);
+        // Either 0 (all fit) or a non-zero next-page offset
+        // (terminal tiny). Both are valid C-side outputs.
+        assert!(r < items.len() || r == 0);
+    }
 }

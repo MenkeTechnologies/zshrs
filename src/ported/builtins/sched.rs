@@ -99,17 +99,6 @@ static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
 // as `schedcmds` above.
 static schedcmdtimed: OnceLock<Mutex<i32>> = OnceLock::new();
 
-// Init-on-first-use accessors. C dereferences the statics directly — Rust
-// requires the OnceLock get-or-init dance. Inlined at call sites would
-// duplicate the boilerplate per dereference; allowlisted as
-// architectural Rust-equivalent of static-zero-init.
-fn schedcmds_lock() -> &'static Mutex<Option<Box<schedcmd>>> {
-    schedcmds.get_or_init(|| Mutex::new(None))
-}
-fn schedcmdtimed_lock() -> &'static Mutex<i32> {
-    schedcmdtimed.get_or_init(|| Mutex::new(0))
-}
-
 // =====================================================================
 // Use addtimedfn() to add a timed event for sched's use              c:57
 // schedaddtimed(void)                                                c:60
@@ -135,13 +124,6 @@ pub(crate) fn schedaddtimed() {                                             // c
         .map(|h| h.time)
         .unwrap_or(0);
     addtimedfn(checksched_thunk, head_time as i64);                  // c:72
-}
-
-// `addtimedfn` from utils.c:4635 takes `fn()` (zero-arity, no return).
-// `checksched` returns `i32` so the module loaders can pass its status.
-// Thunk drops the return to match `addtimedfn`'s signature.
-fn checksched_thunk() {
-    let _ = checksched();
 }
 
 // =====================================================================
@@ -566,34 +548,6 @@ pub(crate) fn schedgetfn(_pm: *const crate::ported::zsh_h::param) -> Vec<String>
 }
 
 // =====================================================================
-// static struct builtin bintab[]                                     c:374
-// static const struct gsu_array sched_gsu                            c:378
-// static struct paramdef partab[]                                    c:381
-// static struct features module_features                             c:386
-// =====================================================================
-
-use crate::ported::zsh_h::features as features_t;
-
-// `module_features` — port of `static struct features module_features`
-// from sched.c:386. Bucket-2 shared global; OnceLock-init since
-// `features` contains fn-pointer fields not const-initializable.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,                                                   // c:387 bintab
-        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab) — sched
-        cd_list: None,                                                    // c:388
-        cd_size: 0,
-        mf_list: None,                                                    // c:389
-        mf_size: 0,
-        pd_list: None,                                                    // c:396 partab
-        pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
-        n_abstract: 0,                                                    // c:396
-    }))
-}
-
-// =====================================================================
 // Module entry points                                                c:394-446
 // =====================================================================
 
@@ -615,6 +569,20 @@ pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<Stri
 pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:411
     handlefeatures(m, module_features(), enables)                        // c:418
 }
+
+// =====================================================================
+// static struct builtin bintab[]                                     c:374
+// static const struct gsu_array sched_gsu                            c:378
+// static struct paramdef partab[]                                    c:381
+// static struct features module_features                             c:386
+// =====================================================================
+
+use crate::ported::zsh_h::features as features_t;
+
+// `module_features` — port of `static struct features module_features`
+// from sched.c:386. Bucket-2 shared global; OnceLock-init since
+// `features` contains fn-pointer fields not const-initializable.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/sched.c:418`.
 #[allow(unused_variables)]
@@ -648,6 +616,38 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // 
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:443
     0                                                                    // c:443
+}
+
+// Init-on-first-use accessors. C dereferences the statics directly — Rust
+// requires the OnceLock get-or-init dance. Inlined at call sites would
+// duplicate the boilerplate per dereference; allowlisted as
+// architectural Rust-equivalent of static-zero-init.
+fn schedcmds_lock() -> &'static Mutex<Option<Box<schedcmd>>> {
+    schedcmds.get_or_init(|| Mutex::new(None))
+}
+fn schedcmdtimed_lock() -> &'static Mutex<i32> {
+    schedcmdtimed.get_or_init(|| Mutex::new(0))
+}
+
+// `addtimedfn` from utils.c:4635 takes `fn()` (zero-arity, no return).
+// `checksched` returns `i32` so the module loaders can pass its status.
+// Thunk drops the return to match `addtimedfn`'s signature.
+fn checksched_thunk() {
+    let _ = checksched();
+}
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,                                                   // c:387 bintab
+        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab) — sched
+        cd_list: None,                                                    // c:388
+        cd_size: 0,
+        mf_list: None,                                                    // c:389
+        mf_size: 0,
+        pd_list: None,                                                    // c:396 partab
+        pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
+        n_abstract: 0,                                                    // c:396
+    }))
 }
 
 // =====================================================================

@@ -45,6 +45,57 @@ use crate::ported::zsh_h::sortelt;
 use libc;
 use std::ffi::CString;
 
+/// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
+///
+/// The qsort callback. C's signature is
+/// `int(*)(const void*, const void*)` for direct use with
+/// `qsort(3)`. Rust port takes typed references — same semantics,
+/// idiomatic Rust calling convention.
+///
+/// Embedded-null handling: when either elt has `len = Some(n)`,
+/// the comparison runs over the first `n` bytes of `cmp` field
+/// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
+/// shorter strings sort below their longer continuations.
+/// WARNING: param names don't match C — Rust=(a, b, sort_flags) vs C=(a, b)
+pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // c:44
+    let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
+    // C's `len == -1` sentinel = "no embedded NULs, use strlen".
+    let a_has_len = a.len >= 0;
+    let b_has_len = b.len >= 0;
+    let result = if !a_has_len && !b_has_len {
+        zstrcmp(
+            &a.cmp,
+            &b.cmp,
+            sort_flags & !(SORTIT_BACKWARDS as u32),
+        )
+    } else {
+        // Embedded-null path: compare first min(a.len, b.len)
+        // bytes; equal-prefix-but-different-length means the
+        // shorter sorts lower.
+        let la = if a_has_len { a.len as usize } else { a.cmp.len() };
+        let lb = if b_has_len { b.len as usize } else { b.cmp.len() };
+        let len = la.min(lb);
+        let ab = a.cmp.as_bytes();
+        let bb = b.cmp.as_bytes();
+        let take_a = ab.len().min(len);
+        let take_b = bb.len().min(len);
+        match ab[..take_a].cmp(&bb[..take_b]) {
+            Ordering::Equal => match (a_has_len, b_has_len) {
+                (true, true)   => la.cmp(&lb),
+                (true, false)  => Ordering::Greater,
+                (false, true)  => Ordering::Less,
+                (false, false) => Ordering::Equal,
+            },
+            o => o,
+        }
+    };
+    if reverse {
+        result.reverse()
+    } else {
+        result
+    }
+}
+
 /// Port of `zstrcmp(const char *as, const char *bs, int sortflags)` from `Src/sort.c:191`.
 ///
 /// C fixes `sortdir = 1`, sets only `sortnobslash` and `sortnumeric`
@@ -202,57 +253,6 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
         } else {
             Ordering::Equal
         }
-    }
-}
-
-/// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
-///
-/// The qsort callback. C's signature is
-/// `int(*)(const void*, const void*)` for direct use with
-/// `qsort(3)`. Rust port takes typed references — same semantics,
-/// idiomatic Rust calling convention.
-///
-/// Embedded-null handling: when either elt has `len = Some(n)`,
-/// the comparison runs over the first `n` bytes of `cmp` field
-/// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
-/// shorter strings sort below their longer continuations.
-/// WARNING: param names don't match C — Rust=(a, b, sort_flags) vs C=(a, b)
-pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // c:44
-    let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
-    // C's `len == -1` sentinel = "no embedded NULs, use strlen".
-    let a_has_len = a.len >= 0;
-    let b_has_len = b.len >= 0;
-    let result = if !a_has_len && !b_has_len {
-        zstrcmp(
-            &a.cmp,
-            &b.cmp,
-            sort_flags & !(SORTIT_BACKWARDS as u32),
-        )
-    } else {
-        // Embedded-null path: compare first min(a.len, b.len)
-        // bytes; equal-prefix-but-different-length means the
-        // shorter sorts lower.
-        let la = if a_has_len { a.len as usize } else { a.cmp.len() };
-        let lb = if b_has_len { b.len as usize } else { b.cmp.len() };
-        let len = la.min(lb);
-        let ab = a.cmp.as_bytes();
-        let bb = b.cmp.as_bytes();
-        let take_a = ab.len().min(len);
-        let take_b = bb.len().min(len);
-        match ab[..take_a].cmp(&bb[..take_b]) {
-            Ordering::Equal => match (a_has_len, b_has_len) {
-                (true, true)   => la.cmp(&lb),
-                (true, false)  => Ordering::Greater,
-                (false, true)  => Ordering::Less,
-                (false, false) => Ordering::Equal,
-            },
-            o => o,
-        }
-    };
-    if reverse {
-        result.reverse()
-    } else {
-        result
     }
 }
 

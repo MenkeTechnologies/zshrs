@@ -86,491 +86,6 @@ use std::sync::atomic::Ordering;
 /// the `flags` field).
 pub type LinkList = crate::ported::linklist::LinkList<String>;
 
-/// Returns true if the global `errflag` (Src/utils.c) is set.
-/// Matches the C idiom `if (errflag) …` that subst.c sprinkles
-/// throughout its loops.
-#[inline]
-fn errflag_set() -> bool {
-    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
-}
-
-/// Sets `errflag |= ERRFLAG_ERROR` on the global `errflag`.
-/// Mirrors C's `errflag |= ERRFLAG_ERROR;` at every subst.c site
-/// where parameter / glob / arith error is reported.
-#[inline]
-fn errflag_set_error() {
-    crate::ported::utils::errflag.fetch_or(
-        crate::ported::zsh_h::ERRFLAG_ERROR,
-        Ordering::Relaxed,
-    );
-}
-
-// Token constants from zsh.h (mapped to char values > 127)
-// `pub mod tokens { … }` — DELETED per user directive. Was a
-// Rust-only duplicate of the canonical token table in
-// `crate::ported::zsh_h` (port of `Src/zsh.h:159-224`). Two names
-// drifted: local `STRING` → canonical `Stringg`, local
-// `OUTANGPROC` → canonical `OutangProc`. All other constants
-// matched bit-for-bit but living in two places invited future drift.
-use crate::ported::zsh_h::{
-    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker,
-    Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound,
-    Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, Snull,
-    Stringg, Tick,
-}; // c:zsh.h:159-224 + scan flags c:1953-1973
-// Aliases for the two names that diverged in the local module.
-// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`Outang`+proc-sub).
-const STRING: char = Stringg; // c:zsh.h:160
-const OUTANGPROC: char = OutangProc; // c:zsh.h:177
-
-/// Port of `LF_ARRAY` from `Src/subst.c:33`.
-/// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
-/// LinkList carries when the expansion produced multiple words.
-/// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
-pub const LF_ARRAY: u32 = 1;                                                 // c:33
-
-// `pub mod prefork_flags { … }` — DELETED per user directive.
-// Every bit value was WRONG vs the canonical C source: local
-// `SINGLE=1, SPLIT=2, SHWORDSPLIT=4, NOSHWORDSPLIT=8, ASSIGN=16,
-// TYPESET=32` vs C's `PREFORK_TYPESET=0x01, PREFORK_ASSIGN=0x02,
-// PREFORK_SINGLE=0x04, PREFORK_SPLIT=0x08, PREFORK_SHWORDSPLIT=0x10,
-// PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
-// `flags & prefork_flags::X` test silently mis-tested the wrong
-// bit. Canonical defs imported from `crate::ported::zsh_h` below.
-use crate::ported::zsh_h::{
-    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
-    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
-}; // c:zsh.h:2020-2042
-
-// `SubstState` and `SubstOptions` structs — DELETED per user
-// directive ("SubstState must be removed", "SubstOptions must be
-// removed", "delete SubstState"). All formerly-bundled fields are
-// canonical globals or executor-backed:
-//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
-//                     (port of `Src/utils.c`'s `int errflag`).
-//   - `opts.*`      → `crate::ported::options::opt_state_get/set`
-//                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
-//   - `variables` / `arrays` / `assoc_arrays`
-//                   → `vars_get`/`arrays_get`/`assoc_get` helpers
-//                     below (executor-backed, equiv to C's
-//                     `getsparam`/`getaparam`).
-//   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
-//   - `function_names`/`command_names`/`alias_names`/`var_attrs`
-//                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
-//   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
-//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
-//   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
-// Every fn signature has dropped the `state: &mut SubstState` arg.
-
-/// Null string constant (from subst.c line 36)
-pub const NULSTRING: &str = "\u{8F}"; // c:100
-
-// =====================================================================
-// Parameter table read/write helpers — direct paramtab access.
-// C reads `paramtab` directly via `getsparam`/`getaparam`
-// (`Src/params.c:3194`/`:3245`); these mirror that by hitting
-// `crate::ported::params::paramtab()` (the global Mutex<HashMap<
-// String, Param>>) and the parallel `paramtab_hashed_storage`.
-//
-// Previous incarnation routed through `fusevm_bridge::try_with_executor`
-// which silently no-ops outside a live VM frame (same fake pattern
-// the user flagged earlier in ksh93.rs). Tests would compile and
-// "pass" while exercising no parameter machinery at all.
-// =====================================================================
-
-// `splice_magic_assoc` deleted — was one big string-dispatcher
-// that collapsed C's per-magic-assoc `scanpm<X>` walkers
-// (`Src/Modules/parameter.c`) into a single switch. C dispatches
-// each magic-assoc Param through its own `gsu->scantab` callback
-// (set at module init); the per-Param scantab plumbing is a
-// follow-up, but the body is now decomposed into individual
-// `scanpm*` fns matching C's names, plus a `splice_magic_assoc`
-// dispatcher that routes name → fn.
-
-/// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
-/// Walks `aliastab` for regular (non-global, non-suffix) aliases.
-fn scanpmraliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) == 0
-                    && (f & ALIAS_SUFFIX as i32) == 0
-                    && (f & DISABLED as i32) == 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
-fn scanpmgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
-fn scanpmsaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
-/// Disabled regular-aliases arm.
-fn scanpmdisraliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) == 0
-                    && (f & ALIAS_SUFFIX as i32) == 0
-                    && (f & DISABLED as i32) != 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmdisgaliases` — disabled-global-aliases arm.
-fn scanpmdisgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmdissaliases` — disabled-suffix-aliases arm.
-fn scanpmdissaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmcommands` — port of `Src/Modules/parameter.c:245`.
-/// HASHED arm reads `cmd` (resolved path); unhashed reads first
-/// path segment in `name` (Vec<String>) joined with the cmd name.
-fn scanpmcommands() -> String {
-    crate::ported::hashtable::cmdnamtab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter_map(|(nm, c)| {
-                let hashed = (c.node.flags & HASHED as i32) != 0;
-                if hashed {
-                    c.cmd.clone()
-                } else {
-                    c.name.as_ref()
-                        .and_then(|v| v.first())
-                        .map(|seg| format!("{}/{}", seg, nm))
-                }
-            })
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
-fn scanpmfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-            .map(|(_, f)| f.body.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmdisfunctions` — disabled-functions arm.
-fn scanpmdisfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-            .map(|(_, f)| f.body.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmfunction_source` — port of `Src/Modules/parameter.c:609`.
-/// `$functions_source` magic-assoc walker (paths where each
-/// function was loaded from). C delegates to `scanfunctions_source`
-/// with `dis=0`; the Rust port inlines the filtered iteration.
-fn scanpmfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-            .map(|(_, f)| f.filename.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmdisfunction_source` — port of `Src/Modules/parameter.c:618`.
-/// `$dis_functions_source` arm (delegates to `scanfunctions_source`
-/// with `dis=DISABLED` in C).
-fn scanpmdisfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-            .map(|(_, f)| f.filename.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
-}
-
-/// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
-fn scanpmnameddirs() -> String {
-    crate::ported::hashnameddir::nameddirtab().lock().ok()
-        .map(|t| t.iter().map(|(_, d)| d.dir.clone()).collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
-}
-
-/// `scanpmbuiltins` — port of `Src/Modules/parameter.c:843`.
-fn scanpmbuiltins() -> String {
-    crate::ported::builtin::createbuiltintable().keys().cloned()
-        .collect::<Vec<_>>().join(" ")
-}
-
-/// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
-fn scanpmparameters() -> String {
-    crate::ported::params::paramtab().read().ok()
-        .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
-}
-
-/// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
-fn scanpmoptions() -> String {
-    crate::ported::options::ZSH_OPTIONS_SET.iter()
-        .map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
-}
-
-/// Dispatcher routing magic-assoc parameter name → `scanpm*` fn.
-/// Rust-side stand-in for C's `param->gsu->scantab` callback
-/// dispatch (`Src/Modules/parameter.c` per-param init at e.g.
-/// `add_parameters()` line 2143). Returns `None` for names with no
-/// ported scanner (history/modules/jobdirs/jobstates/jobtexts/
-/// usergroups/userdirs/...).
-fn splice_magic_assoc(name: &str) -> Option<String> {
-    let v = match name {
-        "aliases"               => scanpmraliases(),         // c:parameter.c:1990
-        "galiases"              => scanpmgaliases(),
-        "saliases"              => scanpmsaliases(),
-        "dis_aliases"           => scanpmdisraliases(),
-        "dis_galiases"          => scanpmdisgaliases(),
-        "dis_saliases"          => scanpmdissaliases(),
-        "commands"              => scanpmcommands(),         // c:parameter.c:245
-        "functions"             => scanpmfunctions(),        // c:parameter.c:519
-        "dis_functions"         => scanpmdisfunctions(),
-        "functions_source"      => scanpmfunction_source(),
-        "dis_functions_source"  => scanpmdisfunction_source(),
-        "nameddirs"             => scanpmnameddirs(),        // c:parameter.c:1618
-        "builtins"              => scanpmbuiltins(),         // c:parameter.c:843
-        "parameters"            => scanpmparameters(),       // c:parameter.c:124
-        "options"               => scanpmoptions(),          // c:parameter.c:1016
-        _ => return None,
-    };
-    Some(v)
-}
-
-/// Read a scalar variable from `paramtab`. Equivalent to C's
-/// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
-fn vars_get(name: &str) -> Option<String> {
-    let tab = crate::ported::params::paramtab().read().ok()?;
-    let pm = tab.get(name)?;
-    pm.u_str.clone()
-}
-
-/// True if `name` exists in `paramtab` (any type).
-fn vars_contains(name: &str) -> bool {
-    crate::ported::params::paramtab().read()
-        .map_or(false, |tab| tab.contains_key(name))
-}
-
-/// Insert / replace a scalar parameter via the canonical
-/// `assignsparam` path. Equivalent to C's `setsparam(name, val)`
-/// (`Src/params.c:3350`).
-fn vars_insert(name: String, value: String) {
-    crate::ported::params::setsparam(&name, &value);
-}
-
-/// Read an array parameter from `paramtab`. Equivalent to C's
-/// `getaparam(name)` (`Src/params.c:3245`).
-fn arrays_get(name: &str) -> Option<Vec<String>> {
-    let tab = crate::ported::params::paramtab().read().ok()?;
-    let pm = tab.get(name)?;
-    pm.u_arr.clone()
-}
-
-/// True if `name` is an array in `paramtab`.
-fn arrays_contains(name: &str) -> bool {
-    crate::ported::params::paramtab().read()
-        .map_or(false, |tab| {
-            tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
-        })
-}
-
-/// Insert / replace an array parameter. Writes through the
-/// canonical paramtab as a `PM_ARRAY` entry.
-fn arrays_insert(name: String, value: Vec<String>) {
-    let mut tab = match crate::ported::params::paramtab().write() {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    if let Some(pm) = tab.get_mut(&name) {
-        pm.u_arr = Some(value);
-        pm.u_str = None;
-        pm.node.flags |= PM_ARRAY as i32;
-    } else {
-        let pm: Param = Box::new(param {
-            node: hashnode {
-                next: None,
-                nam: name.clone(),
-                flags: PM_ARRAY as i32,
-            },
-            u_data: 0, u_arr: Some(value), u_str: None, u_val: 0,
-            u_dval: 0.0, u_hash: None,
-            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
-        });
-        tab.insert(name, pm);
-    }
-}
-
-/// Read an associative array parameter from the parallel
-/// `paramtab_hashed_storage` (PM_HASHED values).
-fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
-    crate::ported::params::paramtab_hashed_storage()
-        .lock()
-        .ok()
-        .and_then(|s| s.get(name).cloned())
-}
-
-/// True if `name` is an assoc-array in `paramtab_hashed_storage`.
-fn assoc_contains(name: &str) -> bool {
-    crate::ported::params::paramtab_hashed_storage()
-        .lock()
-        .map_or(false, |s| s.contains_key(name))
-}
-
-/// Array assignment via paramtab. Equivalent to C's
-/// `assignaparam(name, parts)` (`Src/params.c:3357`).
-fn exec_assignaparam(name: &str, parts: Vec<String>) {
-    arrays_insert(name.to_string(), parts);
-}
-
-/// Assoc-array assignment via paramtab_hashed_storage. The `parts`
-/// argument follows the C `sethparam` convention: alternating
-/// key, value, key, value (`Src/params.c:3602`).
-fn exec_sethparam(name: &str, parts: Vec<String>) {
-    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
-    let mut it = parts.into_iter();
-    while let (Some(k), Some(v)) = (it.next(), it.next()) {
-        map.insert(k, v);
-    }
-    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
-        store.insert(name.to_string(), map);
-    }
-    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-        if let Some(pm) = tab.get_mut(name) {
-            pm.node.flags |= PM_HASHED as i32;
-        } else {
-            let pm: Param = Box::new(param {
-                node: hashnode {
-                    next: None,
-                    nam: name.to_string(),
-                    flags: PM_HASHED as i32,
-                },
-                u_data: 0, u_arr: None, u_str: None, u_val: 0,
-                u_dval: 0.0, u_hash: None,
-                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
-            });
-            tab.insert(name.to_string(), pm);
-        }
-    }
-}
-
-/// No-op now that reads go directly to `paramtab` — the sync-shim
-/// only existed for the executor-backed snapshot path.
-fn exec_sync_state_from_paramtab() {}
-
-/// Read a scalar from `paramtab`. Equivalent to C's
-/// `getsparam(name)` (`Src/params.c:3194`).
-fn exec_getsparam(name: &str) -> Option<String> {
-    vars_get(name)
-}
-
-// =====================================================================
-// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-// `IN_PARAMSUBST_NEST` is a per-thread paramsubst recursion counter
-// mirroring the C `paramsub_nest` global (Src/subst.c). The Rust
-// port previously stored it on ShellExecutor; moved here to keep
-// subst.rs free of ShellExecutor reaches per the
-// no-shellexecutor-in-src/ported rule.
-// =====================================================================
-thread_local! {
-    pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
-}
-
-// =====================================================================
-// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-// `SKIP_FILESUB` is a per-thread flag that suppresses prefork's
-// tilde / `=cmd` expansion pass. Used by the `${var/pat/repl}`
-// pattern + replacement code paths where a literal `~` in `repl`
-// must NOT expand to `$HOME`. C achieves the same observable
-// behavior by NOT routing replacement strings through prefork at
-// all (they go straight through parsestr+getmatch). The Rust port
-// re-uses singsub→prefork for replacement strings and needs this
-// flag to disable the third pass. Replaced the deleted
-// `SubstState.skip_filesub` field per user "SubstState must be
-// removed" directive.
-// =====================================================================
-thread_local! {
-    pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-// =====================================================================
-// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-// `SUB_FLAGS` is the per-paramsubst `sub_flags` bitmask
-// (`Src/subst.c:2169`) — SUB_MATCH / SUB_REST / SUB_BIND / SUB_EIND
-// / SUB_LEN / SUB_SUBSTR / SUB_EGLOB bits set by the (M)/(B)/(E)/
-// (S)/(I) flag-parsing arm and consumed by the match / replace
-// operators downstream. C stores it in a static int; Rust uses
-// thread_local to keep callers re-entrant. Previously routed
-// through `try_with_executor` (fake — silently no-ops outside a
-// live VM frame).
-// =====================================================================
-thread_local! {
-    pub static SUB_FLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
-}
-
-/// Read the current paramsubst flag bitmask. Equivalent to C's
-/// `sub_flags` read at `Src/subst.c:2171`.
-pub fn sub_flags_get() -> i32 {
-    SUB_FLAGS.with(|c| c.get())
-}
-
-/// Write the paramsubst flag bitmask. Equivalent to C's
-/// `sub_flags = X` at `Src/subst.c:2169`.
-pub fn sub_flags_set(v: i32) {
-    SUB_FLAGS.with(|c| c.set(v));
-}
-
 /// Check for array assignment with entries like [key]=val
 /// Port of `keyvalpairelement(LinkList list, LinkNode node)` from `Src/subst.c:49`.
 ///
@@ -843,6 +358,66 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
         node_idx += 1; // c:100
     } // c:100
 } // c:100
+
+// Token constants from zsh.h (mapped to char values > 127)
+// `pub mod tokens { … }` — DELETED per user directive. Was a
+// Rust-only duplicate of the canonical token table in
+// `crate::ported::zsh_h` (port of `Src/zsh.h:159-224`). Two names
+// drifted: local `STRING` → canonical `Stringg`, local
+// `OUTANGPROC` → canonical `OutangProc`. All other constants
+// matched bit-for-bit but living in two places invited future drift.
+use crate::ported::zsh_h::{
+    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker,
+    Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound,
+    Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, Snull,
+    Stringg, Tick,
+}; // c:zsh.h:159-224 + scan flags c:1953-1973
+// Aliases for the two names that diverged in the local module.
+// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`Outang`+proc-sub).
+const STRING: char = Stringg; // c:zsh.h:160
+const OUTANGPROC: char = OutangProc; // c:zsh.h:177
+
+/// Port of `LF_ARRAY` from `Src/subst.c:33`.
+/// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
+/// LinkList carries when the expansion produced multiple words.
+/// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
+pub const LF_ARRAY: u32 = 1;                                                 // c:33
+
+// `pub mod prefork_flags { … }` — DELETED per user directive.
+// Every bit value was WRONG vs the canonical C source: local
+// `SINGLE=1, SPLIT=2, SHWORDSPLIT=4, NOSHWORDSPLIT=8, ASSIGN=16,
+// TYPESET=32` vs C's `PREFORK_TYPESET=0x01, PREFORK_ASSIGN=0x02,
+// PREFORK_SINGLE=0x04, PREFORK_SPLIT=0x08, PREFORK_SHWORDSPLIT=0x10,
+// PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
+// `flags & prefork_flags::X` test silently mis-tested the wrong
+// bit. Canonical defs imported from `crate::ported::zsh_h` below.
+use crate::ported::zsh_h::{
+    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
+    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
+}; // c:zsh.h:2020-2042
+
+// `SubstState` and `SubstOptions` structs — DELETED per user
+// directive ("SubstState must be removed", "SubstOptions must be
+// removed", "delete SubstState"). All formerly-bundled fields are
+// canonical globals or executor-backed:
+//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
+//                     (port of `Src/utils.c`'s `int errflag`).
+//   - `opts.*`      → `crate::ported::options::opt_state_get/set`
+//                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
+//   - `variables` / `arrays` / `assoc_arrays`
+//                   → `vars_get`/`arrays_get`/`assoc_get` helpers
+//                     below (executor-backed, equiv to C's
+//                     `getsparam`/`getaparam`).
+//   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
+//   - `function_names`/`command_names`/`alias_names`/`var_attrs`
+//                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
+//   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
+//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
+//   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
+// Every fn signature has dropped the `state: &mut SubstState` arg.
+
+/// Null string constant (from subst.c line 36)
+pub const NULSTRING: &str = "\u{8F}"; // c:100
 
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
@@ -1511,6 +1086,1328 @@ fn stringsubst(
         Some(node_idx) // c:237
     } // c:237
 } // c:237
+
+/// Quote substitution for heredoc tags
+/// Port of `quotesubst(char *str)` from `Src/subst.c:463`.
+///
+/// Simplified version of prefork/singsub that does only the
+/// substitutions appropriate to quoting context — currently just the
+/// $'...' (Snull) form. Used for here-doc end tags. Other expansions
+/// (param-subst, cmd-subst, arith) stay in the text.
+///
+/// The trailing `remnulargs()` strips Bnull tokens so this is
+/// consistent with the other substitution forms (indicating quotes
+/// have been fully processed).
+pub fn quotesubst(str: &str) -> String {              // c:463
+    // c:463
+    let mut result = str.to_string(); // c:465
+    let mut pos = 0_usize; // c:466
+
+    // C: `while (*str) { if (*str == Stringg && str[1] == Snull) …
+    //               else str++; }`
+    loop {
+        // c:467
+        let chars: Vec<char> = result.chars().collect(); // c:467
+        if pos >= chars.len() {
+            break;
+        } // c:467
+          // C lines 468-470: spot $'…' marker and call
+          // stringsubstquote.
+        if pos + 1 < chars.len()                            // c:468
+            && chars[pos] == STRING                         // c:468
+            && chars[pos + 1] == Snull
+        // c:468
+        {
+            let (new_str, new_pos) = stringsubstquote(&result, pos); // c:469
+            result = new_str; // c:469
+            pos = new_pos; // c:469
+        } else {
+            // c:471
+            pos += 1; // c:472
+        } // c:473
+    }
+    // C: `remnulargs(str);` — strip Bnull / NUL tokens. Use the
+    // inline equivalent the rest of subst.rs uses (\u{0} only;
+    // glob.rs'str full port operates on Vec<GlobToken>).
+    result.replace('\u{0}', "") // c:474
+} // c:475
+
+/// Glob entries in a linked list
+/// Port of `globlist(LinkList list, int flags)` from `Src/subst.c:489`.
+///
+/// Glob-expands each entry in a linked list. Honors two PREFORK_*
+/// flags (per the C body header comment):
+///   - PREFORK_NO_UNTOK: preserve tokens (don't run untokenize before
+///     glob).
+///   - PREFORK_KEY_VALUE: triads of Marker/Key/Value (assoc-array
+///     assignments); skip globbing on the key+value pair, only the
+///     marker node is processed.
+///
+/// Routes through `ShellExecutor::expand_glob` (the canonical
+/// glob.rs port of zsh's zglob) for filesystem matching.
+pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
+    // c:489
+    // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
+    // (we don't track this; csh-glob option is rare).
+    let mut node_idx = 0; // c:493
+
+    while node_idx < list.nodes.len() && !errflag_set() {
+        // c:494
+        let data = match list.getdata(node_idx) {
+            // c:494
+            Some(d) => d.to_string(), // c:494
+            None => {
+                node_idx += 1;
+                continue;
+            } // c:494
+        };
+
+        // C: `if ((flags & PREFORK_KEY_VALUE) && *data == Marker)`
+        // — assoc-array key/value pair; skip 3 nodes (Marker, Key,
+        // Value).
+        if flags & PREFORK_KEY_VALUE != 0 && data.chars().next() == Some(Marker) {
+            // c:497
+            // Advance past Marker + Key + Value.
+            node_idx += 3; // c:499
+            continue; // c:499
+        }
+
+        // C: `zglob(list, node, (flags & PREFORK_NO_UNTOK) != 0);`
+        // — the actual glob expansion. Replaces the node with one
+        // or more nodes (one per match).
+        let no_untok = flags & PREFORK_NO_UNTOK != 0; // c:501
+        let _ = no_untok; // C plumbs through;
+                          // expand_glob handles
+                          // tokens internally.
+        // c:501 — canonical glob expansion (mirrors zglob driver
+        // at glob.c:1214 with alternation + extendedglob pre-passes
+        // inlined). Reads canonical option state directly, no
+        // executor needed.
+        let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
+
+        if expanded.is_empty() {
+            // c:N/A (NOMATCH path)
+            // C zglob does its own NOMATCH/badcshglob accounting
+            // when nothing matches. Preserve the original entry on
+            // empty match (zsh default; NOMATCH option would zerr).
+            node_idx += 1;
+        } else if expanded.len() == 1 {
+            // c:N/A
+            list.setdata(node_idx, expanded.into_iter().next().unwrap());
+            node_idx += 1;
+        } else {
+            // Replace the single node with N expanded nodes.
+            list.delete_node(node_idx);
+            for (i, p) in expanded.iter().enumerate() {
+                if i == 0 {
+                    list.insert_at(node_idx, p.clone());
+                } else {
+                    list.insertlinknode(node_idx + i - 1, p.clone());
+                }
+            }
+            node_idx += expanded.len(); // advance past all
+        }
+    }
+    // C: `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
+    // zerr("no match");` — diagnostic emit. Skipped here pending
+    // badcshglob counter port.
+} // c:510
+
+/// Perform substitution on a single word
+// perform substitution on a single word                                    // c:514
+/// Single-string substitution.
+/// Port of `singsub(char **s)` from Src/subst.c:514.
+// perform substitution on a single word                                    // c:514
+pub fn singsub(s: &str) -> String {                  // c:514
+    // c:514
+    let mut list = LinkList::default(); // c:514
+    list.push_back(s.to_string()); // c:514
+    let mut ret_flags = 0i32; // c:514
+
+    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags); // c:514
+
+    if errflag_set() {
+        // c:514
+        return String::new(); // c:514
+    } // c:514
+
+    list.getdata(0).cloned().unwrap_or_default() // c:514
+} // c:514
+
+/// Substitution with possible multiple results
+/// Multi-word substitution with IFS splitting.
+///
+/// Multi-word substitution: prefork the input as a single linknode,
+/// optionally word-split on IFS first, return the result as scalar or
+/// array depending on whether more than one node emerged or LF_ARRAY
+/// was set.
+///
+/// C signature: `int multsub(char **s, int pf_flags, char ***a,
+/// int *isarr, char *sep, int *ms_flags)`. Returns 0 on success;
+/// in-out pointers carry the result.
+///
+/// Rust signature: `(s, pf_flags) -> (String, Vec<String>,
+/// bool isarr, u32 ms_flags)`. The `sep` parameter is reserved on the
+/// caller side and folded into `state.variables["IFS"]` for now;
+/// pending an explicit sep arg if a caller needs it. The return tuple
+/// carries (joined-scalar, array, isarr, ms_flags).
+/// Port of `multsub(char **s, int pf_flags, char ***a, int *isarr, char *sep, int *ms_flags)` from `Src/subst.c:544`.
+/// WARNING: param names don't match C — Rust=(s, pf_flags) vs C=(s, pf_flags, a, isarr, sep, ms_flags)
+pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
+    // c:544
+    let mut ms_flags = 0i32; // c:551
+    let mut x = s.to_string(); // c:550 (`x = *s`)
+
+    // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
+    // mark MULTSUB_WS_AT_START.
+    let ifs = vars_get("IFS")
+        .unwrap_or_else(|| " \t\n\0".to_string()); // c:N/A (zsh default IFS includes NUL)
+    let is_ifs_sep = |c: char| -> bool {
+        // c:556
+        ifs.contains(c) // c:556
+    };
+
+    if pf_flags & PREFORK_SPLIT != 0 {
+        // c:553
+        let leading: usize = x.chars().take_while(|&c| is_ifs_sep(c)).count(); // c:556
+        if leading > 0 {
+            // c:557
+            ms_flags |= MULTSUB_WS_AT_START; // c:561
+            x = x.chars().skip(leading).collect(); // c:562
+        }
+    }
+
+    // C: `init_list1(foo, x);` — single-element linklist seeded with x.
+    let mut list = LinkList::default(); // c:565
+    list.push_back(x.clone()); // c:565
+
+    // C lines 568-619: PREFORK_SPLIT walks chars looking for ISEP
+    // separators outside quotes/parens. On hit, NUL-terminate and
+    // start a new linknode.
+    if pf_flags & PREFORK_SPLIT != 0 {
+        // c:567
+        // Take ownership of the only node's chars; rebuild list.
+        let chars: Vec<char> = x.chars().collect(); // c:565
+        let mut nodes: Vec<String> = Vec::new(); // c:565
+        let mut cur = String::new(); // c:565
+        let mut inq = false; // c:570 (bslashquote state)
+        let mut inp = 0_i32; // c:570 (paren depth)
+        let mut i = 0_usize; // c:572
+        while i < chars.len() {
+            // c:572
+            let c = chars[i]; // c:573
+                              // C: `if (*x == Dash) *x = '-';` — Dash token →
+                              // literal dash. Rust doesn't have this token here.
+                              // C: `if (itok((unsigned char) *x)) { rawc = *x; l = 1; }`
+                              // Tokens (META range \u{80}-\u{9F}) are single-byte and
+                              // can't be separators. Skip the IFS check for them.
+            let is_token = matches!(c as u32, 0x80..=0x9F); // c:577
+                                                            // Bnull/Bnullkeep arms (C lines 612-617): skip the next
+                                                            // char (parser-verified to exist). \u{99} = Bnull,
+                                                            // \u{9a} = Bnullkeep in our token table.
+            if c == '\u{99}' || c == '\u{9a}' {
+                // c:612
+                cur.push(c); // c:614
+                i += 1; // c:615
+                if i < chars.len() {
+                    // c:615
+                    cur.push(chars[i]); // c:616
+                    i += 1; // c:616
+                }
+                continue; // c:617
+            }
+            // Quote/paren state tracking (C lines 600-611).
+            match c {                                       // c:600
+                '\u{97}' /* Dnull */ |                      // c:602 (")
+                '\u{98}' /* Snull */ |                      // c:603 (')
+                '\u{83}' /* Tick */ => { inq = !inq; }      // c:604 (`)
+                '\u{85}' /* Inpar */ => { inp += 1; }       // c:606
+                '\u{86}' /* Outpar */ => { inp -= 1; }      // c:608
+                _ => {}
+            }
+            // ISEP test (C line 581) — outside quotes/parens, char
+            // matches IFS, char is not a token.
+            if !inq && inp == 0 && !is_token && is_ifs_sep(c) {
+                // c:581
+                // Split here; NUL-terminate cur, walk past trailing
+                // separators (C lines 583-595).
+                if !cur.is_empty() || nodes.is_empty() {
+                    // c:583
+                    nodes.push(std::mem::take(&mut cur)); // c:583
+                }
+                i += 1; // c:584
+                while i < chars.len() && is_ifs_sep(chars[i]) {
+                    // c:584-595
+                    i += 1; // c:594
+                }
+                if i >= chars.len() {
+                    // c:596
+                    ms_flags |= MULTSUB_WS_AT_END; // c:597
+                    break; // c:598
+                }
+                continue; // c:599
+            }
+            cur.push(c); // c:619
+            i += 1; // c:620
+        }
+        if !cur.is_empty() {
+            // c:622
+            nodes.push(cur); // c:622
+        }
+        // Rebuild the linklist with the split nodes.
+        list = LinkList::default(); // c:622
+        for n in nodes {
+            // c:622
+            list.push_back(n); // c:622
+        }
+    }
+
+    // C: `prefork(&foo, pf_flags, ms_flags);`
+    let mut ret_flags = 0i32; // c:625
+    prefork(&mut list, pf_flags, &mut ret_flags); // c:625
+
+    // C lines 626-630: errflag bail.
+    if errflag_set() {
+        // c:626
+        return (String::new(), Vec::new(), false, ms_flags); // c:629
+    }
+
+    // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
+    // array; else single scalar (or empty).
+    let l = list.len(); // c:633
+    if l > 1 || (list.flags & LF_ARRAY != 0) {
+        // c:633
+        let arr: Vec<String> = list.iter().cloned().collect(); // c:635-637
+                                                                                    // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
+                                                                                    // when sep is NULL. Use first IFS char as join separator,
+                                                                                    // matching zsh's sepjoin defaults.
+        let join_sep = ifs.chars().next().map(String::from).unwrap_or_default(); // c:649
+        let joined = arr.join(&join_sep); // c:649
+        return (joined, arr, true, ms_flags); // c:642-647 (array path)
+    }
+    if l == 1 {
+        // c:653
+        let result = list.getdata(0).cloned().unwrap_or_default(); // c:653
+        return (result.clone(), vec![result], false, ms_flags); // c:653
+    }
+    // C: `*s = dupstring("");` — empty result.
+    (String::new(), vec![String::new()], false, ms_flags) // c:655
+} // c:660
+
+/// Port of `filesub(char **namptr, int assign)` from `Src/subst.c:667`.
+///
+/// 1:1 with C: applies filesubstr to the leading `~`/`=`, then in
+/// assign-context walks `=` (TYPESET-only) and `:`-separated path
+/// lists, reapplying filesubstr to each suffix that begins with a
+/// tilde/equals.
+// ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:667
+fn filesub(namptr: &str, assign: i32) -> String {
+    // c:667
+    // C: `filesubstr(namptr, assign);`  (line 672)
+    let mut namptr: String = filesubstr(namptr, assign != 0).unwrap_or_else(|| namptr.to_string()); // c:672
+
+    // C: `if (!assign) return;` — non-assign context bails early.
+    if assign == 0 {
+        // c:674
+        return namptr; // c:675
+    }
+
+    let mut eql: Option<usize> = None; // c:668 (eql=NULL)
+
+    // C: PREFORK_TYPESET arm — `${var}=value` shape, find `=` then
+    // recurse filesubstr on the RHS.
+    if assign & PREFORK_TYPESET != 0 {
+        // c:677
+        // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`
+        if namptr.len() >= 2 {
+            // c:678
+            // strchr from index 1 onward
+            if let Some(sub) = namptr[1..].find('=').map(|p| p + 1) {
+                // c:678
+                eql = Some(sub); // c:678
+                let str_start = sub + 1; // c:679
+                if str_start < namptr.len()                 // c:680
+                    && (namptr.as_bytes()[str_start] == b'~'
+                        || namptr.as_bytes()[str_start] == b'=')
+                {
+                    // c:680
+                    let rhs = &namptr[str_start..]; // c:679
+                    if let Some(expanded) = filesubstr(rhs, true) {
+                        // c:680
+                        // C: `sub[1] = '\0'; *namptr = dyncat(*namptr, str);`
+                        namptr = format!("{}{}", &namptr[..str_start], expanded);
+                        // c:682
+                    } // c:682
+                } // c:680
+            } else {
+                // c:684
+                return namptr; // c:685
+            } // c:686
+        } else {
+            // c:684
+            return namptr; // c:685
+        } // c:686
+    }
+
+    // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
+    // Walk `:`-separated path components, reapply filesubstr on each
+    // suffix that starts with `~` or `=`.
+    let mut ptr_off = 0_usize; // c:689
+    loop {
+        // c:690
+        let slice = &namptr[ptr_off..]; // c:690
+        let colon_rel = match slice.find(':') {
+            // c:690
+            Some(p) => p,  // c:690
+            None => break, // c:690
+        }; // c:690
+        let sub = ptr_off + colon_rel; // c:690
+        let str_start = sub + 1; // c:691
+        let len = sub; // c:692
+                       // C: `sub > eql` — skip the `:` we already chewed in TYPESET.
+        let past_eql = match eql {
+            // c:693
+            Some(e) => sub > e, // c:693
+            None => true,       // c:693
+        }; // c:693
+        if past_eql                                         // c:693
+            && str_start < namptr.len()                     // c:694
+            && (namptr.as_bytes()[str_start] == b'~'
+                || namptr.as_bytes()[str_start] == b'=')
+        {
+            // c:694
+            let rhs = &namptr[str_start..]; // c:691
+            if let Some(expanded) = filesubstr(rhs, true) {
+                // c:695
+                namptr = format!("{}{}", &namptr[..str_start], expanded); // c:697
+            } // c:695
+        } // c:695
+        ptr_off = len + 1; // c:700
+        if ptr_off >= namptr.len() {
+            // c:700
+            break; // c:700
+        } // c:700
+    } // c:701
+    namptr // c:702
+} // c:703
+// c:zsh.h:200
+
+/// Equal substitution (=cmd)
+/// Port of `equalsubstr(char *str, int assign, int nomatch)` from `Src/subst.c:715`.
+///
+/// `=cmd` substitution: looks up `cmd` via findcmd (canonical zsh
+/// PATH walker, ported as ShellExecutor::findcmd). Returns the
+/// expanded path on success, None if not found (with an optional
+/// `zerr` diagnostic when `nomatch` is set).
+///
+/// C body:
+///   1. Walk to end of cmd name (stops at NUL, Inpar, or `:` when
+///      assign — per the isend2 macro).
+///   2. dupstrpfx + untokenize + remnulargs on the cmd portion.
+///   3. findcmd lookup; null → return NULL (with optional zerr).
+///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
+///      with the suffix.
+// do =foo substitution, or equivalent.                                     // c:715
+pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
+    // c:715
+    // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
+    // name. isend2(c) = !c || c==Inpar || (assign && c==':').
+    let end = s // c:719
+        .chars() // c:719
+        .take_while(|&c| {
+            // c:719
+            c != '\0'                                       // c:719
+                && c != Inpar                               // c:719
+                && c != '\u{85}'                            // c:719 (Inpar token)
+                && !(assign && c == ':') // c:719
+        })
+        .count();
+
+    // C: `cmdstr = dupstrpfx(str, pp-str);
+    //     untokenize(cmdstr); remnulargs(cmdstr);`
+    let cmdstr_raw: String = s.chars().take(end).collect(); // c:721
+    let cmdstr = crate::lex::untokenize(&cmdstr_raw); // c:722
+    let cmdstr = cmdstr.replace('\u{0}', ""); // c:723
+
+    // C: `cnam = findcmd(cmdstr, 1, 0)` (Src/exec.c:723) — `1` is
+    // do_hash, `0` is not-just-builtins. Routes through the
+    // canonical port at builtin.rs:3392.
+    let cnam = crate::ported::builtin::findcmd(&cmdstr, 1, 0); // c:724
+
+    match cnam {
+        // c:724
+        Some(path) => {
+            // c:730
+            // C: `if (*pp) return dyncat(cnam, pp); else
+            //     return cnam;`
+            if end < s.chars().count() {
+                // c:730
+                let rest: String = s.chars().skip(end).collect(); // c:730
+                Some(format!("{}{}", path, rest)) // c:731
+            } else {
+                Some(path) // c:733
+            }
+        }
+        None => {
+            // c:725
+            if nomatch {
+                // c:725
+                zerr(&format!("{}: not found", cmdstr)); // c:726
+            }
+            None // c:728
+        }
+    }
+} // c:733
+
+// Helper functions
+
+/// Port of `filesubstr(char **namptr, int assign)` from `Src/subst.c:737`.
+///
+/// Performs `~` and `=` expansion on a single path component. Returns
+/// `Some(expanded)` on success, `None` if no expansion applies. The
+/// caller (filesub) chains this on `:`-separated path lists.
+///
+/// Faithful port of the C ladder — covers `~`, `~+`, `~-`, `~N`/`~-N`
+/// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
+/// equalsubstr).
+pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
+    // c:737
+    if namptr.is_empty() {
+        // c:737
+        return None; // c:737
+    }
+    let chars: Vec<char> = namptr.chars().collect(); // c:737
+    let first = chars[0]; // c:737
+
+    // `~` (and Tilde token) — but not `~=` (handled separately by =arm).
+    // C: `if (*str == Tilde && str[1] != '=' && str[1] != Equals)`.
+    if first == '~' || first == '\u{98}'
+    /* Tilde token */
+    {
+        // c:741
+        if chars.len() == 1 {
+            // c:748 — bare ~
+            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
+            return Some(home);
+        }
+        let nx = chars[1]; // c:741
+        if nx == '=' {
+            return None;
+        } // c:741 — leave for =arm
+
+        // C `isend(c)`: !c || c=='/' || c==Inpar || (assign && c==':')
+        let isend = |c: char| -> bool {
+            // c:725 macro
+            c == '\0' || c == '/' || c == '\u{85}' /* Inpar */
+                || (assign && c == ':')
+        };
+
+        // `~/...` and `~` (isend(str[1])) — bare HOME
+        if isend(nx) {
+            // c:748
+            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
+            let suffix: String = chars[1..].iter().collect();
+            return Some(format!("{}{}", home, suffix));
+        }
+        // `~+...` — current PWD (only if isend(str[2]))
+        if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
+            // c:752
+            let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+            let suffix: String = chars[2..].iter().collect();
+            return Some(format!("{}{}", pwd, suffix));
+        }
+        // `~-...` — OLDPWD (only if isend(str[2]))
+        if nx == '-' && chars.len() >= 3 && isend(chars[2]) {
+            // c:755 — `~-` → $OLDPWD with $PWD fallback. Read both
+            //          via paramtab; OS env fallback removed (was a
+            //          fake: shell-internal $OLDPWD lives in paramtab).
+            let oldpwd = crate::ported::params::getsparam("OLDPWD")
+                .or_else(|| crate::ported::params::getsparam("PWD"))
+                .unwrap_or_default();
+            let suffix: String = chars[2..].iter().collect();
+            return Some(format!("{}{}", oldpwd, suffix));
+        }
+        // `~+N` / `~-N` — dirstack entry. C: `if (!inblank(str[1]) &&
+        // isend(*ptr) && (!idigit(str[1]) || (ptr - str < 4)))`.
+        // Walk digit suffix; ptr ends at first non-digit.
+        if (nx == '+' || nx == '-' || nx.is_ascii_digit()) && !nx.is_whitespace() {
+            // Parse signed integer from chars[1..]
+            let mut p = 1_usize;
+            let neg = chars[p] == '-';
+            if chars[p] == '+' || chars[p] == '-' {
+                p += 1;
+            }
+            let dstart = p;
+            while p < chars.len() && chars[p].is_ascii_digit() {
+                p += 1;
+            }
+            if p > dstart && p < chars.len() && isend(chars[p]) {
+                let val: i32 = chars[dstart..p]
+                    .iter()
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
+                let val = if neg { -val } else { val };
+                let pwd = crate::ported::params::getsparam("PWD")
+                    .unwrap_or_default();
+                // Direct port of subst.c filesub'namptr tilde-+/- arm:
+                // dstackent(ch, val) → pwd or stack entry.
+                // c:4902 — read from canonical DIRSTACK global (mirrors
+                // C'namptr `mod_export LinkList dirstack` at builtin.c:743).
+                let dirstack: Vec<String> = crate::ported::modules::parameter::DIRSTACK
+                    .lock()
+                    .map(|d| d.clone())
+                    .unwrap_or_default();
+                let pushdminus = isset(crate::ported::zsh_h::PUSHDMINUS); // c:4906
+                let entry = dstackent(
+                    // c:4902
+                    if neg { '-' } else { '+' }, // c:4902
+                    val,                         // c:4902
+                    &dirstack,                   // c:4902
+                    &pwd,                        // c:4902
+                    pushdminus,                  // c:4906
+                );
+                if let Some(dir) = entry {
+                    let suffix: String = chars[p..].iter().collect();
+                    return Some(format!("{}{}", dir, suffix));
+                }
+                return None;
+            }
+        }
+        // `~user` — getpwnam lookup (libc).
+        // C: `if ((ptr = itype_end(str+1, IUSER, 0)) != str+1)` —
+        // walk identifier chars (alnum + `_`).
+        let mut p = 1_usize;
+        while p < chars.len() && (chars[p].is_ascii_alphanumeric() || chars[p] == '_') {
+            p += 1;
+        }
+        if p > 1 && p < chars.len() && isend(chars[p]) {
+            let user: String = chars[1..p].iter().collect();
+            let suffix: String = chars[p..].iter().collect();
+            // Named-dir lookup FIRST — `hash -d name=path` registered
+            // names take precedence over OS users (zsh canonical).
+            // Direct port of subst.c filesub which checks
+            // nameddirtab via getnameddir before falling through to
+            // getpwnam.
+            // Canonical nameddirtab lookup (mirrors C'namptr
+            // `getnameddir(name)` at hashnameddir.c via gethashnode2).
+            let named = crate::ported::hashnameddir::nameddirtab()
+                .lock()
+                .ok()
+                .and_then(|t| t.get(&user).map(|nd| nd.dir.clone()));
+            if let Some(path) = named {
+                return Some(format!("{}{}", path, suffix));
+            }
+            // libc getpwnam — cstring -> pw_dir
+            if let Ok(cname) = CString::new(user.clone()) {
+                unsafe {
+                    let pw = libc::getpwnam(cname.as_ptr());
+                    if !pw.is_null() {
+                        let home_ptr = (*pw).pw_dir;
+                        if !home_ptr.is_null() {
+                            let home = std::ffi::CStr::from_ptr(home_ptr)
+                                .to_string_lossy()
+                                .into_owned();
+                            return Some(format!("{}{}", home, suffix));
+                        }
+                    }
+                }
+            }
+            // Fall through — user not found, return None (caller
+            // decides whether to NOMATCH error).
+            return None;
+        }
+        return None;
+    }
+
+    // `=cmd` — PATH lookup via equalsubstr. C:
+    // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
+    if (first == '=' || first == '\u{86}'/* Equals */) && chars.len() > 1 && chars[1] != '\u{85}'
+    /* Inpar */
+    {
+        let cmd_part: String = chars[1..].iter().collect();
+        // Split at `:` if assign, else take the whole thing.
+        let cmd = if assign {
+            cmd_part.split(':').next().unwrap_or(&cmd_part).to_string()
+        } else {
+            cmd_part.clone()
+        };
+        // C: `pathprog(cmd, &fullname)` walks `path[]`. paramtab read.
+        let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        for dir in path.split(':') {
+            let full = format!("{}/{}", dir, cmd);
+            if std::path::Path::new(&full).exists() {
+                if assign && cmd_part.len() > cmd.len() {
+                    let suffix = &cmd_part[cmd.len()..];
+                    return Some(format!("{}{}", full, suffix));
+                }
+                return Some(full);
+            }
+        }
+    }
+    None
+}
+
+/// Port of `strcatsub(char **d, char *pb, char *pe, char *src, int l, char *s, int glbsub, int copied)` from `Src/subst.c:814`.
+///
+/// Concatenates `prefix` + `src` + `suffix` into a fresh string. If
+/// `glob_subst` is set, runs shtokenize on the src segment (so glob
+/// metacharacters become tokens for downstream pattern matching).
+///
+/// C signature: `char *strcatsub(char **d, char *pb, char *pe, char
+/// *src, int l, char *s, int glbsub, int copied)` — populates *d
+/// with the concat result and returns a pointer past the src
+/// segment. The Rust version returns the full concatenation; callers
+/// can recover the post-src position via prefix.len() + src.len().
+/// WARNING: param names don't match C — Rust=(prefix, src, suffix, glob_subst) vs C=(d, pb, pe, src, l, s, glbsub, copied)
+pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
+    // c:814
+    // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
+    //     dupstring(src)); if (glbsub) shtokenize(dest); }`
+    // — fast path: no prefix, no suffix, just src (optionally
+    // shtokenized).
+    if prefix.is_empty() && suffix.is_empty() {
+        // c:820
+        if glob_subst {
+            // c:822
+            // shtokenize returns Vec<GlobToken>; for a string-output
+            // signature we keep the src as-is. The full token-aware
+            // pipeline lives in the canonical glob path.
+            // shtokenize(src) call elided — `src` is `&str` here; the
+            // tokenization side-effect would write into the dest buffer
+            // C builds at `c:823`, not into the input. The canonical
+            // glob pipeline handles tokenization on its own copy.
+        }
+        return src.to_string(); // c:821
+    }
+
+    // C: `*d = dest = hcalloc(pl + l + (s ? strlen(s) : 0) + 1);
+    //     strncpy(dest, pb, pl); dest += pl;
+    //     strcpy(dest, src); if (glbsub) shtokenize(dest);
+    //     dest += l;
+    //     if (s) strcpy(dest, s);`
+    // — general path: pre-allocate + copy three segments in order.
+    let mut result = String::with_capacity(
+        // c:825
+        prefix.len() + src.len() + suffix.len() + 1,
+    );
+    result.push_str(prefix); // c:826
+    result.push_str(src); // c:828
+    if glob_subst {
+        // c:829
+        // Same shtokenize note as above.
+        // shtokenize(src) call elided — same reasoning as c:823 above.
+    }
+    result.push_str(suffix); // c:833
+    result // c:835
+} // c:836
+
+/// `wcpadwidth(wc, multi_width)` — return the display-cell width of
+/// `wc` per zsh's MULTIBYTE_SUPPORT padding logic. Direct port of
+/// Src/subst.c:848-866.
+///
+/// Modes:
+///   • `multi_width == 0` — every char counts as one cell.
+///   • `multi_width == 1` — use `u9_wcwidth`-style cell counting.
+///   • else — combining/zero-width chars count as 0, all others as 1.
+///
+/// The Rust port uses `unicode-width`-style heuristics inline: ASCII
+/// printable + most BMP chars = 1 cell; CJK Unified Ideographs and
+/// other wide blocks = 2 cells; combining/control = 0.
+/// Port of `wcpadwidth(wchar_t wc, int multi_width)` from `Src/subst.c:848`.
+///
+/// Returns the display-cell width of a wide char for `dopadding`.
+///
+/// C signature: `int wcpadwidth(wchar_t wc, int multi_width)`.
+/// multi_width values:
+///   0 → always 1 (legacy / no multibyte)
+///   1 → u9_wcwidth(wc); zero if negative
+///   * → boolean: 1 if u9_wcwidth>0 else 0
+pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // c:848
+    // c:848
+    // u9_wcwidth fallback lives in utils.rs (canonical port of
+    // Src/utils.c::zwcwidth). Use the unicode_width-backed
+    // implementation there.
+    let wcw = crate::ported::utils::zwcwidth(wc) as i32;
+    match multi_width {
+        // c:854
+        // C: `case 0: return 1;`
+        0 => 1, // c:855
+        // C: `case 1: width = WCWIDTH(wc); if (width >= 0) return width; return 0;`
+        1 => {
+            if wcw >= 0 {
+                wcw
+            } else {
+                0
+            }
+        } // c:858
+        // C: `default: return WCWIDTH(wc) > 0 ? 1 : 0;`
+        _ => {
+            if wcw > 0 {
+                1
+            } else {
+                0
+            }
+        } // c:864
+    }
+} // c:866
+
+/// String padding
+/// `${(l:N:)var}` left/right-pad.
+/// Port of `dopadding(char *str, int prenum, int postnum, char *preone, char *postone, char *premul, char *postmul #ifdef MULTIBYTE_SUPPORT , int multi_width #endif)` from Src/subst.c:893.
+///
+/// `multi_width` controls cell-counting per the (m) flag (subst.c:2376):
+///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
+///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
+/// WARNING: param names don't match C — Rust=() vs C=(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif)
+pub fn dopadding(                                                            // c:893
+    // c:893
+    s: &str,               // c:893
+    prenum: usize,         // c:893
+    postnum: usize,        // c:893
+    preone: Option<&str>,  // c:893
+    postone: Option<&str>, // c:893
+    premul: &str,          // c:893
+    postmul: &str,         // c:893
+    multi_width: i32,      // c:2376 (m)
+) -> String {
+    // c:893
+    // (m)-aware string-cell counter. With multi_width==0 every
+    // codepoint counts 1 (legacy behavior); otherwise wcpadwidth
+    // gives the wide-char-aware metric. Direct port of zsh's
+    // MULTIBYTE_SUPPORT path which routes the (l)/(r) length
+    // checks through u9_wcwidth() before deciding pad vs truncate.
+    let cells = |t: &str| -> usize {
+        // c:893
+        if multi_width <= 0 {
+            // c:893
+            t.chars().count() // c:893
+        } else {
+            // c:893
+            t.chars().map(|c| wcpadwidth(c, multi_width) as usize).sum() // c:2376
+        } // c:893
+    };
+    let len = cells(s); // c:893
+    let total_width = prenum + postnum; // c:893
+
+    if total_width == 0 || total_width == len {
+        // c:893
+        return s.to_string(); // c:893
+    } // c:893
+
+    let mut result = String::new(); // c:893
+
+    // Left padding
+    if prenum > 0 {
+        // c:893
+        let chars: Vec<char> = s.chars().collect(); // c:893
+
+        if len > prenum {
+            // c:893
+            // Truncate from left
+            let skip = len - prenum; // c:893
+            result = chars.into_iter().skip(skip).collect(); // c:893
+        } else {
+            // c:893
+            // Pad on left
+            let padding_needed = prenum - len; // c:893
+
+            // Add preone if there's room
+            if let Some(pre) = preone {
+                // c:893
+                let pre_len = pre.chars().count(); // c:893
+                if pre_len <= padding_needed {
+                    // c:893
+                    // Room for repeated padding first
+                    let repeat_len = padding_needed - pre_len; // c:893
+                    if !premul.is_empty() {
+                        // c:893
+                        let mul_len = premul.chars().count(); // c:893
+                        let full_repeats = repeat_len / mul_len; // c:893
+                        let partial = repeat_len % mul_len; // c:893
+
+                        // Partial repeat
+                        if partial > 0 {
+                            // c:893
+                            result.extend(premul.chars().skip(mul_len - partial));
+                            // c:893
+                        } // c:893
+                          // Full repeats
+                        for _ in 0..full_repeats {
+                            // c:893
+                            result.push_str(premul); // c:893
+                        } // c:893
+                    } // c:893
+                    result.push_str(pre); // c:893
+                } else {
+                    // c:893
+                    // Only part of preone fits
+                    result.extend(pre.chars().skip(pre_len - padding_needed)); // c:893
+                } // c:893
+            } else {
+                // c:893
+                // Just use premul
+                if !premul.is_empty() {
+                    // c:893
+                    let mul_len = premul.chars().count(); // c:893
+                    let full_repeats = padding_needed / mul_len; // c:893
+                    let partial = padding_needed % mul_len; // c:893
+
+                    if partial > 0 {
+                        // c:893
+                        result.extend(premul.chars().skip(mul_len - partial)); // c:893
+                    } // c:893
+                    for _ in 0..full_repeats {
+                        // c:893
+                        result.push_str(premul); // c:893
+                    } // c:893
+                } // c:893
+            } // c:893
+
+            result.push_str(s); // c:893
+        } // c:893
+    } else {
+        // c:893
+        result = s.to_string(); // c:893
+    } // c:893
+
+    // Right padding
+    if postnum > 0 {
+        // c:893
+        let current_len = cells(&result); // c:893
+
+        if current_len > postnum {
+            // c:893
+            // Truncate from right
+            result = result.chars().take(postnum).collect(); // c:893
+        } else if current_len < postnum {
+            // c:893
+            // Pad on right
+            let padding_needed = postnum - current_len; // c:893
+
+            if let Some(post) = postone {
+                // c:893
+                let post_len = post.chars().count(); // c:893
+                if post_len <= padding_needed {
+                    // c:893
+                    result.push_str(post); // c:893
+                    let remaining = padding_needed - post_len; // c:893
+                    if !postmul.is_empty() {
+                        // c:893
+                        let mul_len = postmul.chars().count(); // c:893
+                        let full_repeats = remaining / mul_len; // c:893
+                        let partial = remaining % mul_len; // c:893
+
+                        for _ in 0..full_repeats {
+                            // c:893
+                            result.push_str(postmul); // c:893
+                        } // c:893
+                        if partial > 0 {
+                            // c:893
+                            result.extend(postmul.chars().take(partial)); // c:893
+                        } // c:893
+                    } // c:893
+                } else {
+                    // c:893
+                    result.extend(post.chars().take(padding_needed)); // c:893
+                } // c:893
+            } else if !postmul.is_empty() {
+                // c:893
+                let mul_len = postmul.chars().count(); // c:893
+                let full_repeats = padding_needed / mul_len; // c:893
+                let partial = padding_needed % mul_len; // c:893
+
+                for _ in 0..full_repeats {
+                    // c:893
+                    result.push_str(postmul); // c:893
+                } // c:893
+                if partial > 0 {
+                    // c:893
+                    result.extend(postmul.chars().take(partial)); // c:893
+                } // c:893
+            } // c:893
+        } // c:893
+    } // c:893
+
+    result // c:893
+} // c:893
+
+/// Get the delimiter argument for flags like (s:x:) or (j:x:)
+/// Parse a `:STR:`-delimited flag argument.
+/// Port of `get_strarg(char *s, int *lenp)` from Src/subst.c:1348.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, lenp)
+pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
+    // c:1348
+    let mut chars = s.chars().peekable(); // c:1348
+
+    // Get delimiter
+    let del = chars.next()?; // c:1348
+
+    // Map bracket pairs
+    let close_del = match del {
+        // c:1348
+        '(' => ')',          // c:1348
+        '[' => ']',          // c:1348
+        '{' => '}',          // c:1348
+        '<' => '>',          // c:1348
+        Inpar => Outpar,     // c:1348
+        Inbrack => Outbrack, // c:1348
+        Inbrace => Outbrace, // c:1348
+        Inang => Outang,     // c:1348
+        _ => del,            // c:1348
+    }; // c:1348
+
+    // Collect content until closing delimiter
+    let mut content = String::new(); // c:1348
+    let mut rest_start = 1; // c:1348
+
+    for (i, c) in s.chars().enumerate().skip(1) {
+        // c:1348
+        if c == close_del {
+            // c:1348
+            rest_start = i + 1; // c:1348
+            break; // c:1348
+        } // c:1348
+        content.push(c); // c:1348
+        rest_start = i + 1; // c:1348
+    } // c:1348
+
+    let rest = &s[rest_start.min(s.len())..]; // c:1348
+    Some((del, content, rest)) // c:1348
+} // c:1348
+
+/// Get integer argument for flags like (l.N.)
+/// Parse an `:N:`-delimited integer flag argument.
+/// Port of `get_intarg(char **s, int *delmatchp)` from Src/subst.c:1428.
+///
+/// Parses an `:N:`-delimited integer flag argument (e.g. `(l:5:)`).
+/// The C source returns -1 on error, the absolute value otherwise,
+/// and writes the matched delimiter length to *delmatchp.
+///
+/// Rust returns Option<(value, rest)> — None on error, Some((|n|, rest))
+/// on success. The delmatchp output is folded into `rest` (a slice
+/// past the closing delimiter).
+///
+/// Body: get_strarg → parsestr → singsub → mathevali, then absolute
+/// value. The math eval lets `(l:$n:)` etc. work.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, delmatchp)
+pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // c:1428
+    // c:1428
+    // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
+    // expression text + delimiter length.
+    let (_del, content, rest) = get_strarg(s)?; // c:1431
+
+    if rest.is_empty() && content.is_empty() {
+        // c:1436
+        // C: `if (!*t) return -1;` — empty input → error.
+        return None;
+    }
+
+    // C: `if (parsestr(&p)) return -1;` — full lexer reentry skipped
+    // (subst_parse_str approximates).
+    let parsed = subst_parse_str(&content, false, true)?; // c:1442
+
+    // C: `singsub(&p);` — parameter-substitute the content (so
+    // `(l:$n:)` looks up $n).
+    let mut __exec = crate::exec::ShellExecutor::new();
+    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
+    let expanded = singsub(&parsed); // c:1444
+    if errflag_set() {
+        return None;
+    } // c:1445
+
+    // C: `ret = mathevali(p);` — evaluate as integer math.
+    let ret = match crate::ported::math::mathevali(&expanded) {
+        // c:1447
+        Ok(n) => n,            // c:1447
+        Err(_) => return None, // c:1448
+    };
+
+    // C: `if (ret < 0) ret = -ret;` — absolute value.
+    let abs_ret = if ret < 0 { -ret } else { ret }; // c:1452
+
+    // C: `*delmatchp = arglen;` — Rust folds delim-len into rest.
+    Some((abs_ret, rest)) // c:1455
+} // c:1457
+
+/// `subst_parse_str(sp, single, err)` — parse a substitution string in
+/// place: convert tokens, optionally suppressing errors, and recover
+/// the unquoted body for arithmetic / array-index evaluation. Direct
+/// port of Src/subst.c:1460-1487.
+///
+/// In zsh, this is used by arithsubst() to re-parse `$(( … ))`'s
+/// inner expression after parameter expansion has run, and by the
+/// `${…[N]}` index path to evaluate `N` as an arithmetic expression.
+///
+/// Returns the converted text on success, `None` on parse error
+/// (matches the C return value: 0=ok, 1=error).
+///
+/// The `single` flag (false) maps the lexer's `Qstring`/`Qtick` quoted
+/// markers back to plain `String`/`Tick` tokens, mirroring the inner
+/// loop at subst.c:1473-1485 that strips the doubled-up bslashquote
+/// recognition.
+///
+/// C signature: `int subst_parse_str(char **sp, int single, int err)`.
+/// Mutates `*sp` to point at a duplicated, parser-pre-processed copy
+/// of the input. Returns 0 on success, 1 on parse failure.
+///
+/// Rust signature: takes `&str`, returns `Option<String>` — Some(buf)
+/// on success, None on parse failure (matches the C `return 1` error
+/// path).
+///
+/// The C body:
+///   1. `*sp = s = dupstring(*sp);`           — clone for in-place mutation
+///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
+///   3. If !single, walk buffer: outside Dnull (`"`) regions convert
+///      `Qstring` → `String` and `Qtick` → `Tick`. Dnull toggles qt.
+/// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
+pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { // c:1460
+    // c:1460
+    let _ = err; // c:1466 (parsestr error path
+                 //         deferred — full C
+                 //         lexer reentry pending)
+                 // C: `*sp = sp = dupstring(*sp);` — duplicate so the caller'sp
+                 // original buffer is unaffected. Rust'sp String already owns;
+                 // we work on a local copy below.
+    let mut buf: String = sp.to_string(); // c:1465
+
+    // C: `if (!single) { … }` — the conversion only runs in the
+    // non-SINGLE arm (when paramsubst-output may be subsequently
+    // word-split / expanded).
+    if !single {
+        // c:1469
+        let mut chars: Vec<char> = buf.chars().collect(); // c:1469
+        let mut qt = false; // c:1470
+                            // C constant references — these are the token bytes the
+                            // lexer emits. Authoritative values from src/ported/subst.rs
+                            // tokens module: STRING=\u{81}, Qstring=\u{82},
+                            // Tick=\u{83}, Qtick=\u{84}, Dnull=\u{97}.
+        for c in chars.iter_mut() {
+            // c:1472
+            if !qt {
+                // c:1473
+                if *c == '\u{82}'
+                /* Qstring */
+                {
+                    // c:1474
+                    *c = '\u{81}' /* STRING */; // c:1475
+                } else if *c == '\u{84}'
+                /* Qtick */
+                {
+                    // c:1476
+                    *c = '\u{83}' /* Tick */; // c:1477
+                }
+            }
+            if *c == '\u{97}'
+            /* Dnull */
+            {
+                // c:1480
+                qt = !qt; // c:1481
+            }
+        }
+        buf = chars.iter().collect(); // c:1483
+    }
+    // C: `return 0;` — success path returns the buffer.
+    Some(buf) // c:1483
+} // c:1486
+
+
+/// Evaluate character from number (for (#) flag)
+/// Port of `substevalchar(char *ptr)` from `Src/subst.c:1490`.
+///
+/// Implements the `(#)` paramsubst flag: evaluate the expression as
+/// a math integer, then convert that codepoint to a UTF-8 string.
+/// Used by `${(#)foo}` where `foo` is a numeric expression yielding
+/// a character code.
+pub fn substevalchar(ptr: &str) -> Option<String> {
+    // c:1490
+    // C: `int saved_errflag = errflag; errflag = 0;` — clear-and-save
+    // the global error flag around mathevali so failure from an
+    // invalid math expr stays local.
+    // (Rust port has no global errflag — the Result type carries
+    // the error directly.)
+    let ires = match crate::ported::math::mathevali(ptr) {
+        // c:1497
+        Ok(n) => n, // c:1497
+        Err(_) => {
+            // c:1499
+            // C: `return noerrs ? dupstring("") : NULL;` —
+            // empty string when noerrs flag is set, NULL otherwise.
+            // Rust port returns Some("") so callers see a clean
+            // empty value rather than aborting; the `noerrs` global
+            // is at the parser layer and isn't plumbed here yet.
+            return Some(String::new()); // c:1500
+        } // c:1502
+    }; // c:1502
+    if ires < 0 {
+        // c:1505
+        // C: `zerr("character not in range");` — diagnostic to
+        // stderr.
+        zerr("character not in range"); // c:1506
+                                        // C falls through to the byte-render path with a negative
+                                        // ires, which emits a garbage byte. The Rust port returns
+                                        // empty rather than a corrupt char.
+        return Some(String::new()); // c:1506
+    } // c:1507
+
+    // C: MULTIBYTE arm — `if (isset(MULTIBYTE) && ires > 127)` use
+    // ucs4tomb to encode as multibyte. Rust uses char::from_u32
+    // which handles all valid Unicode scalar values uniformly.
+    if let Some(ch) = char::from_u32(ires as u32) {
+        // c:1509
+        let mut buf = [0u8; 4]; // c:1510
+        return Some(ch.encode_utf8(&mut buf).to_string()); // c:1510
+    } // c:1510
+
+    // C fallback: `sprintf(ptr, "%c", (int)ires);` — single byte.
+    // Rust falls back to a single byte when char::from_u32 rejects
+    // (surrogate range or out-of-range value). Render as Latin-1
+    // byte for compatibility with C'ptr `(char)ires` cast.
+    let byte = (ires as u32 & 0xFF) as u8; // c:1517
+    Some(String::from_utf8_lossy(&[byte]).into_owned()) // c:1517
+} // c:1521
+
+/// Untokenize and escape string for flag argument
+/// Port of `untok_and_escape(char *s, int escapes, int tok_arg)` from `Src/subst.c:1528`.
+///
+/// Helper for arguments to parameter flags. Handles two operations
+/// on the input string `s`:
+///
+///   - If `escapes` is set AND `s` begins with `$<ident>` or
+///     `Qstring<ident>`, look up the named parameter and use its
+///     value directly (zsh's `getstrvalue`). Otherwise untokenize
+///     and run `getkeystring` to process print-style escapes.
+///
+///   - If `tok_arg` is set, additionally run `shtokenize` on the
+///     result so the caller sees patterns ready for glob matching.
+pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
+    // c:1528
+    let mut dst: Option<String> = None; // c:1531
+
+    // C: `if (escapes && (*s == Stringg || *s == Qstring) && s[1])`
+    let chars: Vec<char> = s.chars().collect(); // c:1533
+    if escapes && chars.len() >= 2                          // c:1533
+        && (chars[0] == STRING || chars[0] == Qstring)
+    {
+        // Walk identifier chars after the leading $/Qstring.
+        let mut pend = 1_usize; // c:1534
+        while pend < chars.len() {
+            // c:1535
+            let c = chars[pend]; // c:1536
+                                 // C: `iident(*pend)` — identifier-char predicate.
+            if !(c.is_ascii_alphanumeric() || c == '_') {
+                // c:1536
+                break; // c:1537
+            }
+            pend += 1; // c:1535
+        }
+        // C: `if (!*pend) { dst = dupstring(getstrvalue(pstart)); }`
+        if pend == chars.len() {
+            // c:1538
+            let name: String = chars[1..].iter().collect(); // c:1539
+            dst = vars_get(&name); // c:1539
+        }
+    }
+
+    // C: `if (dst == NULL) { untokenize(dst = dupstring(s)); … }`
+    let result = match dst {
+        // c:1542
+        Some(d) => d, // c:1542
+        None => {
+            let untoked = crate::lex::untokenize(s); // c:1543
+            if escapes {
+                // c:1544
+                // C: `dst = getkeystring(dst, &klen,
+                //          GETKEYS_SEP, NULL); dst = pastebuf(...);`
+                crate::ported::utils::getkeystring(&untoked).0 // c:1545
+            } else {
+                untoked // c:1543
+            }
+        }
+    };
+
+    // C: `if (tok_arg) shtokenize(dst);` — re-tokenize for pattern
+    // matching contexts. Rust's shtokenize returns Vec<GlobToken>;
+    // we render back to a string via untokenize roundtrip until a
+    // proper Vec<GlobToken>-aware caller exists.
+    if tok_arg {
+        // c:1549
+        // shtokenize call elided — same as c:823 / c:830 above (the
+        // tokenized form isn't consumed by current zshrs pipeline).
+                                                          // Result kept as-is; tok_arg is a hint for downstream glob
+                                                          // engines that consume the tokenized form directly.
+    }
+    result // c:1553
+} // c:1554
+
+/// Check for colon subscript in parameter expansion
+/// Port of `check_colon_subscript(char *str, char **endp)` from `Src/subst.c:1566`.
+///
+/// Detects a `${var:OFFSET[:LEN]}` substring shape vs a history
+/// modifier or other postfix. Returns `Some((subscript_expr, rest))`
+/// when the input looks like a colon-substring (offset evaluable as
+/// math), `None` otherwise.
+///
+/// C signature: `char *check_colon_subscript(char *str, char **endp)`.
+/// Rust returns the parsed (subscript, remainder) pair.
+/// WARNING: param names don't match C — Rust=(s) vs C=(str, endp)
+pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
+    // c:1566
+    // C: `if (!*str || ialpha(*str) || *str == '&') return NULL;`
+    // — empty, alphabetic (i.e. a modifier letter), or `&` (history-
+    // modifier `:&`) → not a subscript.
+    if s.is_empty()                                         // c:1571
+        || s.starts_with(|c: char| c.is_ascii_alphabetic()) // c:1571
+        || s.starts_with('&')
+    // c:1571
+    {
+        return None; // c:1572
+    }
+
+    // C: `if (*str == ':') { *endp = str; return dupstring("0"); }`
+    // — bare `::` shape: subscript is "0" and end points at the
+    // current position (no chars consumed).
+    if s.starts_with(':') {
+        // c:1574
+        return Some(("0".to_string(), s.to_string())); // c:1576
+    }
+
+    // C: `*endp = parse_subscript(str, 0, ':');` — find a balanced
+    // subscript expression terminated by `:`. Falls back to
+    // `'\0'` (end-of-string) if no trailing `:` found.
+    //
+    // Rust port: walk chars tracking bracket/paren depth, stop at
+    // unbalanced `:` or end of string.
+    let chars: Vec<char> = s.chars().collect(); // c:1579
+    let mut depth: i32 = 0; // c:1579
+    let mut end: Option<usize> = None; // c:1579
+    for (i, &c) in chars.iter().enumerate() {
+        // c:1579
+        match c {                                           // c:1579
+            '[' | '\u{91}' /* Inbrack */ => depth += 1,     // c:1579
+            ']' | '\u{92}' /* Outbrack */ => depth -= 1,    // c:1579
+            '(' | '\u{85}' /* Inpar */ => depth += 1,       // c:1579
+            ')' | '\u{86}' /* Outpar */ => depth -= 1,      // c:1579
+            ':' if depth == 0 => { end = Some(i); break; }  // c:1579
+            _ => {}
+        }
+    }
+    let end = end.unwrap_or(s.len()); // c:1582 (fallthrough '\0')
+    let expr: String = chars[..end].iter().collect(); // c:1583
+
+    // C lines 1585-1591: `parsestr` + `singsub` + `remnulargs` +
+    // `untokenize` on the captured expression.
+    let parsed = subst_parse_str(&expr, false, true)?; // c:1587
+    let expanded = singsub(&parsed); // c:1589
+    if errflag_set() {
+        return None;
+    } // c:1590
+    let stripped = expanded.replace('\u{0}', ""); // c:1590
+    let untoked = crate::lex::untokenize(&stripped); // c:1591
+
+    let rest: String = chars[end..].iter().collect(); // c:1593
+    Some((untoked, rest)) // c:1596
+} // c:1597
 
 // parameter substitution                                                   // c:1601
 /// Parameter substitution
@@ -5420,292 +6317,6 @@ pub fn paramsubst(
     } // c:1625
 } // c:1625
 
-// Helper functions
-
-/// Port of `filesubstr(char **namptr, int assign)` from `Src/subst.c:737`.
-///
-/// Performs `~` and `=` expansion on a single path component. Returns
-/// `Some(expanded)` on success, `None` if no expansion applies. The
-/// caller (filesub) chains this on `:`-separated path lists.
-///
-/// Faithful port of the C ladder — covers `~`, `~+`, `~-`, `~N`/`~-N`
-/// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
-/// equalsubstr).
-pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
-    // c:737
-    if namptr.is_empty() {
-        // c:737
-        return None; // c:737
-    }
-    let chars: Vec<char> = namptr.chars().collect(); // c:737
-    let first = chars[0]; // c:737
-
-    // `~` (and Tilde token) — but not `~=` (handled separately by =arm).
-    // C: `if (*str == Tilde && str[1] != '=' && str[1] != Equals)`.
-    if first == '~' || first == '\u{98}'
-    /* Tilde token */
-    {
-        // c:741
-        if chars.len() == 1 {
-            // c:748 — bare ~
-            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
-            return Some(home);
-        }
-        let nx = chars[1]; // c:741
-        if nx == '=' {
-            return None;
-        } // c:741 — leave for =arm
-
-        // C `isend(c)`: !c || c=='/' || c==Inpar || (assign && c==':')
-        let isend = |c: char| -> bool {
-            // c:725 macro
-            c == '\0' || c == '/' || c == '\u{85}' /* Inpar */
-                || (assign && c == ':')
-        };
-
-        // `~/...` and `~` (isend(str[1])) — bare HOME
-        if isend(nx) {
-            // c:748
-            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
-            let suffix: String = chars[1..].iter().collect();
-            return Some(format!("{}{}", home, suffix));
-        }
-        // `~+...` — current PWD (only if isend(str[2]))
-        if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
-            // c:752
-            let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
-            let suffix: String = chars[2..].iter().collect();
-            return Some(format!("{}{}", pwd, suffix));
-        }
-        // `~-...` — OLDPWD (only if isend(str[2]))
-        if nx == '-' && chars.len() >= 3 && isend(chars[2]) {
-            // c:755 — `~-` → $OLDPWD with $PWD fallback. Read both
-            //          via paramtab; OS env fallback removed (was a
-            //          fake: shell-internal $OLDPWD lives in paramtab).
-            let oldpwd = crate::ported::params::getsparam("OLDPWD")
-                .or_else(|| crate::ported::params::getsparam("PWD"))
-                .unwrap_or_default();
-            let suffix: String = chars[2..].iter().collect();
-            return Some(format!("{}{}", oldpwd, suffix));
-        }
-        // `~+N` / `~-N` — dirstack entry. C: `if (!inblank(str[1]) &&
-        // isend(*ptr) && (!idigit(str[1]) || (ptr - str < 4)))`.
-        // Walk digit suffix; ptr ends at first non-digit.
-        if (nx == '+' || nx == '-' || nx.is_ascii_digit()) && !nx.is_whitespace() {
-            // Parse signed integer from chars[1..]
-            let mut p = 1_usize;
-            let neg = chars[p] == '-';
-            if chars[p] == '+' || chars[p] == '-' {
-                p += 1;
-            }
-            let dstart = p;
-            while p < chars.len() && chars[p].is_ascii_digit() {
-                p += 1;
-            }
-            if p > dstart && p < chars.len() && isend(chars[p]) {
-                let val: i32 = chars[dstart..p]
-                    .iter()
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(0);
-                let val = if neg { -val } else { val };
-                let pwd = crate::ported::params::getsparam("PWD")
-                    .unwrap_or_default();
-                // Direct port of subst.c filesub'namptr tilde-+/- arm:
-                // dstackent(ch, val) → pwd or stack entry.
-                // c:4902 — read from canonical DIRSTACK global (mirrors
-                // C'namptr `mod_export LinkList dirstack` at builtin.c:743).
-                let dirstack: Vec<String> = crate::ported::modules::parameter::DIRSTACK
-                    .lock()
-                    .map(|d| d.clone())
-                    .unwrap_or_default();
-                let pushdminus = isset(crate::ported::zsh_h::PUSHDMINUS); // c:4906
-                let entry = dstackent(
-                    // c:4902
-                    if neg { '-' } else { '+' }, // c:4902
-                    val,                         // c:4902
-                    &dirstack,                   // c:4902
-                    &pwd,                        // c:4902
-                    pushdminus,                  // c:4906
-                );
-                if let Some(dir) = entry {
-                    let suffix: String = chars[p..].iter().collect();
-                    return Some(format!("{}{}", dir, suffix));
-                }
-                return None;
-            }
-        }
-        // `~user` — getpwnam lookup (libc).
-        // C: `if ((ptr = itype_end(str+1, IUSER, 0)) != str+1)` —
-        // walk identifier chars (alnum + `_`).
-        let mut p = 1_usize;
-        while p < chars.len() && (chars[p].is_ascii_alphanumeric() || chars[p] == '_') {
-            p += 1;
-        }
-        if p > 1 && p < chars.len() && isend(chars[p]) {
-            let user: String = chars[1..p].iter().collect();
-            let suffix: String = chars[p..].iter().collect();
-            // Named-dir lookup FIRST — `hash -d name=path` registered
-            // names take precedence over OS users (zsh canonical).
-            // Direct port of subst.c filesub which checks
-            // nameddirtab via getnameddir before falling through to
-            // getpwnam.
-            // Canonical nameddirtab lookup (mirrors C'namptr
-            // `getnameddir(name)` at hashnameddir.c via gethashnode2).
-            let named = crate::ported::hashnameddir::nameddirtab()
-                .lock()
-                .ok()
-                .and_then(|t| t.get(&user).map(|nd| nd.dir.clone()));
-            if let Some(path) = named {
-                return Some(format!("{}{}", path, suffix));
-            }
-            // libc getpwnam — cstring -> pw_dir
-            if let Ok(cname) = CString::new(user.clone()) {
-                unsafe {
-                    let pw = libc::getpwnam(cname.as_ptr());
-                    if !pw.is_null() {
-                        let home_ptr = (*pw).pw_dir;
-                        if !home_ptr.is_null() {
-                            let home = std::ffi::CStr::from_ptr(home_ptr)
-                                .to_string_lossy()
-                                .into_owned();
-                            return Some(format!("{}{}", home, suffix));
-                        }
-                    }
-                }
-            }
-            // Fall through — user not found, return None (caller
-            // decides whether to NOMATCH error).
-            return None;
-        }
-        return None;
-    }
-
-    // `=cmd` — PATH lookup via equalsubstr. C:
-    // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
-    if (first == '=' || first == '\u{86}'/* Equals */) && chars.len() > 1 && chars[1] != '\u{85}'
-    /* Inpar */
-    {
-        let cmd_part: String = chars[1..].iter().collect();
-        // Split at `:` if assign, else take the whole thing.
-        let cmd = if assign {
-            cmd_part.split(':').next().unwrap_or(&cmd_part).to_string()
-        } else {
-            cmd_part.clone()
-        };
-        // C: `pathprog(cmd, &fullname)` walks `path[]`. paramtab read.
-        let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
-        for dir in path.split(':') {
-            let full = format!("{}/{}", dir, cmd);
-            if std::path::Path::new(&full).exists() {
-                if assign && cmd_part.len() > cmd.len() {
-                    let suffix = &cmd_part[cmd.len()..];
-                    return Some(format!("{}{}", full, suffix));
-                }
-                return Some(full);
-            }
-        }
-    }
-    None
-}
-
-/// Port of `filesub(char **namptr, int assign)` from `Src/subst.c:667`.
-///
-/// 1:1 with C: applies filesubstr to the leading `~`/`=`, then in
-/// assign-context walks `=` (TYPESET-only) and `:`-separated path
-/// lists, reapplying filesubstr to each suffix that begins with a
-/// tilde/equals.
-// ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:667
-fn filesub(namptr: &str, assign: i32) -> String {
-    // c:667
-    // C: `filesubstr(namptr, assign);`  (line 672)
-    let mut namptr: String = filesubstr(namptr, assign != 0).unwrap_or_else(|| namptr.to_string()); // c:672
-
-    // C: `if (!assign) return;` — non-assign context bails early.
-    if assign == 0 {
-        // c:674
-        return namptr; // c:675
-    }
-
-    let mut eql: Option<usize> = None; // c:668 (eql=NULL)
-
-    // C: PREFORK_TYPESET arm — `${var}=value` shape, find `=` then
-    // recurse filesubstr on the RHS.
-    if assign & PREFORK_TYPESET != 0 {
-        // c:677
-        // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`
-        if namptr.len() >= 2 {
-            // c:678
-            // strchr from index 1 onward
-            if let Some(sub) = namptr[1..].find('=').map(|p| p + 1) {
-                // c:678
-                eql = Some(sub); // c:678
-                let str_start = sub + 1; // c:679
-                if str_start < namptr.len()                 // c:680
-                    && (namptr.as_bytes()[str_start] == b'~'
-                        || namptr.as_bytes()[str_start] == b'=')
-                {
-                    // c:680
-                    let rhs = &namptr[str_start..]; // c:679
-                    if let Some(expanded) = filesubstr(rhs, true) {
-                        // c:680
-                        // C: `sub[1] = '\0'; *namptr = dyncat(*namptr, str);`
-                        namptr = format!("{}{}", &namptr[..str_start], expanded);
-                        // c:682
-                    } // c:682
-                } // c:680
-            } else {
-                // c:684
-                return namptr; // c:685
-            } // c:686
-        } else {
-            // c:684
-            return namptr; // c:685
-        } // c:686
-    }
-
-    // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
-    // Walk `:`-separated path components, reapply filesubstr on each
-    // suffix that starts with `~` or `=`.
-    let mut ptr_off = 0_usize; // c:689
-    loop {
-        // c:690
-        let slice = &namptr[ptr_off..]; // c:690
-        let colon_rel = match slice.find(':') {
-            // c:690
-            Some(p) => p,  // c:690
-            None => break, // c:690
-        }; // c:690
-        let sub = ptr_off + colon_rel; // c:690
-        let str_start = sub + 1; // c:691
-        let len = sub; // c:692
-                       // C: `sub > eql` — skip the `:` we already chewed in TYPESET.
-        let past_eql = match eql {
-            // c:693
-            Some(e) => sub > e, // c:693
-            None => true,       // c:693
-        }; // c:693
-        if past_eql                                         // c:693
-            && str_start < namptr.len()                     // c:694
-            && (namptr.as_bytes()[str_start] == b'~'
-                || namptr.as_bytes()[str_start] == b'=')
-        {
-            // c:694
-            let rhs = &namptr[str_start..]; // c:691
-            if let Some(expanded) = filesubstr(rhs, true) {
-                // c:695
-                namptr = format!("{}{}", &namptr[..str_start], expanded); // c:697
-            } // c:695
-        } // c:695
-        ptr_off = len + 1; // c:700
-        if ptr_off >= namptr.len() {
-            // c:700
-            break; // c:700
-        } // c:700
-    } // c:701
-    namptr // c:702
-} // c:703
-
 /// Port of `arithsubst(char *a, char **bptr, char *rest)` from `Src/subst.c:4485`.
 ///
 /// C body: param-substitute the expression first (`singsub(&a)`),
@@ -5809,196 +6420,6 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // begins). Rust returns the full string.
     format!("{}{}{}", prefix, b, rest) // c:4501-4509
 } // c:4509
-
-// `convbase` lives in src/ported/utils.rs (canonical port of
-// Src/utils.c). Callers below import via the full path.
-
-/// Multsub flags (from subst.c)
-// `pub mod multsub_flags { … }` — DELETED per user directive; was
-// a Rust-only u32 wrapper duplicating the canonical i32 constants
-// in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
-use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START}; // c:zsh.h:2046-2059
-
-/// Perform substitution on a single word
-// perform substitution on a single word                                    // c:514
-/// Single-string substitution.
-/// Port of `singsub(char **s)` from Src/subst.c:514.
-// perform substitution on a single word                                    // c:514
-pub fn singsub(s: &str) -> String {                  // c:514
-    // c:514
-    let mut list = LinkList::default(); // c:514
-    list.push_back(s.to_string()); // c:514
-    let mut ret_flags = 0i32; // c:514
-
-    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags); // c:514
-
-    if errflag_set() {
-        // c:514
-        return String::new(); // c:514
-    } // c:514
-
-    list.getdata(0).cloned().unwrap_or_default() // c:514
-} // c:514
-
-/// Substitution with possible multiple results
-/// Multi-word substitution with IFS splitting.
-///
-/// Multi-word substitution: prefork the input as a single linknode,
-/// optionally word-split on IFS first, return the result as scalar or
-/// array depending on whether more than one node emerged or LF_ARRAY
-/// was set.
-///
-/// C signature: `int multsub(char **s, int pf_flags, char ***a,
-/// int *isarr, char *sep, int *ms_flags)`. Returns 0 on success;
-/// in-out pointers carry the result.
-///
-/// Rust signature: `(s, pf_flags) -> (String, Vec<String>,
-/// bool isarr, u32 ms_flags)`. The `sep` parameter is reserved on the
-/// caller side and folded into `state.variables["IFS"]` for now;
-/// pending an explicit sep arg if a caller needs it. The return tuple
-/// carries (joined-scalar, array, isarr, ms_flags).
-/// Port of `multsub(char **s, int pf_flags, char ***a, int *isarr, char *sep, int *ms_flags)` from `Src/subst.c:544`.
-/// WARNING: param names don't match C — Rust=(s, pf_flags) vs C=(s, pf_flags, a, isarr, sep, ms_flags)
-pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
-    // c:544
-    let mut ms_flags = 0i32; // c:551
-    let mut x = s.to_string(); // c:550 (`x = *s`)
-
-    // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
-    // mark MULTSUB_WS_AT_START.
-    let ifs = vars_get("IFS")
-        .unwrap_or_else(|| " \t\n\0".to_string()); // c:N/A (zsh default IFS includes NUL)
-    let is_ifs_sep = |c: char| -> bool {
-        // c:556
-        ifs.contains(c) // c:556
-    };
-
-    if pf_flags & PREFORK_SPLIT != 0 {
-        // c:553
-        let leading: usize = x.chars().take_while(|&c| is_ifs_sep(c)).count(); // c:556
-        if leading > 0 {
-            // c:557
-            ms_flags |= MULTSUB_WS_AT_START; // c:561
-            x = x.chars().skip(leading).collect(); // c:562
-        }
-    }
-
-    // C: `init_list1(foo, x);` — single-element linklist seeded with x.
-    let mut list = LinkList::default(); // c:565
-    list.push_back(x.clone()); // c:565
-
-    // C lines 568-619: PREFORK_SPLIT walks chars looking for ISEP
-    // separators outside quotes/parens. On hit, NUL-terminate and
-    // start a new linknode.
-    if pf_flags & PREFORK_SPLIT != 0 {
-        // c:567
-        // Take ownership of the only node's chars; rebuild list.
-        let chars: Vec<char> = x.chars().collect(); // c:565
-        let mut nodes: Vec<String> = Vec::new(); // c:565
-        let mut cur = String::new(); // c:565
-        let mut inq = false; // c:570 (bslashquote state)
-        let mut inp = 0_i32; // c:570 (paren depth)
-        let mut i = 0_usize; // c:572
-        while i < chars.len() {
-            // c:572
-            let c = chars[i]; // c:573
-                              // C: `if (*x == Dash) *x = '-';` — Dash token →
-                              // literal dash. Rust doesn't have this token here.
-                              // C: `if (itok((unsigned char) *x)) { rawc = *x; l = 1; }`
-                              // Tokens (META range \u{80}-\u{9F}) are single-byte and
-                              // can't be separators. Skip the IFS check for them.
-            let is_token = matches!(c as u32, 0x80..=0x9F); // c:577
-                                                            // Bnull/Bnullkeep arms (C lines 612-617): skip the next
-                                                            // char (parser-verified to exist). \u{99} = Bnull,
-                                                            // \u{9a} = Bnullkeep in our token table.
-            if c == '\u{99}' || c == '\u{9a}' {
-                // c:612
-                cur.push(c); // c:614
-                i += 1; // c:615
-                if i < chars.len() {
-                    // c:615
-                    cur.push(chars[i]); // c:616
-                    i += 1; // c:616
-                }
-                continue; // c:617
-            }
-            // Quote/paren state tracking (C lines 600-611).
-            match c {                                       // c:600
-                '\u{97}' /* Dnull */ |                      // c:602 (")
-                '\u{98}' /* Snull */ |                      // c:603 (')
-                '\u{83}' /* Tick */ => { inq = !inq; }      // c:604 (`)
-                '\u{85}' /* Inpar */ => { inp += 1; }       // c:606
-                '\u{86}' /* Outpar */ => { inp -= 1; }      // c:608
-                _ => {}
-            }
-            // ISEP test (C line 581) — outside quotes/parens, char
-            // matches IFS, char is not a token.
-            if !inq && inp == 0 && !is_token && is_ifs_sep(c) {
-                // c:581
-                // Split here; NUL-terminate cur, walk past trailing
-                // separators (C lines 583-595).
-                if !cur.is_empty() || nodes.is_empty() {
-                    // c:583
-                    nodes.push(std::mem::take(&mut cur)); // c:583
-                }
-                i += 1; // c:584
-                while i < chars.len() && is_ifs_sep(chars[i]) {
-                    // c:584-595
-                    i += 1; // c:594
-                }
-                if i >= chars.len() {
-                    // c:596
-                    ms_flags |= MULTSUB_WS_AT_END; // c:597
-                    break; // c:598
-                }
-                continue; // c:599
-            }
-            cur.push(c); // c:619
-            i += 1; // c:620
-        }
-        if !cur.is_empty() {
-            // c:622
-            nodes.push(cur); // c:622
-        }
-        // Rebuild the linklist with the split nodes.
-        list = LinkList::default(); // c:622
-        for n in nodes {
-            // c:622
-            list.push_back(n); // c:622
-        }
-    }
-
-    // C: `prefork(&foo, pf_flags, ms_flags);`
-    let mut ret_flags = 0i32; // c:625
-    prefork(&mut list, pf_flags, &mut ret_flags); // c:625
-
-    // C lines 626-630: errflag bail.
-    if errflag_set() {
-        // c:626
-        return (String::new(), Vec::new(), false, ms_flags); // c:629
-    }
-
-    // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
-    // array; else single scalar (or empty).
-    let l = list.len(); // c:633
-    if l > 1 || (list.flags & LF_ARRAY != 0) {
-        // c:633
-        let arr: Vec<String> = list.iter().cloned().collect(); // c:635-637
-                                                                                    // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
-                                                                                    // when sep is NULL. Use first IFS char as join separator,
-                                                                                    // matching zsh's sepjoin defaults.
-        let join_sep = ifs.chars().next().map(String::from).unwrap_or_default(); // c:649
-        let joined = arr.join(&join_sep); // c:649
-        return (joined, arr, true, ms_flags); // c:642-647 (array path)
-    }
-    if l == 1 {
-        // c:653
-        let result = list.getdata(0).cloned().unwrap_or_default(); // c:653
-        return (result.clone(), vec![result], false, ms_flags); // c:653
-    }
-    // C: `*s = dupstring("");` — empty result.
-    (String::new(), vec![String::new()], false, ms_flags) // c:655
-} // c:660
 
 // CaseMod enum imported from src/ported/hist.rs (canonical port of
 // Src/hist.c::casemodify's CASMOD_* flag set). Local definition was
@@ -6543,137 +6964,6 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
     result // c:4531
 } // c:4531
 
-/// `wcpadwidth(wc, multi_width)` — return the display-cell width of
-/// `wc` per zsh's MULTIBYTE_SUPPORT padding logic. Direct port of
-/// Src/subst.c:848-866.
-///
-/// Modes:
-///   • `multi_width == 0` — every char counts as one cell.
-///   • `multi_width == 1` — use `u9_wcwidth`-style cell counting.
-///   • else — combining/zero-width chars count as 0, all others as 1.
-///
-/// The Rust port uses `unicode-width`-style heuristics inline: ASCII
-/// printable + most BMP chars = 1 cell; CJK Unified Ideographs and
-/// other wide blocks = 2 cells; combining/control = 0.
-/// Port of `wcpadwidth(wchar_t wc, int multi_width)` from `Src/subst.c:848`.
-///
-/// Returns the display-cell width of a wide char for `dopadding`.
-///
-/// C signature: `int wcpadwidth(wchar_t wc, int multi_width)`.
-/// multi_width values:
-///   0 → always 1 (legacy / no multibyte)
-///   1 → u9_wcwidth(wc); zero if negative
-///   * → boolean: 1 if u9_wcwidth>0 else 0
-pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // c:848
-    // c:848
-    // u9_wcwidth fallback lives in utils.rs (canonical port of
-    // Src/utils.c::zwcwidth). Use the unicode_width-backed
-    // implementation there.
-    let wcw = crate::ported::utils::zwcwidth(wc) as i32;
-    match multi_width {
-        // c:854
-        // C: `case 0: return 1;`
-        0 => 1, // c:855
-        // C: `case 1: width = WCWIDTH(wc); if (width >= 0) return width; return 0;`
-        1 => {
-            if wcw >= 0 {
-                wcw
-            } else {
-                0
-            }
-        } // c:858
-        // C: `default: return WCWIDTH(wc) > 0 ? 1 : 0;`
-        _ => {
-            if wcw > 0 {
-                1
-            } else {
-                0
-            }
-        } // c:864
-    }
-} // c:866
-
-/// `subst_parse_str(sp, single, err)` — parse a substitution string in
-/// place: convert tokens, optionally suppressing errors, and recover
-/// the unquoted body for arithmetic / array-index evaluation. Direct
-/// port of Src/subst.c:1460-1487.
-///
-/// In zsh, this is used by arithsubst() to re-parse `$(( … ))`'s
-/// inner expression after parameter expansion has run, and by the
-/// `${…[N]}` index path to evaluate `N` as an arithmetic expression.
-///
-/// Returns the converted text on success, `None` on parse error
-/// (matches the C return value: 0=ok, 1=error).
-///
-/// The `single` flag (false) maps the lexer's `Qstring`/`Qtick` quoted
-/// markers back to plain `String`/`Tick` tokens, mirroring the inner
-/// loop at subst.c:1473-1485 that strips the doubled-up bslashquote
-/// recognition.
-///
-/// C signature: `int subst_parse_str(char **sp, int single, int err)`.
-/// Mutates `*sp` to point at a duplicated, parser-pre-processed copy
-/// of the input. Returns 0 on success, 1 on parse failure.
-///
-/// Rust signature: takes `&str`, returns `Option<String>` — Some(buf)
-/// on success, None on parse failure (matches the C `return 1` error
-/// path).
-///
-/// The C body:
-///   1. `*sp = s = dupstring(*sp);`           — clone for in-place mutation
-///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
-///   3. If !single, walk buffer: outside Dnull (`"`) regions convert
-///      `Qstring` → `String` and `Qtick` → `Tick`. Dnull toggles qt.
-/// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
-pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { // c:1460
-    // c:1460
-    let _ = err; // c:1466 (parsestr error path
-                 //         deferred — full C
-                 //         lexer reentry pending)
-                 // C: `*sp = sp = dupstring(*sp);` — duplicate so the caller'sp
-                 // original buffer is unaffected. Rust'sp String already owns;
-                 // we work on a local copy below.
-    let mut buf: String = sp.to_string(); // c:1465
-
-    // C: `if (!single) { … }` — the conversion only runs in the
-    // non-SINGLE arm (when paramsubst-output may be subsequently
-    // word-split / expanded).
-    if !single {
-        // c:1469
-        let mut chars: Vec<char> = buf.chars().collect(); // c:1469
-        let mut qt = false; // c:1470
-                            // C constant references — these are the token bytes the
-                            // lexer emits. Authoritative values from src/ported/subst.rs
-                            // tokens module: STRING=\u{81}, Qstring=\u{82},
-                            // Tick=\u{83}, Qtick=\u{84}, Dnull=\u{97}.
-        for c in chars.iter_mut() {
-            // c:1472
-            if !qt {
-                // c:1473
-                if *c == '\u{82}'
-                /* Qstring */
-                {
-                    // c:1474
-                    *c = '\u{81}' /* STRING */; // c:1475
-                } else if *c == '\u{84}'
-                /* Qtick */
-                {
-                    // c:1476
-                    *c = '\u{83}' /* Tick */; // c:1477
-                }
-            }
-            if *c == '\u{97}'
-            /* Dnull */
-            {
-                // c:1480
-                qt = !qt; // c:1481
-            }
-        }
-        buf = chars.iter().collect(); // c:1483
-    }
-    // C: `return 0;` — success path returns the buffer.
-    Some(buf) // c:1483
-} // c:1486
-
 /// Get a directory stack entry
 /// Resolve `~+N`/`~-N` directory-stack entries.
 ///
@@ -6743,409 +7033,379 @@ pub fn dstackent(                                                            // 
     dirstack.get(idx).cloned() // c:4920
 } // c:4922
 
-/// String padding
-/// `${(l:N:)var}` left/right-pad.
-/// Port of `dopadding(char *str, int prenum, int postnum, char *preone, char *postone, char *premul, char *postmul #ifdef MULTIBYTE_SUPPORT , int multi_width #endif)` from Src/subst.c:893.
-///
-/// `multi_width` controls cell-counting per the (m) flag (subst.c:2376):
-///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
-///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
-/// WARNING: param names don't match C — Rust=() vs C=(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif)
-pub fn dopadding(                                                            // c:893
-    // c:893
-    s: &str,               // c:893
-    prenum: usize,         // c:893
-    postnum: usize,        // c:893
-    preone: Option<&str>,  // c:893
-    postone: Option<&str>, // c:893
-    premul: &str,          // c:893
-    postmul: &str,         // c:893
-    multi_width: i32,      // c:2376 (m)
-) -> String {
-    // c:893
-    // (m)-aware string-cell counter. With multi_width==0 every
-    // codepoint counts 1 (legacy behavior); otherwise wcpadwidth
-    // gives the wide-char-aware metric. Direct port of zsh's
-    // MULTIBYTE_SUPPORT path which routes the (l)/(r) length
-    // checks through u9_wcwidth() before deciding pad vs truncate.
-    let cells = |t: &str| -> usize {
-        // c:893
-        if multi_width <= 0 {
-            // c:893
-            t.chars().count() // c:893
-        } else {
-            // c:893
-            t.chars().map(|c| wcpadwidth(c, multi_width) as usize).sum() // c:2376
-        } // c:893
-    };
-    let len = cells(s); // c:893
-    let total_width = prenum + postnum; // c:893
+/// Returns true if the global `errflag` (Src/utils.c) is set.
+/// Matches the C idiom `if (errflag) …` that subst.c sprinkles
+/// throughout its loops.
+#[inline]
+fn errflag_set() -> bool {
+    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+}
 
-    if total_width == 0 || total_width == len {
-        // c:893
-        return s.to_string(); // c:893
-    } // c:893
+/// Sets `errflag |= ERRFLAG_ERROR` on the global `errflag`.
+/// Mirrors C's `errflag |= ERRFLAG_ERROR;` at every subst.c site
+/// where parameter / glob / arith error is reported.
+#[inline]
+fn errflag_set_error() {
+    crate::ported::utils::errflag.fetch_or(
+        crate::ported::zsh_h::ERRFLAG_ERROR,
+        Ordering::Relaxed,
+    );
+}
 
-    let mut result = String::new(); // c:893
+// =====================================================================
+// Parameter table read/write helpers — direct paramtab access.
+// C reads `paramtab` directly via `getsparam`/`getaparam`
+// (`Src/params.c:3194`/`:3245`); these mirror that by hitting
+// `crate::ported::params::paramtab()` (the global Mutex<HashMap<
+// String, Param>>) and the parallel `paramtab_hashed_storage`.
+//
+// Previous incarnation routed through `fusevm_bridge::try_with_executor`
+// which silently no-ops outside a live VM frame (same fake pattern
+// the user flagged earlier in ksh93.rs). Tests would compile and
+// "pass" while exercising no parameter machinery at all.
+// =====================================================================
 
-    // Left padding
-    if prenum > 0 {
-        // c:893
-        let chars: Vec<char> = s.chars().collect(); // c:893
+// `splice_magic_assoc` deleted — was one big string-dispatcher
+// that collapsed C's per-magic-assoc `scanpm<X>` walkers
+// (`Src/Modules/parameter.c`) into a single switch. C dispatches
+// each magic-assoc Param through its own `gsu->scantab` callback
+// (set at module init); the per-Param scantab plumbing is a
+// follow-up, but the body is now decomposed into individual
+// `scanpm*` fns matching C's names, plus a `splice_magic_assoc`
+// dispatcher that routes name → fn.
 
-        if len > prenum {
-            // c:893
-            // Truncate from left
-            let skip = len - prenum; // c:893
-            result = chars.into_iter().skip(skip).collect(); // c:893
-        } else {
-            // c:893
-            // Pad on left
-            let padding_needed = prenum - len; // c:893
+/// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
+/// Walks `aliastab` for regular (non-global, non-suffix) aliases.
+fn scanpmraliases() -> String {
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) == 0
+                    && (f & ALIAS_SUFFIX as i32) == 0
+                    && (f & DISABLED as i32) == 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
 
-            // Add preone if there's room
-            if let Some(pre) = preone {
-                // c:893
-                let pre_len = pre.chars().count(); // c:893
-                if pre_len <= padding_needed {
-                    // c:893
-                    // Room for repeated padding first
-                    let repeat_len = padding_needed - pre_len; // c:893
-                    if !premul.is_empty() {
-                        // c:893
-                        let mul_len = premul.chars().count(); // c:893
-                        let full_repeats = repeat_len / mul_len; // c:893
-                        let partial = repeat_len % mul_len; // c:893
+/// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
+fn scanpmgaliases() -> String {
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
 
-                        // Partial repeat
-                        if partial > 0 {
-                            // c:893
-                            result.extend(premul.chars().skip(mul_len - partial));
-                            // c:893
-                        } // c:893
-                          // Full repeats
-                        for _ in 0..full_repeats {
-                            // c:893
-                            result.push_str(premul); // c:893
-                        } // c:893
-                    } // c:893
-                    result.push_str(pre); // c:893
+/// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
+fn scanpmsaliases() -> String {
+    crate::ported::hashtable::sufaliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+// `IN_PARAMSUBST_NEST` is a per-thread paramsubst recursion counter
+// mirroring the C `paramsub_nest` global (Src/subst.c). The Rust
+// port previously stored it on ShellExecutor; moved here to keep
+// subst.rs free of ShellExecutor reaches per the
+// no-shellexecutor-in-src/ported rule.
+// =====================================================================
+thread_local! {
+    pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+// =====================================================================
+// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+// `SKIP_FILESUB` is a per-thread flag that suppresses prefork's
+// tilde / `=cmd` expansion pass. Used by the `${var/pat/repl}`
+// pattern + replacement code paths where a literal `~` in `repl`
+// must NOT expand to `$HOME`. C achieves the same observable
+// behavior by NOT routing replacement strings through prefork at
+// all (they go straight through parsestr+getmatch). The Rust port
+// re-uses singsub→prefork for replacement strings and needs this
+// flag to disable the third pass. Replaced the deleted
+// `SubstState.skip_filesub` field per user "SubstState must be
+// removed" directive.
+// =====================================================================
+thread_local! {
+    pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// =====================================================================
+// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+// `SUB_FLAGS` is the per-paramsubst `sub_flags` bitmask
+// (`Src/subst.c:2169`) — SUB_MATCH / SUB_REST / SUB_BIND / SUB_EIND
+// / SUB_LEN / SUB_SUBSTR / SUB_EGLOB bits set by the (M)/(B)/(E)/
+// (S)/(I) flag-parsing arm and consumed by the match / replace
+// operators downstream. C stores it in a static int; Rust uses
+// thread_local to keep callers re-entrant. Previously routed
+// through `try_with_executor` (fake — silently no-ops outside a
+// live VM frame).
+// =====================================================================
+thread_local! {
+    pub static SUB_FLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
+/// Disabled regular-aliases arm.
+fn scanpmdisraliases() -> String {
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) == 0
+                    && (f & ALIAS_SUFFIX as i32) == 0
+                    && (f & DISABLED as i32) != 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisgaliases` — disabled-global-aliases arm.
+fn scanpmdisgaliases() -> String {
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdissaliases` — disabled-suffix-aliases arm.
+fn scanpmdissaliases() -> String {
+    crate::ported::hashtable::sufaliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmcommands` — port of `Src/Modules/parameter.c:245`.
+/// HASHED arm reads `cmd` (resolved path); unhashed reads first
+/// path segment in `name` (Vec<String>) joined with the cmd name.
+fn scanpmcommands() -> String {
+    crate::ported::hashtable::cmdnamtab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter_map(|(nm, c)| {
+                let hashed = (c.node.flags & HASHED as i32) != 0;
+                if hashed {
+                    c.cmd.clone()
                 } else {
-                    // c:893
-                    // Only part of preone fits
-                    result.extend(pre.chars().skip(pre_len - padding_needed)); // c:893
-                } // c:893
-            } else {
-                // c:893
-                // Just use premul
-                if !premul.is_empty() {
-                    // c:893
-                    let mul_len = premul.chars().count(); // c:893
-                    let full_repeats = padding_needed / mul_len; // c:893
-                    let partial = padding_needed % mul_len; // c:893
-
-                    if partial > 0 {
-                        // c:893
-                        result.extend(premul.chars().skip(mul_len - partial)); // c:893
-                    } // c:893
-                    for _ in 0..full_repeats {
-                        // c:893
-                        result.push_str(premul); // c:893
-                    } // c:893
-                } // c:893
-            } // c:893
-
-            result.push_str(s); // c:893
-        } // c:893
-    } else {
-        // c:893
-        result = s.to_string(); // c:893
-    } // c:893
-
-    // Right padding
-    if postnum > 0 {
-        // c:893
-        let current_len = cells(&result); // c:893
-
-        if current_len > postnum {
-            // c:893
-            // Truncate from right
-            result = result.chars().take(postnum).collect(); // c:893
-        } else if current_len < postnum {
-            // c:893
-            // Pad on right
-            let padding_needed = postnum - current_len; // c:893
-
-            if let Some(post) = postone {
-                // c:893
-                let post_len = post.chars().count(); // c:893
-                if post_len <= padding_needed {
-                    // c:893
-                    result.push_str(post); // c:893
-                    let remaining = padding_needed - post_len; // c:893
-                    if !postmul.is_empty() {
-                        // c:893
-                        let mul_len = postmul.chars().count(); // c:893
-                        let full_repeats = remaining / mul_len; // c:893
-                        let partial = remaining % mul_len; // c:893
-
-                        for _ in 0..full_repeats {
-                            // c:893
-                            result.push_str(postmul); // c:893
-                        } // c:893
-                        if partial > 0 {
-                            // c:893
-                            result.extend(postmul.chars().take(partial)); // c:893
-                        } // c:893
-                    } // c:893
-                } else {
-                    // c:893
-                    result.extend(post.chars().take(padding_needed)); // c:893
-                } // c:893
-            } else if !postmul.is_empty() {
-                // c:893
-                let mul_len = postmul.chars().count(); // c:893
-                let full_repeats = padding_needed / mul_len; // c:893
-                let partial = padding_needed % mul_len; // c:893
-
-                for _ in 0..full_repeats {
-                    // c:893
-                    result.push_str(postmul); // c:893
-                } // c:893
-                if partial > 0 {
-                    // c:893
-                    result.extend(postmul.chars().take(partial)); // c:893
-                } // c:893
-            } // c:893
-        } // c:893
-    } // c:893
-
-    result // c:893
-} // c:893
-
-/// Get the delimiter argument for flags like (s:x:) or (j:x:)
-/// Parse a `:STR:`-delimited flag argument.
-/// Port of `get_strarg(char *s, int *lenp)` from Src/subst.c:1348.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, lenp)
-pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
-    // c:1348
-    let mut chars = s.chars().peekable(); // c:1348
-
-    // Get delimiter
-    let del = chars.next()?; // c:1348
-
-    // Map bracket pairs
-    let close_del = match del {
-        // c:1348
-        '(' => ')',          // c:1348
-        '[' => ']',          // c:1348
-        '{' => '}',          // c:1348
-        '<' => '>',          // c:1348
-        Inpar => Outpar,     // c:1348
-        Inbrack => Outbrack, // c:1348
-        Inbrace => Outbrace, // c:1348
-        Inang => Outang,     // c:1348
-        _ => del,            // c:1348
-    }; // c:1348
-
-    // Collect content until closing delimiter
-    let mut content = String::new(); // c:1348
-    let mut rest_start = 1; // c:1348
-
-    for (i, c) in s.chars().enumerate().skip(1) {
-        // c:1348
-        if c == close_del {
-            // c:1348
-            rest_start = i + 1; // c:1348
-            break; // c:1348
-        } // c:1348
-        content.push(c); // c:1348
-        rest_start = i + 1; // c:1348
-    } // c:1348
-
-    let rest = &s[rest_start.min(s.len())..]; // c:1348
-    Some((del, content, rest)) // c:1348
-} // c:1348
-
-/// Get integer argument for flags like (l.N.)
-/// Parse an `:N:`-delimited integer flag argument.
-/// Port of `get_intarg(char **s, int *delmatchp)` from Src/subst.c:1428.
-///
-/// Parses an `:N:`-delimited integer flag argument (e.g. `(l:5:)`).
-/// The C source returns -1 on error, the absolute value otherwise,
-/// and writes the matched delimiter length to *delmatchp.
-///
-/// Rust returns Option<(value, rest)> — None on error, Some((|n|, rest))
-/// on success. The delmatchp output is folded into `rest` (a slice
-/// past the closing delimiter).
-///
-/// Body: get_strarg → parsestr → singsub → mathevali, then absolute
-/// value. The math eval lets `(l:$n:)` etc. work.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, delmatchp)
-pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // c:1428
-    // c:1428
-    // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
-    // expression text + delimiter length.
-    let (_del, content, rest) = get_strarg(s)?; // c:1431
-
-    if rest.is_empty() && content.is_empty() {
-        // c:1436
-        // C: `if (!*t) return -1;` — empty input → error.
-        return None;
-    }
-
-    // C: `if (parsestr(&p)) return -1;` — full lexer reentry skipped
-    // (subst_parse_str approximates).
-    let parsed = subst_parse_str(&content, false, true)?; // c:1442
-
-    // C: `singsub(&p);` — parameter-substitute the content (so
-    // `(l:$n:)` looks up $n).
-    let mut __exec = crate::exec::ShellExecutor::new();
-    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
-    let expanded = singsub(&parsed); // c:1444
-    if errflag_set() {
-        return None;
-    } // c:1445
-
-    // C: `ret = mathevali(p);` — evaluate as integer math.
-    let ret = match crate::ported::math::mathevali(&expanded) {
-        // c:1447
-        Ok(n) => n,            // c:1447
-        Err(_) => return None, // c:1448
-    };
-
-    // C: `if (ret < 0) ret = -ret;` — absolute value.
-    let abs_ret = if ret < 0 { -ret } else { ret }; // c:1452
-
-    // C: `*delmatchp = arglen;` — Rust folds delim-len into rest.
-    Some((abs_ret, rest)) // c:1455
-} // c:1457
-
-/// Quote substitution for heredoc tags
-/// Port of `quotesubst(char *str)` from `Src/subst.c:463`.
-///
-/// Simplified version of prefork/singsub that does only the
-/// substitutions appropriate to quoting context — currently just the
-/// $'...' (Snull) form. Used for here-doc end tags. Other expansions
-/// (param-subst, cmd-subst, arith) stay in the text.
-///
-/// The trailing `remnulargs()` strips Bnull tokens so this is
-/// consistent with the other substitution forms (indicating quotes
-/// have been fully processed).
-pub fn quotesubst(str: &str) -> String {              // c:463
-    // c:463
-    let mut result = str.to_string(); // c:465
-    let mut pos = 0_usize; // c:466
-
-    // C: `while (*str) { if (*str == Stringg && str[1] == Snull) …
-    //               else str++; }`
-    loop {
-        // c:467
-        let chars: Vec<char> = result.chars().collect(); // c:467
-        if pos >= chars.len() {
-            break;
-        } // c:467
-          // C lines 468-470: spot $'…' marker and call
-          // stringsubstquote.
-        if pos + 1 < chars.len()                            // c:468
-            && chars[pos] == STRING                         // c:468
-            && chars[pos + 1] == Snull
-        // c:468
-        {
-            let (new_str, new_pos) = stringsubstquote(&result, pos); // c:469
-            result = new_str; // c:469
-            pos = new_pos; // c:469
-        } else {
-            // c:471
-            pos += 1; // c:472
-        } // c:473
-    }
-    // C: `remnulargs(str);` — strip Bnull / NUL tokens. Use the
-    // inline equivalent the rest of subst.rs uses (\u{0} only;
-    // glob.rs'str full port operates on Vec<GlobToken>).
-    result.replace('\u{0}', "") // c:474
-} // c:475
-
-/// Glob entries in a linked list
-/// Port of `globlist(LinkList list, int flags)` from `Src/subst.c:489`.
-///
-/// Glob-expands each entry in a linked list. Honors two PREFORK_*
-/// flags (per the C body header comment):
-///   - PREFORK_NO_UNTOK: preserve tokens (don't run untokenize before
-///     glob).
-///   - PREFORK_KEY_VALUE: triads of Marker/Key/Value (assoc-array
-///     assignments); skip globbing on the key+value pair, only the
-///     marker node is processed.
-///
-/// Routes through `ShellExecutor::expand_glob` (the canonical
-/// glob.rs port of zsh's zglob) for filesystem matching.
-pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
-    // c:489
-    // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
-    // (we don't track this; csh-glob option is rare).
-    let mut node_idx = 0; // c:493
-
-    while node_idx < list.nodes.len() && !errflag_set() {
-        // c:494
-        let data = match list.getdata(node_idx) {
-            // c:494
-            Some(d) => d.to_string(), // c:494
-            None => {
-                node_idx += 1;
-                continue;
-            } // c:494
-        };
-
-        // C: `if ((flags & PREFORK_KEY_VALUE) && *data == Marker)`
-        // — assoc-array key/value pair; skip 3 nodes (Marker, Key,
-        // Value).
-        if flags & PREFORK_KEY_VALUE != 0 && data.chars().next() == Some(Marker) {
-            // c:497
-            // Advance past Marker + Key + Value.
-            node_idx += 3; // c:499
-            continue; // c:499
-        }
-
-        // C: `zglob(list, node, (flags & PREFORK_NO_UNTOK) != 0);`
-        // — the actual glob expansion. Replaces the node with one
-        // or more nodes (one per match).
-        let no_untok = flags & PREFORK_NO_UNTOK != 0; // c:501
-        let _ = no_untok; // C plumbs through;
-                          // expand_glob handles
-                          // tokens internally.
-        // c:501 — canonical glob expansion (mirrors zglob driver
-        // at glob.c:1214 with alternation + extendedglob pre-passes
-        // inlined). Reads canonical option state directly, no
-        // executor needed.
-        let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
-
-        if expanded.is_empty() {
-            // c:N/A (NOMATCH path)
-            // C zglob does its own NOMATCH/badcshglob accounting
-            // when nothing matches. Preserve the original entry on
-            // empty match (zsh default; NOMATCH option would zerr).
-            node_idx += 1;
-        } else if expanded.len() == 1 {
-            // c:N/A
-            list.setdata(node_idx, expanded.into_iter().next().unwrap());
-            node_idx += 1;
-        } else {
-            // Replace the single node with N expanded nodes.
-            list.delete_node(node_idx);
-            for (i, p) in expanded.iter().enumerate() {
-                if i == 0 {
-                    list.insert_at(node_idx, p.clone());
-                } else {
-                    list.insertlinknode(node_idx + i - 1, p.clone());
+                    c.name.as_ref()
+                        .and_then(|v| v.first())
+                        .map(|seg| format!("{}/{}", seg, nm))
                 }
-            }
-            node_idx += expanded.len(); // advance past all
-        }
+            })
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
+fn scanpmfunctions() -> String {
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+            .map(|(_, f)| f.body.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisfunctions` — disabled-functions arm.
+fn scanpmdisfunctions() -> String {
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+            .map(|(_, f)| f.body.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmfunction_source` — port of `Src/Modules/parameter.c:609`.
+/// `$functions_source` magic-assoc walker (paths where each
+/// function was loaded from). C delegates to `scanfunctions_source`
+/// with `dis=0`; the Rust port inlines the filtered iteration.
+fn scanpmfunction_source() -> String {
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+            .map(|(_, f)| f.filename.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisfunction_source` — port of `Src/Modules/parameter.c:618`.
+/// `$dis_functions_source` arm (delegates to `scanfunctions_source`
+/// with `dis=DISABLED` in C).
+fn scanpmdisfunction_source() -> String {
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+            .map(|(_, f)| f.filename.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
+fn scanpmnameddirs() -> String {
+    crate::ported::hashnameddir::nameddirtab().lock().ok()
+        .map(|t| t.iter().map(|(_, d)| d.dir.clone()).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// `scanpmbuiltins` — port of `Src/Modules/parameter.c:843`.
+fn scanpmbuiltins() -> String {
+    crate::ported::builtin::createbuiltintable().keys().cloned()
+        .collect::<Vec<_>>().join(" ")
+}
+
+// `convbase` lives in src/ported/utils.rs (canonical port of
+// Src/utils.c). Callers below import via the full path.
+
+/// Multsub flags (from subst.c)
+// `pub mod multsub_flags { … }` — DELETED per user directive; was
+// a Rust-only u32 wrapper duplicating the canonical i32 constants
+// in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
+use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START}; // c:zsh.h:2046-2059
+
+/// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
+fn scanpmparameters() -> String {
+    crate::ported::params::paramtab().read().ok()
+        .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
+fn scanpmoptions() -> String {
+    crate::ported::options::ZSH_OPTIONS_SET.iter()
+        .map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+}
+
+/// Dispatcher routing magic-assoc parameter name → `scanpm*` fn.
+/// Rust-side stand-in for C's `param->gsu->scantab` callback
+/// dispatch (`Src/Modules/parameter.c` per-param init at e.g.
+/// `add_parameters()` line 2143). Returns `None` for names with no
+/// ported scanner (history/modules/jobdirs/jobstates/jobtexts/
+/// usergroups/userdirs/...).
+fn splice_magic_assoc(name: &str) -> Option<String> {
+    let v = match name {
+        "aliases"               => scanpmraliases(),         // c:parameter.c:1990
+        "galiases"              => scanpmgaliases(),
+        "saliases"              => scanpmsaliases(),
+        "dis_aliases"           => scanpmdisraliases(),
+        "dis_galiases"          => scanpmdisgaliases(),
+        "dis_saliases"          => scanpmdissaliases(),
+        "commands"              => scanpmcommands(),         // c:parameter.c:245
+        "functions"             => scanpmfunctions(),        // c:parameter.c:519
+        "dis_functions"         => scanpmdisfunctions(),
+        "functions_source"      => scanpmfunction_source(),
+        "dis_functions_source"  => scanpmdisfunction_source(),
+        "nameddirs"             => scanpmnameddirs(),        // c:parameter.c:1618
+        "builtins"              => scanpmbuiltins(),         // c:parameter.c:843
+        "parameters"            => scanpmparameters(),       // c:parameter.c:124
+        "options"               => scanpmoptions(),          // c:parameter.c:1016
+        _ => return None,
+    };
+    Some(v)
+}
+
+/// Read a scalar variable from `paramtab`. Equivalent to C's
+/// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
+fn vars_get(name: &str) -> Option<String> {
+    let tab = crate::ported::params::paramtab().read().ok()?;
+    let pm = tab.get(name)?;
+    pm.u_str.clone()
+}
+
+/// True if `name` exists in `paramtab` (any type).
+fn vars_contains(name: &str) -> bool {
+    crate::ported::params::paramtab().read()
+        .map_or(false, |tab| tab.contains_key(name))
+}
+
+/// Insert / replace a scalar parameter via the canonical
+/// `assignsparam` path. Equivalent to C's `setsparam(name, val)`
+/// (`Src/params.c:3350`).
+fn vars_insert(name: String, value: String) {
+    crate::ported::params::setsparam(&name, &value);
+}
+
+/// Read an array parameter from `paramtab`. Equivalent to C's
+/// `getaparam(name)` (`Src/params.c:3245`).
+fn arrays_get(name: &str) -> Option<Vec<String>> {
+    let tab = crate::ported::params::paramtab().read().ok()?;
+    let pm = tab.get(name)?;
+    pm.u_arr.clone()
+}
+
+/// True if `name` is an array in `paramtab`.
+fn arrays_contains(name: &str) -> bool {
+    crate::ported::params::paramtab().read()
+        .map_or(false, |tab| {
+            tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
+        })
+}
+
+/// Insert / replace an array parameter. Writes through the
+/// canonical paramtab as a `PM_ARRAY` entry.
+fn arrays_insert(name: String, value: Vec<String>) {
+    let mut tab = match crate::ported::params::paramtab().write() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if let Some(pm) = tab.get_mut(&name) {
+        pm.u_arr = Some(value);
+        pm.u_str = None;
+        pm.node.flags |= PM_ARRAY as i32;
+    } else {
+        let pm: Param = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.clone(),
+                flags: PM_ARRAY as i32,
+            },
+            u_data: 0, u_arr: Some(value), u_str: None, u_val: 0,
+            u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        });
+        tab.insert(name, pm);
     }
-    // C: `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
-    // zerr("no match");` — diagnostic emit. Skipped here pending
-    // badcshglob counter port.
-} // c:510
+}
+
+/// Read an associative array parameter from the parallel
+/// `paramtab_hashed_storage` (PM_HASHED values).
+fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|s| s.get(name).cloned())
+}
+
+/// True if `name` is an assoc-array in `paramtab_hashed_storage`.
+fn assoc_contains(name: &str) -> bool {
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .map_or(false, |s| s.contains_key(name))
+}
 
 /// Flags for SUB_* matching — verbatim port of zsh.h:1981-1996.
 ///
@@ -7164,59 +7424,11 @@ use crate::ported::zsh_h::{
     SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
 }; // c:zsh.h:1981-1996
 
-/// Port of `strcatsub(char **d, char *pb, char *pe, char *src, int l, char *s, int glbsub, int copied)` from `Src/subst.c:814`.
-///
-/// Concatenates `prefix` + `src` + `suffix` into a fresh string. If
-/// `glob_subst` is set, runs shtokenize on the src segment (so glob
-/// metacharacters become tokens for downstream pattern matching).
-///
-/// C signature: `char *strcatsub(char **d, char *pb, char *pe, char
-/// *src, int l, char *s, int glbsub, int copied)` — populates *d
-/// with the concat result and returns a pointer past the src
-/// segment. The Rust version returns the full concatenation; callers
-/// can recover the post-src position via prefix.len() + src.len().
-/// WARNING: param names don't match C — Rust=(prefix, src, suffix, glob_subst) vs C=(d, pb, pe, src, l, s, glbsub, copied)
-pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
-    // c:814
-    // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
-    //     dupstring(src)); if (glbsub) shtokenize(dest); }`
-    // — fast path: no prefix, no suffix, just src (optionally
-    // shtokenized).
-    if prefix.is_empty() && suffix.is_empty() {
-        // c:820
-        if glob_subst {
-            // c:822
-            // shtokenize returns Vec<GlobToken>; for a string-output
-            // signature we keep the src as-is. The full token-aware
-            // pipeline lives in the canonical glob path.
-            // shtokenize(src) call elided — `src` is `&str` here; the
-            // tokenization side-effect would write into the dest buffer
-            // C builds at `c:823`, not into the input. The canonical
-            // glob pipeline handles tokenization on its own copy.
-        }
-        return src.to_string(); // c:821
-    }
-
-    // C: `*d = dest = hcalloc(pl + l + (s ? strlen(s) : 0) + 1);
-    //     strncpy(dest, pb, pl); dest += pl;
-    //     strcpy(dest, src); if (glbsub) shtokenize(dest);
-    //     dest += l;
-    //     if (s) strcpy(dest, s);`
-    // — general path: pre-allocate + copy three segments in order.
-    let mut result = String::with_capacity(
-        // c:825
-        prefix.len() + src.len() + suffix.len() + 1,
-    );
-    result.push_str(prefix); // c:826
-    result.push_str(src); // c:828
-    if glob_subst {
-        // c:829
-        // Same shtokenize note as above.
-        // shtokenize(src) call elided — same reasoning as c:823 above.
-    }
-    result.push_str(suffix); // c:833
-    result // c:835
-} // c:836
+/// Array assignment via paramtab. Equivalent to C's
+/// `assignaparam(name, parts)` (`Src/params.c:3357`).
+fn exec_assignaparam(name: &str, parts: Vec<String>) {
+    arrays_insert(name.to_string(), parts);
+}
 
 // ============================================================================
 // Additional helper functions ported from subst.c
@@ -7604,203 +7816,53 @@ mod tests {
 /// Null string constant (matches C: char nulstring[] = {Nularg, '\0'})
 pub static NULSTRING_BYTES: [char; 2] = [Nularg, '\0']; // c:3193
 
-
-/// Evaluate character from number (for (#) flag)
-/// Port of `substevalchar(char *ptr)` from `Src/subst.c:1490`.
-///
-/// Implements the `(#)` paramsubst flag: evaluate the expression as
-/// a math integer, then convert that codepoint to a UTF-8 string.
-/// Used by `${(#)foo}` where `foo` is a numeric expression yielding
-/// a character code.
-pub fn substevalchar(ptr: &str) -> Option<String> {
-    // c:1490
-    // C: `int saved_errflag = errflag; errflag = 0;` — clear-and-save
-    // the global error flag around mathevali so failure from an
-    // invalid math expr stays local.
-    // (Rust port has no global errflag — the Result type carries
-    // the error directly.)
-    let ires = match crate::ported::math::mathevali(ptr) {
-        // c:1497
-        Ok(n) => n, // c:1497
-        Err(_) => {
-            // c:1499
-            // C: `return noerrs ? dupstring("") : NULL;` —
-            // empty string when noerrs flag is set, NULL otherwise.
-            // Rust port returns Some("") so callers see a clean
-            // empty value rather than aborting; the `noerrs` global
-            // is at the parser layer and isn't plumbed here yet.
-            return Some(String::new()); // c:1500
-        } // c:1502
-    }; // c:1502
-    if ires < 0 {
-        // c:1505
-        // C: `zerr("character not in range");` — diagnostic to
-        // stderr.
-        zerr("character not in range"); // c:1506
-                                        // C falls through to the byte-render path with a negative
-                                        // ires, which emits a garbage byte. The Rust port returns
-                                        // empty rather than a corrupt char.
-        return Some(String::new()); // c:1506
-    } // c:1507
-
-    // C: MULTIBYTE arm — `if (isset(MULTIBYTE) && ires > 127)` use
-    // ucs4tomb to encode as multibyte. Rust uses char::from_u32
-    // which handles all valid Unicode scalar values uniformly.
-    if let Some(ch) = char::from_u32(ires as u32) {
-        // c:1509
-        let mut buf = [0u8; 4]; // c:1510
-        return Some(ch.encode_utf8(&mut buf).to_string()); // c:1510
-    } // c:1510
-
-    // C fallback: `sprintf(ptr, "%c", (int)ires);` — single byte.
-    // Rust falls back to a single byte when char::from_u32 rejects
-    // (surrogate range or out-of-range value). Render as Latin-1
-    // byte for compatibility with C'ptr `(char)ires` cast.
-    let byte = (ires as u32 & 0xFF) as u8; // c:1517
-    Some(String::from_utf8_lossy(&[byte]).into_owned()) // c:1517
-} // c:1521
-
-/// Check for colon subscript in parameter expansion
-/// Port of `check_colon_subscript(char *str, char **endp)` from `Src/subst.c:1566`.
-///
-/// Detects a `${var:OFFSET[:LEN]}` substring shape vs a history
-/// modifier or other postfix. Returns `Some((subscript_expr, rest))`
-/// when the input looks like a colon-substring (offset evaluable as
-/// math), `None` otherwise.
-///
-/// C signature: `char *check_colon_subscript(char *str, char **endp)`.
-/// Rust returns the parsed (subscript, remainder) pair.
-/// WARNING: param names don't match C — Rust=(s) vs C=(str, endp)
-pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
-    // c:1566
-    // C: `if (!*str || ialpha(*str) || *str == '&') return NULL;`
-    // — empty, alphabetic (i.e. a modifier letter), or `&` (history-
-    // modifier `:&`) → not a subscript.
-    if s.is_empty()                                         // c:1571
-        || s.starts_with(|c: char| c.is_ascii_alphabetic()) // c:1571
-        || s.starts_with('&')
-    // c:1571
-    {
-        return None; // c:1572
+/// Assoc-array assignment via paramtab_hashed_storage. The `parts`
+/// argument follows the C `sethparam` convention: alternating
+/// key, value, key, value (`Src/params.c:3602`).
+fn exec_sethparam(name: &str, parts: Vec<String>) {
+    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+    let mut it = parts.into_iter();
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        map.insert(k, v);
     }
-
-    // C: `if (*str == ':') { *endp = str; return dupstring("0"); }`
-    // — bare `::` shape: subscript is "0" and end points at the
-    // current position (no chars consumed).
-    if s.starts_with(':') {
-        // c:1574
-        return Some(("0".to_string(), s.to_string())); // c:1576
+    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+        store.insert(name.to_string(), map);
     }
-
-    // C: `*endp = parse_subscript(str, 0, ':');` — find a balanced
-    // subscript expression terminated by `:`. Falls back to
-    // `'\0'` (end-of-string) if no trailing `:` found.
-    //
-    // Rust port: walk chars tracking bracket/paren depth, stop at
-    // unbalanced `:` or end of string.
-    let chars: Vec<char> = s.chars().collect(); // c:1579
-    let mut depth: i32 = 0; // c:1579
-    let mut end: Option<usize> = None; // c:1579
-    for (i, &c) in chars.iter().enumerate() {
-        // c:1579
-        match c {                                           // c:1579
-            '[' | '\u{91}' /* Inbrack */ => depth += 1,     // c:1579
-            ']' | '\u{92}' /* Outbrack */ => depth -= 1,    // c:1579
-            '(' | '\u{85}' /* Inpar */ => depth += 1,       // c:1579
-            ')' | '\u{86}' /* Outpar */ => depth -= 1,      // c:1579
-            ':' if depth == 0 => { end = Some(i); break; }  // c:1579
-            _ => {}
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags |= PM_HASHED as i32;
+        } else {
+            let pm: Param = Box::new(param {
+                node: hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: PM_HASHED as i32,
+                },
+                u_data: 0, u_arr: None, u_str: None, u_val: 0,
+                u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            });
+            tab.insert(name.to_string(), pm);
         }
     }
-    let end = end.unwrap_or(s.len()); // c:1582 (fallthrough '\0')
-    let expr: String = chars[..end].iter().collect(); // c:1583
+}
 
-    // C lines 1585-1591: `parsestr` + `singsub` + `remnulargs` +
-    // `untokenize` on the captured expression.
-    let parsed = subst_parse_str(&expr, false, true)?; // c:1587
-    let expanded = singsub(&parsed); // c:1589
-    if errflag_set() {
-        return None;
-    } // c:1590
-    let stripped = expanded.replace('\u{0}', ""); // c:1590
-    let untoked = crate::lex::untokenize(&stripped); // c:1591
+/// No-op now that reads go directly to `paramtab` — the sync-shim
+/// only existed for the executor-backed snapshot path.
+fn exec_sync_state_from_paramtab() {}
 
-    let rest: String = chars[end..].iter().collect(); // c:1593
-    Some((untoked, rest)) // c:1596
-} // c:1597
+/// Read a scalar from `paramtab`. Equivalent to C's
+/// `getsparam(name)` (`Src/params.c:3194`).
+fn exec_getsparam(name: &str) -> Option<String> {
+    vars_get(name)
+}
 
-/// Untokenize and escape string for flag argument
-/// Port of `untok_and_escape(char *s, int escapes, int tok_arg)` from `Src/subst.c:1528`.
-///
-/// Helper for arguments to parameter flags. Handles two operations
-/// on the input string `s`:
-///
-///   - If `escapes` is set AND `s` begins with `$<ident>` or
-///     `Qstring<ident>`, look up the named parameter and use its
-///     value directly (zsh's `getstrvalue`). Otherwise untokenize
-///     and run `getkeystring` to process print-style escapes.
-///
-///   - If `tok_arg` is set, additionally run `shtokenize` on the
-///     result so the caller sees patterns ready for glob matching.
-pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
-    // c:1528
-    let mut dst: Option<String> = None; // c:1531
-
-    // C: `if (escapes && (*s == Stringg || *s == Qstring) && s[1])`
-    let chars: Vec<char> = s.chars().collect(); // c:1533
-    if escapes && chars.len() >= 2                          // c:1533
-        && (chars[0] == STRING || chars[0] == Qstring)
-    {
-        // Walk identifier chars after the leading $/Qstring.
-        let mut pend = 1_usize; // c:1534
-        while pend < chars.len() {
-            // c:1535
-            let c = chars[pend]; // c:1536
-                                 // C: `iident(*pend)` — identifier-char predicate.
-            if !(c.is_ascii_alphanumeric() || c == '_') {
-                // c:1536
-                break; // c:1537
-            }
-            pend += 1; // c:1535
-        }
-        // C: `if (!*pend) { dst = dupstring(getstrvalue(pstart)); }`
-        if pend == chars.len() {
-            // c:1538
-            let name: String = chars[1..].iter().collect(); // c:1539
-            dst = vars_get(&name); // c:1539
-        }
-    }
-
-    // C: `if (dst == NULL) { untokenize(dst = dupstring(s)); … }`
-    let result = match dst {
-        // c:1542
-        Some(d) => d, // c:1542
-        None => {
-            let untoked = crate::lex::untokenize(s); // c:1543
-            if escapes {
-                // c:1544
-                // C: `dst = getkeystring(dst, &klen,
-                //          GETKEYS_SEP, NULL); dst = pastebuf(...);`
-                crate::ported::utils::getkeystring(&untoked).0 // c:1545
-            } else {
-                untoked // c:1543
-            }
-        }
-    };
-
-    // C: `if (tok_arg) shtokenize(dst);` — re-tokenize for pattern
-    // matching contexts. Rust's shtokenize returns Vec<GlobToken>;
-    // we render back to a string via untokenize roundtrip until a
-    // proper Vec<GlobToken>-aware caller exists.
-    if tok_arg {
-        // c:1549
-        // shtokenize call elided — same as c:823 / c:830 above (the
-        // tokenized form isn't consumed by current zshrs pipeline).
-                                                          // Result kept as-is; tok_arg is a hint for downstream glob
-                                                          // engines that consume the tokenized form directly.
-    }
-    result // c:1553
-} // c:1554
+/// Read the current paramsubst flag bitmask. Equivalent to C's
+/// `sub_flags` read at `Src/subst.c:2171`.
+pub fn sub_flags_get() -> i32 {
+    SUB_FLAGS.with(|c| c.get())
+}
 
 
 // ============================================================================
@@ -7817,74 +7879,12 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 // available there (Bnullkeep). Bringing Bnullkeep into scope.
 use crate::ported::zsh_h::Bnullkeep;
 use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED};
-// c:zsh.h:200
 
-/// Equal substitution (=cmd)
-/// Port of `equalsubstr(char *str, int assign, int nomatch)` from `Src/subst.c:715`.
-///
-/// `=cmd` substitution: looks up `cmd` via findcmd (canonical zsh
-/// PATH walker, ported as ShellExecutor::findcmd). Returns the
-/// expanded path on success, None if not found (with an optional
-/// `zerr` diagnostic when `nomatch` is set).
-///
-/// C body:
-///   1. Walk to end of cmd name (stops at NUL, Inpar, or `:` when
-///      assign — per the isend2 macro).
-///   2. dupstrpfx + untokenize + remnulargs on the cmd portion.
-///   3. findcmd lookup; null → return NULL (with optional zerr).
-///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
-///      with the suffix.
-// do =foo substitution, or equivalent.                                     // c:715
-pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
-    // c:715
-    // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
-    // name. isend2(c) = !c || c==Inpar || (assign && c==':').
-    let end = s // c:719
-        .chars() // c:719
-        .take_while(|&c| {
-            // c:719
-            c != '\0'                                       // c:719
-                && c != Inpar                               // c:719
-                && c != '\u{85}'                            // c:719 (Inpar token)
-                && !(assign && c == ':') // c:719
-        })
-        .count();
-
-    // C: `cmdstr = dupstrpfx(str, pp-str);
-    //     untokenize(cmdstr); remnulargs(cmdstr);`
-    let cmdstr_raw: String = s.chars().take(end).collect(); // c:721
-    let cmdstr = crate::lex::untokenize(&cmdstr_raw); // c:722
-    let cmdstr = cmdstr.replace('\u{0}', ""); // c:723
-
-    // C: `cnam = findcmd(cmdstr, 1, 0)` (Src/exec.c:723) — `1` is
-    // do_hash, `0` is not-just-builtins. Routes through the
-    // canonical port at builtin.rs:3392.
-    let cnam = crate::ported::builtin::findcmd(&cmdstr, 1, 0); // c:724
-
-    match cnam {
-        // c:724
-        Some(path) => {
-            // c:730
-            // C: `if (*pp) return dyncat(cnam, pp); else
-            //     return cnam;`
-            if end < s.chars().count() {
-                // c:730
-                let rest: String = s.chars().skip(end).collect(); // c:730
-                Some(format!("{}{}", path, rest)) // c:731
-            } else {
-                Some(path) // c:733
-            }
-        }
-        None => {
-            // c:725
-            if nomatch {
-                // c:725
-                zerr(&format!("{}: not found", cmdstr)); // c:726
-            }
-            None // c:728
-        }
-    }
-} // c:733
+/// Write the paramsubst flag bitmask. Equivalent to C's
+/// `sub_flags = X` at `Src/subst.c:2169`.
+pub fn sub_flags_set(v: i32) {
+    SUB_FLAGS.with(|c| c.set(v));
+}
 
 
 // ===========================================================

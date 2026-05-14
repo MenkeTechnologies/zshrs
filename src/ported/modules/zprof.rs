@@ -460,6 +460,70 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+
+
+use crate::ported::zsh_h::features as features_t;
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zprof".to_string()]
+}
+
+// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,66 +636,3 @@ mod tests {
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 }
-
-use crate::ported::zsh_h::features as features_t;
-
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
-}
-
-// Local stubs for the per-module entry points. C uses generic
-// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
-// 3275/3370/3445) but those take `Builtin` + `Features` pointer
-// fields the Rust port doesn't carry. The hardcoded descriptor
-// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zprof".to_string()]
-}
-
-// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 1]);
-    }
-    0
-}
-
-// WARNING: NOT IN ZPROF.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
-    0
-}
-

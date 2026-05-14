@@ -151,52 +151,296 @@ pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync
 /// Sentinel: true once `initlextabs()` has populated the tables.
 static LEX_TABS_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[inline]
-fn ensure_tabs_inited() {
-    if !LEX_TABS_INITED.load(std::sync::atomic::Ordering::Acquire) {
-        initlextabs();
-        LEX_TABS_INITED.store(true, std::sync::atomic::Ordering::Release);
-    }
+/// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
+/// is in a clean state suitable for parsing a nested input (command
+/// substitution body, here-doc terminator, eval'd string).
+pub fn lex_context_save(ls: &mut lex_stack) {
+    // c:218-239 — copy live state into the stack. Mirrors C
+    // field-by-field; `toplevel` param dropped because C does
+    // `(void)toplevel;` (unused).
+    ls.dbparens = LEX_DBPARENS.get() as i32;
+    ls.isfirstln = LEX_ISFIRSTLN.get() as i32;
+    ls.isfirstch = LEX_ISFIRSTCH.get() as i32;
+    ls.lexflags = LEX_LEXFLAGS.get();
+    ls.tok = tok();
+    ls.tokstr = LEX_TOKSTR.with_borrow_mut(|t| t.take());
+    // `zshlextext` (c:225) — pointer alias of `tokstr` after
+    // untokenization. zshrs derives it on demand from `tokstr` +
+    // `untokenize` so there's no separate global to stash.
+    ls.zshlextext = None;
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        ls.lexbuf.ptr = b.ptr.take();
+        ls.lexbuf.siz = b.siz;
+        ls.lexbuf.len = b.len;
+    });
+    ls.lex_add_raw = LEX_LEX_ADD_RAW.get();
+    ls.tokstr_raw = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        ls.lexbuf_raw.ptr = b.ptr.take();
+        ls.lexbuf_raw.siz = b.siz;
+        ls.lexbuf_raw.len = b.len;
+    });
+    ls.lexstop = LEX_LEXSTOP.get() as i32;
+    ls.toklineno = LEX_TOKLINENO.get() as i64;
+
+    // c:235-238 — reset live state to defaults so a nested parse
+    // starts from a clean slate. tokstr/lexbuf zeroed; lexbuf.siz
+    // reset to 256 (the C-source initial alloc); raw buffers
+    // wiped, lex_add_raw cleared.
+    set_tokstr(None);
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(256));
+        b.siz = 256;
+        b.len = 0;
+    });
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = None);
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        b.ptr = None;
+        b.siz = 0;
+        b.len = 0;
+    });
+    LEX_LEX_ADD_RAW.set(0);
 }
 
-/// Table accessor for `lexact1[c]`. Mirrors C's `lexact1[STOUC(c)]`
-/// macro at `Src/lex.c:725`.
-#[inline]
-pub fn lexact1_get(c: char) -> u8 {
-    let idx = c as u32;
-    if idx >= 256 {
-        return LX1_OTHER;
-    }
-    ensure_tabs_inited();
-    let table = LEXACT1.get().unwrap();
-    table.lock().unwrap()[idx as usize]
+/// zsh/Src/lex.c:245 `lex_context_restore`. Inverse of
+/// `lex_context_save`. Called after the nested parse completes.
+pub fn lex_context_restore(ls: &mut lex_stack) {
+    // c:249-261 — copy stack state back into live fields.
+    LEX_DBPARENS.set(ls.dbparens != 0);
+    LEX_ISFIRSTLN.set(ls.isfirstln != 0);
+    LEX_ISFIRSTCH.set(ls.isfirstch != 0);
+    LEX_LEXFLAGS.set(ls.lexflags);
+    set_tok(ls.tok);
+    set_tokstr(ls.tokstr.take());
+    // ls.zshlextext discarded — derived from tokstr (see save).
+    let _ = ls.zshlextext.take();
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
+        b.siz = ls.lexbuf.siz;
+        b.len = ls.lexbuf.len;
+    });
+    LEX_LEX_ADD_RAW.set(ls.lex_add_raw);
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = ls.tokstr_raw.take());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        b.ptr = ls.lexbuf_raw.ptr.take();
+        b.siz = ls.lexbuf_raw.siz;
+        b.len = ls.lexbuf_raw.len;
+    });
+    LEX_LEXSTOP.set(ls.lexstop != 0);
+    LEX_TOKLINENO.set(ls.toklineno as u64);
 }
 
-/// Table accessor for `lexact2[c]`. Mirrors C's `lexact2[STOUC(c)]`
-/// macro at `Src/lex.c:919` (the dispatch inside `gettokstr`).
-#[inline]
-pub fn lexact2_get(c: char) -> u8 {
-    let idx = c as u32;
-    if idx >= 256 {
-        return LX2_OTHER;
+
+
+/// Main lexer entry point — fetch the next token. Direct port of
+/// zsh/Src/lex.c:266 `zshlex`. Loop body matches the C source
+/// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
+/// followed by here-doc draining (lex.c:278-306), newline tracking
+/// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
+pub fn zshlex() {
+    // lex.c:268-269 — early-out on prior LEXERR.
+    if tok() == LEXERR {
+        return;
     }
-    ensure_tabs_inited();
-    let table = LEXACT2.get().unwrap();
-    table.lock().unwrap()[idx as usize]
+
+    // lex.c:270-276 — `do { ... } while (tok != ENDINPUT && exalias())`.
+    // The do-while re-runs gettok when exalias re-injects alias text;
+    // exalias also performs reswdtab keyword promotion (`{` → INBRACE,
+    // `if` → IF, etc.) and spell-correction. Wired one-pass for now —
+    // alias re-injection loop is a follow-up.
+    loop {
+        // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
+        // detection.
+        if LEX_INREPEAT.get() > 0 {
+            LEX_INREPEAT.set(LEX_INREPEAT.get() + 1);
+        }
+        // lex.c:273-274 — `if (inrepeat_ == 3 && (isset(SHORTLOOPS) ||
+        // isset(SHORTREPEAT))) incmdpos = 1;` — at the third token after
+        // `repeat`, SHORTLOOPS/SHORTREPEAT options force back into
+        // command position so the loop body can start without an
+        // explicit `{`.
+        if LEX_INREPEAT.get() == 3 && (isset(SHORTLOOPS) || isset(SHORTREPEAT)) {
+            LEX_INCMDPOS.set(true);
+        }
+
+        // lex.c:275 — `tok = gettok();`
+        let _t = gettok();
+        set_tok(_t);
+
+        // lex.c:276 — `} while (tok != ENDINPUT && exalias());`
+        if tok() == ENDINPUT || !exalias() {
+            break;
+        }
+    }
+
+    // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
+    // so the persistent low bit survives but the per-word bit is
+    // dropped.
+    LEX_NOCORRECT.set(LEX_NOCORRECT.get() & 1);
+
+    // lex.c:278-306 — drain pending here-documents at the start of
+    // a new line. Line-by-line port: walks the canonical `hdocs`
+    // linked list (`parse::HDOCS` mirrors `Src/parse.c:84 struct
+    // heredocs *hdocs;`), calls `gethere` to read each body, calls
+    // `setheredoc` to patch the wordcode redir slot. Two zshrs-only
+    // lines (annotated below) bridge body content + processed flag
+    // into the parallel AST-glue `LEX_HEREDOCS` Vec.
+    if tok() == NEWLIN || tok() == ENDINPUT {
+        // c:279 — `while (hdocs)`
+        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(
+            |h| h.take(),
+        ) {
+            // c:280 — `struct heredocs *next = hdocs->next;`
+            let next: Option<Box<crate::ported::zsh_h::heredocs>> = node.next.take();
+            // c:281 — `char *doc, *munged_term;`
+            let doc: Option<String>;
+            let mut munged_term: String;
+
+            // c:283 — `hwbegin(0);` (history-build cursor — zshrs no-op)
+            // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC : CS_HEREDOCD);`
+            cmdpush(if node.typ == crate::ported::zsh_h::REDIR_HEREDOC {
+                CS_HEREDOC as u8
+            } else {
+                CS_HEREDOCD as u8
+            });
+            // c:285 — `munged_term = dupstring(hdocs->str);`
+            munged_term = crate::ported::mem::dupstring(node.str.as_deref().unwrap_or(""));
+            // c:286 — `STOPHIST` (history-disable scope — zshrs no-op)
+            // c:287 — `doc = gethere(&munged_term, hdocs->type);`
+            doc = crate::exec::gethere(&mut munged_term, node.typ);
+            // c:288 — `ALLOWHIST`
+            // c:289 — `cmdpop();`
+            cmdpop();
+            // c:290 — `hwend();`
+
+            // c:291 — `if (!doc)`
+            let Some(doc) = doc else {
+                // c:292 — `zerr("here document too large");`
+                crate::ported::utils::zerr("here document too large");
+                // c:293-297 — while (hdocs) { next = hdocs->next; zfree(hdocs); hdocs = next; }
+                crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = None);
+                // c:298 — `tok = LEXERR;`
+                set_tok(LEXERR);
+                // c:299 — break out of the while.
+                break;
+            };
+            // c:301-302 — `setheredoc(hdocs->pc, REDIR_HERESTR, doc,
+            //                         hdocs->str, munged_term);`
+            crate::ported::parse::setheredoc(
+                node.pc as usize,
+                crate::ported::zsh_h::REDIR_HERESTR,
+                &doc,
+                node.str.as_deref().unwrap_or(""),
+                &munged_term,
+            );
+            // zshrs-only: write body into the parallel AST-glue
+            // LEX_HEREDOCS entry so `fill_heredoc_bodies` (parse.rs)
+            // wires it onto the matching ZshRedir.heredoc field.
+            // No C counterpart — LEX_HEREDOCS is Rust-only state.
+            LEX_HEREDOCS.with_borrow_mut(|v| {
+                for h in v.iter_mut() {
+                    if !h.processed {
+                        h.content = doc;
+                        h.processed = true;
+                        return;
+                    }
+                }
+            });
+            // c:303 — `zfree(hdocs, sizeof(struct heredocs));`
+            drop(node);
+            // c:304 — `hdocs = next;`
+            crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = next);
+        }
+    }
+
+    // lex.c:307-310 — track whether we just saw a newline.
+    // C uses `inbufct` to distinguish "newline at EOF" (=1)
+    // from "newline mid-input" (=-1); zshrs reads `pos < len`.
+    if tok() != NEWLIN {
+        LEX_ISNEWLIN.set(0);
+    } else {
+        LEX_ISNEWLIN.set(if LEX_POS.get() < LEX_INPUT.with_borrow(|s| s.len()) {
+            -1
+        } else {
+            1
+        });
+    }
+
+    // lex.c:311-312 — fold SEMI / NEWLIN into SEPER unless
+    // LEXFLAGS_NEWLINE is set to preserve newlines (used by
+    // ZLE for completion of partial lines).
+    if tok() == SEMI || (tok() == NEWLIN && LEX_LEXFLAGS.get() & LEXFLAGS_NEWLINE == 0) {
+        set_tok(SEPER);
+    }
+
+    // C zshlex (lex.c:266-310) does NOT update incmdpos / inredir /
+    // oldpos / infor / intypeset / incondpat. Those updates live in:
+    //   - ctxtlex (lex.c:319-368, mirrored at fn ctxtlex below) for
+    //     incmdpos / inredir / oldpos / infor;
+    //   - parse.c call sites for intypeset (parse.c:1932/2042/2047);
+    //   - cond.c par_cond_* for incondpat (Rust-only state — C tracks
+    //     pattern context implicitly via the cond grammar walker).
+    // Earlier zshrs port had duplicated the ctxtlex switch + an
+    // incondpat tracker into zshlex so the parser would get those
+    // updates "for free"; that broke the C-faithful contract of
+    // zshlex. Removed.
 }
 
-/// Table accessor for `lextok2[c]`. Mirrors C's `lextok2[STOUC(c)]`
-/// at `Src/lex.c:919+` — used to translate a glob metacharacter to
-/// its byte-token form (`*` → `Star`, etc.).
-#[inline]
-pub fn lextok2_get(c: char) -> u8 {
-    let idx = c as u32;
-    if idx >= 256 {
-        return c as u8;
+/// Lex next token AND update per-context flags. Direct port of
+/// zsh/Src/lex.c:317 `ctxtlex`. The post-token state machine
+/// at lex.c:322-358 sets `incmdpos` based on the token shape:
+/// list separators / pipes / control keywords reset to cmd-pos;
+/// word-shaped tokens leave cmd-pos. Redirections (lex.c:361-368)
+/// stash prior incmdpos and force the redir target to non-cmd-pos.
+pub fn ctxtlex() {
+    // lex.c:319 — static `oldpos` cache for redir-target restore
+    // is captured per-call here as `oldpos` below (zshrs's parser
+    // re-enters ctxtlex per token, no need for static persistence).
+
+    // lex.c:321 — `zshlex();` to advance to the next token.
+    zshlex();
+
+    // c:322-358 — post-token incmdpos switch. C lists the
+    // arms exactly as enumerated below; `intypeset` is NOT set
+    // here in C (it lives in parse.c:1932/2042/2047, ported in
+    // parse.rs at the typeset-call sites).
+    match tok() {
+        // c:323-343 — separators / openers / conjunctions /
+        // control keywords — back into cmd-pos so the next token
+        // can be a fresh command.
+        SEPER | NEWLIN | SEMI | DSEMI | SEMIAMP | SEMIBAR | AMPER | AMPERBANG | INPAR_TOK
+        | INBRACE_TOK | DBAR | DAMPER | BAR_TOK | BARAMP | INOUTPAR | DOLOOP | THEN | ELIF
+        | ELSE | DOUTBRACK => {
+            LEX_INCMDPOS.set(true);
+        }
+        // c:345-353 — word/value-shaped tokens leave cmd-pos.
+        STRING_LEX | TYPESET | ENVARRAY | OUTPAR_TOK | CASE | DINBRACK => {
+            LEX_INCMDPOS.set(false);
+        }
+        // c:354-357 — `default: break;` — keep compiler happy.
+        _ => {}
     }
-    ensure_tabs_inited();
-    let table = LEXTOK2.get().unwrap();
-    table.lock().unwrap()[idx as usize]
+
+    // lex.c:359-360 — `infor` decay. FOR sets infor=2 so the next
+    // DINPAR can detect c-style for. After any non-DINPAR, decay
+    // to 0 (or back to 2 if we just saw FOR again).
+    if tok() != DINPAR {
+        LEX_INFOR.set(if tok() == FOR { 2 } else { 0 });
+    }
+
+    // lex.c:361-368 — redir-target context dance. After consuming
+    // a redir operator, the following token (the file path) sees
+    // incmdpos=0 even when its inherent shape would put it back
+    // in cmd-pos. After the redir target, restore from oldpos
+    // (struct field — must persist across zshlex calls).
+    if IS_REDIROP(tok()) || tok() == FOR || tok() == FOREACH || tok() == SELECT {
+        LEX_INREDIR.set(true);
+        LEX_OLDPOS.set(LEX_INCMDPOS.get());
+        LEX_INCMDPOS.set(false);
+    } else if LEX_INREDIR.get() {
+        LEX_INCMDPOS.set(LEX_OLDPOS.get());
+        LEX_INREDIR.set(false);
+    }
 }
 
 /// Port of `void initlextabs(void)` from `Src/lex.c:410`. Builds the
@@ -534,655 +778,6 @@ thread_local! {
     )};
 }
 
-/// The Zsh Lexer.
-///
-// All lexer state lives in the file-scope `LEX_*` thread_local statics
-// above, each one matching a `static` in `Src/lex.c`. There's no
-// holder struct — callers use the free fns directly:
-//
-//    lex_init(input);
-//    zshlex();
-//   let tok =  tok();
-//
-// Accessor fns named after the former field identifiers (`tok()`,
-// `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
-
-// ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
-
-pub fn toklineno() -> u64 {
-    LEX_TOKLINENO.get()
-}
-pub fn set_toklineno(v: u64) {
-    LEX_TOKLINENO.set(v);
-}
-pub fn tokfd() -> i32 {
-    LEX_TOKFD.get()
-}
-pub fn set_tokfd(v: i32) {
-    LEX_TOKFD.set(v);
-}
-pub fn isnewlin() -> i32 {
-    LEX_ISNEWLIN.get()
-}
-pub fn set_isnewlin(v: i32) {
-    LEX_ISNEWLIN.set(v);
-}
-pub fn inrepeat() -> i32 {
-    LEX_INREPEAT.get()
-}
-pub fn set_inrepeat(v: i32) {
-    LEX_INREPEAT.set(v);
-}
-pub fn infor() -> i32 {
-    LEX_INFOR.get()
-}
-pub fn set_infor(v: i32) {
-    LEX_INFOR.set(v);
-}
-pub fn inredir() -> bool {
-    LEX_INREDIR.get()
-}
-pub fn set_inredir(v: bool) {
-    LEX_INREDIR.set(v);
-}
-pub fn intypeset() -> bool {
-    LEX_INTYPESET.get()
-}
-pub fn set_intypeset(v: bool) {
-    LEX_INTYPESET.set(v);
-}
-pub fn lineno() -> u64 {
-    LEX_LINENO.get()
-}
-pub fn set_lineno(v: u64) {
-    LEX_LINENO.set(v);
-}
-pub fn incmdpos() -> bool {
-    LEX_INCMDPOS.get()
-}
-pub fn set_incmdpos(v: bool) {
-    LEX_INCMDPOS.set(v);
-}
-/// Port of `int nocorrect` from `Src/lex.c:144`. Getter/setter for
-/// the spelling-correction suppression flag. `par_redir` saves and
-/// restores this around the zshlex that consumes the redir target.
-pub fn nocorrect() -> i32 {
-    LEX_NOCORRECT.get()
-}
-pub fn set_nocorrect(v: i32) {
-    LEX_NOCORRECT.set(v);
-}
-/// Port of `int noaliases` from `Src/lex.c:135`. Suppresses alias
-/// expansion. par_case saves and restores this around the case-word
-/// + `in` lex so the literal `in` keyword isn't alias-expanded.
-pub fn noaliases() -> bool {
-    LEX_NOALIASES.get()
-}
-pub fn set_noaliases(v: bool) {
-    LEX_NOALIASES.set(v);
-}
-pub fn incond() -> i32 {
-    LEX_INCOND.get()
-}
-pub fn set_incond(v: i32) {
-    LEX_INCOND.set(v);
-}
-pub fn incasepat() -> i32 {
-    LEX_INCASEPAT.get()
-}
-pub fn set_incasepat(v: i32) {
-    LEX_INCASEPAT.set(v);
-}
-/// `char *tokstr` accessors — direct port of lex.c:170 file-static.
-pub fn tokstr() -> Option<String> {
-    LEX_TOKSTR.with_borrow(|t| t.clone())
-}
-pub fn set_tokstr(v: Option<String>) {
-    LEX_TOKSTR.with_borrow_mut(|t| *t = v);
-}
-/// `enum lextok tok` accessors — direct port of lex.c:180 file-static.
-pub fn tok() -> lextok {
-    LEX_TOK.get()
-}
-pub fn set_tok(v: lextok) {
-    LEX_TOK.set(v);
-}
-pub fn pos() -> usize {
-    LEX_POS.get()
-}
-pub fn set_pos(v: usize) {
-    LEX_POS.set(v);
-}
-/// Slice the input source from `start..end` — used by parse.rs to
-/// capture function body source text. Returns None if out-of-range.
-pub fn input_slice(start: usize, end: usize) -> Option<String> {
-    LEX_INPUT.with_borrow(|s| s.get(start..end).map(String::from))
-}
-
-/// Create a new lexer for the given input
-pub fn lex_init(input: &str) {
-    // Ensure `typtab[]` is initialised so `iblank()` / `inblank()` /
-    // `idigit()` / etc. (called throughout the lexer) work. C zsh
-    // calls `inittyptab()` once at shell startup in `init_main()`
-    // (init.c:1287); zshrs lex tests bypass that path so we kick
-    // it here too. `inittyptab` is idempotent (sets `ZTF_INIT`).
-    crate::ported::utils::inittyptab();
-    // Reset migrated thread-locals so a fresh lexer instance
-    // starts from a clean slate (same as the C source's
-    // file-static initializers in lex.c).
-    LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
-    LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
-    // P7-batch-3 fields: reset to their C-source initial values.
-    LEX_LEXSTOP.set(false);
-    LEX_INCONDPAT.set(false);
-    LEX_OLDPOS.set(true);
-    LEX_DBPARENS.set(false);
-    LEX_NOALIASES.set(false);
-    LEX_NOCORRECT.set(0);
-    LEX_NOCOMMENTS.set(false);
-    LEX_LEXFLAGS.set(0);
-    LEX_ISFIRSTLN.set(true);
-    LEX_LEX_ADD_RAW.set(0);
-    // P7-batch-4 resets.
-    LEX_TOKFD.set(-1);
-    LEX_TOKLINENO.set(1);
-    LEX_INREDIR.set(false);
-    LEX_INFOR.set(0);
-    LEX_INREPEAT.set(0);
-    LEX_INTYPESET.set(false);
-    LEX_ISNEWLIN.set(0);
-    // P7-batch-5 resets.
-    LEX_LINENO.set(1);
-    LEX_INCMDPOS.set(true);
-    LEX_INCOND.set(0);
-    LEX_INCASEPAT.set(0);
-    // P7-batch-6 reset.
-    LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
-    // P7-batch-7 resets.
-    LEX_TOKSTR.with_borrow_mut(|t| *t = None);
-    LEX_TOK.set(ENDINPUT);
-    // P7-batch-8: input + pos.
-    LEX_INPUT.with_borrow_mut(|s| {
-        s.clear();
-        s.push_str(input);
-    });
-    LEX_POS.set(0);
-}
-
-/// Append a char to the raw-input capture buffer. Direct port of
-/// zsh/Src/lex.c:2025 `zshlex_raw_add`. Called from hgetc
-/// when `lex_add_raw` is nonzero so cmd-sub bodies (`$(...)`,
-/// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
-pub fn zshlex_raw_add(c: char) {
-    // lex.c:2027-2028 — guard on lex_add_raw flag.
-    if LEX_LEX_ADD_RAW.get() == 0 {
-        return;
-    }
-    // lex.c:2030-2038 — append to lexbuf_raw. The C source manages
-    // explicit ptr/len/siz with hrealloc; Rust's String handles
-    // resize automatically.
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| b.add(c));
-}
-
-/// Run alias / reserved-word expansion on the just-lexed token.
-/// Direct port of zsh/Src/lex.c:1949-2021 `exalias`. Returns true
-/// if an alias was injected (the caller's loop should re-run
-/// gettok to consume the injected text).
-///
-/// C source flow:
-///   1. Spell-correct (lex.c:1958-1962) — disabled in zshrs.
-///   2. If tokstr is None: set lextext from `tokstrings[tok]` and
-///      checkalias against that (lex.c:1964-1969).
-///   3. Otherwise: untokenize tokstr into a working copy (lex.c:
-///      1971-1980).
-///   4. ZLE word-tracking: call gotword() if LEXFLAGS_ZLE
-///      (lex.c:1982-1991).
-///   5. Stringg tokens: try checkalias, then reservation lookup
-///      (lex.c:1993-2015).
-///   6. Clear inalmore (lex.c:2016).
-///
-/// Direct port of `exalias(void)` at `Src/lex.c:1953`. No
-/// parameters — reads global `aliastab`/`sufaliastab`/`reswdtab`
-/// directly, mirroring C.
-pub fn exalias() -> bool {
-    // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
-    // history layer doesn't track per-word boundaries here; no-op.
-
-    // c:1958-1962 — full faithful gate:
-    //   if (interact && isset(SHINSTDIN) && !strin && incasepat <= 0
-    //    && tok == STRING && !nocorrect && !(inbufflags & INP_ALIAS)
-    //    && !hist_is_in_word()
-    //    && (isset(CORRECTALL) || (isset(CORRECT) && incmdpos)))
-    //       spckword(&tokstr, 1, incmdpos, 1);
-    let inbufflags_alias =
-        (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS) != 0;
-    let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
-    if crate::ported::zsh_h::interact()
-        && isset(SHINSTDIN)
-        && !strin_set
-        && LEX_INCASEPAT.get() <= 0
-        && tok() == STRING_LEX
-        && LEX_NOCORRECT.get() == 0
-        && !inbufflags_alias
-        && crate::ported::hist::hist_is_in_word() == 0
-        && (isset(CORRECTALL) || (isset(CORRECT) && LEX_INCMDPOS.get()))
-    {
-        // Build candidate list: command names in $PATH, shell
-        // functions, aliases, builtins. C's spckword scans these
-        // internally; our Rust spckword (utils.rs:1802) takes a
-        // pre-built list, so we assemble here, run, then mutate
-        // tokstr in place when a correction crosses the distance
-        // threshold (matches C's `spckword(&tokstr, 1, incmdpos, 1);`
-        // contract — replacing tokstr with the corrected form).
-        let candidates: Vec<String> = {
-            let mut v: Vec<String> = Vec::new();
-            // Shell functions.
-            if let Ok(t) = crate::ported::hashtable::shfunctab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            // Aliases.
-            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            // Command names (from cmdnamtab — hashed $PATH lookups).
-            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            v
-        };
-        let refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
-        // C calls `spckword(&tokstr, ...)` with the raw tokstr; this
-        // runs BEFORE alias / reswd lookup below, BEFORE `lextext`
-        // is computed. Read `tokstr` directly here.
-        if let Some(word) = tokstr() {
-            let word_untok = if has_token(&word) {
-                untokenize(&word)
-            } else {
-                word.clone()
-            };
-            if let Some(corrected) = crate::ported::utils::spckword(&word_untok, &refs, 3) {
-                if corrected != word_untok {
-                    // c:1962 spckword `doerr=1` arg → prompts user.
-                    // Without per-call interactive integration, accept
-                    // the correction silently when CORRECTALL is set,
-                    // skip otherwise (matches the conservative path).
-                    if isset(CORRECTALL) {
-                        set_tokstr(Some(corrected));
-                    }
-                }
-            }
-        }
-    }
-
-    // lex.c:1964-1969 — bare-token path (no tokstr).
-    if LEX_TOKSTR.with_borrow(|t| t.is_none()) {
-        // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
-        // like SEMI/AMPER/etc. the canonical text comes from a
-        // static table.
-        if tok() == NEWLIN {
-            return false;
-        }
-        // Use punctuation-token text; unknown tokens skip alias.
-        let text = match tok() {
-            SEMI => ";",
-            AMPER => "&",
-            BAR_TOK => "|",
-            _ => return false,
-        };
-        return checkalias(text);
-    }
-
-    let tokstr = tokstr().unwrap();
-    // lex.c:1973-1980 — untokenize: convert the lexer's internal
-    // tokenized form (Pound..ztokens shifts) into the literal
-    // shell text. Call the global helper.
-    let lextext = if has_token(&tokstr) {
-        untokenize(&tokstr)
-    } else {
-        tokstr.clone()
-    };
-
-    // lex.c:1982-1991 — ZLE word-tracking for completion.
-    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
-        let zp = LEX_LEXFLAGS.get();
-        gotword();
-        // lex.c:1986-1990 — if gotword cleared lexflags, the cursor
-        // word has been reached; abort exalias so completion can
-        // capture the partial token unchanged.
-        // lex.c:1986 — `(zp & LEXFLAGS_ZLE) && !lexflags` — gotword
-        // fully cleared lexflags (not just ZLE) when the cursor word
-        // was reached.
-        if (zp & LEXFLAGS_ZLE) != 0 && LEX_LEXFLAGS.get() == 0 {
-            return false;
-        }
-    }
-
-    // lex.c:1993-2015 — Stringg-token alias / reswd check.
-    if tok() == STRING_LEX {
-        // c:1995 — `if ((zshlextext != copy || !isset(POSIXALIASES))
-        //   && checkalias())` — under POSIX_ALIASES, only run
-        // alias expansion on tokens that came in literal (`zshlextext
-        // == copy` means no tokenisation/untokenisation happened).
-        // zshrs always passes the untokenised `lextext`; if the
-        // original tokstr had tokens AND POSIXALIASES is on, skip
-        // the alias check (matches C `zshlextext != copy`).
-        let had_tokens = has_token(&tokstr);
-        if (!had_tokens || !isset(POSIXALIASES)) && checkalias(&lextext) {
-            return true;
-        }
-
-        // c:2002 — reserved-word lookup. Fires when in command
-        // position OR when the text is bare `}` and IGNOREBRACES
-        // / IGNORECLOSEBRACES are both unset (so `}` ends a brace
-        // block).
-        let is_close_brace_special =
-            lextext == "}" && unset(IGNOREBRACES) && unset(IGNORECLOSEBRACES);
-        // lex.c:2002-2014 — the C structure is
-        //     if ((incmdpos || ...) && (rw = reswd_lookup)) { ... }
-        //     else if (incond && lextext == "]]") { ... }
-        //     else if (incond == 1 && lextext == "!") { ... }
-        // i.e. the cond `]]`/`!` branches are reached when the reswd
-        // lookup FAILS — even if `incmdpos` is true. The previous
-        // Rust port gated on `incmdpos` alone, so any `]]` reached
-        // inside `[[ ... ]]` with incmdpos still true (the lexer
-        // doesn't auto-reset incmdpos after `[[` in all paths) was
-        // left as a STRING `]]` and par_cond_2 errored with
-        // `condition expected:`. Restructure to mirror C: look up the
-        // reswd ONLY when the gating allows, and treat a failed
-        // lookup the same as a non-gated path so the cond branches
-        // get their turn.
-        let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
-        let rw_tok: Option<lextok> = if reswd_path_eligible {
-            let guard = crate::ported::hashtable::reswdtab_lock()
-                .read()
-                .expect("reswdtab poisoned");
-            guard.get(&lextext).map(|r| r.token)
-        } else {
-            None
-        };
-        if let Some(rwtok) = rw_tok {
-            set_tok(rwtok);
-            if rwtok == REPEAT {
-                LEX_INREPEAT.set(1);
-            }
-            if rwtok == DINBRACK {
-                LEX_INCOND.set(1);
-            }
-        } else if LEX_INCOND.get() > 0 && lextext == "]]" {
-            // lex.c:2010-2012 — `]]` closes the cond expression.
-            set_tok(DOUTBRACK);
-            LEX_INCOND.set(0);
-        } else if LEX_INCOND.get() == 1 && lextext == "!" {
-            // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
-            // negation, not a literal.
-            set_tok(BANG_TOK);
-        }
-    }
-
-    // lex.c:2016 — `inalmore = 0;` — alias-more flag clears after
-    // any non-alias token.
-    // (zshrs's lexer doesn't have inalmore yet — added here would
-    // require gettok to track when an alias-pushed token has more
-    // text after it. Documented divergence.)
-
-    false
-}
-
-/// Direct port of `checkalias(void)` at `Src/lex.c:1902`. No
-/// parameters in C — reads `aliastab`/`sufaliastab` directly.
-/// zshrs threads `lextext` in because it's already untokenized at
-/// the call site; C re-derives it from `zshlextext`. Returns true
-/// if the lookup matched (regular or suffix alias) AND the alias
-/// text was successfully injected back into the input stream for
-/// re-lexing.
-/// WARNING: param names don't match C — Rust=(lextext) vs C=()
-fn checkalias(lextext: &str) -> bool {
-    // lex.c:1906-1907 — guard on null lextext.
-    if lextext.is_empty() {
-        return false;
-    }
-
-    // c:1909 — `if (!noaliases && isset(ALIASESOPT) &&
-    //   (!isset(POSIXALIASES) ||
-    //    (tok == STRING && !reswdtab->getnode(reswdtab, zshlextext))))`.
-    //
-    // Three gates: (1) lexer hasn't set noaliases; (2) ALIASESOPT
-    // option is on; (3) under POSIX_ALIASES, the token must be a
-    // STRING AND not a reserved word.
-    if LEX_NOALIASES.get() || !isset(ALIASESOPT) {
-        return false;
-    }
-    if isset(POSIXALIASES) {
-        if tok() != STRING_LEX {
-            return false;
-        }
-        let is_reswd = crate::ported::hashtable::reswdtab_lock()
-            .read()
-            .expect("reswdtab poisoned")
-            .get(lextext)
-            .is_some();
-        if is_reswd {
-            return false;
-        }
-    }
-
-    // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
-    // aliastab->getnode(aliastab, zshlextext);`
-    let alias_clone: Option<crate::ported::zsh_h::alias> = {
-        let guard = crate::ported::hashtable::aliastab_lock()
-            .read()
-            .expect("aliastab poisoned");
-        guard.get(lextext).cloned()
-    };
-    if let Some(alias) = alias_clone {
-        let is_global = (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
-        if alias.inuse == 0 && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX)) {
-            // c:1918-1927 — if the next char isn't blank, insert a
-            // space so the alias body can't accidentally join the
-            // following word.
-            if !LEX_LEXSTOP.get() {
-                if let Some(c) = peek() {
-                    if !crate::ztype_h::iblank(c as u8) {
-                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
-                    }
-                }
-            }
-            // c:1928 — `inpush(an->text, INP_ALIAS, an);`
-            crate::ported::input::inpush(
-                &alias.text,
-                crate::ported::zsh_h::INP_ALIAS,
-                Some(lextext.to_string()),
-            );
-            // c:1929 — `an->inuse = 1;`.
-            let mut guard = crate::ported::hashtable::aliastab_lock()
-                .write()
-                .expect("aliastab poisoned");
-            if let Some(a) = guard.get_mut(lextext) {
-                a.inuse = 1;
-            }
-            drop(guard);
-            LEX_LEXSTOP.set(false);
-            return true;
-        }
-    }
-
-    // lex.c:1934-1943 — suffix-alias lookup. The token must end
-    // with `.SUFFIX`, the suffix name must be a registered
-    // suffix-alias, AND the lexer must be in command position.
-    if LEX_INCMDPOS.get() {
-        if let Some(dot_pos) = lextext.rfind('.') {
-            if dot_pos > 0 && dot_pos + 1 < lextext.len() {
-                let suffix = &lextext[dot_pos + 1..];
-                let alias_clone: Option<crate::ported::zsh_h::alias> = {
-                    let guard = crate::ported::hashtable::sufaliastab_lock()
-                        .read()
-                        .expect("sufaliastab poisoned");
-                    guard.get(suffix).cloned()
-                };
-                if let Some(alias) = alias_clone {
-                    if alias.inuse == 0 {
-                        // c:1938-1940 — three inpush calls in order:
-                        // the original word, a space, the alias text.
-                        // inpush stacks LIFO so the original word is
-                        // popped FIRST (re-emitted to extend the
-                        // current token), then space, then the alias
-                        // body. C does it the same way.
-                        crate::ported::input::inpush(
-                            lextext,
-                            crate::ported::zsh_h::INP_ALIAS,
-                            Some(suffix.to_string()),
-                        );
-                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
-                        crate::ported::input::inpush(
-                            &alias.text,
-                            crate::ported::zsh_h::INP_ALIAS,
-                            None,
-                        );
-                        // c:1941 — `an->inuse = 1;`.
-                        let mut guard = crate::ported::hashtable::sufaliastab_lock()
-                            .write()
-                            .expect("sufaliastab poisoned");
-                        if let Some(a) = guard.get_mut(suffix) {
-                            a.inuse = 1;
-                        }
-                        drop(guard);
-                        LEX_LEXSTOP.set(false);
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    false
-}
-
-/// Pop the last char from the raw-input capture buffer. Direct
-/// port of zsh/Src/lex.c:2043 `zshlex_raw_back`. Called when
-/// the lexer ungets a char that was just captured raw — the raw
-/// buffer must mirror the live input so this undoes the last add.
-pub fn zshlex_raw_back() {
-    // lex.c:2045-2046 — guard.
-    if LEX_LEX_ADD_RAW.get() == 0 {
-        return;
-    }
-    // lex.c:2047-2048 — `lexbuf_raw.ptr--; lexbuf_raw.len--;`
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| b.pop());
-}
-
-/// Mark the current raw-buffer offset (for restore later). Direct
-/// port of zsh/Src/lex.c:2053 `zshlex_raw_mark`. Returns
-/// `len + offset` so callers can restore via `back_to_mark`.
-pub fn zshlex_raw_mark(offset: i64) -> i64 {
-    // lex.c:2055-2056 — guard.
-    if LEX_LEX_ADD_RAW.get() == 0 {
-        return 0;
-    }
-    // lex.c:2057 — `return lexbuf_raw.len + offset;`
-    (LEX_LEXBUF_RAW.with_borrow(|b| b.buf_len()) as i64) + offset
-}
-
-/// Restore raw-buffer offset to a previously-saved mark. Direct
-/// port of zsh/Src/lex.c:2062 `zshlex_raw_back_to_mark`.
-/// Truncates the raw buffer to `mark` bytes — undoes any captures
-/// since the mark was taken (used when a speculative parse fails
-/// and the lexer rolls back).
-pub fn zshlex_raw_back_to_mark(mark: i64) {
-    // lex.c:2064-2065 — guard.
-    if LEX_LEX_ADD_RAW.get() == 0 {
-        return;
-    }
-    // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
-    // lexbuf_raw.len = mark;` — String::truncate handles both.
-    let m = mark.max(0) as usize;
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-        if let Some(p) = b.ptr.as_mut() {
-            p.truncate(m);
-        }
-        b.len = m as i32;
-    });
-}
-
-/// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
-/// is in a clean state suitable for parsing a nested input (command
-/// substitution body, here-doc terminator, eval'd string).
-pub fn lex_context_save(ls: &mut lex_stack) {
-    // c:218-239 — copy live state into the stack. Mirrors C
-    // field-by-field; `toplevel` param dropped because C does
-    // `(void)toplevel;` (unused).
-    ls.dbparens = LEX_DBPARENS.get() as i32;
-    ls.isfirstln = LEX_ISFIRSTLN.get() as i32;
-    ls.isfirstch = LEX_ISFIRSTCH.get() as i32;
-    ls.lexflags = LEX_LEXFLAGS.get();
-    ls.tok = tok();
-    ls.tokstr = LEX_TOKSTR.with_borrow_mut(|t| t.take());
-    // `zshlextext` (c:225) — pointer alias of `tokstr` after
-    // untokenization. zshrs derives it on demand from `tokstr` +
-    // `untokenize` so there's no separate global to stash.
-    ls.zshlextext = None;
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        ls.lexbuf.ptr = b.ptr.take();
-        ls.lexbuf.siz = b.siz;
-        ls.lexbuf.len = b.len;
-    });
-    ls.lex_add_raw = LEX_LEX_ADD_RAW.get();
-    ls.tokstr_raw = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-        ls.lexbuf_raw.ptr = b.ptr.take();
-        ls.lexbuf_raw.siz = b.siz;
-        ls.lexbuf_raw.len = b.len;
-    });
-    ls.lexstop = LEX_LEXSTOP.get() as i32;
-    ls.toklineno = LEX_TOKLINENO.get() as i64;
-
-    // c:235-238 — reset live state to defaults so a nested parse
-    // starts from a clean slate. tokstr/lexbuf zeroed; lexbuf.siz
-    // reset to 256 (the C-source initial alloc); raw buffers
-    // wiped, lex_add_raw cleared.
-    set_tokstr(None);
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = Some(String::with_capacity(256));
-        b.siz = 256;
-        b.len = 0;
-    });
-    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = None);
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-        b.ptr = None;
-        b.siz = 0;
-        b.len = 0;
-    });
-    LEX_LEX_ADD_RAW.set(0);
-}
-
-/// zsh/Src/lex.c:245 `lex_context_restore`. Inverse of
-/// `lex_context_save`. Called after the nested parse completes.
-pub fn lex_context_restore(ls: &mut lex_stack) {
-    // c:249-261 — copy stack state back into live fields.
-    LEX_DBPARENS.set(ls.dbparens != 0);
-    LEX_ISFIRSTLN.set(ls.isfirstln != 0);
-    LEX_ISFIRSTCH.set(ls.isfirstch != 0);
-    LEX_LEXFLAGS.set(ls.lexflags);
-    set_tok(ls.tok);
-    set_tokstr(ls.tokstr.take());
-    // ls.zshlextext discarded — derived from tokstr (see save).
-    let _ = ls.zshlextext.take();
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
-        b.siz = ls.lexbuf.siz;
-        b.len = ls.lexbuf.len;
-    });
-    LEX_LEX_ADD_RAW.set(ls.lex_add_raw);
-    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = ls.tokstr_raw.take());
-    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-        b.ptr = ls.lexbuf_raw.ptr.take();
-        b.siz = ls.lexbuf_raw.siz;
-        b.len = ls.lexbuf_raw.len;
-    });
-    LEX_LEXSTOP.set(ls.lexstop != 0);
-    LEX_TOKLINENO.set(ls.toklineno as u64);
-}
-
 /// Initialize lexical state. Direct port of zsh/Src/lex.c:441
 /// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
 /// to ENDINPUT so the next gettok starts from a known baseline.
@@ -1198,255 +793,198 @@ pub fn lexinit() {
     set_tok(ENDINPUT);
 }
 
-/// Check recursion depth; returns true if exceeded
-#[inline]
-/// Get next character from input
-pub(crate) fn hgetc() -> Option<char> {
-    // Re-read from unget_buf: increment lineno on `\n` HERE
-    // too. hungetc() decremented lineno when the char was put
-    // back; without a matching increment on the way out, every
-    // `\n` that's ungetted-then-reread leaves lineno
-    // permanently one short. Symptom: $LINENO stuck at 1 in
-    // every script statement because the parser ungets the
-    // separating newline once between statements.
-    if let Some(c) = LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front()) {
-        if c == '\n' {
-            LEX_LINENO.set(LEX_LINENO.get() + 1);
-        }
-        // c:input.c:360-361 — every char returned by ingetc feeds
-        // the raw buffer when lex_add_raw is on. Re-reads from the
-        // unget queue count the same as fresh reads; the matching
-        // `zshlex_raw_back()` call in hungetc removed the prior
-        // record, so this restores it.
-        zshlex_raw_add(c);
-        return Some(c);
-    }
-
-    let c = LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())?;
-    LEX_POS.set(LEX_POS.get() + c.len_utf8());
-
-    if c == '\n' {
-        LEX_LINENO.set(LEX_LINENO.get() + 1);
-    }
-
-    // c:input.c:360-361 — `if (!lexstop) zshlex_raw_add(lastc);`
-    // Every char read from input also feeds the raw buffer when
-    // lex_add_raw is on (used by skipcomm to capture verbatim
-    // `$(...)` body text into the parent token).
-    zshlex_raw_add(c);
-
-    Some(c)
-}
-
-/// Put character back into input. Direct port of `inungetc(int c)`
-/// from `Src/input.c:546-583`. Critical: C decrements lineno on
-/// `\n` ungetc UNCONDITIONALLY (modulo input-flags). Rust's
-/// previous `LEX_LINENO.get() > 1` guard caused off-by-one drift
-/// when lineno was set to 0 (via par_funcdef's `set_lineno(0)`)
-/// then a `\n` got read+ungetted: hungetc wouldn't decrement
-/// (because LEX_LINENO==1 fails `> 1`), but the subsequent re-read
-/// in hgetc DOES increment, leaving LEX_LINENO=2 instead of 1.
-fn hungetc(c: char) {
-    LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
-    if c == '\n' {
-        // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
-        // !strin) && c == '\n') lineno--;`
-        let cur = LEX_LINENO.get();
-        if cur > 0 {
-            LEX_LINENO.set(cur - 1);
-        }
-    }
-    LEX_LEXSTOP.set(false);
-    // c:input.c:549,609 — `inungetc` calls `zshlex_raw_back()` so
-    // the un-gotten char isn't double-counted in lexbuf_raw on
-    // re-read. hgetc will re-add it next time it's pulled.
-    zshlex_raw_back();
-}
-
-/// Peek at next character without consuming
-#[allow(dead_code)]
-fn peek() -> Option<char> {
-    if let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
-        return Some(c);
-    }
-    LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())
-}
-
 /// Add character to token buffer
 /// Port of `add(int c)` from `Src/lex.c:451`.
 fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
 
+/// Determine if (( is arithmetic or command
+/// Decide whether `( ... )` after a `$` is a math expression
+/// `$((...))` or a command substitution `$(...)`. Direct port of
+/// zsh/Src/lex.c:495 `cmd_or_math`. Tries dquote_parse first;
+/// if it succeeds AND the next char is `)` (closing the second
+/// paren of `(( ))`), it's math. Otherwise rewinds and treats as
+/// a command substitution.
+fn cmd_or_math() -> i32 {
+    let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
 
+    // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
+    // arg (CS_MATH or CS_MATHSUBST); zshrs's lone caller (gettok
+    // LX1_INPAR `((`) uses CS_MATH. The matching `cmdpop()` fires
+    // both on the math path (after success) and on the rewind path
+    // (before falling through to skipcomm, which has its own
+    // CS_CMDSUBST push/pop).
+    cmdpush(CS_MATH as u8);
 
-/// Main lexer entry point — fetch the next token. Direct port of
-/// zsh/Src/lex.c:266 `zshlex`. Loop body matches the C source
-/// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
-/// followed by here-doc draining (lex.c:278-306), newline tracking
-/// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
-pub fn zshlex() {
-    // lex.c:268-269 — early-out on prior LEXERR.
-    if tok() == LEXERR {
-        return;
+    // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
+    // which fills lexbuf with ONLY the inner expression, then checks
+    // for the closing `)`. The surrounding `((` / `))` are NOT added
+    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
+    // ')' after, polluting DINPAR's tokstr with the literal parens.
+    // Removed to match C exactly.
+    if dquote_parse(')', false).is_err() {
+        // c:506 — `cmdpop();` before rewind to command-parse path.
+        cmdpop();
+        // Back up and try as command
+        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+                hungetc(c);
+            }
+        }
+        hungetc('(');
+        LEX_LEXSTOP.set(false);
+        return if skipcomm().is_err() {
+            CMD_OR_MATH_ERR
+        } else {
+            CMD_OR_MATH_CMD
+        };
     }
 
-    // lex.c:270-276 — `do { ... } while (tok != ENDINPUT && exalias())`.
-    // The do-while re-runs gettok when exalias re-injects alias text;
-    // exalias also performs reswdtab keyword promotion (`{` → INBRACE,
-    // `if` → IF, etc.) and spell-correction. Wired one-pass for now —
-    // alias re-injection loop is a follow-up.
+    // Check for closing ) — matches C lex.c:511-512: success-with-`)`
+    // means `((..))` was math. Don't add `)` to lexbuf.
+    let c = hgetc();
+    if c == Some(')') {
+        // c:506 — `cmdpop();` on math success.
+        cmdpop();
+        return CMD_OR_MATH_MATH;
+    }
+
+    // c:506 — `cmdpop();` before rewind to command-parse path.
+    cmdpop();
+    // Not math, back up
+    if let Some(c) = c {
+        hungetc(c);
+    }
+    LEX_LEXSTOP.set(false);
+
+    // Back up token
+    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+        if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+            hungetc(c);
+        }
+    }
+    hungetc('(');
+
+    if skipcomm().is_err() {
+        CMD_OR_MATH_ERR
+    } else {
+        CMD_OR_MATH_CMD
+    }
+}
+
+/// Parse `$(...)` or `$((...))` after the `$` has been consumed.
+/// Direct port of zsh/Src/lex.c:540 `cmd_or_math_sub`. Reads
+/// the next char to discriminate: a leading `(` plus successful
+/// math parse via `cmd_or_math` → arithmetic substitution (with
+/// the open-paren retroactively rewritten to Inparmath); else
+/// command substitution via skipcomm.
+fn cmd_or_math_sub() -> i32 {
     loop {
-        // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
-        // detection.
-        if LEX_INREPEAT.get() > 0 {
-            LEX_INREPEAT.set(LEX_INREPEAT.get() + 1);
-        }
-        // lex.c:273-274 — `if (inrepeat_ == 3 && (isset(SHORTLOOPS) ||
-        // isset(SHORTREPEAT))) incmdpos = 1;` — at the third token after
-        // `repeat`, SHORTLOOPS/SHORTREPEAT options force back into
-        // command position so the loop body can start without an
-        // explicit `{`.
-        if LEX_INREPEAT.get() == 3 && (isset(SHORTLOOPS) || isset(SHORTREPEAT)) {
-            LEX_INCMDPOS.set(true);
+        let c = hgetc();
+        if c == Some('\\') {
+            let c2 = hgetc();
+            if c2 != Some('\n') {
+                if let Some(c2) = c2 {
+                    hungetc(c2);
+                }
+                hungetc('\\');
+                LEX_LEXSTOP.set(false);
+                return if skipcomm().is_err() {
+                    CMD_OR_MATH_ERR
+                } else {
+                    CMD_OR_MATH_CMD
+                };
+            }
+            // Line continuation, try again (loop instead of recursion)
+            continue;
         }
 
-        // lex.c:275 — `tok = gettok();`
-        let _t = gettok();
-        set_tok(_t);
+        // Not a line continuation, process normally
+        if c == Some('(') {
+            // Might be $((...))
+            let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
+            add(Inpar);
+            add('(');
 
-        // lex.c:276 — `} while (tok != ENDINPUT && exalias());`
-        if tok() == ENDINPUT || !exalias() {
+            if dquote_parse(')', false).is_ok() {
+                let c2 = hgetc();
+                if c2 == Some(')') {
+                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
+                    // confirmed math `$(( ... ))`, retroactively
+                    // rewrite the Inpar marker (just emitted at
+                    // lexpos) to Inparmath. `buf_len()` is the BYTE
+                    // length of the lexbuf (matching C's
+                    // `lexbuf.len`), so lexpos is the byte offset
+                    // where Inpar landed. Inpar and Inparmath are
+                    // both 2-byte UTF-8 chars (`\u{88}` and
+                    // `\u{89}`) so set_char_at can swap in place.
+                    LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
+                    add(')');
+                    return CMD_OR_MATH_MATH;
+                }
+                if let Some(c2) = c2 {
+                    hungetc(c2);
+                }
+            }
+
+            // Not math, restore and parse as command
+            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
+                if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+                    hungetc(ch);
+                }
+            }
+            hungetc('(');
+            LEX_LEXSTOP.set(false);
+        } else {
+            if let Some(c) = c {
+                hungetc(c);
+            }
+            LEX_LEXSTOP.set(false);
+        }
+
+        return if skipcomm().is_err() {
+            CMD_OR_MATH_ERR
+        } else {
+            CMD_OR_MATH_CMD
+        };
+    }
+}
+
+// ============================================================================
+// Additional parsing functions ported from lex.c
+// ============================================================================
+
+/// Check whether we're looking at valid numeric globbing syntax
+/// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
+/// opening `<`. Leaves the input position unchanged, returning true
+/// or false.
+///
+/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
+/// hgetc/hungetc against the input stream and a temp buffer to
+/// remember consumed chars; zshrs takes a `(input, pos)` slice and
+/// scans without consumption. Same predicate, different I/O model.
+pub fn isnumglob(input: &str, pos: usize) -> bool {
+    let chars: Vec<char> = input[pos..].chars().collect();
+    let mut i = 0;
+    let mut expect_close = false;
+
+    // Look for digits, then -, then digits, then >
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_digit() {
+            i += 1;
+        } else if c == '-' && !expect_close {
+            expect_close = true;
+            i += 1;
+        } else if c == '>' && expect_close {
+            return true;
+        } else {
             break;
         }
     }
-
-    // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
-    // so the persistent low bit survives but the per-word bit is
-    // dropped.
-    LEX_NOCORRECT.set(LEX_NOCORRECT.get() & 1);
-
-    // lex.c:278-306 — drain pending here-documents at the start of
-    // a new line. Line-by-line port: walks the canonical `hdocs`
-    // linked list (`parse::HDOCS` mirrors `Src/parse.c:84 struct
-    // heredocs *hdocs;`), calls `gethere` to read each body, calls
-    // `setheredoc` to patch the wordcode redir slot. Two zshrs-only
-    // lines (annotated below) bridge body content + processed flag
-    // into the parallel AST-glue `LEX_HEREDOCS` Vec.
-    if tok() == NEWLIN || tok() == ENDINPUT {
-        // c:279 — `while (hdocs)`
-        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(
-            |h| h.take(),
-        ) {
-            // c:280 — `struct heredocs *next = hdocs->next;`
-            let next: Option<Box<crate::ported::zsh_h::heredocs>> = node.next.take();
-            // c:281 — `char *doc, *munged_term;`
-            let doc: Option<String>;
-            let mut munged_term: String;
-
-            // c:283 — `hwbegin(0);` (history-build cursor — zshrs no-op)
-            // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC : CS_HEREDOCD);`
-            cmdpush(if node.typ == crate::ported::zsh_h::REDIR_HEREDOC {
-                CS_HEREDOC as u8
-            } else {
-                CS_HEREDOCD as u8
-            });
-            // c:285 — `munged_term = dupstring(hdocs->str);`
-            munged_term = crate::ported::mem::dupstring(node.str.as_deref().unwrap_or(""));
-            // c:286 — `STOPHIST` (history-disable scope — zshrs no-op)
-            // c:287 — `doc = gethere(&munged_term, hdocs->type);`
-            doc = crate::exec::gethere(&mut munged_term, node.typ);
-            // c:288 — `ALLOWHIST`
-            // c:289 — `cmdpop();`
-            cmdpop();
-            // c:290 — `hwend();`
-
-            // c:291 — `if (!doc)`
-            let Some(doc) = doc else {
-                // c:292 — `zerr("here document too large");`
-                crate::ported::utils::zerr("here document too large");
-                // c:293-297 — while (hdocs) { next = hdocs->next; zfree(hdocs); hdocs = next; }
-                crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = None);
-                // c:298 — `tok = LEXERR;`
-                set_tok(LEXERR);
-                // c:299 — break out of the while.
-                break;
-            };
-            // c:301-302 — `setheredoc(hdocs->pc, REDIR_HERESTR, doc,
-            //                         hdocs->str, munged_term);`
-            crate::ported::parse::setheredoc(
-                node.pc as usize,
-                crate::ported::zsh_h::REDIR_HERESTR,
-                &doc,
-                node.str.as_deref().unwrap_or(""),
-                &munged_term,
-            );
-            // zshrs-only: write body into the parallel AST-glue
-            // LEX_HEREDOCS entry so `fill_heredoc_bodies` (parse.rs)
-            // wires it onto the matching ZshRedir.heredoc field.
-            // No C counterpart — LEX_HEREDOCS is Rust-only state.
-            LEX_HEREDOCS.with_borrow_mut(|v| {
-                for h in v.iter_mut() {
-                    if !h.processed {
-                        h.content = doc;
-                        h.processed = true;
-                        return;
-                    }
-                }
-            });
-            // c:303 — `zfree(hdocs, sizeof(struct heredocs));`
-            drop(node);
-            // c:304 — `hdocs = next;`
-            crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = next);
-        }
-    }
-
-    // lex.c:307-310 — track whether we just saw a newline.
-    // C uses `inbufct` to distinguish "newline at EOF" (=1)
-    // from "newline mid-input" (=-1); zshrs reads `pos < len`.
-    if tok() != NEWLIN {
-        LEX_ISNEWLIN.set(0);
-    } else {
-        LEX_ISNEWLIN.set(if LEX_POS.get() < LEX_INPUT.with_borrow(|s| s.len()) {
-            -1
-        } else {
-            1
-        });
-    }
-
-    // lex.c:311-312 — fold SEMI / NEWLIN into SEPER unless
-    // LEXFLAGS_NEWLINE is set to preserve newlines (used by
-    // ZLE for completion of partial lines).
-    if tok() == SEMI || (tok() == NEWLIN && LEX_LEXFLAGS.get() & LEXFLAGS_NEWLINE == 0) {
-        set_tok(SEPER);
-    }
-
-    // C zshlex (lex.c:266-310) does NOT update incmdpos / inredir /
-    // oldpos / infor / intypeset / incondpat. Those updates live in:
-    //   - ctxtlex (lex.c:319-368, mirrored at fn ctxtlex below) for
-    //     incmdpos / inredir / oldpos / infor;
-    //   - parse.c call sites for intypeset (parse.c:1932/2042/2047);
-    //   - cond.c par_cond_* for incondpat (Rust-only state — C tracks
-    //     pattern context implicitly via the cond grammar walker).
-    // Earlier zshrs port had duplicated the ctxtlex switch + an
-    // incondpat tracker into zshlex so the parser would get those
-    // updates "for free"; that broke the C-faithful contract of
-    // zshlex. Removed.
+    false
 }
-
-// `hashchar` / `bangchar` / `hatchar` — port of `unsigned char
-// hashchar, bangchar, hatchar;` declared in `Src/params.c:132` and
-// assigned in `init_main()` (Src/init.c:1100-1102). C zsh exposes
-// these as mutable globals for `$histchars` to rewrite; zshrs
-// pins the default values here (the `$histchars` runtime mirror
-// lives at `crate::ported::hist::bangchar` (AtomicI32)).
-#[allow(non_upper_case_globals)]
-const hashchar: char = '#';
-#[allow(non_upper_case_globals)]
-const bangchar: char = '!';
-#[allow(non_upper_case_globals)]
-#[allow(dead_code)]
-const hatchar: char = '^';
 
 /// Get the next token. Direct port of `gettok(void)` from
 /// `Src/lex.c:613-936`. Reads chars via hgetc, dispatches on the
@@ -1933,21 +1471,6 @@ fn gettok() -> lextok {
         // etc.) happens in exalias via reswdtab lookup (c:2002-2005).
         _ => gettokstr(c, false),
     }
-}
-
-/// Port of `void (*hwaddc)(int)` from `Src/hist.c:43` — function-
-/// pointer that the history layer flips between `ihwaddc` (real
-/// append at hist.c:357, ported at `hist::ihwaddc`) when history
-/// is active, and `nohw` (dummy at hist.c:1062) when it isn't.
-/// Setup happens in `hbegin()` at hist.c:1141/1151. zshrs doesn't
-/// flip the pointer yet, but `ihwaddc` is itself a no-op when
-/// `chline` is empty, so calling it unconditionally matches C
-/// behavior for the history-inactive case. The HISTALLOWCLOBBER
-/// caller sites at `Src/lex.c:903, 910` write `|` so the history
-/// line records the implicit clobber as `>|`/`>>|`.
-#[inline]
-fn hwaddc(c: char) {
-    crate::ported::hist::ihwaddc(c as i32);
 }
 
 /// Get rest of token string
@@ -2762,61 +2285,6 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     peek
 }
 
-/// Check if a string is a valid assignment target (identifier or array ref).
-///
-/// zsh accepts identifier (`[A-Za-z_][A-Za-z0-9_]*`) optionally followed by
-/// a `[...]` subscript. Bare digits are NOT a valid lvalue (rejected at
-/// `if c.is_ascii_digit()` below — array index expressions like `arr[2]`
-/// are caught by the subscript handler, not here). And the first char
-/// must NOT be a zsh internal token byte — `$=foo` (where `$` becomes
-/// the Stringg token 0x85) is parameter substitution with the `=` flag,
-/// NOT an envstring assignment.
-fn is_valid_assignment_target(s: &str) -> bool {
-    let mut chars = s.chars().peekable();
-
-    // Reject leading token byte — `$VAR=` is parameter substitution,
-    // not assignment. Same for `*=`, `?=`, etc.
-    if let Some(&c) = chars.peek() {
-        if itok(c as u8) {
-            return false;
-        }
-    }
-
-    // Check for leading digit (invalid)
-    if let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            // Could be array index, check rest
-            while let Some(&c) = chars.peek() {
-                if !c.is_ascii_digit() {
-                    break;
-                }
-                chars.next();
-            }
-            return chars.peek().is_none();
-        }
-    }
-
-    // Check identifier
-    let mut has_ident = false;
-    while let Some(&c) = chars.peek() {
-        if c == Inbrack || c == '[' {
-            break;
-        }
-        if c == '+' {
-            // foo+=value
-            chars.next();
-            return chars.peek().is_none() || chars.peek() == Some(&'=');
-        }
-        if !crate::ztype_h::iident(c as u8) && c != Stringg && !itok(c as u8) {
-            return false;
-        }
-        has_ident = true;
-        chars.next();
-    }
-
-    has_ident
-}
-
 /// Parse the body of a double-quoted string (or any context that
 /// uses double-quote tokenization — `(( ))`, `${...}`, `$( ( ) )`).
 /// Direct port of `dquote_parse` from `Src/lex.c:1486`. Reads chars
@@ -3049,156 +2517,616 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
     }
 }
 
-/// Determine if (( is arithmetic or command
-/// Decide whether `( ... )` after a `$` is a math expression
-/// `$((...))` or a command substitution `$(...)`. Direct port of
-/// zsh/Src/lex.c:495 `cmd_or_math`. Tries dquote_parse first;
-/// if it succeeds AND the next char is `)` (closing the second
-/// paren of `(( ))`), it's math. Otherwise rewinds and treats as
-/// a command substitution.
-fn cmd_or_math() -> i32 {
-    let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
+/// Tokenize a string as if in double quotes (error-reporting variant).
+/// Direct port of `parsestr(char **s)` from `Src/lex.c:1694`. C
+/// source: `if ((err = parsestrnoerr(s))) { untokenize(*s); ...
+/// zerr("parse error near `%c'", err); tok = LEXERR; }`. zshrs's
+/// wrapper preserves the Result and lets the caller emit the
+/// diagnostic.
+pub fn parsestr(s: &str) -> Result<String, String> {
+    parsestrnoerr(s)
+}
 
-    // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
-    // arg (CS_MATH or CS_MATHSUBST); zshrs's lone caller (gettok
-    // LX1_INPAR `((`) uses CS_MATH. The matching `cmdpop()` fires
-    // both on the math path (after success) and on the rewind path
-    // (before falling through to skipcomm, which has its own
-    // CS_CMDSUBST push/pop).
-    cmdpush(CS_MATH as u8);
-
-    // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
-    // which fills lexbuf with ONLY the inner expression, then checks
-    // for the closing `)`. The surrounding `((` / `))` are NOT added
-    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
-    // ')' after, polluting DINPAR's tokstr with the literal parens.
-    // Removed to match C exactly.
-    if dquote_parse(')', false).is_err() {
-        // c:506 — `cmdpop();` before rewind to command-parse path.
-        cmdpop();
-        // Back up and try as command
-        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-                hungetc(c);
-            }
-        }
-        hungetc('(');
-        LEX_LEXSTOP.set(false);
-        return if skipcomm().is_err() {
-            CMD_OR_MATH_ERR
-        } else {
-            CMD_OR_MATH_CMD
-        };
-    }
-
-    // Check for closing ) — matches C lex.c:511-512: success-with-`)`
-    // means `((..))` was math. Don't add `)` to lexbuf.
-    let c = hgetc();
-    if c == Some(')') {
-        // c:506 — `cmdpop();` on math success.
-        cmdpop();
-        return CMD_OR_MATH_MATH;
-    }
-
-    // c:506 — `cmdpop();` before rewind to command-parse path.
-    cmdpop();
-    // Not math, back up
-    if let Some(c) = c {
-        hungetc(c);
-    }
-    LEX_LEXSTOP.set(false);
-
-    // Back up token
-    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-        if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-            hungetc(c);
-        }
-    }
-    hungetc('(');
-
-    if skipcomm().is_err() {
-        CMD_OR_MATH_ERR
+/// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.
+///
+/// C body:
+/// ```c
+/// zcontext_save();
+/// untokenize(*s);
+/// inpush(dupstring_wlen(*s, l), 0, NULL);
+/// strinbeg(0);
+/// lexbuf.len = 0; lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1;
+/// err = dquote_parse('\0', 1);
+/// if (tokstr) *s = tokstr;
+/// *lexbuf.ptr = '\0';
+/// strinend();
+/// inpop();
+/// zcontext_restore();
+/// return err;
+/// ```
+///
+/// Drives the real `dquote_parse` (with `endchar='\0'`, `sub=true`)
+/// through the nested-lex-context machinery so `${...}`, `$(...)`,
+/// `$((...))`, backticks, etc. tokenize recursively the same way
+/// they do during a normal command parse. Returns the tokenized
+/// string on success.
+pub fn parsestrnoerr(s: &str) -> Result<String, String> {
+    let untok = untokenize(s);                                                // c:1716 `untokenize(*s);`
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());     // c:1717
+    // c:1715 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1718 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
+    // `add()` writes append onto our copy. `lexbuf.ptr/siz/len` are
+    // reset; tokstr is aliased to the buffer.
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(untok.len() + 1));
+        b.siz = (untok.len() + 1) as i32;
+        b.len = 0;
+    });
+    set_tokstr(None);
+    // c:1722 `err = dquote_parse('\0', 1);`
+    let parse_err = dquote_parse('\0', true).is_err();
+    // c:1723-1725 — `if (tokstr) *s = tokstr; *lexbuf.ptr = '\0';`
+    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
+    // c:1726 `strinend();`
+    crate::ported::hist::strinend();
+    // c:1727 `inpop();`
+    crate::ported::input::inpop();
+    // c:1729 `zcontext_restore();`
+    crate::ported::context::zcontext_restore();
+    if parse_err {
+        // C parsestrnoerr (lex.c:1713) returns the offending char so the
+        // caller (parsestr at lex.c:1694) can format `zerr("parse error
+        // near \`%c'", err)`. zshrs returns Err(message); the diagnostic
+        // already went through zerr at the dquote_parse / gettokstr
+        // failure site, so a generic message is sufficient here.
+        Err("parse error".to_string())
     } else {
-        CMD_OR_MATH_CMD
+        Ok(result)
     }
 }
 
-/// Parse `$(...)` or `$((...))` after the `$` has been consumed.
-/// Direct port of zsh/Src/lex.c:540 `cmd_or_math_sub`. Reads
-/// the next char to discriminate: a leading `(` plus successful
-/// math parse via `cmd_or_math` → arithmetic substitution (with
-/// the open-paren retroactively rewritten to Inparmath); else
-/// command substitution via skipcomm.
-fn cmd_or_math_sub() -> i32 {
-    loop {
-        let c = hgetc();
-        if c == Some('\\') {
-            let c2 = hgetc();
-            if c2 != Some('\n') {
-                if let Some(c2) = c2 {
-                    hungetc(c2);
-                }
-                hungetc('\\');
-                LEX_LEXSTOP.set(false);
-                return if skipcomm().is_err() {
-                    CMD_OR_MATH_ERR
-                } else {
-                    CMD_OR_MATH_CMD
-                };
-            }
-            // Line continuation, try again (loop instead of recursion)
-            continue;
-        }
-
-        // Not a line continuation, process normally
-        if c == Some('(') {
-            // Might be $((...))
-            let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
-            add(Inpar);
-            add('(');
-
-            if dquote_parse(')', false).is_ok() {
-                let c2 = hgetc();
-                if c2 == Some(')') {
-                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
-                    // confirmed math `$(( ... ))`, retroactively
-                    // rewrite the Inpar marker (just emitted at
-                    // lexpos) to Inparmath. `buf_len()` is the BYTE
-                    // length of the lexbuf (matching C's
-                    // `lexbuf.len`), so lexpos is the byte offset
-                    // where Inpar landed. Inpar and Inparmath are
-                    // both 2-byte UTF-8 chars (`\u{88}` and
-                    // `\u{89}`) so set_char_at can swap in place.
-                    LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
-                    add(')');
-                    return CMD_OR_MATH_MATH;
-                }
-                if let Some(c2) = c2 {
-                    hungetc(c2);
-                }
-            }
-
-            // Not math, restore and parse as command
-            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
-                if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-                    hungetc(ch);
-                }
-            }
-            hungetc('(');
-            LEX_LEXSTOP.set(false);
-        } else {
-            if let Some(c) = c {
-                hungetc(c);
-            }
-            LEX_LEXSTOP.set(false);
-        }
-
-        return if skipcomm().is_err() {
-            CMD_OR_MATH_ERR
-        } else {
-            CMD_OR_MATH_CMD
-        };
+/// Parse a subscript in string s. Return the position after the
+/// closing bracket, or None on error.
+///
+/// Direct port of zsh/Src/lex.c:1743 `parse_subscript`. The C
+/// source uses dupstring_wlen + inpush + dquote_parse to lex the
+/// subscript through the main lexer; zshrs implements a focused
+/// bracket-balancing walker that handles the same nesting rules
+/// (`[...]`, `(...)`, `{...}`) without re-entering the lexer.
+///
+/// zshrs port note: zsh's parse_subscript also handles a `sub`
+/// flag that controls whether `$` and quotes are tokenized — that
+/// flag isn't exposed here. Most callers don't need it; the few
+/// that do (parameter expansion's `${var[expr]}`) handle the
+/// quote-aware lex separately at the expansion layer.
+pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
+    // c:1746 `if (!*s || *s == endchar) return 0;`
+    if s.is_empty() || s.starts_with(endchar) {
+        return None;
     }
+    let l = s.len();
+    let untok = untokenize(s);                                                // c:1749 `untokenize(t = dupstring_wlen(s, l));`
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    // c:1748 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1750 `inpush(t, 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1751 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1763-1765 — seed lexbuf and run dquote_parse with the
+    // caller's `endchar` + `sub=false` (zshrs's API omits the C `sub`
+    // arg — all current callers pass 0).
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(l + 1));
+        b.siz = (l + 1) as i32;
+        b.len = 0;
+    });
+    let parse_err = dquote_parse(endchar, false).is_err();
+    let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
+    // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
+    // `zcontext_restore();`
+    crate::ported::hist::strinend();
+    crate::ported::input::inpop();
+    crate::ported::context::zcontext_restore();
+    if parse_err {
+        return None;
+    }
+    Some(toklen)
+}
+
+/// Tokenize a string as if it were a normal command-line argument
+/// but it may contain separators. Used for ${...%...} substitutions.
+///
+/// Direct port of zsh/Src/lex.c:1796 `parse_subst_string`.
+/// zsh's version sets `noaliases = 1` + `lexflags = 0` + uses
+/// zcontext_save/inpush/strinbeg → dquote_parse('\0', 1) →
+/// strinend/inpop/zcontext_restore. zshrs's standalone walker
+/// produces the same Bnull/Snull/Dnull/Inpar/Inbrack markers
+/// without re-entering the lexer.
+///
+/// zshrs port note: the C source returns int (0=ok, char value =
+/// where it stopped on error); zshrs returns Result<String,String>
+/// returning the tokenized text directly. Lossy for callers that
+/// need to know the exact stop position, but nothing in zshrs's
+/// expansion layer uses that yet.
+pub fn parse_subst_string(s: &str) -> Result<String, String> {
+    // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+    let l = s.len();
+    let untok = untokenize(s);                                                // c:1804
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    // c:1803 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1806 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1807-1809 — seed lexbuf with the input string.
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(l + 1));
+        b.siz = (l + 1) as i32;
+        b.len = 0;
+    });
+    set_tokstr(None);
+    // c:1810 `c = hgetc();` / c:1811 `ctok = gettokstr(c, 1);`
+    let c0 = hgetc();
+    let ctok = match c0 {
+        Some(ch) => gettokstr(ch, true),
+        None => LEXERR,
+    };
+    use std::sync::atomic::Ordering;
+    let saw_err = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
+    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
+    // c:1813 `strinend();`
+    crate::ported::hist::strinend();
+    // c:1814 `inpop();`
+    crate::ported::input::inpop();
+    // c:1816 `zcontext_restore();`
+    crate::ported::context::zcontext_restore();
+    if ctok == LEXERR || saw_err {
+        // Diagnostic already emitted via zerr at the failure site.
+        return Err("parse error".to_string());
+    }
+    Ok(result)
+}
+
+/// Mark the current word as the one ZLE was looking for. Direct
+/// port of `gotword(void)` from `Src/lex.c:1882`. Computes the
+/// new-word-end (`nwe`) and new-word-begin (`nwb`) line positions
+/// based on `zlemetall`, `inbufct`, `addedx`, and `wordbeg`, then
+/// — if the cursor (`zlemetacs`) falls inside that range — writes
+/// `wb`/`we` and clears `lexflags`.
+pub fn gotword() {
+    use std::sync::atomic::Ordering;
+    let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
+    let addedx = crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst);
+    let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+    let wordbeg = LEX_WORDBEG.get();
+
+    // c:1884 — `int nwe = zlemetall + 1 - inbufct + (addedx == 2 ? 1 : 0);`
+    let nwe = zlemetall + 1 - inbufct + if addedx == 2 { 1 } else { 0 };
+    // c:1885 — `if (zlemetacs <= nwe)`
+    if zlemetacs <= nwe {
+        // c:1886 — `int nwb = zlemetall - wordbeg + addedx;`
+        let nwb = zlemetall - wordbeg + addedx;
+        // c:1887-1893 — `if (zlemetacs >= nwb) { wb = nwb; we = nwe; }
+        // else { wb = zlemetacs + addedx; if (we < wb) we = wb; }`.
+        if zlemetacs >= nwb {
+            crate::ported::zle::compcore::WB.store(nwb, Ordering::SeqCst);
+            crate::ported::zle::compcore::WE.store(nwe, Ordering::SeqCst);
+        } else {
+            let wb_new = zlemetacs + addedx;
+            crate::ported::zle::compcore::WB.store(wb_new, Ordering::SeqCst);
+            let we_cur = crate::ported::zle::compcore::WE.load(Ordering::SeqCst);
+            if we_cur < wb_new {
+                crate::ported::zle::compcore::WE.store(wb_new, Ordering::SeqCst);
+            }
+        }
+        // c:1895 — `lexflags = 0;`
+        LEX_LEXFLAGS.set(0);
+    }
+}
+
+/// Direct port of `checkalias(void)` at `Src/lex.c:1902`. No
+/// parameters in C — reads `aliastab`/`sufaliastab` directly.
+/// zshrs threads `lextext` in because it's already untokenized at
+/// the call site; C re-derives it from `zshlextext`. Returns true
+/// if the lookup matched (regular or suffix alias) AND the alias
+/// text was successfully injected back into the input stream for
+/// re-lexing.
+/// WARNING: param names don't match C — Rust=(lextext) vs C=()
+fn checkalias(lextext: &str) -> bool {
+    // lex.c:1906-1907 — guard on null lextext.
+    if lextext.is_empty() {
+        return false;
+    }
+
+    // c:1909 — `if (!noaliases && isset(ALIASESOPT) &&
+    //   (!isset(POSIXALIASES) ||
+    //    (tok == STRING && !reswdtab->getnode(reswdtab, zshlextext))))`.
+    //
+    // Three gates: (1) lexer hasn't set noaliases; (2) ALIASESOPT
+    // option is on; (3) under POSIX_ALIASES, the token must be a
+    // STRING AND not a reserved word.
+    if LEX_NOALIASES.get() || !isset(ALIASESOPT) {
+        return false;
+    }
+    if isset(POSIXALIASES) {
+        if tok() != STRING_LEX {
+            return false;
+        }
+        let is_reswd = crate::ported::hashtable::reswdtab_lock()
+            .read()
+            .expect("reswdtab poisoned")
+            .get(lextext)
+            .is_some();
+        if is_reswd {
+            return false;
+        }
+    }
+
+    // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
+    // aliastab->getnode(aliastab, zshlextext);`
+    let alias_clone: Option<crate::ported::zsh_h::alias> = {
+        let guard = crate::ported::hashtable::aliastab_lock()
+            .read()
+            .expect("aliastab poisoned");
+        guard.get(lextext).cloned()
+    };
+    if let Some(alias) = alias_clone {
+        let is_global = (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
+        if alias.inuse == 0 && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX)) {
+            // c:1918-1927 — if the next char isn't blank, insert a
+            // space so the alias body can't accidentally join the
+            // following word.
+            if !LEX_LEXSTOP.get() {
+                if let Some(c) = peek() {
+                    if !crate::ztype_h::iblank(c as u8) {
+                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                    }
+                }
+            }
+            // c:1928 — `inpush(an->text, INP_ALIAS, an);`
+            crate::ported::input::inpush(
+                &alias.text,
+                crate::ported::zsh_h::INP_ALIAS,
+                Some(lextext.to_string()),
+            );
+            // c:1929 — `an->inuse = 1;`.
+            let mut guard = crate::ported::hashtable::aliastab_lock()
+                .write()
+                .expect("aliastab poisoned");
+            if let Some(a) = guard.get_mut(lextext) {
+                a.inuse = 1;
+            }
+            drop(guard);
+            LEX_LEXSTOP.set(false);
+            return true;
+        }
+    }
+
+    // lex.c:1934-1943 — suffix-alias lookup. The token must end
+    // with `.SUFFIX`, the suffix name must be a registered
+    // suffix-alias, AND the lexer must be in command position.
+    if LEX_INCMDPOS.get() {
+        if let Some(dot_pos) = lextext.rfind('.') {
+            if dot_pos > 0 && dot_pos + 1 < lextext.len() {
+                let suffix = &lextext[dot_pos + 1..];
+                let alias_clone: Option<crate::ported::zsh_h::alias> = {
+                    let guard = crate::ported::hashtable::sufaliastab_lock()
+                        .read()
+                        .expect("sufaliastab poisoned");
+                    guard.get(suffix).cloned()
+                };
+                if let Some(alias) = alias_clone {
+                    if alias.inuse == 0 {
+                        // c:1938-1940 — three inpush calls in order:
+                        // the original word, a space, the alias text.
+                        // inpush stacks LIFO so the original word is
+                        // popped FIRST (re-emitted to extend the
+                        // current token), then space, then the alias
+                        // body. C does it the same way.
+                        crate::ported::input::inpush(
+                            lextext,
+                            crate::ported::zsh_h::INP_ALIAS,
+                            Some(suffix.to_string()),
+                        );
+                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        crate::ported::input::inpush(
+                            &alias.text,
+                            crate::ported::zsh_h::INP_ALIAS,
+                            None,
+                        );
+                        // c:1941 — `an->inuse = 1;`.
+                        let mut guard = crate::ported::hashtable::sufaliastab_lock()
+                            .write()
+                            .expect("sufaliastab poisoned");
+                        if let Some(a) = guard.get_mut(suffix) {
+                            a.inuse = 1;
+                        }
+                        drop(guard);
+                        LEX_LEXSTOP.set(false);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Run alias / reserved-word expansion on the just-lexed token.
+/// Direct port of zsh/Src/lex.c:1949-2021 `exalias`. Returns true
+/// if an alias was injected (the caller's loop should re-run
+/// gettok to consume the injected text).
+///
+/// C source flow:
+///   1. Spell-correct (lex.c:1958-1962) — disabled in zshrs.
+///   2. If tokstr is None: set lextext from `tokstrings[tok]` and
+///      checkalias against that (lex.c:1964-1969).
+///   3. Otherwise: untokenize tokstr into a working copy (lex.c:
+///      1971-1980).
+///   4. ZLE word-tracking: call gotword() if LEXFLAGS_ZLE
+///      (lex.c:1982-1991).
+///   5. Stringg tokens: try checkalias, then reservation lookup
+///      (lex.c:1993-2015).
+///   6. Clear inalmore (lex.c:2016).
+///
+/// Direct port of `exalias(void)` at `Src/lex.c:1953`. No
+/// parameters — reads global `aliastab`/`sufaliastab`/`reswdtab`
+/// directly, mirroring C.
+pub fn exalias() -> bool {
+    // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
+    // history layer doesn't track per-word boundaries here; no-op.
+
+    // c:1958-1962 — full faithful gate:
+    //   if (interact && isset(SHINSTDIN) && !strin && incasepat <= 0
+    //    && tok == STRING && !nocorrect && !(inbufflags & INP_ALIAS)
+    //    && !hist_is_in_word()
+    //    && (isset(CORRECTALL) || (isset(CORRECT) && incmdpos)))
+    //       spckword(&tokstr, 1, incmdpos, 1);
+    let inbufflags_alias =
+        (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS) != 0;
+    let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
+    if crate::ported::zsh_h::interact()
+        && isset(SHINSTDIN)
+        && !strin_set
+        && LEX_INCASEPAT.get() <= 0
+        && tok() == STRING_LEX
+        && LEX_NOCORRECT.get() == 0
+        && !inbufflags_alias
+        && crate::ported::hist::hist_is_in_word() == 0
+        && (isset(CORRECTALL) || (isset(CORRECT) && LEX_INCMDPOS.get()))
+    {
+        // Build candidate list: command names in $PATH, shell
+        // functions, aliases, builtins. C's spckword scans these
+        // internally; our Rust spckword (utils.rs:1802) takes a
+        // pre-built list, so we assemble here, run, then mutate
+        // tokstr in place when a correction crosses the distance
+        // threshold (matches C's `spckword(&tokstr, 1, incmdpos, 1);`
+        // contract — replacing tokstr with the corrected form).
+        let candidates: Vec<String> = {
+            let mut v: Vec<String> = Vec::new();
+            // Shell functions.
+            if let Ok(t) = crate::ported::hashtable::shfunctab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            // Aliases.
+            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            // Command names (from cmdnamtab — hashed $PATH lookups).
+            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            v
+        };
+        let refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+        // C calls `spckword(&tokstr, ...)` with the raw tokstr; this
+        // runs BEFORE alias / reswd lookup below, BEFORE `lextext`
+        // is computed. Read `tokstr` directly here.
+        if let Some(word) = tokstr() {
+            let word_untok = if has_token(&word) {
+                untokenize(&word)
+            } else {
+                word.clone()
+            };
+            if let Some(corrected) = crate::ported::utils::spckword(&word_untok, &refs, 3) {
+                if corrected != word_untok {
+                    // c:1962 spckword `doerr=1` arg → prompts user.
+                    // Without per-call interactive integration, accept
+                    // the correction silently when CORRECTALL is set,
+                    // skip otherwise (matches the conservative path).
+                    if isset(CORRECTALL) {
+                        set_tokstr(Some(corrected));
+                    }
+                }
+            }
+        }
+    }
+
+    // lex.c:1964-1969 — bare-token path (no tokstr).
+    if LEX_TOKSTR.with_borrow(|t| t.is_none()) {
+        // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
+        // like SEMI/AMPER/etc. the canonical text comes from a
+        // static table.
+        if tok() == NEWLIN {
+            return false;
+        }
+        // Use punctuation-token text; unknown tokens skip alias.
+        let text = match tok() {
+            SEMI => ";",
+            AMPER => "&",
+            BAR_TOK => "|",
+            _ => return false,
+        };
+        return checkalias(text);
+    }
+
+    let tokstr = tokstr().unwrap();
+    // lex.c:1973-1980 — untokenize: convert the lexer's internal
+    // tokenized form (Pound..ztokens shifts) into the literal
+    // shell text. Call the global helper.
+    let lextext = if has_token(&tokstr) {
+        untokenize(&tokstr)
+    } else {
+        tokstr.clone()
+    };
+
+    // lex.c:1982-1991 — ZLE word-tracking for completion.
+    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+        let zp = LEX_LEXFLAGS.get();
+        gotword();
+        // lex.c:1986-1990 — if gotword cleared lexflags, the cursor
+        // word has been reached; abort exalias so completion can
+        // capture the partial token unchanged.
+        // lex.c:1986 — `(zp & LEXFLAGS_ZLE) && !lexflags` — gotword
+        // fully cleared lexflags (not just ZLE) when the cursor word
+        // was reached.
+        if (zp & LEXFLAGS_ZLE) != 0 && LEX_LEXFLAGS.get() == 0 {
+            return false;
+        }
+    }
+
+    // lex.c:1993-2015 — Stringg-token alias / reswd check.
+    if tok() == STRING_LEX {
+        // c:1995 — `if ((zshlextext != copy || !isset(POSIXALIASES))
+        //   && checkalias())` — under POSIX_ALIASES, only run
+        // alias expansion on tokens that came in literal (`zshlextext
+        // == copy` means no tokenisation/untokenisation happened).
+        // zshrs always passes the untokenised `lextext`; if the
+        // original tokstr had tokens AND POSIXALIASES is on, skip
+        // the alias check (matches C `zshlextext != copy`).
+        let had_tokens = has_token(&tokstr);
+        if (!had_tokens || !isset(POSIXALIASES)) && checkalias(&lextext) {
+            return true;
+        }
+
+        // c:2002 — reserved-word lookup. Fires when in command
+        // position OR when the text is bare `}` and IGNOREBRACES
+        // / IGNORECLOSEBRACES are both unset (so `}` ends a brace
+        // block).
+        let is_close_brace_special =
+            lextext == "}" && unset(IGNOREBRACES) && unset(IGNORECLOSEBRACES);
+        // lex.c:2002-2014 — the C structure is
+        //     if ((incmdpos || ...) && (rw = reswd_lookup)) { ... }
+        //     else if (incond && lextext == "]]") { ... }
+        //     else if (incond == 1 && lextext == "!") { ... }
+        // i.e. the cond `]]`/`!` branches are reached when the reswd
+        // lookup FAILS — even if `incmdpos` is true. The previous
+        // Rust port gated on `incmdpos` alone, so any `]]` reached
+        // inside `[[ ... ]]` with incmdpos still true (the lexer
+        // doesn't auto-reset incmdpos after `[[` in all paths) was
+        // left as a STRING `]]` and par_cond_2 errored with
+        // `condition expected:`. Restructure to mirror C: look up the
+        // reswd ONLY when the gating allows, and treat a failed
+        // lookup the same as a non-gated path so the cond branches
+        // get their turn.
+        let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
+        let rw_tok: Option<lextok> = if reswd_path_eligible {
+            let guard = crate::ported::hashtable::reswdtab_lock()
+                .read()
+                .expect("reswdtab poisoned");
+            guard.get(&lextext).map(|r| r.token)
+        } else {
+            None
+        };
+        if let Some(rwtok) = rw_tok {
+            set_tok(rwtok);
+            if rwtok == REPEAT {
+                LEX_INREPEAT.set(1);
+            }
+            if rwtok == DINBRACK {
+                LEX_INCOND.set(1);
+            }
+        } else if LEX_INCOND.get() > 0 && lextext == "]]" {
+            // lex.c:2010-2012 — `]]` closes the cond expression.
+            set_tok(DOUTBRACK);
+            LEX_INCOND.set(0);
+        } else if LEX_INCOND.get() == 1 && lextext == "!" {
+            // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
+            // negation, not a literal.
+            set_tok(BANG_TOK);
+        }
+    }
+
+    // lex.c:2016 — `inalmore = 0;` — alias-more flag clears after
+    // any non-alias token.
+    // (zshrs's lexer doesn't have inalmore yet — added here would
+    // require gettok to track when an alias-pushed token has more
+    // text after it. Documented divergence.)
+
+    false
+}
+
+/// Append a char to the raw-input capture buffer. Direct port of
+/// zsh/Src/lex.c:2025 `zshlex_raw_add`. Called from hgetc
+/// when `lex_add_raw` is nonzero so cmd-sub bodies (`$(...)`,
+/// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
+pub fn zshlex_raw_add(c: char) {
+    // lex.c:2027-2028 — guard on lex_add_raw flag.
+    if LEX_LEX_ADD_RAW.get() == 0 {
+        return;
+    }
+    // lex.c:2030-2038 — append to lexbuf_raw. The C source manages
+    // explicit ptr/len/siz with hrealloc; Rust's String handles
+    // resize automatically.
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| b.add(c));
+}
+
+/// Pop the last char from the raw-input capture buffer. Direct
+/// port of zsh/Src/lex.c:2043 `zshlex_raw_back`. Called when
+/// the lexer ungets a char that was just captured raw — the raw
+/// buffer must mirror the live input so this undoes the last add.
+pub fn zshlex_raw_back() {
+    // lex.c:2045-2046 — guard.
+    if LEX_LEX_ADD_RAW.get() == 0 {
+        return;
+    }
+    // lex.c:2047-2048 — `lexbuf_raw.ptr--; lexbuf_raw.len--;`
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| b.pop());
+}
+
+/// Mark the current raw-buffer offset (for restore later). Direct
+/// port of zsh/Src/lex.c:2053 `zshlex_raw_mark`. Returns
+/// `len + offset` so callers can restore via `back_to_mark`.
+pub fn zshlex_raw_mark(offset: i64) -> i64 {
+    // lex.c:2055-2056 — guard.
+    if LEX_LEX_ADD_RAW.get() == 0 {
+        return 0;
+    }
+    // lex.c:2057 — `return lexbuf_raw.len + offset;`
+    (LEX_LEXBUF_RAW.with_borrow(|b| b.buf_len()) as i64) + offset
+}
+
+/// Restore raw-buffer offset to a previously-saved mark. Direct
+/// port of zsh/Src/lex.c:2062 `zshlex_raw_back_to_mark`.
+/// Truncates the raw buffer to `mark` bytes — undoes any captures
+/// since the mark was taken (used when a speculative parse fails
+/// and the lexer rolls back).
+pub fn zshlex_raw_back_to_mark(mark: i64) {
+    // lex.c:2064-2065 — guard.
+    if LEX_LEX_ADD_RAW.get() == 0 {
+        return;
+    }
+    // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
+    // lexbuf_raw.len = mark;` — String::truncate handles both.
+    let m = mark.max(0) as usize;
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        if let Some(p) = b.ptr.as_mut() {
+            p.truncate(m);
+        }
+        b.len = m as i32;
+    });
 }
 
 /// Skip over `(...)` for command-style substitutions: `$(...)`,
@@ -3460,99 +3388,242 @@ fn skipcomm() -> Result<(), ()> {
     }
 }
 
-/// Lex next token AND update per-context flags. Direct port of
-/// zsh/Src/lex.c:317 `ctxtlex`. The post-token state machine
-/// at lex.c:322-358 sets `incmdpos` based on the token shape:
-/// list separators / pipes / control keywords reset to cmd-pos;
-/// word-shaped tokens leave cmd-pos. Redirections (lex.c:361-368)
-/// stash prior incmdpos and force the redir target to non-cmd-pos.
-pub fn ctxtlex() {
-    // lex.c:319 — static `oldpos` cache for redir-target restore
-    // is captured per-call here as `oldpos` below (zshrs's parser
-    // re-enters ctxtlex per token, no need for static persistence).
-
-    // lex.c:321 — `zshlex();` to advance to the next token.
-    zshlex();
-
-    // c:322-358 — post-token incmdpos switch. C lists the
-    // arms exactly as enumerated below; `intypeset` is NOT set
-    // here in C (it lives in parse.c:1932/2042/2047, ported in
-    // parse.rs at the typeset-call sites).
-    match tok() {
-        // c:323-343 — separators / openers / conjunctions /
-        // control keywords — back into cmd-pos so the next token
-        // can be a fresh command.
-        SEPER | NEWLIN | SEMI | DSEMI | SEMIAMP | SEMIBAR | AMPER | AMPERBANG | INPAR_TOK
-        | INBRACE_TOK | DBAR | DAMPER | BAR_TOK | BARAMP | INOUTPAR | DOLOOP | THEN | ELIF
-        | ELSE | DOUTBRACK => {
-            LEX_INCMDPOS.set(true);
-        }
-        // c:345-353 — word/value-shaped tokens leave cmd-pos.
-        STRING_LEX | TYPESET | ENVARRAY | OUTPAR_TOK | CASE | DINBRACK => {
-            LEX_INCMDPOS.set(false);
-        }
-        // c:354-357 — `default: break;` — keep compiler happy.
-        _ => {}
-    }
-
-    // lex.c:359-360 — `infor` decay. FOR sets infor=2 so the next
-    // DINPAR can detect c-style for. After any non-DINPAR, decay
-    // to 0 (or back to 2 if we just saw FOR again).
-    if tok() != DINPAR {
-        LEX_INFOR.set(if tok() == FOR { 2 } else { 0 });
-    }
-
-    // lex.c:361-368 — redir-target context dance. After consuming
-    // a redir operator, the following token (the file path) sees
-    // incmdpos=0 even when its inherent shape would put it back
-    // in cmd-pos. After the redir target, restore from oldpos
-    // (struct field — must persist across zshlex calls).
-    if IS_REDIROP(tok()) || tok() == FOR || tok() == FOREACH || tok() == SELECT {
-        LEX_INREDIR.set(true);
-        LEX_OLDPOS.set(LEX_INCMDPOS.get());
-        LEX_INCMDPOS.set(false);
-    } else if LEX_INREDIR.get() {
-        LEX_INCMDPOS.set(LEX_OLDPOS.get());
-        LEX_INREDIR.set(false);
+#[inline]
+fn ensure_tabs_inited() {
+    if !LEX_TABS_INITED.load(std::sync::atomic::Ordering::Acquire) {
+        initlextabs();
+        LEX_TABS_INITED.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
-/// Mark the current word as the one ZLE was looking for. Direct
-/// port of `gotword(void)` from `Src/lex.c:1882`. Computes the
-/// new-word-end (`nwe`) and new-word-begin (`nwb`) line positions
-/// based on `zlemetall`, `inbufct`, `addedx`, and `wordbeg`, then
-/// — if the cursor (`zlemetacs`) falls inside that range — writes
-/// `wb`/`we` and clears `lexflags`.
-pub fn gotword() {
-    use std::sync::atomic::Ordering;
-    let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
-    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
-    let addedx = crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst);
-    let inbufct = crate::ported::input::inbufct.with(|c| c.get());
-    let wordbeg = LEX_WORDBEG.get();
-
-    // c:1884 — `int nwe = zlemetall + 1 - inbufct + (addedx == 2 ? 1 : 0);`
-    let nwe = zlemetall + 1 - inbufct + if addedx == 2 { 1 } else { 0 };
-    // c:1885 — `if (zlemetacs <= nwe)`
-    if zlemetacs <= nwe {
-        // c:1886 — `int nwb = zlemetall - wordbeg + addedx;`
-        let nwb = zlemetall - wordbeg + addedx;
-        // c:1887-1893 — `if (zlemetacs >= nwb) { wb = nwb; we = nwe; }
-        // else { wb = zlemetacs + addedx; if (we < wb) we = wb; }`.
-        if zlemetacs >= nwb {
-            crate::ported::zle::compcore::WB.store(nwb, Ordering::SeqCst);
-            crate::ported::zle::compcore::WE.store(nwe, Ordering::SeqCst);
-        } else {
-            let wb_new = zlemetacs + addedx;
-            crate::ported::zle::compcore::WB.store(wb_new, Ordering::SeqCst);
-            let we_cur = crate::ported::zle::compcore::WE.load(Ordering::SeqCst);
-            if we_cur < wb_new {
-                crate::ported::zle::compcore::WE.store(wb_new, Ordering::SeqCst);
-            }
-        }
-        // c:1895 — `lexflags = 0;`
-        LEX_LEXFLAGS.set(0);
+/// Table accessor for `lexact1[c]`. Mirrors C's `lexact1[STOUC(c)]`
+/// macro at `Src/lex.c:725`.
+#[inline]
+pub fn lexact1_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return LX1_OTHER;
     }
+    ensure_tabs_inited();
+    let table = LEXACT1.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
+/// Table accessor for `lexact2[c]`. Mirrors C's `lexact2[STOUC(c)]`
+/// macro at `Src/lex.c:919` (the dispatch inside `gettokstr`).
+#[inline]
+pub fn lexact2_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return LX2_OTHER;
+    }
+    ensure_tabs_inited();
+    let table = LEXACT2.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
+/// Table accessor for `lextok2[c]`. Mirrors C's `lextok2[STOUC(c)]`
+/// at `Src/lex.c:919+` — used to translate a glob metacharacter to
+/// its byte-token form (`*` → `Star`, etc.).
+#[inline]
+pub fn lextok2_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return c as u8;
+    }
+    ensure_tabs_inited();
+    let table = LEXTOK2.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
+/// The Zsh Lexer.
+///
+// All lexer state lives in the file-scope `LEX_*` thread_local statics
+// above, each one matching a `static` in `Src/lex.c`. There's no
+// holder struct — callers use the free fns directly:
+//
+//    lex_init(input);
+//    zshlex();
+//   let tok =  tok();
+//
+// Accessor fns named after the former field identifiers (`tok()`,
+// `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
+
+// ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
+
+pub fn toklineno() -> u64 {
+    LEX_TOKLINENO.get()
+}
+pub fn set_toklineno(v: u64) {
+    LEX_TOKLINENO.set(v);
+}
+pub fn tokfd() -> i32 {
+    LEX_TOKFD.get()
+}
+pub fn set_tokfd(v: i32) {
+    LEX_TOKFD.set(v);
+}
+pub fn isnewlin() -> i32 {
+    LEX_ISNEWLIN.get()
+}
+pub fn set_isnewlin(v: i32) {
+    LEX_ISNEWLIN.set(v);
+}
+pub fn inrepeat() -> i32 {
+    LEX_INREPEAT.get()
+}
+pub fn set_inrepeat(v: i32) {
+    LEX_INREPEAT.set(v);
+}
+pub fn infor() -> i32 {
+    LEX_INFOR.get()
+}
+pub fn set_infor(v: i32) {
+    LEX_INFOR.set(v);
+}
+pub fn inredir() -> bool {
+    LEX_INREDIR.get()
+}
+pub fn set_inredir(v: bool) {
+    LEX_INREDIR.set(v);
+}
+pub fn intypeset() -> bool {
+    LEX_INTYPESET.get()
+}
+pub fn set_intypeset(v: bool) {
+    LEX_INTYPESET.set(v);
+}
+pub fn lineno() -> u64 {
+    LEX_LINENO.get()
+}
+pub fn set_lineno(v: u64) {
+    LEX_LINENO.set(v);
+}
+pub fn incmdpos() -> bool {
+    LEX_INCMDPOS.get()
+}
+pub fn set_incmdpos(v: bool) {
+    LEX_INCMDPOS.set(v);
+}
+/// Port of `int nocorrect` from `Src/lex.c:144`. Getter/setter for
+/// the spelling-correction suppression flag. `par_redir` saves and
+/// restores this around the zshlex that consumes the redir target.
+pub fn nocorrect() -> i32 {
+    LEX_NOCORRECT.get()
+}
+pub fn set_nocorrect(v: i32) {
+    LEX_NOCORRECT.set(v);
+}
+/// Port of `int noaliases` from `Src/lex.c:135`. Suppresses alias
+/// expansion. par_case saves and restores this around the case-word
+/// + `in` lex so the literal `in` keyword isn't alias-expanded.
+pub fn noaliases() -> bool {
+    LEX_NOALIASES.get()
+}
+pub fn set_noaliases(v: bool) {
+    LEX_NOALIASES.set(v);
+}
+pub fn incond() -> i32 {
+    LEX_INCOND.get()
+}
+pub fn set_incond(v: i32) {
+    LEX_INCOND.set(v);
+}
+
+// `hashchar` / `bangchar` / `hatchar` — port of `unsigned char
+// hashchar, bangchar, hatchar;` declared in `Src/params.c:132` and
+// assigned in `init_main()` (Src/init.c:1100-1102). C zsh exposes
+// these as mutable globals for `$histchars` to rewrite; zshrs
+// pins the default values here (the `$histchars` runtime mirror
+// lives at `crate::ported::hist::bangchar` (AtomicI32)).
+#[allow(non_upper_case_globals)]
+const hashchar: char = '#';
+#[allow(non_upper_case_globals)]
+const bangchar: char = '!';
+#[allow(non_upper_case_globals)]
+#[allow(dead_code)]
+const hatchar: char = '^';
+pub fn incasepat() -> i32 {
+    LEX_INCASEPAT.get()
+}
+pub fn set_incasepat(v: i32) {
+    LEX_INCASEPAT.set(v);
+}
+/// `char *tokstr` accessors — direct port of lex.c:170 file-static.
+pub fn tokstr() -> Option<String> {
+    LEX_TOKSTR.with_borrow(|t| t.clone())
+}
+pub fn set_tokstr(v: Option<String>) {
+    LEX_TOKSTR.with_borrow_mut(|t| *t = v);
+}
+/// `enum lextok tok` accessors — direct port of lex.c:180 file-static.
+pub fn tok() -> lextok {
+    LEX_TOK.get()
+}
+pub fn set_tok(v: lextok) {
+    LEX_TOK.set(v);
+}
+pub fn pos() -> usize {
+    LEX_POS.get()
+}
+pub fn set_pos(v: usize) {
+    LEX_POS.set(v);
+}
+/// Slice the input source from `start..end` — used by parse.rs to
+/// capture function body source text. Returns None if out-of-range.
+pub fn input_slice(start: usize, end: usize) -> Option<String> {
+    LEX_INPUT.with_borrow(|s| s.get(start..end).map(String::from))
+}
+
+/// Create a new lexer for the given input
+pub fn lex_init(input: &str) {
+    // Ensure `typtab[]` is initialised so `iblank()` / `inblank()` /
+    // `idigit()` / etc. (called throughout the lexer) work. C zsh
+    // calls `inittyptab()` once at shell startup in `init_main()`
+    // (init.c:1287); zshrs lex tests bypass that path so we kick
+    // it here too. `inittyptab` is idempotent (sets `ZTF_INIT`).
+    crate::ported::utils::inittyptab();
+    // Reset migrated thread-locals so a fresh lexer instance
+    // starts from a clean slate (same as the C source's
+    // file-static initializers in lex.c).
+    LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
+    LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
+    // P7-batch-3 fields: reset to their C-source initial values.
+    LEX_LEXSTOP.set(false);
+    LEX_INCONDPAT.set(false);
+    LEX_OLDPOS.set(true);
+    LEX_DBPARENS.set(false);
+    LEX_NOALIASES.set(false);
+    LEX_NOCORRECT.set(0);
+    LEX_NOCOMMENTS.set(false);
+    LEX_LEXFLAGS.set(0);
+    LEX_ISFIRSTLN.set(true);
+    LEX_LEX_ADD_RAW.set(0);
+    // P7-batch-4 resets.
+    LEX_TOKFD.set(-1);
+    LEX_TOKLINENO.set(1);
+    LEX_INREDIR.set(false);
+    LEX_INFOR.set(0);
+    LEX_INREPEAT.set(0);
+    LEX_INTYPESET.set(false);
+    LEX_ISNEWLIN.set(0);
+    // P7-batch-5 resets.
+    LEX_LINENO.set(1);
+    LEX_INCMDPOS.set(true);
+    LEX_INCOND.set(0);
+    LEX_INCASEPAT.set(0);
+    // P7-batch-6 reset.
+    LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
+    // P7-batch-7 resets.
+    LEX_TOKSTR.with_borrow_mut(|t| *t = None);
+    LEX_TOK.set(ENDINPUT);
+    // P7-batch-8: input + pos.
+    LEX_INPUT.with_borrow_mut(|s| {
+        s.clear();
+        s.push_str(input);
+    });
+    LEX_POS.set(0);
 }
 
 // Direct port of the anonymous enum at `Src/lex.c:483-487`:
@@ -3564,219 +3635,148 @@ pub const CMD_OR_MATH_CMD: i32 = 0;
 pub const CMD_OR_MATH_MATH: i32 = 1;
 pub const CMD_OR_MATH_ERR: i32 = 2;
 
-// ============================================================================
-// Additional parsing functions ported from lex.c
-// ============================================================================
+/// Check recursion depth; returns true if exceeded
+#[inline]
+/// Get next character from input
+pub(crate) fn hgetc() -> Option<char> {
+    // Re-read from unget_buf: increment lineno on `\n` HERE
+    // too. hungetc() decremented lineno when the char was put
+    // back; without a matching increment on the way out, every
+    // `\n` that's ungetted-then-reread leaves lineno
+    // permanently one short. Symptom: $LINENO stuck at 1 in
+    // every script statement because the parser ungets the
+    // separating newline once between statements.
+    if let Some(c) = LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front()) {
+        if c == '\n' {
+            LEX_LINENO.set(LEX_LINENO.get() + 1);
+        }
+        // c:input.c:360-361 — every char returned by ingetc feeds
+        // the raw buffer when lex_add_raw is on. Re-reads from the
+        // unget queue count the same as fresh reads; the matching
+        // `zshlex_raw_back()` call in hungetc removed the prior
+        // record, so this restores it.
+        zshlex_raw_add(c);
+        return Some(c);
+    }
 
-/// Check whether we're looking at valid numeric globbing syntax
-/// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
-/// opening `<`. Leaves the input position unchanged, returning true
-/// or false.
-///
-/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
-/// hgetc/hungetc against the input stream and a temp buffer to
-/// remember consumed chars; zshrs takes a `(input, pos)` slice and
-/// scans without consumption. Same predicate, different I/O model.
-pub fn isnumglob(input: &str, pos: usize) -> bool {
-    let chars: Vec<char> = input[pos..].chars().collect();
-    let mut i = 0;
-    let mut expect_close = false;
+    let c = LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())?;
+    LEX_POS.set(LEX_POS.get() + c.len_utf8());
 
-    // Look for digits, then -, then digits, then >
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_ascii_digit() {
-            i += 1;
-        } else if c == '-' && !expect_close {
-            expect_close = true;
-            i += 1;
-        } else if c == '>' && expect_close {
-            return true;
-        } else {
-            break;
+    if c == '\n' {
+        LEX_LINENO.set(LEX_LINENO.get() + 1);
+    }
+
+    // c:input.c:360-361 — `if (!lexstop) zshlex_raw_add(lastc);`
+    // Every char read from input also feeds the raw buffer when
+    // lex_add_raw is on (used by skipcomm to capture verbatim
+    // `$(...)` body text into the parent token).
+    zshlex_raw_add(c);
+
+    Some(c)
+}
+
+/// Put character back into input. Direct port of `inungetc(int c)`
+/// from `Src/input.c:546-583`. Critical: C decrements lineno on
+/// `\n` ungetc UNCONDITIONALLY (modulo input-flags). Rust's
+/// previous `LEX_LINENO.get() > 1` guard caused off-by-one drift
+/// when lineno was set to 0 (via par_funcdef's `set_lineno(0)`)
+/// then a `\n` got read+ungetted: hungetc wouldn't decrement
+/// (because LEX_LINENO==1 fails `> 1`), but the subsequent re-read
+/// in hgetc DOES increment, leaving LEX_LINENO=2 instead of 1.
+fn hungetc(c: char) {
+    LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
+    if c == '\n' {
+        // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
+        // !strin) && c == '\n') lineno--;`
+        let cur = LEX_LINENO.get();
+        if cur > 0 {
+            LEX_LINENO.set(cur - 1);
         }
     }
-    false
+    LEX_LEXSTOP.set(false);
+    // c:input.c:549,609 — `inungetc` calls `zshlex_raw_back()` so
+    // the un-gotten char isn't double-counted in lexbuf_raw on
+    // re-read. hgetc will re-add it next time it's pulled.
+    zshlex_raw_back();
 }
 
-/// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.
-///
-/// C body:
-/// ```c
-/// zcontext_save();
-/// untokenize(*s);
-/// inpush(dupstring_wlen(*s, l), 0, NULL);
-/// strinbeg(0);
-/// lexbuf.len = 0; lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1;
-/// err = dquote_parse('\0', 1);
-/// if (tokstr) *s = tokstr;
-/// *lexbuf.ptr = '\0';
-/// strinend();
-/// inpop();
-/// zcontext_restore();
-/// return err;
-/// ```
-///
-/// Drives the real `dquote_parse` (with `endchar='\0'`, `sub=true`)
-/// through the nested-lex-context machinery so `${...}`, `$(...)`,
-/// `$((...))`, backticks, etc. tokenize recursively the same way
-/// they do during a normal command parse. Returns the tokenized
-/// string on success.
-pub fn parsestrnoerr(s: &str) -> Result<String, String> {
-    let untok = untokenize(s);                                                // c:1716 `untokenize(*s);`
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());     // c:1717
-    // c:1715 `zcontext_save();`
-    crate::ported::context::zcontext_save();
-    // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
-    // c:1718 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
-    // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
-    // `add()` writes append onto our copy. `lexbuf.ptr/siz/len` are
-    // reset; tokstr is aliased to the buffer.
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = Some(String::with_capacity(untok.len() + 1));
-        b.siz = (untok.len() + 1) as i32;
-        b.len = 0;
-    });
-    set_tokstr(None);
-    // c:1722 `err = dquote_parse('\0', 1);`
-    let parse_err = dquote_parse('\0', true).is_err();
-    // c:1723-1725 — `if (tokstr) *s = tokstr; *lexbuf.ptr = '\0';`
-    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
-    // c:1726 `strinend();`
-    crate::ported::hist::strinend();
-    // c:1727 `inpop();`
-    crate::ported::input::inpop();
-    // c:1729 `zcontext_restore();`
-    crate::ported::context::zcontext_restore();
-    if parse_err {
-        // C parsestrnoerr (lex.c:1713) returns the offending char so the
-        // caller (parsestr at lex.c:1694) can format `zerr("parse error
-        // near \`%c'", err)`. zshrs returns Err(message); the diagnostic
-        // already went through zerr at the dquote_parse / gettokstr
-        // failure site, so a generic message is sufficient here.
-        Err("parse error".to_string())
-    } else {
-        Ok(result)
+/// Peek at next character without consuming
+#[allow(dead_code)]
+fn peek() -> Option<char> {
+    if let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
+        return Some(c);
     }
+    LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())
 }
 
-/// Tokenize a string as if in double quotes (error-reporting variant).
-/// Direct port of `parsestr(char **s)` from `Src/lex.c:1694`. C
-/// source: `if ((err = parsestrnoerr(s))) { untokenize(*s); ...
-/// zerr("parse error near `%c'", err); tok = LEXERR; }`. zshrs's
-/// wrapper preserves the Result and lets the caller emit the
-/// diagnostic.
-pub fn parsestr(s: &str) -> Result<String, String> {
-    parsestrnoerr(s)
+/// Port of `void (*hwaddc)(int)` from `Src/hist.c:43` — function-
+/// pointer that the history layer flips between `ihwaddc` (real
+/// append at hist.c:357, ported at `hist::ihwaddc`) when history
+/// is active, and `nohw` (dummy at hist.c:1062) when it isn't.
+/// Setup happens in `hbegin()` at hist.c:1141/1151. zshrs doesn't
+/// flip the pointer yet, but `ihwaddc` is itself a no-op when
+/// `chline` is empty, so calling it unconditionally matches C
+/// behavior for the history-inactive case. The HISTALLOWCLOBBER
+/// caller sites at `Src/lex.c:903, 910` write `|` so the history
+/// line records the implicit clobber as `>|`/`>>|`.
+#[inline]
+fn hwaddc(c: char) {
+    crate::ported::hist::ihwaddc(c as i32);
 }
 
-/// Parse a subscript in string s. Return the position after the
-/// closing bracket, or None on error.
+/// Check if a string is a valid assignment target (identifier or array ref).
 ///
-/// Direct port of zsh/Src/lex.c:1743 `parse_subscript`. The C
-/// source uses dupstring_wlen + inpush + dquote_parse to lex the
-/// subscript through the main lexer; zshrs implements a focused
-/// bracket-balancing walker that handles the same nesting rules
-/// (`[...]`, `(...)`, `{...}`) without re-entering the lexer.
-///
-/// zshrs port note: zsh's parse_subscript also handles a `sub`
-/// flag that controls whether `$` and quotes are tokenized — that
-/// flag isn't exposed here. Most callers don't need it; the few
-/// that do (parameter expansion's `${var[expr]}`) handle the
-/// quote-aware lex separately at the expansion layer.
-pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
-    // c:1746 `if (!*s || *s == endchar) return 0;`
-    if s.is_empty() || s.starts_with(endchar) {
-        return None;
-    }
-    let l = s.len();
-    let untok = untokenize(s);                                                // c:1749 `untokenize(t = dupstring_wlen(s, l));`
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
-    // c:1748 `zcontext_save();`
-    crate::ported::context::zcontext_save();
-    // c:1750 `inpush(t, 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
-    // c:1751 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
-    // c:1763-1765 — seed lexbuf and run dquote_parse with the
-    // caller's `endchar` + `sub=false` (zshrs's API omits the C `sub`
-    // arg — all current callers pass 0).
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = Some(String::with_capacity(l + 1));
-        b.siz = (l + 1) as i32;
-        b.len = 0;
-    });
-    let parse_err = dquote_parse(endchar, false).is_err();
-    let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
-    // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
-    // `zcontext_restore();`
-    crate::ported::hist::strinend();
-    crate::ported::input::inpop();
-    crate::ported::context::zcontext_restore();
-    if parse_err {
-        return None;
-    }
-    Some(toklen)
-}
+/// zsh accepts identifier (`[A-Za-z_][A-Za-z0-9_]*`) optionally followed by
+/// a `[...]` subscript. Bare digits are NOT a valid lvalue (rejected at
+/// `if c.is_ascii_digit()` below — array index expressions like `arr[2]`
+/// are caught by the subscript handler, not here). And the first char
+/// must NOT be a zsh internal token byte — `$=foo` (where `$` becomes
+/// the Stringg token 0x85) is parameter substitution with the `=` flag,
+/// NOT an envstring assignment.
+fn is_valid_assignment_target(s: &str) -> bool {
+    let mut chars = s.chars().peekable();
 
-/// Tokenize a string as if it were a normal command-line argument
-/// but it may contain separators. Used for ${...%...} substitutions.
-///
-/// Direct port of zsh/Src/lex.c:1796 `parse_subst_string`.
-/// zsh's version sets `noaliases = 1` + `lexflags = 0` + uses
-/// zcontext_save/inpush/strinbeg → dquote_parse('\0', 1) →
-/// strinend/inpop/zcontext_restore. zshrs's standalone walker
-/// produces the same Bnull/Snull/Dnull/Inpar/Inbrack markers
-/// without re-entering the lexer.
-///
-/// zshrs port note: the C source returns int (0=ok, char value =
-/// where it stopped on error); zshrs returns Result<String,String>
-/// returning the tokenized text directly. Lossy for callers that
-/// need to know the exact stop position, but nothing in zshrs's
-/// expansion layer uses that yet.
-pub fn parse_subst_string(s: &str) -> Result<String, String> {
-    // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`
-    if s.is_empty() {
-        return Ok(String::new());
+    // Reject leading token byte — `$VAR=` is parameter substitution,
+    // not assignment. Same for `*=`, `?=`, etc.
+    if let Some(&c) = chars.peek() {
+        if itok(c as u8) {
+            return false;
+        }
     }
-    let l = s.len();
-    let untok = untokenize(s);                                                // c:1804
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
-    // c:1803 `zcontext_save();`
-    crate::ported::context::zcontext_save();
-    // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
-    // c:1806 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
-    // c:1807-1809 — seed lexbuf with the input string.
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = Some(String::with_capacity(l + 1));
-        b.siz = (l + 1) as i32;
-        b.len = 0;
-    });
-    set_tokstr(None);
-    // c:1810 `c = hgetc();` / c:1811 `ctok = gettokstr(c, 1);`
-    let c0 = hgetc();
-    let ctok = match c0 {
-        Some(ch) => gettokstr(ch, true),
-        None => LEXERR,
-    };
-    use std::sync::atomic::Ordering;
-    let saw_err = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
-    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
-    // c:1813 `strinend();`
-    crate::ported::hist::strinend();
-    // c:1814 `inpop();`
-    crate::ported::input::inpop();
-    // c:1816 `zcontext_restore();`
-    crate::ported::context::zcontext_restore();
-    if ctok == LEXERR || saw_err {
-        // Diagnostic already emitted via zerr at the failure site.
-        return Err("parse error".to_string());
+
+    // Check for leading digit (invalid)
+    if let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            // Could be array index, check rest
+            while let Some(&c) = chars.peek() {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                chars.next();
+            }
+            return chars.peek().is_none();
+        }
     }
-    Ok(result)
+
+    // Check identifier
+    let mut has_ident = false;
+    while let Some(&c) = chars.peek() {
+        if c == Inbrack || c == '[' {
+            break;
+        }
+        if c == '+' {
+            // foo+=value
+            chars.next();
+            return chars.peek().is_none() || chars.peek() == Some(&'=');
+        }
+        if !crate::ztype_h::iident(c as u8) && c != Stringg && !itok(c as u8) {
+            return false;
+        }
+        has_ident = true;
+        chars.next();
+    }
+
+    has_ident
 }
 
 /// Untokenize a string - convert tokenized chars back to original

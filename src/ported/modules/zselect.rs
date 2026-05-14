@@ -242,32 +242,6 @@ pub fn bin_zselect(nam: &str, args: &[String],                               // 
     0                                                                    // c:246
 }
 
-/// WARNING: NOT IN ZSELECT.C — Rust char predicate equivalent to C `iident()`
-/// (equivalent C logic at Src/Modules/zsh.h:1700).
-/// `isident(s)` predicate — identifier validity check matching
-/// zsh's `isident()` (Src/utils.c). True iff `s` is non-empty,
-/// every char is alnum or `_`, and the first char is not a digit.
-fn is_ident(s: &str) -> bool {
-    if s.is_empty() { return false; }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if first.is_ascii_digit() { return false; }
-    if !(first.is_alphanumeric() || first == '_') { return false; }
-    chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
-// (impl ShellExecutor block moved to src/fusevm_bridge.rs at the
-// "zselect" call site — per the no-shellexecutor-in-src/ported
-// rule. Canonical bin_zselect above takes (name, args, ops, func)
-// per Src/Modules/zselect.c:65.)
-
-// =====================================================================
-// static struct builtin bintab[]                                    c:271
-// static struct features module_features                            c:275
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (zselect.c:271).
 
 
@@ -281,6 +255,18 @@ use crate::ported::zsh_h::module;
 pub fn setup_(m: *const module) -> i32 {                                // c:288
     0                                                                    // c:303
 }
+
+// (impl ShellExecutor block moved to src/fusevm_bridge.rs at the
+// "zselect" call site — per the no-shellexecutor-in-src/ported
+// rule. Canonical bin_zselect above takes (name, args, ops, func)
+// per Src/Modules/zselect.c:65.)
+
+// =====================================================================
+// static struct builtin bintab[]                                    c:271
+// static struct features module_features                            c:275
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zselect.c:295`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -311,6 +297,85 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:318
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                               // c:325
     0                                                                    // c:325
+}
+
+/// WARNING: NOT IN ZSELECT.C — Rust char predicate equivalent to C `iident()`
+/// (equivalent C logic at Src/Modules/zsh.h:1700).
+/// `isident(s)` predicate — identifier validity check matching
+/// zsh's `isident()` (Src/utils.c). True iff `s` is non-empty,
+/// every char is alnum or `_`, and the first char is not a digit.
+fn is_ident(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if first.is_ascii_digit() { return false; }
+    if !(first.is_alphanumeric() || first == '_') { return false; }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zselect".to_string()]
+}
+
+// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
 }
 
 #[cfg(test)]
@@ -381,67 +446,3 @@ mod tests {
         assert!(unsafe { libc::FD_ISSET(5, &fdset) });
     }
 }
-
-use crate::ported::zsh_h::features as features_t;
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
-}
-
-// Local stubs for the per-module entry points. C uses generic
-// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
-// 3275/3370/3445) but those take `Builtin` + `Features` pointer
-// fields the Rust port doesn't carry. The hardcoded descriptor
-// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zselect".to_string()]
-}
-
-// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 1]);
-    }
-    0
-}
-
-// WARNING: NOT IN ZSELECT.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
-    0
-}
-

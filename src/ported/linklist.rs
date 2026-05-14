@@ -237,12 +237,6 @@ impl<'a, T> IntoIterator for &'a LinkList<T> {
     }
 }
 
-/// Convert a linked list of strings to a `Vec`. Port of
-/// `hlinklist2array()` (`Src/linklist.c:423`).
-pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {                // c:423
-    list.iter().cloned().collect()
-}
-
 // ===========================================================
 // Free-fn ports of `Src/linklist.c` (functions, not macros).
 // ===========================================================
@@ -358,6 +352,12 @@ pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, dat: &T) -> Option<usiz
 /// Port of `linknodebystring(LinkList list, char *dat)` (`Src/linklist.c:403`).
 pub fn linknodebystring(list: &LinkList<String>, dat: &str) -> Option<usize> { // c:403
     list.iter().position(|v| v == dat)
+}
+
+/// Convert a linked list of strings to a `Vec`. Port of
+/// `hlinklist2array()` (`Src/linklist.c:423`).
+pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {                // c:423
+    list.iter().cloned().collect()
 }
 
 /// Port of `zlinklist2array(LinkList list, int copy)` (`Src/linklist.c:449`).

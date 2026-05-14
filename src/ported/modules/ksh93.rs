@@ -488,6 +488,15 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:284
+    // C body c:286-287 — `return 0`. Faithful empty-body port; the
+    //                    ksh93 wrapper unregisters in cleanup_ via
+    //                    deletewrapper.
+    0
+}
+
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
@@ -538,6 +547,11 @@ fn handlefeatures(
     0
 }
 
+// PM_SCALAR / PM_ARRAY / PM_SPECIAL — referenced by PARTAB above.
+const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
+const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
+const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
+
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
@@ -547,20 +561,6 @@ fn setfeatureenables(
     _f: &Mutex<features_t>,
     _e: Option<&[i32]>,
 ) -> i32 {
-    0
-}
-
-// PM_SCALAR / PM_ARRAY / PM_SPECIAL — referenced by PARTAB above.
-const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
-const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
-const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
-#[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:284
-    // C body c:286-287 — `return 0`. Faithful empty-body port; the
-    //                    ksh93 wrapper unregisters in cleanup_ via
-    //                    deletewrapper.
     0
 }
 
@@ -604,6 +604,13 @@ const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`
 // (zsh_h.rs:732), already accessible via `(*pm).u_arr`.
+
+
+
+// Suppress "unused" for the AtomicI64 import; we don't use it directly
+// (locallevel is AtomicI32 to match C `int` for that field).
+#[allow(dead_code)]
+const _: AtomicI64 = AtomicI64::new(0);
 
 #[cfg(test)]
 mod tests {
@@ -693,8 +700,3 @@ mod tests {
         assert_eq!(LOCAL_NAMEREF, PM_LOCAL | PM_UNSET | PM_NAMEREF);
     }
 }
-
-// Suppress "unused" for the AtomicI64 import; we don't use it directly
-// (locallevel is AtomicI32 to match C `int` for that field).
-#[allow(dead_code)]
-const _: AtomicI64 = AtomicI64::new(0);

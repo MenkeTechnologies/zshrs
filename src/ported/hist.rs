@@ -171,12 +171,40 @@ pub static histlinect: AtomicI64 = AtomicI64::new(0);
 /// lead character (`!` by default).
 pub static bangchar: AtomicI32 = AtomicI32::new(b'!' as i32);
 
-/// Direct port of C's `getsparam("HISTFILE")` lookup used inside
-/// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
-/// when their `fn` arg is NULL. C reads from paramtab; was reading
-/// the OS env which never carries the shell-private HISTFILE param.
-fn resolve_histfile() -> Option<String> {
-    crate::ported::params::getsparam("HISTFILE")
+// =========================================================================
+// Functions from hist.c
+// =========================================================================
+
+/// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
+/// from Src/hist.c:248.
+pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:248
+    if toplevel != 0 {                                                       // c:248
+        // top level, make this version visible to ZLE                       // c:251
+        *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone());  // c:252
+        // ensure line stored is NULL-terminated — implicit in String        // c:253-255
+    }
+    hs.histactive = histactive.load(Ordering::SeqCst) as i32;                // c:257
+    hs.histdone = histdone.load(Ordering::SeqCst);                           // c:258
+    hs.stophist = stophist.load(Ordering::SeqCst);                           // c:259
+    hs.hline = Some(chline.lock().unwrap().clone());                         // c:260
+    hs.hptr = Some(hptr.load(Ordering::SeqCst).to_string());                 // c:261
+    hs.chwords = chwords.lock().unwrap().clone();                            // c:262
+    hs.chwordlen = chwordlen.load(Ordering::SeqCst);                         // c:263
+    hs.chwordpos = chwordpos.load(Ordering::SeqCst);                         // c:264
+    // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
+    // are runtime-mutable function-pointer globals in C; the Rust port
+    // dispatches statically via crate::ported::input.
+    hs.hlinesz = hlinesz.load(Ordering::SeqCst);                             // c:272
+    hs.defev = defev.load(Ordering::SeqCst);                                 // c:273
+    hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst);         // c:274
+    // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
+    hs.csp = 0;
+
+    stophist.store(0, Ordering::SeqCst);                                     // c:296
+    chline.lock().unwrap().clear();                                          // c:296
+    hptr.store(0, Ordering::SeqCst);                                         // c:296
+    histactive.store(0, Ordering::SeqCst);                                   // c:296
+    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
 /// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.
@@ -226,94 +254,6 @@ pub const HISTFLAG_RECALL: i32 = 4;
 /// Port of `HISTFLAG_SETTY` from Src/zsh.h.
 pub const HISTFLAG_SETTY: i32 = 8;
 
-// =========================================================================
-// Helper inline accessors for the ring (private — match C internal use)
-// =========================================================================
-
-fn ring_get(ev: i64) -> Option<histent> {
-    let ring = hist_ring.lock().unwrap();
-    for h in ring.iter() {
-        if h.histnum == ev {
-            return Some(clone_histent(h));
-        }
-    }
-    None
-}
-
-fn clone_histent(h: &histent) -> histent {
-    histent {
-        node: crate::ported::zsh_h::hashnode {
-            next: None,
-            nam: h.node.nam.clone(),
-            flags: h.node.flags,
-        },
-        up: None,
-        down: None,
-        zle_text: h.zle_text.clone(),
-        stim: h.stim,
-        ftim: h.ftim,
-        words: h.words.clone(),
-        nwords: h.nwords,
-        histnum: h.histnum,
-    }
-}
-
-fn ring_position(ev: i64) -> Option<usize> {
-    hist_ring.lock().unwrap().iter().position(|h| h.histnum == ev)
-}
-
-fn ring_at(idx: usize) -> i64 {
-    hist_ring.lock().unwrap()[idx].histnum
-}
-
-fn ring_len() -> usize {
-    hist_ring.lock().unwrap().len()
-}
-
-fn ring_oldest() -> Option<i64> {
-    hist_ring.lock().unwrap().last().map(|h| h.histnum)
-}
-
-fn ring_latest() -> Option<histent> {
-    hist_ring.lock().unwrap().first().map(clone_histent)
-}
-
-// =========================================================================
-// Functions from hist.c
-// =========================================================================
-
-/// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
-/// from Src/hist.c:248.
-pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:248
-    if toplevel != 0 {                                                       // c:248
-        // top level, make this version visible to ZLE                       // c:251
-        *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone());  // c:252
-        // ensure line stored is NULL-terminated — implicit in String        // c:253-255
-    }
-    hs.histactive = histactive.load(Ordering::SeqCst) as i32;                // c:257
-    hs.histdone = histdone.load(Ordering::SeqCst);                           // c:258
-    hs.stophist = stophist.load(Ordering::SeqCst);                           // c:259
-    hs.hline = Some(chline.lock().unwrap().clone());                         // c:260
-    hs.hptr = Some(hptr.load(Ordering::SeqCst).to_string());                 // c:261
-    hs.chwords = chwords.lock().unwrap().clone();                            // c:262
-    hs.chwordlen = chwordlen.load(Ordering::SeqCst);                         // c:263
-    hs.chwordpos = chwordpos.load(Ordering::SeqCst);                         // c:264
-    // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
-    // are runtime-mutable function-pointer globals in C; the Rust port
-    // dispatches statically via crate::ported::input.
-    hs.hlinesz = hlinesz.load(Ordering::SeqCst);                             // c:272
-    hs.defev = defev.load(Ordering::SeqCst);                                 // c:273
-    hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst);         // c:274
-    // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
-    hs.csp = 0;
-
-    stophist.store(0, Ordering::SeqCst);                                     // c:296
-    chline.lock().unwrap().clear();                                          // c:296
-    hptr.store(0, Ordering::SeqCst);                                         // c:296
-    histactive.store(0, Ordering::SeqCst);                                   // c:296
-    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
-}
-
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:296.
 pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:296
@@ -350,82 +290,6 @@ pub fn hist_in_word(yesno: i32) {
 /// Port of `int hist_is_in_word(void)` from Src/hist.c.
 pub fn hist_is_in_word() -> i32 {
     if (histactive.load(Ordering::SeqCst) & HA_INWORD) != 0 { 1 } else { 0 }
-}
-
-/// Port of `void herrflush(void)` from Src/hist.c.
-pub fn herrflush() {                                                         // c:477
-    // Reset history error flags - in zsh this clears the input buffer
-    // accumulated during the failed expansion.
-}
-
-/// Port of `int digitcount(char *s)` from Src/hist.c.
-pub fn digitcount(s: &str) -> usize {                                        // c:574
-    s.chars().take_while(|c| c.is_ascii_digit()).count()
-}
-
-/// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
-pub fn nohw(_c: i32) { /* do nothing */ }                                    // c:1062
-
-/// Port of `static void nohwabort(void)` from Src/hist.c:1067.
-pub fn nohwabort() { /* do nothing */ }                                      // c:1067
-
-/// Port of `static void nohwe(void)` from Src/hist.c:1072.
-pub fn nohwe() { /* do nothing */ }                                          // c:1072
-
-/// Port of `void ihwbegin(int offset)` from Src/hist.c.
-pub fn ihwbegin(offset: i32) {                                               // c:1656
-    let stop = stophist.load(Ordering::SeqCst);
-    let active = histactive.load(Ordering::SeqCst);
-    if stop == 2 || (active & HA_INWORD) != 0 {
-        return;
-    }
-    let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 != 0 {
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
-    }
-    let start = (chline.lock().unwrap().len() as i32 + offset).max(0) as i16;
-    let mut words = chwords.lock().unwrap();
-    let idx = chwordpos.load(Ordering::SeqCst) as usize;
-    if words.len() <= idx {
-        words.resize(idx + 1, 0);
-    }
-    words[idx] = start;
-    chwordpos.fetch_add(1, Ordering::SeqCst);
-}
-
-/// Port of `void ihwabort(void)` from Src/hist.c.
-pub fn ihwabort() {                                                          // c:1675
-    let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 != 0 {
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
-    }
-    hist_keep_comment.store(1, Ordering::SeqCst);
-}
-
-/// Port of `void ihwend(void)` from Src/hist.c.
-pub fn ihwend() {                                                            // c:1686
-    let stop = stophist.load(Ordering::SeqCst);
-    let active = histactive.load(Ordering::SeqCst);
-    if stop == 2 || (active & HA_INWORD) != 0 {
-        return;
-    }
-    let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 == 0 {
-        return;
-    }
-    let cur = chline.lock().unwrap().len() as i16;
-    let mut words = chwords.lock().unwrap();
-    let start_idx = (pos - 1) as usize;
-    if cur > words[start_idx] {
-        let end_idx = pos as usize;
-        if words.len() <= end_idx {
-            words.resize(end_idx + 1, 0);
-        }
-        words[end_idx] = cur;
-        chwordpos.fetch_add(1, Ordering::SeqCst);
-    } else {
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
-    }
 }
 
 /// Port of `void ihwaddc(int c)` from Src/hist.c:357.
@@ -491,104 +355,67 @@ pub fn safeinungetc(_c: i32) {
     // port wired here the call site uses InputBuffer::inungetc directly.
 }
 
-/// Port of `Histent quietgethist(zlong ev)` from Src/hist.c.
-pub fn quietgethist(ev: i64) -> Option<histent> {                            // c:2433
-    ring_get(ev)
+/// Port of `void herrflush(void)` from Src/hist.c.
+pub fn herrflush() {                                                         // c:477
+    // Reset history error flags - in zsh this clears the input buffer
+    // accumulated during the failed expansion.
 }
 
-/// Port of `Histent gethist(zlong ev)` from Src/hist.c.
-pub fn gethist(ev: i64) -> Option<histent> {                                 // c:2440
-    let ret = quietgethist(ev);
-    if ret.is_none() {
-        herrflush();
-        crate::ported::utils::zerr(&format!("no such event: {}", ev));
-    }
-    ret
+/// Port of `int getargc(Histent ehist)` from Src/hist.c.
+pub fn getargc(entry: &histent) -> usize {
+    entry.nwords as usize
 }
 
-/// Port of `Histent up_histent(Histent he)` from Src/hist.c.
-pub fn up_histent(current: i64) -> Option<i64> {                             // c:1304
-    let pos = ring_position(current)?;
-    if pos + 1 >= ring_len() {
-        None
-    } else {
-        Some(ring_at(pos + 1))
-    }
+/// Port of `void substfailed(void)` from Src/hist.c.
+pub fn substfailed() {
+    crate::ported::utils::zerr("substitution failed");
 }
 
-/// Port of `Histent down_histent(Histent he)` from Src/hist.c.
-pub fn down_histent(current: i64) -> Option<i64> {                           // c:1311
-    let pos = ring_position(current)?;
-    if pos == 0 {
-        None
-    } else {
-        Some(ring_at(pos - 1))
-    }
+/// Port of `int digitcount(char *s)` from Src/hist.c.
+pub fn digitcount(s: &str) -> usize {                                        // c:574
+    s.chars().take_while(|c| c.is_ascii_digit()).count()
 }
 
-/// Port of `Histent gethistent(zlong ev, int nearmatch)` from Src/hist.c.
-pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // c:1318
-    if ring_len() == 0 {
-        return None;
-    }
-    if ring_get(ev).is_some() {
-        return Some(ev);
-    }
-    if nearmatch == 0 {
-        return None;
-    }
-    let mut best_older: Option<i64> = None;
-    let mut best_newer: Option<i64> = None;
-    for i in 0..ring_len() {
-        let n = ring_at(i);
-        if n < ev && best_older.map_or(true, |b| n > b) {
-            best_older = Some(n);
-        } else if n > ev && best_newer.map_or(true, |b| n < b) {
-            best_newer = Some(n);
-        }
-    }
-    if nearmatch < 0 { best_older } else { best_newer }
+/// Port of `void strinbeg(int dohist)` from Src/hist.c.
+pub fn strinbeg(dohist: i32) {
+    strin.fetch_add(1, Ordering::SeqCst);
+    hbegin(dohist);
 }
 
-/// Port of `Histent prepnexthistent(void)` from Src/hist.c.
-pub fn prepnexthistent() -> i64 {                                            // c:1387
-    let cap = histsiz.load(Ordering::SeqCst);
-    if histlinect.load(Ordering::SeqCst) >= cap {
-        if let Some(oldest) = ring_oldest() {
-            // Drop oldest from ring
-            let mut ring = hist_ring.lock().unwrap();
-            ring.retain(|h| h.histnum != oldest);
-            histlinect.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-    let n = curhist.fetch_add(1, Ordering::SeqCst) + 1;
-    n
+/// Port of `void strinend(void)` from Src/hist.c.
+pub fn strinend() {
+    hend(None);
+    strin.fetch_sub(1, Ordering::SeqCst);
 }
 
-/// Port of `int putoldhistentryontop(int keep_going)` from Src/hist.c.
-pub fn putoldhistentryontop(_keep_going: i32) -> i32 {
-    let mut ring = hist_ring.lock().unwrap();
-    if let Some(oldest) = ring.last().map(|h| h.histnum) {
-        let pos = ring.iter().position(|h| h.histnum == oldest).unwrap();
-        let entry = ring.remove(pos);
-        ring.insert(0, entry);
-        return 1;
-    }
-    0
-}
+/// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
+pub fn nohw(_c: i32) { /* do nothing */ }                                    // c:1062
 
-/// Port of `void resizehistents(void)` from Src/hist.c.
-pub fn resizehistents() {
-    let cap = histsiz.load(Ordering::SeqCst);
-    while histlinect.load(Ordering::SeqCst) > cap {
-        if let Some(oldest) = ring_oldest() {
-            let mut ring = hist_ring.lock().unwrap();
-            ring.retain(|h| h.histnum != oldest);
-            histlinect.fetch_sub(1, Ordering::SeqCst);
-        } else {
-            break;
-        }
+/// Port of `static void nohwabort(void)` from Src/hist.c:1067.
+pub fn nohwabort() { /* do nothing */ }                                      // c:1067
+
+/// Port of `static void nohwe(void)` from Src/hist.c:1072.
+pub fn nohwe() { /* do nothing */ }                                          // c:1072
+
+/// Port of `void ihwbegin(int offset)` from Src/hist.c.
+pub fn ihwbegin(offset: i32) {                                               // c:1656
+    let stop = stophist.load(Ordering::SeqCst);
+    let active = histactive.load(Ordering::SeqCst);
+    if stop == 2 || (active & HA_INWORD) != 0 {
+        return;
     }
+    let pos = chwordpos.load(Ordering::SeqCst);
+    if pos % 2 != 0 {
+        chwordpos.fetch_sub(1, Ordering::SeqCst);
+    }
+    let start = (chline.lock().unwrap().len() as i32 + offset).max(0) as i16;
+    let mut words = chwords.lock().unwrap();
+    let idx = chwordpos.load(Ordering::SeqCst) as usize;
+    if words.len() <= idx {
+        words.resize(idx + 1, 0);
+    }
+    words[idx] = start;
+    chwordpos.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Port of `static void linkcurline(void)` from Src/hist.c:1079.
@@ -605,71 +432,6 @@ pub fn linkcurline() {                                                       // 
 pub fn unlinkcurline() {                                                     // c:1093
     *curline.lock().unwrap() = None;                                         // c:1093-1102
     curhist.fetch_sub(1, Ordering::SeqCst);                                  // c:1103
-}
-
-/// Port of `Histent movehistent(Histent he, int n, int xflags)` from Src/hist.c.
-pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
-    let mut cur = start;
-    while n < 0 {
-        cur = up_histent(cur)?;
-        if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {
-                n += 1;
-            }
-        }
-    }
-    while n > 0 {
-        cur = down_histent(cur)?;
-        if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {
-                n -= 1;
-            }
-        }
-    }
-    Some(cur)
-}
-
-/// Port of `int hcomsearch(char *str)` from Src/hist.c.
-pub fn hcomsearch(prefix: &str) -> Option<i64> {
-    let mut cur = curhist.load(Ordering::SeqCst);
-    while let Some(prev) = up_histent(cur) {
-        cur = prev;
-        if let Some(entry) = ring_get(cur) {
-            if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
-                continue;
-            }
-            if entry.node.nam.starts_with(prefix) {
-                return Some(cur);
-            }
-        }
-    }
-    None
-}
-
-/// Port of `int hconsearch(char *str, int *back)` from Src/hist.c.
-pub fn hconsearch(needle: &str, start: Option<i64>) -> Option<i64> {
-    let mut cur = start.unwrap_or_else(|| curhist.load(Ordering::SeqCst));
-    while let Some(prev) = up_histent(cur) {
-        cur = prev;
-        if let Some(entry) = ring_get(cur) {
-            if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
-                continue;
-            }
-            if entry.node.nam.contains(needle) {
-                return Some(cur);
-            }
-        }
-    }
-    None
-}
-
-/// Port of `int checkcurline(void)` from Src/hist.c.
-pub fn checkcurline(line: &str) -> i32 {
-    if let Some(latest) = ring_latest() {
-        if latest.node.nam == line { 1 } else { 0 }
-    } else {
-        0
-    }
 }
 
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
@@ -756,6 +518,151 @@ pub fn hbegin(dohist: i32) {                                                 // 
             | HFILE_USE_OPTIONS as i32
             | HFILE_FAST as i32);
     }
+}
+
+/// Port of `char *histreduceblanks(void)` from Src/hist.c.
+pub fn histreduceblanks(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut prev_space = false;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            if !prev_space { result.push(' '); prev_space = true; }
+        } else {
+            result.push(c); prev_space = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+/// Port of `void histremovedups(void)` from Src/hist.c.
+pub fn histremovedups() {
+    let mut ring = hist_ring.lock().unwrap();
+    let mut seen = std::collections::HashSet::new();
+    ring.retain(|h| seen.insert(h.node.nam.clone()));
+    let new_ct = ring.len() as i64;
+    drop(ring);
+    histlinect.store(new_ct, Ordering::SeqCst);
+}
+
+/// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
+pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // c:1266
+    let dir: i32 = if n < 0 { -1 } else if n > 0 { 1 } else { 0 };           // c:1266
+    let he = gethistent(hl, dir);                                            // c:1269
+    let he = match he {
+        None => return 0,                                                    // c:1271-1272
+        Some(h) => h,
+    };
+    if he != hl {                                                            // c:1273
+        n -= dir;                                                            // c:1274
+    }
+    let final_he = if n != 0 {                                               // c:1275
+        movehistent(he, n, xflags as u32)                                    // c:1276
+    } else {
+        Some(he)
+    };
+    match final_he {                                                         // c:1277
+        None => {
+            if dir < 0 {                                                     // c:1278
+                firsthist() - 1
+            } else {
+                curhist.load(Ordering::SeqCst) + 1
+            }
+        }
+        Some(h) => h,                                                        // c:1279
+    }
+}
+
+/// Port of `Histent movehistent(Histent he, int n, int xflags)` from Src/hist.c.
+pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
+    let mut cur = start;
+    while n < 0 {
+        cur = up_histent(cur)?;
+        if let Some(e) = ring_get(cur) {
+            if (e.node.flags as u32 & xflags) == 0 {
+                n += 1;
+            }
+        }
+    }
+    while n > 0 {
+        cur = down_histent(cur)?;
+        if let Some(e) = ring_get(cur) {
+            if (e.node.flags as u32 & xflags) == 0 {
+                n -= 1;
+            }
+        }
+    }
+    Some(cur)
+}
+
+/// Port of `Histent up_histent(Histent he)` from Src/hist.c.
+pub fn up_histent(current: i64) -> Option<i64> {                             // c:1304
+    let pos = ring_position(current)?;
+    if pos + 1 >= ring_len() {
+        None
+    } else {
+        Some(ring_at(pos + 1))
+    }
+}
+
+/// Port of `Histent down_histent(Histent he)` from Src/hist.c.
+pub fn down_histent(current: i64) -> Option<i64> {                           // c:1311
+    let pos = ring_position(current)?;
+    if pos == 0 {
+        None
+    } else {
+        Some(ring_at(pos - 1))
+    }
+}
+
+/// Port of `Histent gethistent(zlong ev, int nearmatch)` from Src/hist.c.
+pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // c:1318
+    if ring_len() == 0 {
+        return None;
+    }
+    if ring_get(ev).is_some() {
+        return Some(ev);
+    }
+    if nearmatch == 0 {
+        return None;
+    }
+    let mut best_older: Option<i64> = None;
+    let mut best_newer: Option<i64> = None;
+    for i in 0..ring_len() {
+        let n = ring_at(i);
+        if n < ev && best_older.map_or(true, |b| n > b) {
+            best_older = Some(n);
+        } else if n > ev && best_newer.map_or(true, |b| n < b) {
+            best_newer = Some(n);
+        }
+    }
+    if nearmatch < 0 { best_older } else { best_newer }
+}
+
+/// Port of `int putoldhistentryontop(int keep_going)` from Src/hist.c.
+pub fn putoldhistentryontop(_keep_going: i32) -> i32 {
+    let mut ring = hist_ring.lock().unwrap();
+    if let Some(oldest) = ring.last().map(|h| h.histnum) {
+        let pos = ring.iter().position(|h| h.histnum == oldest).unwrap();
+        let entry = ring.remove(pos);
+        ring.insert(0, entry);
+        return 1;
+    }
+    0
+}
+
+/// Port of `Histent prepnexthistent(void)` from Src/hist.c.
+pub fn prepnexthistent() -> i64 {                                            // c:1387
+    let cap = histsiz.load(Ordering::SeqCst);
+    if histlinect.load(Ordering::SeqCst) >= cap {
+        if let Some(oldest) = ring_oldest() {
+            // Drop oldest from ring
+            let mut ring = hist_ring.lock().unwrap();
+            ring.retain(|h| h.histnum != oldest);
+            histlinect.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let n = curhist.fetch_add(1, Ordering::SeqCst) + 1;
+    n
 }
 
 /// Port of `static int should_ignore_line(Eprog prog)` from Src/hist.c:1425.
@@ -1034,16 +941,432 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
     }
 }
 
-/// Port of `void strinbeg(int dohist)` from Src/hist.c.
-pub fn strinbeg(dohist: i32) {
-    strin.fetch_add(1, Ordering::SeqCst);
-    hbegin(dohist);
+/// Port of `void ihwabort(void)` from Src/hist.c.
+pub fn ihwabort() {                                                          // c:1675
+    let pos = chwordpos.load(Ordering::SeqCst);
+    if pos % 2 != 0 {
+        chwordpos.fetch_sub(1, Ordering::SeqCst);
+    }
+    hist_keep_comment.store(1, Ordering::SeqCst);
 }
 
-/// Port of `void strinend(void)` from Src/hist.c.
-pub fn strinend() {
-    hend(None);
-    strin.fetch_sub(1, Ordering::SeqCst);
+/// Port of `void ihwend(void)` from Src/hist.c.
+pub fn ihwend() {                                                            // c:1686
+    let stop = stophist.load(Ordering::SeqCst);
+    let active = histactive.load(Ordering::SeqCst);
+    if stop == 2 || (active & HA_INWORD) != 0 {
+        return;
+    }
+    let pos = chwordpos.load(Ordering::SeqCst);
+    if pos % 2 == 0 {
+        return;
+    }
+    let cur = chline.lock().unwrap().len() as i16;
+    let mut words = chwords.lock().unwrap();
+    let start_idx = (pos - 1) as usize;
+    if cur > words[start_idx] {
+        let end_idx = pos as usize;
+        if words.len() <= end_idx {
+            words.resize(end_idx + 1, 0);
+        }
+        words[end_idx] = cur;
+        chwordpos.fetch_add(1, Ordering::SeqCst);
+    } else {
+        chwordpos.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Port of `int histbackword(void)` from Src/hist.c.
+pub fn histbackword(line: &str, pos: usize) -> usize {
+    if pos == 0 { return 0; }
+    let bytes = line.as_bytes();
+    let mut p = pos.min(bytes.len());
+    while p > 0 && bytes[p - 1].is_ascii_whitespace() { p -= 1; }
+    while p > 0 && !bytes[p - 1].is_ascii_whitespace() { p -= 1; }
+    p
+}
+
+/// Port of `int hwget(char **startptr)` from Src/hist.c.
+pub fn hwget() -> Option<(i32, String)> {
+    let pos = chwordpos.load(Ordering::SeqCst);
+    if pos == 0 || pos % 2 != 0 { return None; }
+    let words = chwords.lock().unwrap();
+    let start_idx = (pos - 2) as usize;
+    let end_idx = (pos - 1) as usize;
+    if end_idx >= words.len() { return None; }
+    let start = words[start_idx];
+    let end = words[end_idx];
+    let line = chline.lock().unwrap();
+    let s = (start.max(0)) as usize;
+    let e = (end.max(0) as usize).min(line.len());
+    if s > e || s >= line.len() { return None; }
+    Some((start as i32, line[s..e].to_string()))
+}
+
+/// Port of `int hwrep(char *cmdstr, char *matchstr, char *prevcmd)` from Src/hist.c.
+pub fn hwrep(entry: &histent, replacement: &str, word_idx: usize) -> String {
+    let words: Vec<&str> = entry.node.nam.split_whitespace().collect();
+    if word_idx >= words.len() { return entry.node.nam.clone(); }
+    let mut new_words: Vec<String> = words.iter().map(|s| s.to_string()).collect();
+    new_words[word_idx] = replacement.to_string();
+    new_words.join(" ")
+}
+
+/// Port of `char *hgetline(void)` from Src/hist.c.
+pub fn hgetline(entry: &histent) -> String {
+    entry.node.nam.clone()
+}
+
+/// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c.
+pub fn getargspec(argc: usize, c: char, marg: Option<usize>, evset: bool) -> Option<usize> {
+    match c {
+        '0' => Some(0),
+        '1'..='9' => Some(c.to_digit(10).unwrap() as usize),
+        '^' => Some(1),
+        '$' => Some(argc),
+        '%' => { if evset { return None; } marg }
+        _ => None,
+    }
+}
+
+/// Port of `int hconsearch(char *str, int *back)` from Src/hist.c.
+pub fn hconsearch(needle: &str, start: Option<i64>) -> Option<i64> {
+    let mut cur = start.unwrap_or_else(|| curhist.load(Ordering::SeqCst));
+    while let Some(prev) = up_histent(cur) {
+        cur = prev;
+        if let Some(entry) = ring_get(cur) {
+            if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
+                continue;
+            }
+            if entry.node.nam.contains(needle) {
+                return Some(cur);
+            }
+        }
+    }
+    None
+}
+
+/// Port of `int hcomsearch(char *str)` from Src/hist.c.
+pub fn hcomsearch(prefix: &str) -> Option<i64> {
+    let mut cur = curhist.load(Ordering::SeqCst);
+    while let Some(prev) = up_histent(cur) {
+        cur = prev;
+        if let Some(entry) = ring_get(cur) {
+            if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
+                continue;
+            }
+            if entry.node.nam.starts_with(prefix) {
+                return Some(cur);
+            }
+        }
+    }
+    None
+}
+
+/// Port of `char *chabspath(char **pathptr)` from Src/hist.c.
+pub fn chabspath(input: &str) -> Option<String> {
+    if input.is_empty() { return Some(String::new()); }
+    let mut path = if !input.starts_with('/') {
+        let cwd = std::env::current_dir().ok()?;
+        let cwd_s = cwd.to_string_lossy().into_owned();
+        if cwd_s.ends_with('/') { format!("{}{}", cwd_s, input) }
+        else { format!("{}/{}", cwd_s, input) }
+    } else {
+        input.to_string()
+    };
+    let chars: Vec<char> = path.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '/' {
+            out.push('/');
+            i += 1;
+            while i < chars.len() && chars[i] == '/' { i += 1; }
+        } else if c == '.' && i + 1 < chars.len() && chars[i + 1] == '.'
+            && (i + 2 == chars.len() || chars[i + 2] == '/')
+        {
+            if out.len() <= 1 {
+                if out.is_empty() || out == ['/'] { return None; }
+                out.push('.'); out.push('.');
+            } else if out.len() >= 3 && &out[out.len() - 3..] == &['.', '.', '/'] {
+                out.push('.'); out.push('.');
+            } else {
+                if out.last() == Some(&'/') && out.len() > 1 { out.pop(); }
+                while out.last().map(|c| *c != '/').unwrap_or(false) { out.pop(); }
+            }
+            i += 2;
+            if i < chars.len() && chars[i] == '/' { i += 1; }
+        } else if c == '.' && (i + 1 == chars.len() || chars[i + 1] == '/') {
+            i += 1;
+            while i < chars.len() && chars[i] == '/' { i += 1; }
+        } else {
+            out.push(c); i += 1;
+        }
+    }
+    while out.len() > 1 && out.last() == Some(&'/') { out.pop(); }
+    path = out.into_iter().collect();
+    if path.is_empty() { Some("/".to_string()) } else { Some(path) }
+}
+
+/// Port of `char *chrealpath(char **pathptr)` from Src/hist.c.
+pub fn chrealpath(path: &str) -> Option<String> {
+    std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
+pub fn remtpath(s: &str, count: i32) -> String {                             // c:2056
+    let s = s.trim_end_matches('/');
+    if s.is_empty() { return "/".to_string(); }
+    if count == 0 {
+        if let Some(pos) = s.rfind('/') {
+            if pos == 0 { return "/".to_string(); }
+            return s[..pos].trim_end_matches('/').to_string();
+        }
+        return ".".to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut remaining = count;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'/' {
+            remaining -= 1;
+            if remaining <= 0 {
+                if i == 0 { return "/".to_string(); }
+                return s[..i].to_string();
+            }
+            while i + 1 < bytes.len() && bytes[i + 1] == b'/' { i += 1; }
+        }
+        i += 1;
+    }
+    s.to_string()
+}
+
+/// Port of `char *remtext(char **str)` from Src/hist.c:2122.
+pub fn remtext(s: &str) -> String {                                          // c:2122
+    if let Some(slash_pos) = s.rfind('/') {
+        let after_slash = &s[slash_pos + 1..];
+        if let Some(dot_pos) = after_slash.rfind('.') {
+            if dot_pos > 0 {
+                return format!("{}/{}", &s[..slash_pos], &after_slash[..dot_pos]);
+            }
+        }
+        return s.to_string();
+    }
+    if let Some(dot_pos) = s.rfind('.') {
+        if dot_pos > 0 { return s[..dot_pos].to_string(); }
+    }
+    s.to_string()
+}
+
+/// Port of `char *rembutext(char **str)` from Src/hist.c:2136.
+pub fn rembutext(s: &str) -> String {                                        // c:2136
+    if let Some(slash_pos) = s.rfind('/') {
+        let after_slash = &s[slash_pos + 1..];
+        if let Some(dot_pos) = after_slash.rfind('.') {
+            return after_slash[dot_pos + 1..].to_string();
+        }
+        return String::new();
+    }
+    if let Some(dot_pos) = s.rfind('.') {
+        return s[dot_pos + 1..].to_string();
+    }
+    String::new()
+}
+
+/// Port of `char *remlpaths(char **str, int count)` from Src/hist.c:2152.
+pub fn remlpaths(s: &str, count: i32) -> String {                            // c:2152
+    let s = s.trim_end_matches('/');
+    if s.is_empty() { return String::new(); }
+    let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+    let n = if count == 0 { 1 } else { count as usize };
+    let take_n = n.min(parts.len());
+    if take_n == 0 { return String::new(); }
+    parts.iter().rev().take(take_n).rev().copied().collect::<Vec<&str>>().join("/")
+}
+
+/// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
+pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
+    let mut result = String::with_capacity(s.len());
+    let mut nextupper = true;
+    for c in s.chars() {
+        let modified = match how {
+            x if x == CASMOD_LOWER => c.to_lowercase().collect::<String>(),
+            x if x == CASMOD_UPPER => c.to_uppercase().collect::<String>(),
+            x if x == CASMOD_CAPS => {
+                if !c.is_alphanumeric() {
+                    nextupper = true;
+                    c.to_string()
+                } else if nextupper {
+                    nextupper = false;
+                    c.to_uppercase().collect::<String>()
+                } else {
+                    c.to_lowercase().collect::<String>()
+                }
+            }
+            _ /* CASMOD_NONE */ => c.to_string(),
+        };
+        let _ = CASMOD_NONE; // silence unused
+        result.push_str(&modified);
+    }
+    result
+}
+
+/// Port of `char *subst(...)` from Src/hist.c:2336.
+pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
+    if in_pattern.is_empty() { return s.to_string(); }
+    let mut anchor_start = false;
+    let mut anchor_end = false;
+    let mut pat = in_pattern;
+    if let Some(rest) = pat.strip_prefix('#') { anchor_start = true; pat = rest; }
+    if let Some(rest) = pat.strip_prefix('%') { anchor_end = true; pat = rest; }
+    if pat.is_empty() { return s.to_string(); }
+    let out_expanded = convamps(out_pattern, pat);
+    if anchor_start && anchor_end {
+        if s == pat { return out_expanded; }
+        return s.to_string();
+    }
+    if anchor_start {
+        if let Some(rest) = s.strip_prefix(pat) {
+            return format!("{}{}", out_expanded, rest);
+        }
+        return s.to_string();
+    }
+    if anchor_end {
+        if s.ends_with(pat) {
+            let prefix_len = s.len() - pat.len();
+            return format!("{}{}", &s[..prefix_len], out_expanded);
+        }
+        return s.to_string();
+    }
+    if global { s.replace(pat, &out_expanded) } else { s.replacen(pat, &out_expanded, 1) }
+}
+
+/// Port of `char *convamps(char *out, char *in)` from Src/hist.c.
+fn convamps(out: &str, in_pattern: &str) -> String {
+    let mut result = String::with_capacity(out.len());
+    let mut chars = out.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() { result.push(next); chars.next(); }
+        } else if c == '&' {
+            result.push_str(in_pattern);
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Port of `int checkcurline(void)` from Src/hist.c.
+pub fn checkcurline(line: &str) -> i32 {
+    if let Some(latest) = ring_latest() {
+        if latest.node.nam == line { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// Port of `Histent quietgethist(zlong ev)` from Src/hist.c.
+pub fn quietgethist(ev: i64) -> Option<histent> {                            // c:2433
+    ring_get(ev)
+}
+
+/// Port of `Histent gethist(zlong ev)` from Src/hist.c.
+pub fn gethist(ev: i64) -> Option<histent> {                                 // c:2440
+    let ret = quietgethist(ev);
+    if ret.is_none() {
+        herrflush();
+        crate::ported::utils::zerr(&format!("no such event: {}", ev));
+    }
+    ret
+}
+
+/// Port of `char *getargs(Histent ehist, int arg1, int arg2)` from Src/hist.c.
+pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
+    let nwords = entry.words.len() / 2;
+    if nwords == 0 || arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
+        herrflush();
+        crate::ported::utils::zerr("no such word in event");
+        return None;
+    }
+    if arg1 == 0 && arg2 == nwords - 1 {
+        return Some(entry.node.nam.clone());
+    }
+    let pos1 = entry.words.get(arg1 * 2).copied().unwrap_or(0) as usize;
+    let pos2 = entry.words.get(arg2 * 2 + 1).copied().unwrap_or(0) as usize;
+    if pos2 > entry.node.nam.len() || pos1 > pos2 {
+        herrflush();
+        crate::ported::utils::zerr("history event too long, can't index requested words");
+        return None;
+    }
+    Some(entry.node.nam[pos1..pos2].to_string())
+}
+
+/// Port of `char *quote(char **tr)` from Src/hist.c.
+pub fn quote(s: &str) -> String {
+    let bytes: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(bytes.len() + 3);
+    out.push('\'');
+    let mut inquotes = false;
+    let mut prev: char = '\0';
+    for (i, &c) in bytes.iter().enumerate() {
+        if c == '\'' {
+            inquotes = !inquotes;
+            out.push('\''); out.push('\\'); out.push('\''); out.push('\'');
+        } else if c.is_whitespace() && !inquotes && prev != '\\' {
+            out.push('\''); out.push(c); out.push('\'');
+        } else {
+            out.push(c);
+        }
+        prev = if i < bytes.len() { c } else { prev };
+    }
+    out.push('\'');
+    out
+}
+
+/// Port of `char *quotebreak(char **tr)` from Src/hist.c:2527.
+pub fn quotebreak(s: &str) -> String {                                       // c:2527
+    let mut result = String::with_capacity(s.len() + 10);
+    result.push('\'');
+    for c in s.chars() {
+        if c == '\'' { result.push_str("'\\''"); }
+        else if c.is_whitespace() {
+            result.push('\''); result.push(c); result.push('\'');
+        } else {
+            result.push(c);
+        }
+    }
+    result.push('\'');
+    result
+}
+
+/// Port of `char *hdynread(int stop)` from Src/hist.c.
+pub fn hdynread(_stop: i32) -> Option<String> {
+    None
+}
+
+/// Port of `char *hdynread2(int stop)` from Src/hist.c.
+pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
+    let mut out = String::new();
+    let mut consumed = 0usize;
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        consumed += c.len_utf8();
+        if c == stop || c == '\n' {
+            if c == '\n' { consumed -= c.len_utf8(); }
+            return (out, consumed);
+        }
+        if c == '\\' {
+            if let Some(esc) = chars.next() {
+                consumed += esc.len_utf8();
+                out.push(esc);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    (out, consumed)
 }
 
 /// Port of `void inithist(void)` from Src/hist.c:2613.
@@ -1054,79 +1377,36 @@ pub fn inithist() {                                                          // 
     histlinect.store(0, Ordering::SeqCst);
 }
 
-/// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
-pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3182
-    let path: String = match fn_path {                                       // c:3182
-        Some(p) => p.to_string(),
-        None => match resolve_histfile() {
-            Some(p) => p,
-            None => return 1,                                                // c:3189
-        },
-    };
-    if lockhistct.fetch_add(1, Ordering::SeqCst) > 0 {
-        return 0;
-    }
-    let max_tries = if keep_trying != 0 { 30 } else { 1 };
-    for attempt in 0..max_tries {
-        if flockhistfile(&path) != 0 {
-            return 0;
+/// Port of `void resizehistents(void)` from Src/hist.c.
+pub fn resizehistents() {
+    let cap = histsiz.load(Ordering::SeqCst);
+    while histlinect.load(Ordering::SeqCst) > cap {
+        if let Some(oldest) = ring_oldest() {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.retain(|h| h.histnum != oldest);
+            histlinect.fetch_sub(1, Ordering::SeqCst);
+        } else {
+            break;
         }
-        if attempt + 1 < max_tries {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
-    lockhistct.fetch_sub(1, Ordering::SeqCst);
-    if keep_trying != 0 { 2 } else { 1 }
-}
-
-/// Port of `void unlockhistfile(char *fn)` from Src/hist.c.
-pub fn unlockhistfile(path: &str) {
-    let prev = lockhistct.fetch_sub(1, Ordering::SeqCst);
-    if prev <= 0 {
-        lockhistct.store(0, Ordering::SeqCst);
-        return;
-    }
-    if prev == 1 {
-        let lockpath = format!("{}.lock", path);
-        let _ = std::fs::remove_file(&lockpath);
     }
 }
 
-/// Port of `int flockhistfile(char *fn)` from Src/hist.c.
-pub fn flockhistfile(path: &str) -> i32 {
-    #[cfg(unix)]
-    {
-        if let Ok(file) = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(format!("{}.lock", path))
-        {
-            let fd = file.as_raw_fd();
-            return unsafe { if libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 { 1 } else { 0 } };
-        }
-        0
-    }
-    #[cfg(not(unix))]
-    { let _ = path; 1 }
-}
-
-/// Port of `int histfileIsLocked(void)` from Src/hist.c.
-#[allow(non_snake_case)]
-pub fn histfileIsLocked() -> i32 {
-    if lockhistct.load(Ordering::SeqCst) > 0 { 1 } else { 0 }
-}
-
-/// Port of `int checklocktime(char *fn, time_t mtim)` from Src/hist.c.
-pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
-    let lockfile = format!("{}.lock", path);
-    if let Ok(meta) = std::fs::metadata(&lockfile) {
-        if let Ok(modified) = meta.modified() {
-            if let Ok(age) = modified.elapsed() {
-                if age.as_secs() < max_age_secs { return 1; }
-            }
+/// Port of `void readhistline(char *line, ...)` from Src/hist.c.
+pub fn readhistline(line: &str) -> Option<histent> {
+    let line = line.trim();
+    if line.is_empty() { return None; }
+    if let Some(rest) = line.strip_prefix(": ") {
+        if let Some(semi) = rest.find(';') {
+            let meta = &rest[..semi];
+            let cmd = &rest[semi + 1..];
+            let parts: Vec<&str> = meta.splitn(2, ':').collect();
+            let timestamp = parts.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let mut entry = make_histent(0, cmd.to_string());
+            entry.stim = timestamp;
+            return Some(entry);
         }
     }
-    0
+    Some(make_histent(0, line.to_string()))
 }
 
 /// Port of `void readhistfile(char *fn, int err, int readflags)` from Src/hist.c:2675.
@@ -1194,6 +1474,24 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {     // 
     resizehistents();
 }
 
+/// Port of `int flockhistfile(char *fn)` from Src/hist.c.
+pub fn flockhistfile(path: &str) -> i32 {
+    #[cfg(unix)]
+    {
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(format!("{}.lock", path))
+        {
+            let fd = file.as_raw_fd();
+            return unsafe { if libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 { 1 } else { 0 } };
+        }
+        0
+    }
+    #[cfg(not(unix))]
+    { let _ = path; 1 }
+}
+
 /// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
 pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // c:2922
     let path: String = match fn_path {
@@ -1220,145 +1518,61 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // 
     unlockhistfile(&path);
 }
 
-/// Port of `void readhistline(char *line, ...)` from Src/hist.c.
-pub fn readhistline(line: &str) -> Option<histent> {
-    let line = line.trim();
-    if line.is_empty() { return None; }
-    if let Some(rest) = line.strip_prefix(": ") {
-        if let Some(semi) = rest.find(';') {
-            let meta = &rest[..semi];
-            let cmd = &rest[semi + 1..];
-            let parts: Vec<&str> = meta.splitn(2, ':').collect();
-            let timestamp = parts.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            let mut entry = make_histent(0, cmd.to_string());
-            entry.stim = timestamp;
-            return Some(entry);
-        }
-    }
-    Some(make_histent(0, line.to_string()))
-}
-
-/// Construct a fresh `histent` for the ring. Rust-port helper —
-/// in C every call site inlines `zshcalloc(sizeof(struct histent))`
-/// plus field-by-field assignment (hist.c:1614/2098/...) so there
-/// is no C function to mirror. Justified in
-/// `tests/data/fake_fn_allowlist.txt:676`.
-fn make_histent(num: i64, text: String) -> histent {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    histent {
-        node: crate::ported::zsh_h::hashnode {
-            next: None,
-            nam: text,
-            flags: 0,
-        },
-        up: None,
-        down: None,
-        zle_text: None,
-        stim: now,
-        ftim: now,
-        words: Vec::new(),
-        nwords: 0,
-        histnum: num,
-    }
-}
-
-/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3845.
-pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // c:3845
-    let snap = histsave {                                                    // c:3870
-        lasthist: histfile_stats {
-            text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
-            interrupted: 0, next_write_ev: 0,
-        },
-        histfile: hf.map(|s| s.to_string()),                                 // c:3872 h->histfile = histfile
-        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()),          // c:3874 h->hist_ring = hist_ring
-        curhist: curhist.load(Ordering::SeqCst),                             // c:3875 h->curhist = curhist
-        histlinect: histlinect.load(Ordering::SeqCst),                       // c:3876
-        histsiz: histsiz.load(Ordering::SeqCst),                             // c:3877
-        savehistsiz: savehistsiz.load(Ordering::SeqCst),                     // c:3878
-        locallevel: level,                                                   // c:3879
-    };
-    histsave_stack.lock().unwrap().push(snap);                               // c:3901
-    histsave_stack_size.fetch_add(1, Ordering::SeqCst);
-    histsave_stack_pos.fetch_add(1, Ordering::SeqCst);
-    histsiz.store(hs, Ordering::SeqCst);                                     // c:3901
-    savehistsiz.store(shs, Ordering::SeqCst);                                // c:3901
-    curhist.store(0, Ordering::SeqCst);                                      // c:3901 curhist = histlinect = 0
-    histlinect.store(0, Ordering::SeqCst);
-    let _ = hf;
-}
-
-/// Port of `int pophiststack(void)` from Src/hist.c:3901.
-pub fn pophiststack() {                                                      // c:3901
-    if let Some(snap) = histsave_stack.lock().unwrap().pop() {
-        *hist_ring.lock().unwrap() = snap.hist_ring;
-        curhist.store(snap.curhist, Ordering::SeqCst);
-        histlinect.store(snap.histlinect, Ordering::SeqCst);
-        histsiz.store(snap.histsiz, Ordering::SeqCst);
-        let _ = snap.histfile;                                               // restored via param system in C
-        savehistsiz.store(snap.savehistsiz, Ordering::SeqCst);
-        histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
-        histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// Port of `void saveandpophiststack(int writeflags)` from Src/hist.c.
-pub fn saveandpophiststack(writeflags: i32) {
-    savehistfile(None, writeflags);
-    pophiststack();
-}
-
-/// Port of `char *chrealpath(char **pathptr)` from Src/hist.c.
-pub fn chrealpath(path: &str) -> Option<String> {
-    std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned())
-}
-
-/// Port of `char *chabspath(char **pathptr)` from Src/hist.c.
-pub fn chabspath(input: &str) -> Option<String> {
-    if input.is_empty() { return Some(String::new()); }
-    let mut path = if !input.starts_with('/') {
-        let cwd = std::env::current_dir().ok()?;
-        let cwd_s = cwd.to_string_lossy().into_owned();
-        if cwd_s.ends_with('/') { format!("{}{}", cwd_s, input) }
-        else { format!("{}/{}", cwd_s, input) }
-    } else {
-        input.to_string()
-    };
-    let chars: Vec<char> = path.chars().collect();
-    let mut out: Vec<char> = Vec::with_capacity(chars.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '/' {
-            out.push('/');
-            i += 1;
-            while i < chars.len() && chars[i] == '/' { i += 1; }
-        } else if c == '.' && i + 1 < chars.len() && chars[i + 1] == '.'
-            && (i + 2 == chars.len() || chars[i + 2] == '/')
-        {
-            if out.len() <= 1 {
-                if out.is_empty() || out == ['/'] { return None; }
-                out.push('.'); out.push('.');
-            } else if out.len() >= 3 && &out[out.len() - 3..] == &['.', '.', '/'] {
-                out.push('.'); out.push('.');
-            } else {
-                if out.last() == Some(&'/') && out.len() > 1 { out.pop(); }
-                while out.last().map(|c| *c != '/').unwrap_or(false) { out.pop(); }
+/// Port of `int checklocktime(char *fn, time_t mtim)` from Src/hist.c.
+pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
+    let lockfile = format!("{}.lock", path);
+    if let Ok(meta) = std::fs::metadata(&lockfile) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(age) = modified.elapsed() {
+                if age.as_secs() < max_age_secs { return 1; }
             }
-            i += 2;
-            if i < chars.len() && chars[i] == '/' { i += 1; }
-        } else if c == '.' && (i + 1 == chars.len() || chars[i + 1] == '/') {
-            i += 1;
-            while i < chars.len() && chars[i] == '/' { i += 1; }
-        } else {
-            out.push(c); i += 1;
         }
     }
-    while out.len() > 1 && out.last() == Some(&'/') { out.pop(); }
-    path = out.into_iter().collect();
-    if path.is_empty() { Some("/".to_string()) } else { Some(path) }
+    0
+}
+
+/// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
+pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3182
+    let path: String = match fn_path {                                       // c:3182
+        Some(p) => p.to_string(),
+        None => match resolve_histfile() {
+            Some(p) => p,
+            None => return 1,                                                // c:3189
+        },
+    };
+    if lockhistct.fetch_add(1, Ordering::SeqCst) > 0 {
+        return 0;
+    }
+    let max_tries = if keep_trying != 0 { 30 } else { 1 };
+    for attempt in 0..max_tries {
+        if flockhistfile(&path) != 0 {
+            return 0;
+        }
+        if attempt + 1 < max_tries {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    lockhistct.fetch_sub(1, Ordering::SeqCst);
+    if keep_trying != 0 { 2 } else { 1 }
+}
+
+/// Port of `void unlockhistfile(char *fn)` from Src/hist.c.
+pub fn unlockhistfile(path: &str) {
+    let prev = lockhistct.fetch_sub(1, Ordering::SeqCst);
+    if prev <= 0 {
+        lockhistct.store(0, Ordering::SeqCst);
+        return;
+    }
+    if prev == 1 {
+        let lockpath = format!("{}.lock", path);
+        let _ = std::fs::remove_file(&lockpath);
+    }
+}
+
+/// Port of `int histfileIsLocked(void)` from Src/hist.c.
+#[allow(non_snake_case)]
+pub fn histfileIsLocked() -> i32 {
+    if lockhistct.load(Ordering::SeqCst) > 0 { 1 } else { 0 }
 }
 
 /// Port of `int bufferwords(LinkList list, char *buf, int *index, int flags)` from Src/hist.c.
@@ -1408,244 +1622,135 @@ pub fn histsplitwords(line: &str) -> Vec<(usize, usize)> {
     words
 }
 
-/// Port of `char *subst(...)` from Src/hist.c:2336.
-pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
-    if in_pattern.is_empty() { return s.to_string(); }
-    let mut anchor_start = false;
-    let mut anchor_end = false;
-    let mut pat = in_pattern;
-    if let Some(rest) = pat.strip_prefix('#') { anchor_start = true; pat = rest; }
-    if let Some(rest) = pat.strip_prefix('%') { anchor_end = true; pat = rest; }
-    if pat.is_empty() { return s.to_string(); }
-    let out_expanded = convamps(out_pattern, pat);
-    if anchor_start && anchor_end {
-        if s == pat { return out_expanded; }
-        return s.to_string();
-    }
-    if anchor_start {
-        if let Some(rest) = s.strip_prefix(pat) {
-            return format!("{}{}", out_expanded, rest);
-        }
-        return s.to_string();
-    }
-    if anchor_end {
-        if s.ends_with(pat) {
-            let prefix_len = s.len() - pat.len();
-            return format!("{}{}", &s[..prefix_len], out_expanded);
-        }
-        return s.to_string();
-    }
-    if global { s.replace(pat, &out_expanded) } else { s.replacen(pat, &out_expanded, 1) }
-}
-
-/// Port of `char *convamps(char *out, char *in)` from Src/hist.c.
-fn convamps(out: &str, in_pattern: &str) -> String {
-    let mut result = String::with_capacity(out.len());
-    let mut chars = out.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(&next) = chars.peek() { result.push(next); chars.next(); }
-        } else if c == '&' {
-            result.push_str(in_pattern);
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
-pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
-    let mut result = String::with_capacity(s.len());
-    let mut nextupper = true;
-    for c in s.chars() {
-        let modified = match how {
-            x if x == CASMOD_LOWER => c.to_lowercase().collect::<String>(),
-            x if x == CASMOD_UPPER => c.to_uppercase().collect::<String>(),
-            x if x == CASMOD_CAPS => {
-                if !c.is_alphanumeric() {
-                    nextupper = true;
-                    c.to_string()
-                } else if nextupper {
-                    nextupper = false;
-                    c.to_uppercase().collect::<String>()
-                } else {
-                    c.to_lowercase().collect::<String>()
-                }
-            }
-            _ /* CASMOD_NONE */ => c.to_string(),
-        };
-        let _ = CASMOD_NONE; // silence unused
-        result.push_str(&modified);
-    }
-    result
-}
-
-/// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
-pub fn remtpath(s: &str, count: i32) -> String {                             // c:2056
-    let s = s.trim_end_matches('/');
-    if s.is_empty() { return "/".to_string(); }
-    if count == 0 {
-        if let Some(pos) = s.rfind('/') {
-            if pos == 0 { return "/".to_string(); }
-            return s[..pos].trim_end_matches('/').to_string();
-        }
-        return ".".to_string();
-    }
-    let bytes = s.as_bytes();
-    let mut remaining = count;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'/' {
-            remaining -= 1;
-            if remaining <= 0 {
-                if i == 0 { return "/".to_string(); }
-                return s[..i].to_string();
-            }
-            while i + 1 < bytes.len() && bytes[i + 1] == b'/' { i += 1; }
-        }
-        i += 1;
-    }
-    s.to_string()
-}
-
-/// Port of `char *remlpaths(char **str, int count)` from Src/hist.c:2152.
-pub fn remlpaths(s: &str, count: i32) -> String {                            // c:2152
-    let s = s.trim_end_matches('/');
-    if s.is_empty() { return String::new(); }
-    let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
-    let n = if count == 0 { 1 } else { count as usize };
-    let take_n = n.min(parts.len());
-    if take_n == 0 { return String::new(); }
-    parts.iter().rev().take(take_n).rev().copied().collect::<Vec<&str>>().join("/")
-}
-
-/// Port of `char *remtext(char **str)` from Src/hist.c:2122.
-pub fn remtext(s: &str) -> String {                                          // c:2122
-    if let Some(slash_pos) = s.rfind('/') {
-        let after_slash = &s[slash_pos + 1..];
-        if let Some(dot_pos) = after_slash.rfind('.') {
-            if dot_pos > 0 {
-                return format!("{}/{}", &s[..slash_pos], &after_slash[..dot_pos]);
-            }
-        }
-        return s.to_string();
-    }
-    if let Some(dot_pos) = s.rfind('.') {
-        if dot_pos > 0 { return s[..dot_pos].to_string(); }
-    }
-    s.to_string()
-}
-
-/// Port of `char *rembutext(char **str)` from Src/hist.c:2136.
-pub fn rembutext(s: &str) -> String {                                        // c:2136
-    if let Some(slash_pos) = s.rfind('/') {
-        let after_slash = &s[slash_pos + 1..];
-        if let Some(dot_pos) = after_slash.rfind('.') {
-            return after_slash[dot_pos + 1..].to_string();
-        }
-        return String::new();
-    }
-    if let Some(dot_pos) = s.rfind('.') {
-        return s[dot_pos + 1..].to_string();
-    }
-    String::new()
-}
-
-/// Port of `char *quotebreak(char **tr)` from Src/hist.c:2527.
-pub fn quotebreak(s: &str) -> String {                                       // c:2527
-    let mut result = String::with_capacity(s.len() + 10);
-    result.push('\'');
-    for c in s.chars() {
-        if c == '\'' { result.push_str("'\\''"); }
-        else if c.is_whitespace() {
-            result.push('\''); result.push(c); result.push('\'');
-        } else {
-            result.push(c);
-        }
-    }
-    result.push('\'');
-    result
-}
-
-/// Port of `char *quote(char **tr)` from Src/hist.c.
-pub fn quote(s: &str) -> String {
-    let bytes: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(bytes.len() + 3);
-    out.push('\'');
-    let mut inquotes = false;
-    let mut prev: char = '\0';
-    for (i, &c) in bytes.iter().enumerate() {
-        if c == '\'' {
-            inquotes = !inquotes;
-            out.push('\''); out.push('\\'); out.push('\''); out.push('\'');
-        } else if c.is_whitespace() && !inquotes && prev != '\\' {
-            out.push('\''); out.push(c); out.push('\'');
-        } else {
-            out.push(c);
-        }
-        prev = if i < bytes.len() { c } else { prev };
-    }
-    out.push('\'');
-    out
-}
-
-/// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c.
-pub fn getargspec(argc: usize, c: char, marg: Option<usize>, evset: bool) -> Option<usize> {
-    match c {
-        '0' => Some(0),
-        '1'..='9' => Some(c.to_digit(10).unwrap() as usize),
-        '^' => Some(1),
-        '$' => Some(argc),
-        '%' => { if evset { return None; } marg }
-        _ => None,
-    }
-}
-
-/// Port of `char *histreduceblanks(void)` from Src/hist.c.
-pub fn histreduceblanks(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut prev_space = false;
-    for c in text.chars() {
-        if c.is_whitespace() {
-            if !prev_space { result.push(' '); prev_space = true; }
-        } else {
-            result.push(c); prev_space = false;
-        }
-    }
-    result.trim().to_string()
-}
-
-/// Port of `char *hgetline(void)` from Src/hist.c.
-pub fn hgetline(entry: &histent) -> String {
-    entry.node.nam.clone()
-}
-
-/// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
-pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // c:1266
-    let dir: i32 = if n < 0 { -1 } else if n > 0 { 1 } else { 0 };           // c:1266
-    let he = gethistent(hl, dir);                                            // c:1269
-    let he = match he {
-        None => return 0,                                                    // c:1271-1272
-        Some(h) => h,
+/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3845.
+pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // c:3845
+    let snap = histsave {                                                    // c:3870
+        lasthist: histfile_stats {
+            text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
+            interrupted: 0, next_write_ev: 0,
+        },
+        histfile: hf.map(|s| s.to_string()),                                 // c:3872 h->histfile = histfile
+        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()),          // c:3874 h->hist_ring = hist_ring
+        curhist: curhist.load(Ordering::SeqCst),                             // c:3875 h->curhist = curhist
+        histlinect: histlinect.load(Ordering::SeqCst),                       // c:3876
+        histsiz: histsiz.load(Ordering::SeqCst),                             // c:3877
+        savehistsiz: savehistsiz.load(Ordering::SeqCst),                     // c:3878
+        locallevel: level,                                                   // c:3879
     };
-    if he != hl {                                                            // c:1273
-        n -= dir;                                                            // c:1274
+    histsave_stack.lock().unwrap().push(snap);                               // c:3901
+    histsave_stack_size.fetch_add(1, Ordering::SeqCst);
+    histsave_stack_pos.fetch_add(1, Ordering::SeqCst);
+    histsiz.store(hs, Ordering::SeqCst);                                     // c:3901
+    savehistsiz.store(shs, Ordering::SeqCst);                                // c:3901
+    curhist.store(0, Ordering::SeqCst);                                      // c:3901 curhist = histlinect = 0
+    histlinect.store(0, Ordering::SeqCst);
+    let _ = hf;
+}
+
+/// Port of `int pophiststack(void)` from Src/hist.c:3901.
+pub fn pophiststack() {                                                      // c:3901
+    if let Some(snap) = histsave_stack.lock().unwrap().pop() {
+        *hist_ring.lock().unwrap() = snap.hist_ring;
+        curhist.store(snap.curhist, Ordering::SeqCst);
+        histlinect.store(snap.histlinect, Ordering::SeqCst);
+        histsiz.store(snap.histsiz, Ordering::SeqCst);
+        let _ = snap.histfile;                                               // restored via param system in C
+        savehistsiz.store(snap.savehistsiz, Ordering::SeqCst);
+        histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
+        histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
     }
-    let final_he = if n != 0 {                                               // c:1275
-        movehistent(he, n, xflags as u32)                                    // c:1276
-    } else {
-        Some(he)
-    };
-    match final_he {                                                         // c:1277
-        None => {
-            if dir < 0 {                                                     // c:1278
-                firsthist() - 1
-            } else {
-                curhist.load(Ordering::SeqCst) + 1
-            }
+}
+
+/// Port of `void saveandpophiststack(int writeflags)` from Src/hist.c.
+pub fn saveandpophiststack(writeflags: i32) {
+    savehistfile(None, writeflags);
+    pophiststack();
+}
+
+/// Direct port of C's `getsparam("HISTFILE")` lookup used inside
+/// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
+/// when their `fn` arg is NULL. C reads from paramtab; was reading
+/// the OS env which never carries the shell-private HISTFILE param.
+fn resolve_histfile() -> Option<String> {
+    crate::ported::params::getsparam("HISTFILE")
+}
+
+// =========================================================================
+// Helper inline accessors for the ring (private — match C internal use)
+// =========================================================================
+
+fn ring_get(ev: i64) -> Option<histent> {
+    let ring = hist_ring.lock().unwrap();
+    for h in ring.iter() {
+        if h.histnum == ev {
+            return Some(clone_histent(h));
         }
-        Some(h) => h,                                                        // c:1279
+    }
+    None
+}
+
+fn clone_histent(h: &histent) -> histent {
+    histent {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: h.node.nam.clone(),
+            flags: h.node.flags,
+        },
+        up: None,
+        down: None,
+        zle_text: h.zle_text.clone(),
+        stim: h.stim,
+        ftim: h.ftim,
+        words: h.words.clone(),
+        nwords: h.nwords,
+        histnum: h.histnum,
+    }
+}
+
+fn ring_position(ev: i64) -> Option<usize> {
+    hist_ring.lock().unwrap().iter().position(|h| h.histnum == ev)
+}
+
+fn ring_at(idx: usize) -> i64 {
+    hist_ring.lock().unwrap()[idx].histnum
+}
+
+fn ring_len() -> usize {
+    hist_ring.lock().unwrap().len()
+}
+
+fn ring_oldest() -> Option<i64> {
+    hist_ring.lock().unwrap().last().map(|h| h.histnum)
+}
+
+fn ring_latest() -> Option<histent> {
+    hist_ring.lock().unwrap().first().map(clone_histent)
+}
+
+/// Construct a fresh `histent` for the ring. Rust-port helper —
+/// in C every call site inlines `zshcalloc(sizeof(struct histent))`
+/// plus field-by-field assignment (hist.c:1614/2098/...) so there
+/// is no C function to mirror. Justified in
+/// `tests/data/fake_fn_allowlist.txt:676`.
+fn make_histent(num: i64, text: String) -> histent {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    histent {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: text,
+            flags: 0,
+        },
+        up: None,
+        down: None,
+        zle_text: None,
+        stim: now,
+        ftim: now,
+        words: Vec::new(),
+        nwords: 0,
+        histnum: num,
     }
 }
 
@@ -1653,111 +1758,6 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // 
 pub fn firsthist() -> i64 {
     let ring = hist_ring.lock().unwrap();
     ring.last().map(|h| h.histnum).unwrap_or(1)
-}
-
-/// Port of `int hwrep(char *cmdstr, char *matchstr, char *prevcmd)` from Src/hist.c.
-pub fn hwrep(entry: &histent, replacement: &str, word_idx: usize) -> String {
-    let words: Vec<&str> = entry.node.nam.split_whitespace().collect();
-    if word_idx >= words.len() { return entry.node.nam.clone(); }
-    let mut new_words: Vec<String> = words.iter().map(|s| s.to_string()).collect();
-    new_words[word_idx] = replacement.to_string();
-    new_words.join(" ")
-}
-
-/// Port of `void histremovedups(void)` from Src/hist.c.
-pub fn histremovedups() {
-    let mut ring = hist_ring.lock().unwrap();
-    let mut seen = std::collections::HashSet::new();
-    ring.retain(|h| seen.insert(h.node.nam.clone()));
-    let new_ct = ring.len() as i64;
-    drop(ring);
-    histlinect.store(new_ct, Ordering::SeqCst);
-}
-
-/// Port of `int getargc(Histent ehist)` from Src/hist.c.
-pub fn getargc(entry: &histent) -> usize {
-    entry.nwords as usize
-}
-
-/// Port of `void substfailed(void)` from Src/hist.c.
-pub fn substfailed() {
-    crate::ported::utils::zerr("substitution failed");
-}
-
-/// Port of `int hwget(char **startptr)` from Src/hist.c.
-pub fn hwget() -> Option<(i32, String)> {
-    let pos = chwordpos.load(Ordering::SeqCst);
-    if pos == 0 || pos % 2 != 0 { return None; }
-    let words = chwords.lock().unwrap();
-    let start_idx = (pos - 2) as usize;
-    let end_idx = (pos - 1) as usize;
-    if end_idx >= words.len() { return None; }
-    let start = words[start_idx];
-    let end = words[end_idx];
-    let line = chline.lock().unwrap();
-    let s = (start.max(0)) as usize;
-    let e = (end.max(0) as usize).min(line.len());
-    if s > e || s >= line.len() { return None; }
-    Some((start as i32, line[s..e].to_string()))
-}
-
-/// Port of `int histbackword(void)` from Src/hist.c.
-pub fn histbackword(line: &str, pos: usize) -> usize {
-    if pos == 0 { return 0; }
-    let bytes = line.as_bytes();
-    let mut p = pos.min(bytes.len());
-    while p > 0 && bytes[p - 1].is_ascii_whitespace() { p -= 1; }
-    while p > 0 && !bytes[p - 1].is_ascii_whitespace() { p -= 1; }
-    p
-}
-
-/// Port of `char *hdynread(int stop)` from Src/hist.c.
-pub fn hdynread(_stop: i32) -> Option<String> {
-    None
-}
-
-/// Port of `char *hdynread2(int stop)` from Src/hist.c.
-pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
-    let mut out = String::new();
-    let mut consumed = 0usize;
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        consumed += c.len_utf8();
-        if c == stop || c == '\n' {
-            if c == '\n' { consumed -= c.len_utf8(); }
-            return (out, consumed);
-        }
-        if c == '\\' {
-            if let Some(esc) = chars.next() {
-                consumed += esc.len_utf8();
-                out.push(esc);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    (out, consumed)
-}
-
-/// Port of `char *getargs(Histent ehist, int arg1, int arg2)` from Src/hist.c.
-pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
-    let nwords = entry.words.len() / 2;
-    if nwords == 0 || arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
-        herrflush();
-        crate::ported::utils::zerr("no such word in event");
-        return None;
-    }
-    if arg1 == 0 && arg2 == nwords - 1 {
-        return Some(entry.node.nam.clone());
-    }
-    let pos1 = entry.words.get(arg1 * 2).copied().unwrap_or(0) as usize;
-    let pos2 = entry.words.get(arg2 * 2 + 1).copied().unwrap_or(0) as usize;
-    if pos2 > entry.node.nam.len() || pos1 > pos2 {
-        herrflush();
-        crate::ported::utils::zerr("history event too long, can't index requested words");
-        return None;
-    }
-    Some(entry.node.nam[pos1..pos2].to_string())
 }
 
 

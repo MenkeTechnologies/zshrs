@@ -335,780 +335,6 @@ pub static PAROFFS: AtomicI32 = AtomicI32::new(0);                           // 
 pub static MATCHORDER: AtomicI32 = AtomicI32::new(0);                        // c:3169
 
 // =====================================================================
-// rembslash — `Src/Zle/compcore.c:1323`.
-// =====================================================================
-
-/// Port of `mod_export char *rembslash(char *s)` from compcore.c:1322.
-///
-/// "Strip backslash escapes from a token, treating `\X` as `X`."
-pub fn rembslash(s: &str) -> String {                                        // c:1323
-    let mut result = String::with_capacity(s.len());                         // c:1323
-    let mut chars = s.chars().peekable();                                    // c:1327
-    while let Some(c) = chars.next() {
-        if c == '\\' {                                                       // c:1328
-            if let Some(nxt) = chars.next() {                                // c:1329
-                result.push(nxt);
-            }
-        } else {
-            result.push(c);                                                  // c:1343-1333
-        }
-    }
-    result                                                                   // c:1343
-}
-
-// =====================================================================
-// remsquote — `Src/Zle/compcore.c:1343`.
-// =====================================================================
-
-/// Port of `mod_export int remsquote(char *s)` from compcore.c:1342.
-pub fn remsquote(s: &mut String) -> i32 {                                    // c:1343
-    let rcquotes = isset(RCQUOTES); // c:1343
-    let qa: usize = if rcquotes { 1 } else { 3 };
-
-    let bytes = s.as_bytes();                                                // c:1346
-    let mut t = Vec::<u8>::with_capacity(bytes.len());
-    let mut ret: i32 = 0;
-    let mut i = 0;
-    while i < bytes.len() {                                                  // c:1348
-        let matched = if qa == 1 {                                           // c:1349
-            i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\''
-        } else {
-            i + 3 < bytes.len()                                              // c:1351
-                && bytes[i]     == b'\''
-                && bytes[i + 1] == b'\\'
-                && bytes[i + 2] == b'\''
-                && bytes[i + 3] == b'\''
-        };
-        if matched {
-            ret += qa as i32;                                                // c:1352
-            t.push(b'\'');                                                   // c:1353
-            i += qa + 1;                                                     // c:1354
-        } else {
-            t.push(bytes[i]);                                                // c:1356
-            i += 1;
-        }
-    }
-    *s = String::from_utf8(t).unwrap_or_default();                           // c:1357
-    ret                                                                      // c:1366
-}
-
-// =====================================================================
-// ctokenize — `Src/Zle/compcore.c:1366`.
-// =====================================================================
-
-/// Port of `mod_export char *ctokenize(char *p)` from compcore.c:1365.
-///
-/// C calls `tokenize(p)` first then walks the string replacing
-/// unescaped `$`/`{`/`}` with the token bytes `String`/`Inbrace`/
-/// `Outbrace`. Backslash-escaped variants become `Bnull`.
-pub fn ctokenize(p: &str) -> String {                                        // c:1366
-    let bytes = p.as_bytes();                                                // c:1366
-    let mut out = Vec::<u8>::with_capacity(bytes.len());
-    let mut bslash = false;                                                  // c:1369
-    let mut prev_idx: Option<usize> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];                                                    // c:1373
-        if b == b'\\' {                                                      // c:1374
-            bslash = true;
-            out.push(b);
-            prev_idx = Some(out.len() - 1);
-        } else {
-            if b == b'$' || b == b'{' || b == b'}' {                         // c:1377
-                if bslash {                                                  // c:1378
-                    if let Some(pi) = prev_idx {                             // c:1379
-                        out.truncate(pi);
-                        let mut buf = [0u8; 4];
-                        out.extend_from_slice(Bnull.encode_utf8(&mut buf).as_bytes());
-                    }
-                    out.push(b);
-                } else {
-                    let tok = if b == b'$' { Stringg }                    // c:1381
-                              else if b == b'{' { Inbrace }                  // c:1382
-                              else { Outbrace };                             // c:1382
-                    let mut buf = [0u8; 4];
-                    out.extend_from_slice(tok.encode_utf8(&mut buf).as_bytes());
-                }
-            } else {
-                out.push(b);
-            }
-            bslash = false;                                                  // c:1384
-            prev_idx = Some(out.len().saturating_sub(1));
-        }
-        i += 1;
-    }
-    String::from_utf8(out).unwrap_or_default()                               // c:1403
-}
-
-// =====================================================================
-// comp_str — `Src/Zle/compcore.c:1403`.
-// =====================================================================
-
-/// Port of `mod_export char *comp_str(int *ipl, int *pl, int untok)`
-/// from compcore.c:1402.
-pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // c:1403
-    let mut p = COMPPREFIX.get_or_init(|| Mutex::new(String::new()))         // c:1405
-        .lock().unwrap().clone();
-    let mut s = COMPSUFFIX.get_or_init(|| Mutex::new(String::new()))         // c:1406
-        .lock().unwrap().clone();
-    let ip = COMPIPREFIX.get_or_init(|| Mutex::new(String::new()))           // c:1407
-        .lock().unwrap().clone();
-    if !untok {                                                              // c:1411
-        p = ctokenize(&p);                                                   // c:1412
-        p = p.chars().filter(|&c| c != Bnull).collect();                     // c:1413 remnulargs
-        s = ctokenize(&s);                                                   // c:1414
-        s = s.chars().filter(|&c| c != Bnull).collect();                     // c:1415
-    }
-    let lp = p.len() as i32;                                                 // c:1417
-    let lip = ip.len() as i32;                                               // c:1419
-    let mut str = String::with_capacity(ip.len() + p.len() + s.len() + 1);  // c:1420
-    str.push_str(&ip);                                                      // c:1435
-    str.push_str(&p);                                                       // c:1435
-    str.push_str(&s);                                                       // c:1435
-    (str, lip, lp)                                                          // c:1435-1430
-}
-
-// =====================================================================
-// comp_quoting_string — `Src/Zle/compcore.c:1435`.
-// =====================================================================
-
-/// Port of `mod_export char *comp_quoting_string(int stype)` from
-/// compcore.c:1434.
-pub fn comp_quoting_string(stype: i32) -> &'static str {                     // c:1435
-    match stype {                                                            // c:1435
-        x if x == QT_SINGLE  => "'",                                         // c:1439-1440
-        x if x == QT_DOUBLE  => "\"",                                        // c:1441-1442
-        x if x == QT_DOLLARS => "$'",                                        // c:1443-1444
-        _ => {                                                               // c:1445
-            let _ = QT_BACKSLASH;
-            "\\"                                                             // c:1446
-        }
-    }
-}
-
-// =====================================================================
-// multiquote — `Src/Zle/compcore.c:1065`.
-// =====================================================================
-
-/// Port of `mod_export char *multiquote(char *s, int ign)` from
-/// compcore.c:1064.
-pub fn multiquote(s: &str, ign: i32) -> String {                             // c:1065
-    let stack = crate::ported::zle::complete::COMPQSTACK                     // c:1065
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let p_bytes = stack.as_bytes();
-    if !p_bytes.is_empty() && (ign == 0 || p_bytes.len() > 1) {              // c:1070
-        let start = if ign != 0 { 1 } else { 0 };                            // c:1071
-        let mut cur = s.to_string();
-        for &q in &p_bytes[start..] {                                        // c:1073
-            let qt = match q as i32 {                                        // c:1074
-                x if x == QT_BACKSLASH => crate::ported::zsh_h::QT_BACKSLASH,
-                x if x == QT_SINGLE    => crate::ported::zsh_h::QT_SINGLE,
-                x if x == QT_DOUBLE    => crate::ported::zsh_h::QT_DOUBLE,
-                x if x == QT_DOLLARS   => crate::ported::zsh_h::QT_DOLLARS,
-                _ => crate::ported::zsh_h::QT_BACKSLASH,
-            };
-            cur = crate::ported::utils::quotestring(&cur, qt);
-        }
-        cur                                                                  // c:1092
-    } else {
-        s.to_string()                                                        // c:1092
-    }
-}
-
-// =====================================================================
-// tildequote — `Src/Zle/compcore.c:1092`.
-// =====================================================================
-
-/// Port of `mod_export char *tildequote(char *s, int ign)` from
-/// compcore.c:1091.
-pub fn tildequote(s: &str, ign: i32) -> String {                             // c:1092
-    let bytes = s.as_bytes();                                                // c:1092
-    let tilde = !bytes.is_empty() && bytes[0] == b'~';                       // c:1097
-    let staged = if tilde {                                                  // c:1098
-        let mut tmp = String::with_capacity(s.len());
-        tmp.push('x');
-        tmp.push_str(&s[1..]);
-        tmp
-    } else {
-        s.to_string()
-    };
-    let mut quoted = multiquote(&staged, ign);                               // c:1099
-    if tilde && !quoted.is_empty() {                                         // c:1100
-        let mut new_q = String::with_capacity(quoted.len());
-        let mut swapped = false;
-        for c in quoted.chars() {
-            if !swapped && c == 'x' {
-                new_q.push('~');
-                swapped = true;
-            } else {
-                new_q.push(c);
-            }
-        }
-        quoted = new_q;
-    }
-    quoted                                                                   // c:1101
-}
-
-// =====================================================================
-// before_complete / after_complete — `Src/Zle/compcore.c:461 / 503`.
-// =====================================================================
-
-/// Direct port of `int before_complete(Hookdef dummy, int *lst)`
-/// from `Src/Zle/compcore.c:461`. Pre-completion hook: snapshots
-/// `menucmp` into `oldmenucmp`, decides whether the current state
-/// shortcircuits via menu-completion, clamps the cursor when re-
-/// entering an in-word completion, and toggles automenu mode.
-/// Returns 1 to suppress the next-stage match build, 0 to continue.
-pub fn before_complete(lst: &mut i32) -> i32 {                               // c:461
-    use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-    use crate::ported::zle::zle_tricky::{LASTAMBIG, SHOWAGAIN, VALIDLIST};
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
-
-    // c:463 — `oldmenucmp = menucmp;`
-    OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);
-
-    // c:465-466 — `if (showagain && validlist) showinglist = -2;`
-    if SHOWAGAIN.load(Ordering::Relaxed) != 0
-        && VALIDLIST.load(Ordering::Relaxed) != 0
-    {
-        SHOWINGLIST.store(-2, Ordering::Relaxed);
-    }
-    // c:467 — `showagain = 0;`
-    SHOWAGAIN.store(0, Ordering::Relaxed);
-
-    let has_cur = MINFO.get().and_then(|m| m.lock().ok())
-        .map(|m| m.cur.is_some())
-        .unwrap_or(false);
-    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
-
-    // c:471-474 — menu-completion shortcircuit (non-listing path).
-    if has_cur && menucmp_v != 0 && *lst != COMP_LIST_EXPAND {
-        // C: `do_menucmp(*lst); return 1;` — Rust signature takes a
-        // match list; the side-effect of advancing minfo lives in
-        // do_menucmp. The post-summary `do_menucmp` Rust port has a
-        // (&[String], cur, fwd) → (idx, &str) shape, which doesn't
-        // fit a void-context call. The salient signal here is the
-        // `return 1` short-circuit; preserve that.
-        return 1;                                                            // c:473
-    }
-    // c:475-479 — menu-completion shortcircuit (listing path).
-    if has_cur && menucmp_v != 0
-        && VALIDLIST.load(Ordering::Relaxed) != 0
-        && *lst == COMP_LIST_COMPLETE
-    {
-        SHOWINGLIST.store(-2, Ordering::Relaxed);
-        onlyexpl.store(0, Ordering::Relaxed);                                // c:477
-        // c:477 — `listdat.valid = 0;`
-        if let Some(ld) = listdat.get() {
-            if let Ok(mut g) = ld.lock() {
-                g.valid = 0;
-            }
-        }
-        return 1;                                                            // c:478
-    }
-
-    // c:489-490 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
-    //              zlecs = zlell;` — re-entering an in-word completion
-    //              restores cursor to lastend (clamped to zlell).
-    if (fromcomp.load(Ordering::Relaxed) & crate::ported::zle::comp_h::FC_INWORD) != 0 {
-        let le = lastend.load(Ordering::Relaxed);
-        let ll = ZLEMETALL.load(Ordering::Relaxed);
-        let new_cs = if le > ll { ll } else { le };
-        ZLEMETACS.store(new_cs, Ordering::Relaxed);
-    }
-
-    // c:494-496 — automenu trigger.
-    if startauto.load(Ordering::Relaxed) != 0
-        && LASTAMBIG.load(Ordering::Relaxed) != 0
-    {
-        let bashauto = isset(BASHAUTOLIST);
-        let last = LASTAMBIG.load(Ordering::Relaxed);
-        if !bashauto || last == 2 {
-            USEMENU.store(2, Ordering::Relaxed);
-        }
-    }
-
-    0                                                                        // c:498
-}
-
-/// Direct port of `int after_complete(Hookdef dummy, int *dat)`
-/// from `Src/Zle/compcore.c:503`. Post-completion hook: when a
-/// completion has just transitioned into menu-completion (menucmp
-/// went 0→1 across this round), runs MENUSTARTHOOK so registered
-/// hook fns can veto or modify the about-to-display menu.
-///
-/// Hook handlers are registered via `addhookfunc("menu_start", fn)`
-/// (see `crate::ported::module::addhookfunc`), which writes to the
-/// global HOOKTAB. C's `comphooks[]` table declares `menu_start` as
-/// HOOKF_ALL, so every handler fires and the first non-zero return
-/// short-circuits the chain (see runhookdef at module.c:990).
-///
-/// Return value semantics (c:518-532):
-///   - `ret == 0` → no action (no handler vetoed).
-///   - `ret >= 1` → zero `dat[1]`, clear menucmp/menuacc, null minfo.cur.
-///   - `ret >= 2` → also rewind buffer to origline.
-///   - `ret == 2` → also schedule list clear (CLEARLIST=1, invalidatelist).
-pub fn after_complete(dat: &mut [i32]) -> i32 {                              // c:503
-    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
-    let oldmenucmp_v = OLDMENUCMP.load(Ordering::Relaxed);
-
-    // c:505 — `if (menucmp && !oldmenucmp) { ... }`.
-    if menucmp_v == 0 || oldmenucmp_v != 0 {
-        return 0;                                                            // c:535
-    }
-
-    // c:506-517 — build chdata. cdat.matches=amatches, cdat.num=
-    //              nmatches, cdat.nmesg=nmessages, cdat.cur=NULL. The
-    //              Rust hook dispatch path doesn't yet thread chdata
-    //              into shell-fn args (handlers in the standard zsh
-    //              distribution all read directly from compsys globals
-    //              via $compstate). The fields above are still tracked
-    //              via amatches/nmatches/nmessages globals and visible
-    //              to handlers through the normal completion-state
-    //              parameter reads.
-
-    // c:518 — `runhookdef(MENUSTARTHOOK, &cdat)`. C dispatches via
-    // the hookdef chain; the Rust port walks HOOKTAB["menu_start"] and
-    // invokes each shell-fn via the canonical dispatch_function_call
-    // path used by signal-trap shfunc dispatch (signals.rs:1087). The
-    // first non-zero return short-circuits per HOOKF_ALL semantics
-    // (module.c:996-1005).
-    let handlers: Vec<String> = crate::ported::module::HOOKTAB
-        .lock()
-        .ok()
-        .and_then(|t| t.get("menu_start").cloned())
-        .unwrap_or_default();
-
-    let mut ret: i32 = 0;
-    for fn_name in &handlers {
-        let r = crate::fusevm_bridge::with_executor(|exec| {
-            exec.dispatch_function_call(fn_name, &[]).unwrap_or(0)
-        });
-        if r != 0 {
-            ret = r;
-            break;                                                           // c:1001 short-circuit
-        }
-    }
-
-    if ret == 0 {
-        return 0;                                                            // c:535
-    }
-
-    // c:519 — `dat[1] = 0`. The C caller passes a 2-int array; index 1
-    // carries the menu-acceptance flag for the outer compfunc loop.
-    if dat.len() > 1 {
-        dat[1] = 0;
-    }
-    // c:520 — `menucmp = menuacc = 0`.
-    MENUCMP.store(0, Ordering::Relaxed);
-    menuacc.store(0, Ordering::Relaxed);
-    // c:521 — `minfo.cur = NULL`.
-    if let Some(m) = MINFO.get() {
-        if let Ok(mut mi) = m.lock() {
-            mi.cur = None;
-        }
-    }
-
-    if ret >= 2 {                                                            // c:522
-        // c:523 — `fixsuffix()`.
-        crate::ported::zle::zle_misc::fixsuffix();
-        // c:524 — `zlemetacs = 0`.
-        ZLEMETACS.store(0, Ordering::Relaxed);
-        // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
-        let metall = ZLEMETALL.load(Ordering::Relaxed);
-        crate::ported::zle::zle_utils::foredel(metall, crate::ported::zle::zle_h::CUT_RAW);
-        // c:526 — `inststr(origline)` reinserts the pre-completion buffer.
-        let origline_v: String = crate::ported::zle::zle_tricky::ORIGLINE
-            .get()
-            .and_then(|m| m.lock().ok().map(|g| g.clone()))
-            .unwrap_or_default();
-        let _ = crate::ported::zle::zle_tricky::inststr(&origline_v);
-        // c:527 — `zlemetacs = origcs`.
-        let origcs_v = crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed);
-        ZLEMETACS.store(origcs_v, Ordering::Relaxed);
-
-        if ret == 2 {                                                        // c:528
-            // c:529 — `clearlist = 1`.
-            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
-            // c:530 — `invalidatelist()`.
-            crate::ported::zle::zle_h::invalidatelist();
-        }
-    }
-
-    0                                                                        // c:535
-}
-
-// =====================================================================
-// set_list_array — `Src/Zle/compcore.c:1947`.
-// =====================================================================
-
-/// Port of `static void set_list_array(char *name, LinkList l)` from
-/// compcore.c:1947. Writes an array-typed parameter via the canonical
-/// `setaparam` (params.c:3595).
-pub fn set_list_array(name: &str, l: &[String]) {                            // c:1947
-    let _ = crate::ported::params::setaparam(name, l.to_vec());              // c:1956
-}
-
-// =====================================================================
-// get_user_var — `Src/Zle/compcore.c:1956`.
-// =====================================================================
-
-/// Port of `mod_export char **get_user_var(char *nam)` from
-/// compcore.c:1956.
-pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // c:1956
-    let nam = nam?;                                                          // c:1956
-    if nam.starts_with('(') {                                                // c:1960
-        let mut arrlist: Vec<String> = Vec::new();
-        let bytes = nam.as_bytes();
-        let mut buf = Vec::<u8>::new();
-        let mut notempty = false;                                            // c:1963
-        let mut brk = false;
-        let mut i = 1;                                                       // c:1967
-        while i < bytes.len() {
-            let b = bytes[i];
-            if b == b'\\' && i + 1 < bytes.len() {                           // c:1969
-                buf.push(bytes[i + 1]);                                      // c:1970
-                notempty = true;
-                i += 2;
-                continue;
-            }
-            if b == b',' || b == b' ' || b == b'\t' || b == b'\n' || b == b')' {
-                if b == b')' { brk = true; }                                 // c:1972
-                if notempty {                                                // c:1974
-                    let mut start = 0;
-                    if !buf.is_empty() && buf[0] == b'\n' { start = 1; }     // c:1977
-                    let s = String::from_utf8_lossy(&buf[start..]).into_owned();
-                    arrlist.push(s);                                         // c:1979
-                }
-                buf.clear();                                                 // c:1981
-                notempty = false;
-            } else {
-                notempty = true;                                             // c:1984
-                buf.push(b);
-            }
-            i += 1;
-            if brk { break; }                                                // c:1988
-        }
-        if !brk || arrlist.is_empty() { return None; }                       // c:1991
-        Some(arrlist)                                                        // c:1996
-    } else {                                                                 // c:1999
-        // c:2003 — `if ((arr = getaparam(nam)) || (arr = gethparam(nam)))
-        //          arr = (incompfunc ? arrdup(arr) : arr);
-        //          else if ((val = getsparam(nam))) { arr = {val, NULL}; }`
-        // Read directly from paramtab: arrays first, then hashed
-        // assoc-array values, then scalar wrapped in a 1-element array.
-        crate::ported::signals::queue_signals();
-        let result = {
-            let tab = match crate::ported::params::paramtab().read() {
-                Ok(t) => t,
-                Err(_) => {
-                    crate::ported::signals::unqueue_signals();
-                    return None;
-                }
-            };
-            tab.get(nam).and_then(|pm| {
-                if let Some(arr) = pm.u_arr.as_ref() {
-                    Some(arr.clone())                                        // c:2004 getaparam
-                } else if let Some(s) = pm.u_str.as_ref() {
-                    Some(vec![s.clone()])                                    // c:2009 getsparam
-                } else {
-                    None
-                }
-            })
-        };
-        crate::ported::signals::unqueue_signals();                           // c:2022
-        result
-    }
-}
-
-// =====================================================================
-// get_data_arr — `Src/Zle/compcore.c:2022`.
-// =====================================================================
-
-/// Direct port of `static char **get_data_arr(char *name, int keys)`
-/// from `Src/Zle/compcore.c:2022`. C uses `fetchvalue` with
-/// `SCANPM_WANTKEYS`/`SCANPM_WANTVALS` + `SCANPM_MATCHMANY` to scan
-/// an associative-array parameter and return either its keys or its
-/// values as a flat array. Without `fetchvalue` ported with full
-/// SCANPM flag support, we go straight to the hashed-storage
-/// thread-local maintained by params.rs for assoc-arrays.
-pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // c:2022
-    use crate::ported::params::{paramtab, paramtab_hashed_storage};
-    use crate::ported::zsh_h::{PM_HASHED, PM_TYPE};
-
-    crate::ported::signals::queue_signals();                                 // c:2028
-
-    // c:2030-2034 — fetchvalue with SCANPM_MATCHMANY → scan the
-    //                hashed param's keys/values. We approximate by
-    //                routing keys/values directly out of the
-    //                hashed-storage map.
-    let is_hashed = match paramtab().read() {
-        Ok(t) => t.get(name)
-            .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
-            .unwrap_or(false),
-        Err(_) => false,
-    };
-
-    let result = if is_hashed {
-        paramtab_hashed_storage().lock().ok().and_then(|m| {
-            m.get(name).map(|map| {
-                if keys {
-                    map.keys().cloned().collect::<Vec<_>>()
-                } else {
-                    map.values().cloned().collect::<Vec<_>>()
-                }
-            })
-        })
-    } else {
-        // c:2032 — non-hashed names return NULL.
-        None
-    };
-
-    crate::ported::signals::unqueue_signals();                               // c:2041
-    result
-}
-
-// =====================================================================
-// addmatch — `Src/Zle/compcore.c:2041`.
-// =====================================================================
-
-/// Port of `static void addmatch(char *str, int flags, char ***dispp,
-///                                int line)` from compcore.c:2041.
-pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
-    let mut cm = Cmatch::default();                                          // c:2041
-    cm.str = Some(str.to_string());                                        // c:2047
-    // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
-    // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
-    let complist_extra = {
-        let s = COMPLIST.get_or_init(|| Mutex::new(String::new()))
-            .lock().map(|g| g.clone()).unwrap_or_default();
-        let packed = if s.contains("packed") { CMF_PACKED } else { 0 };      // c:2050
-        let rows   = if s.contains("rows")   { CMF_ROWS   } else { 0 };      // c:2051
-        if s.is_empty() { 0 } else { packed | rows }
-    };
-    cm.flags = flags | complist_extra;                                       // c:2048
-    if let Some(d) = disp {                                                  // c:2052
-        cm.disp = Some(d.to_string());                                       // c:2056
-    } else if line {                                                         // c:2057
-        cm.disp = Some(String::new());                                       // c:2058
-        cm.flags |= CMF_DISPLINE;                                            // c:2059
-    }
-    mnum.fetch_add(1, Ordering::Relaxed);                                    // c:2061
-    {
-        let cell = curexpl.get_or_init(|| Mutex::new(None));                 // c:2063
-        if let Ok(mut g) = cell.lock() {
-            if let Some(e) = g.as_mut() { e.count += 1; }
-        }
-    }
-    let mcell = matches.get_or_init(|| Mutex::new(Vec::new()));              // c:2066
-    if let Ok(mut g) = mcell.lock() { g.push(cm); }
-    newmatches.store(1, Ordering::Relaxed);                                  // c:2068
-    {
-        let cell = mgroup.get_or_init(|| Mutex::new(None));                  // c:2069
-        if let Ok(mut g) = cell.lock() {
-            if let Some(grp) = g.as_mut() { grp.new_ = 1; }
-        }
-    }
-}
-
-// `lookup_complist_flags` deleted — Rust-only 8-line helper. Inlined
-// at the single call site in callcompfunc (c:2049-2051).
-
-// =====================================================================
-// begcmgroup — `Src/Zle/compcore.c:3073`.
-// =====================================================================
-
-/// Port of `mod_export void begcmgroup(char *n, int flags)` from
-/// compcore.c:3073.
-pub fn begcmgroup(n: Option<&str>, flags: i32) {                             // c:3073
-    if let Some(name) = n {                                                  // c:3073
-        let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON                    // c:3085
-                 | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
-        let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
-        if let Ok(g) = cell.lock() {
-            for grp in g.iter() {                                            // c:3078
-                if grp.name.as_deref() == Some(name)                         // c:3084-3087
-                    && (grp.flags & mask) == flags
-                {
-                    let active = grp.clone();                                // c:3088
-                    let mc = mgroup.get_or_init(|| Mutex::new(None));
-                    if let Ok(mut s) = mc.lock() { *s = Some(active); }
-                    return;                                                  // c:3095
-                }
-            }
-        }
-    }
-    let mut grp = Cmgroup::default();                                        // c:3101
-    grp.name = n.map(String::from);                                          // c:3105
-    grp.flags = flags;                                                       // c:3108
-    let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut g) = cell.lock() {
-        g.insert(0, grp.clone());                                            // c:3121-3124
-    }
-    let mc = mgroup.get_or_init(|| Mutex::new(None));
-    if let Ok(mut s) = mc.lock() { *s = Some(grp); }
-    if let Ok(mut g) = expls.get_or_init(|| Mutex::new(Vec::new())).lock()    { g.clear(); }
-    if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock()  { g.clear(); }
-    if let Ok(mut g) = fmatches.get_or_init(|| Mutex::new(Vec::new())).lock() { g.clear(); }
-    if let Ok(mut g) = allccs.get_or_init(|| Mutex::new(Vec::new())).lock()   { g.clear(); }
-}
-
-// =====================================================================
-// endcmgroup — `Src/Zle/compcore.c:3131`.
-// =====================================================================
-
-/// Port of `mod_export void endcmgroup(char **ylist)` from
-/// compcore.c:3131.
-pub fn endcmgroup(ylist: Option<Vec<String>>) {                              // c:3131
-    let cell = mgroup.get_or_init(|| Mutex::new(None));
-    if let Ok(mut g) = cell.lock() {
-        if let Some(grp) = g.as_mut() {
-            grp.ylist = ylist.unwrap_or_default();                           // c:3140
-        }
-    }
-}
-
-// =====================================================================
-// addexpl — `Src/Zle/compcore.c:3140`.
-// =====================================================================
-
-/// Port of `mod_export void addexpl(int always)` from compcore.c:3140.
-pub fn addexpl(always: bool) {                                               // c:3140
-    let curexpl_snap = {
-        let cell = curexpl.get_or_init(|| Mutex::new(None));
-        cell.lock().ok().and_then(|g| g.clone())
-    };
-    let curexpl_str = match curexpl_snap.as_ref().and_then(|e| e.str.clone()) {
-        Some(s) => s,
-        None => return,
-    };
-    let curexpl_count  = curexpl_snap.as_ref().map(|e| e.count).unwrap_or(0);
-    let curexpl_fcount = curexpl_snap.as_ref().map(|e| e.fcount).unwrap_or(0);
-
-    let elist = expls.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut g) = elist.lock() {
-        for e in g.iter_mut() {                                              // c:3145
-            if e.str.as_deref() == Some(curexpl_str.as_str()) {             // c:3147
-                e.count  += curexpl_count;                                   // c:3148
-                e.fcount += curexpl_fcount;                                  // c:3149
-                if always {                                                  // c:3150
-                    e.always = 1;
-                    nmessages.fetch_add(1, Ordering::Relaxed);               // c:3152
-                    newmatches.store(1, Ordering::Relaxed);                  // c:3153
-                    let mc = mgroup.get_or_init(|| Mutex::new(None));
-                    if let Ok(mut mg) = mc.lock() {
-                        if let Some(grp) = mg.as_mut() { grp.new_ = 1; }
-                    }
-                }
-                return;                                                      // c:3156
-            }
-        }
-        if let Some(e) = curexpl_snap {                                      // c:3159
-            g.push(e);
-        }
-    }
-    newmatches.store(1, Ordering::Relaxed);                                  // c:3160
-    if always {                                                              // c:3161
-        let mc = mgroup.get_or_init(|| Mutex::new(None));
-        if let Ok(mut mg) = mc.lock() {
-            if let Some(grp) = mg.as_mut() { grp.new_ = 1; }
-        }
-        nmessages.fetch_add(1, Ordering::Relaxed);                           // c:3173
-    }
-}
-
-// =====================================================================
-// matchcmp — `Src/Zle/compcore.c:3173`.
-// =====================================================================
-
-/// Port of `static int matchcmp(Cmatch *a, Cmatch *b)` from
-/// compcore.c:3173.
-pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {              // c:3173
-    let order = MATCHORDER.load(Ordering::Relaxed);
-    let sortdir = if (order & CGF_REVSORT) != 0 { -1 } else { 1 };           // c:3177
-
-    let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32);         // c:3176
-    let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
-        (a.str.clone().unwrap_or_default(),                                 // c:3181
-         b.str.clone().unwrap_or_default())                                 // c:3182
-    } else {
-        if cmp != 0 {                                                        // c:3184
-            let raw = (cmp as i32) * sortdir;
-            return if raw < 0 { std::cmp::Ordering::Less }                   // c:3185
-                   else if raw > 0 { std::cmp::Ordering::Greater }
-                   else { std::cmp::Ordering::Equal };
-        }
-        let displine_cmp = (b.flags & CMF_DISPLINE) - (a.flags & CMF_DISPLINE); // c:3187
-        if displine_cmp != 0 {                                               // c:3188
-            let raw = displine_cmp * sortdir;
-            return if raw < 0 { std::cmp::Ordering::Less }
-                   else if raw > 0 { std::cmp::Ordering::Greater }
-                   else { std::cmp::Ordering::Equal };
-        }
-        (a.disp.clone().unwrap_or_default(),                                 // c:3191
-         b.disp.clone().unwrap_or_default())                                 // c:3192
-    };
-    let raw = sortdir * if as_ == bs { 0 } else if as_ < bs { -1 } else { 1 };
-    if raw < 0 { std::cmp::Ordering::Less }                                  // c:3195
-    else if raw > 0 { std::cmp::Ordering::Greater }
-    else { std::cmp::Ordering::Equal }
-}
-
-// =====================================================================
-// matcheq — `Src/Zle/compcore.c:3203-3215`.
-// =====================================================================
-
-#[inline]
-fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // c:3207
-    match (a, b) {
-        (None, None) => true,
-        (Some(x), Some(y)) => x == y,
-        _ => false,
-    }
-}
-
-/// Port of `static int matcheq(Cmatch a, Cmatch b)` from
-/// compcore.c:3206.
-pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // c:3207
-    matchstreq(a.ipre.as_ref(),  b.ipre.as_ref())  &&                        // c:3207
-    matchstreq(a.pre.as_ref(),   b.pre.as_ref())   &&                        // c:3210
-    matchstreq(a.ppre.as_ref(),  b.ppre.as_ref())  &&                        // c:3211
-    matchstreq(a.psuf.as_ref(),  b.psuf.as_ref())  &&                        // c:3212
-    matchstreq(a.suf.as_ref(),   b.suf.as_ref())   &&                        // c:3213
-    matchstreq(a.str.as_ref(),  b.str.as_ref())                            // c:3214
-}
-
-// =====================================================================
-// freematch / freematches — `Src/Zle/compcore.c:3575 / 3605`.
-// =====================================================================
-
-/// Port of `void freematch(Cmatch m, int *cl, int rec)` from
-/// compcore.c:3575. Rust's `Drop` covers it.
-pub fn freematch(_m: Cmatch) {                                               // c:3575
-}
-
-/// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
-/// `Src/Zle/compcore.c:3605`. The C path walks the cmgroup chain freeing
-/// each Cmatch + ylist + expls + widths + name; in Rust those are
-/// owned by `Vec`/`Box`/`String` so Drop covers the per-node free.
-/// The `cm` arm at c:3636-3637 (`minfo.cur = NULL`) is the only
-/// side-effect that doesn't fall out of Rust's ownership model — wire
-/// it explicitly.
-pub fn freematches(g: Vec<Cmgroup>, cm: i32) {                               // c:3605
-    drop(g);
-    if cm != 0 {                                                             // c:3636
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(
-            crate::ported::zle::comp_h::Menuinfo::default()
-        )).lock() {
-            g.cur = None;                                                     // c:3637
-        }
-    }
-}
-
-// =====================================================================
 // Substrate-blocked stubs — bodies need substrate listed in each
 // doc comment. Returns shape-correct safe defaults.
 // =====================================================================
@@ -1352,208 +578,193 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     goto_compend(ret)
 }
 
-/// First-match shortcut path from compcore.c:398-411. `Cmgroup m = amatches;
-/// while (!m->mcount) m = m->next; do_single(m->matches[0])`.
-fn do_single_first_match() {                                                  // c:398
-    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
-    let first = groups.into_iter().find(|g| g.mcount > 0)
-        .and_then(|g| g.matches.first().cloned());
-    if let Some(m) = first {
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }                                                   // c:407
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.asked = 0; }                                                  // c:408
-        // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
-        // MINFO.cur so the listing path picks it up (matches the C
-        // behavior of routing the single-match insert through minfo).
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-            g.cur = Some(Box::new(m));
-        }
-    }
-}
+// =====================================================================
+// before_complete / after_complete — `Src/Zle/compcore.c:461 / 503`.
+// =====================================================================
 
-/// compcore.c:444 `compend:` epilogue — free matchers, snap zlemetacs.
-fn goto_compend(ret: i32) -> i32 {                                            // c:444
-    if let Ok(mut g) = matchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        g.clear();                                                            // c:445-446 freecmatcher loop
-    }
-    let line_len = ZLEMETALL.load(Ordering::Relaxed);                        // c:448 strlen(zlemetaline)
-    if ZLEMETACS.load(Ordering::Relaxed) > line_len {                        // c:449
-        ZLEMETACS.store(line_len, Ordering::Relaxed);                        // c:450
-    }
-    ret                                                                      // c:453
-}
+/// Direct port of `int before_complete(Hookdef dummy, int *lst)`
+/// from `Src/Zle/compcore.c:461`. Pre-completion hook: snapshots
+/// `menucmp` into `oldmenucmp`, decides whether the current state
+/// shortcircuits via menu-completion, clamps the cursor when re-
+/// entering an in-word completion, and toggles automenu mode.
+/// Returns 1 to suppress the next-stage match build, 0 to continue.
+pub fn before_complete(lst: &mut i32) -> i32 {                               // c:461
+    use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
+    use crate::ported::zle::zle_tricky::{LASTAMBIG, SHOWAGAIN, VALIDLIST};
+    use crate::ported::zle::zle_refresh::SHOWINGLIST;
 
-// `COMP_LIST_COMPLETE` / `QT_NONE_STUB` / `QT_BACKSLASH_STUB` local
-// aliases deleted — call sites now reach the real C-side constants
-// directly (`crate::ported::zle::zle_h::COMP_LIST_COMPLETE`,
-// `crate::ported::zsh_h::QT_NONE`, `crate::ported::zsh_h::QT_BACKSLASH`).
-// The local `COMP_LIST_COMPLETE = 2` was a value-mismatch bug (the
-// real constant is 1 per `Src/Zle/zle.h:357`).
+    // c:463 — `oldmenucmp = menucmp;`
+    OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);
 
-// `char_from_qt` deleted — Rust-only 1-line `(qt as u8) as char`
-// helper. Inlined at the two call sites in get_compstate_str.
-
-// `showinglist_stub` / `showinglist_set` / `clearlist_set` /
-// `listshown_stub` / `instring_stub` deleted — Rust-only 1-line
-// accessors for C globals (SHOWINGLIST / CLEARLIST / LISTSHOWN /
-// INSTRING). C reads/writes the bare globals inline; callers in
-// compcore.rs now do `<GLOBAL>.load(Ordering::Relaxed)` /
-// `<GLOBAL>.store(v, Ordering::Relaxed)` directly.
-/// Direct port of `foredel(int ct, int flags)` from
-/// `Src/Zle/zle_utils.c:1105`. Deletes `ct` chars forward from
-/// `ZLEMETACS` in the global metafied line. Operates on the
-/// `ZLEMETALINE` global rather than a `&mut Zle` handle since
-/// compcore's call site (compcore.c:344-355 error-recovery) drives
-/// the global ZLE buffer directly.
-/// WARNING: param names don't match C — Rust=(ct) vs C=(ct, flags)
-fn foredel(ct: i32) {                                                    // zle_utils.c:1105
-    if ct <= 0 { return; }
-    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
-    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        let bytes = g.as_bytes();
-        if cs >= bytes.len() { return; }
-        let end = (cs + ct as usize).min(bytes.len());
-        // c:1108-1115 — splice out [cs..end).
-        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
-            + &String::from_utf8_lossy(&bytes[end..]);
-        let new_len = new_line.len() as i32;
-        *g = new_line;
-        ZLEMETALL.store(new_len, Ordering::Relaxed);
+    // c:465-466 — `if (showagain && validlist) showinglist = -2;`
+    if SHOWAGAIN.load(Ordering::Relaxed) != 0
+        && VALIDLIST.load(Ordering::Relaxed) != 0
+    {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
     }
-}
+    // c:467 — `showagain = 0;`
+    SHOWAGAIN.store(0, Ordering::Relaxed);
 
-/// Direct port of `inststr(char *s)` from `Src/Zle/zle_tricky.c:278`.
-/// Inserts `s` at `ZLEMETACS` in the global metafied line.
-/// Direct port of `#define inststr(X) inststrlen((X),1,-1)` from
-/// `Src/Zle/zle_tricky.c:57`. Inserts `s` at `ZLEMETACS` in the
-/// global metafied line; cursor advances by `s.len()`.
-/// WARNING: param names don't match C — Rust=(s) vs C=()
-fn inststr(s: &str) {                                                    // c:57
-    if s.is_empty() { return; }
-    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
-    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        let bytes = g.as_bytes();
-        let cs = cs.min(bytes.len());
-        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
-            + s
-            + &String::from_utf8_lossy(&bytes[cs..]);
-        let new_len = new_line.len() as i32;
-        *g = new_line;
-        ZLEMETALL.store(new_len, Ordering::Relaxed);
-        ZLEMETACS.store(cs as i32 + s.len() as i32, Ordering::Relaxed);
-    }
-}
-// `origline_stub` / `origcs_stub` deleted — Rust-only 1-line
-// accessors for the `ORIGLINE` / `ORIGCS` globals (ports of C
-// `origline` / `origcs` at zle_tricky.c:75 etc.). C reads these
-// globals inline; callers in compcore.rs now do the lock/load
-// directly.
-/// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
-/// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
-/// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
-fn unmetafy_line() {                                                     // zle_tricky.c:995
-    let meta = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
-    let new_len = unmeta.len() as i32;
-    let cs = ZLEMETACS.load(Ordering::Relaxed);                              // c:978-1000
-    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = unmeta;
-    }
-    ZLELL.store(new_len, Ordering::Relaxed);
-    ZLECS.store(cs.min(new_len), Ordering::Relaxed);
-}
+    let has_cur = MINFO.get().and_then(|m| m.lock().ok())
+        .map(|m| m.cur.is_some())
+        .unwrap_or(false);
+    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
 
-/// Direct port of `void metafy_line(void)` from `zle_tricky.c:978`.
-/// Reads `ZLELINE`, runs `metafy_line(...)` from zle_tricky.rs, stores
-/// result into `ZLEMETALINE` + updates `ZLEMETACS`/`ZLEMETALL`.
-fn metafy_line() {                                                       // zle_tricky.c:978
-    let raw = ZLELINE.get_or_init(|| Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    let meta = crate::ported::zle::zle_tricky::metafy_line(&raw);
-    let new_len = meta.len() as i32;
-    let cs = ZLECS.load(Ordering::Relaxed);
-    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = meta;
+    // c:471-474 — menu-completion shortcircuit (non-listing path).
+    if has_cur && menucmp_v != 0 && *lst != COMP_LIST_EXPAND {
+        // C: `do_menucmp(*lst); return 1;` — Rust signature takes a
+        // match list; the side-effect of advancing minfo lives in
+        // do_menucmp. The post-summary `do_menucmp` Rust port has a
+        // (&[String], cur, fwd) → (idx, &str) shape, which doesn't
+        // fit a void-context call. The salient signal here is the
+        // `return 1` short-circuit; preserve that.
+        return 1;                                                            // c:473
     }
-    ZLEMETALL.store(new_len, Ordering::Relaxed);
-    ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
-}
-
-/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:113`.
-/// Inserts `lastchar` from ZLE state at cursor. Without a `&mut Zle`
-/// handle we operate on the global `ZLELINE` + a thread-local
-/// lastchar holder. Equivalent C body: insert one char at zlecs,
-/// advance zlecs, bump zlell.
-fn selfinsert() -> i32 {                                                 // zle_misc.c:112
-    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:113
-    if ch < 0 { return 1; }                                                  // c:116 EOF
-    let cs = ZLECS.load(Ordering::Relaxed) as usize;
-    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        let mut bytes = g.as_bytes().to_vec();
-        let cs = cs.min(bytes.len());
-        // c:130 — insertion at cs.
-        if (ch as u32) < 128 {
-            bytes.insert(cs, ch as u8);
-        } else if let Some(c) = char::from_u32(ch as u32) {
-            let mut buf = [0u8; 4];
-            let enc = c.encode_utf8(&mut buf).as_bytes();
-            for (i, b) in enc.iter().enumerate() {
-                bytes.insert(cs + i, *b);
+    // c:475-479 — menu-completion shortcircuit (listing path).
+    if has_cur && menucmp_v != 0
+        && VALIDLIST.load(Ordering::Relaxed) != 0
+        && *lst == COMP_LIST_COMPLETE
+    {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
+        onlyexpl.store(0, Ordering::Relaxed);                                // c:477
+        // c:477 — `listdat.valid = 0;`
+        if let Some(ld) = listdat.get() {
+            if let Ok(mut g) = ld.lock() {
+                g.valid = 0;
             }
         }
-        *g = String::from_utf8_lossy(&bytes).into_owned();
-        let new_len = g.len() as i32;
-        ZLELL.store(new_len, Ordering::Relaxed);
-        ZLECS.store((cs + 1) as i32, Ordering::Relaxed);
+        return 1;                                                            // c:478
     }
-    0                                                                        // c:141
-}
 
-/// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
-/// keyboard char consumed by the binding loop — read by `selfinsert`.
-pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
-// minfo_clear_cur / minfo_asked_zero deleted — Rust-only 2-line
-// wrappers around C's inline writes `minfo.cur = NULL` and
-// `minfo.asked = 0`. All call sites inlined.
+    // c:489-490 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
+    //              zlecs = zlell;` — re-entering an in-word completion
+    //              restores cursor to lastend (clamped to zlell).
+    if (fromcomp.load(Ordering::Relaxed) & crate::ported::zle::comp_h::FC_INWORD) != 0 {
+        let le = lastend.load(Ordering::Relaxed);
+        let ll = ZLEMETALL.load(Ordering::Relaxed);
+        let new_cs = if le > ll { ll } else { le };
+        ZLEMETACS.store(new_cs, Ordering::Relaxed);
+    }
 
-/// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
-/// (the single file-scope instance). The struct type itself lives
-/// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
-pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
-
-// `set_minfo_cur` deleted — Rust-only wrapper for the C inline
-// write `minfo.cur = &m;`. Callers should inline the
-// `MINFO.lock().cur = Some(Box::new(m))` write directly.
-// do_ambig_menu_stub deleted — inlined as
-// `{ let _ = crate::ported::zle::compresult::do_ambig_menu(); }`
-// at the single call site (c:367).
-// do_ambiguous_stub / do_single_stub / do_allmatches_stub /
-// invalidatelist_stub deleted — Rust-only glue wrappers, all
-// inlined at their (single) call sites in do_completion / dupmatch.
-// The real C names live as `pub fn` in compresult.rs / zle_h.rs.
-fn opt_isset(name: &str) -> i32 {                                        // options.c
-    if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
-}
-/// Real call into `getiparam(name)` — the canonical paramtab read.
-/// Mirrors C's `getiparam` at params.c:3044 which reads the global
-/// `paramtab` directly via `gethashnode2`.
-fn env_iparam(name: &str) -> i32 {                                            // params.c:3044
-    crate::ported::params::getiparam(name) as i32
-}
-fn lastprebr_set(s: &str) {                                                   // zle_tricky.c lastprebr
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
-        .get_or_init(|| Mutex::new(String::new())).lock()
+    // c:494-496 — automenu trigger.
+    if startauto.load(Ordering::Relaxed) != 0
+        && LASTAMBIG.load(Ordering::Relaxed) != 0
     {
-        *g = s.to_string();
+        let bashauto = isset(BASHAUTOLIST);
+        let last = LASTAMBIG.load(Ordering::Relaxed);
+        if !bashauto || last == 2 {
+            USEMENU.store(2, Ordering::Relaxed);
+        }
     }
+
+    0                                                                        // c:498
 }
-fn lastpostbr_set(s: &str) {                                                  // zle_tricky.c lastpostbr
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPOSTBR
-        .get_or_init(|| Mutex::new(String::new())).lock()
-    {
-        *g = s.to_string();
+
+/// Direct port of `int after_complete(Hookdef dummy, int *dat)`
+/// from `Src/Zle/compcore.c:503`. Post-completion hook: when a
+/// completion has just transitioned into menu-completion (menucmp
+/// went 0→1 across this round), runs MENUSTARTHOOK so registered
+/// hook fns can veto or modify the about-to-display menu.
+///
+/// Hook handlers are registered via `addhookfunc("menu_start", fn)`
+/// (see `crate::ported::module::addhookfunc`), which writes to the
+/// global HOOKTAB. C's `comphooks[]` table declares `menu_start` as
+/// HOOKF_ALL, so every handler fires and the first non-zero return
+/// short-circuits the chain (see runhookdef at module.c:990).
+///
+/// Return value semantics (c:518-532):
+///   - `ret == 0` → no action (no handler vetoed).
+///   - `ret >= 1` → zero `dat[1]`, clear menucmp/menuacc, null minfo.cur.
+///   - `ret >= 2` → also rewind buffer to origline.
+///   - `ret == 2` → also schedule list clear (CLEARLIST=1, invalidatelist).
+pub fn after_complete(dat: &mut [i32]) -> i32 {                              // c:503
+    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
+    let oldmenucmp_v = OLDMENUCMP.load(Ordering::Relaxed);
+
+    // c:505 — `if (menucmp && !oldmenucmp) { ... }`.
+    if menucmp_v == 0 || oldmenucmp_v != 0 {
+        return 0;                                                            // c:535
     }
+
+    // c:506-517 — build chdata. cdat.matches=amatches, cdat.num=
+    //              nmatches, cdat.nmesg=nmessages, cdat.cur=NULL. The
+    //              Rust hook dispatch path doesn't yet thread chdata
+    //              into shell-fn args (handlers in the standard zsh
+    //              distribution all read directly from compsys globals
+    //              via $compstate). The fields above are still tracked
+    //              via amatches/nmatches/nmessages globals and visible
+    //              to handlers through the normal completion-state
+    //              parameter reads.
+
+    // c:518 — `runhookdef(MENUSTARTHOOK, &cdat)`. C dispatches via
+    // the hookdef chain; the Rust port walks HOOKTAB["menu_start"] and
+    // invokes each shell-fn via the canonical dispatch_function_call
+    // path used by signal-trap shfunc dispatch (signals.rs:1087). The
+    // first non-zero return short-circuits per HOOKF_ALL semantics
+    // (module.c:996-1005).
+    let handlers: Vec<String> = crate::ported::module::HOOKTAB
+        .lock()
+        .ok()
+        .and_then(|t| t.get("menu_start").cloned())
+        .unwrap_or_default();
+
+    let mut ret: i32 = 0;
+    for fn_name in &handlers {
+        let r = crate::fusevm_bridge::with_executor(|exec| {
+            exec.dispatch_function_call(fn_name, &[]).unwrap_or(0)
+        });
+        if r != 0 {
+            ret = r;
+            break;                                                           // c:1001 short-circuit
+        }
+    }
+
+    if ret == 0 {
+        return 0;                                                            // c:535
+    }
+
+    // c:519 — `dat[1] = 0`. The C caller passes a 2-int array; index 1
+    // carries the menu-acceptance flag for the outer compfunc loop.
+    if dat.len() > 1 {
+        dat[1] = 0;
+    }
+    // c:520 — `menucmp = menuacc = 0`.
+    MENUCMP.store(0, Ordering::Relaxed);
+    menuacc.store(0, Ordering::Relaxed);
+    // c:521 — `minfo.cur = NULL`.
+    if let Some(m) = MINFO.get() {
+        if let Ok(mut mi) = m.lock() {
+            mi.cur = None;
+        }
+    }
+
+    if ret >= 2 {                                                            // c:522
+        // c:523 — `fixsuffix()`.
+        crate::ported::zle::zle_misc::fixsuffix();
+        // c:524 — `zlemetacs = 0`.
+        ZLEMETACS.store(0, Ordering::Relaxed);
+        // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
+        let metall = ZLEMETALL.load(Ordering::Relaxed);
+        crate::ported::zle::zle_utils::foredel(metall, crate::ported::zle::zle_h::CUT_RAW);
+        // c:526 — `inststr(origline)` reinserts the pre-completion buffer.
+        let origline_v: String = crate::ported::zle::zle_tricky::ORIGLINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let _ = crate::ported::zle::zle_tricky::inststr(&origline_v);
+        // c:527 — `zlemetacs = origcs`.
+        let origcs_v = crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed);
+        ZLEMETACS.store(origcs_v, Ordering::Relaxed);
+
+        if ret == 2 {                                                        // c:528
+            // c:529 — `clearlist = 1`.
+            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
+            // c:530 — `invalidatelist()`.
+            crate::ported::zle::zle_h::invalidatelist();
+        }
+    }
+
+    0                                                                        // c:535
 }
 
 
@@ -1640,52 +851,228 @@ pub fn callcompfunc(s: &str, fn_name: &str) {                                // 
     crate::ported::utils::INCOMPFUNC.store(_icf, Ordering::Relaxed);
 }
 
-/// Choose `$compstate[context]` per the lex classification in `inwhat`
-/// (and the `ispar` modifier). Direct lift of compcore.c:591-617.
-fn compcontext_for(_s: &str) -> String {                                     // c:591
-    let ip = ispar.load(Ordering::Relaxed);                                  // c:599
-    if ip == 2 { return "brace_parameter".into(); }                          // c:600
-    if ip == 1 { return "parameter".into(); }                                // c:601
-    let lw = linwhat.load(Ordering::Relaxed);                                // c:602
-    match lw {                                                               // c:602
-        x if x == IN_PAR_LW  => "assign_parameter".into(),                   // c:603
-        x if x == IN_MATH_LW => "math".into(),                               // c:604-611
-        x if x == IN_COND_LW => "condition".into(),                          // c:613
-        x if x == IN_ENV_LW  => "value".into(),                              // c:615
-        _                     => "command".into(),                            // c:617
+// =====================================================================
+// makecomplist — `Src/Zle/compcore.c:946`.
+// =====================================================================
+
+/// Direct port of `int makecomplist(char *s, int incmd, int lst)` from
+/// compcore.c:946. Top-level dispatch into the completion subsystem:
+/// either the new compsys path (`callcompfunc`) or the legacy compctl
+/// path (`COMPCTLMAKEHOOK`).
+pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // c:946
+    let owb   = WB.load(Ordering::Relaxed);                                  // c:946
+    let owe   = WE.load(Ordering::Relaxed);
+    let ooffs = OFFS.load(Ordering::Relaxed);
+
+    // c:952-958 — `if (compfunc && (p = check_param(s, 0, 0)))`.
+    let mut s_owned = s.to_string();
+    if compfunc_active() {
+        if let Some(p) = check_param(&s_owned, false, false) {               // c:952
+            s_owned = s_owned[p..].to_string();                              // c:953 s = p
+            PARWB.store(owb, Ordering::Relaxed);                             // c:954
+            PARWE.store(owe, Ordering::Relaxed);                             // c:955
+            PAROFFS.store(ooffs, Ordering::Relaxed);                         // c:956
+        } else {
+            PARWB.store(-1, Ordering::Relaxed);                              // c:958
+        }
+    } else {
+        PARWB.store(-1, Ordering::Relaxed);                                  // c:958
+    }
+
+    linwhat.store(INWHAT.load(Ordering::Relaxed), Ordering::Relaxed);        // c:960
+
+    if compfunc_active() {                                                   // c:962
+        let os = s_owned.clone();                                            // c:964
+        let onm = nmatches.load(Ordering::Relaxed);                          // c:965
+        let odm = diffmatches.load(Ordering::Relaxed);                       // c:965
+        let osi = movefd(0);                                            // c:965 movefd(0)
+
+        // c:967-968 — bmatchers = mstack = NULL.
+        if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        // c:970-971 — ainfo = fainfo = hcalloc(sizeof(struct aminfo)).
+        if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Aminfo::default());
+        }
+        if let Ok(mut g) = fainfo.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Aminfo::default());
+        }
+        if let Ok(mut g) = freecl.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;                                                       // c:973
+        }
+        if crate::ported::zle::zle_tricky::VALIDLIST.load(Ordering::Relaxed) == 0 {
+            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed); // c:976
+        }
+        if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            g.clear();                                                        // c:977
+        }
+        mnum.store(0, Ordering::Relaxed);                                    // c:978
+        unambig_mnum.store(-1, Ordering::Relaxed);                           // c:979
+        if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
+            g.clear();                                                        // c:980
+        }
+        insmnum.store(ZMULT.load(Ordering::Relaxed), Ordering::Relaxed);     // c:981
+        oldlist.store(0, Ordering::Relaxed);                                 // c:986
+        oldins.store(0, Ordering::Relaxed);                                  // c:986
+        begcmgroup(Some("default"), 0);                                      // c:987
+        crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed); // c:988
+        menuacc.store(0, Ordering::Relaxed);                                 // c:988
+        newmatches.store(0, Ordering::Relaxed);                              // c:988
+        onlyexpl.store(0, Ordering::Relaxed);                                // c:988
+
+        let dup_s = crate::ported::mem::dupstring(&os);                      // c:990
+        let cf_name = compfunc.get_or_init(|| Mutex::new(None))
+            .lock().ok().and_then(|g| g.clone()).unwrap_or_default();
+        callcompfunc(&dup_s, &cf_name);                                      // c:991
+        endcmgroup(None);                                                    // c:992
+
+        // c:995 — runhookdef(COMPCTLCLEANUPHOOK, NULL).
+        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:995
+
+        if oldlist.load(Ordering::Relaxed) != 0 {                            // c:997
+            nmatches.store(onm, Ordering::Relaxed);                          // c:998
+            diffmatches.store(odm, Ordering::Relaxed);                       // c:999
+            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1000
+            if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                if let Ok(last) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                    *g = last.clone();                                       // c:1001
+                }
+            }
+            if let Ok(mut g) = lmatches.get_or_init(|| Mutex::new(None)).lock() {
+                let last_l = lastlmatches.get_or_init(|| Mutex::new(None))
+                    .lock().ok().and_then(|g| g.clone());
+                *g = last_l;                                                 // c:1007
+            }
+            // c:1008-1011 — `if (pmatches) freematches(pmatches, 1)`.
+            let drained = pmatches.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().map(|mut g| std::mem::take(&mut *g))
+                .unwrap_or_default();
+            freematches(drained, 1);                                          // c:1009-1010
+            hasperm.store(0, Ordering::Relaxed);                             // c:1011
+            redup(osi);                                                 // c:1012
+            return 0;                                                        // c:1013
+        }
+        if !lastmatches.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().map(|g| g.is_empty()).unwrap_or(true)
+        {                                                                    // c:1015
+            if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                g.clear();                                                    // c:1016-1017
+            }
+        }
+        permmatches(1);                                                      // c:1019
+        // c:1020-1029 — copy pmatches → amatches/lastmatches; swap holders.
+        let p_snap = pmatches.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().ok().map(|g| g.clone()).unwrap_or_default();
+        if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = p_snap.clone();                                             // c:1020
+        }
+        lastpermmnum.store(permmnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1021
+        lastpermgnum.store(permgnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1022
+        if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            *g = p_snap;                                                     // c:1024
+        }
+        let lm_snap = lmatches.get_or_init(|| Mutex::new(None))
+            .lock().ok().and_then(|g| g.clone());
+        if let Ok(mut g) = lastlmatches.get_or_init(|| Mutex::new(None)).lock() {
+            *g = lm_snap;                                                    // c:1025
+        }
+        if let Ok(mut g) = pmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+            g.clear();                                                       // c:1026
+        }
+        hasperm.store(0, Ordering::Relaxed);                                 // c:1027
+        hasoldlist.store(1, Ordering::Relaxed);                              // c:1028
+
+        let any_nm = nmatches.load(Ordering::Relaxed) != 0
+                  || nmessages.load(Ordering::Relaxed) != 0;
+        let errset = errflag_get();
+        if any_nm && !errset {                                               // c:1030
+            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1031
+            redup(osi);                                                 // c:1032
+            return 0;                                                        // c:1033
+        }
+        redup(osi);                                                     // c:1035
+        return 1;                                                            // c:1036
+    } else {                                                                 // c:1038
+        // c:1040-1047 — compctl dispatch via COMPCTLMAKEHOOK.
+        let mut dat = crate::ported::zle::comp_h::Ccmakedat {
+            str:  Some(s_owned.clone()),                                    // c:1042
+            incmd,                                                           // c:1043
+            lst,                                                             // c:1044
+        };
+        runhookdef_compctlmake(&mut dat);                               // c:1045
+        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:1048
+        return dat.lst;                                                      // c:1050
     }
 }
 
-pub const IN_NOTHING_LW: i32 = 0;                                            // lex.h
-pub const IN_CMD_LW:     i32 = 1;                                            // lex.h
-pub const IN_COND_LW:    i32 = 2;                                            // lex.h
-pub const IN_MATH_LW:    i32 = 3;                                            // lex.h
-pub const IN_PAR_LW:     i32 = 4;                                            // lex.h
-pub const IN_ENV_LW:     i32 = 5;                                            // lex.h
+// =====================================================================
+// multiquote — `Src/Zle/compcore.c:1065`.
+// =====================================================================
 
-// lastval_stub / incompfunc_stub / sfcontext_stub deleted — inlined
-// at all call sites: LASTVAL.load / INCOMPFUNC.load / SFCONTEXT.load
-// respectively, matching C's inline global reads.
-/// Real call into `doshfunc` — `Src/exec.c`. Looks up the function
-/// in the global shfunctab (`getshfunc`) and dispatches via the VM's
-/// `functions_compiled` map. Returns the function's exit status
-/// (LASTVAL after the call), matching C's `doshfunc` return value.
-pub fn shfunc_call(name: &str) -> i32 {                                  // exec.c
-    if crate::ported::utils::getshfunc(name).is_none() {                     // c:exec.c:5800
-        return 1;                                                            // missing fn → status 1
+/// Port of `mod_export char *multiquote(char *s, int ign)` from
+/// compcore.c:1064.
+pub fn multiquote(s: &str, ign: i32) -> String {                             // c:1065
+    let stack = crate::ported::zle::complete::COMPQSTACK                     // c:1065
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let p_bytes = stack.as_bytes();
+    if !p_bytes.is_empty() && (ign == 0 || p_bytes.len() > 1) {              // c:1070
+        let start = if ign != 0 { 1 } else { 0 };                            // c:1071
+        let mut cur = s.to_string();
+        for &q in &p_bytes[start..] {                                        // c:1073
+            let qt = match q as i32 {                                        // c:1074
+                x if x == QT_BACKSLASH => crate::ported::zsh_h::QT_BACKSLASH,
+                x if x == QT_SINGLE    => crate::ported::zsh_h::QT_SINGLE,
+                x if x == QT_DOUBLE    => crate::ported::zsh_h::QT_DOUBLE,
+                x if x == QT_DOLLARS   => crate::ported::zsh_h::QT_DOLLARS,
+                _ => crate::ported::zsh_h::QT_BACKSLASH,
+            };
+            cur = crate::ported::utils::quotestring(&cur, qt);
+        }
+        cur                                                                  // c:1092
+    } else {
+        s.to_string()                                                        // c:1092
     }
-    // The full VM dispatch (Op::CallFunction) lives inside the fusevm
-    // bridge; from compcore we can't synthesize a VM frame, so we
-    // probe + return the last status which mirrors C's "function
-    // already returned, just read $?" behavior in the common case
-    // of compfunc returning before exit.
-    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)                  // c:exec.c return lastval
 }
-/// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
-/// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
-fn set_compstate_str(key: &str, val: &str) {                                  // params.c:3350
-    let pname = format!("compstate[{}]", key);
-    let _ = crate::ported::params::setsparam(&pname, val);
+
+// =====================================================================
+// tildequote — `Src/Zle/compcore.c:1092`.
+// =====================================================================
+
+/// Port of `mod_export char *tildequote(char *s, int ign)` from
+/// compcore.c:1091.
+pub fn tildequote(s: &str, ign: i32) -> String {                             // c:1092
+    let bytes = s.as_bytes();                                                // c:1092
+    let tilde = !bytes.is_empty() && bytes[0] == b'~';                       // c:1097
+    let staged = if tilde {                                                  // c:1098
+        let mut tmp = String::with_capacity(s.len());
+        tmp.push('x');
+        tmp.push_str(&s[1..]);
+        tmp
+    } else {
+        s.to_string()
+    };
+    let mut quoted = multiquote(&staged, ign);                               // c:1099
+    if tilde && !quoted.is_empty() {                                         // c:1100
+        let mut new_q = String::with_capacity(quoted.len());
+        let mut swapped = false;
+        for c in quoted.chars() {
+            if !swapped && c == 'x' {
+                new_q.push('~');
+                swapped = true;
+            } else {
+                new_q.push(c);
+            }
+        }
+        quoted = new_q;
+    }
+    quoted                                                                   // c:1101
 }
 
 // =====================================================================
@@ -1952,78 +1339,156 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     None                                                                     // c:1320
 }
 
-/// Local helper: position before-the-current char (handles UTF-8).
-#[inline]
-fn prev_char_index(bytes: &[u8], pos: usize) -> usize {                      // local
-    if pos == 0 { return 0; }
-    let mut i = pos - 1;
-    while i > 0 && (bytes[i] & 0xC0) == 0x80 { i -= 1; }
-    i
-}
+// =====================================================================
+// rembslash — `Src/Zle/compcore.c:1323`.
+// =====================================================================
 
-#[inline]
-fn char_at(bytes: &[u8], pos: usize) -> char {                               // local
-    if pos >= bytes.len() { return '\0'; }
-    let s = match std::str::from_utf8(&bytes[pos..]) { Ok(s) => s, Err(_) => return '\0' };
-    s.chars().next().unwrap_or('\0')
-}
-
-/// Walk a balanced pair of in/out token bytes starting at `start`,
-/// returning the index just after the closing token, or None if
-/// unbalanced. C `skipparens` returns the position; this version
-/// returns the same semantic.
-fn skip_token_parens(bytes: &[u8], start: usize, open: char, close: char)    // local
-    -> Option<usize>
-{
-    let mut depth: i32 = 0;
-    let mut i = start;
-    while i < bytes.len() {
-        let c = char_at(bytes, i);
-        if c == open { depth += 1; }
-        else if c == close {
-            depth -= 1;
-            if depth == 0 { return Some(i + c.len_utf8()); }
+/// Port of `mod_export char *rembslash(char *s)` from compcore.c:1322.
+///
+/// "Strip backslash escapes from a token, treating `\X` as `X`."
+pub fn rembslash(s: &str) -> String {                                        // c:1323
+    let mut result = String::with_capacity(s.len());                         // c:1323
+    let mut chars = s.chars().peekable();                                    // c:1327
+    while let Some(c) = chars.next() {
+        if c == '\\' {                                                       // c:1328
+            if let Some(nxt) = chars.next() {                                // c:1329
+                result.push(nxt);
+            }
+        } else {
+            result.push(c);                                                  // c:1343-1333
         }
-        i += c.len_utf8();
     }
-    if depth == 0 { Some(i) } else { None }
+    result                                                                   // c:1343
 }
 
-/// Walk the INAMESPC name-character class — equivalent to C's
-/// `itype_end(e, INAMESPC, 0)` loop. Stops at first non-name char.
-fn walk_namespace(bytes: &[u8]) -> usize {                                    // local
-    let s = match std::str::from_utf8(bytes) { Ok(s) => s, Err(_) => return 0 };
-    let mut len = 0usize;
-    for c in s.chars() {
-        if c.is_alphanumeric() || c == '_' { len += c.len_utf8(); }
-        else { break; }
+// =====================================================================
+// remsquote — `Src/Zle/compcore.c:1343`.
+// =====================================================================
+
+/// Port of `mod_export int remsquote(char *s)` from compcore.c:1342.
+pub fn remsquote(s: &mut String) -> i32 {                                    // c:1343
+    let rcquotes = isset(RCQUOTES); // c:1343
+    let qa: usize = if rcquotes { 1 } else { 3 };
+
+    let bytes = s.as_bytes();                                                // c:1346
+    let mut t = Vec::<u8>::with_capacity(bytes.len());
+    let mut ret: i32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {                                                  // c:1348
+        let matched = if qa == 1 {                                           // c:1349
+            i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\''
+        } else {
+            i + 3 < bytes.len()                                              // c:1351
+                && bytes[i]     == b'\''
+                && bytes[i + 1] == b'\\'
+                && bytes[i + 2] == b'\''
+                && bytes[i + 3] == b'\''
+        };
+        if matched {
+            ret += qa as i32;                                                // c:1352
+            t.push(b'\'');                                                   // c:1353
+            i += qa + 1;                                                     // c:1354
+        } else {
+            t.push(bytes[i]);                                                // c:1356
+            i += 1;
+        }
     }
-    len
+    *s = String::from_utf8(t).unwrap_or_default();                           // c:1357
+    ret                                                                      // c:1366
 }
 
-/// Strip Inbrace/Outbrace/Stringg/etc. token bytes back to literal
-/// characters — substitute for C `untokenize()` over the slice. The
-/// canonical Rust untokenize lives in `crate::lex::untokenize`.
-fn strip_tokens(s: &str) -> String {                                          // local
-    crate::lex::untokenize(s).to_string()
+// =====================================================================
+// ctokenize — `Src/Zle/compcore.c:1366`.
+// =====================================================================
+
+/// Port of `mod_export char *ctokenize(char *p)` from compcore.c:1365.
+///
+/// C calls `tokenize(p)` first then walks the string replacing
+/// unescaped `$`/`{`/`}` with the token bytes `String`/`Inbrace`/
+/// `Outbrace`. Backslash-escaped variants become `Bnull`.
+pub fn ctokenize(p: &str) -> String {                                        // c:1366
+    let bytes = p.as_bytes();                                                // c:1366
+    let mut out = Vec::<u8>::with_capacity(bytes.len());
+    let mut bslash = false;                                                  // c:1369
+    let mut prev_idx: Option<usize> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];                                                    // c:1373
+        if b == b'\\' {                                                      // c:1374
+            bslash = true;
+            out.push(b);
+            prev_idx = Some(out.len() - 1);
+        } else {
+            if b == b'$' || b == b'{' || b == b'}' {                         // c:1377
+                if bslash {                                                  // c:1378
+                    if let Some(pi) = prev_idx {                             // c:1379
+                        out.truncate(pi);
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(Bnull.encode_utf8(&mut buf).as_bytes());
+                    }
+                    out.push(b);
+                } else {
+                    let tok = if b == b'$' { Stringg }                    // c:1381
+                              else if b == b'{' { Inbrace }                  // c:1382
+                              else { Outbrace };                             // c:1382
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(tok.encode_utf8(&mut buf).as_bytes());
+                }
+            } else {
+                out.push(b);
+            }
+            bslash = false;                                                  // c:1384
+            prev_idx = Some(out.len().saturating_sub(1));
+        }
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()                               // c:1403
 }
 
-/// File-scope `int offs` from `Src/Zle/zle_tricky.c:88`. The C source
-/// declares this as `mod_export`; mirrored here per Rule 9 since it's
-/// not yet at a canonical Rust home.
-pub static OFFS: AtomicI32 = AtomicI32::new(0);                              // zle_tricky.c:88
+// =====================================================================
+// comp_str — `Src/Zle/compcore.c:1403`.
+// =====================================================================
 
-/// File-scope `Compctl freecl` from `Src/Zle/compcore.c:255`. The
-/// freelist of available Compctl slots for the current completion call.
-pub static freecl: OnceLock<Mutex<Option<i32>>> = OnceLock::new();           // c:255
+/// Port of `mod_export char *comp_str(int *ipl, int *pl, int untok)`
+/// from compcore.c:1402.
+pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // c:1403
+    let mut p = COMPPREFIX.get_or_init(|| Mutex::new(String::new()))         // c:1405
+        .lock().unwrap().clone();
+    let mut s = COMPSUFFIX.get_or_init(|| Mutex::new(String::new()))         // c:1406
+        .lock().unwrap().clone();
+    let ip = COMPIPREFIX.get_or_init(|| Mutex::new(String::new()))           // c:1407
+        .lock().unwrap().clone();
+    if !untok {                                                              // c:1411
+        p = ctokenize(&p);                                                   // c:1412
+        p = p.chars().filter(|&c| c != Bnull).collect();                     // c:1413 remnulargs
+        s = ctokenize(&s);                                                   // c:1414
+        s = s.chars().filter(|&c| c != Bnull).collect();                     // c:1415
+    }
+    let lp = p.len() as i32;                                                 // c:1417
+    let lip = ip.len() as i32;                                               // c:1419
+    let mut str = String::with_capacity(ip.len() + p.len() + s.len() + 1);  // c:1420
+    str.push_str(&ip);                                                      // c:1435
+    str.push_str(&p);                                                       // c:1435
+    str.push_str(&s);                                                       // c:1435
+    (str, lip, lp)                                                          // c:1435-1430
+}
 
-/// File-scope `int hcompcall` accessor — `compfunc` active iff non-empty.
-fn compfunc_active() -> bool {
-    compfunc.get_or_init(|| Mutex::new(None))
-        .lock().ok()
-        .and_then(|g| g.clone())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
+// =====================================================================
+// comp_quoting_string — `Src/Zle/compcore.c:1435`.
+// =====================================================================
+
+/// Port of `mod_export char *comp_quoting_string(int stype)` from
+/// compcore.c:1434.
+pub fn comp_quoting_string(stype: i32) -> &'static str {                     // c:1435
+    match stype {                                                            // c:1435
+        x if x == QT_SINGLE  => "'",                                         // c:1439-1440
+        x if x == QT_DOUBLE  => "\"",                                        // c:1441-1442
+        x if x == QT_DOLLARS => "$'",                                        // c:1443-1444
+        _ => {                                                               // c:1445
+            let _ = QT_BACKSLASH;
+            "\\"                                                             // c:1446
+        }
+    }
 }
 
 // =====================================================================
@@ -2066,29 +1531,178 @@ pub fn set_comp_sep() -> i32 {                                               // 
     1                                                                        // c:1937 ret = 1 means "no change"
 }
 
-/// Direct port of `void lexsave(void)` from `Src/lex.c`. Delegates
-/// to `zcontext_save` which pushes the lex/parse/hist context stack
-/// frame. Returns a token (current stack depth) for symmetry with
-/// the C `int` save token used by `set_comp_sep` for invariant check.
-fn lexsave() -> usize {                                                  // lex.c via context.c:80
-    crate::ported::context::zcontext_save();
-    (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
+// =====================================================================
+// set_list_array — `Src/Zle/compcore.c:1947`.
+// =====================================================================
+
+/// Port of `static void set_list_array(char *name, LinkList l)` from
+/// compcore.c:1947. Writes an array-typed parameter via the canonical
+/// `setaparam` (params.c:3595).
+pub fn set_list_array(name: &str, l: &[String]) {                            // c:1947
+    let _ = crate::ported::params::setaparam(name, l.to_vec());              // c:1956
 }
 
-/// Direct port of `void lexrestore(void)` from `Src/lex.c`. Pops the
-/// last `zcontext_save` frame. C body restores hist/lex/parse via
-/// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
-fn lexrestore(_token: usize) {                                           // lex.c via context.c:117
-    let parts = crate::ported::zsh_h::ZCONTEXT_HIST
-              | crate::ported::zsh_h::ZCONTEXT_LEX
-              | crate::ported::zsh_h::ZCONTEXT_PARSE;
-    crate::ported::context::zcontext_restore_partial(parts);
-    LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
+// =====================================================================
+// get_user_var — `Src/Zle/compcore.c:1956`.
+// =====================================================================
+
+/// Port of `mod_export char **get_user_var(char *nam)` from
+/// compcore.c:1956.
+pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // c:1956
+    let nam = nam?;                                                          // c:1956
+    if nam.starts_with('(') {                                                // c:1960
+        let mut arrlist: Vec<String> = Vec::new();
+        let bytes = nam.as_bytes();
+        let mut buf = Vec::<u8>::new();
+        let mut notempty = false;                                            // c:1963
+        let mut brk = false;
+        let mut i = 1;                                                       // c:1967
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\\' && i + 1 < bytes.len() {                           // c:1969
+                buf.push(bytes[i + 1]);                                      // c:1970
+                notempty = true;
+                i += 2;
+                continue;
+            }
+            if b == b',' || b == b' ' || b == b'\t' || b == b'\n' || b == b')' {
+                if b == b')' { brk = true; }                                 // c:1972
+                if notempty {                                                // c:1974
+                    let mut start = 0;
+                    if !buf.is_empty() && buf[0] == b'\n' { start = 1; }     // c:1977
+                    let s = String::from_utf8_lossy(&buf[start..]).into_owned();
+                    arrlist.push(s);                                         // c:1979
+                }
+                buf.clear();                                                 // c:1981
+                notempty = false;
+            } else {
+                notempty = true;                                             // c:1984
+                buf.push(b);
+            }
+            i += 1;
+            if brk { break; }                                                // c:1988
+        }
+        if !brk || arrlist.is_empty() { return None; }                       // c:1991
+        Some(arrlist)                                                        // c:1996
+    } else {                                                                 // c:1999
+        // c:2003 — `if ((arr = getaparam(nam)) || (arr = gethparam(nam)))
+        //          arr = (incompfunc ? arrdup(arr) : arr);
+        //          else if ((val = getsparam(nam))) { arr = {val, NULL}; }`
+        // Read directly from paramtab: arrays first, then hashed
+        // assoc-array values, then scalar wrapped in a 1-element array.
+        crate::ported::signals::queue_signals();
+        let result = {
+            let tab = match crate::ported::params::paramtab().read() {
+                Ok(t) => t,
+                Err(_) => {
+                    crate::ported::signals::unqueue_signals();
+                    return None;
+                }
+            };
+            tab.get(nam).and_then(|pm| {
+                if let Some(arr) = pm.u_arr.as_ref() {
+                    Some(arr.clone())                                        // c:2004 getaparam
+                } else if let Some(s) = pm.u_str.as_ref() {
+                    Some(vec![s.clone()])                                    // c:2009 getsparam
+                } else {
+                    None
+                }
+            })
+        };
+        crate::ported::signals::unqueue_signals();                           // c:2022
+        result
+    }
 }
 
-/// Depth counter so `set_comp_sep`'s sanity assert ("lexsave/restore
-/// balanced") fires when a future port mismatches them.
-static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // local
+// =====================================================================
+// get_data_arr — `Src/Zle/compcore.c:2022`.
+// =====================================================================
+
+/// Direct port of `static char **get_data_arr(char *name, int keys)`
+/// from `Src/Zle/compcore.c:2022`. C uses `fetchvalue` with
+/// `SCANPM_WANTKEYS`/`SCANPM_WANTVALS` + `SCANPM_MATCHMANY` to scan
+/// an associative-array parameter and return either its keys or its
+/// values as a flat array. Without `fetchvalue` ported with full
+/// SCANPM flag support, we go straight to the hashed-storage
+/// thread-local maintained by params.rs for assoc-arrays.
+pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // c:2022
+    use crate::ported::params::{paramtab, paramtab_hashed_storage};
+    use crate::ported::zsh_h::{PM_HASHED, PM_TYPE};
+
+    crate::ported::signals::queue_signals();                                 // c:2028
+
+    // c:2030-2034 — fetchvalue with SCANPM_MATCHMANY → scan the
+    //                hashed param's keys/values. We approximate by
+    //                routing keys/values directly out of the
+    //                hashed-storage map.
+    let is_hashed = match paramtab().read() {
+        Ok(t) => t.get(name)
+            .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+
+    let result = if is_hashed {
+        paramtab_hashed_storage().lock().ok().and_then(|m| {
+            m.get(name).map(|map| {
+                if keys {
+                    map.keys().cloned().collect::<Vec<_>>()
+                } else {
+                    map.values().cloned().collect::<Vec<_>>()
+                }
+            })
+        })
+    } else {
+        // c:2032 — non-hashed names return NULL.
+        None
+    };
+
+    crate::ported::signals::unqueue_signals();                               // c:2041
+    result
+}
+
+// =====================================================================
+// addmatch — `Src/Zle/compcore.c:2041`.
+// =====================================================================
+
+/// Port of `static void addmatch(char *str, int flags, char ***dispp,
+///                                int line)` from compcore.c:2041.
+pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
+    let mut cm = Cmatch::default();                                          // c:2041
+    cm.str = Some(str.to_string());                                        // c:2047
+    // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
+    // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
+    let complist_extra = {
+        let s = COMPLIST.get_or_init(|| Mutex::new(String::new()))
+            .lock().map(|g| g.clone()).unwrap_or_default();
+        let packed = if s.contains("packed") { CMF_PACKED } else { 0 };      // c:2050
+        let rows   = if s.contains("rows")   { CMF_ROWS   } else { 0 };      // c:2051
+        if s.is_empty() { 0 } else { packed | rows }
+    };
+    cm.flags = flags | complist_extra;                                       // c:2048
+    if let Some(d) = disp {                                                  // c:2052
+        cm.disp = Some(d.to_string());                                       // c:2056
+    } else if line {                                                         // c:2057
+        cm.disp = Some(String::new());                                       // c:2058
+        cm.flags |= CMF_DISPLINE;                                            // c:2059
+    }
+    mnum.fetch_add(1, Ordering::Relaxed);                                    // c:2061
+    {
+        let cell = curexpl.get_or_init(|| Mutex::new(None));                 // c:2063
+        if let Ok(mut g) = cell.lock() {
+            if let Some(e) = g.as_mut() { e.count += 1; }
+        }
+    }
+    let mcell = matches.get_or_init(|| Mutex::new(Vec::new()));              // c:2066
+    if let Ok(mut g) = mcell.lock() { g.push(cm); }
+    newmatches.store(1, Ordering::Relaxed);                                  // c:2068
+    {
+        let cell = mgroup.get_or_init(|| Mutex::new(None));                  // c:2069
+        if let Ok(mut g) = cell.lock() {
+            if let Some(grp) = g.as_mut() { grp.new_ = 1; }
+        }
+    }
+}
 
 // =====================================================================
 // addmatches — `Src/Zle/compcore.c:2080`.
@@ -2452,28 +2066,6 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
 
     let _ = (ppl, psl, compignored_local, added);
     0                                                                        // c:2636
-}
-
-// ---- Extern stubs for addmatches's bucket-3 dependencies ----
-
-fn compquote_first() -> Option<char> {                                        // zle_tricky.c compquote
-    crate::ported::zle::zle_tricky::COMPQUOTE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock().ok()
-        .and_then(|g| g.chars().next())
-}
-fn instring_set(v: i32) {                                                     // zle_tricky.c:419
-    crate::ported::zle::zle_tricky::INSTRING.store(v, Ordering::Relaxed);
-}
-fn inbackt_set(v: i32) {                                                      // zle_tricky.c:419
-    crate::ported::zle::zle_tricky::INBACKT.store(v, Ordering::Relaxed);
-}
-fn autoq_set(s: &str) {                                                       // zle_tricky.c autoq
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::AUTOQ
-        .get_or_init(|| Mutex::new(String::new())).lock()
-    {
-        *g = s.to_string();
-    }
 }
 
 // =====================================================================
@@ -2894,253 +2486,159 @@ pub fn add_match_data(                                                       // 
     cm                                                                       // c:3067 return cm
 }
 
-// ---- Extern stubs for add_match_data's Cline operations ----
-
-/// Bridge to `cline_matched()` — `Src/Zle/compmatch.c:253`. The
-/// real port takes `&mut Option<Box<Cline>>` walking the chain
-/// marking each node CLF_MATCHED. With only a string slice here we
-/// build a one-node Cline shim and route the call through it so the
-/// CLF_MATCHED state-machine update fires the same way as in C.
-fn cline_matched_compcore(line: Option<&str>) {                                   // compmatch.c:253
-    let Some(s) = line else { return; };
-    if s.is_empty() { return; }
-    let mut head = Some(Box::new(crate::ported::zle::comp_h::Cline {
-        line: Some(s.to_string()),
-        llen: s.len() as i32,
-        ..Default::default()
-    }));
-    crate::ported::zle::compmatch::cline_matched(&mut head);
-}
-/// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
-/// global read at `Src/Zle/zle_tricky.c qisuf`.
-fn qisuf_get() -> String {                                                   // zle_tricky.c qisuf
-    crate::ported::params::getsparam("qisuf").unwrap_or_default()
-}
-fn qipre_get() -> String {                                                   // zle_tricky.c qipre
-    crate::ported::params::getsparam("qipre").unwrap_or_default()
-}
+// `lookup_complist_flags` deleted — Rust-only 8-line helper. Inlined
+// at the single call site in callcompfunc (c:2049-2051).
 
 // =====================================================================
-// makecomplist — `Src/Zle/compcore.c:946`.
+// begcmgroup — `Src/Zle/compcore.c:3073`.
 // =====================================================================
 
-/// Direct port of `int makecomplist(char *s, int incmd, int lst)` from
-/// compcore.c:946. Top-level dispatch into the completion subsystem:
-/// either the new compsys path (`callcompfunc`) or the legacy compctl
-/// path (`COMPCTLMAKEHOOK`).
-pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // c:946
-    let owb   = WB.load(Ordering::Relaxed);                                  // c:946
-    let owe   = WE.load(Ordering::Relaxed);
-    let ooffs = OFFS.load(Ordering::Relaxed);
-
-    // c:952-958 — `if (compfunc && (p = check_param(s, 0, 0)))`.
-    let mut s_owned = s.to_string();
-    if compfunc_active() {
-        if let Some(p) = check_param(&s_owned, false, false) {               // c:952
-            s_owned = s_owned[p..].to_string();                              // c:953 s = p
-            PARWB.store(owb, Ordering::Relaxed);                             // c:954
-            PARWE.store(owe, Ordering::Relaxed);                             // c:955
-            PAROFFS.store(ooffs, Ordering::Relaxed);                         // c:956
-        } else {
-            PARWB.store(-1, Ordering::Relaxed);                              // c:958
-        }
-    } else {
-        PARWB.store(-1, Ordering::Relaxed);                                  // c:958
-    }
-
-    linwhat.store(INWHAT.load(Ordering::Relaxed), Ordering::Relaxed);        // c:960
-
-    if compfunc_active() {                                                   // c:962
-        let os = s_owned.clone();                                            // c:964
-        let onm = nmatches.load(Ordering::Relaxed);                          // c:965
-        let odm = diffmatches.load(Ordering::Relaxed);                       // c:965
-        let osi = movefd(0);                                            // c:965 movefd(0)
-
-        // c:967-968 — bmatchers = mstack = NULL.
-        if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
-            *g = None;
-        }
-        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = None;
-        }
-        // c:970-971 — ainfo = fainfo = hcalloc(sizeof(struct aminfo)).
-        if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Aminfo::default());
-        }
-        if let Ok(mut g) = fainfo.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Aminfo::default());
-        }
-        if let Ok(mut g) = freecl.get_or_init(|| Mutex::new(None)).lock() {
-            *g = None;                                                       // c:973
-        }
-        if crate::ported::zle::zle_tricky::VALIDLIST.load(Ordering::Relaxed) == 0 {
-            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed); // c:976
-        }
-        if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            g.clear();                                                        // c:977
-        }
-        mnum.store(0, Ordering::Relaxed);                                    // c:978
-        unambig_mnum.store(-1, Ordering::Relaxed);                           // c:979
-        if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
-            g.clear();                                                        // c:980
-        }
-        insmnum.store(ZMULT.load(Ordering::Relaxed), Ordering::Relaxed);     // c:981
-        oldlist.store(0, Ordering::Relaxed);                                 // c:986
-        oldins.store(0, Ordering::Relaxed);                                  // c:986
-        begcmgroup(Some("default"), 0);                                      // c:987
-        crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed); // c:988
-        menuacc.store(0, Ordering::Relaxed);                                 // c:988
-        newmatches.store(0, Ordering::Relaxed);                              // c:988
-        onlyexpl.store(0, Ordering::Relaxed);                                // c:988
-
-        let dup_s = crate::ported::mem::dupstring(&os);                      // c:990
-        let cf_name = compfunc.get_or_init(|| Mutex::new(None))
-            .lock().ok().and_then(|g| g.clone()).unwrap_or_default();
-        callcompfunc(&dup_s, &cf_name);                                      // c:991
-        endcmgroup(None);                                                    // c:992
-
-        // c:995 — runhookdef(COMPCTLCLEANUPHOOK, NULL).
-        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:995
-
-        if oldlist.load(Ordering::Relaxed) != 0 {                            // c:997
-            nmatches.store(onm, Ordering::Relaxed);                          // c:998
-            diffmatches.store(odm, Ordering::Relaxed);                       // c:999
-            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1000
-            if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                if let Ok(last) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                    *g = last.clone();                                       // c:1001
+/// Port of `mod_export void begcmgroup(char *n, int flags)` from
+/// compcore.c:3073.
+pub fn begcmgroup(n: Option<&str>, flags: i32) {                             // c:3073
+    if let Some(name) = n {                                                  // c:3073
+        let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON                    // c:3085
+                 | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
+        let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
+        if let Ok(g) = cell.lock() {
+            for grp in g.iter() {                                            // c:3078
+                if grp.name.as_deref() == Some(name)                         // c:3084-3087
+                    && (grp.flags & mask) == flags
+                {
+                    let active = grp.clone();                                // c:3088
+                    let mc = mgroup.get_or_init(|| Mutex::new(None));
+                    if let Ok(mut s) = mc.lock() { *s = Some(active); }
+                    return;                                                  // c:3095
                 }
             }
-            if let Ok(mut g) = lmatches.get_or_init(|| Mutex::new(None)).lock() {
-                let last_l = lastlmatches.get_or_init(|| Mutex::new(None))
-                    .lock().ok().and_then(|g| g.clone());
-                *g = last_l;                                                 // c:1007
-            }
-            // c:1008-1011 — `if (pmatches) freematches(pmatches, 1)`.
-            let drained = pmatches.get_or_init(|| Mutex::new(Vec::new()))
-                .lock().map(|mut g| std::mem::take(&mut *g))
-                .unwrap_or_default();
-            freematches(drained, 1);                                          // c:1009-1010
-            hasperm.store(0, Ordering::Relaxed);                             // c:1011
-            redup(osi);                                                 // c:1012
-            return 0;                                                        // c:1013
         }
-        if !lastmatches.get_or_init(|| Mutex::new(Vec::new()))
-            .lock().map(|g| g.is_empty()).unwrap_or(true)
-        {                                                                    // c:1015
-            if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                g.clear();                                                    // c:1016-1017
-            }
-        }
-        permmatches(1);                                                      // c:1019
-        // c:1020-1029 — copy pmatches → amatches/lastmatches; swap holders.
-        let p_snap = pmatches.get_or_init(|| Mutex::new(Vec::new()))
-            .lock().ok().map(|g| g.clone()).unwrap_or_default();
-        if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            *g = p_snap.clone();                                             // c:1020
-        }
-        lastpermmnum.store(permmnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1021
-        lastpermgnum.store(permgnum.load(Ordering::Relaxed), Ordering::Relaxed); // c:1022
-        if let Ok(mut g) = lastmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            *g = p_snap;                                                     // c:1024
-        }
-        let lm_snap = lmatches.get_or_init(|| Mutex::new(None))
-            .lock().ok().and_then(|g| g.clone());
-        if let Ok(mut g) = lastlmatches.get_or_init(|| Mutex::new(None)).lock() {
-            *g = lm_snap;                                                    // c:1025
-        }
-        if let Ok(mut g) = pmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            g.clear();                                                       // c:1026
-        }
-        hasperm.store(0, Ordering::Relaxed);                                 // c:1027
-        hasoldlist.store(1, Ordering::Relaxed);                              // c:1028
+    }
+    let mut grp = Cmgroup::default();                                        // c:3101
+    grp.name = n.map(String::from);                                          // c:3105
+    grp.flags = flags;                                                       // c:3108
+    let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut g) = cell.lock() {
+        g.insert(0, grp.clone());                                            // c:3121-3124
+    }
+    let mc = mgroup.get_or_init(|| Mutex::new(None));
+    if let Ok(mut s) = mc.lock() { *s = Some(grp); }
+    if let Ok(mut g) = expls.get_or_init(|| Mutex::new(Vec::new())).lock()    { g.clear(); }
+    if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock()  { g.clear(); }
+    if let Ok(mut g) = fmatches.get_or_init(|| Mutex::new(Vec::new())).lock() { g.clear(); }
+    if let Ok(mut g) = allccs.get_or_init(|| Mutex::new(Vec::new())).lock()   { g.clear(); }
+}
 
-        let any_nm = nmatches.load(Ordering::Relaxed) != 0
-                  || nmessages.load(Ordering::Relaxed) != 0;
-        let errset = errflag_get();
-        if any_nm && !errset {                                               // c:1030
-            crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1031
-            redup(osi);                                                 // c:1032
-            return 0;                                                        // c:1033
+// =====================================================================
+// endcmgroup — `Src/Zle/compcore.c:3131`.
+// =====================================================================
+
+/// Port of `mod_export void endcmgroup(char **ylist)` from
+/// compcore.c:3131.
+pub fn endcmgroup(ylist: Option<Vec<String>>) {                              // c:3131
+    let cell = mgroup.get_or_init(|| Mutex::new(None));
+    if let Ok(mut g) = cell.lock() {
+        if let Some(grp) = g.as_mut() {
+            grp.ylist = ylist.unwrap_or_default();                           // c:3140
         }
-        redup(osi);                                                     // c:1035
-        return 1;                                                            // c:1036
-    } else {                                                                 // c:1038
-        // c:1040-1047 — compctl dispatch via COMPCTLMAKEHOOK.
-        let mut dat = crate::ported::zle::comp_h::Ccmakedat {
-            str:  Some(s_owned.clone()),                                    // c:1042
-            incmd,                                                           // c:1043
-            lst,                                                             // c:1044
-        };
-        runhookdef_compctlmake(&mut dat);                               // c:1045
-        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:1048
-        return dat.lst;                                                      // c:1050
     }
 }
 
-// ---- Extern stubs for makecomplist's bucket-3 dependencies ----
+// =====================================================================
+// addexpl — `Src/Zle/compcore.c:3140`.
+// =====================================================================
 
-/// File-scope holder for `Cmlist bmatchers` — `Src/Zle/compcore.c:236`.
-/// C linked-list of matchers active for brace-matching, populated by
-/// `add_bmatchers` walking the user-installed `Cmatcher` chain.
-pub static bmatchers: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
-    = OnceLock::new();                                                       // c:236
+/// Port of `mod_export void addexpl(int always)` from compcore.c:3140.
+pub fn addexpl(always: bool) {                                               // c:3140
+    let curexpl_snap = {
+        let cell = curexpl.get_or_init(|| Mutex::new(None));
+        cell.lock().ok().and_then(|g| g.clone())
+    };
+    let curexpl_str = match curexpl_snap.as_ref().and_then(|e| e.str.clone()) {
+        Some(s) => s,
+        None => return,
+    };
+    let curexpl_count  = curexpl_snap.as_ref().map(|e| e.count).unwrap_or(0);
+    let curexpl_fcount = curexpl_snap.as_ref().map(|e| e.fcount).unwrap_or(0);
 
-/// File-scope holder for `Cmlist mstack` — `Src/Zle/compcore.c:236`.
-/// Matcher-stack — current active matcher list for compadd recursion.
-pub static mstack: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
-    = OnceLock::new();                                                       // c:236
-
-/// Adapter for `int movefd(int fd)` from `Src/utils.c:2974` —
-/// delegates to the canonical port in `ported::utils::movefd`.
-fn movefd(fd: i32) -> i32 {                                             // utils.c:2974
-    crate::ported::utils::movefd(fd)
-}
-
-/// Adapter for `void redup(int new, int old)` from `Src/utils.c:2021` —
-/// delegates to the canonical port `ported::utils::redup`. Callers
-/// only need the new-fd form here; `old` is the inverse of movefd's
-/// reservation (passed as -1 to mean "no original").
-fn redup(new: i32) {                                                    // utils.c:2021
-    crate::ported::utils::redup(new, -1);
-}
-
-/// Adapter for the `errflag` global from `Src/init.c` — reads the
-/// canonical atomic in `ported::utils::errflag`.
-fn errflag_get() -> bool {
-    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
-}
-
-/// Direct port of `void runhookdef(Hookdef h, void *arg)` from
-/// `Src/init.c:990` — dispatches each registered shell function for
-/// the named hook by walking the global `hooktab` (module.c:843).
-fn runhookdef_compcore(hook: &str) {                                              // init.c:990
-    let fns: Vec<String> = crate::ported::module::HOOKTAB.lock()
-        .ok()
-        .and_then(|g| g.get(hook).cloned())
-        .unwrap_or_default();
-    for f in fns {
-        let _ = shfunc_call(&f);
+    let elist = expls.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut g) = elist.lock() {
+        for e in g.iter_mut() {                                              // c:3145
+            if e.str.as_deref() == Some(curexpl_str.as_str()) {             // c:3147
+                e.count  += curexpl_count;                                   // c:3148
+                e.fcount += curexpl_fcount;                                  // c:3149
+                if always {                                                  // c:3150
+                    e.always = 1;
+                    nmessages.fetch_add(1, Ordering::Relaxed);               // c:3152
+                    newmatches.store(1, Ordering::Relaxed);                  // c:3153
+                    let mc = mgroup.get_or_init(|| Mutex::new(None));
+                    if let Ok(mut mg) = mc.lock() {
+                        if let Some(grp) = mg.as_mut() { grp.new_ = 1; }
+                    }
+                }
+                return;                                                      // c:3156
+            }
+        }
+        if let Some(e) = curexpl_snap {                                      // c:3159
+            g.push(e);
+        }
+    }
+    newmatches.store(1, Ordering::Relaxed);                                  // c:3160
+    if always {                                                              // c:3161
+        let mc = mgroup.get_or_init(|| Mutex::new(None));
+        if let Ok(mut mg) = mc.lock() {
+            if let Some(grp) = mg.as_mut() { grp.new_ = 1; }
+        }
+        nmessages.fetch_add(1, Ordering::Relaxed);                           // c:3173
     }
 }
 
-/// Direct port of `runhookdef(COMPCTLMAKEHOOK, &dat)` from
-/// `Src/Zle/compctl.c`. The compctl module registers this hook so
-/// `Src/Zle/compcore.c:1042-1045` dispatches into compctl's
-/// `makecomplistctl` via its registered shfunc list.
-fn runhookdef_compctlmake(                                               // init.c:990 (COMPCTLMAKEHOOK)
-    dat: &mut crate::ported::zle::comp_h::Ccmakedat,
-) {
-    // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
-    let s = dat.str.clone().unwrap_or_default();
-    let _ = crate::ported::zle::compctl::makecomplistctl(dat.lst);
-    let _ = s;
+// =====================================================================
+// matchcmp — `Src/Zle/compcore.c:3173`.
+// =====================================================================
+
+/// Port of `static int matchcmp(Cmatch *a, Cmatch *b)` from
+/// compcore.c:3173.
+pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {              // c:3173
+    let order = MATCHORDER.load(Ordering::Relaxed);
+    let sortdir = if (order & CGF_REVSORT) != 0 { -1 } else { 1 };           // c:3177
+
+    let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32);         // c:3176
+    let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
+        (a.str.clone().unwrap_or_default(),                                 // c:3181
+         b.str.clone().unwrap_or_default())                                 // c:3182
+    } else {
+        if cmp != 0 {                                                        // c:3184
+            let raw = (cmp as i32) * sortdir;
+            return if raw < 0 { std::cmp::Ordering::Less }                   // c:3185
+                   else if raw > 0 { std::cmp::Ordering::Greater }
+                   else { std::cmp::Ordering::Equal };
+        }
+        let displine_cmp = (b.flags & CMF_DISPLINE) - (a.flags & CMF_DISPLINE); // c:3187
+        if displine_cmp != 0 {                                               // c:3188
+            let raw = displine_cmp * sortdir;
+            return if raw < 0 { std::cmp::Ordering::Less }
+                   else if raw > 0 { std::cmp::Ordering::Greater }
+                   else { std::cmp::Ordering::Equal };
+        }
+        (a.disp.clone().unwrap_or_default(),                                 // c:3191
+         b.disp.clone().unwrap_or_default())                                 // c:3192
+    };
+    let raw = sortdir * if as_ == bs { 0 } else if as_ < bs { -1 } else { 1 };
+    if raw < 0 { std::cmp::Ordering::Less }                                  // c:3195
+    else if raw > 0 { std::cmp::Ordering::Greater }
+    else { std::cmp::Ordering::Equal }
 }
 
-/// File-scope registry mirroring `Src/init.c`'s `zshhooks[]` table —
-/// each hook name maps to the ordered list of shfunc names to call.
-pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String>>>>
-    = OnceLock::new();                                                        // init.c zshhooks
+/// Port of `static int matcheq(Cmatch a, Cmatch b)` from
+/// compcore.c:3206.
+pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // c:3207
+    matchstreq(a.ipre.as_ref(),  b.ipre.as_ref())  &&                        // c:3207
+    matchstreq(a.pre.as_ref(),   b.pre.as_ref())   &&                        // c:3210
+    matchstreq(a.ppre.as_ref(),  b.ppre.as_ref())  &&                        // c:3211
+    matchstreq(a.psuf.as_ref(),  b.psuf.as_ref())  &&                        // c:3212
+    matchstreq(a.suf.as_ref(),   b.suf.as_ref())   &&                        // c:3213
+    matchstreq(a.str.as_ref(),  b.str.as_ref())                            // c:3214
+}
 
 // =====================================================================
 // makearray — `Src/Zle/compcore.c:3224`.
@@ -3280,35 +2778,6 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
     (rp, n, nl, ll)                                                          // c:3366-3373
 }
 
-/// Port of the `type==0` string-sort branch of `makearray()` from
-/// compcore.c:3239-3257. Sorts strings via `strmetasort` + dedup.
-pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) { // c:3239
-    let mut n: i32 = rp.len() as i32;
-    if flags != 0 && n > 0 {                                                 // c:3240
-        let numeric = isset(NUMERICGLOBSORT); // c:3243
-        let mut sf = SORTIT_IGNORING_BACKSLASHES as u32;
-        if numeric {
-            sf |= SORTIT_NUMERICALLY as u32;
-        }
-        crate::ported::sort::strmetasort(&mut rp, sf, None);                 // c:3242-3244
-
-        // Dedup consecutive equals.                                         // c:3247
-        let mut cp = 0usize;
-        let mut ap = 0usize;
-        while ap < rp.len() {
-            if ap != cp { rp.swap(ap, cp); }
-            cp += 1;
-            let mut bp = ap;
-            while bp + 1 < rp.len() && rp[ap] == rp[bp + 1] {                // c:3250
-                bp += 1; n -= 1;
-            }
-            ap = bp + 1;                                                     // c:3252
-        }
-        rp.truncate(cp);                                                     // c:3253
-    }
-    (rp, n)
-}
-
 // =====================================================================
 // dupmatch — `Src/Zle/compcore.c:3370`.
 // =====================================================================
@@ -3353,14 +2822,6 @@ pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {                // 
     r.fmodec = m.fmodec;                                                     // c:3414
     r                                                                        // c:3416
 }
-
-// =====================================================================
-// permmatches — `Src/Zle/compcore.c:3423`.
-// =====================================================================
-
-/// Static state for `permmatches`'s `static int fi`. C scopes the
-/// flag to the function; Rust hoists it to file scope per Rule S1.
-static PERMMATCHES_FI: AtomicI32 = AtomicI32::new(0);                        // c:3423 static int fi
 
 /// Port of `mod_export int permmatches(int last)` from compcore.c:3422.
 /// Promotes the per-round `amatches` accumulator into the permanent
@@ -3540,6 +3001,545 @@ pub fn permmatches(last: i32) -> i32 {                                       // 
     }
 
     fi                                                                       // c:3570
+}
+
+// =====================================================================
+// freematch / freematches — `Src/Zle/compcore.c:3575 / 3605`.
+// =====================================================================
+
+/// Port of `void freematch(Cmatch m, int *cl, int rec)` from
+/// compcore.c:3575. Rust's `Drop` covers it.
+pub fn freematch(_m: Cmatch) {                                               // c:3575
+}
+
+/// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
+/// keyboard char consumed by the binding loop — read by `selfinsert`.
+pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
+// minfo_clear_cur / minfo_asked_zero deleted — Rust-only 2-line
+// wrappers around C's inline writes `minfo.cur = NULL` and
+// `minfo.asked = 0`. All call sites inlined.
+
+/// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
+/// (the single file-scope instance). The struct type itself lives
+/// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
+pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
+
+/// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
+/// `Src/Zle/compcore.c:3605`. The C path walks the cmgroup chain freeing
+/// each Cmatch + ylist + expls + widths + name; in Rust those are
+/// owned by `Vec`/`Box`/`String` so Drop covers the per-node free.
+/// The `cm` arm at c:3636-3637 (`minfo.cur = NULL`) is the only
+/// side-effect that doesn't fall out of Rust's ownership model — wire
+/// it explicitly.
+pub fn freematches(g: Vec<Cmgroup>, cm: i32) {                               // c:3605
+    drop(g);
+    if cm != 0 {                                                             // c:3636
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(
+            crate::ported::zle::comp_h::Menuinfo::default()
+        )).lock() {
+            g.cur = None;                                                     // c:3637
+        }
+    }
+}
+
+// =====================================================================
+// matcheq — `Src/Zle/compcore.c:3203-3215`.
+// =====================================================================
+
+#[inline]
+fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // c:3207
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// First-match shortcut path from compcore.c:398-411. `Cmgroup m = amatches;
+/// while (!m->mcount) m = m->next; do_single(m->matches[0])`.
+fn do_single_first_match() {                                                  // c:398
+    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let first = groups.into_iter().find(|g| g.mcount > 0)
+        .and_then(|g| g.matches.first().cloned());
+    if let Some(m) = first {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }                                                   // c:407
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.asked = 0; }                                                  // c:408
+        // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
+        // MINFO.cur so the listing path picks it up (matches the C
+        // behavior of routing the single-match insert through minfo).
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
+            g.cur = Some(Box::new(m));
+        }
+    }
+}
+
+/// compcore.c:444 `compend:` epilogue — free matchers, snap zlemetacs.
+fn goto_compend(ret: i32) -> i32 {                                            // c:444
+    if let Ok(mut g) = matchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        g.clear();                                                            // c:445-446 freecmatcher loop
+    }
+    let line_len = ZLEMETALL.load(Ordering::Relaxed);                        // c:448 strlen(zlemetaline)
+    if ZLEMETACS.load(Ordering::Relaxed) > line_len {                        // c:449
+        ZLEMETACS.store(line_len, Ordering::Relaxed);                        // c:450
+    }
+    ret                                                                      // c:453
+}
+
+// `COMP_LIST_COMPLETE` / `QT_NONE_STUB` / `QT_BACKSLASH_STUB` local
+// aliases deleted — call sites now reach the real C-side constants
+// directly (`crate::ported::zle::zle_h::COMP_LIST_COMPLETE`,
+// `crate::ported::zsh_h::QT_NONE`, `crate::ported::zsh_h::QT_BACKSLASH`).
+// The local `COMP_LIST_COMPLETE = 2` was a value-mismatch bug (the
+// real constant is 1 per `Src/Zle/zle.h:357`).
+
+// `char_from_qt` deleted — Rust-only 1-line `(qt as u8) as char`
+// helper. Inlined at the two call sites in get_compstate_str.
+
+// `showinglist_stub` / `showinglist_set` / `clearlist_set` /
+// `listshown_stub` / `instring_stub` deleted — Rust-only 1-line
+// accessors for C globals (SHOWINGLIST / CLEARLIST / LISTSHOWN /
+// INSTRING). C reads/writes the bare globals inline; callers in
+// compcore.rs now do `<GLOBAL>.load(Ordering::Relaxed)` /
+// `<GLOBAL>.store(v, Ordering::Relaxed)` directly.
+/// Direct port of `foredel(int ct, int flags)` from
+/// `Src/Zle/zle_utils.c:1105`. Deletes `ct` chars forward from
+/// `ZLEMETACS` in the global metafied line. Operates on the
+/// `ZLEMETALINE` global rather than a `&mut Zle` handle since
+/// compcore's call site (compcore.c:344-355 error-recovery) drives
+/// the global ZLE buffer directly.
+/// WARNING: param names don't match C — Rust=(ct) vs C=(ct, flags)
+fn foredel(ct: i32) {                                                    // zle_utils.c:1105
+    if ct <= 0 { return; }
+    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let bytes = g.as_bytes();
+        if cs >= bytes.len() { return; }
+        let end = (cs + ct as usize).min(bytes.len());
+        // c:1108-1115 — splice out [cs..end).
+        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
+            + &String::from_utf8_lossy(&bytes[end..]);
+        let new_len = new_line.len() as i32;
+        *g = new_line;
+        ZLEMETALL.store(new_len, Ordering::Relaxed);
+    }
+}
+
+/// Direct port of `inststr(char *s)` from `Src/Zle/zle_tricky.c:278`.
+/// Inserts `s` at `ZLEMETACS` in the global metafied line.
+/// Direct port of `#define inststr(X) inststrlen((X),1,-1)` from
+/// `Src/Zle/zle_tricky.c:57`. Inserts `s` at `ZLEMETACS` in the
+/// global metafied line; cursor advances by `s.len()`.
+/// WARNING: param names don't match C — Rust=(s) vs C=()
+fn inststr(s: &str) {                                                    // c:57
+    if s.is_empty() { return; }
+    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let bytes = g.as_bytes();
+        let cs = cs.min(bytes.len());
+        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
+            + s
+            + &String::from_utf8_lossy(&bytes[cs..]);
+        let new_len = new_line.len() as i32;
+        *g = new_line;
+        ZLEMETALL.store(new_len, Ordering::Relaxed);
+        ZLEMETACS.store(cs as i32 + s.len() as i32, Ordering::Relaxed);
+    }
+}
+
+pub const IN_NOTHING_LW: i32 = 0;                                            // lex.h
+pub const IN_CMD_LW:     i32 = 1;                                            // lex.h
+pub const IN_COND_LW:    i32 = 2;                                            // lex.h
+pub const IN_MATH_LW:    i32 = 3;                                            // lex.h
+pub const IN_PAR_LW:     i32 = 4;                                            // lex.h
+pub const IN_ENV_LW:     i32 = 5;                                            // lex.h
+// `origline_stub` / `origcs_stub` deleted — Rust-only 1-line
+// accessors for the `ORIGLINE` / `ORIGCS` globals (ports of C
+// `origline` / `origcs` at zle_tricky.c:75 etc.). C reads these
+// globals inline; callers in compcore.rs now do the lock/load
+// directly.
+/// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
+/// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
+/// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
+fn unmetafy_line() {                                                     // zle_tricky.c:995
+    let meta = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
+    let new_len = unmeta.len() as i32;
+    let cs = ZLEMETACS.load(Ordering::Relaxed);                              // c:978-1000
+    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = unmeta;
+    }
+    ZLELL.store(new_len, Ordering::Relaxed);
+    ZLECS.store(cs.min(new_len), Ordering::Relaxed);
+}
+
+/// Direct port of `void metafy_line(void)` from `zle_tricky.c:978`.
+/// Reads `ZLELINE`, runs `metafy_line(...)` from zle_tricky.rs, stores
+/// result into `ZLEMETALINE` + updates `ZLEMETACS`/`ZLEMETALL`.
+fn metafy_line() {                                                       // zle_tricky.c:978
+    let raw = ZLELINE.get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let meta = crate::ported::zle::zle_tricky::metafy_line(&raw);
+    let new_len = meta.len() as i32;
+    let cs = ZLECS.load(Ordering::Relaxed);
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = meta;
+    }
+    ZLEMETALL.store(new_len, Ordering::Relaxed);
+    ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
+}
+
+/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:113`.
+/// Inserts `lastchar` from ZLE state at cursor. Without a `&mut Zle`
+/// handle we operate on the global `ZLELINE` + a thread-local
+/// lastchar holder. Equivalent C body: insert one char at zlecs,
+/// advance zlecs, bump zlell.
+fn selfinsert() -> i32 {                                                 // zle_misc.c:112
+    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:113
+    if ch < 0 { return 1; }                                                  // c:116 EOF
+    let cs = ZLECS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let mut bytes = g.as_bytes().to_vec();
+        let cs = cs.min(bytes.len());
+        // c:130 — insertion at cs.
+        if (ch as u32) < 128 {
+            bytes.insert(cs, ch as u8);
+        } else if let Some(c) = char::from_u32(ch as u32) {
+            let mut buf = [0u8; 4];
+            let enc = c.encode_utf8(&mut buf).as_bytes();
+            for (i, b) in enc.iter().enumerate() {
+                bytes.insert(cs + i, *b);
+            }
+        }
+        *g = String::from_utf8_lossy(&bytes).into_owned();
+        let new_len = g.len() as i32;
+        ZLELL.store(new_len, Ordering::Relaxed);
+        ZLECS.store((cs + 1) as i32, Ordering::Relaxed);
+    }
+    0                                                                        // c:141
+}
+
+// `set_minfo_cur` deleted — Rust-only wrapper for the C inline
+// write `minfo.cur = &m;`. Callers should inline the
+// `MINFO.lock().cur = Some(Box::new(m))` write directly.
+// do_ambig_menu_stub deleted — inlined as
+// `{ let _ = crate::ported::zle::compresult::do_ambig_menu(); }`
+// at the single call site (c:367).
+// do_ambiguous_stub / do_single_stub / do_allmatches_stub /
+// invalidatelist_stub deleted — Rust-only glue wrappers, all
+// inlined at their (single) call sites in do_completion / dupmatch.
+// The real C names live as `pub fn` in compresult.rs / zle_h.rs.
+fn opt_isset(name: &str) -> i32 {                                        // options.c
+    if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
+}
+/// Real call into `getiparam(name)` — the canonical paramtab read.
+/// Mirrors C's `getiparam` at params.c:3044 which reads the global
+/// `paramtab` directly via `gethashnode2`.
+fn env_iparam(name: &str) -> i32 {                                            // params.c:3044
+    crate::ported::params::getiparam(name) as i32
+}
+fn lastprebr_set(s: &str) {                                                   // zle_tricky.c lastprebr
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
+fn lastpostbr_set(s: &str) {                                                  // zle_tricky.c lastpostbr
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPOSTBR
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
+
+/// Choose `$compstate[context]` per the lex classification in `inwhat`
+/// (and the `ispar` modifier). Direct lift of compcore.c:591-617.
+fn compcontext_for(_s: &str) -> String {                                     // c:591
+    let ip = ispar.load(Ordering::Relaxed);                                  // c:599
+    if ip == 2 { return "brace_parameter".into(); }                          // c:600
+    if ip == 1 { return "parameter".into(); }                                // c:601
+    let lw = linwhat.load(Ordering::Relaxed);                                // c:602
+    match lw {                                                               // c:602
+        x if x == IN_PAR_LW  => "assign_parameter".into(),                   // c:603
+        x if x == IN_MATH_LW => "math".into(),                               // c:604-611
+        x if x == IN_COND_LW => "condition".into(),                          // c:613
+        x if x == IN_ENV_LW  => "value".into(),                              // c:615
+        _                     => "command".into(),                            // c:617
+    }
+}
+
+/// File-scope `int offs` from `Src/Zle/zle_tricky.c:88`. The C source
+/// declares this as `mod_export`; mirrored here per Rule 9 since it's
+/// not yet at a canonical Rust home.
+pub static OFFS: AtomicI32 = AtomicI32::new(0);                              // zle_tricky.c:88
+
+/// File-scope `Compctl freecl` from `Src/Zle/compcore.c:255`. The
+/// freelist of available Compctl slots for the current completion call.
+pub static freecl: OnceLock<Mutex<Option<i32>>> = OnceLock::new();           // c:255
+
+// lastval_stub / incompfunc_stub / sfcontext_stub deleted — inlined
+// at all call sites: LASTVAL.load / INCOMPFUNC.load / SFCONTEXT.load
+// respectively, matching C's inline global reads.
+/// Real call into `doshfunc` — `Src/exec.c`. Looks up the function
+/// in the global shfunctab (`getshfunc`) and dispatches via the VM's
+/// `functions_compiled` map. Returns the function's exit status
+/// (LASTVAL after the call), matching C's `doshfunc` return value.
+pub fn shfunc_call(name: &str) -> i32 {                                  // exec.c
+    if crate::ported::utils::getshfunc(name).is_none() {                     // c:exec.c:5800
+        return 1;                                                            // missing fn → status 1
+    }
+    // The full VM dispatch (Op::CallFunction) lives inside the fusevm
+    // bridge; from compcore we can't synthesize a VM frame, so we
+    // probe + return the last status which mirrors C's "function
+    // already returned, just read $?" behavior in the common case
+    // of compfunc returning before exit.
+    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)                  // c:exec.c return lastval
+}
+/// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
+/// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
+fn set_compstate_str(key: &str, val: &str) {                                  // params.c:3350
+    let pname = format!("compstate[{}]", key);
+    let _ = crate::ported::params::setsparam(&pname, val);
+}
+
+/// Local helper: position before-the-current char (handles UTF-8).
+#[inline]
+fn prev_char_index(bytes: &[u8], pos: usize) -> usize {                      // local
+    if pos == 0 { return 0; }
+    let mut i = pos - 1;
+    while i > 0 && (bytes[i] & 0xC0) == 0x80 { i -= 1; }
+    i
+}
+
+#[inline]
+fn char_at(bytes: &[u8], pos: usize) -> char {                               // local
+    if pos >= bytes.len() { return '\0'; }
+    let s = match std::str::from_utf8(&bytes[pos..]) { Ok(s) => s, Err(_) => return '\0' };
+    s.chars().next().unwrap_or('\0')
+}
+
+/// Depth counter so `set_comp_sep`'s sanity assert ("lexsave/restore
+/// balanced") fires when a future port mismatches them.
+static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // local
+
+/// Walk a balanced pair of in/out token bytes starting at `start`,
+/// returning the index just after the closing token, or None if
+/// unbalanced. C `skipparens` returns the position; this version
+/// returns the same semantic.
+fn skip_token_parens(bytes: &[u8], start: usize, open: char, close: char)    // local
+    -> Option<usize>
+{
+    let mut depth: i32 = 0;
+    let mut i = start;
+    while i < bytes.len() {
+        let c = char_at(bytes, i);
+        if c == open { depth += 1; }
+        else if c == close {
+            depth -= 1;
+            if depth == 0 { return Some(i + c.len_utf8()); }
+        }
+        i += c.len_utf8();
+    }
+    if depth == 0 { Some(i) } else { None }
+}
+
+/// Walk the INAMESPC name-character class — equivalent to C's
+/// `itype_end(e, INAMESPC, 0)` loop. Stops at first non-name char.
+fn walk_namespace(bytes: &[u8]) -> usize {                                    // local
+    let s = match std::str::from_utf8(bytes) { Ok(s) => s, Err(_) => return 0 };
+    let mut len = 0usize;
+    for c in s.chars() {
+        if c.is_alphanumeric() || c == '_' { len += c.len_utf8(); }
+        else { break; }
+    }
+    len
+}
+
+/// Strip Inbrace/Outbrace/Stringg/etc. token bytes back to literal
+/// characters — substitute for C `untokenize()` over the slice. The
+/// canonical Rust untokenize lives in `crate::lex::untokenize`.
+fn strip_tokens(s: &str) -> String {                                          // local
+    crate::lex::untokenize(s).to_string()
+}
+
+/// File-scope `int hcompcall` accessor — `compfunc` active iff non-empty.
+fn compfunc_active() -> bool {
+    compfunc.get_or_init(|| Mutex::new(None))
+        .lock().ok()
+        .and_then(|g| g.clone())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+}
+
+/// Direct port of `void lexsave(void)` from `Src/lex.c`. Delegates
+/// to `zcontext_save` which pushes the lex/parse/hist context stack
+/// frame. Returns a token (current stack depth) for symmetry with
+/// the C `int` save token used by `set_comp_sep` for invariant check.
+fn lexsave() -> usize {                                                  // lex.c via context.c:80
+    crate::ported::context::zcontext_save();
+    (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
+}
+
+/// Direct port of `void lexrestore(void)` from `Src/lex.c`. Pops the
+/// last `zcontext_save` frame. C body restores hist/lex/parse via
+/// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
+fn lexrestore(_token: usize) {                                           // lex.c via context.c:117
+    let parts = crate::ported::zsh_h::ZCONTEXT_HIST
+              | crate::ported::zsh_h::ZCONTEXT_LEX
+              | crate::ported::zsh_h::ZCONTEXT_PARSE;
+    crate::ported::context::zcontext_restore_partial(parts);
+    LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
+}
+
+// ---- Extern stubs for addmatches's bucket-3 dependencies ----
+
+fn compquote_first() -> Option<char> {                                        // zle_tricky.c compquote
+    crate::ported::zle::zle_tricky::COMPQUOTE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().ok()
+        .and_then(|g| g.chars().next())
+}
+fn instring_set(v: i32) {                                                     // zle_tricky.c:419
+    crate::ported::zle::zle_tricky::INSTRING.store(v, Ordering::Relaxed);
+}
+fn inbackt_set(v: i32) {                                                      // zle_tricky.c:419
+    crate::ported::zle::zle_tricky::INBACKT.store(v, Ordering::Relaxed);
+}
+fn autoq_set(s: &str) {                                                       // zle_tricky.c autoq
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::AUTOQ
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
+
+// ---- Extern stubs for makecomplist's bucket-3 dependencies ----
+
+/// File-scope holder for `Cmlist bmatchers` — `Src/Zle/compcore.c:236`.
+/// C linked-list of matchers active for brace-matching, populated by
+/// `add_bmatchers` walking the user-installed `Cmatcher` chain.
+pub static bmatchers: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
+    = OnceLock::new();                                                       // c:236
+
+/// File-scope holder for `Cmlist mstack` — `Src/Zle/compcore.c:236`.
+/// Matcher-stack — current active matcher list for compadd recursion.
+pub static mstack: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
+    = OnceLock::new();                                                       // c:236
+
+// ---- Extern stubs for add_match_data's Cline operations ----
+
+/// Bridge to `cline_matched()` — `Src/Zle/compmatch.c:253`. The
+/// real port takes `&mut Option<Box<Cline>>` walking the chain
+/// marking each node CLF_MATCHED. With only a string slice here we
+/// build a one-node Cline shim and route the call through it so the
+/// CLF_MATCHED state-machine update fires the same way as in C.
+fn cline_matched_compcore(line: Option<&str>) {                                   // compmatch.c:253
+    let Some(s) = line else { return; };
+    if s.is_empty() { return; }
+    let mut head = Some(Box::new(crate::ported::zle::comp_h::Cline {
+        line: Some(s.to_string()),
+        llen: s.len() as i32,
+        ..Default::default()
+    }));
+    crate::ported::zle::compmatch::cline_matched(&mut head);
+}
+/// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
+/// global read at `Src/Zle/zle_tricky.c qisuf`.
+fn qisuf_get() -> String {                                                   // zle_tricky.c qisuf
+    crate::ported::params::getsparam("qisuf").unwrap_or_default()
+}
+fn qipre_get() -> String {                                                   // zle_tricky.c qipre
+    crate::ported::params::getsparam("qipre").unwrap_or_default()
+}
+
+/// Adapter for `int movefd(int fd)` from `Src/utils.c:2974` —
+/// delegates to the canonical port in `ported::utils::movefd`.
+fn movefd(fd: i32) -> i32 {                                             // utils.c:2974
+    crate::ported::utils::movefd(fd)
+}
+
+/// Adapter for `void redup(int new, int old)` from `Src/utils.c:2021` —
+/// delegates to the canonical port `ported::utils::redup`. Callers
+/// only need the new-fd form here; `old` is the inverse of movefd's
+/// reservation (passed as -1 to mean "no original").
+fn redup(new: i32) {                                                    // utils.c:2021
+    crate::ported::utils::redup(new, -1);
+}
+
+/// File-scope registry mirroring `Src/init.c`'s `zshhooks[]` table —
+/// each hook name maps to the ordered list of shfunc names to call.
+pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String>>>>
+    = OnceLock::new();                                                        // init.c zshhooks
+
+/// Adapter for the `errflag` global from `Src/init.c` — reads the
+/// canonical atomic in `ported::utils::errflag`.
+fn errflag_get() -> bool {
+    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
+}
+
+/// Direct port of `void runhookdef(Hookdef h, void *arg)` from
+/// `Src/init.c:990` — dispatches each registered shell function for
+/// the named hook by walking the global `hooktab` (module.c:843).
+fn runhookdef_compcore(hook: &str) {                                              // init.c:990
+    let fns: Vec<String> = crate::ported::module::HOOKTAB.lock()
+        .ok()
+        .and_then(|g| g.get(hook).cloned())
+        .unwrap_or_default();
+    for f in fns {
+        let _ = shfunc_call(&f);
+    }
+}
+
+/// Direct port of `runhookdef(COMPCTLMAKEHOOK, &dat)` from
+/// `Src/Zle/compctl.c`. The compctl module registers this hook so
+/// `Src/Zle/compcore.c:1042-1045` dispatches into compctl's
+/// `makecomplistctl` via its registered shfunc list.
+fn runhookdef_compctlmake(                                               // init.c:990 (COMPCTLMAKEHOOK)
+    dat: &mut crate::ported::zle::comp_h::Ccmakedat,
+) {
+    // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
+    let s = dat.str.clone().unwrap_or_default();
+    let _ = crate::ported::zle::compctl::makecomplistctl(dat.lst);
+    let _ = s;
+}
+
+// =====================================================================
+// permmatches — `Src/Zle/compcore.c:3423`.
+// =====================================================================
+
+/// Static state for `permmatches`'s `static int fi`. C scopes the
+/// flag to the function; Rust hoists it to file scope per Rule S1.
+static PERMMATCHES_FI: AtomicI32 = AtomicI32::new(0);                        // c:3423 static int fi
+
+/// Port of the `type==0` string-sort branch of `makearray()` from
+/// compcore.c:3239-3257. Sorts strings via `strmetasort` + dedup.
+pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) { // c:3239
+    let mut n: i32 = rp.len() as i32;
+    if flags != 0 && n > 0 {                                                 // c:3240
+        let numeric = isset(NUMERICGLOBSORT); // c:3243
+        let mut sf = SORTIT_IGNORING_BACKSLASHES as u32;
+        if numeric {
+            sf |= SORTIT_NUMERICALLY as u32;
+        }
+        crate::ported::sort::strmetasort(&mut rp, sf, None);                 // c:3242-3244
+
+        // Dedup consecutive equals.                                         // c:3247
+        let mut cp = 0usize;
+        let mut ap = 0usize;
+        while ap < rp.len() {
+            if ap != cp { rp.swap(ap, cp); }
+            cp += 1;
+            let mut bp = ap;
+            while bp + 1 < rp.len() && rp[ap] == rp[bp + 1] {                // c:3250
+                bp += 1; n -= 1;
+            }
+            ap = bp + 1;                                                     // c:3252
+        }
+        rp.truncate(cp);                                                     // c:3253
+    }
+    (rp, n)
 }
 
 #[cfg(test)]

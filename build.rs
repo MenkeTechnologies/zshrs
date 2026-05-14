@@ -207,11 +207,18 @@ fn collect_rust_files(root: &Path, out: &mut Vec<PathBuf>) {
 /// Find free `fn NAME(` declarations at module level (depth 0).
 /// Skips methods (anything inside `impl`/`trait`) and `mod tests`
 /// blocks. Mirror of the test's `collect_free_fns` — keep in sync.
+///
+/// Brace-counting state machine ignores `{`/`}` that appear inside
+/// `// line comments`, `/* block comments */`, `"string literals"`,
+/// `'char literals'`, and `r"raw strings"` / `r#"hashed"#` — without
+/// this, a test that contains `"{"` in a string literal corrupts the
+/// depth tracker and the gate misfires after any reordering.
 fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
     let mut fns: Vec<(String, usize)> = Vec::new();
     let mut depth: i32 = 0;
     let mut in_test_mod = false;
     let mut test_mod_depth: i32 = 0;
+    let mut in_block_comment: i32 = 0;
 
     for (lineno, line) in src.lines().enumerate() {
         let lineno = lineno + 1;
@@ -224,17 +231,97 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
             test_mod_depth = depth + 1;
         }
 
-        let scan = if let Some(pos) = line.find("//") {
-            &line[..pos]
-        } else {
-            line
-        };
+        let bytes = line.as_bytes();
+        let mut i = 0;
         let mut delta: i32 = 0;
-        for c in scan.chars() {
-            match c {
-                '{' => delta += 1,
-                '}' => delta -= 1,
-                _ => {}
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_block_comment > 0 {
+                if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    in_block_comment -= 1;
+                    i += 2;
+                    continue;
+                }
+                if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    in_block_comment += 1;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            match b {
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => break,
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                    in_block_comment += 1;
+                    i += 2;
+                }
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        let c = bytes[i];
+                        if c == b'\\' { i += 2; continue; }
+                        if c == b'"' { i += 1; break; }
+                        i += 1;
+                    }
+                }
+                b'r' if i + 1 < bytes.len() && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#') => {
+                    let mut hashes = 0;
+                    let mut j = i + 1;
+                    while j < bytes.len() && bytes[j] == b'#' {
+                        hashes += 1;
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'"' {
+                        i = j + 1;
+                        loop {
+                            if i >= bytes.len() { break; }
+                            if bytes[i] == b'"' {
+                                let mut closed = 0;
+                                let mut k = i + 1;
+                                while k < bytes.len() && bytes[k] == b'#' && closed < hashes {
+                                    closed += 1;
+                                    k += 1;
+                                }
+                                if closed >= hashes {
+                                    i = k;
+                                    break;
+                                }
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                b'\'' => {
+                    let mut j = i + 1;
+                    let mut found_close = false;
+                    let mut escape = false;
+                    while j < bytes.len() && j - i < 12 {
+                        if !escape && bytes[j] == b'\'' {
+                            found_close = true;
+                            break;
+                        }
+                        if bytes[j] == b'\\' && !escape {
+                            escape = true;
+                        } else {
+                            escape = false;
+                        }
+                        j += 1;
+                    }
+                    if found_close {
+                        i = j + 1;
+                    } else {
+                        i += 1;
+                        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                            i += 1;
+                        }
+                    }
+                }
+                b'{' => { delta += 1; i += 1; }
+                b'}' => { delta -= 1; i += 1; }
+                _ => i += 1,
             }
         }
         let pre_depth = depth;

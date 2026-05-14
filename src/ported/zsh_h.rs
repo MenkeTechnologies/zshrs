@@ -3537,6 +3537,12 @@ pub fn OPT_ARG_SAFE<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
     }
 }
 
+
+
+// Suppress dead-code warnings for the AtomicI32 we don't use yet.
+#[allow(dead_code)]
+const _MARKER_KEEP: AtomicI32 = AtomicI32::new(0);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3719,7 +3725,3 @@ mod tests {
         assert_eq!(ZWC('a'), 'a');
     }
 }
-
-// Suppress dead-code warnings for the AtomicI32 we don't use yet.
-#[allow(dead_code)]
-const _MARKER_KEEP: AtomicI32 = AtomicI32::new(0);

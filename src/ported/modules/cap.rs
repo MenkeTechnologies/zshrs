@@ -304,54 +304,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 // Tests
 // =====================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    fn empty_ops() -> options {
-        options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
-    }
-
-    #[test]
-    fn test_features_returns_bintab_names() {
-        let m: *const module = std::ptr::null();
-        let mut features: Vec<String> = Vec::new();
-        let rc = features_(m, &mut features);
-        assert_eq!(rc, 0);
-        assert_eq!(features, vec!["b:cap", "b:getcap", "b:setcap"]);
-    }
-
-    #[test]
-    fn test_enables_get_then_set() {
-        let m: *const module = std::ptr::null();
-        let mut enables: Option<Vec<i32>> = None;
-        let rc = enables_(m, &mut enables);
-        assert_eq!(rc, 0);
-        let v = enables.as_ref().unwrap();
-        assert_eq!(v.len(), 3);
-        let rc = enables_(m, &mut enables);
-        assert_eq!(rc, 0);
-    }
-
-    #[test]
-    fn test_cleanup_returns_zero() {
-        let m: *const module = std::ptr::null();
-        assert_eq!(cleanup_(m), 0);
-    }
-
-    #[test]
-    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-    fn test_bin_cap_unsupported_on_macos() {
-        let ops = empty_ops();
-        // Without libcap, all three bin_* return 1 (notavail).
-        assert_eq!(bin_cap("cap", &[], &ops, 0), 1);
-        assert_eq!(bin_getcap("getcap", &["/etc/passwd".into()], &ops, 0), 1);
-        assert_eq!(
-            bin_setcap("setcap", &["cap_net_admin+ep".into(), "/tmp/x".into()], &ops, 0),
-            1
-        );
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
@@ -416,3 +369,51 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_ops() -> options {
+        options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
+
+    #[test]
+    fn test_features_returns_bintab_names() {
+        let m: *const module = std::ptr::null();
+        let mut features: Vec<String> = Vec::new();
+        let rc = features_(m, &mut features);
+        assert_eq!(rc, 0);
+        assert_eq!(features, vec!["b:cap", "b:getcap", "b:setcap"]);
+    }
+
+    #[test]
+    fn test_enables_get_then_set() {
+        let m: *const module = std::ptr::null();
+        let mut enables: Option<Vec<i32>> = None;
+        let rc = enables_(m, &mut enables);
+        assert_eq!(rc, 0);
+        let v = enables.as_ref().unwrap();
+        assert_eq!(v.len(), 3);
+        let rc = enables_(m, &mut enables);
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_cleanup_returns_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(cleanup_(m), 0);
+    }
+
+    #[test]
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn test_bin_cap_unsupported_on_macos() {
+        let ops = empty_ops();
+        // Without libcap, all three bin_* return 1 (notavail).
+        assert_eq!(bin_cap("cap", &[], &ops, 0), 1);
+        assert_eq!(bin_getcap("getcap", &["/etc/passwd".into()], &ops, 0), 1);
+        assert_eq!(
+            bin_setcap("setcap", &["cap_net_admin+ep".into(), "/tmp/x".into()], &ops, 0),
+            1
+        );
+    }
+}

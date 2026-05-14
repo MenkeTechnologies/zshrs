@@ -15,27 +15,6 @@ use crate::ported::modules::random::getrandom_buffer;
 use crate::ported::utils::zwarn;
 
 // =====================================================================
-// /* Count the number of leading zeros, hopefully in gcc/clang by HW
-//  * instruction */                                                  c:40-41
-// #if defined(__GNUC__) || defined(__clang__)
-// #define clz64(x) __builtin_clzll(x)
-// #else
-// #define clz64(x) _zclz64(x)
-// =====================================================================
-
-/// Port of `clz64(x)` macro from `Src/Modules/random_real.c:43`.
-///
-/// Dispatches to the HW clz on platforms that have it (Rust's
-/// `u64::leading_zeros()` is the HW intrinsic on every modern arch),
-/// or to `_zclz64()` as the portable fallback. C resolves this at
-/// preprocessor time; Rust resolves at the call site.
-#[inline]
-pub fn clz64(x: u64) -> i32 {
-    // Equivalent to C's `__builtin_clzll(x)` branch (c:43).
-    if x == 0 { 64 } else { x.leading_zeros() as i32 }
-}
-
-// =====================================================================
 // _zclz64(uint64_t x)                                                c:48
 // =====================================================================
 
@@ -191,6 +170,27 @@ pub fn random_real() -> f64 {
     // matches the C author's 2015-02-22 update note (c:133-136) about
     // glibc's slow software bit-twiddling implementation.
     (significand as f64) * (2.0_f64).powi(exponent)
+}
+
+// =====================================================================
+// /* Count the number of leading zeros, hopefully in gcc/clang by HW
+//  * instruction */                                                  c:40-41
+// #if defined(__GNUC__) || defined(__clang__)
+// #define clz64(x) __builtin_clzll(x)
+// #else
+// #define clz64(x) _zclz64(x)
+// =====================================================================
+
+/// Port of `clz64(x)` macro from `Src/Modules/random_real.c:43`.
+///
+/// Dispatches to the HW clz on platforms that have it (Rust's
+/// `u64::leading_zeros()` is the HW intrinsic on every modern arch),
+/// or to `_zclz64()` as the portable fallback. C resolves this at
+/// preprocessor time; Rust resolves at the call site.
+#[inline]
+pub fn clz64(x: u64) -> i32 {
+    // Equivalent to C's `__builtin_clzll(x)` branch (c:43).
+    if x == 0 { 64 } else { x.leading_zeros() as i32 }
 }
 
 #[cfg(test)]

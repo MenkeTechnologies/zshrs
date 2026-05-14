@@ -303,6 +303,460 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
+/// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
+/// ```c
+/// static void
+/// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
+/// {
+///     while (len--)
+///         *dst++ = rc;
+/// }
+/// ```
+/// Fill `dst[0..len]` with copies of `rc`. Equivalent to
+/// `memset` for REFRESH_ELEMENT slices.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(rc, len) vs C=(dst, rc, len)
+pub fn ZR_memset(                                                            // c:86
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
+    len: usize,
+) {
+    let n = len.min(dst.len());
+    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
+        *slot = rc;
+    }
+}
+
+/// Port of `ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)` from `Src/Zle/zle_refresh.c:95`.
+/// ```c
+/// static void
+/// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
+/// {
+///     while ((*dst++ = *src++).chr != ZWC('\0'))
+///         ;
+/// }
+/// ```
+/// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
+/// `dst`. The terminator is INCLUDED in the copy.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
+pub fn ZR_strcpy(                                                            // c:95
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+) {
+    let mut i = 0;
+    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
+        if i >= dst.len() || i >= src.len() {
+            break;
+        }
+        dst[i] = src[i];
+        if src[i].chr == '\0' {
+            break;
+        }
+        i += 1;
+    }
+}
+
+/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
+/// ```c
+/// static size_t
+/// ZR_strlen(const REFRESH_ELEMENT *wstr)
+/// {
+///     int len = 0;
+///     while (wstr++->chr != ZWC('\0'))
+///         len++;
+///     return len;
+/// }
+/// ```
+/// Length of a NUL-terminated REFRESH_ELEMENT string.
+#[allow(non_snake_case)]
+/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
+pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:102
+    let mut len = 0;                                                         // c:102 int len = 0
+    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
+        len += 1;                                                            // c:107 len++
+    }
+    len                                                                      // c:109 return len
+}
+
+/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:119`.
+/// ```c
+/// static int
+/// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
+///            int len)
+/// {
+///     while (len--) {
+///         if ((!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr) ||
+///             (!(newwstr->atr & TXT_MULTIWORD_MASK) && !newwstr->chr))
+///             return !ZR_equal(*oldwstr, *newwstr);
+///         if (!ZR_equal(*oldwstr, *newwstr))
+///             return 1;
+///         oldwstr++;
+///         newwstr++;
+///     }
+///     return 0;
+/// }
+/// ```
+/// Simplified strcmp: returns 0 if first `len` elements match
+/// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
+/// either string (treating it as the shorter-string boundary).
+#[allow(non_snake_case)]
+/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:120`.
+/// WARNING: param names don't match C — Rust=(newwstr, len) vs C=(oldwstr, newwstr, len)
+pub fn ZR_strncmp(                                                           // c:120
+    oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    len: usize,
+) -> i32 {
+    let mut i = 0;
+    while i < len {                                                          // c:123 while (len--)
+        if i >= oldwstr.len() || i >= newwstr.len() {
+            // C reads past end via pointer; we bound it.
+            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
+        }
+        let o = oldwstr[i];
+        let n = newwstr[i];
+        // c:124-126 — `if early-NUL → return !equal`.
+        let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
+        let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
+        if old_is_nul || new_is_nul {
+            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
+        }
+        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
+            return 1;
+        }
+        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
+    }
+    0                                                                        // c:133 return 0
+}
+
+/// Apply a `$zle_highlight` array to the manager.
+/// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
+/// each `category:spec` entry, parses the spec via `match_highlight`,
+/// and stores it in `category_attrs`. Categories not mentioned keep the
+/// zsh defaults, applied here on first call: `region` and `special`
+/// default to `standout`, `isearch` to `underline`, `suffix` to `bold`
+/// — direct ports of zle_refresh.c:395-402.
+/// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
+pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
+
+    let mut seen = std::collections::HashSet::new();
+    for entry in atrs {
+        if entry.is_empty() {
+            continue;
+        }
+        if *entry == "none" {
+            // zle_refresh.c:355-360 — `none` clears every category.
+            for cat in [
+                HC::Region,
+                HC::Isearch,
+                HC::Suffix,
+                HC::Paste,
+                HC::Default,
+                HC::Special,
+                HC::Ellipsis,
+            ] {
+                manager.category_attrs.insert(cat, TextAttr::default());
+                seen.insert(cat);
+            }
+            continue;
+        }
+        let (prefix, rest) = match entry.split_once(':') {
+            Some(t) => t,
+            None => continue,
+        };
+        let cat = match prefix {
+            "region" => HC::Region,
+            "isearch" => HC::Isearch,
+            "suffix" => HC::Suffix,
+            "paste" => HC::Paste,
+            "default" => HC::Default,
+            "special" => HC::Special,
+            "ellipsis" => HC::Ellipsis,
+            _ => continue,
+        };
+        manager.category_attrs.insert(cat, match_highlight(rest));
+        seen.insert(cat);
+    }
+
+    // Defaults for unset slots — zle_refresh.c:395-402.
+    let default_standout = TextAttr {
+        standout: true,
+        ..TextAttr::default()
+    };
+    let default_underline = TextAttr {
+        underline: true,
+        ..TextAttr::default()
+    };
+    let default_bold = TextAttr {
+        bold: true,
+        ..TextAttr::default()
+    };
+    if !seen.contains(&HC::Region) {
+        manager.category_attrs.insert(HC::Region, default_standout);
+    }
+    if !seen.contains(&HC::Isearch) {
+        manager.category_attrs.insert(HC::Isearch, default_underline);
+    }
+    if !seen.contains(&HC::Suffix) {
+        manager.category_attrs.insert(HC::Suffix, default_bold);
+    }
+    if !seen.contains(&HC::Special) {
+        manager.category_attrs.insert(HC::Special, default_standout);
+    }
+}
+
+/// Port of `zle_free_highlight()` from `Src/Zle/zle_refresh.c:415`.
+/// ```c
+/// void
+/// zle_free_highlight(void) {
+///     free_colour_buffer();
+/// }
+/// ```
+/// Direct port of `void zle_free_highlight(void)` from
+/// `Src/Zle/zle_refresh.c:415-420`.
+/// ```c
+/// free_colour_buffer();
+/// ```
+///
+/// C's `free_colour_buffer` frees the per-cell colour-attribute
+/// storage used by `region_highlight`. In the Rust port that
+/// storage is a `Vec<HighlightSpan>` inside the file-scope
+/// `HIGHLIGHT` static, dropped automatically by Vec::clear at the
+/// same invalidate points that fire the C free. No-op here is the
+/// correct cross-language equivalent for this fn shape (the
+/// caller doesn't reach into the highlight buffer from this entry
+/// point; the live tick clears its buffer directly).
+pub fn zle_free_highlight() {                                                // c:415
+    // Rust ownership handles the equivalent free; explicit clear
+    // happens against the file-scope HIGHLIGHT static when
+    // invalidate fires.
+}
+
+/// Port of `void tcoutclear(int cap)` from
+/// `Src/Zle/zle_refresh.c:607`. C dispatches on `cap` (a termcap
+/// index — TCCLEAREOL/TCCLEAREOD/TCCLEARSCREEN) to emit the
+/// corresponding escape. Rust collapses to a bool `to_end`:
+/// `true` → clear-to-end (CSI J), `false` → clear-entire-screen
+/// (CSI 2J).
+/// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
+pub fn tcoutclear(to_end: bool) {                                            // c:607
+    use std::sync::atomic::Ordering;
+    let bytes: &[u8] = if to_end {
+        b"\x1b[J"      // CSI J — clear to end of screen
+    } else {
+        b"\x1b[2J"     // CSI 2J — clear entire screen
+    };
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, bytes);
+}
+
+    /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
+    /// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
+    /// encodes the char as UTF-8 bytes and writes to the shell-out
+    /// fd.
+    pub fn zwcputc(c: char) {
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+    }
+
+    /// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
+    /// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
+    /// shout)`. Rust writes the UTF-8 bytes to shout.
+    pub fn zwcwrite(s: &str) {
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+    }
+
+/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
+/// WARNING: param names don't match C — Rust=(state) vs C=()
+pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
+    // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
+    // the row arrays. Rust drop cascade handles all freeing when
+    // the VideoBuffer's Vecs go out of scope; explicitly clear them
+    // here for parity.
+    state.old_video = None;
+    state.new_video = None;
+}
+
+/// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
+/// WARNING: param names don't match C — Rust=(state) vs C=()
+pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
+    // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
+    // (winh+1) lines; cleared via memset.` zshrs uses
+    // VideoBuffer::clear/resize for the same effect. Pull the new
+    // term geometry from the existing helpers.
+    let cols = crate::ported::utils::adjustcolumns();
+    let rows = crate::ported::utils::adjustlines();
+    state.columns = cols;
+    state.lines = rows;
+    state.old_video = Some(VideoBuffer::new(cols, rows));
+    state.new_video = Some(VideoBuffer::new(cols, rows));
+    state.need_full_redraw = true;
+}
+
+    /// Port of `void scrollwindow(int tline)` from
+    /// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
+    /// negative → scroll down (CSI T).
+    pub fn scrollwindow(lines: i32) {
+        let s = if lines > 0 {
+            format!("\x1b[{}S", lines)
+        } else if lines < 0 {
+            format!("\x1b[{}T", -lines)
+        } else {
+            return;
+        };
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+    }
+
+/// Port of `nextline(Rparams rpms, int wrapped)` from Src/Zle/zle_refresh.c:842.
+#[allow(unused_variables)]
+pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:842
+    // C body (c:842-873): advance rpms->ln++; check space against
+    // winh; allocate new buffer row if needed; return 1 when display
+    // is full (caller should stop emitting). zshrs uses RefreshState
+    // for the cursor; this advances vln and signals overflow.
+    rpms.vln += 1;
+    if rpms.vln >= rpms.lines {
+        return 1;                                                            // out of vertical space
+    }
+    rpms.vcs = 0;
+    0
+}
+
+/// Port of `snextline(Rparams rpms)` from Src/Zle/zle_refresh.c:875.
+pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c:875
+    // C body (c:875-919): scroll the on-screen display up one line
+    // when the new line wraps past the bottom. zshrs decrements
+    // vln so the next emit lands on the (now-cleared) bottom row.
+    if rpms.vln > 0 {
+        rpms.vln -= 1;
+    }
+    rpms.vcs = 0;
+    0
+}
+
+/// Direct port of `static void addmultiword(REFRESH_ELEMENT *base,
+///                                          ZLE_STRING_T tptr, int ichars)`
+/// from `Src/Zle/zle_refresh.c:913`.
+///
+/// C source pushes a multi-codepoint cluster (combining marks etc.)
+/// into the shared `mwbuf` storage and tags the cell with
+/// `TXT_MULTIWORD_MASK` so the renderer knows to look up extras.
+///
+/// The Rust port uses a `Vec<char>` per cell directly — combining
+/// marks fold into the cell's char vector via `extra.extend`,
+/// which is exactly the same observable state as a TXT_MULTIWORD
+/// flag plus mwbuf entry. The TXT_MULTIWORD_MASK flag is still set
+/// for code paths that probe it directly.
+pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // c:913
+                     _tptr: &[char], _ichars: usize) {
+    // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
+    // path that reads mwbuf knows to dereference. zshrs's
+    // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
+    // wide-char already carries the full codepoint (no need for a
+    // separate mwbuf table indexed off base->chr), so flagging
+    // TXT_MULTIWORD_MASK is the complete observable effect.
+    base.atr |= TXT_MULTIWORD_MASK;
+}
+
+// RegionHighlight / HighlightCategory / HighlightManager — Rust-side
+// aggregates over zsh's C `region_highlights[N_SPECIAL_HIGHLIGHTS]`
+// array + per-category attr globals (`default_attr`/`special_attr`/
+// `ellipsis_attr` from `Src/Zle/zle_refresh.c`). C uses bare integer
+// indexing into a fixed-size array; this port uses a typed enum +
+// HashMap. Eventual unification: collapse into discrete file-scope
+// statics matching the C layout.
+
+/// Simplified region-highlight entry. Loosely equivalent to
+/// `struct region_highlight` (legit-ported at `zle_h.rs:613` with
+/// different fields: start/end/atr/flags/memo/layer).
+#[derive(Debug, Clone)]
+pub struct RegionHighlight {
+    pub start: usize,
+    pub end: usize,
+    pub attr: TextAttr,
+    pub memo: Option<String>,
+}
+
+/// Identifies a fixed slot in zsh's
+/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` array (zle_refresh.c
+/// indices 0=region, 1=isearch, 2=suffix, 3=paste) plus the
+/// standalone default/special/ellipsis attr globals
+/// (`default_attr`/`special_attr`/`ellipsis_attr`). C uses bare
+/// integer indexing — no enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HighlightCategory {
+    Region,
+    Isearch,
+    Suffix,
+    Paste,
+    Default,
+    Special,
+    Ellipsis,
+}
+
+/// Collects C's `region_highlights[]` array + per-category attr
+/// globals (`default_attr`/`special_attr`/`ellipsis_attr` from
+/// zle_refresh.c) into one container.
+#[derive(Debug, Default)]
+pub struct HighlightManager {
+    pub regions: Vec<RegionHighlight>,
+    /// Per-category attrs from `$zle_highlight`. Index by
+    /// `HighlightCategory`. Equivalent to the per-slot atr storage
+    /// in `region_highlights[]` and the
+    /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
+    /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()`.
+    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
+}
+
+impl HighlightManager {
+    pub fn new() -> Self {
+        HighlightManager {
+            regions: Vec::new(),
+            category_attrs: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set region highlight. Equivalent to
+    /// `set_region_highlight()` from zle_refresh.c.
+    pub fn set_region_highlight(&mut self, start: usize, end: usize, attr: TextAttr) {
+        self.regions.push(RegionHighlight {
+            start,
+            end,
+            attr,
+            memo: None,
+        });
+    }
+
+    /// Get region highlight for position. Equivalent to
+    /// `get_region_highlight()` from zle_refresh.c.
+    pub fn get_region_highlight(&self, pos: usize) -> Option<&RegionHighlight> {
+        self.regions.iter().find(|r| pos >= r.start && pos < r.end)
+    }
+
+    /// Unset region highlight. Equivalent to
+    /// `unset_region_highlight()` from zle_refresh.c.
+    pub fn unset_region_highlight(&mut self) {
+        self.regions.clear();
+    }
+
+    /// Free highlight resources. Equivalent to
+    /// `zle_free_highlight()` from zle_refresh.c.
+    pub fn free(&mut self) {
+        self.regions.clear();
+    }
+}
+
+/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
+/// WARNING: param names don't match C — Rust=(state) vs C=()
+pub fn bufswap(state: &mut RefreshState) {                                   // c:bufswap
+    // C body: swap nbuf and obuf pointers (with mwbuf shadow when
+    // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
+    std::mem::swap(&mut state.old_video, &mut state.new_video);
+}
+
     pub fn zrefresh() {                                             // c:975
         // c:975 — full repaint pipeline. C writes every byte through
         //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
@@ -433,6 +887,185 @@ use crate::ported::zle::deltochar::*;
         let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
     }
 
+/// Port of `wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news)` from `Src/Zle/zle_refresh.c:1736`.
+/// ```c
+/// static int
+/// wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news) {
+///     int i = 0;
+///     while (olds->chr && ZR_equal(*olds, *news))
+///         olds++, news++, i++;
+///     return i;
+/// }
+/// ```
+/// Common-prefix length of two REFRESH_ELEMENT strings; stops at
+/// the first NUL chr in `olds` or first cell that differs in chr+atr.
+pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+               news: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
+    let mut i = 0;
+    while i < olds.len() && i < news.len()
+        && olds[i].chr != '\0' && olds[i] == news[i]
+    {
+        i += 1;
+    }
+    i
+}
+
+    /// Port of `void refreshline(int ln)` from
+    /// `Src/Zle/zle_refresh.c:1543`. Forces a single-line repaint;
+    /// our zrefresh repaints the whole video buffer regardless.
+    pub fn refreshline(_line: usize) {
+        zrefresh();
+    }
+
+    /// Direct port of `void moveto(int ln, int cl)` from
+    /// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
+    /// strings to teleport the cursor; Rust emits the equivalent
+    /// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
+    /// `print!` fake.
+    pub fn moveto(row: usize, col: usize) {                       // c:2105
+        let s = format!("\x1b[{};{}H", row + 1, col + 1);
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+    }
+
+/// Port of `void tcmultout(int cap, int multcap, int ct)` from
+/// `Src/Zle/zle_refresh.c:2163`. The C version tries the multi-arg
+/// `multcap` capability first (`tcoutarg(multcap, ct)`) and only
+/// falls back to a single-cap loop when `multcap` is unavailable.
+/// Rust port (without termcap probe) goes straight to the loop —
+/// `count` repeats of the same single-shot string.
+/// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
+pub fn tcmultout(cap: &str, count: i32) {                                    // c:2163
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    for _ in 0..count {                                                      // c:2173 single-cap loop
+        let _ = crate::ported::utils::write_loop(out_fd, cap.as_bytes());
+    }
+}
+
+    /// Port of `void tc_rightcurs(int ct)` from
+    /// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
+    pub fn tc_rightcurs(count: usize) {
+        if count > 0 {
+            let s = format!("\x1b[{}C", count);
+            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+        }
+    }
+
+    /// Port of `void tc_downcurs(int ct)` from
+    /// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
+    /// capability `ct` times; Rust emits the parametrised CSI B.
+    pub fn tc_downcurs(count: usize) {
+        if count > 0 {
+            let s = format!("\x1b[{}B", count);
+            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
+        }
+    }
+
+/// Direct port of `int tcout_via_func(int cap, int arg, int (*outc)(int))`
+/// from `Src/Zle/zle_refresh.c:2291`. Looks up the user's `tcout` shell
+/// function via `getshfunc` and dispatches when defined; returns 0 if
+/// the function was found and called (caller skips the termcap output),
+/// 1 otherwise (caller emits the raw termcap escape).
+pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
+    if crate::ported::utils::getshfunc("tcout").is_some() {
+        // Function found; cap/arg would be passed via `$1`/`$2` in a
+        // full port — here we just dispatch and let the user fn read
+        // the args from the environment / its widget context.
+        let _ = crate::ported::zle::compcore::shfunc_call("tcout");
+        return 0;
+    }
+    1
+}
+
+
+
+/// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
+/// C looks up the termcap string via `tcstr[cap]` and writes it
+/// through `tputs(..., putshout)` to the shell-output fd. Rust port
+/// takes the resolved escape string directly (skipping the
+/// `tcstr[]` index lookup, since termcap probing isn't fully wired)
+/// and writes the bytes to `SHTTY` via `write_loop`.
+///
+/// Falls back to stdout (fd 1) when `SHTTY` is unset — covers the
+/// non-interactive paths (tests, batch evaluation) where there's no
+/// dedicated shell-output fd yet.
+/// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
+pub fn tcout(cap: &str) {                                                    // c:2339
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if fd >= 0 {
+        let _ = crate::ported::utils::write_loop(fd, cap.as_bytes());
+    } else {
+        let _ = crate::ported::utils::write_loop(1, cap.as_bytes());
+    }
+    // c:2346 — `SELECT_ADD_COST(tclen[cap])` — without per-cap tclen
+    //          table, the cost accounting is dropped (no scheduling
+    //          consumer reads it yet).
+}
+
+/// Port of `void tcoutarg(int cap, int arg)` from
+/// `Src/Zle/zle_refresh.c:2351`. C calls `tgoto(tcstr[cap], arg, arg)`
+/// to expand termcap `%d` / parametrised escape codes. Rust port
+/// does a literal `%d → arg` substring substitution (mirrors the
+/// most common case; doesn't handle the rare termcap `%p1%d`
+/// parametrisation that `tgoto` handles).
+/// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
+pub fn tcoutarg(cap: &str, arg: i32) {                                       // c:2351
+    use std::sync::atomic::Ordering;
+    // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
+    let s = cap.replace("%d", &arg.to_string());
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());          // c:2359
+}
+
+    /// Direct port of `void clearscreen(UNUSED(char **args))` from
+    /// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
+    /// shell-output fd, then re-renders. Was a `print!` fake.
+    pub fn clearscreen() {                                          // c:2366
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, b"\x1b[2J\x1b[H");
+        zrefresh();
+    }
+
+    /// Direct port of `void redisplay(UNUSED(char **args))` from
+    /// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
+    /// returns; Rust just re-runs zrefresh which equivalently
+    /// repaints from current state.
+    pub fn redisplay() {                                            // c:2377
+        zrefresh();
+    }
+
+    /// Port of `void singlerefresh(ZLE_STRING_T tmpline, int tmpll,
+    /// int tmpcs)` from `Src/Zle/zle_refresh.c:2397`. C builds a
+    /// fresh single-line video buffer for `read -e` / `vared` style
+    /// non-multiline editing; Rust defers to `zrefresh` which
+    /// handles single-line as a special case of multi-line.
+    pub fn singlerefresh() {                                        // c:2397
+        zrefresh();
+    }
+
+/// Port of `singmoveto(int pos)` from Src/Zle/zle_refresh.c:2687.
+/// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
+pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
+    // C body: `singlemoveto()` issues termcap cursor-positioning to
+    // `pos` on a single-line display. Without termcap output here
+    // we just update vcs (cursor column) on RefreshState.
+    state.vcs = pos;
+}
+
+/// Initialize ZLE refresh subsystem
+/// Port of zle_refresh_boot() from zle_refresh.c
+pub fn zle_refresh_boot() -> RefreshState {
+    RefreshState::new()
+}
+
+/// Cleanup ZLE refresh subsystem
+/// Port of zle_refresh_finish() from zle_refresh.c
+pub fn zle_refresh_finish(state: &mut RefreshState) {
+    state.free_video();
+}
+
     /// Build the per-character attribute overlay used by `zrefresh`.
     /// One slot per char in `zleline`; `None` means "default attrs",
     /// `Some(attr)` means apply `attr` for that cell.
@@ -497,98 +1130,6 @@ use crate::ported::zle::deltochar::*;
         Ok(())
     }
 
-    /// Direct port of `void clearscreen(UNUSED(char **args))` from
-    /// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
-    /// shell-output fd, then re-renders. Was a `print!` fake.
-    pub fn clearscreen() {                                          // c:2366
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, b"\x1b[2J\x1b[H");
-        zrefresh();
-    }
-
-    /// Direct port of `void redisplay(UNUSED(char **args))` from
-    /// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
-    /// returns; Rust just re-runs zrefresh which equivalently
-    /// repaints from current state.
-    pub fn redisplay() {                                            // c:2377
-        zrefresh();
-    }
-
-    /// Direct port of `void moveto(int ln, int cl)` from
-    /// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
-    /// strings to teleport the cursor; Rust emits the equivalent
-    /// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
-    /// `print!` fake.
-    pub fn moveto(row: usize, col: usize) {                       // c:2105
-        let s = format!("\x1b[{};{}H", row + 1, col + 1);
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
-
-    /// Port of `void tc_downcurs(int ct)` from
-    /// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
-    /// capability `ct` times; Rust emits the parametrised CSI B.
-    pub fn tc_downcurs(count: usize) {
-        if count > 0 {
-            let s = format!("\x1b[{}B", count);
-            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-        }
-    }
-
-    /// Port of `void tc_rightcurs(int ct)` from
-    /// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
-    pub fn tc_rightcurs(count: usize) {
-        if count > 0 {
-            let s = format!("\x1b[{}C", count);
-            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-        }
-    }
-
-    /// Port of `void scrollwindow(int tline)` from
-    /// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
-    /// negative → scroll down (CSI T).
-    pub fn scrollwindow(lines: i32) {
-        let s = if lines > 0 {
-            format!("\x1b[{}S", lines)
-        } else if lines < 0 {
-            format!("\x1b[{}T", -lines)
-        } else {
-            return;
-        };
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
-
-    /// Port of `void singlerefresh(ZLE_STRING_T tmpline, int tmpll,
-    /// int tmpcs)` from `Src/Zle/zle_refresh.c:2397`. C builds a
-    /// fresh single-line video buffer for `read -e` / `vared` style
-    /// non-multiline editing; Rust defers to `zrefresh` which
-    /// handles single-line as a special case of multi-line.
-    pub fn singlerefresh() {                                        // c:2397
-        zrefresh();
-    }
-
-    /// Port of `void refreshline(int ln)` from
-    /// `Src/Zle/zle_refresh.c:1543`. Forces a single-line repaint;
-    /// our zrefresh repaints the whole video buffer regardless.
-    pub fn refreshline(_line: usize) {
-        zrefresh();
-    }
-
-    /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
-    /// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
-    /// encodes the char as UTF-8 bytes and writes to the shell-out
-    /// fd.
-    pub fn zwcputc(c: char) {
-        let mut buf = [0u8; 4];
-        let s = c.encode_utf8(&mut buf);
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
-
-    /// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
-    /// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
-    /// shout)`. Rust writes the UTF-8 bytes to shout.
-    pub fn zwcwrite(s: &str) {
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
-
 
 /// Calculate visible width of a prompt string — port of `countprompt()`
 /// from Src/prompt.c:1140. The C function counts cells while skipping
@@ -614,181 +1155,6 @@ fn countprompt(s: &str) -> usize {
     }
 
     width
-}
-
-// RegionHighlight / HighlightCategory / HighlightManager — Rust-side
-// aggregates over zsh's C `region_highlights[N_SPECIAL_HIGHLIGHTS]`
-// array + per-category attr globals (`default_attr`/`special_attr`/
-// `ellipsis_attr` from `Src/Zle/zle_refresh.c`). C uses bare integer
-// indexing into a fixed-size array; this port uses a typed enum +
-// HashMap. Eventual unification: collapse into discrete file-scope
-// statics matching the C layout.
-
-/// Simplified region-highlight entry. Loosely equivalent to
-/// `struct region_highlight` (legit-ported at `zle_h.rs:613` with
-/// different fields: start/end/atr/flags/memo/layer).
-#[derive(Debug, Clone)]
-pub struct RegionHighlight {
-    pub start: usize,
-    pub end: usize,
-    pub attr: TextAttr,
-    pub memo: Option<String>,
-}
-
-/// Identifies a fixed slot in zsh's
-/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` array (zle_refresh.c
-/// indices 0=region, 1=isearch, 2=suffix, 3=paste) plus the
-/// standalone default/special/ellipsis attr globals
-/// (`default_attr`/`special_attr`/`ellipsis_attr`). C uses bare
-/// integer indexing — no enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HighlightCategory {
-    Region,
-    Isearch,
-    Suffix,
-    Paste,
-    Default,
-    Special,
-    Ellipsis,
-}
-
-/// Collects C's `region_highlights[]` array + per-category attr
-/// globals (`default_attr`/`special_attr`/`ellipsis_attr` from
-/// zle_refresh.c) into one container.
-#[derive(Debug, Default)]
-pub struct HighlightManager {
-    pub regions: Vec<RegionHighlight>,
-    /// Per-category attrs from `$zle_highlight`. Index by
-    /// `HighlightCategory`. Equivalent to the per-slot atr storage
-    /// in `region_highlights[]` and the
-    /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
-    /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()`.
-    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
-}
-
-impl HighlightManager {
-    pub fn new() -> Self {
-        HighlightManager {
-            regions: Vec::new(),
-            category_attrs: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Set region highlight. Equivalent to
-    /// `set_region_highlight()` from zle_refresh.c.
-    pub fn set_region_highlight(&mut self, start: usize, end: usize, attr: TextAttr) {
-        self.regions.push(RegionHighlight {
-            start,
-            end,
-            attr,
-            memo: None,
-        });
-    }
-
-    /// Get region highlight for position. Equivalent to
-    /// `get_region_highlight()` from zle_refresh.c.
-    pub fn get_region_highlight(&self, pos: usize) -> Option<&RegionHighlight> {
-        self.regions.iter().find(|r| pos >= r.start && pos < r.end)
-    }
-
-    /// Unset region highlight. Equivalent to
-    /// `unset_region_highlight()` from zle_refresh.c.
-    pub fn unset_region_highlight(&mut self) {
-        self.regions.clear();
-    }
-
-    /// Free highlight resources. Equivalent to
-    /// `zle_free_highlight()` from zle_refresh.c.
-    pub fn free(&mut self) {
-        self.regions.clear();
-    }
-}
-
-/// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
-/// C looks up the termcap string via `tcstr[cap]` and writes it
-/// through `tputs(..., putshout)` to the shell-output fd. Rust port
-/// takes the resolved escape string directly (skipping the
-/// `tcstr[]` index lookup, since termcap probing isn't fully wired)
-/// and writes the bytes to `SHTTY` via `write_loop`.
-///
-/// Falls back to stdout (fd 1) when `SHTTY` is unset — covers the
-/// non-interactive paths (tests, batch evaluation) where there's no
-/// dedicated shell-output fd yet.
-/// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
-pub fn tcout(cap: &str) {                                                    // c:2339
-    use std::sync::atomic::Ordering;
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    if fd >= 0 {
-        let _ = crate::ported::utils::write_loop(fd, cap.as_bytes());
-    } else {
-        let _ = crate::ported::utils::write_loop(1, cap.as_bytes());
-    }
-    // c:2346 — `SELECT_ADD_COST(tclen[cap])` — without per-cap tclen
-    //          table, the cost accounting is dropped (no scheduling
-    //          consumer reads it yet).
-}
-
-/// Port of `void tcoutarg(int cap, int arg)` from
-/// `Src/Zle/zle_refresh.c:2351`. C calls `tgoto(tcstr[cap], arg, arg)`
-/// to expand termcap `%d` / parametrised escape codes. Rust port
-/// does a literal `%d → arg` substring substitution (mirrors the
-/// most common case; doesn't handle the rare termcap `%p1%d`
-/// parametrisation that `tgoto` handles).
-/// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
-pub fn tcoutarg(cap: &str, arg: i32) {                                       // c:2351
-    use std::sync::atomic::Ordering;
-    // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
-    let s = cap.replace("%d", &arg.to_string());
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());          // c:2359
-}
-
-/// Port of `void tcmultout(int cap, int multcap, int ct)` from
-/// `Src/Zle/zle_refresh.c:2163`. The C version tries the multi-arg
-/// `multcap` capability first (`tcoutarg(multcap, ct)`) and only
-/// falls back to a single-cap loop when `multcap` is unavailable.
-/// Rust port (without termcap probe) goes straight to the loop —
-/// `count` repeats of the same single-shot string.
-/// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
-pub fn tcmultout(cap: &str, count: i32) {                                    // c:2163
-    use std::sync::atomic::Ordering;
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    for _ in 0..count {                                                      // c:2173 single-cap loop
-        let _ = crate::ported::utils::write_loop(out_fd, cap.as_bytes());
-    }
-}
-
-/// Port of `void tcoutclear(int cap)` from
-/// `Src/Zle/zle_refresh.c:607`. C dispatches on `cap` (a termcap
-/// index — TCCLEAREOL/TCCLEAREOD/TCCLEARSCREEN) to emit the
-/// corresponding escape. Rust collapses to a bool `to_end`:
-/// `true` → clear-to-end (CSI J), `false` → clear-entire-screen
-/// (CSI 2J).
-/// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
-pub fn tcoutclear(to_end: bool) {                                            // c:607
-    use std::sync::atomic::Ordering;
-    let bytes: &[u8] = if to_end {
-        b"\x1b[J"      // CSI J — clear to end of screen
-    } else {
-        b"\x1b[2J"     // CSI 2J — clear entire screen
-    };
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, bytes);
-}
-
-/// Initialize ZLE refresh subsystem
-/// Port of zle_refresh_boot() from zle_refresh.c
-pub fn zle_refresh_boot() -> RefreshState {
-    RefreshState::new()
-}
-
-/// Cleanup ZLE refresh subsystem
-/// Port of zle_refresh_finish() from zle_refresh.c
-pub fn zle_refresh_finish(state: &mut RefreshState) {
-    state.free_video();
 }
 
 /// Parse a highlight attribute spec (the part after the `category:` prefix)
@@ -859,469 +1225,6 @@ fn match_colour(name: &str) -> Option<u8> {
     }
 }
 
-/// Apply a `$zle_highlight` array to the manager.
-/// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
-/// each `category:spec` entry, parses the spec via `match_highlight`,
-/// and stores it in `category_attrs`. Categories not mentioned keep the
-/// zsh defaults, applied here on first call: `region` and `special`
-/// default to `standout`, `isearch` to `underline`, `suffix` to `bold`
-/// — direct ports of zle_refresh.c:395-402.
-/// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
-pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
-
-    let mut seen = std::collections::HashSet::new();
-    for entry in atrs {
-        if entry.is_empty() {
-            continue;
-        }
-        if *entry == "none" {
-            // zle_refresh.c:355-360 — `none` clears every category.
-            for cat in [
-                HC::Region,
-                HC::Isearch,
-                HC::Suffix,
-                HC::Paste,
-                HC::Default,
-                HC::Special,
-                HC::Ellipsis,
-            ] {
-                manager.category_attrs.insert(cat, TextAttr::default());
-                seen.insert(cat);
-            }
-            continue;
-        }
-        let (prefix, rest) = match entry.split_once(':') {
-            Some(t) => t,
-            None => continue,
-        };
-        let cat = match prefix {
-            "region" => HC::Region,
-            "isearch" => HC::Isearch,
-            "suffix" => HC::Suffix,
-            "paste" => HC::Paste,
-            "default" => HC::Default,
-            "special" => HC::Special,
-            "ellipsis" => HC::Ellipsis,
-            _ => continue,
-        };
-        manager.category_attrs.insert(cat, match_highlight(rest));
-        seen.insert(cat);
-    }
-
-    // Defaults for unset slots — zle_refresh.c:395-402.
-    let default_standout = TextAttr {
-        standout: true,
-        ..TextAttr::default()
-    };
-    let default_underline = TextAttr {
-        underline: true,
-        ..TextAttr::default()
-    };
-    let default_bold = TextAttr {
-        bold: true,
-        ..TextAttr::default()
-    };
-    if !seen.contains(&HC::Region) {
-        manager.category_attrs.insert(HC::Region, default_standout);
-    }
-    if !seen.contains(&HC::Isearch) {
-        manager.category_attrs.insert(HC::Isearch, default_underline);
-    }
-    if !seen.contains(&HC::Suffix) {
-        manager.category_attrs.insert(HC::Suffix, default_bold);
-    }
-    if !seen.contains(&HC::Special) {
-        manager.category_attrs.insert(HC::Special, default_standout);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_countprompt() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(countprompt("hello"), 5);
-        assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
-        assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
-    }
-
-    #[test]
-    fn test_video_buffer() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut buf = VideoBuffer::new(80, 24);
-        assert_eq!(buf.cols, 80);
-        assert_eq!(buf.rows, 24);
-
-        buf.set(0, 0, RefreshElement::new('A'));
-        assert_eq!(buf.get(0, 0).map(|e| e.chr), Some('A'));
-
-        buf.clear();
-        assert_eq!(buf.get(0, 0).map(|e| e.chr), Some(' '));
-    }
-
-    #[test]
-    fn test_refresh_state() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut state = RefreshState::new();
-        assert!(state.old_video.is_some());
-        assert!(state.new_video.is_some());
-
-        state.swap_buffers();
-        state.free_video();
-        assert!(state.old_video.is_none());
-    }
-
-    #[test]
-    fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert!(compute_render_attrs().is_empty());
-    }
-
-    #[test]
-    fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
-        crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
-        let attrs = compute_render_attrs();
-        assert_eq!(attrs.len(), 11);
-        // [0..2) and [7..11) are unstyled.
-        for slot in attrs.iter().take(2) {
-            assert!(slot.is_none());
-        }
-        for slot in attrs.iter().skip(7) {
-            assert!(slot.is_none());
-        }
-        // [2..7) painted in standout.
-        for slot in attrs.iter().take(7).skip(2) {
-            let attr = slot.expect("standout");
-            assert!(attr.standout);
-        }
-    }
-
-    #[test]
-    fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
-        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst); // linewise — same swap behavior
-        let attrs = compute_render_attrs();
-        // Range collapses to (1..5).
-        assert!(attrs[0].is_none());
-        for slot in attrs.iter().take(5).skip(1) {
-            assert!(slot.unwrap().standout);
-        }
-        assert!(attrs[5].is_none());
-    }
-
-    #[test]
-    fn match_highlight_handles_combined_attrs() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let attr = match_highlight("bold,fg=red,underline");
-        assert!(attr.bold);
-        assert!(attr.underline);
-        assert_eq!(attr.fg_color, Some(1));
-    }
-
-    #[test]
-    fn match_highlight_named_and_numeric_colors() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
-        assert_eq!(match_highlight("bg=42").bg_color, Some(42));
-        // Out-of-range numeric → ignored (parse fails for u8).
-        assert_eq!(match_highlight("fg=999").fg_color, None);
-    }
-
-    #[test]
-    fn match_highlight_negation_clears_attr() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let attr = match_highlight("bold,nobold,underline");
-        assert!(!attr.bold);
-        assert!(attr.underline);
-    }
-
-    #[test]
-    fn match_highlight_none_resets_everything() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let attr = match_highlight("bold,fg=red,none,underline");
-        // After `none` the only thing surviving is the trailing `underline`.
-        assert!(!attr.bold);
-        assert!(attr.underline);
-        assert_eq!(attr.fg_color, None);
-    }
-
-    #[test]
-    fn zle_set_highlight_populates_categories_and_defaults() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut mgr = HighlightManager::new();
-        let entries = ["region:fg=red,bold", "isearch:fg=blue"];
-        zle_set_highlight(&mut mgr, &entries);
-        let region = mgr.category_attrs[&HighlightCategory::Region];
-        assert!(region.bold);
-        assert_eq!(region.fg_color, Some(1));
-        let isearch = mgr.category_attrs[&HighlightCategory::Isearch];
-        assert_eq!(isearch.fg_color, Some(4));
-        // Suffix wasn't set: defaults to bold (zle_refresh.c:401).
-        let suffix = mgr.category_attrs[&HighlightCategory::Suffix];
-        assert!(suffix.bold);
-        // Special wasn't set: defaults to standout (zle_refresh.c:396).
-        let special = mgr.category_attrs[&HighlightCategory::Special];
-        assert!(special.standout);
-    }
-
-    #[test]
-    fn zle_set_highlight_none_clears_every_slot() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut mgr = HighlightManager::new();
-        zle_set_highlight(&mut mgr, &["none"]);
-        for cat in [
-            HighlightCategory::Region,
-            HighlightCategory::Isearch,
-            HighlightCategory::Suffix,
-            HighlightCategory::Paste,
-        ] {
-            let attr = mgr.category_attrs[&cat];
-            assert_eq!(attr, TextAttr::default());
-        }
-    }
-
-    #[test]
-    fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // When the user sets `zle_highlight=(region:fg=red,bold)` via
-        // zle_set_highlight, vi visual-mode should paint the region
-        // with that attr instead of the default standout.
-        crate::ported::zle::zle_main::zle_reset();
-        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
-        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        zle_set_highlight(&mut crate::ported::zle::zle_main::highlight().lock().unwrap(), &["region:fg=red,bold"]);
-        let attrs = compute_render_attrs();
-        for slot in attrs.iter().take(4).skip(1) {
-            let a = slot.expect("region painted");
-            assert!(a.bold);
-            assert_eq!(a.fg_color, Some(1));
-            // Standout shouldn't be auto-set when user overrode.
-            assert!(!a.standout);
-        }
-    }
-
-    #[test]
-    fn compute_render_attrs_explicit_regions_override_default() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
-        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
-        let custom = TextAttr {
-            bold: true,
-            fg_color: Some(1),
-            ..TextAttr::default()
-        };
-        crate::ported::zle::zle_main::highlight().lock().unwrap()
-            .set_region_highlight(1, 4, custom);
-        let attrs = compute_render_attrs();
-        assert!(attrs[0].is_none());
-        for slot in attrs.iter().take(4).skip(1) {
-            let a = slot.expect("custom");
-            assert!(a.bold);
-            assert_eq!(a.fg_color, Some(1));
-        }
-        assert!(attrs[4].is_none());
-    }
-}
-
-/// Direct port of `static void addmultiword(REFRESH_ELEMENT *base,
-///                                          ZLE_STRING_T tptr, int ichars)`
-/// from `Src/Zle/zle_refresh.c:913`.
-///
-/// C source pushes a multi-codepoint cluster (combining marks etc.)
-/// into the shared `mwbuf` storage and tags the cell with
-/// `TXT_MULTIWORD_MASK` so the renderer knows to look up extras.
-///
-/// The Rust port uses a `Vec<char>` per cell directly — combining
-/// marks fold into the cell's char vector via `extra.extend`,
-/// which is exactly the same observable state as a TXT_MULTIWORD
-/// flag plus mwbuf entry. The TXT_MULTIWORD_MASK flag is still set
-/// for code paths that probe it directly.
-pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // c:913
-                     _tptr: &[char], _ichars: usize) {
-    // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
-    // path that reads mwbuf knows to dereference. zshrs's
-    // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
-    // wide-char already carries the full codepoint (no need for a
-    // separate mwbuf table indexed off base->chr), so flagging
-    // TXT_MULTIWORD_MASK is the complete observable effect.
-    base.atr |= TXT_MULTIWORD_MASK;
-}
-
-/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
-/// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn bufswap(state: &mut RefreshState) {                                   // c:bufswap
-    // C body: swap nbuf and obuf pointers (with mwbuf shadow when
-    // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
-    std::mem::swap(&mut state.old_video, &mut state.new_video);
-}
-
-/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
-/// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
-    // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
-    // the row arrays. Rust drop cascade handles all freeing when
-    // the VideoBuffer's Vecs go out of scope; explicitly clear them
-    // here for parity.
-    state.old_video = None;
-    state.new_video = None;
-}
-
-/// Port of `nextline(Rparams rpms, int wrapped)` from Src/Zle/zle_refresh.c:842.
-#[allow(unused_variables)]
-pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:842
-    // C body (c:842-873): advance rpms->ln++; check space against
-    // winh; allocate new buffer row if needed; return 1 when display
-    // is full (caller should stop emitting). zshrs uses RefreshState
-    // for the cursor; this advances vln and signals overflow.
-    rpms.vln += 1;
-    if rpms.vln >= rpms.lines {
-        return 1;                                                            // out of vertical space
-    }
-    rpms.vcs = 0;
-    0
-}
-
-/// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
-/// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
-    // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
-    // (winh+1) lines; cleared via memset.` zshrs uses
-    // VideoBuffer::clear/resize for the same effect. Pull the new
-    // term geometry from the existing helpers.
-    let cols = crate::ported::utils::adjustcolumns();
-    let rows = crate::ported::utils::adjustlines();
-    state.columns = cols;
-    state.lines = rows;
-    state.old_video = Some(VideoBuffer::new(cols, rows));
-    state.new_video = Some(VideoBuffer::new(cols, rows));
-    state.need_full_redraw = true;
-}
-
-/// Port of `singmoveto(int pos)` from Src/Zle/zle_refresh.c:2687.
-/// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
-pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
-    // C body: `singlemoveto()` issues termcap cursor-positioning to
-    // `pos` on a single-line display. Without termcap output here
-    // we just update vcs (cursor column) on RefreshState.
-    state.vcs = pos;
-}
-
-/// Port of `snextline(Rparams rpms)` from Src/Zle/zle_refresh.c:875.
-pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c:875
-    // C body (c:875-919): scroll the on-screen display up one line
-    // when the new line wraps past the bottom. zshrs decrements
-    // vln so the next emit lands on the (now-cleared) bottom row.
-    if rpms.vln > 0 {
-        rpms.vln -= 1;
-    }
-    rpms.vcs = 0;
-    0
-}
-
-/// Direct port of `int tcout_via_func(int cap, int arg, int (*outc)(int))`
-/// from `Src/Zle/zle_refresh.c:2291`. Looks up the user's `tcout` shell
-/// function via `getshfunc` and dispatches when defined; returns 0 if
-/// the function was found and called (caller skips the termcap output),
-/// 1 otherwise (caller emits the raw termcap escape).
-pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
-    if crate::ported::utils::getshfunc("tcout").is_some() {
-        // Function found; cap/arg would be passed via `$1`/`$2` in a
-        // full port — here we just dispatch and let the user fn read
-        // the args from the environment / its widget context.
-        let _ = crate::ported::zle::compcore::shfunc_call("tcout");
-        return 0;
-    }
-    1
-}
-
-/// Port of `wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news)` from `Src/Zle/zle_refresh.c:1736`.
-/// ```c
-/// static int
-/// wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news) {
-///     int i = 0;
-///     while (olds->chr && ZR_equal(*olds, *news))
-///         olds++, news++, i++;
-///     return i;
-/// }
-/// ```
-/// Common-prefix length of two REFRESH_ELEMENT strings; stops at
-/// the first NUL chr in `olds` or first cell that differs in chr+atr.
-pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-               news: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
-    let mut i = 0;
-    while i < olds.len() && i < news.len()
-        && olds[i].chr != '\0' && olds[i] == news[i]
-    {
-        i += 1;
-    }
-    i
-}
-
-/// Port of `zle_free_highlight()` from `Src/Zle/zle_refresh.c:415`.
-/// ```c
-/// void
-/// zle_free_highlight(void) {
-///     free_colour_buffer();
-/// }
-/// ```
-/// Direct port of `void zle_free_highlight(void)` from
-/// `Src/Zle/zle_refresh.c:415-420`.
-/// ```c
-/// free_colour_buffer();
-/// ```
-///
-/// C's `free_colour_buffer` frees the per-cell colour-attribute
-/// storage used by `region_highlight`. In the Rust port that
-/// storage is a `Vec<HighlightSpan>` inside the file-scope
-/// `HIGHLIGHT` static, dropped automatically by Vec::clear at the
-/// same invalidate points that fire the C free. No-op here is the
-/// correct cross-language equivalent for this fn shape (the
-/// caller doesn't reach into the highlight buffer from this entry
-/// point; the live tick clears its buffer directly).
-pub fn zle_free_highlight() {                                                // c:415
-    // Rust ownership handles the equivalent free; explicit clear
-    // happens against the file-scope HIGHLIGHT static when
-    // invalidate fires.
-}
-
-/// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
-/// ```c
-/// static void
-/// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
-/// {
-///     while (len--)
-///         *dst++ = rc;
-/// }
-/// ```
-/// Fill `dst[0..len]` with copies of `rc`. Equivalent to
-/// `memset` for REFRESH_ELEMENT slices.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(rc, len) vs C=(dst, rc, len)
-pub fn ZR_memset(                                                            // c:86
-    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
-    len: usize,
-) {
-    let n = len.min(dst.len());
-    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
-        *slot = rc;
-    }
-}
-
 /// Port of `ZR_equal(zr1, zr2)` macro from `Src/Zle/zle_refresh.c:74-82`.
 /// Multibyte path: `chr == chr && atr == atr && (combining-cluster eq)`.
 /// Non-multibyte path collapses to the same first conjunction. Rust uses
@@ -1346,109 +1249,6 @@ pub fn ZR_memcpy(                                                            // 
     l: usize,
 ) {
     dst[..l].copy_from_slice(&src[..l]);
-}
-
-/// Port of `ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)` from `Src/Zle/zle_refresh.c:95`.
-/// ```c
-/// static void
-/// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
-/// {
-///     while ((*dst++ = *src++).chr != ZWC('\0'))
-///         ;
-/// }
-/// ```
-/// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
-/// `dst`. The terminator is INCLUDED in the copy.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
-pub fn ZR_strcpy(                                                            // c:95
-    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-) {
-    let mut i = 0;
-    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
-        if i >= dst.len() || i >= src.len() {
-            break;
-        }
-        dst[i] = src[i];
-        if src[i].chr == '\0' {
-            break;
-        }
-        i += 1;
-    }
-}
-
-/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
-/// ```c
-/// static size_t
-/// ZR_strlen(const REFRESH_ELEMENT *wstr)
-/// {
-///     int len = 0;
-///     while (wstr++->chr != ZWC('\0'))
-///         len++;
-///     return len;
-/// }
-/// ```
-/// Length of a NUL-terminated REFRESH_ELEMENT string.
-#[allow(non_snake_case)]
-/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
-pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:102
-    let mut len = 0;                                                         // c:102 int len = 0
-    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
-        len += 1;                                                            // c:107 len++
-    }
-    len                                                                      // c:109 return len
-}
-
-/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:119`.
-/// ```c
-/// static int
-/// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
-///            int len)
-/// {
-///     while (len--) {
-///         if ((!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr) ||
-///             (!(newwstr->atr & TXT_MULTIWORD_MASK) && !newwstr->chr))
-///             return !ZR_equal(*oldwstr, *newwstr);
-///         if (!ZR_equal(*oldwstr, *newwstr))
-///             return 1;
-///         oldwstr++;
-///         newwstr++;
-///     }
-///     return 0;
-/// }
-/// ```
-/// Simplified strcmp: returns 0 if first `len` elements match
-/// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
-/// either string (treating it as the shorter-string boundary).
-#[allow(non_snake_case)]
-/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:120`.
-/// WARNING: param names don't match C — Rust=(newwstr, len) vs C=(oldwstr, newwstr, len)
-pub fn ZR_strncmp(                                                           // c:120
-    oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    len: usize,
-) -> i32 {
-    let mut i = 0;
-    while i < len {                                                          // c:123 while (len--)
-        if i >= oldwstr.len() || i >= newwstr.len() {
-            // C reads past end via pointer; we bound it.
-            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
-        }
-        let o = oldwstr[i];
-        let n = newwstr[i];
-        // c:124-126 — `if early-NUL → return !equal`.
-        let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
-        let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
-        if old_is_nul || new_is_nul {
-            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
-        }
-        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
-            return 1;
-        }
-        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
-    }
-    0                                                                        // c:133 return 0
 }
 
 // =====================================================================
@@ -1865,5 +1665,207 @@ mod zr_tests {
         assert_eq!(r.tosln, 0);
         assert_eq!(r.pos, 0);
         assert_eq!(r.end, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_countprompt() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(countprompt("hello"), 5);
+        assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
+        assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
+    }
+
+    #[test]
+    fn test_video_buffer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut buf = VideoBuffer::new(80, 24);
+        assert_eq!(buf.cols, 80);
+        assert_eq!(buf.rows, 24);
+
+        buf.set(0, 0, RefreshElement::new('A'));
+        assert_eq!(buf.get(0, 0).map(|e| e.chr), Some('A'));
+
+        buf.clear();
+        assert_eq!(buf.get(0, 0).map(|e| e.chr), Some(' '));
+    }
+
+    #[test]
+    fn test_refresh_state() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut state = RefreshState::new();
+        assert!(state.old_video.is_some());
+        assert!(state.new_video.is_some());
+
+        state.swap_buffers();
+        state.free_video();
+        assert!(state.old_video.is_none());
+    }
+
+    #[test]
+    fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(compute_render_attrs().is_empty());
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
+        let attrs = compute_render_attrs();
+        assert_eq!(attrs.len(), 11);
+        // [0..2) and [7..11) are unstyled.
+        for slot in attrs.iter().take(2) {
+            assert!(slot.is_none());
+        }
+        for slot in attrs.iter().skip(7) {
+            assert!(slot.is_none());
+        }
+        // [2..7) painted in standout.
+        for slot in attrs.iter().take(7).skip(2) {
+            let attr = slot.expect("standout");
+            assert!(attr.standout);
+        }
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst); // linewise — same swap behavior
+        let attrs = compute_render_attrs();
+        // Range collapses to (1..5).
+        assert!(attrs[0].is_none());
+        for slot in attrs.iter().take(5).skip(1) {
+            assert!(slot.unwrap().standout);
+        }
+        assert!(attrs[5].is_none());
+    }
+
+    #[test]
+    fn match_highlight_handles_combined_attrs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let attr = match_highlight("bold,fg=red,underline");
+        assert!(attr.bold);
+        assert!(attr.underline);
+        assert_eq!(attr.fg_color, Some(1));
+    }
+
+    #[test]
+    fn match_highlight_named_and_numeric_colors() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
+        assert_eq!(match_highlight("bg=42").bg_color, Some(42));
+        // Out-of-range numeric → ignored (parse fails for u8).
+        assert_eq!(match_highlight("fg=999").fg_color, None);
+    }
+
+    #[test]
+    fn match_highlight_negation_clears_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let attr = match_highlight("bold,nobold,underline");
+        assert!(!attr.bold);
+        assert!(attr.underline);
+    }
+
+    #[test]
+    fn match_highlight_none_resets_everything() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let attr = match_highlight("bold,fg=red,none,underline");
+        // After `none` the only thing surviving is the trailing `underline`.
+        assert!(!attr.bold);
+        assert!(attr.underline);
+        assert_eq!(attr.fg_color, None);
+    }
+
+    #[test]
+    fn zle_set_highlight_populates_categories_and_defaults() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut mgr = HighlightManager::new();
+        let entries = ["region:fg=red,bold", "isearch:fg=blue"];
+        zle_set_highlight(&mut mgr, &entries);
+        let region = mgr.category_attrs[&HighlightCategory::Region];
+        assert!(region.bold);
+        assert_eq!(region.fg_color, Some(1));
+        let isearch = mgr.category_attrs[&HighlightCategory::Isearch];
+        assert_eq!(isearch.fg_color, Some(4));
+        // Suffix wasn't set: defaults to bold (zle_refresh.c:401).
+        let suffix = mgr.category_attrs[&HighlightCategory::Suffix];
+        assert!(suffix.bold);
+        // Special wasn't set: defaults to standout (zle_refresh.c:396).
+        let special = mgr.category_attrs[&HighlightCategory::Special];
+        assert!(special.standout);
+    }
+
+    #[test]
+    fn zle_set_highlight_none_clears_every_slot() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut mgr = HighlightManager::new();
+        zle_set_highlight(&mut mgr, &["none"]);
+        for cat in [
+            HighlightCategory::Region,
+            HighlightCategory::Isearch,
+            HighlightCategory::Suffix,
+            HighlightCategory::Paste,
+        ] {
+            let attr = mgr.category_attrs[&cat];
+            assert_eq!(attr, TextAttr::default());
+        }
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // When the user sets `zle_highlight=(region:fg=red,bold)` via
+        // zle_set_highlight, vi visual-mode should paint the region
+        // with that attr instead of the default standout.
+        crate::ported::zle::zle_main::zle_reset();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
+        zle_set_highlight(&mut crate::ported::zle::zle_main::highlight().lock().unwrap(), &["region:fg=red,bold"]);
+        let attrs = compute_render_attrs();
+        for slot in attrs.iter().take(4).skip(1) {
+            let a = slot.expect("region painted");
+            assert!(a.bold);
+            assert_eq!(a.fg_color, Some(1));
+            // Standout shouldn't be auto-set when user overrode.
+            assert!(!a.standout);
+        }
+    }
+
+    #[test]
+    fn compute_render_attrs_explicit_regions_override_default() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        let custom = TextAttr {
+            bold: true,
+            fg_color: Some(1),
+            ..TextAttr::default()
+        };
+        crate::ported::zle::zle_main::highlight().lock().unwrap()
+            .set_region_highlight(1, 4, custom);
+        let attrs = compute_render_attrs();
+        assert!(attrs[0].is_none());
+        for slot in attrs.iter().take(4).skip(1) {
+            let a = slot.expect("custom");
+            assert!(a.bold);
+            assert_eq!(a.fg_color, Some(1));
+        }
+        assert!(attrs[4].is_none());
     }
 }

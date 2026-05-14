@@ -59,25 +59,31 @@ thread_local! {
     static tjob: RefCell<bool> = RefCell::new(false);
 }
 
-/// Port of `tpush(wordcode code, int pop)` from `Src/text.c:396` (append byte to `tbuf`, honour `tlim`).
-fn tpush(c: i32) {
-    let b = c as u8;
-    tbuf.with(|tb| {
-        let mut v = tb.borrow_mut();
-        if let Some(max) = tlim.with(|l| *l.borrow()) {
-            if v.len() >= max {
-                return;
-            }
+/// Port of `dec_tindent` from `Src/text.c:70`.
+pub fn dec_tindent() {
+    tindent.with(|t| {
+        let mut v = t.borrow_mut();
+        if *v > 0 {
+            *v -= 1;
         }
-        v.push(b);
     });
 }
 
-/// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
-/// Local shim renamed to avoid name-clashing with the canonical
-/// `parse::ecgetstr(&mut estate, ...)`; the body delegates directly.
-fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
-    parse::ecgetstr(st, dup, tok)
+/// Port of `taddpending(char *str1, char *str2)` from `Src/text.c:89`.
+pub fn taddpending(str1: &str, str2: &str) {
+    let mut v = Vec::with_capacity(str1.len() + str2.len());
+    v.extend_from_slice(str1.as_bytes());
+    v.extend_from_slice(str2.as_bytes());
+    tpending.with(|p| {
+        let mut g = p.borrow_mut();
+        match &mut *g {
+            Some(p) => {
+                p.push(b'\n');
+                p.extend_from_slice(&v);
+            }
+            None => *g = Some(v),
+        }
+    });
 }
 
 #[allow(non_camel_case_types)]
@@ -111,6 +117,49 @@ struct tstack {
     u: tstack_u,
 }
 
+/// Port of `tdopending` from `Src/text.c:114`.
+pub fn tdopending() {
+    let drained = tpending.with(|p| p.borrow_mut().take());
+    if let Some(p) = drained {
+        tpush(b'\n' as i32);
+        taddstr(&String::from_utf8_lossy(&p));
+    }
+}
+
+/// Port of `taddchr(int c)` from `Src/text.c:128`.
+pub fn taddchr(c: i32) {
+    tpush(c);
+}
+
+/// Port of `taddstr(const char *s)` from `Src/text.c:146`.
+pub fn taddstr(s: &str) {
+    let nl = tnewlins.with(|c| *c.borrow());
+    if nl {
+        tbuf.with(|tb| tb.borrow_mut().extend_from_slice(s.as_bytes()));
+    } else {
+        for &b in s.as_bytes() {
+            let ch = if b == b'\n' { b' ' } else { b };
+            tpush(ch as i32);
+        }
+    }
+}
+
+/// Port of `taddlist(Estate state, int num)` from `Src/text.c:170`.
+fn taddlist(state: &mut estate, num: i32) {
+    if num == 0 {
+        return;
+    }
+    let mut n = num;
+    while n > 0 {
+        taddstr(&ecgetstr(state, EC_NODUP, None));
+        tpush(b' ' as i32);
+        n -= 1;
+    }
+    tbuf.with(|tb| {
+        let _ = tb.borrow_mut().pop();
+    });
+}
+
 /// Port of `taddassign(wordcode code, Estate state, int typeset)` from `Src/text.c:184`.
 fn taddassign(code: wordcode, state: &mut estate, typeset: i32) {
     taddstr(&ecgetstr(state, EC_NODUP, None));
@@ -133,22 +182,6 @@ fn taddassign(code: wordcode, state: &mut estate, typeset: i32) {
     }
 }
 
-/// Port of `taddlist(Estate state, int num)` from `Src/text.c:170`.
-fn taddlist(state: &mut estate, num: i32) {
-    if num == 0 {
-        return;
-    }
-    let mut n = num;
-    while n > 0 {
-        taddstr(&ecgetstr(state, EC_NODUP, None));
-        tpush(b' ' as i32);
-        n -= 1;
-    }
-    tbuf.with(|tb| {
-        let _ = tb.borrow_mut().pop();
-    });
-}
-
 /// Port of `taddassignlist(Estate state, wordcode count)` from `Src/text.c:213`.
 fn taddassignlist(state: &mut estate, count: wordcode) {
     if count != 0 {
@@ -163,60 +196,6 @@ fn taddassignlist(state: &mut estate, count: wordcode) {
         state.pc += 1;
         taddassign(acode, state, 1);
         c -= 1;
-    }
-}
-
-/// Port of `taddstr(const char *s)` from `Src/text.c:146`.
-pub fn taddstr(s: &str) {
-    let nl = tnewlins.with(|c| *c.borrow());
-    if nl {
-        tbuf.with(|tb| tb.borrow_mut().extend_from_slice(s.as_bytes()));
-    } else {
-        for &b in s.as_bytes() {
-            let ch = if b == b'\n' { b' ' } else { b };
-            tpush(ch as i32);
-        }
-    }
-}
-
-/// Port of `taddchr(int c)` from `Src/text.c:128`.
-pub fn taddchr(c: i32) {
-    tpush(c);
-}
-
-/// Port of `dec_tindent` from `Src/text.c:70`.
-pub fn dec_tindent() {
-    tindent.with(|t| {
-        let mut v = t.borrow_mut();
-        if *v > 0 {
-            *v -= 1;
-        }
-    });
-}
-
-/// Port of `taddpending(char *str1, char *str2)` from `Src/text.c:89`.
-pub fn taddpending(str1: &str, str2: &str) {
-    let mut v = Vec::with_capacity(str1.len() + str2.len());
-    v.extend_from_slice(str1.as_bytes());
-    v.extend_from_slice(str2.as_bytes());
-    tpending.with(|p| {
-        let mut g = p.borrow_mut();
-        match &mut *g {
-            Some(p) => {
-                p.push(b'\n');
-                p.extend_from_slice(&v);
-            }
-            None => *g = Some(v),
-        }
-    });
-}
-
-/// Port of `tdopending` from `Src/text.c:114`.
-pub fn tdopending() {
-    let drained = tpending.with(|p| p.borrow_mut().take());
-    if let Some(p) = drained {
-        tpush(b'\n' as i32);
-        taddstr(&String::from_utf8_lossy(&p));
     }
 }
 
@@ -246,12 +225,87 @@ pub fn taddnl(no_semicolon: i32) {
     }
 }
 
+/// Port of `getpermtext(Eprog prog, Wordcode c, int start_indent)` from `Src/text.c:279`.
+pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
+    queue_signals();
+    useeprog(&prog);
+    let mut state = estate {
+        prog,
+        pc: c.unwrap_or(0),
+        strs: None,
+        strs_offset: 0,
+    };
+    tbuf.with(|tb| tb.borrow_mut().clear());
+    tlim.with(|l| *l.borrow_mut() = None);
+    tpending.with(|p| *p.borrow_mut() = None);
+    tindent.with(|t| *t.borrow_mut() = start_indent);
+    tnewlins.with(|n| *n.borrow_mut() = true);
+    tjob.with(|j| *j.borrow_mut() = false);
+    if state.prog.len != 0 {
+        gettext2(&mut state);
+    }
+    let raw = tbuf.with(|tb| {
+        let mut v = tb.borrow_mut();
+        String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
+    });
+    let p = state.prog;
+    freeeprog(&p);
+    unqueue_signals();
+    lex::untokenize(&raw)
+}
+
+/// Port of `getjobtext(Eprog prog, Wordcode c)` from `Src/text.c:315`.
+pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
+    queue_signals();
+    useeprog(&prog);
+    let mut state = estate {
+        prog,
+        pc: c.unwrap_or(0),
+        strs: None,
+        strs_offset: 0,
+    };
+    tbuf.with(|tb| tb.borrow_mut().clear());
+    tlim.with(|l| *l.borrow_mut() = Some(JOBTEXTSIZE));
+    tpending.with(|p| *p.borrow_mut() = None);
+    tindent.with(|t| *t.borrow_mut() = 0);
+    tnewlins.with(|n| *n.borrow_mut() = true);
+    tjob.with(|j| *j.borrow_mut() = true);
+    if state.prog.len != 0 {
+        gettext2(&mut state);
+    }
+    let mut raw = tbuf.with(|tb| {
+        let mut v = tb.borrow_mut();
+        String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
+    });
+    if raw.ends_with(META) {
+        raw.pop();
+    }
+    let p = state.prog;
+    freeeprog(&p);
+    unqueue_signals();
+    lex::untokenize(&raw)
+}
+
 // c:1022-1026 — fstr[] (getredirs)
 const FSTR: [&str; 18] = [
     ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<", "<&", ">&",
     ">&-",
     "<", ">",
 ];
+
+/// Port of `tpush(wordcode code, int pop)` from `Src/text.c:396` (append byte to `tbuf`, honour `tlim`).
+fn tpush(c: i32) {
+    let b = c as u8;
+    tbuf.with(|tb| {
+        let mut v = tb.borrow_mut();
+        if let Some(max) = tlim.with(|l| *l.borrow()) {
+            if v.len() >= max {
+                return;
+            }
+        }
+        v.push(b);
+    });
+}
 
 /// Port of `gettext2(Estate state)` from `Src/text.c:415`.
 pub fn gettext2(state: &mut estate) {
@@ -1179,87 +1233,6 @@ pub fn gettext2(state: &mut estate) {
     tdopending();
 }
 
-#[inline]
-fn useeprog(_p: &Eprog) {}
-
-#[inline]
-fn freeeprog(_p: &Eprog) {}
-
-/// Port of `zoutputtab(FILE *outf)` from `Src/text.c:263`.
-pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
-    let expand_tabs = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
-    if expand_tabs < 0 {
-        return Ok(());
-    }
-    if expand_tabs > 0 {
-        let spaces = vec![b' '; expand_tabs as usize];
-        outf.write_all(&spaces)
-    } else {
-        outf.write_all(b"\t")
-    }
-}
-
-/// Port of `getpermtext(Eprog prog, Wordcode c, int start_indent)` from `Src/text.c:279`.
-pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
-    queue_signals();
-    useeprog(&prog);
-    let mut state = estate {
-        prog,
-        pc: c.unwrap_or(0),
-        strs: None,
-        strs_offset: 0,
-    };
-    tbuf.with(|tb| tb.borrow_mut().clear());
-    tlim.with(|l| *l.borrow_mut() = None);
-    tpending.with(|p| *p.borrow_mut() = None);
-    tindent.with(|t| *t.borrow_mut() = start_indent);
-    tnewlins.with(|n| *n.borrow_mut() = true);
-    tjob.with(|j| *j.borrow_mut() = false);
-    if state.prog.len != 0 {
-        gettext2(&mut state);
-    }
-    let raw = tbuf.with(|tb| {
-        let mut v = tb.borrow_mut();
-        String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
-    });
-    let p = state.prog;
-    freeeprog(&p);
-    unqueue_signals();
-    lex::untokenize(&raw)
-}
-
-/// Port of `getjobtext(Eprog prog, Wordcode c)` from `Src/text.c:315`.
-pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
-    queue_signals();
-    useeprog(&prog);
-    let mut state = estate {
-        prog,
-        pc: c.unwrap_or(0),
-        strs: None,
-        strs_offset: 0,
-    };
-    tbuf.with(|tb| tb.borrow_mut().clear());
-    tlim.with(|l| *l.borrow_mut() = Some(JOBTEXTSIZE));
-    tpending.with(|p| *p.borrow_mut() = None);
-    tindent.with(|t| *t.borrow_mut() = 0);
-    tnewlins.with(|n| *n.borrow_mut() = true);
-    tjob.with(|j| *j.borrow_mut() = true);
-    if state.prog.len != 0 {
-        gettext2(&mut state);
-    }
-    let mut raw = tbuf.with(|tb| {
-        let mut v = tb.borrow_mut();
-        String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
-    });
-    if raw.ends_with(META) {
-        raw.pop();
-    }
-    let p = state.prog;
-    freeeprog(&p);
-    unqueue_signals();
-    lex::untokenize(&raw)
-}
-
 /// Port of `getredirs(LinkList redirs)` from `Src/text.c:1019`.
 pub fn getredirs(redirs: &LinkList<redir>) {
     queue_signals(); // c:1019
@@ -1325,6 +1298,33 @@ pub fn getredirs(redirs: &LinkList<redir>) {
         let _ = tb.borrow_mut().pop();
     }); // c:1116
     unqueue_signals(); // c:1118
+}
+
+/// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
+/// Local shim renamed to avoid name-clashing with the canonical
+/// `parse::ecgetstr(&mut estate, ...)`; the body delegates directly.
+fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
+    parse::ecgetstr(st, dup, tok)
+}
+
+#[inline]
+fn useeprog(_p: &Eprog) {}
+
+#[inline]
+fn freeeprog(_p: &Eprog) {}
+
+/// Port of `zoutputtab(FILE *outf)` from `Src/text.c:263`.
+pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
+    let expand_tabs = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
+    if expand_tabs < 0 {
+        return Ok(());
+    }
+    if expand_tabs > 0 {
+        let spaces = vec![b' '; expand_tabs as usize];
+        outf.write_all(&spaces)
+    } else {
+        outf.write_all(b"\t")
+    }
 }
 
 #[cfg(test)]

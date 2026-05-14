@@ -224,42 +224,7 @@ pub fn finish_(m: *const module) -> i32 {                               // c:508
     0                                                                    // c:508
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn nl_names_includes_codeset() {
-        assert!(NL_NAMES.contains(&"CODESET"));
-        assert!(NL_NAMES.contains(&"D_T_FMT"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn getlanginfo_codeset_is_some() {
-        assert!(getlanginfo("CODESET").is_some());
-    }
-
-    #[test]
-    fn getlanginfo_invalid_returns_none() {
-        assert!(getlanginfo("INVALID_NAME").is_none());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn liitem_codeset_resolves() {
-        assert!(liitem("CODESET").is_some());
-        assert!(liitem("DOES_NOT_EXIST").is_none());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn scanlanginfo_emits_items() {
-        let v = scanlanginfo();
-        assert!(!v.is_empty());
-        assert!(v.iter().any(|(k, _)| k == "CODESET"));
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
@@ -324,3 +289,39 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nl_names_includes_codeset() {
+        assert!(NL_NAMES.contains(&"CODESET"));
+        assert!(NL_NAMES.contains(&"D_T_FMT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_codeset_is_some() {
+        assert!(getlanginfo("CODESET").is_some());
+    }
+
+    #[test]
+    fn getlanginfo_invalid_returns_none() {
+        assert!(getlanginfo("INVALID_NAME").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn liitem_codeset_resolves() {
+        assert!(liitem("CODESET").is_some());
+        assert!(liitem("DOES_NOT_EXIST").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_emits_items() {
+        let v = scanlanginfo();
+        assert!(!v.is_empty());
+        assert!(v.iter().any(|(k, _)| k == "CODESET"));
+    }
+}

@@ -75,31 +75,6 @@ unsafe extern "C" {
     fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
 }
 
-/// WARNING: NOT IN TERMCAP.C — AtomicI32-protected lazy termcap init; C uses libtermcap `tgetent` once at boot
-/// (equivalent C logic at Src/Modules/termcap.c:82).
-/// Initialize libtermcap's database for `$TERM`. Returns true on success.
-/// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
-fn ensure_termcap_loaded() -> bool {
-    // 0 = uninit, 1 = ok, -1 = failed. Cache the libtermcap state for
-    // the lifetime of the process, matching libtermcap's own behavior.
-    static STATE: AtomicI32 = AtomicI32::new(0);
-    match STATE.load(Ordering::Relaxed) {
-        1 => true,
-        -1 => false,
-        _ => {
-            let term = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
-            let term_c = match std::ffi::CString::new(term) { Ok(c) => c, Err(_) => return false };
-            let r = {
-                let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-                unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) }
-            };
-            let ok = r > 0;
-            STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
-            ok
-        }
-    }
-}
-
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
 /// present" via the `boolcodes[]` table walk: if `tgetflag`
@@ -303,12 +278,6 @@ pub fn scantermcap() -> Vec<(String, String)> {                          // c:20
     out
 }
 
-// =====================================================================
-// static struct features module_features                            c:314 (termcap.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (termcap.c).
 
 
@@ -326,6 +295,12 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
     // C body c:325-326 — `return 0`. Faithful empty-body port.
     0
 }
+
+// =====================================================================
+// static struct features module_features                            c:314 (termcap.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/termcap.c:330`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -365,39 +340,32 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ztgetflag_known_on_returns_one() {
-        assert_eq!(ztgetflag("am"), 1);
-    }
-
-    #[test]
-    fn ztgetflag_unknown_returns_minus_one() {
-        assert_eq!(ztgetflag("zz"), -1);
-    }
-
-    #[test]
-    fn gettermcap_co_returns_columns() {
-        let v = gettermcap("co");
-        assert!(v.is_some());
-        let n: i32 = v.unwrap().parse().unwrap_or(0);
-        assert!(n > 0);
-    }
-
-    #[test]
-    fn gettermcap_unknown_returns_none() {
-        assert!(gettermcap("zz_nonexistent").is_none());
-    }
-
-    #[test]
-    fn scantermcap_emits_bool_caps() {
-        let v = scantermcap();
-        assert!(v.iter().any(|(k, _)| k == "am"));
+/// WARNING: NOT IN TERMCAP.C — AtomicI32-protected lazy termcap init; C uses libtermcap `tgetent` once at boot
+/// (equivalent C logic at Src/Modules/termcap.c:82).
+/// Initialize libtermcap's database for `$TERM`. Returns true on success.
+/// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
+fn ensure_termcap_loaded() -> bool {
+    // 0 = uninit, 1 = ok, -1 = failed. Cache the libtermcap state for
+    // the lifetime of the process, matching libtermcap's own behavior.
+    static STATE: AtomicI32 = AtomicI32::new(0);
+    match STATE.load(Ordering::Relaxed) {
+        1 => true,
+        -1 => false,
+        _ => {
+            let term = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
+            let term_c = match std::ffi::CString::new(term) { Ok(c) => c, Err(_) => return false };
+            let r = {
+                let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) }
+            };
+            let ok = r > 0;
+            STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
+            ok
+        }
     }
 }
+
+
 
 // =====================================================
 // ShellExecutor shim
@@ -468,3 +436,36 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ztgetflag_known_on_returns_one() {
+        assert_eq!(ztgetflag("am"), 1);
+    }
+
+    #[test]
+    fn ztgetflag_unknown_returns_minus_one() {
+        assert_eq!(ztgetflag("zz"), -1);
+    }
+
+    #[test]
+    fn gettermcap_co_returns_columns() {
+        let v = gettermcap("co");
+        assert!(v.is_some());
+        let n: i32 = v.unwrap().parse().unwrap_or(0);
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn gettermcap_unknown_returns_none() {
+        assert!(gettermcap("zz_nonexistent").is_none());
+    }
+
+    #[test]
+    fn scantermcap_emits_bool_caps() {
+        let v = scantermcap();
+        assert!(v.iter().any(|(k, _)| k == "am"));
+    }
+}

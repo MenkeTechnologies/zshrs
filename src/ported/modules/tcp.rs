@@ -72,12 +72,6 @@ pub fn zsh_inet_ntop(af: i32, addr_bytes: &[u8]) -> Option<String> {     // c:72
     }
 }
 
-/// Port of `zsh_inet_aton(char const *src, struct in_addr *dst)` from `Src/Modules/tcp.c:103`.
-/// WARNING: param names don't match C — Rust=(src) vs C=(src, dst)
-pub fn zsh_inet_aton(src: &str) -> Option<u32> {                         // c:103
-    src.parse::<std::net::Ipv4Addr>().ok().map(|a| u32::from(a).to_be())
-}
-
 /// Port of `zsh_inet_pton(int af, char const *src, void *dst)` from `Src/Modules/tcp.c:122`. Wraps
 /// libc inet_pton(3) — parses an IP-presentation string into the
 /// network-byte-order bytes. Returns 1 / 0 / -1 per C.
@@ -155,6 +149,25 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
     })
 }
 
+/// Port of `tcp_socket(int domain, int type, int protocol, int ztflags)` from `Src/Modules/tcp.c:231`.
+/// C body (c:235-243):
+/// ```c
+/// Tcp_session sess = zts_alloc(ztflags);
+/// sess->fd = socket(domain, type, protocol);
+/// addmodulefd(sess->fd, FDT_MODULE);
+/// return sess;
+/// ```
+/// WARNING: param names don't match C — Rust=(domain, ty, protocol, ztflags) vs C=(domain, type, protocol, ztflags)
+pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessionHandle {  // c:231
+    let idx = zts_alloc(ztflags);                                        // c:245
+    let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:245
+    sess_with(idx, |s| { s.fd = fd; });                                  // c:245 sess->fd = ...
+    if fd >= 0 {
+        crate::ported::utils::addmodulefd(fd);                           // c:245
+    }
+    Some(idx)                                                            // c:245 return sess
+}
+
 // =====================================================================
 // !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
 // =====================================================================
@@ -182,45 +195,6 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
 // `ztcp_sessions` linked list). Rust models the same: a handle that
 // indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
 type TcpSessionHandle = Option<usize>;
-
-// WARNING: NOT IN TCP.C — Rust-only closure accessor for the
-// `ZTCP_SESSIONS` thread_local Vec. C reads `sess->FIELD` directly on
-// a heap-allocated `Tcp_session *` from `ztcp_head` (tcp.c:155);
-// Rust's TLS-Vec layout requires a borrow-scoped access pattern.
-fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
-    ZTCP_SESSIONS.with(|s| {
-        let g = s.borrow();
-        f(&g[idx])
-    })
-}
-
-// WARNING: NOT IN TCP.C — Rust-only mutable closure accessor; see
-// `sess_get` above. C writes `sess->FIELD = X;` directly.
-fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
-    ZTCP_SESSIONS.with(|s| {
-        let mut g = s.borrow_mut();
-        f(&mut g[idx])
-    });
-}
-
-/// Port of `tcp_socket(int domain, int type, int protocol, int ztflags)` from `Src/Modules/tcp.c:231`.
-/// C body (c:235-243):
-/// ```c
-/// Tcp_session sess = zts_alloc(ztflags);
-/// sess->fd = socket(domain, type, protocol);
-/// addmodulefd(sess->fd, FDT_MODULE);
-/// return sess;
-/// ```
-/// WARNING: param names don't match C — Rust=(domain, ty, protocol, ztflags) vs C=(domain, type, protocol, ztflags)
-pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessionHandle {  // c:231
-    let idx = zts_alloc(ztflags);                                        // c:245
-    let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:245
-    sess_with(idx, |s| { s.fd = fd; });                                  // c:245 sess->fd = ...
-    if fd >= 0 {
-        crate::ported::utils::addmodulefd(fd);                           // c:245
-    }
-    Some(idx)                                                            // c:245 return sess
-}
 
 /// Port of `ztcp_free_session(Tcp_session sess)` from `Src/Modules/tcp.c:245`.
 /// In the Rust port the Vec drop handles `zfree(sess, ...)`.
@@ -661,12 +635,6 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
     0                                                                    // c:702
 }
 
-// =====================================================================
-// static struct features module_features                            c:705 (tcp.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (tcp.c).
 
 
@@ -695,6 +663,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
     handlefeatures(m, module_features(), enables) // c:736
 }
 
+// =====================================================================
+// static struct features module_features                            c:705 (tcp.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/tcp.c:736`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:736
@@ -720,41 +694,33 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zts_alloc_creates_session_with_default_fd() {
-        let _ = zts_alloc(ZTCP_LISTEN);
-        ZTCP_SESSIONS.with(|s| {
-            let sessions = s.borrow();
-            assert!(!sessions.is_empty());
-            let last = sessions.last().unwrap();
-            assert_eq!(last.fd, -1);
-            assert_eq!(last.flags, ZTCP_LISTEN);
-        });
-    }
-
-    #[test]
-    fn inet_ntop_v4_works() {
-        let bytes = [127u8, 0, 0, 1];
-        assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("127.0.0.1"));
-    }
-
-    #[test]
-    fn inet_pton_v4_works() {
-        let mut buf = [0u8; 4];
-        assert_eq!(zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut buf), 1);
-        assert_eq!(buf, [127, 0, 0, 1]);
-    }
-
-    #[test]
-    fn inet_pton_invalid_returns_zero() {
-        let mut buf = [0u8; 4];
-        assert_eq!(zsh_inet_pton(libc::AF_INET, "bad-ip", &mut buf), 0);
-    }
+/// Port of `zsh_inet_aton(char const *src, struct in_addr *dst)` from `Src/Modules/tcp.c:103`.
+/// WARNING: param names don't match C — Rust=(src) vs C=(src, dst)
+pub fn zsh_inet_aton(src: &str) -> Option<u32> {                         // c:103
+    src.parse::<std::net::Ipv4Addr>().ok().map(|a| u32::from(a).to_be())
 }
+
+// WARNING: NOT IN TCP.C — Rust-only closure accessor for the
+// `ZTCP_SESSIONS` thread_local Vec. C reads `sess->FIELD` directly on
+// a heap-allocated `Tcp_session *` from `ztcp_head` (tcp.c:155);
+// Rust's TLS-Vec layout requires a borrow-scoped access pattern.
+fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
+    ZTCP_SESSIONS.with(|s| {
+        let g = s.borrow();
+        f(&g[idx])
+    })
+}
+
+// WARNING: NOT IN TCP.C — Rust-only mutable closure accessor; see
+// `sess_get` above. C writes `sess->FIELD = X;` directly.
+fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
+    ZTCP_SESSIONS.with(|s| {
+        let mut g = s.borrow_mut();
+        f(&mut g[idx])
+    });
+}
+
+
 
 // ShellExecutor::bin_ztcp shim — parses flags into the canonical
 // `options` struct matching the BUILTIN spec at tcp.c:710
@@ -825,3 +791,38 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zts_alloc_creates_session_with_default_fd() {
+        let _ = zts_alloc(ZTCP_LISTEN);
+        ZTCP_SESSIONS.with(|s| {
+            let sessions = s.borrow();
+            assert!(!sessions.is_empty());
+            let last = sessions.last().unwrap();
+            assert_eq!(last.fd, -1);
+            assert_eq!(last.flags, ZTCP_LISTEN);
+        });
+    }
+
+    #[test]
+    fn inet_ntop_v4_works() {
+        let bytes = [127u8, 0, 0, 1];
+        assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn inet_pton_v4_works() {
+        let mut buf = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut buf), 1);
+        assert_eq!(buf, [127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn inet_pton_invalid_returns_zero() {
+        let mut buf = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "bad-ip", &mut buf), 0);
+    }
+}

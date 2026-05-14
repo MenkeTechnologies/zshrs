@@ -42,63 +42,118 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
     let mut depth: i32 = 0;
     let mut in_test_mod = false;
     let mut test_mod_depth: i32 = 0;
+    let mut in_block_comment: i32 = 0;
 
     for (lineno, line) in src.lines().enumerate() {
         let lineno = lineno + 1;
         let trimmed = line.trim_start();
 
-        // Detect entering a `#[cfg(test)] mod tests { ... }` so we can
-        // ignore fns inside it. Approximate: any `mod X` after a `#[cfg(test)]`
-        // attribute. Simpler: just recognize the literal `mod tests {`
-        // shape that's our convention.
-        if !in_test_mod && trimmed.starts_with("#[cfg(test)]") {
-            // Next non-blank line might be `mod tests {`. Check via a peek
-            // that looks at the same trimmed line continuation — for
-            // simplicity treat any subsequent depth=0 `mod tests {` as test.
-            // We mark and let the depth tracker handle entry.
-        }
-        // Recognize start of a test mod at module level.
         if depth == 0 && (trimmed.starts_with("mod tests {") || trimmed.starts_with("mod test {")) {
             in_test_mod = true;
             test_mod_depth = depth + 1;
         }
 
-        // Update brace depth — count `{` and `}` outside string/char
-        // literals. Crude but adequate for our consistent codebase
-        // formatting. Skip lines that are line comments.
-        let scan = if let Some(pos) = line.find("//") {
-            &line[..pos]
-        } else {
-            line
-        };
-        for c in scan.chars() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if in_test_mod && depth < test_mod_depth {
-                        in_test_mod = false;
+        // Mirror of build.rs::collect_free_fns — keep in sync.
+        // Walks the line char-by-char tracking comment/string state
+        // so `{`/`}` inside strings/chars/comments don't perturb depth.
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        let mut delta: i32 = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_block_comment > 0 {
+                if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    in_block_comment -= 1;
+                    i += 2;
+                    continue;
+                }
+                if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    in_block_comment += 1;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            match b {
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => break,
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                    in_block_comment += 1;
+                    i += 2;
+                }
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        let c = bytes[i];
+                        if c == b'\\' { i += 2; continue; }
+                        if c == b'"' { i += 1; break; }
+                        i += 1;
                     }
                 }
-                _ => {}
+                b'r' if i + 1 < bytes.len() && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#') => {
+                    let mut hashes = 0;
+                    let mut j = i + 1;
+                    while j < bytes.len() && bytes[j] == b'#' {
+                        hashes += 1;
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'"' {
+                        i = j + 1;
+                        loop {
+                            if i >= bytes.len() { break; }
+                            if bytes[i] == b'"' {
+                                let mut closed = 0;
+                                let mut k = i + 1;
+                                while k < bytes.len() && bytes[k] == b'#' && closed < hashes {
+                                    closed += 1;
+                                    k += 1;
+                                }
+                                if closed >= hashes {
+                                    i = k;
+                                    break;
+                                }
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                b'\'' => {
+                    let mut j = i + 1;
+                    let mut found_close = false;
+                    let mut escape = false;
+                    while j < bytes.len() && j - i < 12 {
+                        if !escape && bytes[j] == b'\'' {
+                            found_close = true;
+                            break;
+                        }
+                        if bytes[j] == b'\\' && !escape {
+                            escape = true;
+                        } else {
+                            escape = false;
+                        }
+                        j += 1;
+                    }
+                    if found_close {
+                        i = j + 1;
+                    } else {
+                        i += 1;
+                        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                            i += 1;
+                        }
+                    }
+                }
+                b'{' => { delta += 1; i += 1; }
+                b'}' => { delta -= 1; i += 1; }
+                _ => i += 1,
             }
         }
-
-        // Recognize free fn declarations at module level (depth 0
-        // BEFORE the line's own `{` is consumed — the fn keyword
-        // appears before its opening brace, so check pre-line depth).
-        // For accuracy we re-scan: if the line contains `fn NAME(`
-        // and the brace depth WAS 0 before this line, count it.
-        // Compute pre-line depth by subtracting deltas from this line.
-        let mut delta: i32 = 0;
-        for c in scan.chars() {
-            match c {
-                '{' => delta += 1,
-                '}' => delta -= 1,
-                _ => {}
-            }
+        let pre_depth = depth;
+        depth += delta;
+        if in_test_mod && depth < test_mod_depth {
+            in_test_mod = false;
         }
-        let pre_depth = depth - delta;
 
         if in_test_mod {
             continue;

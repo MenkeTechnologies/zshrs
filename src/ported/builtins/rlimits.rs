@@ -206,86 +206,6 @@ static CURRENT_LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
 /// `zsetlimit()`.
 static LIMITS: OnceLock<Mutex<Vec<rlimit>>> = OnceLock::new();
 
-#[cfg(unix)]
-fn nlimits() -> usize {
-    RLIM_NLIMITS as usize
-}
-
-#[cfg(not(unix))]
-fn nlimits() -> usize {
-    0
-}
-
-// WARNING: NOT IN RLIMITS.C — Rust-only initializer. C performs the
-// equivalent rlimit-snapshot inside `init_main()` (Src/init.c:1287);
-// the Rust port factors it out so `set_resinfo()`, `bin_limit()`,
-// etc. can lazily seed `LIMITS`/`CURRENT_LIMITS` on first use without
-// requiring a separate init pass. Allowlisted in
-// tests/data/fake_fn_allowlist.txt.
-#[cfg(unix)]
-fn ensure_limits_initialized() {
-    let init = || {
-        let mut v: Vec<rlimit> = Vec::with_capacity(nlimits());
-        for i in 0..nlimits() as i32 {
-            let mut r = rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            unsafe {
-                getrlimit(i as _, &mut r);
-            }
-            v.push(r);
-        }
-        v
-    };
-    LIMITS.get_or_init(|| Mutex::new(init()));
-    CURRENT_LIMITS.get_or_init(|| Mutex::new(init()));
-}
-
-#[cfg(not(unix))]
-fn ensure_limits_initialized() {}
-
-// =====================================================================
-// Port of `set_resinfo()` from Src/Builtins/rlimits.c:194.
-// =====================================================================
-
-/// Port of `set_resinfo()` from `Src/Builtins/rlimits.c:194`.
-///
-/// Build the `RESINFO` table indexed by `RLIMIT_*` value. Entries
-/// for resources not in `known_resources[]` get a synthesized
-/// `UNKNOWN-N` placeholder so `printulimit()` / `showlimitvalue()`
-/// can format unknown limits without a NULL dereference.
-pub(crate) fn set_resinfo() {
-    RESINFO.get_or_init(|| {
-        let mut v: Vec<resinfo_T> = Vec::with_capacity(nlimits());
-        for i in 0..nlimits() as i32 {
-            let entry = known_resources
-                .iter()
-                .find(|r| r.res == i)
-                .cloned()
-                .unwrap_or_else(|| resinfo_T {
-                    res: -1,
-                    name: leak_unknown_name(i),
-                    r#type: zlimtype::ZLIMTYPE_UNKNOWN,
-                    unit: 1,
-                    opt: 'N',
-                    descr: leak_unknown_name(i),
-                });
-            v.push(entry);
-        }
-        Mutex::new(v)
-    });
-}
-
-// WARNING: NOT IN RLIMITS.C — Rust-only helper. C `set_resinfo()`
-// (rlimits.c:206-214) writes the synthesized `UNKNOWN-N` text into a
-// `zalloc(12)` heap buffer; Rust port leaks a `Box<str>` since
-// `&'static str` is required for the `name`/`descr` fields and
-// allocation is a one-shot per resource at module-init.
-fn leak_unknown_name(i: i32) -> &'static str {
-    Box::leak(format!("UNKNOWN-{}", i).into_boxed_str())
-}
-
 // =====================================================================
 // Port of `free_resinfo()` from Src/Builtins/rlimits.c:222.
 // =====================================================================
@@ -716,67 +636,6 @@ pub(crate) fn do_limit(
     _soft: bool,
     _set: bool,
 ) -> i32 {
-    0
-}
-
-// WARNING: NOT IN RLIMITS.C — `zsetlimit` lives in `Src/exec.c:314`,
-// not `rlimits.c`. The Rust port colocates the helper here because
-// rlimits.rs is the only consumer; the eventual exec.rs port can
-// move it. Inlines the C body: if LIMITS[i] differs from
-// CURRENT_LIMITS[i], call `setrlimit`, then sync CURRENT_LIMITS[i]
-// back to LIMITS[i].
-#[cfg(unix)]
-fn zsetlimit(limnum: i32, nam: &str) -> i32 {
-    ensure_limits_initialized();
-    let limits_lock = match LIMITS.get() {
-        Some(l) => l,
-        None => return 0,
-    };
-    let cur_lock = match CURRENT_LIMITS.get() {
-        Some(l) => l,
-        None => return 0,
-    };
-    let limits = limits_lock.lock().unwrap();
-    let limits_v = limits[limnum as usize];
-    drop(limits);
-    let cur = cur_lock.lock().unwrap();
-    let cur_v = cur[limnum as usize];
-    drop(cur);
-    if limits_v.rlim_max != cur_v.rlim_max || limits_v.rlim_cur != cur_v.rlim_cur {
-        if unsafe { setrlimit(limnum as _, &limits_v) } < 0 {
-            zwarnnam(nam, &format!("setrlimit failed: {}", std::io::Error::last_os_error()));
-            // restore in-memory copy from current
-            let mut limits = limits_lock.lock().unwrap();
-            limits[limnum as usize] = cur_v;
-            return 1;
-        }
-        let mut cur = cur_lock.lock().unwrap();
-        cur[limnum as usize] = limits_v;
-    }
-    0
-}
-
-#[cfg(not(unix))]
-fn zsetlimit(_limnum: i32, _nam: &str) -> i32 {
-    0
-}
-
-// WARNING: NOT IN RLIMITS.C — `setlimits` lives in `Src/exec.c:331`.
-// Loops over RLIM_NLIMITS and calls `zsetlimit()` on each. Same
-// rationale as `zsetlimit` above.
-#[cfg(unix)]
-fn setlimits(nam: &str) -> i32 {
-    let mut ret = 0;
-    for i in 0..nlimits() as i32 {
-        if zsetlimit(i, nam) != 0 {
-            ret += 1;
-        }
-    }
-    ret
-}
-
-#[cfg(not(unix))]
-fn setlimits(_nam: &str) -> i32 {
     0
 }
 
@@ -1368,44 +1227,6 @@ pub(crate) fn bin_ulimit(
 }
 
 // =====================================================================
-// Module entry points (rlimits.c:883-924).
-// =====================================================================
-
-// =====================================================================
-// static struct builtin bintab[]                                     c:867
-// static struct features module_features                             c:873
-//
-// Static dispatch tables consumed by the C module loader. The
-// `module_features` table below is referenced by features_/enables_/
-// cleanup_ and built lazily on first access (Rust can't init
-// module_features as a `static` literal because Builtin contains
-// fn-pointer fields).
-// =====================================================================
-
-use crate::ported::zsh_h::features as features_t;
-
-// Backing store for `module_features` — built on first call to a
-// loader hook. Bucket-2 shared global per the same rationale as
-// LIMITS/RESINFO above.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
-            bn_list: None,                                                // c:874 bintab
-            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
-            cd_list: None,                                                // c:875
-            cd_size: 0,
-            mf_list: None,                                                // c:876
-            mf_size: 0,
-            pd_list: None,                                                // c:877
-            pd_size: 0,
-            n_abstract: 0,                                                // c:883
-        })
-    })
-}
-
-// =====================================================================
 // setup_(UNUSED(Module m))                                           c:881
 // =====================================================================
 
@@ -1447,6 +1268,185 @@ pub fn cleanup_(m: *const module) -> i32 {
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
     0                                                                    // c:921
+}
+
+#[cfg(unix)]
+fn nlimits() -> usize {
+    RLIM_NLIMITS as usize
+}
+
+#[cfg(not(unix))]
+fn nlimits() -> usize {
+    0
+}
+
+// WARNING: NOT IN RLIMITS.C — Rust-only initializer. C performs the
+// equivalent rlimit-snapshot inside `init_main()` (Src/init.c:1287);
+// the Rust port factors it out so `set_resinfo()`, `bin_limit()`,
+// etc. can lazily seed `LIMITS`/`CURRENT_LIMITS` on first use without
+// requiring a separate init pass. Allowlisted in
+// tests/data/fake_fn_allowlist.txt.
+#[cfg(unix)]
+fn ensure_limits_initialized() {
+    let init = || {
+        let mut v: Vec<rlimit> = Vec::with_capacity(nlimits());
+        for i in 0..nlimits() as i32 {
+            let mut r = rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            unsafe {
+                getrlimit(i as _, &mut r);
+            }
+            v.push(r);
+        }
+        v
+    };
+    LIMITS.get_or_init(|| Mutex::new(init()));
+    CURRENT_LIMITS.get_or_init(|| Mutex::new(init()));
+}
+
+// =====================================================================
+// Module entry points (rlimits.c:883-924).
+// =====================================================================
+
+// =====================================================================
+// static struct builtin bintab[]                                     c:867
+// static struct features module_features                             c:873
+//
+// Static dispatch tables consumed by the C module loader. The
+// `module_features` table below is referenced by features_/enables_/
+// cleanup_ and built lazily on first access (Rust can't init
+// module_features as a `static` literal because Builtin contains
+// fn-pointer fields).
+// =====================================================================
+
+use crate::ported::zsh_h::features as features_t;
+
+// Backing store for `module_features` — built on first call to a
+// loader hook. Bucket-2 shared global per the same rationale as
+// LIMITS/RESINFO above.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+#[cfg(not(unix))]
+fn ensure_limits_initialized() {}
+
+// =====================================================================
+// Port of `set_resinfo()` from Src/Builtins/rlimits.c:194.
+// =====================================================================
+
+/// Port of `set_resinfo()` from `Src/Builtins/rlimits.c:194`.
+///
+/// Build the `RESINFO` table indexed by `RLIMIT_*` value. Entries
+/// for resources not in `known_resources[]` get a synthesized
+/// `UNKNOWN-N` placeholder so `printulimit()` / `showlimitvalue()`
+/// can format unknown limits without a NULL dereference.
+pub(crate) fn set_resinfo() {
+    RESINFO.get_or_init(|| {
+        let mut v: Vec<resinfo_T> = Vec::with_capacity(nlimits());
+        for i in 0..nlimits() as i32 {
+            let entry = known_resources
+                .iter()
+                .find(|r| r.res == i)
+                .cloned()
+                .unwrap_or_else(|| resinfo_T {
+                    res: -1,
+                    name: leak_unknown_name(i),
+                    r#type: zlimtype::ZLIMTYPE_UNKNOWN,
+                    unit: 1,
+                    opt: 'N',
+                    descr: leak_unknown_name(i),
+                });
+            v.push(entry);
+        }
+        Mutex::new(v)
+    });
+}
+
+// WARNING: NOT IN RLIMITS.C — Rust-only helper. C `set_resinfo()`
+// (rlimits.c:206-214) writes the synthesized `UNKNOWN-N` text into a
+// `zalloc(12)` heap buffer; Rust port leaks a `Box<str>` since
+// `&'static str` is required for the `name`/`descr` fields and
+// allocation is a one-shot per resource at module-init.
+fn leak_unknown_name(i: i32) -> &'static str {
+    Box::leak(format!("UNKNOWN-{}", i).into_boxed_str())
+}
+
+// WARNING: NOT IN RLIMITS.C — `zsetlimit` lives in `Src/exec.c:314`,
+// not `rlimits.c`. The Rust port colocates the helper here because
+// rlimits.rs is the only consumer; the eventual exec.rs port can
+// move it. Inlines the C body: if LIMITS[i] differs from
+// CURRENT_LIMITS[i], call `setrlimit`, then sync CURRENT_LIMITS[i]
+// back to LIMITS[i].
+#[cfg(unix)]
+fn zsetlimit(limnum: i32, nam: &str) -> i32 {
+    ensure_limits_initialized();
+    let limits_lock = match LIMITS.get() {
+        Some(l) => l,
+        None => return 0,
+    };
+    let cur_lock = match CURRENT_LIMITS.get() {
+        Some(l) => l,
+        None => return 0,
+    };
+    let limits = limits_lock.lock().unwrap();
+    let limits_v = limits[limnum as usize];
+    drop(limits);
+    let cur = cur_lock.lock().unwrap();
+    let cur_v = cur[limnum as usize];
+    drop(cur);
+    if limits_v.rlim_max != cur_v.rlim_max || limits_v.rlim_cur != cur_v.rlim_cur {
+        if unsafe { setrlimit(limnum as _, &limits_v) } < 0 {
+            zwarnnam(nam, &format!("setrlimit failed: {}", std::io::Error::last_os_error()));
+            // restore in-memory copy from current
+            let mut limits = limits_lock.lock().unwrap();
+            limits[limnum as usize] = cur_v;
+            return 1;
+        }
+        let mut cur = cur_lock.lock().unwrap();
+        cur[limnum as usize] = limits_v;
+    }
+    0
+}
+
+#[cfg(not(unix))]
+fn zsetlimit(_limnum: i32, _nam: &str) -> i32 {
+    0
+}
+
+// WARNING: NOT IN RLIMITS.C — `setlimits` lives in `Src/exec.c:331`.
+// Loops over RLIM_NLIMITS and calls `zsetlimit()` on each. Same
+// rationale as `zsetlimit` above.
+#[cfg(unix)]
+fn setlimits(nam: &str) -> i32 {
+    let mut ret = 0;
+    for i in 0..nlimits() as i32 {
+        if zsetlimit(i, nam) != 0 {
+            ret += 1;
+        }
+    }
+    ret
+}
+
+#[cfg(not(unix))]
+fn setlimits(_nam: &str) -> i32 {
+    0
+}
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,                                                // c:874 bintab
+            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
+            cd_list: None,                                                // c:875
+            cd_size: 0,
+            mf_list: None,                                                // c:876
+            mf_size: 0,
+            pd_list: None,                                                // c:877
+            pd_size: 0,
+            n_abstract: 0,                                                // c:883
+        })
+    })
 }
 
 // =====================================================================

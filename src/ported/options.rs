@@ -157,179 +157,39 @@ pub static EMULATION: std::sync::atomic::AtomicI32 =
 pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Switch to a named emulation. Port of `emulate()` from
-/// `Src/options.c:533`. Sets `emulation` (file-scope global), then
-/// inlines the body of `installemulation()` (c:523) to populate
-/// `opts[]` per the new emulation, skipping OPT_SPECIAL entries per
-/// the exec.c:5933-5938 walk.
-pub fn emulate(mode: &str, fully: bool) {                                    // c:533
-    let ch = mode.chars().next().unwrap_or('z');
-    let ch = if ch == 'r' { mode.chars().nth(1).unwrap_or('z') } else { ch };
-    let new_emu = match ch {
-        'c' => crate::ported::zsh_h::EMULATE_CSH,
-        'k' => crate::ported::zsh_h::EMULATE_KSH,
-        's' | 'b' => crate::ported::zsh_h::EMULATE_SH,
-        _ => crate::ported::zsh_h::EMULATE_ZSH,
-    };
-    EMULATION.store(new_emu, std::sync::atomic::Ordering::Relaxed);
-    FULLY_EMULATING.store(fully, std::sync::atomic::Ordering::Relaxed);
-
-    // c:551-572 — body of `installemulation()` + exec.c:5933-5938
-    // OPT_SPECIAL-skip walk, inlined here per the C source.
-    let mut emu = new_emu;
-    if fully {
-        emu |= crate::ported::zsh_h::EMULATE_FULLY;                          // c:551
-    }
-    let mut new_opts: std::collections::HashMap<String, bool> =
-        std::collections::HashMap::new();
-    installemulation(emu, &mut new_opts);                                    // c:552
-    for (k, v) in &new_opts {
-        if (optns_flags(k) & OPT_SPECIAL) == 0 {                             // exec.c:5933-5938
-            opt_state_set(k, *v);
+/// C body (c:450-466):
+/// ```c
+/// optno = on->optno; if (optno < 0) optno = -optno;
+/// if (isset(KSHOPTIONPRINT)) {
+///     if (defset(on, emulation))
+///         printf("no%-19s %s\n", nam, isset(optno) ? "off" : "on");
+///     else
+///         printf("%-21s %s\n", nam, isset(optno) ? "on" : "off");
+/// } else if (set == (isset(optno) ^ defset(on, emulation))) {
+///     if (set ^ isset(optno)) fputs("no", stdout);
+///     puts(nam);
+/// }
+/// ```
+/// Port of `printoptionnode(HashNode hn, int set)` from `Src/options.c:450`.
+pub fn printoptionnode(hn: &str, set: bool) {                                // c:450
+    let on = opt_state_get(hn).unwrap_or(false);                             // c:450 isset(optno)
+    let default_on = default_on_options().contains(&hn);                     // c:455 defset(on, emulation)
+    let kshprint = opt_state_get("kshoptionprint").unwrap_or(false);         // c:456 isset(KSHOPTIONPRINT)
+    if kshprint {                                                            // c:456
+        if default_on {                                                      // c:457
+            println!("no{:<19} {}", hn, if on { "off" } else { "on" });      // c:458
+        } else {
+            println!("{:<21} {}", hn, if on { "on" } else { "off" });        // c:460
         }
-    }
-    if new_emu == crate::ported::zsh_h::EMULATE_ZSH {
-        // c:46 — `opts[optno] = defset(...)` walk for zsh defaults.
-        for name in ZSH_OPTIONS_SET.iter() {
-            opt_state_set(name, defset(name, EMULATE_ZSH));
+    } else if set == (on ^ default_on) {                                     // c:462
+        if set ^ on {                                                        // c:463
+            print!("no");                                                    // c:464
         }
+        println!("{}", hn);                                                  // c:465
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::zsh_h::isset;
-    use super::*;
 
-    // Tests share global OPTS_LIVE state; serialize via this mutex so
-    // parallel cargo-test threads don't stomp each other's option-state
-    // setup (e.g. test_emulation switching to `sh` while test_default
-    // checks `exec` set under zsh defaults).
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn test_default_options() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        // `glob` (OPT_ZSH) is on by default under EMULATE_ZSH.
-        assert!(isset(optlookup("glob")));
-        // `xtrace` (OPT_EMULATE, no OPT_ALL) is off by default.
-        assert!(!isset(optlookup("xtrace")));
-        // `zle` is OPT_SPECIAL — must NOT be set by defset; only
-        // interactive-shell init turns it on (init.c:1244).
-        assert!(!isset(optlookup("zle")));
-        // Note: `exec` would be a natural OPT_ALL check, but its
-        // optno constant isn't yet defined in zsh_h.rs — only ~175
-        // of 228 options have optno entries. The other three above
-        // suffice to verify defset/OPT_ZSH/OPT_SPECIAL semantics.
-    }
-
-    #[test]
-    fn test_set_option() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        dosetopt(optlookup("xtrace"), if true { 1 } else { 0 }, 0);
-        assert!(isset(optlookup("xtrace")));
-        dosetopt(optlookup("xtrace"), if false { 1 } else { 0 }, 0);
-        assert!(!isset(optlookup("xtrace")));
-    }
-
-    #[test]
-    fn test_no_prefix() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        dosetopt(optlookup("noglob"), if true { 1 } else { 0 }, 0);
-        assert!(!isset(optlookup("glob")));
-        // `optlookup("noglob")` returns negative optno (-GLOB); the
-        // C-faithful pattern at every call site is
-        // `if n < 0 { !isset(-n) } else { isset(n) }` — verify both
-        // halves here.
-        let n = optlookup("noglob");
-        assert!(n < 0, "noglob should resolve to negative optno");
-        assert!(!isset(-n), "after `setopt noglob`, glob must be unset");
-    }
-
-    #[test]
-    fn test_case_insensitive() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        assert_eq!(optlookup("GLOB"), optlookup("glob"));
-        assert_eq!(optlookup("GlOb"), optlookup("glob"));
-    }
-
-    #[test]
-    fn test_underscore_ignored() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        assert_eq!(optlookup("auto_list"), optlookup("autolist"));
-        assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
-    }
-
-    #[test]
-    fn test_option_alias() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        // `braceexpand` aliases to `noignorebraces` (optns[]:269 -IGNOREBRACES).
-        dosetopt(optlookup("braceexpand"), if true { 1 } else { 0 }, 0);
-        assert!(!isset(optlookup("ignorebraces")));
-    }
-
-    #[test]
-    fn test_single_letter() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        // -x is xtrace.
-        dosetopt(optlookupc('x'), if true { 1 } else { 0 }, 0);
-        assert!(isset(optlookup("xtrace")));
-        // -n is noexec (negated bit in zshletters).
-        dosetopt(optlookupc('n'), if true { 1 } else { 0 }, 0);
-        assert!(!isset(optlookup("exec")));
-    }
-
-    #[test]
-    fn test_emulation() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        emulate("sh", true);
-        assert_eq!(
-            EMULATION.load(std::sync::atomic::Ordering::Relaxed),
-            crate::ported::zsh_h::EMULATE_SH
-        );
-        assert!(isset(optlookup("shwordsplit")));
-
-        emulate("zsh", true);
-        assert_eq!(
-            EMULATION.load(std::sync::atomic::Ordering::Relaxed),
-            crate::ported::zsh_h::EMULATE_ZSH
-        );
-    }
-
-    #[test]
-    fn test_dash_string() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // `setopt` rejects user-level changes to INTERACTIVE / etc.
-        // (dosetopt at options.c:746) when force=0; the test writes
-        // SPECIAL options through the low-level state map so the
-        // dash-string read sees them (mirrors C init's path).
-        opt_state_set("interactive", true);
-        opt_state_set("monitor", true);
-
-        let dash = dashgetfn();
-        assert!(dash.contains('i'));
-        assert!(dash.contains('m'));
-    }
-
-    #[test]
-    fn test_lookup_canonicalises_underscores_and_case() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        createoptiontable();
-        // The canonicalised name "autolist" is the same option whether
-        // written AUTO_LIST, AutoList, auto__list — `optlookup`
-        // does the canonicalisation matching `optlookup()` (c:684).
-        assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
-        assert_eq!(optlookup("AutoList"), optlookup("autolist"));
-        assert_eq!(optlookup("auto__list"), optlookup("autolist"));
-    }
-}
 
 // ===========================================================
 // Methods moved verbatim from src/ported/exec.rs because their
@@ -624,36 +484,622 @@ pub fn createoptiontable() {                                                 // 
     }
 }
 
-/// C body (c:450-466):
+/// Direct port of `static void setemulate(HashNode hn, int fully)`
+/// from `Src/options.c:507`. C body:
 /// ```c
-/// optno = on->optno; if (optno < 0) optno = -optno;
-/// if (isset(KSHOPTIONPRINT)) {
+/// Optname on = (Optname) hn;
+/// if (!(on->node.flags & OPT_ALIAS) &&
+///     ((fully && !(on->node.flags & OPT_SPECIAL)) ||
+///      (on->node.flags & OPT_EMULATE)))
+///     setemulate_opts[on->optno] = defset(on, setemulate_emulation);
+/// ```
+/// Per-option callback invoked by `scanhashtable(optiontab, ...,
+/// setemulate, ...)` to populate the `new_opts[]` table with each
+/// option's default-for-target-emulation state.
+pub fn setemulate(name: &str, fully: i32) {                                  // c:507
+    let flags = optns_flags(name);                                           // c:507
+    // c:515-517 — emulation-relevant filter.
+    let is_alias = (flags & OPT_ALIAS) != 0;
+    let is_special = (flags & OPT_SPECIAL) != 0;
+    let is_emulate = (flags & OPT_EMULATE) != 0;
+    if is_alias {
+        return;
+    }
+    if !((fully != 0 && !is_special) || is_emulate) {                        // c:516-517
+        return;
+    }
+    // c:518 — `setemulate_opts[on->optno] = defset(on, setemulate_emulation);`
+    let target = SETEMULATE_EMULATION.load(std::sync::atomic::Ordering::Relaxed);
+    let on_by_default = defset(name, target);
+    if let Ok(mut tab) = setemulate_opts_lock().lock() {
+        tab.insert(name.to_string(), on_by_default);
+    }
+}
+
+/// Direct port of `void installemulation(int new_emulation, char
+/// *new_opts)` from `Src/options.c:523`:
+/// ```c
+/// setemulate_emulation = new_emulation;
+/// setemulate_opts = new_opts;
+/// scanhashtable(optiontab, 0, 0, 0, setemulate,
+///               !!(new_emulation & EMULATE_FULLY));
+/// ```
+/// Populates `new_opts[]` with each option's default-for-target-
+/// emulation state by walking `optiontab` via the `setemulate`
+/// per-option callback. Does NOT mutate the live `opts[]` — that
+/// happens in the caller (`emulate()` and `bin_emulate -L`).
+pub fn installemulation(new_emulation: i32,
+                        new_opts: &mut std::collections::HashMap<String, bool>) { // c:523
+    // c:525 — `setemulate_emulation = new_emulation;`
+    SETEMULATE_EMULATION
+        .store(new_emulation, std::sync::atomic::Ordering::Relaxed);         // c:525
+    // c:526 — `setemulate_opts = new_opts;`. We can't alias the
+    // caller's HashMap directly, so the per-option callback writes
+    // into our module-static and we splice it back into `new_opts`.
+    if let Ok(mut tab) = setemulate_opts_lock().lock() {
+        tab.clear();
+    }
+    // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully).
+    let fully = if (new_emulation & EMULATE_FULLY) != 0 { 1 } else { 0 };    // c:528
+    for name in ZSH_OPTIONS_SET.iter() {
+        setemulate(name, fully);                                             // c:527
+    }
+    // Splice setemulate_opts → new_opts so the C semantic of
+    // "new_opts is now populated" holds for the caller.
+    if let Ok(tab) = setemulate_opts_lock().lock() {
+        for (k, v) in tab.iter() {
+            new_opts.insert(k.clone(), *v);
+        }
+    }
+}
+
+/// Switch to a named emulation. Port of `emulate()` from
+/// `Src/options.c:533`. Sets `emulation` (file-scope global), then
+/// inlines the body of `installemulation()` (c:523) to populate
+/// `opts[]` per the new emulation, skipping OPT_SPECIAL entries per
+/// the exec.c:5933-5938 walk.
+pub fn emulate(mode: &str, fully: bool) {                                    // c:533
+    let ch = mode.chars().next().unwrap_or('z');
+    let ch = if ch == 'r' { mode.chars().nth(1).unwrap_or('z') } else { ch };
+    let new_emu = match ch {
+        'c' => crate::ported::zsh_h::EMULATE_CSH,
+        'k' => crate::ported::zsh_h::EMULATE_KSH,
+        's' | 'b' => crate::ported::zsh_h::EMULATE_SH,
+        _ => crate::ported::zsh_h::EMULATE_ZSH,
+    };
+    EMULATION.store(new_emu, std::sync::atomic::Ordering::Relaxed);
+    FULLY_EMULATING.store(fully, std::sync::atomic::Ordering::Relaxed);
+
+    // c:551-572 — body of `installemulation()` + exec.c:5933-5938
+    // OPT_SPECIAL-skip walk, inlined here per the C source.
+    let mut emu = new_emu;
+    if fully {
+        emu |= crate::ported::zsh_h::EMULATE_FULLY;                          // c:551
+    }
+    let mut new_opts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    installemulation(emu, &mut new_opts);                                    // c:552
+    for (k, v) in &new_opts {
+        if (optns_flags(k) & OPT_SPECIAL) == 0 {                             // exec.c:5933-5938
+            opt_state_set(k, *v);
+        }
+    }
+    if new_emu == crate::ported::zsh_h::EMULATE_ZSH {
+        // c:46 — `opts[optno] = defset(...)` walk for zsh defaults.
+        for name in ZSH_OPTIONS_SET.iter() {
+            opt_state_set(name, defset(name, EMULATE_ZSH));
+        }
+    }
+}
+
+/// `setopt OPT` builtin per-arg dispatch.
+/// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
+/// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
+pub fn setoption(hn: &str, value: i32) -> i32 {
+    // C: `opts[optno] = value;` — the C source writes the option's
+    // live state into the `opts[]` array. The Rust port stores it
+    // in OPTS_LIVE via `opt_state_set` (the same global the
+    // `optlookup("hn")>0` and `isset(OPT)` paths read).
+    opt_state_set(hn, value != 0);                                         // c:735+ dosetopt body
+    0
+}
+
+/// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
+/// The target emulation bitmap, written by `installemulation` and
+/// read by the `setemulate` per-option callback (c:518).
+static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
+/// The precomputed `new_opts[]` array `setemulate` writes into. C
+/// stores it as a flat `char[]` indexed by `optno`; the Rust port
+/// keeps it as a HashMap<String, bool> since the runtime is FNV-
+/// hashed instead of densely indexed.
+static SETEMULATE_OPTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, bool>>,
+> = std::sync::OnceLock::new();                                              // c:501
+
+/// Direct port of `bin_setopt(char *nam, char **args, UNUSED(Options ops), int isun)` from Src/options.c:580.
+/// C body (c:585-680):
+///   - no args → `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
+///     optiontab->printnode, !isun)` lists each option set or unset
+///     according to !isun
+///   - parse leading `-`/`+` flags arg-by-arg; the action polarity
+///     is `(**args == '-') ^ isun` per c:594
+///   - within an arg: `-o NAME` (c:606), `-m` (c:624), or a single-
+///     letter option flag (c:626)
+///   - `-`/`+` arg with empty body becomes the pseudo `--` marker
+///     terminating flag parsing (c:596-597)
+///   - bare names branch (!match_glob, c:640): each arg is an
+///     option name → `dosetopt(optlookup(name), !isun, 0)`
+///   - glob branch (`-m`, c:653): each arg is patcompile'd then
+///     `scanmatchtable(optiontab, pprog, ..., setoption, !isun)`
+///     applies it across the option table
+///   - tail: `inittyptab()` rebuilds the type table to reflect any
+///     option changes that affect lexer/expansion
+pub fn bin_setopt(nam: &str, args: &[String],                                // c:580
+                  _ops: &crate::ported::zsh_h::options, isun: i32) -> i32 {
+    let mut retval = 0i32;
+    let mut match_glob = false;                                              // c:582
+    let mut idx = 0usize;
+
+    if args.is_empty() {                                                     // c:586
+        // c:587 — scanhashtable(optiontab, 1, 0, OPT_ALIAS,
+        // optiontab->printnode, !isun): walk every option in the
+        // table and emit each one whose current state matches !isun.
+        let want_set = isun == 0;
+        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter()
+            .map(|s| s.to_string()).collect();
+        names.sort();
+        for n in names {
+            let on = opt_state_get(&n).unwrap_or(false);
+            if on == want_set {
+                printoptionnode(&n, want_set);                               // c:587 printnode
+            }
+        }
+        return 0;                                                            // c:589
+    }
+
+    // c:592-636 — leading `-`/`+` flag parse loop.
+    'outer: while idx < args.len()
+        && (args[idx].starts_with('-') || args[idx].starts_with('+'))
+    {
+        let leading = args[idx].as_bytes()[0];                               // c:594
+        let action: i32 = ((leading == b'-') as i32) ^ isun;                 // c:594
+        if args[idx].len() == 1 {                                            // c:596 args[0][1] empty
+            // c:597 — `*args = "--";` then fall through to the
+            // inner while which immediately matches `-` and breaks
+            // into doneoptions. Equivalent: skip past this arg and
+            // exit the outer loop.
+            idx += 1;
+            break 'outer;
+        }
+        let body_bytes = args[idx].as_bytes()[1..].to_vec();                 // c:599 *++*args
+        let mut k = 0usize;
+        while k < body_bytes.len() {                                         // c:599
+            let mut c = body_bytes[k];
+            // c:600-601 — `if(**args == Meta) *++*args ^= 32;` —
+            // unmeta the next byte before reading.
+            if c == crate::ported::zsh_h::META as u8 {                       // c:600
+                k += 1;
+                if k < body_bytes.len() { c = body_bytes[k] ^ 32; }          // c:601
+                else { break; }
+            }
+            if c == b'-' {                                                   // c:603 pseudo `--`
+                idx += 1;                                                    // c:604
+                break 'outer;                                                // c:605 goto doneoptions
+            } else if c == b'o' {                                            // c:606
+                // c:607-608 — if more chars after 'o', use them as the
+                // option name; otherwise advance to next arg.
+                let oarg: String = if k + 1 < body_bytes.len() {             // c:607
+                    String::from_utf8_lossy(&body_bytes[k + 1..]).into_owned()
+                } else {
+                    idx += 1;                                                // c:608
+                    if idx >= args.len() {                                   // c:609 !*args
+                        zwarnnam(nam, "string expected after -o");           // c:610
+                        return 1;                                            // c:612
+                    }
+                    args[idx].clone()
+                };
+                let optno = optlookup(&oarg);                                // c:614
+                if optno == 0 {                                              // c:614
+                    zwarnnam(nam,                                            // c:615
+                        &format!("no such option: {}", oarg));
+                    retval |= 1;
+                } else if dosetopt(optno, action, 0) != 0 {                  // c:617
+                    zwarnnam(nam,                                            // c:618
+                        &format!("can't change option: {}", oarg));
+                    retval |= 1;
+                }
+                break;                                                       // c:622 break inner
+            } else if c == b'm' {                                            // c:624
+                match_glob = true;                                           // c:625
+            } else {                                                         // c:626
+                let optno = optlookupc(c as char);                           // c:627
+                if optno == 0 {                                              // c:627
+                    zwarnnam(nam, &format!("bad option: -{}", c as char));   // c:628
+                    retval |= 1;
+                } else if dosetopt(optno, action, 0) != 0 {                  // c:630
+                    zwarnnam(nam,                                            // c:631
+                        &format!("can't change option: -{}", c as char));
+                    retval |= 1;
+                }
+            }
+            k += 1;
+        }
+        idx += 1;                                                            // c:636 args++
+    }
+
+    // c:638 — doneoptions: positional args remain.
+    if !match_glob {                                                         // c:640
+        // c:642-650 — bare option names.
+        while idx < args.len() {                                             // c:642
+            let oname = args[idx].clone();
+            idx += 1;
+            let optno = optlookup(&oname);                                   // c:643
+            if optno == 0 {                                                  // c:643
+                zwarnnam(nam,                                                // c:644
+                    &format!("no such option: {}", oname));
+                retval |= 1;
+            } else {
+                let v = (isun == 0) as i32;                                  // c:646 !isun
+                if dosetopt(optno, v, 0) != 0 {                              // c:646
+                    zwarnnam(nam,                                            // c:647
+                        &format!("can't change option: {}", oname));
+                    retval |= 1;
+                }
+            }
+        }
+    } else {                                                                 // c:653
+        // c:655-678 — globbing branch.
+        while idx < args.len() {                                             // c:655
+            let raw = args[idx].clone();
+            idx += 1;
+            // c:660-666 — `s = dupstring(*args);` then walk: strip
+            // `_`, lowercase A-Z (mirrors optlookup's canonicalisation
+            // documented at c:684).
+            let normalized: String = raw.chars()
+                .filter(|&c| c != '_')
+                .map(|c| c.to_ascii_lowercase()).collect();
+            // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
+            let prog = crate::ported::pattern::patcompile(
+                &normalized,
+                crate::ported::zsh_h::PAT_HEAPDUP,
+                None,
+            );
+            if prog.is_none() {                                              // c:670
+                zwarnnam(nam, &format!("bad pattern: {}", raw));             // c:671
+                retval |= 1;
+                break;                                                       // c:673
+            }
+            // c:676 — scanmatchtable(optiontab, pprog, 0, 0, OPT_ALIAS,
+            // setoption, !isun): the `setoption` static at c:572 calls
+            // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
+            let v = (isun == 0) as i32;
+            for opt_name in ZSH_OPTIONS_SET.iter() {                         // c:676
+                if crate::ported::pattern::patmatch(&normalized, opt_name) {
+                    let _ = setoption(opt_name, v);                          // c:572 setoption
+                }
+            }
+        }
+    }
+    crate::ported::utils::inittyptab();                                                            // c:678
+    retval                                                                   // c:679
+}
+
+// Identify an option name                                                  // c:680
+/// Translate an option name to a signed option index.
+///
+/// C body (c:684-715): normalize `name` (strip `_`, lowercase),
+/// then `optiontab->getnode(optiontab, s)` returns the `Optname`
+/// whose `->optno` field is the canonical numeric ID (one of the
+/// `ALIASESOPT` / `ERREXIT` / ... constants from `zsh.h:2050+`).
+/// `no`-prefix returns the negation of the stripped lookup.
+///
+/// Rust port: `optiontab` isn't ported as a runtime hashtable, so
+/// we scan the same canonical `zh::OPT_*` constants `index_to_name`
+/// uses (the inverse direction). The returned value is the C-fixed
+/// optno (so `isset(optlookup("errexit"))` reads `opts[ERREXIT]`),
+/// NOT a Rust-side hash — that earlier hash-based encoding caused
+/// `isset(optlookup(name))` to read a wrong slot via `opt_name(h)`
+/// and `[[ -o NAME ]]` returned false even after `setopt NAME`.
+/// Port of `optlookup(char const *name)` from `Src/options.c:684`.
+///
+/// Walks the canonicalised name through the option table (including
+/// OPT_ALIAS rows at `optns[]:269-280`); aliases resolve to their
+/// target optno with a negative sign for `OPT_ALIAS`-negating rows
+/// (`braceexpand` → `-IGNOREBRACES`, `log` → `-HISTNOFUNCTIONS`,
+/// etc.). Returns `OPT_INVALID` when the name is unknown.
+pub fn optlookup(name: &str) -> i32 {                                        // c:684
+
+    // c:689 — `s = t = dupstring(name);`
+    // c:691-705 — strip `_` + lowercase.
+    let s: String = name.chars()                                             // c:689
+        .filter(|&c| c != '_')                                               // c:693-694
+        .flat_map(|c| c.to_lowercase())                                      // c:702-703
+        .collect();
+
+    // OPT_ALIAS rows from optns[]:269-280 — alias names resolve to
+    // their target optno (signed for the alias's negation polarity).
+    // C zsh stores these as hash entries in optiontab with
+    // `optno = -target` (negative) for the `-PREFIX` rows.
+    let alias_optno: Option<i32> = match s.as_str() {
+        "braceexpand" => Some(-IGNOREBRACES),                                // c:269 -IGNOREBRACES
+        "dotglob"     => Some(GLOBDOTS),                                     // c:270 GLOBDOTS
+        "hashall"     => Some(HASHCMDS),                                     // c:271 HASHCMDS
+        "histappend"  => Some(APPENDHISTORY),                                // c:272 APPENDHISTORY
+        "histexpand"  => Some(BANGHIST),                                     // c:273 BANGHIST
+        "log"         => Some(-HISTNOFUNCTIONS),                             // c:274 -HISTNOFUNCTIONS
+        "mailwarn"    => Some(MAILWARNING),                                  // c:275 MAILWARNING
+        "onecmd"      => Some(SINGLECOMMAND),                                // c:276 SINGLECOMMAND
+        "physical"    => Some(CHASELINKS),                                   // c:277 CHASELINKS
+        "promptvars"  => Some(PROMPTSUBST),                                  // c:278 PROMPTSUBST
+        "stdin"       => Some(SHINSTDIN),                                    // c:279 SHINSTDIN
+        "trackall"    => Some(HASHCMDS),                                     // c:280 HASHCMDS
+        _ => None,
+    };
+    if let Some(optno) = alias_optno {
+        return optno;
+    }
+
+    // c:708-712 — `if s[0..2] == "no" && getnode(s+2)` → -optno, else getnode(s).
+    if let Some(stripped) = s.strip_prefix("no") {                           // c:708
+        if let Some(optno) = optno_by_name(stripped) {                       // c:709
+            return -optno;                                                   // c:710
+        }
+    }
+    match optno_by_name(&s) {                                                // c:721
+        Some(optno) => optno,                                                // c:721
+        None => OPT_INVALID,                                                 // c:721
+    }
+}
+
+// Identify an option letter                                                // c:721
+/// Translate a single-letter option flag to its index.
+/// Port of `optlookupc(char c)` from Src/options.c:721. Returns 0 for
+/// unrecognised letters. Walks the active letter table (`KSH_LETTERS`
+/// when `SHOPTIONLETTERS` is set, `zshletters` otherwise) and
+/// resolves the canonical name via `optno_by_name`.
+pub fn optlookupc(c: char) -> i32 {                                          // c:721
+    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+        KSH_LETTERS
+    } else {
+        zshletters
+    };
+    for (ch, name, _negated) in letters {
+        if *ch == c {
+            return optno_by_name(name).unwrap_or(0);                         // c:725
+        }
+    }
+    0
+}
+
+/// Direct port of `dosetopt(int optno, int value, int force, char *new_opts)` from Src/options.c:735. C body:
+/// negate value when optno < 0 (the "no" prefix marker); look up
+/// option name by optno; reject emulation-locked options; write
+/// `opts[optno] = value`. Static-link path: optno is the FNV hash
+/// produced by `optlookup`; we look up by name in a reverse pass
+/// against the canonical option set, then write OPTS_LIVE.
+/// WARNING: param names don't match C — Rust=(optno, value, _force) vs C=(optno, value, force, new_opts)
+pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // c:735
+    if optno == 0 { return -1; }
+    let mut idx = optno;
+    if idx < 0 {                                                             // c:739
+        idx = -idx;
+        value = if value != 0 { 0 } else { 1 };                              // c:741
+    }
+    // c:744 — locate the option name whose FNV hash matches idx.
+    let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
+    match name {
+        Some(n) => { opt_state_set(n, value != 0); 0 }                       // c:760 opts[optno] = value
+        None => -1,                                                          // c:758
+    }
+}
+
+/// Build the value of `$-`: a string of the active single-letter
+/// option flags (e.g. `"is"` for an interactive script).
+/// Port of `dashgetfn(UNUSED(Param pm))` from Src/options.c:890. C source iterates
+/// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
+pub fn dashgetfn() -> String {
+    // C reads `opts[optno]` for each single-letter option (c:890-895).
+    // The Rust port's authoritative store is OPTS_LIVE (the same map
+    // `opt_state_get` reads), so route each lookup through it.
+    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+        KSH_LETTERS
+    } else {
+        zshletters
+    };
+    let mut out = String::new();
+    for c in (b'A'..=b'z').map(|b| b as char) {
+        for (ch, name, negated) in letters {
+            if *ch == c {
+                let value = opt_state_get(name).unwrap_or(false);            // c:891 `opts[optno]`
+                let effective = if *negated { !value } else { value };
+                if effective {
+                    out.push(c);
+                }
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Direct port of `printoptionstates(int hadplus)` from Src/options.c:909.
+/// C body (c:910): `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
+/// printoptionnodestate, hadplus);` — walks optiontab applying the
+/// printoptionnodestate callback to each non-alias entry.
+/// Static-link path: walks ZSH_OPTIONS_SET (canonical option name
+/// registry) and reads each option's live state via opt_state_get.
+pub fn printoptionstates(hadplus: bool) {                                    // c:909
+    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
+    names.sort();
+    for n in names {                                                         // c:910 scanhashtable
+        let value = opt_state_get(n).unwrap_or(false);
+        printoptionnodestate(n, value, hadplus);                             // c:916
+    }
+}
+
+/// C body (c:920-933):
+/// ```c
+/// if (hadplus) {
+///     printf("set %co %s%s\n",
+///         defset(on, emulation) != isset(optno) ? '-' : '+',
+///         defset(on, emulation) ? "no" : "",
+///         on->node.nam);
+/// } else {
 ///     if (defset(on, emulation))
 ///         printf("no%-19s %s\n", nam, isset(optno) ? "off" : "on");
 ///     else
 ///         printf("%-21s %s\n", nam, isset(optno) ? "on" : "off");
-/// } else if (set == (isset(optno) ^ defset(on, emulation))) {
-///     if (set ^ isset(optno)) fputs("no", stdout);
-///     puts(nam);
 /// }
 /// ```
-/// Port of `printoptionnode(HashNode hn, int set)` from `Src/options.c:450`.
-pub fn printoptionnode(hn: &str, set: bool) {                                // c:450
-    let on = opt_state_get(hn).unwrap_or(false);                             // c:450 isset(optno)
-    let default_on = default_on_options().contains(&hn);                     // c:455 defset(on, emulation)
-    let kshprint = opt_state_get("kshoptionprint").unwrap_or(false);         // c:456 isset(KSHOPTIONPRINT)
-    if kshprint {                                                            // c:456
-        if default_on {                                                      // c:457
-            println!("no{:<19} {}", hn, if on { "off" } else { "on" });      // c:458
+/// Port of `printoptionnodestate(HashNode hn, int hadplus)` from `Src/options.c:916`.
+/// WARNING: param names don't match C — Rust=(name, value, hadplus) vs C=(hn, hadplus)
+pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // c:916
+    let default_on = default_on_options().contains(&name);                   // c:916 defset
+    if hadplus {                                                             // c:920
+        let sign = if default_on != value { '-' } else { '+' };              // c:922
+        let no_prefix = if default_on { "no" } else { "" };                  // c:923
+        println!("set {}o {}{}", sign, no_prefix, name);                     // c:921
+    } else {
+        if default_on {                                                      // c:927
+            println!("no{:<19} {}", name,                                    // c:928
+                if value { "off" } else { "on" });
         } else {
-            println!("{:<21} {}", hn, if on { "on" } else { "off" });        // c:460
+            println!("{:<21} {}", name,                                      // c:930
+                if value { "on" } else { "off" });
         }
-    } else if set == (on ^ default_on) {                                     // c:462
-        if set ^ on {                                                        // c:463
-            print!("no");                                                    // c:464
-        }
-        println!("{}", hn);                                                  // c:465
     }
+}
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `OPTS_LIVE` is the process-wide option-state map that bin_setopt
+// reads + writes. The C source uses a flat `char opts[OPTSIZE]`
+// global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
+// `opts[o] = 1` etc.). Rust uses an RwLock<HashMap<String,bool>>
+// because optno is FNV-hashed (no flat index range) and HashMap is
+// the natural Rust mirror of "name → set?" lookup.
+//
+// Per PORT_PLAN.md Phase 3 (bucket-2 read-mostly): options are read
+// on every command dispatch (`isset(ERREXIT)`, `isset(INTERACTIVE)`,
+// etc.) but written only on `setopt`/`unsetopt`. `RwLock` lets
+// parallel readers proceed without serialising on a mutex.
+//
+// !!! Do NOT add a parallel options store elsewhere. Every read /
+// write of an option's set-state in the lib must route through
+// `opt_state_get` / `opt_state_set` to stay coherent with bin_setopt.
+// The ShellExecutor.options HashMap should eventually become a
+// read-through cache of this map. !!!
+// =====================================================================
+
+static OPTS_LIVE: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+/// Direct port of `printoptionlist()` from Src/options.c:938.
+/// C body (c:945-955):
+/// ```c
+/// printf("\nNamed options:\n");
+/// scanhashtable(optiontab, 1, 0, OPT_ALIAS, printoptionlist_printoption, 0);
+/// printf("\nOption aliases:\n");
+/// scanhashtable(optiontab, 1, OPT_ALIAS, 0, printoptionlist_printoption, 0);
+/// printf("\nOption letters:\n");
+/// for(lp = optletters, c = FIRST_OPT; c <= LAST_OPT; lp++, c++) {
+///     if(!*lp) continue;
+///     printf("  -%c  ", c);
+///     printoptionlist_printequiv(*lp);
+/// }
+/// ```
+pub fn printoptionlist() {                                                   // c:938
+    println!();
+    println!("Named options:");                                              // c:945
+    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
+    names.sort();
+    for n in &names {                                                        // c:946 scanhashtable
+        printoptionlist_printoption(n, 0);                                   // c:958
+    }
+    println!();
+    println!("Option aliases:");                                             // c:947
+    // c:948 — alias-only walk; static-link path lacks OPT_ALIAS bit
+    // tracking on each option, so the alias walk emits nothing here.
+    println!();
+    println!("Option letters:");                                             // c:949
+    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+        KSH_LETTERS
+    } else {
+        zshletters
+    };
+    for c in (b'A'..=b'z').map(|b| b as char) {                              // c:950
+        for (ch, aname, _negated) in letters {
+            if *ch == c {
+                print!("  -{}  ", c);                                        // c:953
+                printoptionlist_printequiv(optlookup(aname));                // c:954
+                break;
+            }
+        }
+    }
+}
+
+/// Direct port of `printoptionlist_printoption()` from
+/// Src/options.c:958. C body (c:961-967):
+/// ```c
+/// if(on->node.flags & OPT_ALIAS) {
+///     printf("  --%-19s  ", on->node.nam);
+///     printoptionlist_printequiv(on->optno);
+/// } else
+///     printf("  --%s\n", on->node.nam);
+/// ```
+/// Static-link path: OPT_ALIAS flag tracking on each option isn't
+/// ported, so every entry takes the non-alias branch.
+/// WARNING: param names don't match C — Rust=(name, _ignored) vs C=(hn, ignored)
+pub fn printoptionlist_printoption(name: &str, _ignored: i32) {              // c:958
+    println!("  --{}", name);                                                // c:971
+}
+
+/// Direct port of `printoptionlist_printequiv(int optno)` from Src/options.c:971.
+/// C body (c:973-977):
+/// ```c
+/// int isneg = optno < 0;
+/// optno *= (isneg ? -1 : 1);
+/// printf("  equivalent to --%s%s\n", isneg ? "no-" : "",
+///        optns[optno-1].node.nam);
+/// ```
+pub fn printoptionlist_printequiv(optno: i32) {                              // c:971
+    let isneg = optno < 0;                                                   // c:971
+    let abs_optno = if isneg { -optno } else { optno };                      // c:974
+    let prefix = if isneg { "no-" } else { "" };                             // c:975
+    let name = ZSH_OPTIONS_SET.iter()
+        .find(|n| optlookup(n) == abs_optno)
+        .copied()
+        .unwrap_or("?");                                                     // c:976 optns[optno-1].node.nam
+    println!("  equivalent to --{}{}", prefix, name);                        // c:975
+}
+
+/// C body (c:990-997):
+/// ```c
+/// if (!(on->node.flags & OPT_ALIAS) &&
+///     ((fully && !(on->node.flags & OPT_SPECIAL)) ||
+///      (on->node.flags & OPT_EMULATE)))
+/// {
+///     if (!print_emulate_opts[on->optno]) fputs("no", stdout);
+///     puts(on->node.nam);
+/// }
+/// ```
+/// Static-link path: per-option flag bits (OPT_ALIAS / OPT_SPECIAL /
+/// OPT_EMULATE) aren't yet ported with the optns[] table; the Rust
+/// port emits every non-default option whose value matches `value`.
+/// Port of `print_emulate_option(HashNode hn, int fully)` from `Src/options.c:984`.
+/// WARNING: param names don't match C — Rust=(name, value, _fully) vs C=(hn, fully)
+pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // c:984
+    if !value {                                                              // c:984 !print_emulate_opts[optno]
+        print!("no");                                                        // c:995
+    }
+    println!("{}", name);                                                    // c:996
 }
 
 // =====================================================================
@@ -878,194 +1324,11 @@ pub(crate) fn default_on_options() -> std::collections::HashSet<&'static str> {
     set
 }
 
-/// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
-/// The target emulation bitmap, written by `installemulation` and
-/// read by the `setemulate` per-option callback (c:518).
-static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
-/// The precomputed `new_opts[]` array `setemulate` writes into. C
-/// stores it as a flat `char[]` indexed by `optno`; the Rust port
-/// keeps it as a HashMap<String, bool> since the runtime is FNV-
-/// hashed instead of densely indexed.
-static SETEMULATE_OPTS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, bool>>,
-> = std::sync::OnceLock::new();                                              // c:501
-
 fn setemulate_opts_lock()
     -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>>
 {
     SETEMULATE_OPTS
         .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-/// Direct port of `static void setemulate(HashNode hn, int fully)`
-/// from `Src/options.c:507`. C body:
-/// ```c
-/// Optname on = (Optname) hn;
-/// if (!(on->node.flags & OPT_ALIAS) &&
-///     ((fully && !(on->node.flags & OPT_SPECIAL)) ||
-///      (on->node.flags & OPT_EMULATE)))
-///     setemulate_opts[on->optno] = defset(on, setemulate_emulation);
-/// ```
-/// Per-option callback invoked by `scanhashtable(optiontab, ...,
-/// setemulate, ...)` to populate the `new_opts[]` table with each
-/// option's default-for-target-emulation state.
-pub fn setemulate(name: &str, fully: i32) {                                  // c:507
-    let flags = optns_flags(name);                                           // c:507
-    // c:515-517 — emulation-relevant filter.
-    let is_alias = (flags & OPT_ALIAS) != 0;
-    let is_special = (flags & OPT_SPECIAL) != 0;
-    let is_emulate = (flags & OPT_EMULATE) != 0;
-    if is_alias {
-        return;
-    }
-    if !((fully != 0 && !is_special) || is_emulate) {                        // c:516-517
-        return;
-    }
-    // c:518 — `setemulate_opts[on->optno] = defset(on, setemulate_emulation);`
-    let target = SETEMULATE_EMULATION.load(std::sync::atomic::Ordering::Relaxed);
-    let on_by_default = defset(name, target);
-    if let Ok(mut tab) = setemulate_opts_lock().lock() {
-        tab.insert(name.to_string(), on_by_default);
-    }
-}
-
-/// Direct port of `void installemulation(int new_emulation, char
-/// *new_opts)` from `Src/options.c:523`:
-/// ```c
-/// setemulate_emulation = new_emulation;
-/// setemulate_opts = new_opts;
-/// scanhashtable(optiontab, 0, 0, 0, setemulate,
-///               !!(new_emulation & EMULATE_FULLY));
-/// ```
-/// Populates `new_opts[]` with each option's default-for-target-
-/// emulation state by walking `optiontab` via the `setemulate`
-/// per-option callback. Does NOT mutate the live `opts[]` — that
-/// happens in the caller (`emulate()` and `bin_emulate -L`).
-pub fn installemulation(new_emulation: i32,
-                        new_opts: &mut std::collections::HashMap<String, bool>) { // c:523
-    // c:525 — `setemulate_emulation = new_emulation;`
-    SETEMULATE_EMULATION
-        .store(new_emulation, std::sync::atomic::Ordering::Relaxed);         // c:525
-    // c:526 — `setemulate_opts = new_opts;`. We can't alias the
-    // caller's HashMap directly, so the per-option callback writes
-    // into our module-static and we splice it back into `new_opts`.
-    if let Ok(mut tab) = setemulate_opts_lock().lock() {
-        tab.clear();
-    }
-    // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully).
-    let fully = if (new_emulation & EMULATE_FULLY) != 0 { 1 } else { 0 };    // c:528
-    for name in ZSH_OPTIONS_SET.iter() {
-        setemulate(name, fully);                                             // c:527
-    }
-    // Splice setemulate_opts → new_opts so the C semantic of
-    // "new_opts is now populated" holds for the caller.
-    if let Ok(tab) = setemulate_opts_lock().lock() {
-        for (k, v) in tab.iter() {
-            new_opts.insert(k.clone(), *v);
-        }
-    }
-}
-
-/// `setopt OPT` builtin per-arg dispatch.
-/// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
-/// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
-pub fn setoption(hn: &str, value: i32) -> i32 {
-    // C: `opts[optno] = value;` — the C source writes the option's
-    // live state into the `opts[]` array. The Rust port stores it
-    // in OPTS_LIVE via `opt_state_set` (the same global the
-    // `optlookup("hn")>0` and `isset(OPT)` paths read).
-    opt_state_set(hn, value != 0);                                         // c:735+ dosetopt body
-    0
-}
-
-// Identify an option name                                                  // c:680
-/// Translate an option name to a signed option index.
-///
-/// C body (c:684-715): normalize `name` (strip `_`, lowercase),
-/// then `optiontab->getnode(optiontab, s)` returns the `Optname`
-/// whose `->optno` field is the canonical numeric ID (one of the
-/// `ALIASESOPT` / `ERREXIT` / ... constants from `zsh.h:2050+`).
-/// `no`-prefix returns the negation of the stripped lookup.
-///
-/// Rust port: `optiontab` isn't ported as a runtime hashtable, so
-/// we scan the same canonical `zh::OPT_*` constants `index_to_name`
-/// uses (the inverse direction). The returned value is the C-fixed
-/// optno (so `isset(optlookup("errexit"))` reads `opts[ERREXIT]`),
-/// NOT a Rust-side hash — that earlier hash-based encoding caused
-/// `isset(optlookup(name))` to read a wrong slot via `opt_name(h)`
-/// and `[[ -o NAME ]]` returned false even after `setopt NAME`.
-/// Port of `optlookup(char const *name)` from `Src/options.c:684`.
-///
-/// Walks the canonicalised name through the option table (including
-/// OPT_ALIAS rows at `optns[]:269-280`); aliases resolve to their
-/// target optno with a negative sign for `OPT_ALIAS`-negating rows
-/// (`braceexpand` → `-IGNOREBRACES`, `log` → `-HISTNOFUNCTIONS`,
-/// etc.). Returns `OPT_INVALID` when the name is unknown.
-pub fn optlookup(name: &str) -> i32 {                                        // c:684
-
-    // c:689 — `s = t = dupstring(name);`
-    // c:691-705 — strip `_` + lowercase.
-    let s: String = name.chars()                                             // c:689
-        .filter(|&c| c != '_')                                               // c:693-694
-        .flat_map(|c| c.to_lowercase())                                      // c:702-703
-        .collect();
-
-    // OPT_ALIAS rows from optns[]:269-280 — alias names resolve to
-    // their target optno (signed for the alias's negation polarity).
-    // C zsh stores these as hash entries in optiontab with
-    // `optno = -target` (negative) for the `-PREFIX` rows.
-    let alias_optno: Option<i32> = match s.as_str() {
-        "braceexpand" => Some(-IGNOREBRACES),                                // c:269 -IGNOREBRACES
-        "dotglob"     => Some(GLOBDOTS),                                     // c:270 GLOBDOTS
-        "hashall"     => Some(HASHCMDS),                                     // c:271 HASHCMDS
-        "histappend"  => Some(APPENDHISTORY),                                // c:272 APPENDHISTORY
-        "histexpand"  => Some(BANGHIST),                                     // c:273 BANGHIST
-        "log"         => Some(-HISTNOFUNCTIONS),                             // c:274 -HISTNOFUNCTIONS
-        "mailwarn"    => Some(MAILWARNING),                                  // c:275 MAILWARNING
-        "onecmd"      => Some(SINGLECOMMAND),                                // c:276 SINGLECOMMAND
-        "physical"    => Some(CHASELINKS),                                   // c:277 CHASELINKS
-        "promptvars"  => Some(PROMPTSUBST),                                  // c:278 PROMPTSUBST
-        "stdin"       => Some(SHINSTDIN),                                    // c:279 SHINSTDIN
-        "trackall"    => Some(HASHCMDS),                                     // c:280 HASHCMDS
-        _ => None,
-    };
-    if let Some(optno) = alias_optno {
-        return optno;
-    }
-
-    // c:708-712 — `if s[0..2] == "no" && getnode(s+2)` → -optno, else getnode(s).
-    if let Some(stripped) = s.strip_prefix("no") {                           // c:708
-        if let Some(optno) = optno_by_name(stripped) {                       // c:709
-            return -optno;                                                   // c:710
-        }
-    }
-    match optno_by_name(&s) {                                                // c:721
-        Some(optno) => optno,                                                // c:721
-        None => OPT_INVALID,                                                 // c:721
-    }
-}
-
-// Identify an option letter                                                // c:721
-/// Translate a single-letter option flag to its index.
-/// Port of `optlookupc(char c)` from Src/options.c:721. Returns 0 for
-/// unrecognised letters. Walks the active letter table (`KSH_LETTERS`
-/// when `SHOPTIONLETTERS` is set, `zshletters` otherwise) and
-/// resolves the canonical name via `optno_by_name`.
-pub fn optlookupc(c: char) -> i32 {                                          // c:721
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
-        KSH_LETTERS
-    } else {
-        zshletters
-    };
-    for (ch, name, _negated) in letters {
-        if *ch == c {
-            return optno_by_name(name).unwrap_or(0);                         // c:725
-        }
-    }
-    0
 }
 
 /// Reverse lookup `index_to_name` to map a canonical option name
@@ -1083,33 +1346,6 @@ fn optno_by_name(name: &str) -> Option<i32> {
     }
     None
 }
-
-// =====================================================================
-// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `OPTS_LIVE` is the process-wide option-state map that bin_setopt
-// reads + writes. The C source uses a flat `char opts[OPTSIZE]`
-// global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
-// `opts[o] = 1` etc.). Rust uses an RwLock<HashMap<String,bool>>
-// because optno is FNV-hashed (no flat index range) and HashMap is
-// the natural Rust mirror of "name → set?" lookup.
-//
-// Per PORT_PLAN.md Phase 3 (bucket-2 read-mostly): options are read
-// on every command dispatch (`isset(ERREXIT)`, `isset(INTERACTIVE)`,
-// etc.) but written only on `setopt`/`unsetopt`. `RwLock` lets
-// parallel readers proceed without serialising on a mutex.
-//
-// !!! Do NOT add a parallel options store elsewhere. Every read /
-// write of an option's set-state in the lib must route through
-// `opt_state_get` / `opt_state_set` to stay coherent with bin_setopt.
-// The ShellExecutor.options HashMap should eventually become a
-// read-through cache of this map. !!!
-// =====================================================================
-
-static OPTS_LIVE: std::sync::OnceLock<
-    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
-    std::sync::OnceLock::new();
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
 /// state of `name` from the process-wide option store.
@@ -1154,375 +1390,6 @@ pub fn opt_state_len() -> usize {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
         std::collections::HashMap::new()));
     m.read().map(|g| g.len()).unwrap_or(0)
-}
-
-/// Direct port of `dosetopt(int optno, int value, int force, char *new_opts)` from Src/options.c:735. C body:
-/// negate value when optno < 0 (the "no" prefix marker); look up
-/// option name by optno; reject emulation-locked options; write
-/// `opts[optno] = value`. Static-link path: optno is the FNV hash
-/// produced by `optlookup`; we look up by name in a reverse pass
-/// against the canonical option set, then write OPTS_LIVE.
-/// WARNING: param names don't match C — Rust=(optno, value, _force) vs C=(optno, value, force, new_opts)
-pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // c:735
-    if optno == 0 { return -1; }
-    let mut idx = optno;
-    if idx < 0 {                                                             // c:739
-        idx = -idx;
-        value = if value != 0 { 0 } else { 1 };                              // c:741
-    }
-    // c:744 — locate the option name whose FNV hash matches idx.
-    let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
-    match name {
-        Some(n) => { opt_state_set(n, value != 0); 0 }                       // c:760 opts[optno] = value
-        None => -1,                                                          // c:758
-    }
-}
-
-/// Direct port of `bin_setopt(char *nam, char **args, UNUSED(Options ops), int isun)` from Src/options.c:580.
-/// C body (c:585-680):
-///   - no args → `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
-///     optiontab->printnode, !isun)` lists each option set or unset
-///     according to !isun
-///   - parse leading `-`/`+` flags arg-by-arg; the action polarity
-///     is `(**args == '-') ^ isun` per c:594
-///   - within an arg: `-o NAME` (c:606), `-m` (c:624), or a single-
-///     letter option flag (c:626)
-///   - `-`/`+` arg with empty body becomes the pseudo `--` marker
-///     terminating flag parsing (c:596-597)
-///   - bare names branch (!match_glob, c:640): each arg is an
-///     option name → `dosetopt(optlookup(name), !isun, 0)`
-///   - glob branch (`-m`, c:653): each arg is patcompile'd then
-///     `scanmatchtable(optiontab, pprog, ..., setoption, !isun)`
-///     applies it across the option table
-///   - tail: `inittyptab()` rebuilds the type table to reflect any
-///     option changes that affect lexer/expansion
-pub fn bin_setopt(nam: &str, args: &[String],                                // c:580
-                  _ops: &crate::ported::zsh_h::options, isun: i32) -> i32 {
-    let mut retval = 0i32;
-    let mut match_glob = false;                                              // c:582
-    let mut idx = 0usize;
-
-    if args.is_empty() {                                                     // c:586
-        // c:587 — scanhashtable(optiontab, 1, 0, OPT_ALIAS,
-        // optiontab->printnode, !isun): walk every option in the
-        // table and emit each one whose current state matches !isun.
-        let want_set = isun == 0;
-        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter()
-            .map(|s| s.to_string()).collect();
-        names.sort();
-        for n in names {
-            let on = opt_state_get(&n).unwrap_or(false);
-            if on == want_set {
-                printoptionnode(&n, want_set);                               // c:587 printnode
-            }
-        }
-        return 0;                                                            // c:589
-    }
-
-    // c:592-636 — leading `-`/`+` flag parse loop.
-    'outer: while idx < args.len()
-        && (args[idx].starts_with('-') || args[idx].starts_with('+'))
-    {
-        let leading = args[idx].as_bytes()[0];                               // c:594
-        let action: i32 = ((leading == b'-') as i32) ^ isun;                 // c:594
-        if args[idx].len() == 1 {                                            // c:596 args[0][1] empty
-            // c:597 — `*args = "--";` then fall through to the
-            // inner while which immediately matches `-` and breaks
-            // into doneoptions. Equivalent: skip past this arg and
-            // exit the outer loop.
-            idx += 1;
-            break 'outer;
-        }
-        let body_bytes = args[idx].as_bytes()[1..].to_vec();                 // c:599 *++*args
-        let mut k = 0usize;
-        while k < body_bytes.len() {                                         // c:599
-            let mut c = body_bytes[k];
-            // c:600-601 — `if(**args == Meta) *++*args ^= 32;` —
-            // unmeta the next byte before reading.
-            if c == crate::ported::zsh_h::META as u8 {                       // c:600
-                k += 1;
-                if k < body_bytes.len() { c = body_bytes[k] ^ 32; }          // c:601
-                else { break; }
-            }
-            if c == b'-' {                                                   // c:603 pseudo `--`
-                idx += 1;                                                    // c:604
-                break 'outer;                                                // c:605 goto doneoptions
-            } else if c == b'o' {                                            // c:606
-                // c:607-608 — if more chars after 'o', use them as the
-                // option name; otherwise advance to next arg.
-                let oarg: String = if k + 1 < body_bytes.len() {             // c:607
-                    String::from_utf8_lossy(&body_bytes[k + 1..]).into_owned()
-                } else {
-                    idx += 1;                                                // c:608
-                    if idx >= args.len() {                                   // c:609 !*args
-                        zwarnnam(nam, "string expected after -o");           // c:610
-                        return 1;                                            // c:612
-                    }
-                    args[idx].clone()
-                };
-                let optno = optlookup(&oarg);                                // c:614
-                if optno == 0 {                                              // c:614
-                    zwarnnam(nam,                                            // c:615
-                        &format!("no such option: {}", oarg));
-                    retval |= 1;
-                } else if dosetopt(optno, action, 0) != 0 {                  // c:617
-                    zwarnnam(nam,                                            // c:618
-                        &format!("can't change option: {}", oarg));
-                    retval |= 1;
-                }
-                break;                                                       // c:622 break inner
-            } else if c == b'm' {                                            // c:624
-                match_glob = true;                                           // c:625
-            } else {                                                         // c:626
-                let optno = optlookupc(c as char);                           // c:627
-                if optno == 0 {                                              // c:627
-                    zwarnnam(nam, &format!("bad option: -{}", c as char));   // c:628
-                    retval |= 1;
-                } else if dosetopt(optno, action, 0) != 0 {                  // c:630
-                    zwarnnam(nam,                                            // c:631
-                        &format!("can't change option: -{}", c as char));
-                    retval |= 1;
-                }
-            }
-            k += 1;
-        }
-        idx += 1;                                                            // c:636 args++
-    }
-
-    // c:638 — doneoptions: positional args remain.
-    if !match_glob {                                                         // c:640
-        // c:642-650 — bare option names.
-        while idx < args.len() {                                             // c:642
-            let oname = args[idx].clone();
-            idx += 1;
-            let optno = optlookup(&oname);                                   // c:643
-            if optno == 0 {                                                  // c:643
-                zwarnnam(nam,                                                // c:644
-                    &format!("no such option: {}", oname));
-                retval |= 1;
-            } else {
-                let v = (isun == 0) as i32;                                  // c:646 !isun
-                if dosetopt(optno, v, 0) != 0 {                              // c:646
-                    zwarnnam(nam,                                            // c:647
-                        &format!("can't change option: {}", oname));
-                    retval |= 1;
-                }
-            }
-        }
-    } else {                                                                 // c:653
-        // c:655-678 — globbing branch.
-        while idx < args.len() {                                             // c:655
-            let raw = args[idx].clone();
-            idx += 1;
-            // c:660-666 — `s = dupstring(*args);` then walk: strip
-            // `_`, lowercase A-Z (mirrors optlookup's canonicalisation
-            // documented at c:684).
-            let normalized: String = raw.chars()
-                .filter(|&c| c != '_')
-                .map(|c| c.to_ascii_lowercase()).collect();
-            // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
-            let prog = crate::ported::pattern::patcompile(
-                &normalized,
-                crate::ported::zsh_h::PAT_HEAPDUP,
-                None,
-            );
-            if prog.is_none() {                                              // c:670
-                zwarnnam(nam, &format!("bad pattern: {}", raw));             // c:671
-                retval |= 1;
-                break;                                                       // c:673
-            }
-            // c:676 — scanmatchtable(optiontab, pprog, 0, 0, OPT_ALIAS,
-            // setoption, !isun): the `setoption` static at c:572 calls
-            // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
-            let v = (isun == 0) as i32;
-            for opt_name in ZSH_OPTIONS_SET.iter() {                         // c:676
-                if crate::ported::pattern::patmatch(&normalized, opt_name) {
-                    let _ = setoption(opt_name, v);                          // c:572 setoption
-                }
-            }
-        }
-    }
-    crate::ported::utils::inittyptab();                                                            // c:678
-    retval                                                                   // c:679
-}
-
-/// Build the value of `$-`: a string of the active single-letter
-/// option flags (e.g. `"is"` for an interactive script).
-/// Port of `dashgetfn(UNUSED(Param pm))` from Src/options.c:890. C source iterates
-/// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn dashgetfn() -> String {
-    // C reads `opts[optno]` for each single-letter option (c:890-895).
-    // The Rust port's authoritative store is OPTS_LIVE (the same map
-    // `opt_state_get` reads), so route each lookup through it.
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
-        KSH_LETTERS
-    } else {
-        zshletters
-    };
-    let mut out = String::new();
-    for c in (b'A'..=b'z').map(|b| b as char) {
-        for (ch, name, negated) in letters {
-            if *ch == c {
-                let value = opt_state_get(name).unwrap_or(false);            // c:891 `opts[optno]`
-                let effective = if *negated { !value } else { value };
-                if effective {
-                    out.push(c);
-                }
-                break;
-            }
-        }
-    }
-    out
-}
-
-/// Direct port of `printoptionstates(int hadplus)` from Src/options.c:909.
-/// C body (c:910): `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
-/// printoptionnodestate, hadplus);` — walks optiontab applying the
-/// printoptionnodestate callback to each non-alias entry.
-/// Static-link path: walks ZSH_OPTIONS_SET (canonical option name
-/// registry) and reads each option's live state via opt_state_get.
-pub fn printoptionstates(hadplus: bool) {                                    // c:909
-    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
-    names.sort();
-    for n in names {                                                         // c:910 scanhashtable
-        let value = opt_state_get(n).unwrap_or(false);
-        printoptionnodestate(n, value, hadplus);                             // c:916
-    }
-}
-
-/// C body (c:920-933):
-/// ```c
-/// if (hadplus) {
-///     printf("set %co %s%s\n",
-///         defset(on, emulation) != isset(optno) ? '-' : '+',
-///         defset(on, emulation) ? "no" : "",
-///         on->node.nam);
-/// } else {
-///     if (defset(on, emulation))
-///         printf("no%-19s %s\n", nam, isset(optno) ? "off" : "on");
-///     else
-///         printf("%-21s %s\n", nam, isset(optno) ? "on" : "off");
-/// }
-/// ```
-/// Port of `printoptionnodestate(HashNode hn, int hadplus)` from `Src/options.c:916`.
-/// WARNING: param names don't match C — Rust=(name, value, hadplus) vs C=(hn, hadplus)
-pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // c:916
-    let default_on = default_on_options().contains(&name);                   // c:916 defset
-    if hadplus {                                                             // c:920
-        let sign = if default_on != value { '-' } else { '+' };              // c:922
-        let no_prefix = if default_on { "no" } else { "" };                  // c:923
-        println!("set {}o {}{}", sign, no_prefix, name);                     // c:921
-    } else {
-        if default_on {                                                      // c:927
-            println!("no{:<19} {}", name,                                    // c:928
-                if value { "off" } else { "on" });
-        } else {
-            println!("{:<21} {}", name,                                      // c:930
-                if value { "on" } else { "off" });
-        }
-    }
-}
-
-/// Direct port of `printoptionlist()` from Src/options.c:938.
-/// C body (c:945-955):
-/// ```c
-/// printf("\nNamed options:\n");
-/// scanhashtable(optiontab, 1, 0, OPT_ALIAS, printoptionlist_printoption, 0);
-/// printf("\nOption aliases:\n");
-/// scanhashtable(optiontab, 1, OPT_ALIAS, 0, printoptionlist_printoption, 0);
-/// printf("\nOption letters:\n");
-/// for(lp = optletters, c = FIRST_OPT; c <= LAST_OPT; lp++, c++) {
-///     if(!*lp) continue;
-///     printf("  -%c  ", c);
-///     printoptionlist_printequiv(*lp);
-/// }
-/// ```
-pub fn printoptionlist() {                                                   // c:938
-    println!();
-    println!("Named options:");                                              // c:945
-    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
-    names.sort();
-    for n in &names {                                                        // c:946 scanhashtable
-        printoptionlist_printoption(n, 0);                                   // c:958
-    }
-    println!();
-    println!("Option aliases:");                                             // c:947
-    // c:948 — alias-only walk; static-link path lacks OPT_ALIAS bit
-    // tracking on each option, so the alias walk emits nothing here.
-    println!();
-    println!("Option letters:");                                             // c:949
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
-        KSH_LETTERS
-    } else {
-        zshletters
-    };
-    for c in (b'A'..=b'z').map(|b| b as char) {                              // c:950
-        for (ch, aname, _negated) in letters {
-            if *ch == c {
-                print!("  -{}  ", c);                                        // c:953
-                printoptionlist_printequiv(optlookup(aname));                // c:954
-                break;
-            }
-        }
-    }
-}
-
-/// Direct port of `printoptionlist_printoption()` from
-/// Src/options.c:958. C body (c:961-967):
-/// ```c
-/// if(on->node.flags & OPT_ALIAS) {
-///     printf("  --%-19s  ", on->node.nam);
-///     printoptionlist_printequiv(on->optno);
-/// } else
-///     printf("  --%s\n", on->node.nam);
-/// ```
-/// Static-link path: OPT_ALIAS flag tracking on each option isn't
-/// ported, so every entry takes the non-alias branch.
-/// WARNING: param names don't match C — Rust=(name, _ignored) vs C=(hn, ignored)
-pub fn printoptionlist_printoption(name: &str, _ignored: i32) {              // c:958
-    println!("  --{}", name);                                                // c:971
-}
-
-/// Direct port of `printoptionlist_printequiv(int optno)` from Src/options.c:971.
-/// C body (c:973-977):
-/// ```c
-/// int isneg = optno < 0;
-/// optno *= (isneg ? -1 : 1);
-/// printf("  equivalent to --%s%s\n", isneg ? "no-" : "",
-///        optns[optno-1].node.nam);
-/// ```
-pub fn printoptionlist_printequiv(optno: i32) {                              // c:971
-    let isneg = optno < 0;                                                   // c:971
-    let abs_optno = if isneg { -optno } else { optno };                      // c:974
-    let prefix = if isneg { "no-" } else { "" };                             // c:975
-    let name = ZSH_OPTIONS_SET.iter()
-        .find(|n| optlookup(n) == abs_optno)
-        .copied()
-        .unwrap_or("?");                                                     // c:976 optns[optno-1].node.nam
-    println!("  equivalent to --{}{}", prefix, name);                        // c:975
-}
-
-/// C body (c:990-997):
-/// ```c
-/// if (!(on->node.flags & OPT_ALIAS) &&
-///     ((fully && !(on->node.flags & OPT_SPECIAL)) ||
-///      (on->node.flags & OPT_EMULATE)))
-/// {
-///     if (!print_emulate_opts[on->optno]) fputs("no", stdout);
-///     puts(on->node.nam);
-/// }
-/// ```
-/// Static-link path: per-option flag bits (OPT_ALIAS / OPT_SPECIAL /
-/// OPT_EMULATE) aren't yet ported with the optns[] table; the Rust
-/// port emits every non-default option whose value matches `value`.
-/// Port of `print_emulate_option(HashNode hn, int fully)` from `Src/options.c:984`.
-/// WARNING: param names don't match C — Rust=(name, value, _fully) vs C=(hn, fully)
-pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // c:984
-    if !value {                                                              // c:984 !print_emulate_opts[optno]
-        print!("no");                                                        // c:995
-    }
-    println!("{}", name);                                                    // c:996
 }
 
 /// Direct port of `list_emulate_options(char *cmdopts, int fully)` from Src/options.c:1003.
@@ -1737,4 +1604,139 @@ fn index_to_name(idx: i32) -> Option<&'static str> {
         x if x == zh::USEZLE              => "zle",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::zsh_h::isset;
+    use super::*;
+
+    // Tests share global OPTS_LIVE state; serialize via this mutex so
+    // parallel cargo-test threads don't stomp each other's option-state
+    // setup (e.g. test_emulation switching to `sh` while test_default
+    // checks `exec` set under zsh defaults).
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_default_options() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // `glob` (OPT_ZSH) is on by default under EMULATE_ZSH.
+        assert!(isset(optlookup("glob")));
+        // `xtrace` (OPT_EMULATE, no OPT_ALL) is off by default.
+        assert!(!isset(optlookup("xtrace")));
+        // `zle` is OPT_SPECIAL — must NOT be set by defset; only
+        // interactive-shell init turns it on (init.c:1244).
+        assert!(!isset(optlookup("zle")));
+        // Note: `exec` would be a natural OPT_ALL check, but its
+        // optno constant isn't yet defined in zsh_h.rs — only ~175
+        // of 228 options have optno entries. The other three above
+        // suffice to verify defset/OPT_ZSH/OPT_SPECIAL semantics.
+    }
+
+    #[test]
+    fn test_set_option() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        dosetopt(optlookup("xtrace"), if true { 1 } else { 0 }, 0);
+        assert!(isset(optlookup("xtrace")));
+        dosetopt(optlookup("xtrace"), if false { 1 } else { 0 }, 0);
+        assert!(!isset(optlookup("xtrace")));
+    }
+
+    #[test]
+    fn test_no_prefix() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        dosetopt(optlookup("noglob"), if true { 1 } else { 0 }, 0);
+        assert!(!isset(optlookup("glob")));
+        // `optlookup("noglob")` returns negative optno (-GLOB); the
+        // C-faithful pattern at every call site is
+        // `if n < 0 { !isset(-n) } else { isset(n) }` — verify both
+        // halves here.
+        let n = optlookup("noglob");
+        assert!(n < 0, "noglob should resolve to negative optno");
+        assert!(!isset(-n), "after `setopt noglob`, glob must be unset");
+    }
+
+    #[test]
+    fn test_case_insensitive() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        assert_eq!(optlookup("GLOB"), optlookup("glob"));
+        assert_eq!(optlookup("GlOb"), optlookup("glob"));
+    }
+
+    #[test]
+    fn test_underscore_ignored() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        assert_eq!(optlookup("auto_list"), optlookup("autolist"));
+        assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
+    }
+
+    #[test]
+    fn test_option_alias() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // `braceexpand` aliases to `noignorebraces` (optns[]:269 -IGNOREBRACES).
+        dosetopt(optlookup("braceexpand"), if true { 1 } else { 0 }, 0);
+        assert!(!isset(optlookup("ignorebraces")));
+    }
+
+    #[test]
+    fn test_single_letter() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // -x is xtrace.
+        dosetopt(optlookupc('x'), if true { 1 } else { 0 }, 0);
+        assert!(isset(optlookup("xtrace")));
+        // -n is noexec (negated bit in zshletters).
+        dosetopt(optlookupc('n'), if true { 1 } else { 0 }, 0);
+        assert!(!isset(optlookup("exec")));
+    }
+
+    #[test]
+    fn test_emulation() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        emulate("sh", true);
+        assert_eq!(
+            EMULATION.load(std::sync::atomic::Ordering::Relaxed),
+            crate::ported::zsh_h::EMULATE_SH
+        );
+        assert!(isset(optlookup("shwordsplit")));
+
+        emulate("zsh", true);
+        assert_eq!(
+            EMULATION.load(std::sync::atomic::Ordering::Relaxed),
+            crate::ported::zsh_h::EMULATE_ZSH
+        );
+    }
+
+    #[test]
+    fn test_dash_string() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // `setopt` rejects user-level changes to INTERACTIVE / etc.
+        // (dosetopt at options.c:746) when force=0; the test writes
+        // SPECIAL options through the low-level state map so the
+        // dash-string read sees them (mirrors C init's path).
+        opt_state_set("interactive", true);
+        opt_state_set("monitor", true);
+
+        let dash = dashgetfn();
+        assert!(dash.contains('i'));
+        assert!(dash.contains('m'));
+    }
+
+    #[test]
+    fn test_lookup_canonicalises_underscores_and_case() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // The canonicalised name "autolist" is the same option whether
+        // written AUTO_LIST, AutoList, auto__list — `optlookup`
+        // does the canonicalisation matching `optlookup()` (c:684).
+        assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
+        assert_eq!(optlookup("AutoList"), optlookup("autolist"));
+        assert_eq!(optlookup("auto__list"), optlookup("autolist"));
+    }
 }

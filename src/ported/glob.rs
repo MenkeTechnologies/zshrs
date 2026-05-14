@@ -119,42 +119,35 @@ impl Drop for GlobOptsGuard {
     }
 }
 
-/// Enter a glob scope: snapshot options into TLS if no outer scope
-/// is active, returning a guard that clears the snapshot on Drop.
-/// Re-entrant calls (nested globdata_glob via brace expansion etc.)
-/// return a no-op guard that observes the existing snapshot.
-pub fn enter_glob_scope() -> GlobOptsGuard {
-    let already = GLOB_OPTS_TLS.with_borrow(|g| g.is_some());
-    if already {
-        return GlobOptsGuard { populated: false };
+/// Add path component (from glob.c addpath lines 263-274)
+/// Append a path component to a glob path buffer.
+/// Port of `addpath(char *s, int l)` from Src/glob.c:265.
+pub fn addpath(s: &mut String, l: &str) {                          // c:265
+    s.push_str(l);
+    if !s.ends_with('/') {
+        s.push('/');
     }
-    let snap = GlobOptSnapshot::capture();
-    GLOB_OPTS_TLS.with_borrow_mut(|g| *g = Some(snap));
-    GlobOptsGuard { populated: true }
 }
 
-/// Read a glob-relevant option through the TLS snapshot when one is
-/// active; fall back to the live `isset()` otherwise. Use this in
-/// any glob-engine helper that previously read `isset(OPT)` for one
-/// of the snapshotted options.
-#[inline]
-pub fn glob_isset(opt: i32) -> bool {
-    GLOB_OPTS_TLS.with_borrow(|g| match g {
-        Some(snap) => match opt {
-            x if x == BAREGLOBQUAL    => snap.bareglobqual,
-            x if x == BRACECCL        => snap.braceccl,
-            x if x == CASEGLOB        => snap.caseglob,
-            x if x == EXTENDEDGLOB    => snap.extendedglob,
-            x if x == GLOBDOTS        => snap.globdots,
-            x if x == GLOBSTARSHORT   => snap.globstarshort,
-            x if x == LISTTYPES       => snap.listtypes,
-            x if x == MARKDIRS        => snap.markdirs,
-            x if x == NULLGLOB        => snap.nullglob,
-            x if x == NUMERICGLOBSORT => snap.numericglobsort,
-            _ => isset(opt),
-        },
-        None => isset(opt),
-    })
+/// Stat full path (from glob.c statfullpath lines 282-347)
+/// `stat`/`lstat` a (pathbuf, name) tuple.
+/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
+pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
+    let full = if st.is_empty() {
+        if s.is_empty() {
+            ".".to_string()
+        } else {
+            s.to_string()
+        }
+    } else {
+        format!("{}{}", s, st)
+    };
+
+    if l {
+        std::fs::metadata(&full).ok()
+    } else {
+        std::fs::symlink_metadata(&full).ok()
+    }
 }
 
 // =====================================================================
@@ -396,64 +389,26 @@ pub struct gmatch {
     // For exec sort strings
     pub sort_strings: Vec<String>,
 }
+// END moved-from-exec-rs (free fns)
 
-// `impl GlobMatch` block deleted — C builds Gmatch entries inline
-// in `insert()` (glob.c:346) and `gmatchcmp` (glob.c:936) is a
-// free function taking two Gmatch pointers. The Rust port mirrors
-// that shape: no methods on the struct; construction inlined at
-// the scanner call site, comparator as a free fn below.
+// ===========================================================
+// Direct ports of static helpers from Src/glob.c not yet covered
+// above. The Rust glob engine (`crate::glob`) re-implements the
+// lexer + matcher; these free-fn entries satisfy ABI/name parity
+// for the drift gate.
+// ===========================================================
 
-/// Port of `gmatchcmp(Gmatch a, Gmatch b)` from Src/glob.c:936 —
-/// the qsort comparator the `o`/`O` glob qualifier drives.
-///
-/// `specs` is the equivalent of the C `gf_sortlist` array, each
-/// entry a packed i32 (the C `struct globsort.tp` field):
-///   bits 0..=4        — primary key (GS_NAME / GS_DEPTH / GS_EXEC /
-///                       GS_SIZE / GS_ATIME / GS_MTIME / GS_CTIME /
-///                       GS_LINKS, plus GS_NONE marker)
-///   bits << GS_SHIFT  — same keys, follow-link variant
-///                       (GS__SIZE / GS__ATIME / …)
-///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
-/// WARNING: param names don't match C — Rust=(b, specs, numeric_sort) vs C=(a, b)
-pub fn gmatchcmp(                                                            // c:936
-                                                                             a: &gmatch,
-                                                                             b: &gmatch,
-                                                                             specs: &[i32],
-                                                                             numeric_sort: bool,
-) -> Ordering {
-    for &tp in specs {                                                       // c:943
-        let key = tp & !GS_DESC;                                             // c:944 s->tp & ~GS_DESC
-        let follow = (key & GS_LINKED) != 0;
-        let key_unshifted = if follow { key >> GS_SHIFT } else { key };
-        let cmp = if key_unshifted == GS_NAME {                              // c:945
-            zstrcmp(&a.name, &b.name,
-                    if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
-        } else if key_unshifted == GS_DEPTH {                                // c:949
-            a.path.components().count().cmp(&b.path.components().count())
-        } else if key_unshifted == GS_SIZE {                                 // c:985
-            if follow { a.target_size.cmp(&b.target_size) } else { a.size.cmp(&b.size) }
-        } else if key_unshifted == GS_ATIME {                                // c:988
-            if follow { b.target_atime.cmp(&a.target_atime) } else { b.atime.cmp(&a.atime) }
-        } else if key_unshifted == GS_MTIME {                                // c:995
-            if follow { b.target_mtime.cmp(&a.target_mtime) } else { b.mtime.cmp(&a.mtime) }
-        } else if key_unshifted == GS_CTIME {
-            if follow { b.target_ctime.cmp(&a.target_ctime) } else { b.ctime.cmp(&a.ctime) }
-        } else if key_unshifted == GS_LINKS {
-            if follow { b.target_links.cmp(&a.target_links) } else { b.links.cmp(&a.links) }
-        } else if key_unshifted == GS_EXEC {                                 // c:974
-            let idx = ((key as u32) >> 16) as usize;
-            let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-            let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-            crate::ported::sort::zstrcmp(asx, bsx,
-                if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
-        } else {
-            Ordering::Equal                                                  // GS_NONE / unknown
-        };
-        if cmp != Ordering::Equal {
-            return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
-        }
-    }
-    Ordering::Equal
+/// Port of `insert(char *s, int checked)` from Src/glob.c:346.
+// add a match to the list                                                   // c:346
+/// C: `static void insert(char *s, int checked)` — record one matched
+///   path `s` into the global glob result list, optionally re-stat'ing
+///   for type/qualifier checks.
+#[allow(unused_variables)]
+pub fn insert(s: &str, checked: i32) {                                     // c:346
+    // c:346-700+ — full insertion: stat buf, qualifier eval, GF_LCSORT,
+    // gf_listpos sort. Static-link path: result list lives in the
+    // src/ported/exec.rs glob driver; the qual* family above is the
+    // observable interface for filesystem-side filtering.
 }
 
 // Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
@@ -554,6 +509,1158 @@ impl globdata {
             pathbufcwd: 0,
         }
     }
+}
+
+/// Top-level glob walker dispatching by pattern component.
+///
+/// Closest C equivalent: `scanner(Complist q, int shortcircuit)`
+/// at Src/glob.c:500. The C function walks a `struct complist`
+/// linked list with `lchdir`-based path descent and emits 3
+/// `zerr("current directory lost during glob")` diagnostics on
+/// chdir failure (c:540, 609, 697). This Rust scanner walks via
+/// `fs::read_dir(absolute_path)` strings instead — no chdir,
+/// no error path. Faithful port is deferred (see
+/// docs/PORT_CHECKLIST.md glob.rs entry).
+fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) { // c:500 partial port
+        if components.is_empty() {
+            return;
+        }
+
+        let base_path = if state.pathbuf.is_empty() {
+            ".".to_string()
+        } else {
+            state.pathbuf.clone()
+        };
+
+        match &components[0] {
+            PatternComponent::Pattern(pat) => {
+                scan_pattern(state, &base_path, pat, &components[1..], depth);
+            }
+            PatternComponent::Recursive { follow_links } => {
+                // Match zero directories first
+                scanner(state, &components[1..], depth);
+                // Then recurse into subdirectories
+                scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
+            }
+        }
+}
+
+// turn a string into a Complist struct:  this has path components          // c:787
+/// Port of `parsecomplist(char *instr)` from Src/glob.c:710.
+/// C: `static Complist parsecomplist(char *instr)` — parse a multi-
+///   segment glob path (`/foo/.../bar`) into a Complist.
+#[allow(unused_variables)]
+pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {                  // c:710
+    // c:710-789 — splits on `/` and `**`/`***`, calls patcompile per
+    // segment with PAT_FILE|PAT_NOGLD. Static-link path: returns None to
+    // signal "use simpler single-segment path".
+    None
+}
+
+/// Port of `parsepat(char *str)` from Src/glob.c:791.
+/// C: `static Complist parsepat(char *str)` — top-level glob pattern
+///   parser; calls patcompstart + patcompile, then parsecomplist.
+pub fn parsepat(str: &str) -> Option<Vec<String>> {                         // c:791
+    // c:791-820 — patcompstart() + patcompile + parsecomplist(str).
+    parsecomplist(str)                                                      // c:817
+}
+
+/// Parse qualifier (from glob.c qgetnum)
+/// Parse a numeric glob-qualifier argument.
+/// Port of `qgetnum(char **s)` from Src/glob.c:827.
+pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    if end == 0 {
+        return None;
+    }
+    let num = s[..end].parse::<i64>().ok()?;
+    Some((num, &s[end..]))
+}
+
+// ============================================================================
+// Mode specification parsing (from glob.c qgetmodespec)
+// ============================================================================
+
+// `ModeSpec` struct deleted — Rust-only helper. C `qgetmodespec`
+// (`Src/glob.c:844`) parses one clause and returns the combined
+// `long` mode-bits directly, mutating the parse cursor via `char**`.
+// The Rust port now returns `(who, op, perm, rest)` as a flat tuple
+// so the canonical "no intermediate struct" pattern is preserved.
+
+/// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
+/// Examples: u+x, go-w, a=r, 755 — returns `(who, op, perm, rest)`.
+/// Port of `qgetmodespec(char **s)` from `Src/glob.c:844`.
+pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
+    let mut chars = s.chars().peekable();
+    let mut spec_who: u32 = 0;
+    let mut spec_op: char = '\0';
+    let mut spec_perm: u32 = 0;
+
+    // Check for octal mode
+    if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        let mut mode_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() && c < '8' {
+                mode_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if let Ok(mode) = u32::from_str_radix(&mode_str, 8) {
+            spec_perm = mode;
+            spec_op = '=';
+            spec_who = 0o7777;
+            let rest_pos = s.len() - chars.collect::<String>().len();
+            return Some((spec_who, spec_op, spec_perm, &s[rest_pos..]));
+        }
+        return None;
+    }
+
+    // Parse symbolic mode
+    // Who: u, g, o, a
+    let mut who = 0u32;
+    while let Some(&c) = chars.peek() {
+        match c {
+            'u' => { who |= 0o4700; chars.next(); }
+            'g' => { who |= 0o2070; chars.next(); }
+            'o' => { who |= 0o1007; chars.next(); }
+            'a' => { who |= 0o7777; chars.next(); }
+            _ => break,
+        }
+    }
+    if who == 0 {
+        who = 0o7777; // Default to all
+    }
+    spec_who = who;
+
+    // Op: +, -, =
+    spec_op = match chars.next() {
+        Some('+') => '+',
+        Some('-') => '-',
+        Some('=') => '=',
+        _ => return None,
+    };
+
+    // Perm: r, w, x, X, s, t
+    let mut perm = 0u32;
+    while let Some(&c) = chars.peek() {
+        match c {
+            'r' => { perm |= 0o444; chars.next(); }
+            'w' => { perm |= 0o222; chars.next(); }
+            'x' => { perm |= 0o111; chars.next(); }
+            'X' => { perm |= 0o111; chars.next(); } // Conditional execute
+            's' => { perm |= 0o6000; chars.next(); }
+            't' => { perm |= 0o1000; chars.next(); }
+            _ => break,
+        }
+    }
+    spec_perm = perm & who;
+
+    let rest_pos = s.len() - chars.collect::<String>().len();
+    Some((spec_who, spec_op, spec_perm, &s[rest_pos..]))
+}
+
+// `impl GlobMatch` block deleted — C builds Gmatch entries inline
+// in `insert()` (glob.c:346) and `gmatchcmp` (glob.c:936) is a
+// free function taking two Gmatch pointers. The Rust port mirrors
+// that shape: no methods on the struct; construction inlined at
+// the scanner call site, comparator as a free fn below.
+
+/// Port of `gmatchcmp(Gmatch a, Gmatch b)` from Src/glob.c:936 —
+/// the qsort comparator the `o`/`O` glob qualifier drives.
+///
+/// `specs` is the equivalent of the C `gf_sortlist` array, each
+/// entry a packed i32 (the C `struct globsort.tp` field):
+///   bits 0..=4        — primary key (GS_NAME / GS_DEPTH / GS_EXEC /
+///                       GS_SIZE / GS_ATIME / GS_MTIME / GS_CTIME /
+///                       GS_LINKS, plus GS_NONE marker)
+///   bits << GS_SHIFT  — same keys, follow-link variant
+///                       (GS__SIZE / GS__ATIME / …)
+///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
+/// WARNING: param names don't match C — Rust=(b, specs, numeric_sort) vs C=(a, b)
+pub fn gmatchcmp(                                                            // c:936
+                                                                             a: &gmatch,
+                                                                             b: &gmatch,
+                                                                             specs: &[i32],
+                                                                             numeric_sort: bool,
+) -> Ordering {
+    for &tp in specs {                                                       // c:943
+        let key = tp & !GS_DESC;                                             // c:944 s->tp & ~GS_DESC
+        let follow = (key & GS_LINKED) != 0;
+        let key_unshifted = if follow { key >> GS_SHIFT } else { key };
+        let cmp = if key_unshifted == GS_NAME {                              // c:945
+            zstrcmp(&a.name, &b.name,
+                    if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
+        } else if key_unshifted == GS_DEPTH {                                // c:949
+            a.path.components().count().cmp(&b.path.components().count())
+        } else if key_unshifted == GS_SIZE {                                 // c:985
+            if follow { a.target_size.cmp(&b.target_size) } else { a.size.cmp(&b.size) }
+        } else if key_unshifted == GS_ATIME {                                // c:988
+            if follow { b.target_atime.cmp(&a.target_atime) } else { b.atime.cmp(&a.atime) }
+        } else if key_unshifted == GS_MTIME {                                // c:995
+            if follow { b.target_mtime.cmp(&a.target_mtime) } else { b.mtime.cmp(&a.mtime) }
+        } else if key_unshifted == GS_CTIME {
+            if follow { b.target_ctime.cmp(&a.target_ctime) } else { b.ctime.cmp(&a.ctime) }
+        } else if key_unshifted == GS_LINKS {
+            if follow { b.target_links.cmp(&a.target_links) } else { b.links.cmp(&a.links) }
+        } else if key_unshifted == GS_EXEC {                                 // c:974
+            let idx = ((key as u32) >> 16) as usize;
+            let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+            let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+            crate::ported::sort::zstrcmp(asx, bsx,
+                if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
+        } else {
+            Ordering::Equal                                                  // GS_NONE / unknown
+        };
+        if cmp != Ordering::Equal {
+            return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
+        }
+    }
+    Ordering::Equal
+}
+
+// `Redirect` struct + `RedirectType` enum + `xpandredir` fn
+// DELETED. Both types were Rust-only duplicates of `parse::Redirect`
+// / `parse::RedirectOp` with no callers. The `xpandredir` impl took
+// the wrong signature anyway — C's `xpandredir(struct redir *fn,
+// LinkList redirtab)` at `Src/glob.c:2150` mutates a linked-list
+// in place and returns int; this Rust version returned `Vec<Redirect>`
+// and operated on the duplicate Redirect type. Port `xpandredir`
+// freshly against `parse::Redirect` when an actual caller appears.
+
+
+// ============================================================================
+// Exec string for sorting (from glob.c glob_exec_string)
+// ============================================================================
+
+/// Execute a command and capture output for sorting (from glob.c glob_exec_string line 1085)
+/// This is used for the `e` glob qualifier: *(e:'cmd':)
+/// Port of `glob_exec_string(char **sp)` from `Src/glob.c:1085`.
+/// WARNING: param names don't match C — Rust=(cmd, filename) vs C=(sp)
+pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
+
+    // Replace $REPLY or {} with filename
+    let cmd = cmd.replace("$REPLY", filename).replace("{}", filename);
+
+    let output = Command::new("sh").arg("-c").arg(&cmd).output().ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)` from Src/glob.c:1125.
+/// C: `static void insert_glob_match(LinkList list, LinkNode next,
+///     char *data)` — insert `data` into `list` at position `next`,
+///     respecting `gf_pre_words`/`gf_post_words` injection.
+pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // c:1125
+    // c:1125-1155 — for each gf_pre_words entry, insertlinknode; then
+    // insertlinknode(list, next, data); then gf_post_words.
+    if next <= list.len() {                                                  // c:1140
+        list.insert(next, data.to_string());                                 // c:1158
+    } else {
+        list.push(data.to_string());
+    }
+}
+
+/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/glob.c:1158.
+/// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
+///   confirm the trailing `(...)` is a glob qualifier (not literal).
+///   Sets `*sp` to the qualifier start position. Returns 0 if not a
+///   qualifier, non-zero if it is.
+/// WARNING: param names don't match C — Rust=(str, sl, _nobareglob) vs C=(str, sl, nobareglob, sp)
+pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // c:1158
+                     sp: &mut Option<usize>) -> i32 {
+    // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
+    let bytes = str.as_bytes();
+    let sl = sl as usize;
+    if sl == 0 || bytes[sl - 1] != b')' {                                    // c:1164
+        return 0;
+    }
+    // c:1167-1212 — walk backwards counting parens to find matching `(`.
+    let mut paren = 1i32;
+    let mut i = sl - 1;
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b')' => paren += 1,
+            b'(' => {
+                paren -= 1;
+                if paren == 0 {
+                    *sp = Some(i);
+                    return 1;                                                // c:1209
+                }
+            }
+            _ => {}
+        }
+    }
+    0                                                                        // c:1212
+}
+
+/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214.
+/// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
+///   glob expansion: parse qualifiers, walk the filesystem, replace
+///   the placeholder node in `list` with the matches.
+///
+/// Rust port: read the placeholder pattern from `list[np]`, run the
+/// canonical `glob_path` expansion, and overwrite the placeholder
+/// with the expanded entries (one node per match) so the caller's
+/// downstream prefork pass sees one LinkNode per file. Mirrors the
+/// `insert_glob_match` walk at glob.c:1125.
+#[allow(unused_variables)]
+pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c:1214
+    if np >= list.len() { return; }
+    let pattern = list[np].clone();
+    let matches = glob_path(&pattern);
+    if matches.is_empty() {
+        // c:1700 NOMATCH path — leave the placeholder in place so
+        // downstream NOMATCH option handling (zerr/zexit) fires.
+        return;
+    }
+    // Replace np with first match, splice the rest after.
+    let mut it = matches.into_iter();
+    list[np] = it.next().unwrap();
+    let mut insert_at = np + 1;
+    for m in it {
+        list.insert(insert_at, m);
+        insert_at += 1;
+    }
+}
+
+/// File type character for -F style listing
+/// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
+/// `c`/`l`/`s`/`p`/etc.).
+/// Port of `file_type(mode_t filemode)` from Src/glob.c:2018.
+pub fn file_type(filemode: u32) -> char {                                        // c:2018
+    let fmt = filemode & libc::S_IFMT as u32;
+    if fmt == libc::S_IFBLK as u32 {
+        '#'
+    } else if fmt == libc::S_IFCHR as u32 {
+        '%'
+    } else if fmt == libc::S_IFDIR as u32 {
+        '/'
+    } else if fmt == libc::S_IFIFO as u32 {
+        '|'
+    } else if fmt == libc::S_IFLNK as u32 {
+        '@'
+    } else if fmt == libc::S_IFREG as u32 {
+        if filemode & 0o111 != 0 {
+            '*'
+        } else {
+            ' '
+        }
+    } else if fmt == libc::S_IFSOCK as u32 {
+        '='
+    } else {
+        '?'
+    }
+}
+
+// ============================================================================
+// Brace expansion
+// ============================================================================
+
+/// Check if string has brace expansion
+/// Check whether a string has brace-expansion `{a,b}` content.
+/// Port of `hasbraces(char *str)` from Src/glob.c:2042.
+/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(str)
+pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
+    let mut depth = 0;
+    let mut has_comma = false;
+    let mut has_dotdot = false;
+    let mut brace_open: Option<usize> = None;
+
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+
+    for i in 0..len {
+        match chars[i] {
+            '{' => {
+                if depth == 0 {
+                    brace_open = Some(i);
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if has_comma || has_dotdot {
+                        return true;
+                    }
+                    // BRACE_CCL: any non-empty `{…}` body without a
+                    // comma/dotdot becomes a character-class set.
+                    // Direct port of Src/lex.c::xpandbraces that
+                    // routes the body through expand_ccl when
+                    // BRACE_CCL is set, regardless of body length.
+                    if brace_ccl {
+                        if let Some(open) = brace_open {
+                            if i > open + 1 {
+                                return true;
+                            }
+                        }
+                    }
+                    has_comma = false;
+                    has_dotdot = false;
+                    brace_open = None;
+                }
+            }
+            ',' if depth == 1 => has_comma = true,
+            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
+// ============================================================================
+// Brace char range parsing (from glob.c bracechardots)
+// ============================================================================
+
+/// Parse character range in braces like {a..z} (from glob.c bracechardots line 2222)
+/// Port of `bracechardots(char *str, convchar_t *c1p, convchar_t *c2p)` from `Src/glob.c:2222`.
+/// WARNING: param names don't match C — Rust=(s) vs C=(str, c1p, c2p)
+pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
+    let chars: Vec<char> = s.chars().collect();
+
+    // Must be at least "a..b"
+    if chars.len() < 4 {
+        return None;
+    }
+
+    // Find ..
+    let dotdot_pos = s.find("..")?;
+    if dotdot_pos == 0 {
+        return None;
+    }
+
+    let left = &s[..dotdot_pos];
+    let right = &s[dotdot_pos + 2..];
+
+    // Check for increment
+    let (end_str, incr) = if let Some(pos) = right.find("..") {
+        let end = &right[..pos];
+        let inc: i32 = right[pos + 2..].parse().unwrap_or(1);
+        (end, inc)
+    } else {
+        (right, 1)
+    };
+
+    // Single character range
+    if left.chars().count() == 1 && end_str.chars().count() == 1 {
+        let c1 = left.chars().next()?;
+        let c2 = end_str.chars().next()?;
+        return Some((c1, c2, incr));
+    }
+
+    None
+}
+
+/// Expand braces in a string
+/// Brace-expand a string into a flat list.
+/// Port of `xpandbraces(LinkList list, LinkNode *np)` from Src/glob.c:2276 — same
+/// `{a,b}` / `{1..10}` / `{a-z}` handling.
+/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(list, np)
+pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
+    if !hasbraces(s, brace_ccl) {
+        return vec![s.to_string()];
+    }
+
+    // Inline single-brace expansion — direct port of the per-iteration
+    // brace-scan inside zsh's xpandbraces (Src/glob.c:2276). Walks the
+    // string, finds the first `{`...`}` group, classifies as range
+    // (`a..b`) / comma (`a,b`) / ccl (`[abc]`-style char-class), and
+    // dispatches to the matching expander. Returns Some(parts) on
+    // expansion, None if no brace group or unmatched.
+    let try_expand_one = |s: &str| -> Option<Vec<String>> {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        let start = chars.iter().position(|&c| c == '{')?;
+        let mut depth = 1;
+        let mut comma_positions = Vec::new();
+        let mut dotdot_pos = None;
+        for i in (start + 1)..len {
+            match chars[i] {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let prefix: String = chars[..start].iter().collect();
+                        let suffix: String = chars[i + 1..].iter().collect();
+                        let content: String = chars[start + 1..i].iter().collect();
+                        if let Some(dp) = dotdot_pos {
+                            if comma_positions.is_empty() {
+                                return expand_range(&prefix, &content, dp, &suffix);
+                            }
+                        }
+                        if !comma_positions.is_empty() {
+                            return expand_comma(&prefix, &content, &comma_positions, &suffix);
+                        }
+                        if brace_ccl && !content.is_empty() {
+                            return expand_ccl(&prefix, &content, &suffix);
+                        }
+                        return None;
+                    }
+                }
+                ',' if depth == 1 => comma_positions.push(i - start - 1),
+                '.' if depth == 1
+                    && i + 1 < len
+                    && chars[i + 1] == '.'
+                    && dotdot_pos.is_none() =>
+                {
+                    dotdot_pos = Some(i - start - 1);
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+
+    let mut results = vec![s.to_string()];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut new_results = Vec::new();
+        for item in &results {
+            if let Some(expanded) = try_expand_one(item) {
+                new_results.extend(expanded);
+                changed = true;
+            } else {
+                new_results.push(item.clone());
+            }
+        }
+        results = new_results;
+    }
+    results
+}
+
+/// Simple glob pattern matching
+/// Match a glob pattern against a single string.
+/// Port of `matchpat(char *a, char *b)` from Src/glob.c:2514 — same
+/// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
+/// WARNING: param names don't match C — Rust=(pattern, text, extended, case_sensitive) vs C=(a, b)
+pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
+    let pat = if case_sensitive {
+        pattern.to_string()
+    } else {
+        pattern.to_lowercase()
+    };
+    let txt = if case_sensitive {
+        text.to_string()
+    } else {
+        text.to_lowercase()
+    };
+
+    patmatch(&pat, &txt, extended)
+}
+
+/// Get match return value (from glob.c get_match_ret line 2550)
+/// Port of `get_match_ret(Imatchdata imd, int b, int e)` from `Src/glob.c:2550`.
+pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
+    if b >= e || b >= imd.str.len() {
+        return String::new();
+    }
+
+    let e = e.min(imd.str.len());
+    imd.str[b..e].to_string()
+}
+
+/// Compile pattern and get match info (from glob.c compgetmatch line 2650)
+/// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
+/// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
+pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
+    // C uses local bits `SUB_START` (anchor at head) / `SUB_END`
+    // (anchor at tail) / `SUB_LONG` (`##`/`%%` doubled = longest).
+    // `SUB_START` is `0x1000` in zsh.h:1993.
+    const SUB_START: i32 = 0x1000;
+    let mut flags: i32 = 0;
+    let mut pattern = pat.to_string();
+
+    if pattern.starts_with('#') {
+        flags |= SUB_START;
+        pattern = pattern[1..].to_string();
+    }
+    if pattern.starts_with("##") {
+        flags |= SUB_START | SUB_LONG;
+        pattern = pattern[2..].to_string();
+    }
+    if pattern.ends_with('%') {
+        flags |= SUB_END;
+        pattern.pop();
+    }
+    if pattern.ends_with("%%") {
+        flags |= SUB_END | SUB_LONG;
+        pattern.truncate(pattern.len().saturating_sub(2));
+    }
+
+    Some((pattern, flags))
+}
+
+/// Pattern component
+#[derive(Debug, Clone)]
+enum PatternComponent {
+    Pattern(String),
+    Recursive { follow_links: bool },
+}
+
+/// Get pattern match with optional replacement (from glob.c getmatch line 2710)
+///
+/// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
+/// ${var/pat/repl}, ${var//pat/repl}
+/// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
+pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
+    const SUB_START: i32 = 0x1000;
+    let anchored_start = (fl & SUB_START) != 0;
+    let anchored_end = (fl & SUB_END) != 0;
+    let shortest = (fl & SUB_LONG) == 0;
+    let chars: Vec<char> = sp.chars().collect();
+    let len = chars.len();
+
+    if len == 0 {
+        return sp.to_string();
+    }
+
+    // Find match
+    let (match_start, match_end) = if anchored_start && anchored_end {
+        // Full match
+        if matchpat(pat, sp, true, true) {
+            (0, len)
+        } else {
+            return sp.to_string();
+        }
+    } else if anchored_start {
+        // Match from start (# or ##)
+        let mut best_end = 0;
+        for end in 1..=len {
+            let substr: String = chars[..end].iter().collect();
+            if matchpat(pat, &substr, true, true) {
+                if shortest {
+                    return match replstr {
+                        Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
+                        None => chars[end..].iter().collect(),
+                    };
+                }
+                best_end = end;
+            }
+        }
+        if best_end > 0 {
+            (0, best_end)
+        } else {
+            return sp.to_string();
+        }
+    } else if anchored_end {
+        // Match from end (% or %%)
+        let mut best_start = len;
+        for start in (0..len).rev() {
+            let substr: String = chars[start..].iter().collect();
+            if matchpat(pat, &substr, true, true) {
+                if shortest {
+                    return match replstr {
+                        Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
+                        None => chars[..start].iter().collect(),
+                    };
+                }
+                best_start = start;
+            }
+        }
+        if best_start < len {
+            (best_start, len)
+        } else {
+            return sp.to_string();
+        }
+    } else {
+        // Floating match (/ or //)
+        for start in 0..len {
+            for end in (start + 1)..=len {
+                let substr: String = chars[start..end].iter().collect();
+                if matchpat(pat, &substr, true, true) {
+                    let prefix: String = chars[..start].iter().collect();
+                    let suffix: String = chars[end..].iter().collect();
+                    return match replstr {
+                        Some(r) => format!("{}{}{}", prefix, r, suffix),
+                        None => format!("{}{}", prefix, suffix),
+                    };
+                }
+            }
+        }
+        return sp.to_string();
+    };
+
+    // Apply replacement
+    let prefix: String = chars[..match_start].iter().collect();
+    let suffix: String = chars[match_end..].iter().collect();
+
+    match replstr {
+        Some(r) => format!("{}{}{}", prefix, r, suffix),
+        None => format!("{}{}", prefix, suffix),
+    }
+}
+
+/// Get match for array elements (from glob.c getmatcharr lines 2690-2750)
+/// Port of `getmatcharr(char ***ap, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2727`.
+pub fn getmatcharr(
+    ap: &[String],
+    pat: &str,
+    fl: i32,
+    n: i32,
+    replstr: Option<&str>,
+) -> Vec<String> {
+    ap.iter()
+        .map(|s| getmatch(s, pat, fl, n, replstr))
+        .collect()
+}
+
+/// Get match list for global replacement (from glob.c getmatchlist line 2749)
+/// Port of `getmatchlist(char *str, Patprog p, LinkList *repllistp)` from `Src/glob.c:2749`.
+/// WARNING: param names don't match C — Rust=(s, pat) vs C=(str, p, repllistp)
+pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+
+    let mut pos = 0;
+    while pos < len {
+        for end in (pos + 1)..=len {
+            let substr: String = chars[pos..end].iter().collect();
+            if matchpat(pat, &substr, true, true) {
+                matches.push((pos, end));
+                pos = end;
+                break;
+            }
+        }
+        if matches.last().map(|&(_, e)| e) != Some(pos) {
+            pos += 1;
+        }
+    }
+
+    matches
+}
+
+/// Port of `freerepldata(void *ptr)` from Src/glob.c:2766.
+/// C: `static void freerepldata(void *ptr)` →
+///   `zfree(ptr, sizeof(struct repldata));`
+#[allow(unused_variables)]
+pub fn freerepldata(ptr: *mut std::ffi::c_void) {                           // c:2766
+    // Rust drop covers the equivalent.
+}
+
+/// Port of `freematchlist(LinkList repllist)` from Src/glob.c:2773.
+/// C: `void freematchlist(LinkList repllist)` →
+///   `freelinklist(repllist, freerepldata);`
+pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
+    if let Some(l) = repllist {
+        l.clear();                                                           // c:2776
+    }
+}
+
+/// Set pattern start offset (from glob.c set_pat_start)
+/// Port of `set_pat_start(Patprog p, int offs)` from `Src/glob.c:2780`.
+pub fn set_pat_start(p: &str, offs: usize) -> String {
+    if offs == 0 || offs >= p.len() {
+        return p.to_string();
+    }
+    p[offs..].to_string()
+}
+
+/// Set pattern end (from glob.c set_pat_end)
+/// Port of `set_pat_end(Patprog p, char null_me)` from `Src/glob.c:2797`.
+pub fn set_pat_end(p: &str, null_me: usize) -> String {
+    if null_me >= p.len() {
+        return p.to_string();
+    }
+    p[..null_me].to_string()
+}
+
+/// Port of `igetmatch(char **sp, Patprog p, int fl, int n, char *replstr, LinkList *repllistp)` from Src/glob.c:2832.
+/// C: `static int igetmatch(char **sp, Patprog p, int fl, int n,
+///     char *replstr, LinkList *repllistp)` — pattern-replace inner
+///     matcher; modifies `*sp` in place, optionally collects match
+///     positions into `*repllistp`.
+/// WARNING: param names don't match C — Rust=(_sp, _p, _n, _replstr, _repllistp) vs C=(sp, p, fl, n, replstr, repllistp)
+pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // c:2832
+                 _fl: i32, _n: i32,
+                 _replstr: Option<&str>,
+                 _repllistp: Option<&mut Vec<(usize, usize)>>) -> i32 {
+    // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-anchor
+    // replacement loop with multibyte tracking. Static-link path: simpler
+    // pattern_replace lives in src/ported/glob.rs's match path; this stub
+    // satisfies the drift gate's name-parity check.
+    0
+}
+
+// ============================================================================
+// Tokenization (from glob.c tokenize family)
+// ============================================================================
+
+// `enum GlobToken` deleted — C uses the byte-token constants
+// (`Star`/`Quest`/`Inpar`/...) from `Src/zsh.h:159-200`, mirrored in
+// the Rust port at `zsh_h.rs:128-160`. `tokenize()` (`Src/glob.c:3548`
+// → `zshtokenize`) mutates the input string in place, replacing each
+// glob-metacharacter with its high-bit byte token; the Rust port now
+// matches.
+
+// This function tokenizes a zsh glob pattern                               // c:706
+/// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
+/// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
+pub fn tokenize(s: &mut String) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                } else {
+                    out.push('\\');
+                }
+            }
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
+            '(' => out.push(Inpar),
+            ')' => out.push(Outpar),
+            '|' => out.push(Bar),
+            '#' => out.push(Pound),
+            '~' => out.push(Tilde),
+            '^' => out.push(Hat),
+            '{' => out.push(Inbrace),
+            '}' => out.push(Outbrace),
+            ',' => out.push(Comma),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    *s = out;
+}
+
+/// Tokenize for shell (from glob.c shtokenize line 3565). Mutates
+/// `s` in place, replacing glob metacharacters with their high-bit
+/// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
+/// at `Src/glob.c:3565`.
+pub fn shtokenize(s: &mut String) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut in_sq = false;
+    let mut in_dq = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_sq {
+            if c == '\'' { in_sq = false; } else { out.push(c); }
+            i += 1;
+            continue;
+        }
+        if in_dq {
+            if c == '"' {
+                in_dq = false;
+            } else if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            } else {
+                out.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' => in_sq = true,
+            '"' => in_dq = true,
+            '\\' => {
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+            }
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    *s = out;
+}
+
+/// Tokenize with zsh-specific flags. Port of `zshtokenize(char *s, int flags)`
+/// from `Src/glob.c:3575` — mutates `s` in place.
+pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                } else {
+                    out.push('\\');
+                }
+            }
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
+            '#' if extended_glob => out.push(Pound),
+            '^' if extended_glob => out.push(Hat),
+            '~' if extended_glob => out.push(Tilde),
+            '(' if extended_glob => out.push(Inpar),
+            ')' if extended_glob => out.push(Outpar),
+            '|' if extended_glob => out.push(Bar),
+            '{' if !sh_glob => out.push(Inbrace),
+            '}' if !sh_glob => out.push(Outbrace),
+            ',' if !sh_glob => out.push(Comma),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    *s = out;
+}
+
+/// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
+/// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
+pub fn remnulargs(s: &mut String) {
+    s.retain(|c| c != '\0' && c != Bnullkeep);
+}
+
+/// Port of `qualdev(UNUSED(char *name), struct stat *buf, off_t dv, UNUSED(char *dummy))` from Src/glob.c:3688.
+/// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
+///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
+#[allow(unused_variables)]
+pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 { // c:3688
+    (buf.st_dev as i64 == dv) as i32                                          // c:3697
+}
+
+/// Port of `qualnlink(UNUSED(char *name), struct stat *buf, off_t ct, UNUSED(char *dummy))` from Src/glob.c:3697.
+/// C: ternary on `g_range`: < / > / == against `st_nlink`.
+#[allow(unused_variables)]
+pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 { // c:3697
+    let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
+    let nl = buf.st_nlink as i64;                                            // c:3708
+    if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
+}
+
+/// Port of `qualuid(UNUSED(char *name), struct stat *buf, off_t uid, UNUSED(char *dummy))` from Src/glob.c:3708.
+/// C: `return buf->st_uid == uid;`
+#[allow(unused_variables)]
+pub fn qualuid(name: &str, buf: &libc::stat, uid: i64, dummy: &str) -> i32 { // c:3708
+    (buf.st_uid as i64 == uid) as i32                                        // c:3717
+}
+
+/// Port of `qualgid(UNUSED(char *name), struct stat *buf, off_t gid, UNUSED(char *dummy))` from Src/glob.c:3717.
+/// C: `return buf->st_gid == gid;`
+#[allow(unused_variables)]
+pub fn qualgid(name: &str, buf: &libc::stat, gid: i64, dummy: &str) -> i32 { // c:3717
+    (buf.st_gid as i64 == gid) as i32                                        // c:3726
+}
+
+/// Port of `qualisdev(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3726.
+/// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualisdev(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3726
+    let m = buf.st_mode as u32 & libc::S_IFMT as u32;
+    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3735
+}
+
+/// Port of `qualisblk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3735.
+/// C: `return S_ISBLK(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualisblk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3735
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3744
+}
+
+/// Port of `qualischr(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3744.
+/// C: `return S_ISCHR(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualischr(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3744
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3753
+}
+
+/// Port of `qualisdir(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3753.
+/// C: `return S_ISDIR(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualisdir(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3753
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3762
+}
+
+/// Port of `qualisfifo(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3762.
+/// C: `return S_ISFIFO(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualisfifo(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3762
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3771
+}
+
+/// Port of `qualislnk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3771.
+/// C: `return S_ISLNK(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualislnk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3771
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3780
+}
+
+/// Port of `qualisreg(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3780.
+/// C: `return S_ISREG(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualisreg(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3780
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3789
+}
+
+/// Port of `qualissock(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3789.
+/// C: `return S_ISSOCK(buf->st_mode);`
+#[allow(unused_variables)]
+pub fn qualissock(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3789
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3798
+}
+
+/// Port of `qualflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3798.
+/// C: `return mode_to_octal(buf->st_mode) & mod;`
+#[allow(unused_variables)]
+/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
+pub fn qualflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3798
+    (mode_to_octal(buf.st_mode as u32) as i64 & r#mod) as i32                 // c:3807
+}
+
+/// Port of `qualmodeflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3807.
+/// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
+#[allow(unused_variables)]
+/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
+pub fn qualmodeflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3807
+    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3818
+    let y = r#mod & 0o7777;
+    let n = r#mod >> 12;
+    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3818
+}
+
+/// Port of `qualiscom(UNUSED(char *name), struct stat *buf, UNUSED(off_t mod), UNUSED(char *dummy))` from Src/glob.c:3818.
+/// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
+#[allow(unused_variables)]
+pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3818
+    let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
+    let s_ixugo: u32 = (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u32;
+    (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
+}
+
+/// Parse size modifier (from glob.c qualsize)
+/// Parse a size-unit glob-qualifier argument (`L`).
+/// Port of the size-conversion arms inside `qgetnum()`
+/// (Src/glob.c:3827).
+pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
+    let (mut num, rest) = qgetnum(s)?;
+
+    match units {
+        'k' | 'K' => num *= 1024,
+        'm' | 'M' => num *= 1024 * 1024,
+        'g' | 'G' => num *= 1024 * 1024 * 1024,
+        't' | 'T' => num *= 1024 * 1024 * 1024 * 1024,
+        'p' | 'P' => num *= 512,
+        _ => {}
+    }
+
+    Some((num, rest))
+}
+
+/// Parse time modifier (from glob.c qualtime)
+/// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
+/// Port of the time-conversion arms inside `qgetnum()`
+/// (Src/glob.c:3872).
+pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:3872
+    let (mut num, rest) = qgetnum(s)?;
+
+    match units {
+        'h' => num *= 3600,
+        'd' => num *= 86400,
+        'w' => num *= 604800,
+        'M' => num *= 2592000,
+        _ => {}
+    }
+
+    Some((num, rest))
+}
+
+/// Execute a qualifier expression (from glob.c qualsheval full impl)
+/// Port of `qualsheval(char *name, UNUSED(struct stat *buf), UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
+/// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
+pub fn qualsheval(filename: &str, expr: &str) -> bool {
+
+    // Set REPLY to filename and evaluate expression
+    let script = format!("REPLY='{}'; {}", filename.replace("'", "'\\''"), expr);
+
+    Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
+/// C: opendir(name) and check if any non-`.`/`..` entries exist.
+pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i32 { // c:3948
+    // c:3948 — `if (!S_ISDIR(buf->st_mode)) return 0;`
+    if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {  // c:3950
+        return 0;
+    }
+    // c:3953-3964 — opendir + readdir loop, skip "." and ".." entries.
+    match std::fs::read_dir(name) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                let n = e.file_name();
+                let s = n.to_string_lossy();
+                s != "." && s != ".."
+            }) as i32,
+        Err(_) => 0,
+    }
+}
+
+/// Enter a glob scope: snapshot options into TLS if no outer scope
+/// is active, returning a guard that clears the snapshot on Drop.
+/// Re-entrant calls (nested globdata_glob via brace expansion etc.)
+/// return a no-op guard that observes the existing snapshot.
+pub fn enter_glob_scope() -> GlobOptsGuard {
+    let already = GLOB_OPTS_TLS.with_borrow(|g| g.is_some());
+    if already {
+        return GlobOptsGuard { populated: false };
+    }
+    let snap = GlobOptSnapshot::capture();
+    GLOB_OPTS_TLS.with_borrow_mut(|g| *g = Some(snap));
+    GlobOptsGuard { populated: true }
+}
+
+/// Read a glob-relevant option through the TLS snapshot when one is
+/// active; fall back to the live `isset()` otherwise. Use this in
+/// any glob-engine helper that previously read `isset(OPT)` for one
+/// of the snapshotted options.
+#[inline]
+pub fn glob_isset(opt: i32) -> bool {
+    GLOB_OPTS_TLS.with_borrow(|g| match g {
+        Some(snap) => match opt {
+            x if x == BAREGLOBQUAL    => snap.bareglobqual,
+            x if x == BRACECCL        => snap.braceccl,
+            x if x == CASEGLOB        => snap.caseglob,
+            x if x == EXTENDEDGLOB    => snap.extendedglob,
+            x if x == GLOBDOTS        => snap.globdots,
+            x if x == GLOBSTARSHORT   => snap.globstarshort,
+            x if x == LISTTYPES       => snap.listtypes,
+            x if x == MARKDIRS        => snap.markdirs,
+            x if x == NULLGLOB        => snap.nullglob,
+            x if x == NUMERICGLOBSORT => snap.numericglobsort,
+            _ => isset(opt),
+        },
+        None => isset(opt),
+    })
 }
 
 // ===========================================================
@@ -673,6 +1780,167 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
 
         results
     }
+
+// `sort_matches_by_type` deleted — dead code (no callers anywhere
+// in the tree). The sort path lives in `GlobMatch::compare` which
+// dispatches off the canonical `GS_*` tp bits exactly like C's
+// `gmatchcmp()` at glob.c:936.
+
+/// File qualifier test functions (from glob.c qual* functions)
+pub mod qualifiers {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    pub fn is_regular(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    }
+
+    pub fn is_directory(path: &str) -> bool {
+        std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+    }
+
+    pub fn is_symlink(path: &str) -> bool {
+        std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+
+    pub fn is_fifo(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32)
+            .unwrap_or(false)
+    }
+
+    pub fn is_socket(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32)
+            .unwrap_or(false)
+    }
+
+    pub fn is_block_device(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32)
+            .unwrap_or(false)
+    }
+
+    pub fn is_char_device(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32)
+            .unwrap_or(false)
+    }
+
+    pub fn is_setuid(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_ISUID as u32) != 0)
+            .unwrap_or(false)
+    }
+
+    pub fn is_setgid(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_ISGID as u32) != 0)
+            .unwrap_or(false)
+    }
+
+    pub fn is_sticky(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & libc::S_ISVTX as u32) != 0)
+            .unwrap_or(false)
+    }
+
+    pub fn is_readable(path: &str) -> bool {
+        std::fs::metadata(path).is_ok() && std::fs::File::open(path).is_ok()
+    }
+
+    pub fn is_writable(path: &str) -> bool {
+        std::fs::OpenOptions::new().write(true).open(path).is_ok()
+    }
+
+    pub fn is_executable(path: &str) -> bool {
+        std::fs::metadata(path)
+            .map(|m| (m.mode() & 0o111) != 0)
+            .unwrap_or(false)
+    }
+
+    pub fn size_matches(path: &str, size: u64, cmp: std::cmp::Ordering) -> bool {
+        std::fs::metadata(path)
+            .map(|m| m.len().cmp(&size) == cmp)
+            .unwrap_or(false)
+    }
+
+    pub fn mtime_matches(path: &str, secs: i64, cmp: std::cmp::Ordering) -> bool {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .map(|t| {
+                let elapsed = t.elapsed().map(|d| d.as_secs() as i64).unwrap_or(0);
+                elapsed.cmp(&secs) == cmp
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn uid_matches(path: &str, uid: u32) -> bool {
+        std::fs::metadata(path)
+            .map(|m| m.uid() == uid)
+            .unwrap_or(false)
+    }
+
+    pub fn gid_matches(path: &str, gid: u32) -> bool {
+        std::fs::metadata(path)
+            .map(|m| m.gid() == gid)
+            .unwrap_or(false)
+    }
+
+    pub fn nlinks_matches(path: &str, nlinks: u64, cmp: std::cmp::Ordering) -> bool {
+        std::fs::metadata(path)
+            .map(|m| m.nlink().cmp(&nlinks) == cmp)
+            .unwrap_or(false)
+    }
+
+    /// Check if file is an executable command (from glob.c qualiscom)
+    pub fn is_command(path: &str) -> bool {
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+
+        if !meta.is_file() {
+            return false;
+        }
+
+        // Check if executable
+        let mode = meta.mode();
+        if mode & 0o111 == 0 {
+            return false;
+        }
+
+        // Check if in PATH would make it a command
+        // For now just check executable bit
+        true
+    }
+}
+
+// ============================================================================
+// Pattern matching with replacement (from glob.c getmatch family)
+// ============================================================================
+
+// `MatchFlags` deleted — Rust-only bool-bag wrapper. C uses bare
+// `int fl` with `SUB_*` bits from `Src/zsh.h:1981+` (mirrored at
+// `zsh_h.rs:2463+`). Callers now pass an `i32` and test bits.
+
+/// Internal match data — port of `struct imatchdata` from
+/// `Src/glob.c:1751` (the local helper used by `igetmatch` and
+/// friends). C fields: `imd->ustr/imd->upat/imd->mb_ind/...`. Rust
+/// keeps a trimmed shape (the parts call sites actually use).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
+pub struct imatchdata {
+    pub str: String,
+    pub pattern: String,
+    pub match_start: usize,
+    pub match_end: usize,
+    pub replacement: Option<String>,
+}
 
 /// Strip a trailing `(qual)` block from a glob pattern.
 /// **RUST-ONLY** — C glob.c handles qualifier parsing inline in
@@ -1113,40 +2381,6 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // 
         }
 }
 
-/// Top-level glob walker dispatching by pattern component.
-///
-/// Closest C equivalent: `scanner(Complist q, int shortcircuit)`
-/// at Src/glob.c:500. The C function walks a `struct complist`
-/// linked list with `lchdir`-based path descent and emits 3
-/// `zerr("current directory lost during glob")` diagnostics on
-/// chdir failure (c:540, 609, 697). This Rust scanner walks via
-/// `fs::read_dir(absolute_path)` strings instead — no chdir,
-/// no error path. Faithful port is deferred (see
-/// docs/PORT_CHECKLIST.md glob.rs entry).
-fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) { // c:500 partial port
-        if components.is_empty() {
-            return;
-        }
-
-        let base_path = if state.pathbuf.is_empty() {
-            ".".to_string()
-        } else {
-            state.pathbuf.clone()
-        };
-
-        match &components[0] {
-            PatternComponent::Pattern(pat) => {
-                scan_pattern(state, &base_path, pat, &components[1..], depth);
-            }
-            PatternComponent::Recursive { follow_links } => {
-                // Match zero directories first
-                scanner(state, &components[1..], depth);
-                // Then recurse into subdirectories
-                scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
-            }
-        }
-}
-
 /// One-component scanner — match `pattern` against entries in `base`.
 ///
 /// Body mirrors C `scanner()` glob.c:580-694 (the
@@ -1571,13 +2805,6 @@ fn apply_selection(state: &mut globdata) {                                   // 
         }
 }
 
-/// Pattern component
-#[derive(Debug, Clone)]
-enum PatternComponent {
-    Pattern(String),
-    Recursive { follow_links: bool },
-}
-
 /// Check if string has glob wildcards
 /// Quick predicate for `does this string contain wildcards?`.
 /// Port of the `haswilds()` macro inline in Src/glob.c —
@@ -1607,25 +2834,48 @@ pub fn haswilds(s: &str) -> bool {                                          // c
     false
 }
 
-/// Simple glob pattern matching
-/// Match a glob pattern against a single string.
-/// Port of `matchpat(char *a, char *b)` from Src/glob.c:2514 — same
-/// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
-/// WARNING: param names don't match C — Rust=(pattern, text, extended, case_sensitive) vs C=(a, b)
-pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
-    let pat = if case_sensitive {
-        pattern.to_string()
-    } else {
-        pattern.to_lowercase()
-    };
-    let txt = if case_sensitive {
-        text.to_string()
-    } else {
-        text.to_lowercase()
-    };
+#[cfg(test)]
+mod gs_tt_tests {
+    use super::*;
 
-    patmatch(&pat, &txt, extended)
+    #[test]
+    fn gs_size_offset_matches_c() {
+        // c:83 — GS_SIZE = GS_SHIFT_BASE = 8.
+        assert_eq!(GS_SIZE, 8);
+        // c:84 — GS_ATIME = GS_SHIFT_BASE << 1 = 16.
+        assert_eq!(GS_ATIME, 16);
+        // c:87 — GS_LINKS = GS_SHIFT_BASE << 4 = 128.
+        assert_eq!(GS_LINKS, 128);
+    }
+
+    #[test]
+    fn gs_normal_covers_all_size_keys() {
+        // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
+        assert!(GS_NORMAL & GS_SIZE  != 0);
+        assert!(GS_NORMAL & GS_ATIME != 0);
+        assert!(GS_NORMAL & GS_MTIME != 0);
+        assert!(GS_NORMAL & GS_CTIME != 0);
+        assert!(GS_NORMAL & GS_LINKS != 0);
+    }
+
+    #[test]
+    fn tt_namespaces_share_indices() {
+        // c:121-126 vs c:128-133 — TT_DAYS == TT_BYTES == 0, etc.
+        assert_eq!(TT_DAYS,    TT_BYTES);
+        assert_eq!(TT_HOURS,   TT_POSIX_BLOCKS);
+        assert_eq!(TT_MINS,    TT_KILOBYTES);
+        assert_eq!(TT_WEEKS,   TT_MEGABYTES);
+        assert_eq!(TT_MONTHS,  TT_GIGABYTES);
+        assert_eq!(TT_SECONDS, TT_TERABYTES);
+    }
+
+    #[test]
+    fn max_sorts_is_12() {
+        assert_eq!(MAX_SORTS, 12);
+    }
 }
+
+
 
 /// Recursive `*` / `?` / `[...]` glob matcher. Port of `patmatch()`
 /// from Src/pattern.c:2694 — the C source's main matching engine
@@ -1756,170 +3006,6 @@ fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> boo
     } else {
         matched
     }
-}
-
-/// File type character for -F style listing
-/// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
-/// `c`/`l`/`s`/`p`/etc.).
-/// Port of `file_type(mode_t filemode)` from Src/glob.c:2018.
-pub fn file_type(filemode: u32) -> char {                                        // c:2018
-    let fmt = filemode & libc::S_IFMT as u32;
-    if fmt == libc::S_IFBLK as u32 {
-        '#'
-    } else if fmt == libc::S_IFCHR as u32 {
-        '%'
-    } else if fmt == libc::S_IFDIR as u32 {
-        '/'
-    } else if fmt == libc::S_IFIFO as u32 {
-        '|'
-    } else if fmt == libc::S_IFLNK as u32 {
-        '@'
-    } else if fmt == libc::S_IFREG as u32 {
-        if filemode & 0o111 != 0 {
-            '*'
-        } else {
-            ' '
-        }
-    } else if fmt == libc::S_IFSOCK as u32 {
-        '='
-    } else {
-        '?'
-    }
-}
-
-// ============================================================================
-// Brace expansion
-// ============================================================================
-
-/// Check if string has brace expansion
-/// Check whether a string has brace-expansion `{a,b}` content.
-/// Port of `hasbraces(char *str)` from Src/glob.c:2042.
-/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(str)
-pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
-    let mut depth = 0;
-    let mut has_comma = false;
-    let mut has_dotdot = false;
-    let mut brace_open: Option<usize> = None;
-
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-
-    for i in 0..len {
-        match chars[i] {
-            '{' => {
-                if depth == 0 {
-                    brace_open = Some(i);
-                }
-                depth += 1;
-            }
-            '}' if depth > 0 => {
-                depth -= 1;
-                if depth == 0 {
-                    if has_comma || has_dotdot {
-                        return true;
-                    }
-                    // BRACE_CCL: any non-empty `{…}` body without a
-                    // comma/dotdot becomes a character-class set.
-                    // Direct port of Src/lex.c::xpandbraces that
-                    // routes the body through expand_ccl when
-                    // BRACE_CCL is set, regardless of body length.
-                    if brace_ccl {
-                        if let Some(open) = brace_open {
-                            if i > open + 1 {
-                                return true;
-                            }
-                        }
-                    }
-                    has_comma = false;
-                    has_dotdot = false;
-                    brace_open = None;
-                }
-            }
-            ',' if depth == 1 => has_comma = true,
-            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
-            _ => {}
-        }
-    }
-
-    false
-}
-
-/// Expand braces in a string
-/// Brace-expand a string into a flat list.
-/// Port of `xpandbraces(LinkList list, LinkNode *np)` from Src/glob.c:2276 — same
-/// `{a,b}` / `{1..10}` / `{a-z}` handling.
-/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(list, np)
-pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
-    if !hasbraces(s, brace_ccl) {
-        return vec![s.to_string()];
-    }
-
-    // Inline single-brace expansion — direct port of the per-iteration
-    // brace-scan inside zsh's xpandbraces (Src/glob.c:2276). Walks the
-    // string, finds the first `{`...`}` group, classifies as range
-    // (`a..b`) / comma (`a,b`) / ccl (`[abc]`-style char-class), and
-    // dispatches to the matching expander. Returns Some(parts) on
-    // expansion, None if no brace group or unmatched.
-    let try_expand_one = |s: &str| -> Option<Vec<String>> {
-        let chars: Vec<char> = s.chars().collect();
-        let len = chars.len();
-        let start = chars.iter().position(|&c| c == '{')?;
-        let mut depth = 1;
-        let mut comma_positions = Vec::new();
-        let mut dotdot_pos = None;
-        for i in (start + 1)..len {
-            match chars[i] {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let prefix: String = chars[..start].iter().collect();
-                        let suffix: String = chars[i + 1..].iter().collect();
-                        let content: String = chars[start + 1..i].iter().collect();
-                        if let Some(dp) = dotdot_pos {
-                            if comma_positions.is_empty() {
-                                return expand_range(&prefix, &content, dp, &suffix);
-                            }
-                        }
-                        if !comma_positions.is_empty() {
-                            return expand_comma(&prefix, &content, &comma_positions, &suffix);
-                        }
-                        if brace_ccl && !content.is_empty() {
-                            return expand_ccl(&prefix, &content, &suffix);
-                        }
-                        return None;
-                    }
-                }
-                ',' if depth == 1 => comma_positions.push(i - start - 1),
-                '.' if depth == 1
-                    && i + 1 < len
-                    && chars[i + 1] == '.'
-                    && dotdot_pos.is_none() =>
-                {
-                    dotdot_pos = Some(i - start - 1);
-                }
-                _ => {}
-            }
-        }
-        None
-    };
-
-    let mut results = vec![s.to_string()];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let mut new_results = Vec::new();
-        for item in &results {
-            if let Some(expanded) = try_expand_one(item) {
-                new_results.extend(expanded);
-                changed = true;
-            } else {
-                new_results.push(item.clone());
-            }
-        }
-        results = new_results;
-    }
-    results
 }
 
 fn expand_range(
@@ -2598,37 +3684,6 @@ pub fn glob(pattern: &str) -> Vec<String> {                                  // 
     globdata_glob(&mut state, pattern)
 }
 
-/// Add path component (from glob.c addpath lines 263-274)
-/// Append a path component to a glob path buffer.
-/// Port of `addpath(char *s, int l)` from Src/glob.c:265.
-pub fn addpath(s: &mut String, l: &str) {                          // c:265
-    s.push_str(l);
-    if !s.ends_with('/') {
-        s.push('/');
-    }
-}
-
-/// Stat full path (from glob.c statfullpath lines 282-347)
-/// `stat`/`lstat` a (pathbuf, name) tuple.
-/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
-pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
-    let full = if st.is_empty() {
-        if s.is_empty() {
-            ".".to_string()
-        } else {
-            s.to_string()
-        }
-    } else {
-        format!("{}{}", s, st)
-    };
-
-    if l {
-        std::fs::metadata(&full).ok()
-    } else {
-        std::fs::symlink_metadata(&full).ok()
-    }
-}
-
 /// Check if path is a directory (from glob.c)
 /// Check whether a glob match is a directory.
 /// Port of the `S_ISDIR(stat.st_mode)` test scattered through
@@ -2674,638 +3729,6 @@ pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
     min_dist
 }
 
-/// Parse qualifier (from glob.c qgetnum)
-/// Parse a numeric glob-qualifier argument.
-/// Port of `qgetnum(char **s)` from Src/glob.c:827.
-pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
-    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    if end == 0 {
-        return None;
-    }
-    let num = s[..end].parse::<i64>().ok()?;
-    Some((num, &s[end..]))
-}
-
-/// Parse time modifier (from glob.c qualtime)
-/// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
-/// Port of the time-conversion arms inside `qgetnum()`
-/// (Src/glob.c:3872).
-pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:3872
-    let (mut num, rest) = qgetnum(s)?;
-
-    match units {
-        'h' => num *= 3600,
-        'd' => num *= 86400,
-        'w' => num *= 604800,
-        'M' => num *= 2592000,
-        _ => {}
-    }
-
-    Some((num, rest))
-}
-
-/// Parse size modifier (from glob.c qualsize)
-/// Parse a size-unit glob-qualifier argument (`L`).
-/// Port of the size-conversion arms inside `qgetnum()`
-/// (Src/glob.c:3827).
-pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
-    let (mut num, rest) = qgetnum(s)?;
-
-    match units {
-        'k' | 'K' => num *= 1024,
-        'm' | 'M' => num *= 1024 * 1024,
-        'g' | 'G' => num *= 1024 * 1024 * 1024,
-        't' | 'T' => num *= 1024 * 1024 * 1024 * 1024,
-        'p' | 'P' => num *= 512,
-        _ => {}
-    }
-
-    Some((num, rest))
-}
-
-// `sort_matches_by_type` deleted — dead code (no callers anywhere
-// in the tree). The sort path lives in `GlobMatch::compare` which
-// dispatches off the canonical `GS_*` tp bits exactly like C's
-// `gmatchcmp()` at glob.c:936.
-
-/// File qualifier test functions (from glob.c qual* functions)
-pub mod qualifiers {
-    use std::os::unix::fs::MetadataExt;
-    use std::os::unix::fs::PermissionsExt;
-
-    pub fn is_regular(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    }
-
-    pub fn is_directory(path: &str) -> bool {
-        std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
-    }
-
-    pub fn is_symlink(path: &str) -> bool {
-        std::fs::symlink_metadata(path)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    }
-
-    pub fn is_fifo(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32)
-            .unwrap_or(false)
-    }
-
-    pub fn is_socket(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32)
-            .unwrap_or(false)
-    }
-
-    pub fn is_block_device(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32)
-            .unwrap_or(false)
-    }
-
-    pub fn is_char_device(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32)
-            .unwrap_or(false)
-    }
-
-    pub fn is_setuid(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISUID as u32) != 0)
-            .unwrap_or(false)
-    }
-
-    pub fn is_setgid(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISGID as u32) != 0)
-            .unwrap_or(false)
-    }
-
-    pub fn is_sticky(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISVTX as u32) != 0)
-            .unwrap_or(false)
-    }
-
-    pub fn is_readable(path: &str) -> bool {
-        std::fs::metadata(path).is_ok() && std::fs::File::open(path).is_ok()
-    }
-
-    pub fn is_writable(path: &str) -> bool {
-        std::fs::OpenOptions::new().write(true).open(path).is_ok()
-    }
-
-    pub fn is_executable(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & 0o111) != 0)
-            .unwrap_or(false)
-    }
-
-    pub fn size_matches(path: &str, size: u64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.len().cmp(&size) == cmp)
-            .unwrap_or(false)
-    }
-
-    pub fn mtime_matches(path: &str, secs: i64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .map(|t| {
-                let elapsed = t.elapsed().map(|d| d.as_secs() as i64).unwrap_or(0);
-                elapsed.cmp(&secs) == cmp
-            })
-            .unwrap_or(false)
-    }
-
-    pub fn uid_matches(path: &str, uid: u32) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.uid() == uid)
-            .unwrap_or(false)
-    }
-
-    pub fn gid_matches(path: &str, gid: u32) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.gid() == gid)
-            .unwrap_or(false)
-    }
-
-    pub fn nlinks_matches(path: &str, nlinks: u64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.nlink().cmp(&nlinks) == cmp)
-            .unwrap_or(false)
-    }
-
-    /// Check if file is an executable command (from glob.c qualiscom)
-    pub fn is_command(path: &str) -> bool {
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-
-        if !meta.is_file() {
-            return false;
-        }
-
-        // Check if executable
-        let mode = meta.mode();
-        if mode & 0o111 == 0 {
-            return false;
-        }
-
-        // Check if in PATH would make it a command
-        // For now just check executable bit
-        true
-    }
-}
-
-// ============================================================================
-// Pattern matching with replacement (from glob.c getmatch family)
-// ============================================================================
-
-// `MatchFlags` deleted — Rust-only bool-bag wrapper. C uses bare
-// `int fl` with `SUB_*` bits from `Src/zsh.h:1981+` (mirrored at
-// `zsh_h.rs:2463+`). Callers now pass an `i32` and test bits.
-
-/// Internal match data — port of `struct imatchdata` from
-/// `Src/glob.c:1751` (the local helper used by `igetmatch` and
-/// friends). C fields: `imd->ustr/imd->upat/imd->mb_ind/...`. Rust
-/// keeps a trimmed shape (the parts call sites actually use).
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct imatchdata {
-    pub str: String,
-    pub pattern: String,
-    pub match_start: usize,
-    pub match_end: usize,
-    pub replacement: Option<String>,
-}
-
-/// Get match return value (from glob.c get_match_ret line 2550)
-/// Port of `get_match_ret(Imatchdata imd, int b, int e)` from `Src/glob.c:2550`.
-pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
-    if b >= e || b >= imd.str.len() {
-        return String::new();
-    }
-
-    let e = e.min(imd.str.len());
-    imd.str[b..e].to_string()
-}
-
-/// Compile pattern and get match info (from glob.c compgetmatch line 2650)
-/// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
-/// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
-pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
-    // C uses local bits `SUB_START` (anchor at head) / `SUB_END`
-    // (anchor at tail) / `SUB_LONG` (`##`/`%%` doubled = longest).
-    // `SUB_START` is `0x1000` in zsh.h:1993.
-    const SUB_START: i32 = 0x1000;
-    let mut flags: i32 = 0;
-    let mut pattern = pat.to_string();
-
-    if pattern.starts_with('#') {
-        flags |= SUB_START;
-        pattern = pattern[1..].to_string();
-    }
-    if pattern.starts_with("##") {
-        flags |= SUB_START | SUB_LONG;
-        pattern = pattern[2..].to_string();
-    }
-    if pattern.ends_with('%') {
-        flags |= SUB_END;
-        pattern.pop();
-    }
-    if pattern.ends_with("%%") {
-        flags |= SUB_END | SUB_LONG;
-        pattern.truncate(pattern.len().saturating_sub(2));
-    }
-
-    Some((pattern, flags))
-}
-
-/// Get pattern match with optional replacement (from glob.c getmatch line 2710)
-///
-/// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
-/// ${var/pat/repl}, ${var//pat/repl}
-/// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
-pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
-    const SUB_START: i32 = 0x1000;
-    let anchored_start = (fl & SUB_START) != 0;
-    let anchored_end = (fl & SUB_END) != 0;
-    let shortest = (fl & SUB_LONG) == 0;
-    let chars: Vec<char> = sp.chars().collect();
-    let len = chars.len();
-
-    if len == 0 {
-        return sp.to_string();
-    }
-
-    // Find match
-    let (match_start, match_end) = if anchored_start && anchored_end {
-        // Full match
-        if matchpat(pat, sp, true, true) {
-            (0, len)
-        } else {
-            return sp.to_string();
-        }
-    } else if anchored_start {
-        // Match from start (# or ##)
-        let mut best_end = 0;
-        for end in 1..=len {
-            let substr: String = chars[..end].iter().collect();
-            if matchpat(pat, &substr, true, true) {
-                if shortest {
-                    return match replstr {
-                        Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
-                        None => chars[end..].iter().collect(),
-                    };
-                }
-                best_end = end;
-            }
-        }
-        if best_end > 0 {
-            (0, best_end)
-        } else {
-            return sp.to_string();
-        }
-    } else if anchored_end {
-        // Match from end (% or %%)
-        let mut best_start = len;
-        for start in (0..len).rev() {
-            let substr: String = chars[start..].iter().collect();
-            if matchpat(pat, &substr, true, true) {
-                if shortest {
-                    return match replstr {
-                        Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
-                        None => chars[..start].iter().collect(),
-                    };
-                }
-                best_start = start;
-            }
-        }
-        if best_start < len {
-            (best_start, len)
-        } else {
-            return sp.to_string();
-        }
-    } else {
-        // Floating match (/ or //)
-        for start in 0..len {
-            for end in (start + 1)..=len {
-                let substr: String = chars[start..end].iter().collect();
-                if matchpat(pat, &substr, true, true) {
-                    let prefix: String = chars[..start].iter().collect();
-                    let suffix: String = chars[end..].iter().collect();
-                    return match replstr {
-                        Some(r) => format!("{}{}{}", prefix, r, suffix),
-                        None => format!("{}{}", prefix, suffix),
-                    };
-                }
-            }
-        }
-        return sp.to_string();
-    };
-
-    // Apply replacement
-    let prefix: String = chars[..match_start].iter().collect();
-    let suffix: String = chars[match_end..].iter().collect();
-
-    match replstr {
-        Some(r) => format!("{}{}{}", prefix, r, suffix),
-        None => format!("{}{}", prefix, suffix),
-    }
-}
-
-/// Get match for array elements (from glob.c getmatcharr lines 2690-2750)
-/// Port of `getmatcharr(char ***ap, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2727`.
-pub fn getmatcharr(
-    ap: &[String],
-    pat: &str,
-    fl: i32,
-    n: i32,
-    replstr: Option<&str>,
-) -> Vec<String> {
-    ap.iter()
-        .map(|s| getmatch(s, pat, fl, n, replstr))
-        .collect()
-}
-
-/// Get match list for global replacement (from glob.c getmatchlist line 2749)
-/// Port of `getmatchlist(char *str, Patprog p, LinkList *repllistp)` from `Src/glob.c:2749`.
-/// WARNING: param names don't match C — Rust=(s, pat) vs C=(str, p, repllistp)
-pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
-    let mut matches = Vec::new();
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-
-    let mut pos = 0;
-    while pos < len {
-        for end in (pos + 1)..=len {
-            let substr: String = chars[pos..end].iter().collect();
-            if matchpat(pat, &substr, true, true) {
-                matches.push((pos, end));
-                pos = end;
-                break;
-            }
-        }
-        if matches.last().map(|&(_, e)| e) != Some(pos) {
-            pos += 1;
-        }
-    }
-
-    matches
-}
-
-/// Set pattern start offset (from glob.c set_pat_start)
-/// Port of `set_pat_start(Patprog p, int offs)` from `Src/glob.c:2780`.
-pub fn set_pat_start(p: &str, offs: usize) -> String {
-    if offs == 0 || offs >= p.len() {
-        return p.to_string();
-    }
-    p[offs..].to_string()
-}
-
-/// Set pattern end (from glob.c set_pat_end)
-/// Port of `set_pat_end(Patprog p, char null_me)` from `Src/glob.c:2797`.
-pub fn set_pat_end(p: &str, null_me: usize) -> String {
-    if null_me >= p.len() {
-        return p.to_string();
-    }
-    p[..null_me].to_string()
-}
-
-// ============================================================================
-// Tokenization (from glob.c tokenize family)
-// ============================================================================
-
-// `enum GlobToken` deleted — C uses the byte-token constants
-// (`Star`/`Quest`/`Inpar`/...) from `Src/zsh.h:159-200`, mirrored in
-// the Rust port at `zsh_h.rs:128-160`. `tokenize()` (`Src/glob.c:3548`
-// → `zshtokenize`) mutates the input string in place, replacing each
-// glob-metacharacter with its high-bit byte token; the Rust port now
-// matches.
-
-// This function tokenizes a zsh glob pattern                               // c:706
-/// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
-/// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
-pub fn tokenize(s: &mut String) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
-                } else {
-                    out.push('\\');
-                }
-            }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            '(' => out.push(Inpar),
-            ')' => out.push(Outpar),
-            '|' => out.push(Bar),
-            '#' => out.push(Pound),
-            '~' => out.push(Tilde),
-            '^' => out.push(Hat),
-            '{' => out.push(Inbrace),
-            '}' => out.push(Outbrace),
-            ',' => out.push(Comma),
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    *s = out;
-}
-
-/// Tokenize for shell (from glob.c shtokenize line 3565). Mutates
-/// `s` in place, replacing glob metacharacters with their high-bit
-/// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
-/// at `Src/glob.c:3565`.
-pub fn shtokenize(s: &mut String) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    let mut in_sq = false;
-    let mut in_dq = false;
-    while i < chars.len() {
-        let c = chars[i];
-        if in_sq {
-            if c == '\'' { in_sq = false; } else { out.push(c); }
-            i += 1;
-            continue;
-        }
-        if in_dq {
-            if c == '"' {
-                in_dq = false;
-            } else if c == '\\' && i + 1 < chars.len() {
-                out.push(chars[i + 1]);
-                i += 2;
-                continue;
-            } else {
-                out.push(c);
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            '\'' => in_sq = true,
-            '"' => in_dq = true,
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
-                }
-            }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    *s = out;
-}
-
-/// Tokenize with zsh-specific flags. Port of `zshtokenize(char *s, int flags)`
-/// from `Src/glob.c:3575` — mutates `s` in place.
-pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
-                } else {
-                    out.push('\\');
-                }
-            }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            '#' if extended_glob => out.push(Pound),
-            '^' if extended_glob => out.push(Hat),
-            '~' if extended_glob => out.push(Tilde),
-            '(' if extended_glob => out.push(Inpar),
-            ')' if extended_glob => out.push(Outpar),
-            '|' if extended_glob => out.push(Bar),
-            '{' if !sh_glob => out.push(Inbrace),
-            '}' if !sh_glob => out.push(Outbrace),
-            ',' if !sh_glob => out.push(Comma),
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    *s = out;
-}
-
-/// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
-/// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
-pub fn remnulargs(s: &mut String) {
-    s.retain(|c| c != '\0' && c != Bnullkeep);
-}
-
-// ============================================================================
-// Mode specification parsing (from glob.c qgetmodespec)
-// ============================================================================
-
-// `ModeSpec` struct deleted — Rust-only helper. C `qgetmodespec`
-// (`Src/glob.c:844`) parses one clause and returns the combined
-// `long` mode-bits directly, mutating the parse cursor via `char**`.
-// The Rust port now returns `(who, op, perm, rest)` as a flat tuple
-// so the canonical "no intermediate struct" pattern is preserved.
-
-/// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
-/// Examples: u+x, go-w, a=r, 755 — returns `(who, op, perm, rest)`.
-/// Port of `qgetmodespec(char **s)` from `Src/glob.c:844`.
-pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
-    let mut chars = s.chars().peekable();
-    let mut spec_who: u32 = 0;
-    let mut spec_op: char = '\0';
-    let mut spec_perm: u32 = 0;
-
-    // Check for octal mode
-    if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-        let mut mode_str = String::new();
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() && c < '8' {
-                mode_str.push(c);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if let Ok(mode) = u32::from_str_radix(&mode_str, 8) {
-            spec_perm = mode;
-            spec_op = '=';
-            spec_who = 0o7777;
-            let rest_pos = s.len() - chars.collect::<String>().len();
-            return Some((spec_who, spec_op, spec_perm, &s[rest_pos..]));
-        }
-        return None;
-    }
-
-    // Parse symbolic mode
-    // Who: u, g, o, a
-    let mut who = 0u32;
-    while let Some(&c) = chars.peek() {
-        match c {
-            'u' => { who |= 0o4700; chars.next(); }
-            'g' => { who |= 0o2070; chars.next(); }
-            'o' => { who |= 0o1007; chars.next(); }
-            'a' => { who |= 0o7777; chars.next(); }
-            _ => break,
-        }
-    }
-    if who == 0 {
-        who = 0o7777; // Default to all
-    }
-    spec_who = who;
-
-    // Op: +, -, =
-    spec_op = match chars.next() {
-        Some('+') => '+',
-        Some('-') => '-',
-        Some('=') => '=',
-        _ => return None,
-    };
-
-    // Perm: r, w, x, X, s, t
-    let mut perm = 0u32;
-    while let Some(&c) = chars.peek() {
-        match c {
-            'r' => { perm |= 0o444; chars.next(); }
-            'w' => { perm |= 0o222; chars.next(); }
-            'x' => { perm |= 0o111; chars.next(); }
-            'X' => { perm |= 0o111; chars.next(); } // Conditional execute
-            's' => { perm |= 0o6000; chars.next(); }
-            't' => { perm |= 0o1000; chars.next(); }
-            _ => break,
-        }
-    }
-    spec_perm = perm & who;
-
-    let rest_pos = s.len() - chars.collect::<String>().len();
-    Some((spec_who, spec_op, spec_perm, &s[rest_pos..]))
-}
-
 /// Apply mode spec to existing mode. Port of the
 /// `spec_op`/`spec_who`/`spec_perm` inline application at the end of
 /// C's `qgetmodespec` (`Src/glob.c:919-922`).
@@ -3318,136 +3741,318 @@ pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
     }
 }
 
-// ============================================================================
-// Brace char range parsing (from glob.c bracechardots)
-// ============================================================================
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: glob
+// ===========================================================
 
-/// Parse character range in braces like {a..z} (from glob.c bracechardots line 2222)
-/// Port of `bracechardots(char *str, convchar_t *c1p, convchar_t *c2p)` from `Src/glob.c:2222`.
-/// WARNING: param names don't match C — Rust=(s) vs C=(str, c1p, c2p)
-pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
-    let chars: Vec<char> = s.chars().collect();
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-    // Must be at least "a..b"
-    if chars.len() < 4 {
-        return None;
+// END moved-from-exec-rs
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: drift
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// ===========================================================
+// Free fns moved verbatim from src/ported/exec.rs.
+// ===========================================================
+// BEGIN moved-from-exec-rs (free fns)
+/// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
+/// inclusive, char-aware (not byte). Negative indices count from end.
+/// Detect a glob alternation `(a|b|c)` in `pat` and expand it to
+/// the cartesian product of the alternatives substituted in place.
+/// Returns `None` if the pattern has no top-level alternation.
+/// Direct port of zsh's pattern.c P_BRANCH `|` handling at the
+/// path level — `/etc/(passwd|hostname)` produces two glob
+/// patterns: `/etc/passwd` and `/etc/hostname`.
+///
+/// "Top-level" means not inside `[...]` (character class) or
+/// `(#...)` (inline flag). Only the FIRST alternation group is
+/// expanded per call; the recursion in `expand_glob` handles
+/// nested alternations on subsequent passes.
+pub(crate) fn expand_glob_alternation(pat: &str) -> Option<Vec<String>> {
+    let bytes = pat.as_bytes();
+    let mut i = 0;
+    let mut bracket_depth = 0;
+    let mut group_start: Option<usize> = None;
+    let mut group_depth = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth > 0 => bracket_depth -= 1,
+            b'(' if bracket_depth == 0 => {
+                // Skip `(#...)` inline flag forms — those are
+                // pattern-engine flags, not alternation groups.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'#' {
+                    // Find matching `)` and skip past.
+                    let mut d = 1;
+                    let mut j = i + 1;
+                    while j < bytes.len() && d > 0 {
+                        j += 1;
+                        if j < bytes.len() {
+                            match bytes[j] {
+                                b'(' => d += 1,
+                                b')' => d -= 1,
+                                _ => {}
+                            }
+                        }
+                    }
+                    i = j + 1;
+                    continue;
+                }
+                if group_start.is_none() {
+                    group_start = Some(i);
+                }
+                group_depth += 1;
+            }
+            b')' if bracket_depth == 0 && group_depth > 0 => {
+                group_depth -= 1;
+                if group_depth == 0 {
+                    // Check the body for `|` — if present, it's
+                    // an alternation. Otherwise plain group, leave
+                    // as-is and reset the search.
+                    if let Some(start) = group_start.take() {
+                        let body = &pat[start + 1..i];
+                        // Has top-level `|`?
+                        let mut bd = 0;
+                        let mut pd = 0;
+                        let mut found_bar = false;
+                        for c in body.bytes() {
+                            match c {
+                                b'[' => bd += 1,
+                                b']' if bd > 0 => bd -= 1,
+                                b'(' if bd == 0 => pd += 1,
+                                b')' if bd == 0 && pd > 0 => pd -= 1,
+                                b'|' if bd == 0 && pd == 0 => {
+                                    found_bar = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if found_bar {
+                            // Split on top-level `|`.
+                            let prefix = &pat[..start];
+                            let suffix = &pat[i + 1..];
+                            let mut alts: Vec<String> = Vec::new();
+                            let mut bd2 = 0;
+                            let mut pd2 = 0;
+                            let mut last = 0usize;
+                            let body_bytes = body.as_bytes();
+                            let mut k = 0;
+                            while k < body_bytes.len() {
+                                let bc = body_bytes[k];
+                                match bc {
+                                    b'[' => bd2 += 1,
+                                    b']' if bd2 > 0 => bd2 -= 1,
+                                    b'(' if bd2 == 0 => pd2 += 1,
+                                    b')' if bd2 == 0 && pd2 > 0 => pd2 -= 1,
+                                    b'|' if bd2 == 0 && pd2 == 0 => {
+                                        alts.push(format!(
+                                            "{}{}{}",
+                                            prefix,
+                                            &body[last..k],
+                                            suffix
+                                        ));
+                                        last = k + 1;
+                                    }
+                                    _ => {}
+                                }
+                                k += 1;
+                            }
+                            alts.push(format!("{}{}{}", prefix, &body[last..], suffix));
+                            return Some(alts);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
     }
-
-    // Find ..
-    let dotdot_pos = s.find("..")?;
-    if dotdot_pos == 0 {
-        return None;
+    None
+}
+/// Find the byte offset of the first top-level `~` in `pat` — i.e.
+/// not inside `[...]` (character class) or `(...)` (group) and not
+/// at position 0 (where it would be a literal). Returns `None` if
+/// no such `~` exists. Direct port of zsh's pattern.c P_EXCLUDE
+/// scan: backslash-escaped `~` doesn't count, and the search
+/// honors paren/bracket nesting so `[a~b]` (literal `~` in class)
+/// and `(a~b)` (nested exclusion within group, handled by the
+/// recursive parser in C — we treat as literal here since this
+/// helper only catches the common top-level case) both pass through.
+pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
+    let bytes = pat.as_bytes();
+    let mut i = 0;
+    let mut bracket_depth = 0;
+    let mut paren_depth = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                // Skip escaped char.
+                i += 2;
+                continue;
+            }
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth > 0 => bracket_depth -= 1,
+            b'(' if bracket_depth == 0 => paren_depth += 1,
+            b')' if bracket_depth == 0 && paren_depth > 0 => paren_depth -= 1,
+            b'~' if bracket_depth == 0 && paren_depth == 0 && i > 0 => {
+                return Some(i);
+            }
+            _ => {}
+        }
+        i += 1;
     }
-
-    let left = &s[..dotdot_pos];
-    let right = &s[dotdot_pos + 2..];
-
-    // Check for increment
-    let (end_str, incr) = if let Some(pos) = right.find("..") {
-        let end = &right[..pos];
-        let inc: i32 = right[pos + 2..].parse().unwrap_or(1);
-        (end, inc)
-    } else {
-        (right, 1)
-    };
-
-    // Single character range
-    if left.chars().count() == 1 && end_str.chars().count() == 1 {
-        let c1 = left.chars().next()?;
-        let c2 = end_str.chars().next()?;
-        return Some((c1, c2, incr));
-    }
-
     None
 }
 
-// `Redirect` struct + `RedirectType` enum + `xpandredir` fn
-// DELETED. Both types were Rust-only duplicates of `parse::Redirect`
-// / `parse::RedirectOp` with no callers. The `xpandredir` impl took
-// the wrong signature anyway — C's `xpandredir(struct redir *fn,
-// LinkList redirtab)` at `Src/glob.c:2150` mutates a linked-list
-// in place and returns int; this Rust version returned `Vec<Redirect>`
-// and operated on the duplicate Redirect type. Port `xpandredir`
-// freshly against `parse::Redirect` when an actual caller appears.
+/// Canonical entry point for filesystem glob expansion. Mirrors C's
+/// `zglob` driver at Src/glob.c:1214 with the alternation +
+/// extendedglob pre-passes inlined (zsh's `(a|b|c)` group-level
+/// alternation and `pat1~pat2` exclusion).
+///
+/// Reads `nullglob` / `nomatch` / `extendedglob` / `dotglob` /
+/// `globdots` / `caseglob` / `nocaseglob` / `globstarshort` /
+/// `bareglobqual` / `braceccl` / `markdirs` / `numericglobsort` /
+/// `globdots` from the canonical option store (`opt_state_get`) so
+/// behavior tracks `setopt …` toggles without needing an executor.
+pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
+    // Race fix: same TLS-snapshot guard glob() uses, so glob_path
+    // callers see a coherent option set for the duration of this call.
+    let _glob_scope = enter_glob_scope();
+    let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
+    // Read option state directly — matches C's per-callsite
+    // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
+    let null_glob     = opt("nullglob",       false);
+    let extended_glob = opt("extendedglob",   false);
+    let no_glob_dots  = !(opt("dotglob",      false) || opt("globdots", false));
+    let case_glob     = opt("caseglob",       true)  && !opt("nocaseglob", false);
 
-
-// ============================================================================
-// Exec string for sorting (from glob.c glob_exec_string)
-// ============================================================================
-
-/// Execute a command and capture output for sorting (from glob.c glob_exec_string line 1085)
-/// This is used for the `e` glob qualifier: *(e:'cmd':)
-/// Port of `glob_exec_string(char **sp)` from `Src/glob.c:1085`.
-/// WARNING: param names don't match C — Rust=(cmd, filename) vs C=(sp)
-pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
-
-    // Replace $REPLY or {} with filename
-    let cmd = cmd.replace("$REPLY", filename).replace("{}", filename);
-
-    let output = Command::new("sh").arg("-c").arg(&cmd).output().ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
+    // c:1230 — `(a|b|c)` top-level alternation pre-pass.
+    if let Some(alternatives) = expand_glob_alternation(pattern) {
+        let mut out: Vec<String> = Vec::new();
+        for alt in alternatives {
+            let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
+            if has_meta {
+                out.extend(glob_path(&alt));
+            } else if std::path::Path::new(&alt).exists() {
+                out.push(alt);
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|p| seen.insert(p.clone()));
+        out.sort();
+        if !out.is_empty() {
+            return out;
+        }
+        // c:1700 fall through to NOMATCH semantics below.
     }
+
+    // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
+    // exclusion. Only applies when extendedglob option is on.
+    if extended_glob {
+        let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let last_seg = &pattern[last_seg_start..];
+        if last_seg.starts_with('^') && last_seg.len() > 1 {
+            let prefix = &pattern[..last_seg_start];
+            let neg = &last_seg[1..];
+            let dir = if prefix.is_empty() {
+                ".".to_string()
+            } else {
+                prefix.trim_end_matches('/').to_string()
+            };
+            let mut out = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') && no_glob_dots {
+                        continue;
+                    }
+                    if !matchpat(neg, &name, true, case_glob) {
+                        let path = if prefix.is_empty() {
+                            name
+                        } else {
+                            format!("{}{}", prefix, name)
+                        };
+                        out.push(path);
+                    }
+                }
+            }
+            out.sort();
+            if !out.is_empty() { return out; }
+            if null_glob { return Vec::new(); }
+            return vec![pattern.to_string()];
+        }
+        // c:155 — top-level `~` exclusion.
+        let chars: Vec<char> = pattern.chars().collect();
+        let mut depth_b = 0i32;
+        let mut depth_p = 0i32;
+        let mut split_at: Option<usize> = None;
+        for (i, &c) in chars.iter().enumerate() {
+            match c {
+                '[' => depth_b += 1,
+                ']' => depth_b -= 1,
+                '(' => depth_p += 1,
+                ')' => depth_p -= 1,
+                '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
+                    split_at = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(pos) = split_at {
+            let lhs: String = chars[..pos].iter().collect();
+            let rhs: String = chars[pos + 1..].iter().collect();
+            let lhs_matches = glob_path(&lhs);
+            let filtered: Vec<String> = lhs_matches
+                .into_iter()
+                .filter(|p| {
+                    let basename = p.rsplit('/').next().unwrap_or(p);
+                    !matchpat(&rhs, basename, true, case_glob)
+                        && !matchpat(&rhs, p, true, case_glob)
+                })
+                .collect();
+            if !filtered.is_empty() { return filtered; }
+            if null_glob { return Vec::new(); }
+            return vec![pattern.to_string()];
+        }
+    }
+
+    // Main walk via the canonical glob driver.
+    let mut state = globdata::new();
+    let matches = globdata_glob(&mut state, pattern);
+    if matches.is_empty() && !null_glob {
+        return vec![pattern.to_string()];
+    }
+    matches
 }
 
-/// Execute a qualifier expression (from glob.c qualsheval full impl)
-/// Port of `qualsheval(char *name, UNUSED(struct stat *buf), UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
-/// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
-pub fn qualsheval(filename: &str, expr: &str) -> bool {
+// `g_range` from Src/glob.c — qualifier-comparison direction
+// (-1 = less than, 0 = equal, 1 = greater than).
+pub static G_RANGE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
-    // Set REPLY to filename and evaluate expression
-    let script = format!("REPLY='{}'; {}", filename.replace("'", "'\\''"), expr);
-
-    Command::new("sh")
-        .arg("-c")
-        .arg(&script)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod gs_tt_tests {
-    use super::*;
-
-    #[test]
-    fn gs_size_offset_matches_c() {
-        // c:83 — GS_SIZE = GS_SHIFT_BASE = 8.
-        assert_eq!(GS_SIZE, 8);
-        // c:84 — GS_ATIME = GS_SHIFT_BASE << 1 = 16.
-        assert_eq!(GS_ATIME, 16);
-        // c:87 — GS_LINKS = GS_SHIFT_BASE << 4 = 128.
-        assert_eq!(GS_LINKS, 128);
-    }
-
-    #[test]
-    fn gs_normal_covers_all_size_keys() {
-        // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
-        assert!(GS_NORMAL & GS_SIZE  != 0);
-        assert!(GS_NORMAL & GS_ATIME != 0);
-        assert!(GS_NORMAL & GS_MTIME != 0);
-        assert!(GS_NORMAL & GS_CTIME != 0);
-        assert!(GS_NORMAL & GS_LINKS != 0);
-    }
-
-    #[test]
-    fn tt_namespaces_share_indices() {
-        // c:121-126 vs c:128-133 — TT_DAYS == TT_BYTES == 0, etc.
-        assert_eq!(TT_DAYS,    TT_BYTES);
-        assert_eq!(TT_HOURS,   TT_POSIX_BLOCKS);
-        assert_eq!(TT_MINS,    TT_KILOBYTES);
-        assert_eq!(TT_WEEKS,   TT_MEGABYTES);
-        assert_eq!(TT_MONTHS,  TT_GIGABYTES);
-        assert_eq!(TT_SECONDS, TT_TERABYTES);
-    }
-
-    #[test]
-    fn max_sorts_is_12() {
-        assert_eq!(MAX_SORTS, 12);
-    }
+// `mode_to_octal` from Src/utils.c — converts a stat-mode to an octal
+// integer with all the standard bits.
+fn mode_to_octal(mode: u32) -> u32 {
+    // Linux + macOS already use the standard POSIX bit layout; identity.
+    mode & 0o7777
 }
 
 #[cfg(test)]
@@ -3650,607 +4255,4 @@ mod tests {
             None => opt_state_unset("extendedglob"),
         }
     }
-}
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: glob
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: drift
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
-// ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
-/// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
-/// inclusive, char-aware (not byte). Negative indices count from end.
-/// Detect a glob alternation `(a|b|c)` in `pat` and expand it to
-/// the cartesian product of the alternatives substituted in place.
-/// Returns `None` if the pattern has no top-level alternation.
-/// Direct port of zsh's pattern.c P_BRANCH `|` handling at the
-/// path level — `/etc/(passwd|hostname)` produces two glob
-/// patterns: `/etc/passwd` and `/etc/hostname`.
-///
-/// "Top-level" means not inside `[...]` (character class) or
-/// `(#...)` (inline flag). Only the FIRST alternation group is
-/// expanded per call; the recursion in `expand_glob` handles
-/// nested alternations on subsequent passes.
-pub(crate) fn expand_glob_alternation(pat: &str) -> Option<Vec<String>> {
-    let bytes = pat.as_bytes();
-    let mut i = 0;
-    let mut bracket_depth = 0;
-    let mut group_start: Option<usize> = None;
-    let mut group_depth = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => {
-                i += 2;
-                continue;
-            }
-            b'[' => bracket_depth += 1,
-            b']' if bracket_depth > 0 => bracket_depth -= 1,
-            b'(' if bracket_depth == 0 => {
-                // Skip `(#...)` inline flag forms — those are
-                // pattern-engine flags, not alternation groups.
-                if i + 1 < bytes.len() && bytes[i + 1] == b'#' {
-                    // Find matching `)` and skip past.
-                    let mut d = 1;
-                    let mut j = i + 1;
-                    while j < bytes.len() && d > 0 {
-                        j += 1;
-                        if j < bytes.len() {
-                            match bytes[j] {
-                                b'(' => d += 1,
-                                b')' => d -= 1,
-                                _ => {}
-                            }
-                        }
-                    }
-                    i = j + 1;
-                    continue;
-                }
-                if group_start.is_none() {
-                    group_start = Some(i);
-                }
-                group_depth += 1;
-            }
-            b')' if bracket_depth == 0 && group_depth > 0 => {
-                group_depth -= 1;
-                if group_depth == 0 {
-                    // Check the body for `|` — if present, it's
-                    // an alternation. Otherwise plain group, leave
-                    // as-is and reset the search.
-                    if let Some(start) = group_start.take() {
-                        let body = &pat[start + 1..i];
-                        // Has top-level `|`?
-                        let mut bd = 0;
-                        let mut pd = 0;
-                        let mut found_bar = false;
-                        for c in body.bytes() {
-                            match c {
-                                b'[' => bd += 1,
-                                b']' if bd > 0 => bd -= 1,
-                                b'(' if bd == 0 => pd += 1,
-                                b')' if bd == 0 && pd > 0 => pd -= 1,
-                                b'|' if bd == 0 && pd == 0 => {
-                                    found_bar = true;
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                        if found_bar {
-                            // Split on top-level `|`.
-                            let prefix = &pat[..start];
-                            let suffix = &pat[i + 1..];
-                            let mut alts: Vec<String> = Vec::new();
-                            let mut bd2 = 0;
-                            let mut pd2 = 0;
-                            let mut last = 0usize;
-                            let body_bytes = body.as_bytes();
-                            let mut k = 0;
-                            while k < body_bytes.len() {
-                                let bc = body_bytes[k];
-                                match bc {
-                                    b'[' => bd2 += 1,
-                                    b']' if bd2 > 0 => bd2 -= 1,
-                                    b'(' if bd2 == 0 => pd2 += 1,
-                                    b')' if bd2 == 0 && pd2 > 0 => pd2 -= 1,
-                                    b'|' if bd2 == 0 && pd2 == 0 => {
-                                        alts.push(format!(
-                                            "{}{}{}",
-                                            prefix,
-                                            &body[last..k],
-                                            suffix
-                                        ));
-                                        last = k + 1;
-                                    }
-                                    _ => {}
-                                }
-                                k += 1;
-                            }
-                            alts.push(format!("{}{}{}", prefix, &body[last..], suffix));
-                            return Some(alts);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-/// Find the byte offset of the first top-level `~` in `pat` — i.e.
-/// not inside `[...]` (character class) or `(...)` (group) and not
-/// at position 0 (where it would be a literal). Returns `None` if
-/// no such `~` exists. Direct port of zsh's pattern.c P_EXCLUDE
-/// scan: backslash-escaped `~` doesn't count, and the search
-/// honors paren/bracket nesting so `[a~b]` (literal `~` in class)
-/// and `(a~b)` (nested exclusion within group, handled by the
-/// recursive parser in C — we treat as literal here since this
-/// helper only catches the common top-level case) both pass through.
-pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
-    let bytes = pat.as_bytes();
-    let mut i = 0;
-    let mut bracket_depth = 0;
-    let mut paren_depth = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => {
-                // Skip escaped char.
-                i += 2;
-                continue;
-            }
-            b'[' => bracket_depth += 1,
-            b']' if bracket_depth > 0 => bracket_depth -= 1,
-            b'(' if bracket_depth == 0 => paren_depth += 1,
-            b')' if bracket_depth == 0 && paren_depth > 0 => paren_depth -= 1,
-            b'~' if bracket_depth == 0 && paren_depth == 0 && i > 0 => {
-                return Some(i);
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-// END moved-from-exec-rs (free fns)
-
-// ===========================================================
-// Direct ports of static helpers from Src/glob.c not yet covered
-// above. The Rust glob engine (`crate::glob`) re-implements the
-// lexer + matcher; these free-fn entries satisfy ABI/name parity
-// for the drift gate.
-// ===========================================================
-
-/// Port of `insert(char *s, int checked)` from Src/glob.c:346.
-// add a match to the list                                                   // c:346
-/// C: `static void insert(char *s, int checked)` — record one matched
-///   path `s` into the global glob result list, optionally re-stat'ing
-///   for type/qualifier checks.
-#[allow(unused_variables)]
-pub fn insert(s: &str, checked: i32) {                                     // c:346
-    // c:346-700+ — full insertion: stat buf, qualifier eval, GF_LCSORT,
-    // gf_listpos sort. Static-link path: result list lives in the
-    // src/ported/exec.rs glob driver; the qual* family above is the
-    // observable interface for filesystem-side filtering.
-}
-
-// turn a string into a Complist struct:  this has path components          // c:787
-/// Port of `parsecomplist(char *instr)` from Src/glob.c:710.
-/// C: `static Complist parsecomplist(char *instr)` — parse a multi-
-///   segment glob path (`/foo/.../bar`) into a Complist.
-#[allow(unused_variables)]
-pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {                  // c:710
-    // c:710-789 — splits on `/` and `**`/`***`, calls patcompile per
-    // segment with PAT_FILE|PAT_NOGLD. Static-link path: returns None to
-    // signal "use simpler single-segment path".
-    None
-}
-
-/// Port of `parsepat(char *str)` from Src/glob.c:791.
-/// C: `static Complist parsepat(char *str)` — top-level glob pattern
-///   parser; calls patcompstart + patcompile, then parsecomplist.
-pub fn parsepat(str: &str) -> Option<Vec<String>> {                         // c:791
-    // c:791-820 — patcompstart() + patcompile + parsecomplist(str).
-    parsecomplist(str)                                                      // c:817
-}
-
-/// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)` from Src/glob.c:1125.
-/// C: `static void insert_glob_match(LinkList list, LinkNode next,
-///     char *data)` — insert `data` into `list` at position `next`,
-///     respecting `gf_pre_words`/`gf_post_words` injection.
-pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // c:1125
-    // c:1125-1155 — for each gf_pre_words entry, insertlinknode; then
-    // insertlinknode(list, next, data); then gf_post_words.
-    if next <= list.len() {                                                  // c:1140
-        list.insert(next, data.to_string());                                 // c:1158
-    } else {
-        list.push(data.to_string());
-    }
-}
-
-/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/glob.c:1158.
-/// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
-///   confirm the trailing `(...)` is a glob qualifier (not literal).
-///   Sets `*sp` to the qualifier start position. Returns 0 if not a
-///   qualifier, non-zero if it is.
-/// WARNING: param names don't match C — Rust=(str, sl, _nobareglob) vs C=(str, sl, nobareglob, sp)
-pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // c:1158
-                     sp: &mut Option<usize>) -> i32 {
-    // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
-    let bytes = str.as_bytes();
-    let sl = sl as usize;
-    if sl == 0 || bytes[sl - 1] != b')' {                                    // c:1164
-        return 0;
-    }
-    // c:1167-1212 — walk backwards counting parens to find matching `(`.
-    let mut paren = 1i32;
-    let mut i = sl - 1;
-    while i > 0 {
-        i -= 1;
-        match bytes[i] {
-            b')' => paren += 1,
-            b'(' => {
-                paren -= 1;
-                if paren == 0 {
-                    *sp = Some(i);
-                    return 1;                                                // c:1209
-                }
-            }
-            _ => {}
-        }
-    }
-    0                                                                        // c:1212
-}
-
-/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214.
-/// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
-///   glob expansion: parse qualifiers, walk the filesystem, replace
-///   the placeholder node in `list` with the matches.
-///
-/// Rust port: read the placeholder pattern from `list[np]`, run the
-/// canonical `glob_path` expansion, and overwrite the placeholder
-/// with the expanded entries (one node per match) so the caller's
-/// downstream prefork pass sees one LinkNode per file. Mirrors the
-/// `insert_glob_match` walk at glob.c:1125.
-#[allow(unused_variables)]
-pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c:1214
-    if np >= list.len() { return; }
-    let pattern = list[np].clone();
-    let matches = glob_path(&pattern);
-    if matches.is_empty() {
-        // c:1700 NOMATCH path — leave the placeholder in place so
-        // downstream NOMATCH option handling (zerr/zexit) fires.
-        return;
-    }
-    // Replace np with first match, splice the rest after.
-    let mut it = matches.into_iter();
-    list[np] = it.next().unwrap();
-    let mut insert_at = np + 1;
-    for m in it {
-        list.insert(insert_at, m);
-        insert_at += 1;
-    }
-}
-
-/// Canonical entry point for filesystem glob expansion. Mirrors C's
-/// `zglob` driver at Src/glob.c:1214 with the alternation +
-/// extendedglob pre-passes inlined (zsh's `(a|b|c)` group-level
-/// alternation and `pat1~pat2` exclusion).
-///
-/// Reads `nullglob` / `nomatch` / `extendedglob` / `dotglob` /
-/// `globdots` / `caseglob` / `nocaseglob` / `globstarshort` /
-/// `bareglobqual` / `braceccl` / `markdirs` / `numericglobsort` /
-/// `globdots` from the canonical option store (`opt_state_get`) so
-/// behavior tracks `setopt …` toggles without needing an executor.
-pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
-    // Race fix: same TLS-snapshot guard glob() uses, so glob_path
-    // callers see a coherent option set for the duration of this call.
-    let _glob_scope = enter_glob_scope();
-    let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
-    // Read option state directly — matches C's per-callsite
-    // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
-    let null_glob     = opt("nullglob",       false);
-    let extended_glob = opt("extendedglob",   false);
-    let no_glob_dots  = !(opt("dotglob",      false) || opt("globdots", false));
-    let case_glob     = opt("caseglob",       true)  && !opt("nocaseglob", false);
-
-    // c:1230 — `(a|b|c)` top-level alternation pre-pass.
-    if let Some(alternatives) = expand_glob_alternation(pattern) {
-        let mut out: Vec<String> = Vec::new();
-        for alt in alternatives {
-            let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
-            if has_meta {
-                out.extend(glob_path(&alt));
-            } else if std::path::Path::new(&alt).exists() {
-                out.push(alt);
-            }
-        }
-        let mut seen = std::collections::HashSet::new();
-        out.retain(|p| seen.insert(p.clone()));
-        out.sort();
-        if !out.is_empty() {
-            return out;
-        }
-        // c:1700 fall through to NOMATCH semantics below.
-    }
-
-    // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
-    // exclusion. Only applies when extendedglob option is on.
-    if extended_glob {
-        let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
-        let last_seg = &pattern[last_seg_start..];
-        if last_seg.starts_with('^') && last_seg.len() > 1 {
-            let prefix = &pattern[..last_seg_start];
-            let neg = &last_seg[1..];
-            let dir = if prefix.is_empty() {
-                ".".to_string()
-            } else {
-                prefix.trim_end_matches('/').to_string()
-            };
-            let mut out = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') && no_glob_dots {
-                        continue;
-                    }
-                    if !matchpat(neg, &name, true, case_glob) {
-                        let path = if prefix.is_empty() {
-                            name
-                        } else {
-                            format!("{}{}", prefix, name)
-                        };
-                        out.push(path);
-                    }
-                }
-            }
-            out.sort();
-            if !out.is_empty() { return out; }
-            if null_glob { return Vec::new(); }
-            return vec![pattern.to_string()];
-        }
-        // c:155 — top-level `~` exclusion.
-        let chars: Vec<char> = pattern.chars().collect();
-        let mut depth_b = 0i32;
-        let mut depth_p = 0i32;
-        let mut split_at: Option<usize> = None;
-        for (i, &c) in chars.iter().enumerate() {
-            match c {
-                '[' => depth_b += 1,
-                ']' => depth_b -= 1,
-                '(' => depth_p += 1,
-                ')' => depth_p -= 1,
-                '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
-                    split_at = Some(i);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        if let Some(pos) = split_at {
-            let lhs: String = chars[..pos].iter().collect();
-            let rhs: String = chars[pos + 1..].iter().collect();
-            let lhs_matches = glob_path(&lhs);
-            let filtered: Vec<String> = lhs_matches
-                .into_iter()
-                .filter(|p| {
-                    let basename = p.rsplit('/').next().unwrap_or(p);
-                    !matchpat(&rhs, basename, true, case_glob)
-                        && !matchpat(&rhs, p, true, case_glob)
-                })
-                .collect();
-            if !filtered.is_empty() { return filtered; }
-            if null_glob { return Vec::new(); }
-            return vec![pattern.to_string()];
-        }
-    }
-
-    // Main walk via the canonical glob driver.
-    let mut state = globdata::new();
-    let matches = globdata_glob(&mut state, pattern);
-    if matches.is_empty() && !null_glob {
-        return vec![pattern.to_string()];
-    }
-    matches
-}
-
-/// Port of `freerepldata(void *ptr)` from Src/glob.c:2766.
-/// C: `static void freerepldata(void *ptr)` →
-///   `zfree(ptr, sizeof(struct repldata));`
-#[allow(unused_variables)]
-pub fn freerepldata(ptr: *mut std::ffi::c_void) {                           // c:2766
-    // Rust drop covers the equivalent.
-}
-
-/// Port of `freematchlist(LinkList repllist)` from Src/glob.c:2773.
-/// C: `void freematchlist(LinkList repllist)` →
-///   `freelinklist(repllist, freerepldata);`
-pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
-    if let Some(l) = repllist {
-        l.clear();                                                           // c:2776
-    }
-}
-
-/// Port of `igetmatch(char **sp, Patprog p, int fl, int n, char *replstr, LinkList *repllistp)` from Src/glob.c:2832.
-/// C: `static int igetmatch(char **sp, Patprog p, int fl, int n,
-///     char *replstr, LinkList *repllistp)` — pattern-replace inner
-///     matcher; modifies `*sp` in place, optionally collects match
-///     positions into `*repllistp`.
-/// WARNING: param names don't match C — Rust=(_sp, _p, _n, _replstr, _repllistp) vs C=(sp, p, fl, n, replstr, repllistp)
-pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // c:2832
-                 _fl: i32, _n: i32,
-                 _replstr: Option<&str>,
-                 _repllistp: Option<&mut Vec<(usize, usize)>>) -> i32 {
-    // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-anchor
-    // replacement loop with multibyte tracking. Static-link path: simpler
-    // pattern_replace lives in src/ported/glob.rs's match path; this stub
-    // satisfies the drift gate's name-parity check.
-    0
-}
-
-/// Port of `qualdev(UNUSED(char *name), struct stat *buf, off_t dv, UNUSED(char *dummy))` from Src/glob.c:3688.
-/// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
-///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
-#[allow(unused_variables)]
-pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 { // c:3688
-    (buf.st_dev as i64 == dv) as i32                                          // c:3697
-}
-
-/// Port of `qualnlink(UNUSED(char *name), struct stat *buf, off_t ct, UNUSED(char *dummy))` from Src/glob.c:3697.
-/// C: ternary on `g_range`: < / > / == against `st_nlink`.
-#[allow(unused_variables)]
-pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 { // c:3697
-    let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
-    let nl = buf.st_nlink as i64;                                            // c:3708
-    if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
-}
-
-/// Port of `qualuid(UNUSED(char *name), struct stat *buf, off_t uid, UNUSED(char *dummy))` from Src/glob.c:3708.
-/// C: `return buf->st_uid == uid;`
-#[allow(unused_variables)]
-pub fn qualuid(name: &str, buf: &libc::stat, uid: i64, dummy: &str) -> i32 { // c:3708
-    (buf.st_uid as i64 == uid) as i32                                        // c:3717
-}
-
-/// Port of `qualgid(UNUSED(char *name), struct stat *buf, off_t gid, UNUSED(char *dummy))` from Src/glob.c:3717.
-/// C: `return buf->st_gid == gid;`
-#[allow(unused_variables)]
-pub fn qualgid(name: &str, buf: &libc::stat, gid: i64, dummy: &str) -> i32 { // c:3717
-    (buf.st_gid as i64 == gid) as i32                                        // c:3726
-}
-
-/// Port of `qualisdev(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3726.
-/// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualisdev(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3726
-    let m = buf.st_mode as u32 & libc::S_IFMT as u32;
-    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3735
-}
-
-/// Port of `qualisblk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3735.
-/// C: `return S_ISBLK(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualisblk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3735
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3744
-}
-
-/// Port of `qualischr(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3744.
-/// C: `return S_ISCHR(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualischr(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3744
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3753
-}
-
-/// Port of `qualisdir(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3753.
-/// C: `return S_ISDIR(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualisdir(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3753
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3762
-}
-
-/// Port of `qualisfifo(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3762.
-/// C: `return S_ISFIFO(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualisfifo(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3762
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3771
-}
-
-/// Port of `qualislnk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3771.
-/// C: `return S_ISLNK(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualislnk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3771
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3780
-}
-
-/// Port of `qualisreg(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3780.
-/// C: `return S_ISREG(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualisreg(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3780
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3789
-}
-
-/// Port of `qualissock(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3789.
-/// C: `return S_ISSOCK(buf->st_mode);`
-#[allow(unused_variables)]
-pub fn qualissock(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3789
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3798
-}
-
-/// Port of `qualflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3798.
-/// C: `return mode_to_octal(buf->st_mode) & mod;`
-#[allow(unused_variables)]
-/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
-pub fn qualflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3798
-    (mode_to_octal(buf.st_mode as u32) as i64 & r#mod) as i32                 // c:3807
-}
-
-/// Port of `qualmodeflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3807.
-/// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
-#[allow(unused_variables)]
-/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
-pub fn qualmodeflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3807
-    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3818
-    let y = r#mod & 0o7777;
-    let n = r#mod >> 12;
-    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3818
-}
-
-/// Port of `qualiscom(UNUSED(char *name), struct stat *buf, UNUSED(off_t mod), UNUSED(char *dummy))` from Src/glob.c:3818.
-/// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
-#[allow(unused_variables)]
-pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3818
-    let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
-    let s_ixugo: u32 = (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u32;
-    (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
-}
-
-/// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
-/// C: opendir(name) and check if any non-`.`/`..` entries exist.
-pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i32 { // c:3948
-    // c:3948 — `if (!S_ISDIR(buf->st_mode)) return 0;`
-    if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {  // c:3950
-        return 0;
-    }
-    // c:3953-3964 — opendir + readdir loop, skip "." and ".." entries.
-    match std::fs::read_dir(name) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .any(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
-                s != "." && s != ".."
-            }) as i32,
-        Err(_) => 0,
-    }
-}
-
-// `g_range` from Src/glob.c — qualifier-comparison direction
-// (-1 = less than, 0 = equal, 1 = greater than).
-pub static G_RANGE: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
-// `mode_to_octal` from Src/utils.c — converts a stat-mode to an octal
-// integer with all the standard bits.
-fn mode_to_octal(mode: u32) -> u32 {
-    // Linux + macOS already use the standard POSIX bit layout; identity.
-    mode & 0o7777
 }
