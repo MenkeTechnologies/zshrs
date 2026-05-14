@@ -902,19 +902,17 @@ pub fn yyerror(msg: &str) {
 }
 
 // ============================================================
-// Wordcode emission stubs (parse.c private helpers)
+// Wordcode emission helpers (parse.c private helpers)
 //
-// The following functions are direct counterparts of zsh's
-// private wordcode-emission helpers in parse.c. zsh uses these
-// to write u32 opcodes into a flat `ecbuf` array; zshrs builds
-// an AST tree and never emits wordcode at the parse layer.
-// The implementations are documented stubs that preserve the
-// function signatures + cite the C source. Real wordcode would
-// be emitted later by compile_zsh.rs walking the AST.
+// Direct ports of zsh's wordcode-emission helpers in parse.c.
+// These write u32 opcodes into a flat `ecbuf` array thread-local
+// via ecadd / ecdel / ecispace / ecstrcode and friends. The
+// par_*_wordcode family at parse.rs:1700-3500 walks the lex
+// stream and emits a real wordcode buffer here.
 //
-// Listed for port-surface completeness so every parse.c symbol
-// has a Rust counterpart even when the algorithm is moot in the
-// AST architecture.
+// (The AST tree built by par_program / par_simple / etc. is a
+// separate path used by fusevm; see compile_zsh.rs for the AST
+// → fusevm-bytecode compiler.)
 // ============================================================
 
 /// Patch a list-placeholder wordcode with its actual opcode +
@@ -1447,9 +1445,11 @@ pub fn freeeprog(p: &mut crate::ported::zsh_h::eprog) {
 // ============================================================
 // Wordcode runtime getters (parse.c:2853-3060)
 //
-// These read packed wordcode out of a running Eprog at execution
-// time. zshrs's executor walks the AST directly so these are
-// stubs that preserve the C signatures + cite the source.
+// Direct ports of the wordcode-read helpers (ecrawstr,
+// ecgetstr, ecgetarr, ecgetredirs, ecgetlist, eccopyredirs).
+// Read packed wordcode out of an Eprog at execution time.
+// Used by exec_wordcode and the wordcode-walking dispatch in
+// src/exec.rs.
 // ============================================================
 
 /// Port of `ecrawstr(Eprog p, Wordcode pc, int *tokflag)` from
