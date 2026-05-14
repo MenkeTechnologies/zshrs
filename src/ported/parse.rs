@@ -2002,17 +2002,14 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
     // c:960 — `int r, nr = 0;`
     let mut nr: i32 = 0;
     // c:962 — `r = ecused;`
-    let mut r = ECUSED.get();
-    // c:964-969 — leading redirs.
+    let mut r: usize = ECUSED.get() as usize;
+    // c:964-968 — leading redirs.
     if IS_REDIROP(tok()) {
         // c:965 — `*cmplx = 1;`
         *cmplx = 1;
+        // c:966-968 — `while (IS_REDIROP(tok)) { nr += par_redir(&r, NULL); }`
         while IS_REDIROP(tok()) {
-            if par_redir().is_some() {
-                nr += 1;
-            } else {
-                break;
-            }
+            nr += par_redir_wordcode(&mut r);
         }
     }
     // c:970-1066 — token-dispatch switch.
@@ -2099,7 +2096,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
                 }
                 if sr > 1 {
                     *cmplx = 1;
-                    r += sr - 1;
+                    r += (sr - 1) as usize;
                 }
             }
         }
@@ -2113,15 +2110,16 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
             } else if sr > 1 {
                 // c:1060-1061 — `*cmplx = 1; r += sr - 1;`
                 *cmplx = 1;
-                r += sr - 1;
+                r += (sr - 1) as usize;
             }
         }
     }
     // c:1067-1071 — trailing redirs.
+    // c:1067 — `if (IS_REDIROP(tok)) { *cmplx = 1; while (...) (void)par_redir(&r, NULL); }`
     if IS_REDIROP(tok()) {
         *cmplx = 1;
         while IS_REDIROP(tok()) {
-            let _ = par_redir();
+            let _ = par_redir_wordcode(&mut r);
         }
     }
     // c:1072-1075 — `incmdpos=1; incasepat=0; incond=0; intypeset=0;`
