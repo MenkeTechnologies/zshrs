@@ -136,14 +136,32 @@ def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
             elif c == ')': depth -= 1
             pos += 1
         # Skip return type / where-clause / attrs until `{` or `;`.
-        while pos < len(src) and src[pos] != '{' and src[pos] != ';':
+        # For Rust, track `[`/`]` (array types like `[u8; 4]`) and
+        # `<`/`>` (generics) bracket depth — `;` inside those is type
+        # syntax, not a fn-decl terminator.
+        sq_depth = 0
+        ang_depth = 0
+        while pos < len(src):
             new_pos = _skip_lex(src, pos)
             if new_pos != pos:
                 pos = new_pos
                 continue
+            c = src[pos]
+            if is_rust:
+                if c == '[': sq_depth += 1
+                elif c == ']': sq_depth = max(0, sq_depth - 1)
+                elif c == '<': ang_depth += 1
+                elif c == '>': ang_depth = max(0, ang_depth - 1)
+            if sq_depth == 0 and ang_depth == 0:
+                if c == '{' or c == ';':
+                    break
             pos += 1
         if pos >= len(src) or src[pos] == ';':
-            bodies[name] = 0
+            # `;`-terminated decl (extern FFI prototype, fn forward
+            # declaration). Don't overwrite a previously-seen real
+            # body with 0 — use setdefault so a real `{` body found
+            # earlier in the file survives.
+            bodies.setdefault(name, 0)
             continue
         # Walk to matching close brace.
         body_start = pos + 1
