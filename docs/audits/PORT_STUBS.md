@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-14T21:17:02.291673+00:00
+Generated: 2026-05-14T21:18:14.508572+00:00
 
 ## Method
 
@@ -16,11 +16,10 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 172 stubs across 46 files
+## Summary: 168 stubs across 46 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
-| `src/ported/jobs.rs` | 8 | `clearjobtab` (1 / 22) |
 | `src/ported/modules/zutil.rs` | 8 | `zalloc_default_array` (1 / 17) |
 | `src/ported/zle/zle_hist.rs` | 8 | `doisearch` (12 / 454) |
 | `src/ported/zle/zle_refresh.rs` | 8 | `moveto` (2 / 44) |
@@ -38,6 +37,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/init.rs` | 5 | `init_term` (8 / 86) |
 | `src/ported/parse.rs` | 5 | `check_dump_file` (1 / 83) |
 | `src/ported/zle/zle_utils.rs` | 5 | `stringaszleline` (14 / 102) |
+| `src/ported/jobs.rs` | 4 | `handle_sub` (10 / 57) |
 | `src/ported/modules/db_gdbm.rs` | 4 | `gdbmgetfn` (7 / 28) |
 | `src/ported/signals.rs` | 4 | `killrunjobs` (1 / 13) |
 | `src/ported/zle/complist.rs` | 4 | `compprintfmt` (4 / 232) |
@@ -68,19 +68,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/computil.rs` | 1 | `cfp_add_sdirs` (18 / 73) |
 
 ## Per-file detail
-
-### `src/ported/jobs.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1055 | `clearjobtab` | 1 | 22 | 4% |
-| 1117 | `spawnjob` | 4 | 24 | 16% |
-| 277 | `handle_sub` | 10 | 57 | 17% |
-| 895 | `freejob` | 7 | 34 | 20% |
-| 402 | `update_job` | 33 | 146 | 22% |
-| 810 | `addfilelist` | 4 | 15 | 26% |
-| 638 | `should_report_time` | 12 | 44 | 27% |
-| 545 | `printtime` | 56 | 192 | 29% |
 
 ### `src/ported/modules/zutil.rs` — 8 stubs
 
@@ -272,6 +259,15 @@ python3 scripts/gen_port_stubs.py
 | 195 | `spaceinline` | 8 | 54 | 14% |
 | 249 | `cuttext` | 18 | 79 | 22% |
 | 161 | `zle_save_positions` | 8 | 34 | 23% |
+
+### `src/ported/jobs.rs` — 4 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 277 | `handle_sub` | 10 | 57 | 17% |
+| 402 | `update_job` | 33 | 146 | 22% |
+| 638 | `should_report_time` | 12 | 44 | 27% |
+| 545 | `printtime` | 56 | 192 | 29% |
 
 ### `src/ported/modules/db_gdbm.rs` — 4 stubs
 
