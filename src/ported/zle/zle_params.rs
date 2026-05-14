@@ -683,16 +683,15 @@ pub fn get_prepost(text: &str, len: usize) -> String {                       // 
 }
 
 /// Port of `set_predisplay(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c:886.
+/// C body (single statement):
+///     `set_prepost(&predisplay, &predisplaylen, x);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_predisplay(x: Option<&str>) {                                     // c:886
-    use crate::ported::zle::zle_misc::PREDISPLAY;
-    use std::sync::Mutex;
-    let g = PREDISPLAY.get_or_init(|| Mutex::new(String::new()));
-    let mut buf = g.lock().unwrap();
-    buf.clear();
-    if let Some(s) = x {
-        buf.push_str(s);
-    }
+    let mut buf = crate::ported::zle::zle_misc::PREDISPLAY                   // c:888 &predisplay
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().unwrap();
+    let mut len = buf.chars().count();                                       // c:888 &predisplaylen
+    set_prepost(&mut buf, &mut len, x);                                      // c:888
 }
 
 /// Port of `get_predisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:893.
@@ -705,16 +704,15 @@ pub fn get_predisplay() -> String {                                          // 
 }
 
 /// Port of `set_postdisplay(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c:900.
+/// C body (single statement):
+///     `set_prepost(&postdisplay, &postdisplaylen, x);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_postdisplay(x: Option<&str>) {                                    // c:900
-    use crate::ported::zle::zle_misc::POSTDISPLAY;
-    use std::sync::Mutex;
-    let g = POSTDISPLAY.get_or_init(|| Mutex::new(String::new()));
-    let mut buf = g.lock().unwrap();
-    buf.clear();
-    if let Some(s) = x {
-        buf.push_str(s);
-    }
+    let mut buf = crate::ported::zle::zle_misc::POSTDISPLAY                  // c:902 &postdisplay
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().unwrap();
+    let mut len = buf.chars().count();                                       // c:902 &postdisplaylen
+    set_prepost(&mut buf, &mut len, x);                                      // c:902
 }
 
 /// Port of `get_postdisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:907.
