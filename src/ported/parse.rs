@@ -2954,11 +2954,24 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     // c:1836-1842 — `int oecused = ecused, isnull = 1, r, argc = 0,
     // p, isfunc = 0, sr = 0; int c = *cmplx, nrediradd, assignments
     // = 0, ppost = 0, is_typeset = 0; ...`
+    // c:1839 — `int c = *cmplx`. Captures the initial cmplx value at
+    // entry so the INOUTPAR funcdef branch (c:2070) can restore it via
+    // `*cmplx = c;` — funcdef is NOT structurally complex from the
+    // enclosing list's perspective, even though par_simple sets cmplx
+    // to true while collecting names. Without this save/restore, the
+    // top-level WC_LIST loses its Z_SIMPLE optimization for
+    // single-funcdef-cmd files (set_list_code requires !cmplx).
     let _oecused = ECUSED.get() as usize;
+    let initial_cmplx = cmplx_get();
     let mut isnull = true;
     let mut argc: u32 = 0;
     let mut sr: i32 = 0;
     let mut assignments = false;
+    // c:1838 — `int isfunc = 0`. Set to 1 when INOUTPAR funcdef
+    // branch fires so the post-loop WCB_SIMPLE/WCB_TYPESET emission
+    // is skipped (c:2189 `if (!isfunc) { ecbuf[p] = ... }`).
+    // Without this flag the FUNCDEF header gets clobbered by SIMPLE.
+    let mut isfunc = false;
 
     // c:1843 — `r = ecused;` — saves the offset where redirs get
     // INSERTED (via ecispace). Each redir shifts later words DOWN
@@ -3306,7 +3319,11 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                     error("par_simple: assignments before funcdef");
                     return 0;
                 }
-                cmplx_set(true);
+                // c:2070 — `*cmplx = c;` — restore the saved initial
+                // cmplx (typically false) so the enclosing list can
+                // apply Z_SIMPLE optimization to a single-funcdef cmd.
+                // OLD CODE SET cmplx=true which broke Z_SIMPLE.
+                cmplx_set(initial_cmplx);
                 set_incmdpos(true);
                 cmdpush(CS_FUNCDEF as u8);
                 zshlex();
@@ -3332,7 +3349,18 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 ECNFUNC.set(ECNFUNC.get() + 1);
                 let oecssub = ECSSUB.get();
                 ECSSUB.set(so);
+                // c:2091 — `int c = 0;` — INNER cmplx local to the
+                // body parse. C's `*cmplx` (the enclosing scope's
+                // cmplx) is NOT modified by the body's pattern
+                // setting. The funcdef header gets the body's
+                // cmplx-derived set_*_code, but the enclosing list
+                // sees only the saved initial_cmplx (already set
+                // above per c:2070). Save outer TLS cmplx, run body
+                // with fresh inner cmplx, then RESTORE outer — do
+                // NOT OR in the inner.
+                let body_outer_cmplx = cmplx_get();
                 if tok() == INBRACE_TOK {
+                    cmplx_set(false);
                     zshlex();
                     par_list_wordcode();
                     if tok() != OUTBRACE_TOK {
@@ -3345,6 +3373,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                         set_incmdpos(false);
                     }
                     zshlex();
+                    cmplx_set(body_outer_cmplx);
                 } else {
                     // c:2107-2132 — short-body funcdef form: `f() cmd` or
                     // `() cmd`. Wraps single par_cmd result in a synthetic
@@ -3353,14 +3382,13 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                     let ll = ecadd(0);
                     let sl = ecadd(0);
                     ecadd(WCB_PIPE(WC_PIPE_END, 0));
-                    let outer_cmplx = cmplx_get();
                     cmplx_set(false);
                     let ok = par_cmd_wordcode(argc == 0);
-                    let c = cmplx_get();
-                    cmplx_set(outer_cmplx | c);
+                    let inner_c = cmplx_get();
                     if !ok {
                         cmdpop();
                         error("par_simple: funcdef short-body: missing command");
+                        cmplx_set(body_outer_cmplx);
                         return 0;
                     }
                     if argc == 0 {
@@ -3368,10 +3396,13 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                         // after the body; first one already read.
                         set_incmdpos(false);
                     }
-                    // c:2130-2131
+                    // c:2130-2131 — inner sublist/list use inner cmplx.
                     let used = ECUSED.get() as usize;
-                    set_sublist_code(sl, WC_SUBLIST_END as i32, 0, (used.saturating_sub(1 + sl)) as i32, c);
-                    set_list_code(ll, Z_SYNC | Z_END, c);
+                    set_sublist_code(sl, WC_SUBLIST_END as i32, 0, (used.saturating_sub(1 + sl)) as i32, inner_c);
+                    set_list_code(ll, Z_SYNC | Z_END, inner_c);
+                    // Restore OUTER cmplx — inner's pattern-setting does
+                    // not leak into the enclosing list's cmplx.
+                    cmplx_set(body_outer_cmplx);
                 }
                 cmdpop();
                 ecadd(WCB_END());
@@ -3394,10 +3425,9 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 ECNPATS.with(|c| c.set(onp));
                 ECSSUB.set(oecssub);
                 ECNFUNC.set(ECNFUNC.get() + 1);
+                // c:2160-2162 — `isfunc = 1; isnull = 0; break;`.
+                isfunc = true;
                 isnull = false;
-                // Anonymous funcdef may have arguments — not ported
-                // yet. Break out of the words loop; outer parser
-                // handles whatever follows.
                 break;
             }
             _ => break,
@@ -3418,28 +3448,29 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     set_intypeset(false);
     // c:2189-2199 — `if (!isfunc) { if (is_typeset) ecbuf[p] =
     // WCB_TYPESET(argc); else ecbuf[p] = WCB_SIMPLE(argc); }`.
-    // The WCB_TYPESET header is followed by either a postassigns
-    // count at `ppost` (when assignments were emitted) or a
-    // trailing 0 word.
-    let header = if is_typeset {
-        if postassigns > 0 {
-            ECBUF.with_borrow_mut(|b| {
-                if ppost < b.len() {
-                    b[ppost] = postassigns;
-                }
-            });
+    // When isfunc=true the INOUTPAR branch already wrote WCB_FUNCDEF
+    // at p; do NOT clobber it.
+    if !isfunc {
+        let header = if is_typeset {
+            if postassigns > 0 {
+                ECBUF.with_borrow_mut(|b| {
+                    if ppost < b.len() {
+                        b[ppost] = postassigns;
+                    }
+                });
+            } else {
+                ecadd(0);
+            }
+            WCB_TYPESET(argc)
         } else {
-            ecadd(0);
-        }
-        WCB_TYPESET(argc)
-    } else {
-        WCB_SIMPLE(argc)
-    };
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = header;
-        }
-    });
+            WCB_SIMPLE(argc)
+        };
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = header;
+            }
+        });
+    }
     1 + sr
 }
 
