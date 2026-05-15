@@ -454,14 +454,7 @@ pub fn inpopalias() {                                                        // 
 /// Port of `ingetptr()` from Src/input.c:817.
 pub fn ingetptr() -> String {                                                // c:817
     let pos = inbufpos.with(|p| p.get());
-    inbuf.with(|b| {
-        let s = b.borrow();
-        if pos < s.len() {
-            s[pos..].to_string()
-        } else {
-            String::new()
-        }
-    })
+    inbuf.with(|b| b.borrow().get(pos..).map(str::to_string).unwrap_or_default())
 }
 
 // Size of buffer for non-interactive command input                        // c:127

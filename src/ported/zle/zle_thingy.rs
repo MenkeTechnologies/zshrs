@@ -145,20 +145,11 @@ impl Thingy {
 /// WARNING: param names don't match C — Rust=() vs C=(ht)
 pub fn emptythingytab() {                                                    // c:80
     // c:80 — `scanhashtable(thingytab, 0, 0, DISABLED, scanemptythingies, 0)`.
-    // The DISABLED filter skips already-disabled entries; we mirror
-    // that by collecting names of active entries first, then calling
-    // scanemptythingies on each (avoids holding the lock during the
-    // mutating callback).
-    let names: Vec<String> = {
-        let tab = thingytab().lock().unwrap();
-        tab.iter()
-            .filter(|(_, t)| (t.flags & DISABLED) == 0)
-            .map(|(k, _)| k.clone())
-            .collect()
-    };
-    for n in names {                                                         // c:91 scancallback
-        scanemptythingies(&n);
-    }
+    // Collect-then-iterate to avoid holding the lock during the mutating callback.
+    let names: Vec<String> = thingytab().lock().unwrap().iter()
+        .filter(|(_, t)| (t.flags & DISABLED) == 0)
+        .map(|(k, _)| k.clone()).collect();
+    names.iter().for_each(|n| scanemptythingies(n));                         // c:91 scancallback
 }
 
 /// Port of `scanemptythingies(HashNode hn, UNUSED(int flags))` from `Src/Zle/zle_thingy.c:96`.
