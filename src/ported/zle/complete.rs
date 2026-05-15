@@ -1338,22 +1338,13 @@ pub fn makecompparams() {                                                    // 
 }
 
 /// Direct port of `HashTable get_compstate(Param pm)` from
-/// `Src/Zle/complete.c:1357`. C body (c:1358-1361): `return pm->u.hash`
-/// — the inner hash of the $compstate hashed param. Returns the
-/// addr-of u_hash so callers can treat it as a HashTable handle;
-/// `None` when the param has no hash (PM_UNSET or wrong type).
-#[allow(unused_variables)]
+/// `Src/Zle/complete.c:1357`. C body (single statement):
+///     `return pm->u.hash;`
+/// Rust returns `Option<usize>` (opaque HashTable-pointer parity);
+/// `None` when the param has no hash.
 pub fn get_compstate(pm: *mut crate::ported::zsh_h::param) -> Option<usize> { // c:1357
-    if pm.is_null() { return None; }
-    let p = unsafe { &*pm };
-    if p.u_hash.is_some() {
-        // Return the address as an opaque HashTable handle. The C
-        // signature is `HashTable` (pointer); we expose the address
-        // for callers that compare-only (parity with C identity).
-        Some(&p.u_hash as *const _ as usize)
-    } else {
-        None
-    }
+    unsafe { pm.as_ref() }                                                   // c:1359 pm->...
+        .and_then(|p| p.u_hash.as_ref().map(|_| &p.u_hash as *const _ as usize))
 }
 
 /// Direct port of `void set_compstate(Param pm, HashTable ht)` from
