@@ -1,9 +1,8 @@
-.\" zshrsall.1 — comprehensive reference for zshrs (like zshall(1)).
-.\" Combines the per-topic content that, in upstream zsh, is split
-.\" across zshbuiltins, zshoptions, zshparam, zshzle, zshcompsys etc.
-.\" The zshrs-specific layers (daemon, fusevm, AOT, AOP, caches,
-.\" parity modes, recorder) are documented inline because they have
-.\" no upstream counterpart.
+.\" zshrsall.1 — comprehensive reference for zshrs (parallels zshall(1)).
+.\" Combines per-topic content (builtins, options, parameters, ZLE,
+.\" expansion, completion, modules, conditional/arithmetic/redirection)
+.\" plus the zshrs-only layers (daemon, fusevm, AOT, AOP, caches,
+.\" parity modes, recorder, worker pool, AOP intercepts).
 .TH ZSHRSALL 1 "2026-05-14" "zshrs 0.11.4" "User Commands"
 .SH NAME
 zshrsall \- the Z shell, Rust compiled implementation (full reference)
@@ -12,68 +11,59 @@ zshrsall \- the Z shell, Rust compiled implementation (full reference)
 .RI [ options ]
 .RI [ argument
 \&...]
-.SH DESCRIPTION
+.SH OVERVIEW
 This is the comprehensive reference for
 .BR zshrs (1).
-For the short option summary, see
-.BR zshrs (1).
-For the singleton coordinator daemon, see
+The short option summary lives in
+.BR zshrs (1);
+daemon administration in
 .BR zd (1).
 .PP
 .B zshrs
 is a strict 1:1 port of the Z shell
 .RB ( zsh (1))
-into Rust, with an additional non-port extensions layer that adds
-features zsh does not have. The runtime is a four-crate workspace:
-.IP "" 4
-.B zshrs
-\(em the runtime binary
-.IP "" 4
-.B compsys
-\(em completion-system subcrate
-.IP "" 4
-.B zshrs-daemon
-\(em the singleton coordinator
-.IP "" 4
-.B zshrs-recorder
-\(em the optional shell-session recorder
+into Rust, plus a non-port
+.I extensions
+layer that adds features zsh does not have. The runtime is a
+four-crate workspace:
+.IP \fBzshrs\fR 8
+the runtime binary
+.IP \fBcompsys\fR 8
+completion-system subcrate
+.IP \fBzshrs-daemon\fR 8
+singleton coordinator
+.IP \fBzshrs-recorder\fR 8
+optional shell-session recorder
 .PP
 .B src/ported/
-holds the strict 1:1 ports (89 files, every function maps to a real
+holds the strict 1:1 ports (89 files; every function maps to a real
 .IB Src/ x .c
 zsh function, enforced by
 .BR tests/port_purity.rs ).
 .B src/extensions/
-holds zshrs-only code (31 files: AOT, daemon coordination, plugin and
-script and autoload caches, fish-style autosuggestions / abbreviations /
+holds zshrs-only code (31 files: AOT, daemon coordination, plugin/
+script/autoload caches, fish-style autosuggestions/abbreviations/
 syntax highlighting, the persistent worker pool, ZWC bytecode helpers).
 .SH "THE COMPILED PIPELINE"
 Every command zshrs runs traverses this pipeline:
-.IP "" 4
-.B lex
-\(em
+.IP \fBlex\fR 8
 .IR src/ported/lex.rs ,
 matches
 .IR Src/lex.c .
-.IP "" 4
-.B parse
-\(em
+.IP \fBparse\fR 8
 .IR src/ported/parse.rs ,
 matches
 .IR Src/parse.c .
-.IP "" 4
-.B emit
-\(em wordcode emission, then
+.IP \fBemit\fR 8
+wordcode emission, then
 .B fusevm
 opcode lowering.
-.IP "" 4
-.B compile
-\(em
+.IP \fBcompile\fR 8
 .B fusevm
-JIT compiles hot units to native machine code on the second invocation.
-.IP "" 4
-.B run
-\(em the bytecode runs in
+JIT-compiles hot units to native machine code on the second
+invocation.
+.IP \fBrun\fR 8
+the bytecode runs in
 .B fusevm
 with a persistent worker pool servicing builtins and most external
 calls without
@@ -87,18 +77,18 @@ and
 .BR \-\-disasm
 (see
 .BR zshrs (1)).
-The resulting bytecode is cached as rkyv shards under
+Resulting bytecode is cached as rkyv shards under
 .IR ~/.cache/zshrs/ .
-.SH "INVOCATION"
+.SH INVOCATION
 .B zshrs
 accepts the same argument grammar as
 .BR zsh (1).
-A login shell sources login files, an interactive shell sources
-.IR .zshrc ,
-.BR \-c
-takes a command literal,
+A login shell sources login files; an interactive shell sources
+.IR .zshrc ;
+.B \-c
+takes a command literal;
 .B \-s
-forces stdin reading, and bare-script invocation
+forces stdin reading; bare-script invocation
 .RB ( "zshrs " script )
 runs the script with
 .B $0
@@ -128,13 +118,13 @@ Identical behaviour to
 .BR /bin/sh
 (Bourne, dash).
 .PP
-Parity modes never write to the cache and never connect to the daemon;
-they exist for compatibility testing and for environments where
-caching must be off.
+Parity modes never write the cache, never connect to the daemon, and
+never load the extensions layer.
 .SH "STARTUP FILES"
 Same set, order, and gating as
 .BR zsh (1):
 .PP
+.RS
 .IR /etc/zshenv " \(em " $ZDOTDIR/.zshenv " \(em " /etc/zprofile " \(em " $ZDOTDIR/.zprofile
 (login)
 .B \(em
@@ -146,6 +136,7 @@ Same set, order, and gating as
 .B \(em
 .IR $ZDOTDIR/.zlogout " \(em " /etc/zlogout
 (login shutdown).
+.RE
 .PP
 When
 .B $ZDOTDIR
@@ -156,73 +147,1587 @@ is used. The
 and
 .B PRIVILEGED
 options gate sourcing identically to upstream zsh.
-.SH "FILES, LANGUAGE & SYNTAX"
-zshrs accepts the full zsh language: parameter expansion (including
-.BR ${(z)var} ", " ${(s/X/)var} ", " ${(q)var} ", " ${(P)var} ", " (V) ", " (kv) ", " (ZX) " ..."),
-process substitution
-.RB ( <(...) ", " >(...) "),"
-brace expansion, glob qualifiers
-.RB ( "*(.D)" ", " "*(om[1,5])" ", " ...),
-extended-glob patterns
-.RB ( **/* ", " "(foo|bar)" ", " "<NUM-NUM>" "),"
-arithmetic
-.RB ( "(( ... ))" ", " $((...)) "),"
-math functions, and conditional expressions
-.RB ( "[[ ... ]]" "),"
-all matching upstream zsh. Compatibility surface for plugins
-.RB ( "oh-my-zsh, " "prezto, " "zinit, " "p10k, " "zsh-autosuggestions"
-etc.) is sacred; the
-.B 96-test
-invariants
-.RB ( tree_walker_absent ,
-.B no_tree_walker_dispatch )
-plus the parity corpus pin observable behaviour.
+.SH "LANGUAGE OVERVIEW"
+.SS "Simple commands"
+A simple command is a sequence of optional variable assignments
+followed by blank-separated words, with optional redirections
+interspersed. The first word is the command name; subsequent words
+are its arguments. Builtins and shell functions are tried first;
+otherwise the command is searched along
+.BR $PATH .
+.SS "Compound commands"
+.B if
+.IR list ;
+.B then
+.IR list "; [" "elif " list ";\ then " list "; ...] [" "else " list "; ] " fi
+.br
+.B while
+.IR list "; do " list "; done"
+.br
+.B until
+.IR list "; do " list "; done"
+.br
+.B for
+.I name
+.RB [ in
+.IR word ... ]
+.RB ; do
+.IR list ;
+.B done
+.br
+.B for
+.RB (( [ expr1 ]
+.RB ; [ expr2 ]
+.RB ; [ expr3 ]
+.B )) do
+.IR list ;
+.B done
+.br
+.B select
+.I name
+.RB [ in
+.IR word ... ]
+.RB ; do
+.IR list ;
+.B done
+.br
+.B case
+.I word
+.B in
+.IR pattern ")\ " list ";;\ " ... " esac
+.br
+.RI ( list )
+\(em subshell.
+.RI { list ;}
+\(em current-shell group.
+.PP
+.B function
+.IR name " {" " list " "}" "
+or
+.IR name " () {" " list " "}" "
+defines a function.
+.SS "Pipelines and lists"
+.IR pipeline " ::= " "[!] cmd [ |[&] cmd ...]"
+.br
+.IR list " ::= " "pipeline [ ;|&|&&|||| pipeline ...]"
+.PP
+.B time
+prefix times a pipeline using
+.BR $TIMEFMT .
+.B !
+negates exit status.
+.B &
+backgrounds.
+.B &&
+and
+.B ||
+short-circuit by exit status.
+.B |&
+pipes both stdout and stderr.
+.SH "REDIRECTION"
+.TP
+.BI < file
+stdin from
+.IR file .
+.TP
+.BI > file
+stdout to
+.IR file
+(error if
+.B NOCLOBBER
+set and file exists).
+.TP
+.BI >| file
+stdout to
+.IR file
+(force; bypass
+.BR NOCLOBBER ).
+.TP
+.BI >> file
+stdout appended.
+.TP
+.BR << " " WORD
+heredoc; input until a line equal to
+.IR WORD
+(quote WORD to disable expansion;
+.B <<-
+strips leading tabs).
+.TP
+.BI <<< word
+here-string; feeds the expanded
+.I word
+as stdin.
+.TP
+.BI <> file
+fd for read+write.
+.TP
+.BI <& fd " / " >& fd
+duplicate fd.
+.TP
+.B &>
+\fIfile\fR \(em redirect both stdout and stderr to
+.IR file .
+.TP
+.B &>>
+\fIfile\fR \(em append both stdout and stderr.
+.TP
+.BI <( list )
+process substitution \(em expands to a
+.B /dev/fd/N
+path whose contents are
+.IR list 's
+stdout.
+.TP
+.BI >( list )
+process substitution \(em expands to a
+.B /dev/fd/N
+path whose writes are piped to
+.IR list 's
+stdin.
+.TP
+.BI =( list )
+process substitution to a temp file.
+.PP
+A leading integer
+.RI ( "2>&1" ", " "3>" file )
+selects the fd; the default is stdin for
+.B <
+and stdout for
+.BR > .
+.B MULTIOS
+duplicates writes when multiple redirections target the same fd.
+.SH "EXPANSION ORDER"
+zshrs expansion happens in this order, matching upstream zsh:
+.IP " 1." 4
+.B History
+expansion
+.RB ( "!!" ", " "!N" ", " "!?str?" ", " "^old^new" ").
+Parsed from raw input before any other expansion. Disabled in
+non-interactive shells unless
+.B BANG_HIST
+is set.
+.IP " 2." 4
+.B Alias
+expansion (parse time). Global aliases
+.RB ( "alias -g" )
+expand at any position; regular aliases only as command words.
+.IP " 3." 4
+.B Process
+substitution
+.RB ( <(...) ", " >(...) ", " =(...) ).
+.IP " 4." 4
+.B Parameter
+expansion
+.RB ( $name ", " "${name[ind]}" ", " "${name:-default}" ", " "${(P)name}" ", " "${(qV)name}" " ...
+\(em see PARAMETER EXPANSION below).
+.IP " 5." 4
+.B Command
+substitution
+.RB ( "$(...)" ", " `...` ).
+.IP " 6." 4
+.B Arithmetic
+expansion
+.RB ( $((...)) ", " $[...] ).
+.IP " 7." 4
+.B Brace
+expansion
+.RB ( {a,b,c} ", " {1..10} ", " {01..10..2} ).
+.IP " 8." 4
+.B Filename
+generation (globbing) and tilde substitution.
+.IP " 9." 4
+.B Word
+splitting on
+.B $IFS
+(only in unquoted contexts and in
+.RB $* / $@
+within unquoted form).
+.SH "PARAMETER EXPANSION"
+.SS "Basic forms"
+.TP
+.B ${name}
+value.
+.TP
+.BI ${name[i]}
+array element
+.IR i
+(1-based unless
+.B KSH_ARRAYS
+set).
+.TP
+.BI ${name[i,j]}
+slice from
+.I i
+to
+.IR j .
+.TP
+.BI ${name:- word }
+.IR word
+if
+.I name
+unset or empty.
+.TP
+.BI ${name:= word }
+assign
+.I word
+to
+.I name
+if unset/empty, then expand.
+.TP
+.BI ${name:? word }
+abort with
+.I word
+if unset/empty.
+.TP
+.BI ${name:+ word }
+.IR word
+if
+.I name
+set and non-empty.
+.TP
+.BI ${name# pattern }
+strip shortest matching prefix.
+.TP
+.BI ${name## pattern }
+strip longest matching prefix.
+.TP
+.BI ${name% pattern }
+strip shortest matching suffix.
+.TP
+.BI ${name%% pattern }
+strip longest matching suffix.
+.TP
+.BI ${name/ pat / repl }
+replace first
+.I pat
+with
+.IR repl .
+.TP
+.BI ${name// pat / repl }
+replace all matches.
+.TP
+.BI ${name:offset}
+\fIand\fR
+.BI ${name:offset:length}
+\(em substring slice (bash-compat).
+.SS "Modifier flags (parenthesised prefix)"
+Inside
+.B ${(\fIflags\fB)name}
+each character is a flag:
+.TP
+.B P
+treat
+.B name
+as containing another variable's name (indirection).
+.TP
+.B V
+emit nonprintable bytes in
+.B $'\\x..'
+form.
+.TP
+.B q / qq / qqq / qqqq
+quote-escape for re-evaluation in increasing strictness.
+.TP
+.B Q
+remove one level of quoting.
+.TP
+.B e
+re-evaluate the expansion result.
+.TP
+.B s/X/
+split on the literal char
+.IR X .
+.TP
+.B j/X/
+join elements with
+.IR X .
+.TP
+.B z
+shell-aware tokenisation (lexer-token boundaries).
+.TP
+.B u
+remove duplicate elements (uniq).
+.TP
+.B o
+sort ascending;
+.B O
+sort descending.
+.TP
+.B a
+reverse element order;
+.B A
+treat the value as the name of an associative array.
+.TP
+.B k
+list keys of an associative array;
+.B v
+list values;
+.B kv
+interleave keys + values.
+.TP
+.B @
+expand each element as a separate word (preserve word boundaries
+inside double quotes).
+.TP
+.B M
+keep only the matched portion under
+.B #
+/
+.B %
+/
+.B /
+operators;
+.B R
+keep the unmatched remainder.
+.TP
+.B L / U / C
+lowercase / uppercase / capitalize.
+.TP
+.B "##"
+the
+.B (##)
+flag turns
+.RB " %"
+/
+.B #
+into greedy variants
+.RB ( ## ", " %% ).
+.PP
+Flags combine:
+.B "${(kv)assoc}" ", "  "${(j:\\n:)array}" ", "  "${(@f)\"$(<file)\"}" .
+.SH "SPECIAL PARAMETERS"
+zshrs honours every special parameter from upstream zsh.
+.PP
+.B Positional / argv:
+.B $#
+(arg count),
+.B $*
+(joined with first IFS char),
+.B $@
+(separate words),
+.B $0
+(script name),
+.BR $1 \(em $N
+(positional args).
+.PP
+.B Status:
+.B $?
+(last exit status),
+.B $!
+(last background PID),
+.B $$
+(shell PID),
+.B $PPID
+(parent PID),
+.B $UID
+.B $GID
+.B $EUID
+.B $EGID ,
+.B $-
+(current option letters),
+.B $_
+(last arg of previous command),
+.B $pipestatus
+(per-segment exit status of last pipeline).
+.PP
+.B Shell-version / introspection:
+.B $ZSH_VERSION
+.B $ZSH_NAME
+.B $ZSH_PATCHLEVEL
+.B $ZSHRS_VERSION
+(zshrs-only),
+.B $LINENO
+.B $FUNCNAME
+.B $funcstack
+.B $functrace
+.B $funcsourcetrace
+.B $funcfiletrace .
+.PP
+.B Time / random:
+.B $SECONDS
+(elapsed; float if declared
+.BR "typeset -F SECONDS" ),
+.B $EPOCHSECONDS
+.B $EPOCHREALTIME
+(zsh/datetime),
+.B $RANDOM
+(0\(en32767 PRNG),
+.B $SRANDOM
+(32-bit unsigned).
+.PP
+.B Paths:
+.B $PATH
+.B $FPATH
+.B $CDPATH
+.B $MAILPATH
+.B $MANPATH
+.B $WATCH
+.B $WORDCHARS
+.B $TMPPREFIX .
+.PP
+.B Path arrays:
+.B $path
+.B $fpath
+.B $cdpath
+.B $manpath
+.B $mailpath
+.B $watch
+.B $module_path
+.B $fignore
+\(em colon-array tied to scalar versions.
+.PP
+.B I/O:
+.B $IFS
+(word-split chars),
+.B $LINES
+.B $COLUMNS
+(terminal geometry, auto-updated on SIGWINCH),
+.B $TERM
+.B $TERMINFO
+.B $COLORTERM .
+.PP
+.B Prompt:
+.B $PS1
+.B $PS2
+.B $PS3
+.B $PS4
+.B $RPS1
+.B $RPROMPT
+.B $SPROMPT
+.B $PROMPT_EOL_MARK .
+.PP
+.B Locale:
+.B $LANG
+.B $LC_*
+.B $LC_ALL .
+.PP
+.B Directory stack:
+.B $PWD
+.B $OLDPWD
+.B $DIRSTACKSIZE
+.B $dirstack .
+.PP
+.B History:
+.B $HISTFILE
+.B $HISTSIZE
+.B $SAVEHIST
+.B $HISTORY
+.B $HISTNO
+.B $LASTHIST
+.B $HISTCMD .
+.PP
+.B Completion (compsys):
+.B $compstate
+.B $words
+.B $CURRENT
+.B $PREFIX
+.B $SUFFIX
+.B $IPREFIX
+.B $ISUFFIX
+.B $compopaque .
+.PP
+.B Regex / match:
+.B $MATCH
+.B $match
+.B $MBEGIN
+.B $mbegin
+.B $MEND
+.B $mend
+(populated after a successful
+.B [[ str =~ regex ]]
+or
+.B (M)
+parameter flag);
+.B $BASH_REMATCH .
+.PP
+.B Editor:
+.B $EDITOR
+.B $VISUAL
+.B $READNULLCMD
+.B $NULLCMD
+.B $REPORTTIME
+.B $TIMEFMT
+.B $TMOUT
+.B $KEYTIMEOUT .
+.PP
+.B Privacy / mail:
+.B $MAIL
+.B $MAILCHECK
+.B $MAIL_WARNING
+.B $LOGNAME
+.B $USER
+.B $USERNAME
+.B $HOME .
+.PP
+.B zshrs-only:
+.B $ZSHRS_CACHE
+(override cache root),
+.B $ZSHRS_LOG
+(tracing filter),
+.B $ZSHRS_LONG_CMD_PRE_THRESHOLD
+(seconds; above which preexec timing hook fires),
+.B $ZSHRS_NO_DAEMON
+(per-invocation suppression).
+.SH "ARRAYS AND ASSOCIATIVE ARRAYS"
+.B typeset -a arr
+declares a normal array;
+.B typeset -A assoc
+declares an associative array. Arrays are 1-indexed by default; set
+.B KSH_ARRAYS
+for 0-indexed semantics.
+.PP
+.B Element ops:
+.BR ${arr[i]} ", " ${arr[-1]} " (last), " ${arr[1,3]} " (slice),"
+.BR ${#arr} " (length), " ${arr[@]} " (all)."
+.PP
+.B Assoc ops:
+.BR ${assoc[key]} ", " ${(k)assoc} " (keys), " ${(v)assoc} " (values),"
+.BR ${(kv)assoc} " (interleaved)."
+.PP
+.B Append:
+.B arr+=(elt)
+\(em append element;
+.B "arr[i]+=text"
+\(em concat to element;
+.B assoc+=(k v)
+\(em add key.
+.SH "ARITHMETIC"
+.B (( expr ))
+returns 0 if
+.I expr
+is non-zero, 1 otherwise.
+.B $((expr))
+substitutes the result. Operators (highest precedence first):
+.PP
+.RS
+.B "** "
+(exponent)
+.br
+.B "! ~ - +"
+(unary)
+.br
+.B "* / %"
+.br
+.B "+ -"
+.br
+.B "<< >>"
+.br
+.B "< <= > >="
+.br
+.B "== !="
+.br
+.B "&  ^  |"
+.br
+.B "&&  ||"
+.br
+.B "?:"
+(ternary)
+.br
+.B "= += -= *= /= %= **= <<= >>= &= ^= |=  &&= ||="
+.RE
+.PP
+Float support requires
+.B typeset -F
+or
+.BR "typeset -E ."
+Math functions
+.RB ( sin ", " cos ", " sqrt ", " exp ", " log ", " atan ", " ceil ", " floor ", " ...)
+load via
+.BR "zmodload zsh/mathfunc" .
+.SH "CONDITIONAL EXPRESSIONS"
+.B [[ expr ]]
+returns 0 (true) or 1 (false). Word splitting and filename generation
+do not apply inside; the right-hand side of pattern operators is a
+glob (or regex for
+.BR =~ ).
+.SS "File tests"
+.TP
+.B -a
+file exists.
+.TP
+.B -b
+block special.
+.TP
+.B -c
+character special.
+.TP
+.B -d
+directory.
+.TP
+.B -e
+exists.
+.TP
+.B -f
+regular file.
+.TP
+.B -g
+setgid.
+.TP
+.B -h " / " -L
+symbolic link.
+.TP
+.B -k
+sticky bit.
+.TP
+.B -p
+named pipe.
+.TP
+.B -r " / " -w " / " -x
+readable / writable / executable.
+.TP
+.B -s
+non-zero size.
+.TP
+.B -u
+setuid.
+.TP
+.B -O " / " -G
+owned by EUID / EGID.
+.TP
+.B -N
+mtime newer than atime.
+.TP
+.B -S
+socket.
+.SS "Binary file tests"
+.B file1 -nt file2
+(newer),
+.B -ot
+(older),
+.B -ef
+(same dev+inode).
+.SS "String tests"
+.B -n s
+non-empty;
+.B -z s
+empty;
+.B s == pat
+glob match;
+.B s != pat
+glob mismatch;
+.B s =~ regex
+ERE match (sets
+.BR $MATCH ", " $match ", " $BASH_REMATCH );
+.B s1 < s2
+lex less;
+.B s1 > s2
+greater.
+.SS "Numeric tests"
+.B -eq -ne -lt -le -gt -ge .
+.SS "Boolean composition"
+.B "!"
+.B "&&"
+.B "||"
+with operator precedence; parenthesise with
+.BR "( ... )" .
+.SH "GLOB PATTERNS"
+.SS "Basic"
+.B *
+zero or more chars.
+.B ?
+exactly one char.
+.B [chars]
+class.
+.B [!chars]
+negation.
+.B [a-z]
+range.
+.B [[:alpha:]]
+POSIX classes
+.RB ( alpha ", " alnum ", " digit ", " upper ", " lower ", " space ", " punct ", " cntrl ", " print ", " graph ", " xdigit ", " blank ).
+.SS "Extended (EXTENDED_GLOB)"
+.B **/
+recursive match (across directories).
+.B ***/
+like
+.B **/
+but follows symlinks.
+.B (foo|bar)
+alternation.
+.B ^pat
+exclude pattern.
+.B pat~excl
+match
+.I pat
+except
+.IR excl .
+.B <NUM-NUM>
+numeric range (
+.BR <-> " any number, " "<0-99>" " 0\(en99)."
+.B #
+zero or more of preceding atom (like
+.BR * );
+.B ##
+one or more.
+.SS "Glob qualifiers"
+.B file*(qual)
+applies file-system filters. Common qualifiers:
+.TP
+.B /
+directories only.
+.TP
+.B .
+plain files only.
+.TP
+.B @
+symlinks only.
+.TP
+.B = " / " p " / " *
+sockets / pipes / executables.
+.TP
+.B r,w,x
+readable / writable / executable by user;
+.BR R , W , X
+by anyone;
+.BR A , I , E
+group / other.
+.TP
+.B u\fIuser\fR " / " g\fIgroup\fR
+owned by
+.IR user " / " group .
+.TP
+.B L\fI[+-]n[kmgptKMGPT]\fR
+size match (k/m/g/p/t suffixes; +/- for greater/lesser).
+.TP
+.B s, S, t, T
+size in bytes / blocks / lines.
+.TP
+.BR m [mhdwM] [+-]n
+modified within / after / before
+.I n
+minutes / hours / days / weeks / months.
+.TP
+.BR a [mhdwM] [+-]n
+accessed within;
+.BR c [mhdwM]
+ctime.
+.TP
+.B U, G
+owned by current UID / GID.
+.TP
+.B oc, on, oN, oL, om, oa, od
+sort by ctime / name / Name / size / mtime / atime / dirname.
+.B O
+inverts (descending).
+.TP
+.B [n,m]
+slice the result list.
+.TP
+.B D
+include dotfiles.
+.TP
+.B N
+NULL_GLOB: empty result is OK, no error.
+.TP
+.B -
+follow symlinks for tests.
+.TP
+.B e:\fIcode\fR:
+arbitrary shell test; the file passes if
+.I code
+returns true.
+.PP
+Qualifiers chain:
+.B *(.Lk+10om[1,5])
+\(em plain files larger than 10K, oldest 5 by mtime.
+.SH "JOB CONTROL"
+.B MONITOR
+on for interactive shells. Suffix
+.B &
+to background.
+.B Ctrl-Z
+suspends.
+.B fg %N
+foregrounds job
+.IR N ;
+.B bg %N
+resumes in background.
+.B jobs
+lists;
+.B disown %N
+detaches from the shell;
+.B kill %N
+signals a job; named jobs by
+.B %%
+(current),
+.BR %+ ,
+.BR %- ,
+or
+.BI %? str
+(match by command substring).
+.B NOTIFY
+prints state changes immediately;
+.B no_notify
+defers to next prompt.
+.SH "FUNCTIONS"
+.B function name {body}
+or
+.B name () {body}
+defines a function. Local variables: prefix with
+.BR local ,
+.BR typeset ,
+.BR declare ,
+.BR integer ,
+.BR float ,
+.BR private .
+Functions inherit
+.BR $1 ... $N
+positional args; the calling positional set is restored on return.
+.PP
+.B autoload \-Uz fnname
+defers loading until first call; the function body is read from a
+file named
+.I fnname
+along
+.BR $fpath .
+.B \-U
+disables alias expansion at load time.
+.B \-z
+forces zsh-style parsing.
+.PP
+.B Special hook names:
+.B preexec
+(before each command),
+.B precmd
+(before each prompt),
+.B chpwd
+(after cd),
+.B zshexit
+(on shell exit),
+.B periodic
+(every
+.B $PERIOD
+seconds),
+.BR TRAPDEBUG / TRAPERR / TRAPEXIT
+(trap handlers).
+.B zle-line-init
+.B zle-line-pre-redraw
+.B zle-line-finish
+.B zle-keymap-select
+.B zle-isearch-update
+.B zle-isearch-exit
+are ZLE hooks.
+.SH "BUILTINS"
+The full upstream set is implemented; below groups them by category.
+For per-option detail see
+.BR zshbuiltins (1).
+.PP
+.B Flow control:
+.BR break ,
+.BR continue ,
+.BR return ,
+.BR exit ,
+.BR true ,
+.BR false ,
+.BR : .
+.PP
+.B Variable mgmt:
+.BR typeset ,
+.BR declare ,
+.BR local ,
+.BR private ,
+.BR readonly ,
+.BR export ,
+.BR float ,
+.BR integer ,
+.BR unset ,
+.BR vared .
+.PP
+.B Path / dir:
+.BR cd ,
+.BR chdir ,
+.BR pwd ,
+.BR pushd ,
+.BR popd ,
+.BR dirs ,
+.BR hash ,
+.BR rehash ,
+.BR unhash ,
+.BR umask .
+.PP
+.B History:
+.BR fc ,
+.BR history ,
+.BR r .
+.PP
+.B Job control:
+.BR bg ,
+.BR fg ,
+.BR jobs ,
+.BR disown ,
+.BR kill ,
+.BR wait ,
+.BR suspend ,
+.BR ttyctl .
+.PP
+.B I/O:
+.BR echo ,
+.BR print ,
+.BR printf ,
+.BR read ,
+.BR pushln ,
+.BR getln ,
+.BR getopts .
+.PP
+.B Eval / exec:
+.BR eval ,
+.BR exec ,
+.BR source ,
+.BR \.\& ,
+.BR command ,
+.BR builtin ,
+.BR noglob .
+.PP
+.B Options / aliases:
+.BR setopt ,
+.BR unsetopt ,
+.BR set ,
+.BR alias ,
+.BR unalias ,
+.BR functions ,
+.BR unfunction ,
+.BR enable ,
+.BR disable ,
+.BR emulate ,
+.BR autoload .
+.PP
+.B Limits / signals:
+.BR limit ,
+.BR unlimit ,
+.BR ulimit ,
+.BR trap .
+.PP
+.B Tests / introspection:
+.BR test ,
+.BR "[" ,
+.BR "[[" ,
+.BR whence ,
+.BR where ,
+.BR which ,
+.BR type ,
+.BR stat ,
+.BR zstat ,
+.BR times .
+.PP
+.B Completion:
+.BR compadd ,
+.BR compcall ,
+.BR compctl ,
+.BR compdescribe ,
+.BR compfiles ,
+.BR compgroups ,
+.BR compquote ,
+.BR compset ,
+.BR comptags ,
+.BR comptry ,
+.BR compvalues .
+.PP
+.B Bytecode / autoload:
+.BR zcompile ,
+.BR zformat ,
+.BR zparseopts .
+.PP
+.B Networking / modules:
+.BR zftp ,
+.BR zsocket ,
+.BR zpty ,
+.BR zregexparse ,
+.BR zstyle ,
+.BR zsystem ,
+.BR zmodload .
+.PP
+.B Echo / termcap:
+.BR echotc ,
+.BR echoti ,
+.BR ttyctl .
+.PP
+.B Misc:
+.BR float ,
+.BR log ,
+.BR sched ,
+.BR shift ,
+.BR fc ,
+.BR cap ,
+.BR clone ,
+.BR bye ,
+.BR logout .
+.PP
+zshrs adds 48 fish-ported builtins surfaced under the same dispatch;
+they appear in
+.B builtin
+and
+.B "whence -m"
+output. See
+.IR src/extensions/builtins/ .
+.SH "OPTIONS"
+.B setopt
+turns options on;
+.B unsetopt
+turns them off.
+.B "set -o NAME"
+and
+.B "set +o NAME"
+are POSIX aliases. Per emulation the default-on set differs; see
+.BR emulate .
+.PP
+.B Login / shell shape:
+.BR LOGIN ,
+.BR INTERACTIVE ,
+.BR PRIVILEGED ,
+.BR RESTRICTED ,
+.BR ONE_CMD ,
+.BR SHIN_STDIN ,
+.BR SINGLE_COMMAND .
+.PP
+.B Changing directories:
+.BR AUTO_CD ,
+.BR AUTO_PUSHD ,
+.BR CHASE_DOTS ,
+.BR CHASE_LINKS ,
+.BR CDABLE_VARS ,
+.BR PUSHD_IGNORE_DUPS ,
+.BR PUSHD_MINUS ,
+.BR PUSHD_SILENT ,
+.BR PUSHD_TO_HOME ,
+.BR POSIX_CD .
+.PP
+.B Completion:
+.BR ALWAYS_LAST_PROMPT ,
+.BR ALWAYS_TO_END ,
+.BR AUTO_LIST ,
+.BR AUTO_MENU ,
+.BR AUTO_NAME_DIRS ,
+.BR AUTO_PARAM_KEYS ,
+.BR AUTO_PARAM_SLASH ,
+.BR AUTO_REMOVE_SLASH ,
+.BR BASH_AUTO_LIST ,
+.BR COMPLETE_ALIASES ,
+.BR COMPLETE_IN_WORD ,
+.BR GLOB_COMPLETE ,
+.BR HASH_LIST_ALL ,
+.BR LIST_AMBIGUOUS ,
+.BR LIST_BEEP ,
+.BR LIST_PACKED ,
+.BR LIST_ROWS_FIRST ,
+.BR LIST_TYPES ,
+.BR MENU_COMPLETE ,
+.BR REC_EXACT .
+.PP
+.B Expansion / globbing:
+.BR BAD_PATTERN ,
+.BR BARE_GLOB_QUAL ,
+.BR BRACE_CCL ,
+.BR CASE_GLOB ,
+.BR CASE_MATCH ,
+.BR CASE_PATHS ,
+.BR CSH_NULL_GLOB ,
+.BR EQUALS ,
+.BR EXTENDED_GLOB ,
+.BR FORCE_FLOAT ,
+.BR GLOB_ASSIGN ,
+.BR GLOB_DOTS ,
+.BR GLOB_STAR_SHORT ,
+.BR GLOB_SUBST ,
+.BR HIST_SUBST_PATTERN ,
+.BR IGNORE_BRACES ,
+.BR IGNORE_CLOSE_BRACES ,
+.BR KSH_GLOB ,
+.BR MAGIC_EQUAL_SUBST ,
+.BR MARK_DIRS ,
+.BR MULTIBYTE ,
+.BR NOMATCH ,
+.BR NULL_GLOB ,
+.BR NUMERIC_GLOB_SORT ,
+.BR RC_EXPAND_PARAM ,
+.BR REMATCH_PCRE ,
+.BR SH_GLOB ,
+.BR UNSET ,
+.BR WARN_CREATE_GLOBAL ,
+.BR WARN_NESTED_VAR .
+.PP
+.B History:
+.BR APPEND_HISTORY ,
+.BR BANG_HIST ,
+.BR EXTENDED_HISTORY ,
+.BR HIST_ALLOW_CLOBBER ,
+.BR HIST_BEEP ,
+.BR HIST_EXPIRE_DUPS_FIRST ,
+.BR HIST_FCNTL_LOCK ,
+.BR HIST_FIND_NO_DUPS ,
+.BR HIST_IGNORE_ALL_DUPS ,
+.BR HIST_IGNORE_DUPS ,
+.BR HIST_IGNORE_SPACE ,
+.BR HIST_LEX_WORDS ,
+.BR HIST_NO_FUNCTIONS ,
+.BR HIST_NO_STORE ,
+.BR HIST_REDUCE_BLANKS ,
+.BR HIST_SAVE_BY_COPY ,
+.BR HIST_SAVE_NO_DUPS ,
+.BR HIST_VERIFY ,
+.BR INC_APPEND_HISTORY ,
+.BR INC_APPEND_HISTORY_TIME ,
+.BR SHARE_HISTORY .
+.PP
+.B I/O:
+.BR ALIASES ,
+.BR CLOBBER ,
+.BR CLOBBER_EMPTY ,
+.BR CORRECT ,
+.BR CORRECT_ALL ,
+.BR DVORAK ,
+.BR FLOW_CONTROL ,
+.BR HASH_CMDS ,
+.BR HASH_DIRS ,
+.BR HASH_EXECUTABLES_ONLY ,
+.BR IGNORE_EOF ,
+.BR INTERACTIVE_COMMENTS ,
+.BR HUP ,
+.BR MAIL_WARNING ,
+.BR PATH_DIRS ,
+.BR PATH_SCRIPT ,
+.BR PRINT_EIGHT_BIT ,
+.BR PRINT_EXIT_VALUE ,
+.BR RC_QUOTES ,
+.BR RM_STAR_SILENT ,
+.BR RM_STAR_WAIT ,
+.BR SHORT_LOOPS ,
+.BR SHORT_REPEAT ,
+.BR SUN_KEYBOARD_HACK .
+.PP
+.B Job control:
+.BR AUTO_CONTINUE ,
+.BR AUTO_RESUME ,
+.BR BG_NICE ,
+.BR CHECK_JOBS ,
+.BR CHECK_RUNNING_JOBS ,
+.BR HUP ,
+.BR LONG_LIST_JOBS ,
+.BR MONITOR ,
+.BR NOTIFY ,
+.BR POSIX_JOBS .
+.PP
+.B Prompting:
+.BR PROMPT_BANG ,
+.BR PROMPT_CR ,
+.BR PROMPT_PERCENT ,
+.BR PROMPT_SP ,
+.BR PROMPT_SUBST ,
+.BR TRANSIENT_RPROMPT .
+.PP
+.B Scripts / functions:
+.BR ALIAS_FUNC_DEF ,
+.BR C_BASES ,
+.BR C_PRECEDENCES ,
+.BR DEBUG_BEFORE_CMD ,
+.BR ERR_EXIT ,
+.BR ERR_RETURN ,
+.BR EVAL_LINENO ,
+.BR EXEC ,
+.BR FUNCTION_ARGZERO ,
+.BR LOCAL_LOOPS ,
+.BR LOCAL_OPTIONS ,
+.BR LOCAL_PATTERNS ,
+.BR LOCAL_TRAPS ,
+.BR MULTI_FUNC_DEF ,
+.BR MULTIOS ,
+.BR OCTAL_ZEROES ,
+.BR PIPE_FAIL ,
+.BR POSIX_ALIASES ,
+.BR POSIX_BUILTINS ,
+.BR POSIX_IDENTIFIERS ,
+.BR POSIX_STRINGS ,
+.BR POSIX_TRAPS ,
+.BR PRINT_RC_OUTPUT ,
+.BR SOURCE_TRACE ,
+.BR TYPESET_SILENT ,
+.BR TYPESET_TO_UNSET ,
+.BR VERBOSE ,
+.BR XTRACE .
+.PP
+.B Shell emulation:
+.BR BASH_REMATCH ,
+.BR BSD_ECHO ,
+.BR CSH_JUNKIE_HISTORY ,
+.BR CSH_JUNKIE_LOOPS ,
+.BR CSH_JUNKIE_QUOTES ,
+.BR CSH_NULLCMD ,
+.BR IGNORE_BRACES ,
+.BR KSH_ARRAYS ,
+.BR KSH_AUTOLOAD ,
+.BR KSH_OPTION_PRINT ,
+.BR KSH_TYPESET ,
+.BR KSH_ZERO_SUBSCRIPT ,
+.BR POSIX_BUILTINS ,
+.BR SH_FILE_EXPANSION ,
+.BR SH_NULLCMD ,
+.BR SH_OPTION_LETTERS ,
+.BR SH_WORD_SPLIT ,
+.BR TRAPS_ASYNC .
+.PP
+.B ZLE:
+.BR BEEP ,
+.BR COMBINING_CHARS ,
+.BR EMACS ,
+.BR OVERSTRIKE ,
+.BR SINGLE_LINE_ZLE ,
+.BR VI ,
+.BR ZLE .
+.PP
+See
+.BR zshoptions (1)
+for option-by-option semantics; all upstream options are recognised
+and behave identically.
 .SH "ZLE \(em ZSH LINE EDITOR"
 All 193 widgets from upstream
 .B Src/Zle/iwidgets.list
-are ported: history navigation, vi find/repeat/marks, undo/redo,
-isearch, yank-pop, shell-aware word motion, region/visual mode, text
-objects, completion menu, and
-.B $zle_highlight
-parsing. The lexer-driven shell-word splitter is the same code path
-.BR zsh-syntax-highlighting
-expects; tokenisation matches
-.BR Src/glob.c::zshtokenize
-exactly.
-.SH "COMPLETION"
-The completion system (compsys) ships as its own crate
-.RI ( compsys/ )
-with the per-shell-state caches mmap'd from
-.IR ~/.cache/zshrs/ .
+are ported. Widgets are bound with
+.B "bindkey \-K KEYMAP SEQ WIDGET"
+and listed with
+.BR "bindkey -L" .
+Standard keymaps are
+.BR main ,
+.BR emacs ,
+.BR viins ,
+.BR vicmd ,
+.BR menuselect ,
+.BR listscroll ,
+.BR .safe ,
+and the
+.B isearch
+keymap.
+.SS "Motion"
+.BR forward-char ,
+.BR backward-char ,
+.BR forward-word ,
+.BR backward-word ,
+.BR vi-forward-word ,
+.BR vi-backward-word ,
+.BR vi-forward-word-end ,
+.BR vi-find-next-char ,
+.BR vi-find-prev-char ,
+.BR vi-first-non-blank ,
+.BR beginning-of-line ,
+.BR end-of-line ,
+.BR vi-end-of-line ,
+.BR beginning-of-line-hist ,
+.BR end-of-line-hist ,
+.BR up-line ,
+.BR down-line ,
+.BR up-line-or-history ,
+.BR down-line-or-history ,
+.BR up-line-or-search ,
+.BR down-line-or-search ,
+.BR vi-goto-column ,
+.BR vi-goto-mark ,
+.BR vi-goto-mark-line .
+.SS "Editing"
+.BR self-insert ,
+.BR vi-insert ,
+.BR vi-insert-bol ,
+.BR vi-append ,
+.BR vi-append-eol ,
+.BR delete-char ,
+.BR delete-char-or-list ,
+.BR backward-delete-char ,
+.BR vi-delete-char ,
+.BR vi-backward-delete-char ,
+.BR vi-substitute ,
+.BR vi-substitute-line ,
+.BR vi-replace ,
+.BR vi-replace-chars ,
+.BR vi-change ,
+.BR vi-change-eol ,
+.BR vi-change-whole-line ,
+.BR overwrite-mode ,
+.BR transpose-chars ,
+.BR transpose-words ,
+.BR up-case-word ,
+.BR down-case-word ,
+.BR capitalize-word ,
+.BR vi-up-case ,
+.BR vi-down-case ,
+.BR vi-swap-case ,
+.BR vi-oper-swap-case ,
+.BR kill-word ,
+.BR backward-kill-word ,
+.BR vi-kill-eol ,
+.BR vi-kill-line ,
+.BR kill-line ,
+.BR kill-buffer ,
+.BR kill-whole-line ,
+.BR backward-kill-line ,
+.BR undo ,
+.BR redo ,
+.BR vi-undo-change .
+.SS "Kill / yank"
+.BR yank ,
+.BR yank-pop ,
+.BR vi-put-before ,
+.BR vi-put-after ,
+.BR vi-yank ,
+.BR vi-yank-eol ,
+.BR vi-yank-whole-line ,
+.BR copy-region-as-kill ,
+.BR copy-prev-word ,
+.BR copy-prev-shell-word ,
+.BR put-replace-selection .
+.SS "History / search"
+.BR history-incremental-search-backward ,
+.BR history-incremental-search-forward ,
+.BR history-incremental-pattern-search-backward ,
+.BR history-incremental-pattern-search-forward ,
+.BR history-search-backward ,
+.BR history-search-forward ,
+.BR history-beginning-search-backward ,
+.BR history-beginning-search-forward ,
+.BR history-beginning-search-backward-end ,
+.BR history-beginning-search-forward-end ,
+.BR history-search-backward-end ,
+.BR history-search-forward-end ,
+.BR up-history ,
+.BR down-history ,
+.BR vi-history-search-backward ,
+.BR vi-history-search-forward ,
+.BR vi-cmd-repeat-search ,
+.BR vi-rev-repeat-search ,
+.BR vi-repeat-search ,
+.BR insert-last-word ,
+.BR get-line ,
+.BR push-line ,
+.BR push-line-or-edit ,
+.BR push-input .
+.SS "Completion"
+.BR complete-word ,
+.BR menu-complete ,
+.BR menu-expand-or-complete ,
+.BR expand-or-complete ,
+.BR expand-or-complete-prefix ,
+.BR list-choices ,
+.BR _menu_select ,
+.BR _complete_help ,
+.BR _bash_completions ,
+.BR _correct_word ,
+.BR _correct_filename ,
 .BR _approximate ,
 .BR _expand_alias ,
-.BR _list ,
-.BR _menu ,
-.BR _oldlist ,
-and the
-.B *.zwc
-autoload-bundle path are honoured. The
+.BR delete-char-or-list ,
+.BR reverse-menu-complete ,
+.BR accept-and-menu-complete .
+.SS "Mode switching"
+.BR vi-cmd-mode ,
+.BR vi-insert ,
+.BR vi-replace ,
+.BR vi-set-buffer ,
+.BR vi-quoted-insert ,
+.BR quoted-insert .
+.SS "Region / visual"
+.BR set-mark-command ,
+.BR exchange-point-and-mark ,
+.BR vi-visual ,
+.BR vi-visual-line ,
+.BR visual-mode ,
+.BR visual-line-mode ,
+.BR select-in-bracketed ,
+.BR select-in-blank-word ,
+.BR select-in-word ,
+.BR select-in-shell-word ,
+.BR vi-select-in-bracketed ,
+.BR copy-region-as-kill .
+.SS "Submission"
+.BR accept-line ,
+.BR accept-line-and-down-history ,
+.BR accept-and-hold ,
+.BR accept-and-infer-next-history ,
+.BR run-help ,
+.BR which-command ,
+.BR send-break ,
+.BR clear-screen ,
+.BR redisplay ,
+.BR push-line-or-edit ,
+.BR end-of-history ,
+.BR beginning-of-history .
+.PP
+The
+.B $zle_highlight
+array controls highlighting groups (
+.BR isearch ,
+.BR region ,
+.BR special ,
+.BR suffix ,
+.BR paste ,
+.BR err ).
+.B $WIDGET ", " $LBUFFER ", " $RBUFFER ", " $BUFFER ", " $CURSOR ", " $MARK ", " $NUMERIC ", " $KEYS
+are read/write inside widget functions.
+.SH "COMPLETION SYSTEM (compsys)"
+.B compinit
+loads
+.B _*
+completion functions from
+.B $fpath
+and installs them via
+.B compdef
+on the relevant command names. zshrs ships
 .B zsh-more-completions
-corpus (16,806 files) loads unchanged.
-.SH "BUILTINS"
-Every builtin from upstream zsh is implemented: the full
-.BR alias " " bg " " bindkey " " break " " builtin " " bye " " cap " " cd " " chdir " " clone " " command " " compadd " " compcall " " compctl " " compdescribe " " compfiles " " compgroups " " compquote " " compset " " comptags " " comptry " " compvalues " " continue " " declare " " dirs " " disable " " disown " " echo " " echotc " " echoti " " emulate " " enable " " eval " " exec " " exit " " export " " false " " fc " " fg " " float " " function " " functions " " getln " " getopts " " hash " " history " " integer " " jobs " " kill " " let " " limit " " local " " log " " logout " " noglob " " popd " " print " " printf " " private " " pushd " " pushln " " pwd " " r " " read " " readonly " " rehash " " return " " sched " " set " " setopt " " shift " " source " " stat " " suspend " " test " " times " " trap " " true " " ttyctl " " type " " typeset " " ulimit " " umask " " unalias " " unfunction " " unhash " " unlimit " " unset " " unsetopt " " vared " " wait " " whence " " where " " which " " zcompile " " zformat " " zftp " " zle " " zmodload " " zparseopts " " zpty " " zregexparse " " zsocket " " zstat " " zstyle " " zsystem
-set, plus 48 fish-ported builtins surfaced under the same dispatch.
+(16,806+ files) preconfigured; the corpus loads unchanged.
+.SS "Authoring helpers"
+.B _arguments
+declares per-command argspecs.
+.B _values
+expands a list with descriptions.
+.B _describe
+adds matches with text.
+.B _files
+.B _path_files
+file/path matchers.
+.B _command_names
+external commands;
+.B _builtins
+builtin names.
+.B _options
+.B _setopt
+shell options.
+.B _alternative
+groups several matchers behind tags.
+.B _wanted
+.B _requested
+.B _tags
+tag-driven match filtering.
+.SS "User-facing config"
+.B zstyle
+\(em the canonical style mechanism.
+.B "zstyle ':completion:*' menu select=long-list"
+\(em interactive menu;
+.B "zstyle ':completion:*' matcher-list ..."
+case / dash insensitivity;
+.B "zstyle ':completion:*:descriptions' format ..."
+group headers.
+.PP
+.B $compstate
+keys include
+.BR insert ,
+.BR list ,
+.BR force_list ,
+.BR ignored ,
+.BR pattern_match ,
+.BR pattern_insert ,
+.BR nmatches ,
+.BR vared ,
+.BR matcher ,
+.BR matcher_string ,
+.BR exact ,
+.BR exact_string ,
+.BR last_prompt ,
+.BR to_end ,
+.BR old_list ,
+.BR old_insert .
+.SS "Caching"
+zshrs caches the compiled completion graph as rkyv shards under
+.IR ~/.cache/zshrs/ ;
+the daemon invalidates them when any file in
+.B $fpath
+changes. First-time
+.B compinit
+on a fresh machine takes typical zsh time; subsequent shell starts
+mmap the cache and skip parse entirely.
+.SH "MODULES"
+.B zmodload NAME
+loads a module;
+.B zmodload \-u NAME
+unloads (where reversible). Ported modules:
+.PP
+.B zsh/attr
+xattrs;
+.B zsh/cap
+POSIX capabilities;
+.B zsh/clone
+fork helper;
+.B zsh/complete , zsh/complist , zsh/computil
+\(em compsys engine;
+.B zsh/curses
+zcurses bindings;
+.B zsh/datetime
+.B $EPOCHSECONDS / $EPOCHREALTIME / strftime;
+.B zsh/db/gdbm
+key-value DB tied to assoc params;
+.B zsh/example
+demo;
+.B zsh/files
+faster
+.BR rm / mv / ln
+etc;
+.B zsh/hlgroup
+syntax-highlight groups;
+.B zsh/ksh93
+.B $KSH_VERSION
+emulation;
+.B zsh/langinfo
+.BR nl_langinfo ;
+.B zsh/mapfile
+file <-> array tying;
+.B zsh/mathfunc
+.BR sin / cos /...;
+.B zsh/nearcolor
+color-name resolver;
+.B zsh/newuser
+first-run wizard;
+.B zsh/param/private
+.B private
+typeset;
+.B zsh/parameter
+shell-state assoc arrays;
+.B zsh/pcre
+PCRE regex (
+.BR pcre_compile ,
+.BR pcre_match );
+.B zsh/random
+.B SRANDOM
+seed;
+.B zsh/regex
+ERE;
+.B zsh/sched
+delayed-command scheduler;
+.B zsh/socket
+.B zsocket
+TCP / Unix sockets;
+.B zsh/stat
+.B zstat
+file metadata;
+.B zsh/system
+.BR "zsystem flock" ,
+.BR sysopen ,
+.BR sysseek ;
+.B zsh/tcp
+.BR ztcp ;
+.B zsh/termcap
+termcap entries;
+.B zsh/terminfo
+terminfo entries;
+.B zsh/watch
+.B WATCH
+login / logout;
+.B zsh/zftp
+FTP client;
+.B zsh/zle , zsh/zleparameter
+ZLE state;
+.B zsh/zprof
+function profiling;
+.B zsh/zpty
+pty-spawn helper;
+.B zsh/zselect
+.BR select (2)
+on fds;
+.B zsh/zutil
+.BR zformat ", " zparseopts ", " zregexparse ", " zstyle .
+.PP
 See
-.BR zshbuiltins (1)
-for option-by-option detail; all options listed there are honoured.
-.SH "OPTIONS"
-zshrs honours every option defined in upstream zsh:
-.BR setopt / unsetopt
-manipulate the same on/off table, the same default emulation matrix
-.RB ( ksh ,
-.BR sh ,
-.BR zsh )
-applies, and the
-.BR emulate (1)
-builtin switches between them at runtime. See
-.BR zshoptions (1)
-for the full list.
+.BR zshmodules (1)
+for upstream descriptions; zshrs adds no new modules in
+.IR src/ported/
+\(em new functionality lives under
+.IR src/extensions/
+and is surfaced through the
+.B builtin
+table.
 .SH "DAEMON COORDINATION"
 When run in full mode (no parity flag), zshrs cooperates with a
 singleton coordinator process,
@@ -230,19 +1735,16 @@ singleton coordinator process,
 addressed via
 .IR ~/.cache/zshrs/daemon.sock .
 The daemon owns ALL mutation:
-.IP "" 4
-.B fsnotify
-\(em watches
+.IP \fBfsnotify\fR 8
+watches
 .IR ~/.zshrc ,
 .BR $fpath ,
-plugin trees, and invalidates the affected cache shards.
-.IP "" 4
-.B compile
-\(em rkyv image writes for script_cache, plugin_cache, autoload_cache,
+plugin trees; invalidates affected cache shards on change.
+.IP \fBcompile\fR 8
+rkyv image writes for script_cache, plugin_cache, autoload_cache,
 catalog.db rebuilds, log rotation, integrity scans.
-.IP "" 4
-.B IPC routing
-\(em cross-shell pub/sub
+.IP "\fBIPC routing\fR" 8
+cross-shell pub/sub
 .RB ( zsubscribe ,
 .BR znotify ,
 .BR zsend ,
@@ -258,7 +1760,7 @@ planned).
 100+ thin
 .B zshrs
 clients (e.g. one per tmux pane) mmap the daemon's outputs directly
-for hot lookups (zero IPC), and use the socket only for control-plane
+for hot lookups (zero IPC) and use the socket only for control-plane
 events (rebuild, fpath_changed, stats_flush, cross-shell dispatch).
 Clients spawn zero background threads, polling timers, or SQLite
 handles. See
@@ -270,7 +1772,7 @@ for daemon administration.
 .B \-\-aot
 .RI ( script.zsh )
 emits a single self-contained executable that bundles
-.BR fusevm
+.B fusevm
 with the script's compiled bytecode. The result has zero runtime
 dependency on the
 .B zshrs
@@ -284,12 +1786,12 @@ supports
 .BR after ,
 and
 .B around
-advice on every command, builtin, and user function. Registered via
-the
+advice on every command, builtin, and user function. Advice is
+registered via the
 .B intercepts
 crate (see
-.IR src/intercepts/ ),
-the advice runs in-process inside fusevm \(em no
+.IR src/intercepts/ )
+and runs in-process inside fusevm \(em no
 .BR fork (2)
 \(em which makes it cheap enough for production tracing, profiling,
 auditing, or per-command behaviour overlays. This is the foundation
@@ -300,13 +1802,43 @@ for
 and the rest of the
 .B zpwr
 introspection stack.
+.SH "WORKERS & NO-FORK ARCHITECTURE"
+zshrs ships a persistent worker pool: long-lived processes that
+service builtins, common externals
+.RB ( ls ", " cat ", " grep ", "
+etc., on the user's allowlist), and pipeline stages without invoking
+.BR fork (2)
+on every command. This is invisible to scripts: pipelines compose,
+redirections work, job control behaves identically. Workers can be
+disabled via
+.B "setopt no_workers"
+or by the parity flags.
+.SH "RECORDER"
+.B zshrs-recorder
+.RI ( bins/zshrs-recorder.rs )
+captures shell sessions as a structured event stream. Feature-gated;
+see
+.BR docs/RECORDER.md " and " docs/RECORDER_PROTOCOL.md
+for the on-disk schema. The replay surface
+.RB ( zpwrReplay )
+sits on top of it.
 .SH "ENVIRONMENT"
-Standard zsh-recognised variables and the zshrs additions
-.RB ( ZSHRS_CACHE ,
-.BR ZSHRS_LOG ,
-.BR ZSHRS_LONG_CMD_PRE_THRESHOLD )
-are documented in
-.BR zshrs (1).
+Standard zsh-recognised variables (see SPECIAL PARAMETERS) plus
+zshrs additions:
+.TP
+.B ZSHRS_CACHE
+Override the cache root. Default:
+.IR ~/.cache/zshrs/ .
+.TP
+.B ZSHRS_LOG
+.BR tracing -style filter for the structured log. Examples:
+.BR debug ", " "zshrs::ported::lex=trace" ", " "zshrs=info,fusevm=trace" .
+.TP
+.B ZSHRS_LONG_CMD_PRE_THRESHOLD
+Seconds. Commands taking longer fire the preexec long-cmd hook.
+.TP
+.B ZSHRS_NO_DAEMON
+Suppress daemon connection (per-invocation override of full mode).
 .SH "FILES"
 .TP
 .I ~/.cache/zshrs/
@@ -322,16 +1854,18 @@ Optional daemon config; see
 .BR zd (1).
 .TP
 .I ~/.zshenv,\ ~/.zprofile,\ ~/.zshrc,\ ~/.zlogin,\ ~/.zlogout
-Standard zsh startup files.
+Standard zsh startup files (used identically to upstream zsh).
 .SH "EXIT STATUS"
 Identical to
-.BR zsh (1).
-The shell exits with the status of the last command, or with
+.BR zsh (1):
+the shell exits with the status of the last command or with
 .B $?
 at the time of an
 .B exit
 call. 127 indicates command-not-found; 126 indicates a permission
-error.
+error. Trap handlers and
+.B zshexit
+fire before the actual exit syscall.
 .SH "COMPATIBILITY GUARANTEES"
 .B zshrs
 treats the zsh upstream
@@ -351,6 +1885,32 @@ must work today. Compat-floor regressions against
 and the standard plugin set are catastrophic; the parity test corpus
 .RB ( tests/zsh_compat_parity_gaps.rs ,
 20,000+ cases) is gating.
+.PP
+.B Architectural invariants:
+.IP "" 4
+.B tree_walker_absent
+\(em the C-style AST walker is unreachable from any code path.
+fusevm bytecode is the only executor.
+.IP "" 4
+.B no_tree_walker_dispatch
+\(em no Rust call-site re-introduces an
+.BR execlist / execpline / execcmd
+shape; pinned at 96 tests.
+.IP "" 4
+.B port_purity
+\(em every
+.B pub fn
+under
+.B src/ported/
+maps to a real
+.B Src/x.c
+function name (allowlist in
+.BR tests/data/fake_fn_allowlist.txt ).
+.IP "" 4
+.B file_mapping
+\(em ports live in the Rust file matching their C basename
+(allowlist in
+.BR tests/data/ported_fn_file_mapping_allowlist.txt ).
 .SH "DIAGNOSTICS"
 Errors take the form
 .BI "zshrs: " command ": " reason
@@ -360,43 +1920,34 @@ plugin compile) goes to
 via
 .BR tracing ;
 it is never printed to the terminal. No startup banner. No deprecation
-nags. No spell-correction prompts. No "did you mean" hints.
+nags. No spell-correction prompts. No "did you mean" hints. No
+tip-of-the-day. No "use \fB\-\-help\fR for more" suffix in error
+messages.
 .SH "DEBUGGING & INTROSPECTION"
 .TP
 .B \-\-disasm
 Print fusevm opcodes before VM execution.
 .TP
-.B \-\-dump\-tokens, \-\-dump\-ast, \-\-dump\-wordcode, \-\-dump\-zwc
-Inspect each pipeline stage; see
-.BR zshrs (1).
+.B \-\-dump\-tokens
+Token stream from lex.rs.
 .TP
-.B ZSHRS_LOG
-.BR tracing -style filter on the structured log. Examples:
-.B ZSHRS_LOG=debug
-or
-.BR "ZSHRS_LOG=zshrs::ported::lex=trace" .
+.B \-\-dump\-ast
+Parsed AST from parse.rs.
+.TP
+.B \-\-dump\-wordcode
+zsh-style wordcode (for parity comparison against
+.BR zcompile ).
+.TP
+.B \-\-dump\-zwc
+Inspect a
+.B *.zwc
+bytecode bundle.
 .TP
 .B \-\-doctor
 Full diagnostic report; useful when filing issues.
-.SH "RECORDER"
-.B zshrs-recorder
-.RI ( bins/zshrs-recorder.rs )
-captures shell sessions as a structured event stream. Feature-gated;
-see
-.BR docs/RECORDER.md " and " docs/RECORDER_PROTOCOL.md
-for the on-disk schema.
-.SH "WORKERS & NO-FORK ARCHITECTURE"
-zshrs ships a persistent worker pool: long-lived processes that
-service builtins, common externals
-.RB ( ls ", " cat ", " grep ", "
-etc., on the user's allowlist), and pipeline stages without invoking
-.BR fork (2)
-on every command.
-.B "No fork, no problems."
-This is invisible to scripts: pipelines compose, redirections work,
-job control behaves identically. Workers can be disabled via
-.BR setopt " " no_workers
-or by the parity flags.
+.TP
+.B ZSHRS_LOG
+.BR tracing -style filter on the structured log.
 .SH "SEE ALSO"
 .BR zshrs (1),
 .BR zd (1),
@@ -408,27 +1959,29 @@ or by the parity flags.
 .BR zshzle (1),
 .BR zshcompsys (1),
 .BR zshcompctl (1),
+.BR zshcompwid (1),
 .BR zshmisc (1),
 .BR zshmodules (1),
 .BR zshroadmap (1),
 .BR zshcalsys (1),
 .BR zshtcpsys (1),
+.BR zshzftpsys (1),
 .BR zshcontrib (1),
 .BR zshexpn (1)
 .PP
-Online: docs at
+Online docs:
 .UR https://menketechnologies.github.io/zshrs/
 https://menketechnologies.github.io/zshrs/
 .UE ,
-reference at
+reference:
 .UR https://menketechnologies.github.io/zshrs/reference.html
 https://menketechnologies.github.io/zshrs/reference.html
 .UE ,
-live coverage report at
+live coverage report:
 .UR https://menketechnologies.github.io/zshrs/report.html
 https://menketechnologies.github.io/zshrs/report.html
 .UE ,
-sources at
+sources:
 .UR https://github.com/MenkeTechnologies/zshrs
 https://github.com/MenkeTechnologies/zshrs
 .UE .
@@ -436,7 +1989,7 @@ https://github.com/MenkeTechnologies/zshrs
 .B zshrs
 is developed by MenkeTechnologies. Built on the zsh upstream
 .RB ( https://www.zsh.org )
-which remains the source-of-truth spec; zshrs's port purity test
+which remains the source-of-truth spec; zshrs's port-purity test
 .RB ( tests/port_purity.rs )
 fails the build if any
 .IR src/ported/
