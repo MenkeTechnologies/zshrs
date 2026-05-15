@@ -499,22 +499,15 @@ pub fn start_match() {                                                       // 
 ///     matchparts = matchsubs = NULL;
 /// }
 /// ```
-/// Tear down the per-match cline lists when a match attempt fails.
+/// C body (compmatch.c:312, 3 lines):
+///     `free_cline(matchparts);
+///      free_cline(matchsubs);
+///      matchparts = matchsubs = NULL;`
+/// The `take()` on each guard discards the old chain (Rust drop runs
+/// `free_cline`) and leaves the slot None — same observable state.
 pub fn abort_match() {                                                       // c:312
-    // c:312-315 — `free_cline(matchparts); free_cline(matchsubs)`.
-    let parts = MATCHPARTS
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .take();
-    let subs = MATCHSUBS
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .take();
-    free_cline(parts);
-    free_cline(subs);
-    // c:316 — set to NULL (already done by .take()).
+    free_cline(MATCHPARTS.get_or_init(|| Mutex::new(None)).lock().unwrap().take()); // c:313
+    free_cline(MATCHSUBS.get_or_init(|| Mutex::new(None)).lock().unwrap().take());  // c:314
 }
 
 /// Direct port of `static void add_match_str(Cmatcher m, char *l,
