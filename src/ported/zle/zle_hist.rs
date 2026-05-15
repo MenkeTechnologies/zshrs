@@ -652,17 +652,11 @@ pub fn endofbufferorhistory() -> i32 {                          // c:593
 /// live-buffer sentinel just past the last entry) via
 /// `zle_goto_hist`. Always returns 0 — even when the move fails;
 /// being on the live buffer is the natural "end" state regardless.
-pub fn endofhistory() -> i32 {                                  // c:604
-    // c:606 — `zle_goto_hist(curhist, 0, 0)`. Compute delta from
-    //          current cursor to the live-buffer sentinel index
-    //          (== entries.len()).
-    let (cur, end): (i32, i32) = {
-        let h = crate::ported::zle::zle_main::history().lock().unwrap();
-        (h.cursor as i32, h.entries.len() as i32)
-    };
-    let delta = end - cur;
-    let _ = zle_goto_hist(delta, false);
-    0                                                            // c:607
+/// C body (2 lines): `zle_goto_hist(curhist, 0, 0); return 0;`
+pub fn endofhistory() -> i32 {                                               // c:604
+    let (cur, end) = { let h = crate::ported::zle::zle_main::history().lock().unwrap(); (h.cursor as i32, h.entries.len() as i32) };
+    let _ = zle_goto_hist(end - cur, false);                                 // c:606
+    0                                                                        // c:607
 }
 
 /// Port of `insertlastword()` from Src/Zle/zle_hist.c:612.
