@@ -947,6 +947,7 @@ pub type Repldata = Box<repldata>; // c:2007
 
 /// Port of `struct paramdef` from `Src/zsh.h:2082-2090`.
 #[allow(non_camel_case_types)]
+#[derive(Default)]
 pub struct paramdef {
     // c:2082
     pub name: String,                 // c:2083
