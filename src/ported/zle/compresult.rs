@@ -588,32 +588,18 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {             // 
 /// Set the `complist` global and update `onlyexpl` per the
 /// substring scan. Called from `bin_compset` to honour
 /// `compstate[list]`.
-pub fn comp_list(v: Option<&str>) {                                              // c:1468
-    use std::sync::Mutex;
+/// C body (Src/Zle/compresult.c:1468) is 4 lines:
+///   `zsfree(complist); complist = v;
+///    onlyexpl = v ? ((strstr(v,"expl")?1:0) |
+///                    (strstr(v,"messages")?2:0)) : 0;`
+pub fn comp_list(v: Option<&str>) {                                          // c:1468
     use std::sync::atomic::Ordering;
-    use crate::ported::zle::compcore::onlyexpl;
-
-    // c:1470-1471 — `zsfree(complist); complist = v`.
-    let complist = crate::ported::zle::complete::COMPLIST
-        .get_or_init(|| Mutex::new(String::new()));
-    {
-        let mut g = complist.lock().unwrap();
-        g.clear();
-        if let Some(s) = v {
-            g.push_str(s);
-        }
-    }
-
-    // c:1473-1474 — `onlyexpl = (v ? ((strstr(v,"expl")?1:0) |
-    //                                 (strstr(v,"messages")?2:0)) : 0)`.
-    let val = match v {
-        None => 0,
-        Some(s) => {
-            (if s.contains("expl")     { 1 } else { 0 })
-          | (if s.contains("messages") { 2 } else { 0 })
-        }
-    };
-    onlyexpl.store(val, Ordering::SeqCst);
+    let mut g = crate::ported::zle::complete::COMPLIST                       // c:1470 zsfree+assign
+        .get_or_init(|| std::sync::Mutex::new(String::new())).lock().unwrap();
+    g.clear();
+    if let Some(s) = v { g.push_str(s); }
+    let val = v.map_or(0, |s| (s.contains("expl") as i32) | (s.contains("messages") as i32) << 1); // c:1473
+    crate::ported::zle::compcore::onlyexpl.store(val, Ordering::SeqCst);     // c:1473
 }
 
 /// Port of `skipnolist(Cmatch *p, int showall)` from `Src/Zle/compresult.c:1480`.
