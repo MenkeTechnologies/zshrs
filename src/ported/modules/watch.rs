@@ -337,18 +337,13 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:45
 ///     return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
 /// return u->ut_time - v->ut_time;
 /// ```
-pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {                   // c:527
-    let ut = u.ut_tv.tv_sec as i64;
-    let vt = v.ut_tv.tv_sec as i64;
-    if ut == vt {                                                        // c:527
-        // c:530 — `return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));`
-        return match utmp_line(u).cmp(&utmp_line(v)) {
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => 1,
-        };
-    }
-    (ut - vt) as i32                                                     // c:531 return u->ut_time - v->ut_time
+/// C body (watch.c:527, 3 lines):
+///     `if (u->ut_time == v->ut_time)
+///          return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
+///      return u->ut_time - v->ut_time;`
+pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {                       // c:527
+    let (ut, vt) = (u.ut_tv.tv_sec as i64, v.ut_tv.tv_sec as i64);
+    if ut == vt { utmp_line(u).cmp(&utmp_line(v)) as i32 } else { (ut - vt) as i32 } // c:529-531
 }
 
 // Per-evaluator watch-module state — bucket-1 dissolution per

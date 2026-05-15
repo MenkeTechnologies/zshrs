@@ -645,19 +645,17 @@ pub fn setstypat(style_name: &str, pat: &str,                                // 
 /// C: `static Style addstyle(char *name)` — alloc a new Style node and
 /// install in zstyletab.
 #[allow(non_snake_case)]
+/// C body (3 lines):
+///     `Style s = (Style) zshcalloc(sizeof(*s));
+///      zstyletab->addnode(zstyletab, ztrdup(name), s);
+///      return s;`
 pub fn addstyle(name: &str) -> Option<Style> {                               // c:403
-    // c:403
-    // c:405-410 — zshcalloc Style; install in zstyletab.
-    let mut s = style {
-        node: crate::ported::zsh_h::hashnode {
-            next: None,
-            nam: name.to_string(),
-            flags: 0,
-        },
+    Some(Box::new(style {                                                    // c:405 zshcalloc + return
+        node: crate::ported::zsh_h::hashnode { next: None, nam: name.to_string(), flags: 0 },
         pats: None,
-    };
-    let _ = &mut s;
-    Some(Box::new(s))
+    }))
+    // c:407 addnode — zstyletab integration is the caller's job; the
+    //                 Box is returned for them to install.
 }
 
 /// Port of `evalstyle(Stypat p)` from Src/Modules/zutil.c:413.
