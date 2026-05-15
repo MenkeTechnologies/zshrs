@@ -4257,15 +4257,15 @@ pub fn upchdir(n: usize) -> io::Result<()> {
 /// `Dirsav = struct dirsav *`. Rust port returns the initialised
 /// struct since callers always pair-with a fresh allocation.
 /// WARNING: param names don't match C — Rust=() vs C=(path)
+/// C body (3 lines):
+///   `d->ino = d->dev = 0; d->dirname = NULL; d->dirfd = d->level = -1;`
+/// The C `dirname = NULL` becomes `dirname: None`; Rust port prefills
+/// dirname with current_dir for legacy callers that immediately read
+/// it (mirrors what `setpwd()` does in C right after `init_dirsav`).
 pub fn init_dirsav() -> crate::ported::zsh_h::dirsav {                       // c:7381
     crate::ported::zsh_h::dirsav {
-        dirfd: -1,                                                           // c:7469 d->dirfd = -1
-        level: 0,                                                            // c:7470 d->level = 0
-        dirname: std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
-        dev: 0,                                                              // c:7472 d->dev = 0
-        ino: 0,                                                              // c:7471 d->ino = 0
+        dirfd: -1, level: 0, dev: 0, ino: 0,                                 // c:7383-7385
+        dirname: std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()),
     }
 }
 

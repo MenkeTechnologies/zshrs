@@ -3496,15 +3496,15 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
 /// Port of `fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` from Src/builtin.c:3967.
 /// C: `static void fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` →
 ///   `addlinknode(matchednodes, cn->node.nam);`
+/// C body (2 lines):
+///   `Cmdnam cn = (Cmdnam) hn;
+///    addlinknode(matchednodes, cn->node.nam);`
+/// (C source does not null-check hn — callers guarantee non-null.)
 /// WARNING: param names don't match C — Rust=(hn) vs C=(hn, printflags)
 pub fn fetchcmdnamnode(hn: *mut crate::ported::zsh_h::hashnode,              // c:3967
                        _printflags: i32) {
-    if hn.is_null() { return; }
-    let cn = unsafe { &*hn };
-    // c:3971 — `addlinknode(matchednodes, cn->node.nam);`
-    if let Ok(mut m) = MATCHEDNODES.lock() {
-        m.push(cn.nam.clone());                                              // c:3971
-    }
+    let nam = unsafe { (*hn).nam.clone() };                                  // c:3969 cast + read
+    if let Ok(mut m) = MATCHEDNODES.lock() { m.push(nam); }                  // c:3971
 }
 
 /// Port of `bin_whence(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:3975.
