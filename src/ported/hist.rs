@@ -447,22 +447,14 @@ pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
 
 /// Port of `Histent up_histent(Histent he)` from Src/hist.c.
 pub fn up_histent(current: i64) -> Option<i64> {                             // c:1304
-    let pos = ring_position(current)?;
-    if pos + 1 >= ring_len() {
-        None
-    } else {
-        Some(ring_at(pos + 1))
-    }
+    let pos = ring_position(current)?;                                       // c:1306 !he
+    (pos + 1 < ring_len()).then(|| ring_at(pos + 1))                         // c:1306 he->up == hist_ring? NULL : he->up
 }
 
 /// Port of `Histent down_histent(Histent he)` from Src/hist.c.
 pub fn down_histent(current: i64) -> Option<i64> {                           // c:1311
     let pos = ring_position(current)?;
-    if pos == 0 {
-        None
-    } else {
-        Some(ring_at(pos - 1))
-    }
+    (pos > 0).then(|| ring_at(pos - 1))                                      // c:1313 he == hist_ring? NULL : he->down
 }
 
 /// Port of `Histent gethistent(zlong ev, int nearmatch)` from Src/hist.c.
