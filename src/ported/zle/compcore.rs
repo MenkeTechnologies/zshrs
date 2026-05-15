@@ -2275,11 +2275,8 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {                             // 
 /// Port of `mod_export void endcmgroup(char **ylist)` from
 /// compcore.c:3131.
 pub fn endcmgroup(ylist: Option<Vec<String>>) {                              // c:3131
-    let cell = mgroup.get_or_init(|| Mutex::new(None));
-    if let Ok(mut g) = cell.lock() {
-        if let Some(grp) = g.as_mut() {
-            grp.ylist = ylist.unwrap_or_default();                           // c:3140
-        }
+    if let Ok(mut g) = mgroup.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(grp) = g.as_mut() { grp.ylist = ylist.unwrap_or_default(); }  // c:3140
     }
 }
 
