@@ -2852,4 +2852,76 @@ mod tests {
         assert_eq!(mathevali("1 ? 42 : 1/0").unwrap(), 42);
         assert_eq!(mathevali("0 ? 1/0 : 42").unwrap(), 42);
     }
+
+    /// `Src/math.c:467-490` — `$(( ))` integer arithmetic supports
+    /// hex (`0x`/`0X`), binary (`0b`/`0B`). Octal-via-leading-zero
+    /// (`0777`) is OPT-IN behind the OCTALZEROES option — by default
+    /// `0777` parses as decimal 777 (matches C's c:489 conditional).
+    /// Pin both the hex/binary path AND the default-decimal behavior
+    /// for leading-zero.
+    #[test]
+    fn mathevali_parses_hex_and_binary_literals() {
+        // Hex literals at c:471 (lowchar 'x').
+        assert_eq!(mathevali("0xff").unwrap(),  255);
+        assert_eq!(mathevali("0x10").unwrap(),  16);
+        assert_eq!(mathevali("0xff + 1").unwrap(), 256);
+        // Binary literals at c:471 (lowchar 'b').
+        assert_eq!(mathevali("0b1010").unwrap(), 10);
+        assert_eq!(mathevali("0b11111111").unwrap(), 255);
+        // Default-OCTALZEROES-off: `0777` is decimal 777, NOT octal 511.
+        assert_eq!(mathevali("0777").unwrap(), 777,
+            "c:489 — leading-zero parses as decimal when OCTALZEROES off");
+    }
+
+    /// c:1505 — bitwise AND/OR/XOR. Each operator has its own
+    /// precedence tier between shifts and logical ops. Regression
+    /// flipping precedence between `&` and `|` would break `$(( a &
+    /// b | c ))` (must be `(a&b) | c`, not `a & (b|c)`).
+    #[test]
+    fn mathevali_bitwise_operators_and_or_xor() {
+        // Boolean truth-table cases.
+        assert_eq!(mathevali("12 & 10").unwrap(), 8,   "1100 & 1010 = 1000");
+        assert_eq!(mathevali("12 | 10").unwrap(), 14,  "1100 | 1010 = 1110");
+        assert_eq!(mathevali("12 ^ 10").unwrap(), 6,   "1100 ^ 1010 = 0110");
+        // Precedence: `&` > `^` > `|`, so `a & b | c` == `(a&b) | c`.
+        assert_eq!(mathevali("12 & 10 | 1").unwrap(), 9,
+            "c:1505 — & binds tighter than | : (12 & 10) | 1 = 8 | 1 = 9");
+    }
+
+    /// c:1505 — comparison ops produce 0 or 1 (Boolean semantics).
+    /// Pin all six relational ops.
+    #[test]
+    fn mathevali_comparison_operators_return_zero_or_one() {
+        assert_eq!(mathevali("1 < 2").unwrap(),  1);
+        assert_eq!(mathevali("2 < 1").unwrap(),  0);
+        assert_eq!(mathevali("2 > 1").unwrap(),  1);
+        assert_eq!(mathevali("1 > 2").unwrap(),  0);
+        assert_eq!(mathevali("2 <= 2").unwrap(), 1);
+        assert_eq!(mathevali("2 >= 2").unwrap(), 1);
+        assert_eq!(mathevali("2 == 2").unwrap(), 1);
+        assert_eq!(mathevali("2 != 2").unwrap(), 0);
+    }
+
+    /// c:1505 — unary minus and bitwise NOT. The C parser must
+    /// distinguish `1 - 2` (binary) from `1 + -2` (unary).
+    #[test]
+    fn mathevali_unary_minus_and_bitwise_not() {
+        assert_eq!(mathevali("-5").unwrap(), -5);
+        assert_eq!(mathevali("-(2 + 3)").unwrap(), -5);
+        assert_eq!(mathevali("1 + -2").unwrap(), -1);
+        // Bitwise NOT (~).
+        assert_eq!(mathevali("~0").unwrap(), -1, "two's-complement: ~0 = -1");
+        assert_eq!(mathevali("~5").unwrap(), -6);
+    }
+
+    /// c:1505 — logical NOT operator `!`. Maps 0 → 1, anything-else → 0.
+    #[test]
+    fn mathevali_logical_not() {
+        assert_eq!(mathevali("!0").unwrap(),  1);
+        assert_eq!(mathevali("!1").unwrap(),  0);
+        assert_eq!(mathevali("!42").unwrap(), 0);
+        // Double-NOT normalises to 0/1.
+        assert_eq!(mathevali("!!42").unwrap(), 1);
+        assert_eq!(mathevali("!!0").unwrap(),  0);
+    }
 }

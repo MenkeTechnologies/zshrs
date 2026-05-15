@@ -84,12 +84,19 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-#[inline] fn zc_iword(c: char) -> bool { c.is_alphanumeric() || c == '_' }
-#[inline] fn zc_ialnum(c: char) -> bool { c.is_alphanumeric() }
-#[inline] fn zc_ialpha(c: char) -> bool { c.is_alphabetic() }
-#[inline] fn zc_iblank(c: char) -> bool { c == ' ' || c == '\t' }
-#[inline] fn zc_inblank(c: char) -> bool { c == ' ' || c == '\t' || c == '\n' }
-#[inline] fn zc_ipunct(c: char) -> bool { c.is_ascii_punctuation() }
+// Local aliases routing to the canonical `ZC_*` predicates in
+// `zle_h.rs:246-271` (port of `Src/Zle/zle.h:60-73`). Re-defining
+// these inline here is a divergence trap — the previous versions
+// had narrow `space || tab` iblank and `space || tab || \n` inblank
+// that did NOT match the C `wcsiblank`/`iswspace` semantics. Always
+// route through the canonical port so a regression has one place
+// to fix, not two.
+#[inline] fn zc_iword(c: char)   -> bool { crate::ported::zle::zle_h::ZC_iword(c)   }
+#[inline] fn zc_ialnum(c: char)  -> bool { crate::ported::zle::zle_h::ZC_ialnum(c)  }
+#[inline] fn zc_ialpha(c: char)  -> bool { crate::ported::zle::zle_h::ZC_ialpha(c)  }
+#[inline] fn zc_iblank(c: char)  -> bool { crate::ported::zle::zle_h::ZC_iblank(c)  }
+#[inline] fn zc_inblank(c: char) -> bool { crate::ported::zle::zle_h::ZC_inblank(c) }
+#[inline] fn zc_ipunct(c: char)  -> bool { crate::ported::zle::zle_h::ZC_ipunct(c)  }
 
 /// Port of `forwardword(char **args)` from `Src/Zle/zle_word.c:45`.
 ///
@@ -1066,5 +1073,62 @@ mod tests {
         transposewords(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "bar foo");
+    }
+
+    /// `Src/Zle/zle_word.c:74-78` — `wordclass` is a 3-level ternary:
+    /// `ZC_iblank(x) ? 0 : ((ZC_ialnum(x) || ZWC('_') == x) ? 1 :
+    ///                       ZC_ipunct(x) ? 2 : 3)`.
+    /// Returns 0=iblank, 1=alnum-or-underscore, 2=punctuation, 3=other.
+    /// Every word-movement widget (`forwardword`, `backwardword`,
+    /// `viforwardwordend`, `vibackwardword`, …) iterates against this
+    /// classifier — a regression in any branch breaks all of them.
+    #[test]
+    fn wordclass_iblank_branch_returns_zero() {
+        // c:76 — `ZC_iblank(x) ? 0`. After the wcsiblank fix
+        // `Src/Zle/zle.h:62` → `Src/utils.c:4302-4307` the iblank arm
+        // catches every iswspace-except-newline char.
+        assert_eq!(wordclass(' '),  0);
+        assert_eq!(wordclass('\t'), 0);
+        assert_eq!(wordclass('\r'),       0, "CR is iblank per wcsiblank");
+        assert_eq!(wordclass('\x0c'),     0, "FF is iblank per wcsiblank");
+        assert_eq!(wordclass('\x0b'),     0, "VT is iblank per wcsiblank");
+        assert_eq!(wordclass('\u{00A0}'), 0, "NBSP is iblank per wcsiblank");
+    }
+
+    /// c:76-77 — `ZC_ialnum(x) || ZWC('_') == x` → 1. Alphanumerics
+    /// AND `_` collapse to class 1 so `foo_bar` is treated as a
+    /// single word boundary.
+    #[test]
+    fn wordclass_alnum_and_underscore_branch_returns_one() {
+        // Letters.
+        assert_eq!(wordclass('a'), 1);
+        assert_eq!(wordclass('Z'), 1);
+        // Digits.
+        assert_eq!(wordclass('0'), 1);
+        assert_eq!(wordclass('9'), 1);
+        // Underscore — explicit special-case at c:76.
+        assert_eq!(wordclass('_'), 1);
+    }
+
+    /// c:77 — `ZC_ipunct(x) ? 2`. Punctuation falls in class 2 so it
+    /// separates word-1 from word-1 (e.g. `foo.bar` is two class-1
+    /// chunks separated by a class-2 char).
+    #[test]
+    fn wordclass_punctuation_branch_returns_two() {
+        assert_eq!(wordclass('.'), 2);
+        assert_eq!(wordclass(','), 2);
+        assert_eq!(wordclass(';'), 2);
+        assert_eq!(wordclass('!'), 2);
+        assert_eq!(wordclass('-'), 2);
+        assert_eq!(wordclass('"'), 2);
+    }
+
+    /// c:77 — final `: 3` arm catches everything else. Newline is the
+    /// canonical "other" char: `wcsiblank` at `Src/utils.c:4304`
+    /// excludes `\n` from iblank, `iswalnum('\n')` is false,
+    /// `iswpunct('\n')` is false → class 3.
+    #[test]
+    fn wordclass_other_branch_returns_three() {
+        assert_eq!(wordclass('\n'), 3, "newline excluded from iblank by wcsiblank");
     }
 }

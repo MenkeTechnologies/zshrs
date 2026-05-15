@@ -34,8 +34,10 @@ use crate::ported::zle::zle_tricky::*;
 use crate::ported::zle::deltochar::*;
 
 pub fn blankwordclass(x: char) -> i32 {                                  // c:34
-    // C: `return (ZC_iblank(x) ? 0 : 1);`
-    if x == ' ' || x == '\t' { 0 } else { 1 }                            // c:36
+    // c:36 — `return (ZC_iblank(x) ? 0 : 1);`. `ZC_iblank` routes
+    // through `wcsiblank` (Src/Zle/zle.h:62 → Src/utils.c:4302-4307):
+    // `iswspace(wc) && wc != L'\n'`.
+    if crate::ported::zle::zle_h::ZC_iblank(x) { 0 } else { 1 }          // c:36
 }
 
 /// Port of `selectword(UNUSED(char **args))` from `Src/Zle/textobjects.c:41`.
@@ -269,7 +271,7 @@ pub fn selectword() -> i32 {                                // c:41
             if pc == '\n' {                                              // c:186
                 break;                                                   // c:187
             }
-            if !(pc == ' ' || pc == '\t') {                              // c:188 !ZC_iblank
+            if !crate::ported::zle::zle_h::ZC_iblank(pc) {               // c:188 !ZC_iblank
                 pos += 1;                                                // c:189 INCPOS
                 crate::ported::zle::zle_main::MARK.store(pos, std::sync::atomic::Ordering::SeqCst);                                          // c:190
                 break;                                                   // c:191
@@ -367,6 +369,45 @@ mod tests {
         assert_eq!(blankwordclass('0'),  1, "digit is not iblank");
         assert_eq!(blankwordclass('!'),  1, "punctuation is not iblank");
         assert_eq!(blankwordclass('\n'), 1, "newline is NOT iblank per ZC_iblank semantics");
+    }
+
+    /// `Src/Zle/textobjects.c:36` — `return (ZC_iblank(x) ? 0 : 1)`.
+    /// `Src/Zle/zle.h:62` aliases `ZC_iblank` to `wcsiblank` in the
+    /// MULTIBYTE_SUPPORT build; `Src/utils.c:4304` defines
+    /// `wcsiblank(wc)` as `iswspace(wc) && wc != L'\n'`. Non-ASCII
+    /// letters are NOT `iswspace` so they fall through to the
+    /// non-iblank branch (return 1).
+    #[test]
+    fn blankwordclass_non_ascii_letters_are_not_iblank() {
+        assert_eq!(blankwordclass('é'),  1, "Latin-1 letter: not iswspace");
+        assert_eq!(blankwordclass('字'), 1, "CJK ideograph: not iswspace");
+        assert_eq!(blankwordclass('α'),  1, "Greek letter: not iswspace");
+    }
+
+    /// `Src/utils.c:4302-4307 wcsiblank` returns true for every
+    /// `iswspace` char except `\n`. Per `Src/Zle/textobjects.c:36`
+    /// that means CR/FF/VT/NBSP all classify as iblank → return 0.
+    /// Pinning this prevents a regression that re-narrows the
+    /// classifier back to `space || tab` (which would split words
+    /// on non-ASCII whitespace in vi `aW`/`iW` selections).
+    #[test]
+    fn blankwordclass_wide_whitespace_classes_are_iblank() {
+        assert_eq!(blankwordclass('\r'),       0, "CR is iblank per wcsiblank");
+        assert_eq!(blankwordclass('\x0c'),     0, "FF is iblank per wcsiblank");
+        assert_eq!(blankwordclass('\x0b'),     0, "VT is iblank per wcsiblank");
+        assert_eq!(blankwordclass('\u{00A0}'), 0, "NBSP is iblank per wcsiblank");
+    }
+
+    /// `Src/Zle/textobjects.c:224-225` — `if (n < 1 || 2*n > zlell+1) return 1`.
+    /// With an empty buffer (`zlell == 0`) the predicate `2*1 > 0+1`
+    /// is true so the guard fires for any n>=1. Regression dropping
+    /// this guard would run the tokeniser over a zero-length buffer
+    /// and corrupt `MARK`/`ZLECS` (set to past-end indices) on every
+    /// vi `iw`/`aw` over an empty prompt.
+    #[test]
+    fn selectargument_returns_one_on_empty_buffer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(selectargument(), 1, "c:225 — empty buffer fails 2*n > zlell+1");
     }
 
 }

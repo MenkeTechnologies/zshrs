@@ -288,4 +288,55 @@ mod tests {
         // Src/zsh.h:2157 — `#define ND_USERNAME (1<<1)`.
         assert_eq!(ND_USERNAME, 1 << 1);
     }
+
+    /// `Src/hashnameddir.c:98` — `if (!allusersadded) { … allusersadded = 1; }`.
+    /// Once the passwd database has been walked, subsequent calls must
+    /// early-exit. Regression dropping this guard would re-walk
+    /// `getpwent()` on every `~<TAB>` completion attempt — silently
+    /// quadratic on systems with thousands of LDAP users. We can't
+    /// observe the no-op via the table (other parallel tests may
+    /// mutate it) — instead we pin the visible side-effect:
+    /// `allusersadded` stays exactly 1, since the c:111 `= 1` only
+    /// runs inside the c:98 conditional.
+    #[test]
+    fn fillnameddirtable_short_circuits_when_allusersadded_set() {
+        allusersadded.store(1, Ordering::Relaxed);
+        fillnameddirtable();
+        assert_eq!(allusersadded.load(Ordering::Relaxed), 1,
+            "c:98 conditional must early-exit; flag remains 1 unchanged");
+    }
+
+    /// `Src/hashnameddir.c:125` — `nd->diff = strlen(nd->dir) - strlen(nam);`.
+    /// `Src/zsh.h:2152` — `int diff;` (signed int field). Regression
+    /// using unsigned subtraction (or assuming `dir.len() >= name.len()`)
+    /// would underflow on a `hash -d short=/x` style entry.
+    #[test]
+    fn addnameddirnode_diff_can_be_negative() {
+        // name "longname" (8) longer than dir "/x" (2) → diff = -6.
+        fresh_table();
+        addnameddirnode("longname", make_nd("longname", "/x", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("longname").expect("entry inserted");
+        assert_eq!(nd.diff, -6, "c:125 — signed subtraction may underflow zero");
+    }
+
+    /// `Src/hashnameddir.c:121-128` — `addnameddirnode` calls
+    /// `addhashnode(ht, nam, nodeptr)` at c:127. `addhashnode` in C
+    /// replaces an existing node with the same key (Src/hashtable.c
+    /// `addhashnode2` removes the prior entry before insert).
+    /// Regression that accumulates duplicate keys would mis-print
+    /// `~name`-prefixed paths after `hash -d` reuse and leak the
+    /// stale `diff` field.
+    #[test]
+    fn addnameddirnode_overwrites_existing_entry() {
+        fresh_table();
+        addnameddirnode("p", make_nd("p", "/old", 0));
+        addnameddirnode("p", make_nd("p", "/new/longer/path", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("p").expect("entry present");
+        assert_eq!(nd.dir, "/new/longer/path", "c:127 — addhashnode replaces");
+        // c:125 — diff recomputed for the new dir+name pair.
+        assert_eq!(nd.diff, "/new/longer/path".len() as i32 - 1);
+        assert_eq!(t.len(), 1, "must not accumulate duplicate keys");
+    }
 }

@@ -520,4 +520,50 @@ mod tests {
         let arr = hlinklist2array(&list);
         assert_eq!(arr, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     }
+
+    /// `Src/linklist.c:302-311` — `countlinknodes(list)` walks the
+    /// `next` chain incrementing a counter. Empty list → 0.
+    #[test]
+    fn countlinknodes_returns_len_for_arbitrary_lists() {
+        let empty: LinkList<i32> = LinkList::new();
+        assert_eq!(countlinknodes(&empty), 0,
+            "c:309 — empty list traversal yields 0");
+        let one: LinkList<i32> = vec![42].into_iter().collect();
+        assert_eq!(countlinknodes(&one), 1);
+        let many: LinkList<i32> = (0..100).collect();
+        assert_eq!(countlinknodes(&many), 100);
+    }
+
+    /// `Src/linklist.c:316-325` — `rolllist(l, nd)` makes `nd` first,
+    /// moving preceding nodes to end (circular rotation). The Rust
+    /// port treats `nd` as a 0-indexed position to rotate to the
+    /// front; rotate-by-0 is a no-op, rotate-by-N wraps via modulo.
+    #[test]
+    fn rolllist_rotates_to_index() {
+        // c:319-324 — rotate so nd-th element becomes first.
+        let mut list: LinkList<i32> = vec![10, 20, 30, 40].into_iter().collect();
+        rolllist(&mut list, 2);
+        assert_eq!(list.to_vec(), vec![30, 40, 10, 20],
+            "c:321 — `list.first = nd` then preceding nodes append at end");
+    }
+
+    /// c:316-325 — rolllist by 0 is the identity. Pin so an off-by-one
+    /// regression doesn't silently rotate every caller by 1.
+    #[test]
+    fn rolllist_zero_index_is_identity() {
+        let mut list: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
+        rolllist(&mut list, 0);
+        assert_eq!(list.to_vec(), vec![1, 2, 3]);
+    }
+
+    /// c:316-325 — rolllist with index >= len wraps via modulo. Pins
+    /// the implementation choice (C version is UB on out-of-range —
+    /// Rust port chose modulo defensively).
+    #[test]
+    fn rolllist_wraps_index_modulo_length() {
+        let mut list: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
+        // index 4 mod 3 == 1 → rotate by 1.
+        rolllist(&mut list, 4);
+        assert_eq!(list.to_vec(), vec![2, 3, 1]);
+    }
 }

@@ -965,7 +965,8 @@ fn gettok() -> lextok {
     // & INP_ALIAS)) wordbeg = inbufct - (qbang && c == bangchar);`
     // ZLE word-begin tracking; consumed by `gotword` (c:1882).
     let qbang_at_bang =
-        crate::ported::hist::qbang.load(std::sync::atomic::Ordering::SeqCst) && c == bangchar;
+        crate::ported::hist::qbang.load(std::sync::atomic::Ordering::SeqCst)
+        && c as i32 == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
     let qbang_adj: i32 = if qbang_at_bang { 1 } else { 0 };
     if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
         && (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS)
@@ -1076,7 +1077,7 @@ fn gettok() -> lextok {
     let lexflags = LEX_LEXFLAGS.get();
     let allow_comment_via_flags = (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0)
         && (!crate::ported::zsh_h::interact() || unset(SHINSTDIN));
-    if c == hashchar
+    if c as i32 == crate::ported::hist::hashchar.load(std::sync::atomic::Ordering::SeqCst)
         && !LEX_NOCOMMENTS.get()
         && (isset(INTERACTIVECOMMENTS) || allow_comment_via_flags)
     {
@@ -3497,19 +3498,12 @@ pub fn set_incond(v: i32) {
     LEX_INCOND.set(v);
 }
 
-// `hashchar` / `bangchar` / `hatchar` — port of `unsigned char
-// hashchar, bangchar, hatchar;` declared in `Src/params.c:132` and
-// assigned in `init_main()` (Src/init.c:1100-1102). C zsh exposes
-// these as mutable globals for `$histchars` to rewrite; zshrs
-// pins the default values here (the `$histchars` runtime mirror
-// lives at `crate::ported::hist::bangchar` (AtomicI32)).
-#[allow(non_upper_case_globals)]
-const hashchar: char = '#';
-#[allow(non_upper_case_globals)]
-const bangchar: char = '!';
-#[allow(non_upper_case_globals)]
-#[allow(dead_code)]
-const hatchar: char = '^';
+// `hashchar` / `bangchar` / `hatchar` canonical port of
+// `unsigned char hashchar, bangchar, hatchar;` (`Src/params.c:132`)
+// lives at `crate::ported::hist::{hashchar, bangchar, hatchar}` as
+// `AtomicI32` so `histcharssetfn` (`Src/params.c:5095-5097`) can
+// update them when `$HISTCHARS` changes. Local stale-const copies
+// removed — readers now go through the atomic load directly.
 pub fn incasepat() -> i32 {
     LEX_INCASEPAT.get()
 }

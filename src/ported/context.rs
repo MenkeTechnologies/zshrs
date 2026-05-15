@@ -152,4 +152,56 @@ mod tests {
         assert!(crate::ported::lex::LEX_DBPARENS.with(|c| c.get()));
         assert_eq!(crate::ported::lex::toklineno(), 42);
     }
+
+    /// `Src/zsh.h:491-495` — `ZCONTEXT_HIST = (1<<0)`,
+    /// `ZCONTEXT_LEX = (1<<1)`, `ZCONTEXT_PARSE = (1<<2)`. The three
+    /// bits must be distinct and non-overlapping; `zcontext_save_partial`
+    /// at c:60/63/66 AND-tests each independently and a flag collision
+    /// would silently double-save one substrate and skip another on
+    /// every nested context (heredoc-inside-eval, `read -E`, …).
+    #[test]
+    fn zcontext_flag_bits_are_distinct_and_nonzero() {
+        use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
+        // Pin the exact C constants from Src/zsh.h:491-495.
+        assert_eq!(ZCONTEXT_HIST,  1 << 0);
+        assert_eq!(ZCONTEXT_LEX,   1 << 1);
+        assert_eq!(ZCONTEXT_PARSE, 1 << 2);
+        // Bitfield discipline: no overlapping bits.
+        assert_eq!(ZCONTEXT_HIST  & ZCONTEXT_LEX,   0);
+        assert_eq!(ZCONTEXT_HIST  & ZCONTEXT_PARSE, 0);
+        assert_eq!(ZCONTEXT_LEX   & ZCONTEXT_PARSE, 0);
+    }
+
+    /// `Src/context.c:52-72` — `zcontext_save_partial(parts)` allocates
+    /// the frame BEFORE the `parts &` gates at c:60/63/66, then pushes
+    /// at c:70-71 unconditionally (`cs->next = cstack; cstack = cs`).
+    /// `parts == 0` is a legitimate caller pattern (probe-save); the
+    /// push must still fire. Regression that early-exits on a zero
+    /// mask would mis-balance the stack for any such caller.
+    #[test]
+    fn zcontext_save_partial_with_zero_mask_still_pushes_frame() {
+        reset_cstack();
+        crate::ported::lex::lex_init("");
+        zcontext_save_partial(0);
+        assert!(cstack.lock().unwrap().is_some(),
+            "c:70-71 push must fire even when no parts requested");
+        zcontext_restore_partial(0);
+        assert!(cstack.lock().unwrap().is_none(),
+            "c:96 pop must mirror the push regardless of parts mask");
+    }
+
+    /// `Src/context.c:89-96` — `zcontext_restore_partial` reads
+    /// `cs = cstack` at c:91 and a `DPUTS(!cstack, ...)` at c:93 fires
+    /// in C debug builds. Release C dereferences a NULL `cs` — UB —
+    /// but the Rust port chose to silently no-op on empty stack
+    /// (`head.take()` returns None → early return). Pin the no-op so
+    /// a refactor doesn't suddenly start panicking on unbalanced
+    /// restore calls.
+    #[test]
+    fn zcontext_restore_partial_on_empty_stack_is_noop() {
+        reset_cstack();
+        zcontext_restore_partial(0);
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_none());
+    }
 }

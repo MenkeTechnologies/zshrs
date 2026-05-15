@@ -2770,4 +2770,152 @@ mod tests {
         zleactive.store(0, Ordering::SeqCst);
         assert_eq!(super::super::zle_thingy::zle_usable(), 0);
     }
+
+    /// `Src/Zle/zle_misc.c:919-946` — `parsedigit(int inkey)`. Default
+    /// base 10 (set by `zle_reset()` to `modifier { base: 10, ... }`)
+    /// hits the c:943 path `if (inkey >= '0' && inkey < '0' + zmod.base)`.
+    #[test]
+    fn parsedigit_decimal_recognises_zero_through_nine() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 10);
+        for d in 0..=9 {
+            assert_eq!(parsedigit(b'0' as i32 + d), d, "'{}' → {}", d, d);
+        }
+    }
+
+    /// c:934-942 — base > 10 path. Three sub-arms:
+    /// `inkey >= 'a' && inkey < 'a' + zmod.base - 10` (c:935),
+    /// `inkey >= 'A' && inkey < 'A' + zmod.base - 10` (c:937),
+    /// `idigit(inkey)` (c:939). For base 16 the alpha bound is `< 'g'`
+    /// so 'g'/'G' fall through to `return -1` at c:941.
+    #[test]
+    fn parsedigit_hex_recognises_full_alphabet() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 16;
+        assert_eq!(parsedigit(b'a' as i32), 10);
+        assert_eq!(parsedigit(b'f' as i32), 15);
+        assert_eq!(parsedigit(b'A' as i32), 10);
+        assert_eq!(parsedigit(b'F' as i32), 15);
+        assert_eq!(parsedigit(b'g' as i32), -1, "c:941 — past 'a'+base-10 bound");
+        assert_eq!(parsedigit(b'G' as i32), -1);
+        assert_eq!(parsedigit(b'9' as i32), 9);
+        assert_eq!(parsedigit(b'0' as i32), 0);
+    }
+
+    /// c:943-944 — `if (inkey >= '0' && inkey < '0' + zmod.base)`. For
+    /// base 8 (`zmod.base = 8`) the bound `'0' + 8 == '8'` excludes
+    /// '8' and '9', which fall through to `return -1` at c:945.
+    #[test]
+    fn parsedigit_octal_rejects_eight_and_nine() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 8;
+        assert_eq!(parsedigit(b'0' as i32), 0);
+        assert_eq!(parsedigit(b'7' as i32), 7);
+        assert_eq!(parsedigit(b'8' as i32), -1, "c:945 — '8' fails '0'+8 bound");
+        assert_eq!(parsedigit(b'9' as i32), -1);
+    }
+
+    /// c:945 — final `return -1` for non-digit inputs in the base ≤ 10
+    /// path.
+    #[test]
+    fn parsedigit_rejects_non_digit_inputs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(parsedigit(b' '  as i32), -1);
+        assert_eq!(parsedigit(b'.'  as i32), -1);
+        assert_eq!(parsedigit(b'-'  as i32), -1);
+        assert_eq!(parsedigit(b'a'  as i32), -1, "c:945 — 'a' rejected in base 10");
+        assert_eq!(parsedigit(b'\n' as i32), -1);
+    }
+
+    /// c:928-930 — non-MULTIBYTE branch does `inkey &= 0x7f` to strip
+    /// the Meta bit before digit classification. zshrs ports the
+    /// non-MULTIBYTE form (always-mask) since Rust `char` is wide
+    /// already. ESC-5 from the tty arrives as 0xb5 and must parse
+    /// as 5.
+    #[test]
+    fn parsedigit_strips_meta_bit_before_classification() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        for d in 0..=9 {
+            let meta = (b'0' as i32 + d) | 0x80;
+            assert_eq!(parsedigit(meta), d,
+                "Meta-{} (0x{:x}) must mask 0x80 and parse as {}",
+                d, meta, d);
+        }
+    }
+
+    /// `Src/Zle/zle_misc.c:1201-1224` — `makequote(str, *len)` wraps
+    /// `str` in single quotes (c:1213 open, c:1222 close) and escapes
+    /// every embedded `'` as 4 chars `'\''` (c:1215-1219). Plain input
+    /// with no embedded quotes hits only c:1221 `*l++ = *str` for each
+    /// char.
+    #[test]
+    fn makequote_wraps_plain_input_in_single_quotes() {
+        let out: String = makequote(&"hello".chars().collect::<Vec<_>>()).iter().collect();
+        assert_eq!(out, "'hello'");
+    }
+
+    /// c:1215-1219 — `*str == ZWC('\'')` arm emits the 4-char escape
+    /// `'\''`: close-quote, backslash, literal quote, re-open.
+    #[test]
+    fn makequote_escapes_embedded_single_quote() {
+        let out: String = makequote(&"it's".chars().collect::<Vec<_>>()).iter().collect();
+        assert_eq!(out, r#"'it'\''s'"#);
+    }
+
+    /// c:1211 — `*len += 2 + qtct*3`. Two embedded quotes (qtct=2)
+    /// drive output length to `4 + 2 + 6 = 12` chars.
+    #[test]
+    fn makequote_handles_consecutive_quotes() {
+        let out: String = makequote(&"a''b".chars().collect::<Vec<_>>()).iter().collect();
+        assert_eq!(out, r#"'a'\'''\''b'"#);
+        assert_eq!(out.len(), 12);
+    }
+
+    /// c:1213 + c:1222 — open and close quote are emitted unconditionally
+    /// even for empty input (the `for` loop at c:1214 has zero
+    /// iterations). Output is the 2-char string `''`.
+    #[test]
+    fn makequote_empty_input_returns_pair_of_quotes() {
+        let out: String = makequote(&[]).iter().collect();
+        assert_eq!(out, "''", "c:1213+c:1222 — quotes fire unconditionally");
+    }
+
+    /// `Src/Zle/zle_misc.c:255-269` — `transpose_swap(start, middle,
+    /// end)` rotates `[start..middle)` with `[middle..end)`:
+    /// c:263-264 saves first slice, c:266 `ZS_memmove` shifts the
+    /// second into start, c:267 `ZS_memcpy` writes the saved first
+    /// after it.
+    #[test]
+    fn transpose_swap_rotates_two_adjacent_slices() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        {
+            let mut z = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+            *z = "abcDEFG".chars().collect();
+        }
+        crate::ported::zle::zle_main::ZLELL.store(
+            7, std::sync::atomic::Ordering::SeqCst);
+        transpose_swap(0, 3, 7);
+        let got: String = crate::ported::zle::zle_main::ZLELINE
+            .lock().unwrap().iter().collect();
+        assert_eq!(got, "DEFGabc");
+    }
+
+    /// c:255 — equal-length halves. Symmetric case is the easiest
+    /// off-by-one trap: a regression confusing len1 (c:260) and len2
+    /// (c:261) would silently no-op (same length, same result), so
+    /// pair this with the asymmetric test above to catch it.
+    #[test]
+    fn transpose_swap_equal_length_halves() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        {
+            let mut z = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+            *z = "1234".chars().collect();
+        }
+        crate::ported::zle::zle_main::ZLELL.store(
+            4, std::sync::atomic::Ordering::SeqCst);
+        transpose_swap(0, 2, 4);
+        let got: String = crate::ported::zle::zle_main::ZLELINE
+            .lock().unwrap().iter().collect();
+        assert_eq!(got, "3412");
+    }
 }

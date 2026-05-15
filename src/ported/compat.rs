@@ -587,4 +587,99 @@ mod tests {
         assert_eq!(n, 3);
     }
 
+    /// `Src/compat.c:175-180` — `difftime(t2, t1)` body is
+    /// `return (double)(t2 - t1);`. Signed subtraction; result can be
+    /// negative when `t1 > t2`. The fallback shim is only used on
+    /// systems lacking `difftime(3)`.
+    #[test]
+    fn difftime_returns_signed_double_difference() {
+        assert_eq!(difftime(1_700_000_010, 1_700_000_000),  10.0);
+        assert_eq!(difftime(1_700_000_000, 1_700_000_010), -10.0,
+            "c:178 — signed cast; t1 > t2 must be negative");
+        assert_eq!(difftime(42, 42), 0.0);
+    }
+
+    /// `Src/compat.c:785-790` — `isprint_ascii(c)` body is
+    /// `return c >= 0x20 && c <= 0x7e;` — strict ASCII printable range
+    /// (space through tilde), locale-independent.
+    #[test]
+    fn isprint_ascii_matches_strict_ascii_printable_range() {
+        // Boundaries.
+        assert!(isprint_ascii(' '), "c:786 — 0x20 is printable");
+        assert!(isprint_ascii('~'), "c:786 — 0x7e is printable");
+        // Just outside both ends.
+        assert!(!isprint_ascii('\x1f'), "c:786 — 0x1f is NOT printable");
+        assert!(!isprint_ascii('\x7f'), "c:786 — DEL is NOT printable");
+        // Common visible chars all inside the range.
+        assert!(isprint_ascii('A'));
+        assert!(isprint_ascii('0'));
+        assert!(isprint_ascii('!'));
+        // Controls all rejected.
+        assert!(!isprint_ascii('\t'));
+        assert!(!isprint_ascii('\n'));
+        assert!(!isprint_ascii('\0'));
+        // Non-ASCII (>= 0x80) rejected per the upper-bound at 0x7e.
+        assert!(!isprint_ascii('é'),  "c:786 — non-ASCII outside range");
+        assert!(!isprint_ascii('字'), "c:786 — wide char outside range");
+    }
+
+    /// `Src/compat.c:638` — `output64(zlong val)` formats a 64-bit
+    /// integer for output. Rust uses `i64::to_string()`. Pin boundary
+    /// values (i64::MIN/MAX) and the sign handling.
+    #[test]
+    fn output64_formats_i64_boundaries_and_zero() {
+        assert_eq!(output64(0), "0");
+        assert_eq!(output64(42), "42");
+        assert_eq!(output64(-1), "-1");
+        assert_eq!(output64(i64::MAX), "9223372036854775807");
+        assert_eq!(output64(i64::MIN), "-9223372036854775808");
+    }
+
+    /// `Src/compat.c:770-775` — `u9_iswprint(ucs)` returns true iff
+    /// the char is NOT a control AND has a non-negative width. Pin
+    /// the canonical printable cases + control rejection.
+    #[test]
+    fn u9_iswprint_accepts_printable_rejects_controls() {
+        assert!(u9_iswprint('a'));
+        assert!(u9_iswprint(' '));
+        assert!(u9_iswprint('é'),  "Latin-1 letter is printable");
+        assert!(u9_iswprint('字'), "CJK ideograph is printable");
+        // Controls — explicit zsh check at c:773.
+        assert!(!u9_iswprint('\0'));
+        assert!(!u9_iswprint('\t'));
+        assert!(!u9_iswprint('\n'));
+        assert!(!u9_iswprint('\x07'));
+        assert!(!u9_iswprint('\x1b'));
+        assert!(!u9_iswprint('\x7f'), "DEL is a C0 control");
+    }
+
+    /// `Src/compat.c:760-768` — `u9_wcwidth(ucs)` returns:
+    /// `-1` for controls, `0` for combining/zero-width marks, `1` for
+    /// most chars, `2` for CJK/East-Asian-Wide. Rust delegates to the
+    /// `unicode-width` crate. Pin the four-tier output so a future
+    /// crate version mismatch surfaces.
+    #[test]
+    fn u9_wcwidth_returns_canonical_widths() {
+        // -1 for controls (locked at c:766 `is_control` branch in Rust).
+        assert_eq!(u9_wcwidth('\x07'), -1);
+        // 1 for ordinary ASCII.
+        assert_eq!(u9_wcwidth('a'), 1);
+        assert_eq!(u9_wcwidth(' '), 1);
+        // 2 for CJK ideographs.
+        assert_eq!(u9_wcwidth('字'), 2);
+        // 0 for combining marks (U+0301 COMBINING ACUTE ACCENT).
+        assert_eq!(u9_wcwidth('\u{0301}'), 0);
+    }
+
+    /// `Src/compat.c:194` — `strerror(errnum)` returns a printable
+    /// string. The libc shim returns "Success" for 0 on Linux/macOS
+    /// (or any non-empty descriptor — we don't pin exact text, just
+    /// that the function returns SOMETHING per errno code). Pin only
+    /// the API contract: non-empty for at least one known errno.
+    #[test]
+    fn strerror_returns_non_empty_string_for_known_errno() {
+        // ENOENT is "No such file or directory" on every Unix.
+        let s = strerror(2 /* ENOENT */);
+        assert!(!s.is_empty(), "c:194 — strerror must return non-empty for ENOENT");
+    }
 }

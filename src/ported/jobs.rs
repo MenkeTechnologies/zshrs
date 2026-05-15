@@ -261,10 +261,25 @@ pub fn hasprocs(jobtab: &[Job], job: usize) -> bool {
         .unwrap_or(false)
 }
 
-/// Port of `super_job(int sub)` from `Src/jobs.c:260` — find the super-job of a sub-job.
+/// Port of `super_job(int sub)` from `Src/jobs.c:259-270` — find the super-job of a sub-job.
+/// ```c
+/// for (i = 1; i <= maxjob; i++)
+///     if ((jobtab[i].stat & STAT_SUPERJOB) &&
+///         jobtab[i].other == sub &&
+///         jobtab[i].gleader)
+///         return i;
+/// return 0;
+/// ```
+/// The `gleader` non-zero check at c:267 was previously missing in
+/// the Rust port — silently returned super-job indices for entries
+/// that hadn't yet had a process-group leader assigned, breaking
+/// job-control SIGCONT relay paths.
 pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // c:260
     for (i, job) in jobtab.iter().enumerate() {
-        if (job.stat & stat::SUPERJOB) != 0 && job.other as usize == job_idx {
+        if (job.stat & stat::SUPERJOB) != 0
+            && job.other as usize == job_idx
+            && job.gleader != 0                                              // c:267
+        {
             return Some(i);
         }
     }
@@ -2665,6 +2680,27 @@ mod tests {
         assert!(super_job(&tab, 0).is_none());
     }
 
+    /// `Src/jobs.c:259-270` — `super_job` requires THREE conditions:
+    /// `STAT_SUPERJOB` bit + `other == sub` + `gleader != 0`. The
+    /// gleader check at c:267 was previously missing in the Rust
+    /// port. Pin all three: a job with SUPERJOB+other match but
+    /// `gleader == 0` (not yet group-leader-assigned) must NOT be
+    /// returned as the super-job.
+    #[test]
+    fn super_job_requires_nonzero_gleader() {
+        let mut tab = vec![Job::new(), Job::new(), Job::new()];
+        // Job 2 is a super-job of sub-job 1 BUT no gleader yet.
+        tab[2].stat |= stat::SUPERJOB;
+        tab[2].other = 1;
+        tab[2].gleader = 0;
+        assert!(super_job(&tab, 1).is_none(),
+            "c:267 — gleader==0 must NOT match super_job lookup");
+        // Now assign gleader — super_job returns Some(2).
+        tab[2].gleader = 12345;
+        assert_eq!(super_job(&tab, 1), Some(2),
+            "c:267 — gleader != 0 + other match + SUPERJOB → match");
+    }
+
     /// c:findproc — looking up a non-existent pid returns None. A
     /// regression returning Some(0,0,false) would let SIGCHLD reap
     /// a phantom job.
@@ -2689,5 +2725,46 @@ mod tests {
         assert_eq!(job_idx, 1);
         assert_eq!(proc_idx, 0);
         assert!(!is_aux, "primary procs vec, not auxprocs");
+    }
+
+    /// `Src/jobs.c:752-765` — `printhhmmss(secs)` three-branch
+    /// decision tree:
+    /// - hours > 0   → `H:MM:SS.xx`
+    /// - mins  > 0   → `M:SS.xx`
+    /// - else        → `S.xxx` (three-decimal precision)
+    /// Pin each branch.
+    #[test]
+    fn printhhmmss_three_branch_format_dispatch() {
+        // c:763 — sub-minute uses `%.3f` format.
+        assert_eq!(printhhmmss(0.5),    "0.500");
+        assert_eq!(printhhmmss(12.345), "12.345");
+        // c:761 — minutes branch uses `%d:%05.2f`.
+        // 75.0s = 1m 15.0s → "1:15.00".
+        assert_eq!(printhhmmss(75.0),  "1:15.00");
+        // 125.5s = 2m 5.5s → "2:05.50".
+        assert_eq!(printhhmmss(125.5), "2:05.50");
+        // c:759 — hours branch uses `%d:%02d:%05.2f`.
+        // 3661.5s = 1h 1m 1.5s → "1:01:01.50".
+        assert_eq!(printhhmmss(3661.5), "1:01:01.50");
+        // Multi-hour: 7200s = 2h 0m 0s → "2:00:00.00".
+        assert_eq!(printhhmmss(7200.0), "2:00:00.00");
+    }
+
+    /// `Src/jobs.c:1107-1109` — `sigmsg(sig)` looks up signal names
+    /// in the `sigmsg[]` table and returns a canonical message
+    /// (e.g. "interrupt" for SIGINT). Out-of-range returns the
+    /// default "unknown signal" message.
+    #[test]
+    fn sigmsg_returns_canonical_messages_for_standard_signals() {
+        // SIGINT/SIGTERM are universal POSIX signals — pin their
+        // message text exists (non-empty).
+        let int_msg  = sigmsg(libc::SIGINT);
+        let term_msg = sigmsg(libc::SIGTERM);
+        let kill_msg = sigmsg(libc::SIGKILL);
+        assert!(!int_msg.is_empty());
+        assert!(!term_msg.is_empty());
+        assert!(!kill_msg.is_empty());
+        // They must be distinct (no single "unknown" sentinel for all).
+        assert_ne!(int_msg, term_msg);
     }
 }

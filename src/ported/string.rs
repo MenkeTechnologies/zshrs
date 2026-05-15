@@ -372,4 +372,144 @@ mod tests {
     fn dyncat_empty_inputs_return_empty() {
         assert_eq!(dyncat("", ""), "");
     }
+
+    /// `Src/string.c:144-155` — `bicat(s1, s2)` is the
+    /// permanent-storage variant of `dyncat`. C body computes
+    /// `zalloc(strlen(s1)+strlen(s2)+1)` then `strcpy(ptr, s1)` and
+    /// `strcpy(ptr+l1, s2)`. Two-segment concat, never reorders.
+    #[test]
+    fn bicat_concatenates_in_order_with_either_empty() {
+        assert_eq!(bicat("foo", "bar"), "foobar");
+        assert_eq!(bicat("", "bar"),    "bar",
+            "c:152 — strcpy(ptr, \"\") writes only the NUL, ptr+0 starts s2");
+        assert_eq!(bicat("foo", ""),    "foo",
+            "c:153 — strcpy(ptr+3, \"\") writes only the NUL");
+        assert_eq!(bicat("", ""),       "");
+    }
+
+    /// `Src/string.c:172-178` — `ztrduppfx(s, len)` body is identical
+    /// to `dupstrpfx` (same `memcpy`/NUL pattern at c:175-177); only
+    /// the allocator differs (`zalloc` vs `zhalloc`). Both lanes
+    /// collapse to `String` in the Rust port. Behaviour parity with
+    /// `dupstrpfx` is the contract — a regression that diverged the
+    /// two would silently leak storage-lane assumptions into callers.
+    #[test]
+    fn ztrduppfx_matches_dupstrpfx_byte_for_byte() {
+        for (s, len) in [("hello", 3usize), ("ab", 100), ("hello", 0), ("", 5)] {
+            assert_eq!(ztrduppfx(s, len), dupstrpfx(s, len),
+                "ztrduppfx/dupstrpfx divergence at ({:?}, {})", s, len);
+        }
+    }
+
+    /// `Src/string.c:186-189` — `appstr(base, append)` C body is
+    /// `strcat(realloc(base, strlen(base)+strlen(append)+1), append)`.
+    /// Append-in-place semantics: post-condition is `base == base ++ append`.
+    /// Empty append → base unchanged. Empty base → result equals append.
+    #[test]
+    fn appstr_appends_in_place() {
+        let mut b = String::from("foo");
+        appstr(&mut b, "bar");
+        assert_eq!(b, "foobar");
+        // c:188 — strcat with empty s2 leaves base unchanged.
+        appstr(&mut b, "");
+        assert_eq!(b, "foobar", "appending empty must leave base unchanged");
+        // Empty base + nonempty append.
+        let mut e = String::new();
+        appstr(&mut e, "xyz");
+        assert_eq!(e, "xyz");
+    }
+
+    /// `Src/string.c:195-201` — `strend(str)`. C body:
+    /// `if (*str == '\0') return str; return str + strlen(str) - 1;`.
+    /// Single-char input → that char (no underflow on `len-1`).
+    /// Multi-char input → last char only.
+    #[test]
+    fn strend_returns_only_last_character_for_multichar_input() {
+        // c:200 — `str + strlen(str) - 1` for "hello" (len=5) → 'o'.
+        assert_eq!(strend("hello"), "o");
+        // c:200 — len=2 → 'b'.
+        assert_eq!(strend("ab"), "b");
+        // c:198 — empty input falls through `*str == '\0'` branch and
+        // returns the empty string (the pointer-to-NUL in C).
+        assert_eq!(strend(""), "");
+    }
+
+    /// `Src/string.c:32-42` — `dupstring(s)`. C body:
+    /// `if (!s) return NULL; t = zhalloc(strlen(s)+1); strcpy(t,s); return t;`.
+    /// Empty string round-trips (no underflow on len=0).
+    #[test]
+    fn dupstring_returns_owned_copy_with_identity_content() {
+        assert_eq!(dupstring("hello"), "hello");
+        assert_eq!(dupstring(""), "", "c:39 — empty input → len 0+1, strcpy copies NUL");
+        // Non-ASCII (UTF-8) round-trips byte-identical.
+        assert_eq!(dupstring("café"),  "café");
+        assert_eq!(dupstring("字"),    "字");
+    }
+
+    /// `Src/string.c:47-58` — `dupstring_wlen(s, len)`. C body:
+    /// `memcpy(t, s, len); t[len] = '\\0';`. Byte-counted copy — len
+    /// can be less than, equal to, or greater than `strlen(s)`. The
+    /// Rust port via `as_bytes()` slicing must match `memcpy`
+    /// semantics, including the `len > s.len()` case which clamps
+    /// (C would read past the buffer — UB; Rust port clamps to
+    /// avoid panic per the impl note at c:50).
+    #[test]
+    fn dupstring_wlen_respects_byte_length_and_clamps_overflow() {
+        // c:55 — memcpy(t, s, len) for len < strlen.
+        assert_eq!(dupstring_wlen("hello world", 5), "hello");
+        // len == 0 → empty.
+        assert_eq!(dupstring_wlen("hello", 0), "");
+        // Clamp: Rust port returns whole string rather than reading
+        // past the buffer (C would have been UB).
+        assert_eq!(dupstring_wlen("ab", 100), "ab");
+        // Exact-length boundary.
+        assert_eq!(dupstring_wlen("foo", 3), "foo");
+    }
+
+    /// `Src/string.c:76-85` — `wcs_ztrdup(const wchar_t *s)`. C body
+    /// is the wide-char version of `ztrdup`: copies the wchar_t string
+    /// into a zalloc'd buffer. Rust UTF-8 `String` subsumes the
+    /// wchar_t representation — identity copy.
+    #[test]
+    fn wcs_ztrdup_returns_independent_copy() {
+        let mut src = String::from("widechar");
+        let dup = wcs_ztrdup(&src);
+        src.clear();
+        assert_eq!(dup, "widechar",
+            "wide-char dup must survive source-side mutation");
+        // Non-ASCII paths.
+        assert_eq!(wcs_ztrdup("éàü字"), "éàü字");
+    }
+
+    /// `Src/string.c:113-128` — `zhtricat(s1, s2, s3)`. C body uses
+    /// heap-arena allocator (zhalloc) instead of permanent zalloc.
+    /// Both lanes collapse to `String` in Rust; behaviour must match
+    /// tricat exactly. Pin parity with tricat for the same three
+    /// inputs — a regression diverging the two would silently change
+    /// memory ownership in C but produce wrong content if anything
+    /// changed at the byte level.
+    #[test]
+    fn zhtricat_matches_tricat_byte_for_byte() {
+        for (a, b, c) in [
+            ("foo", "bar", "baz"),
+            ("",    "x",   ""),
+            ("a",   "",    "z"),
+            ("",    "",    ""),
+        ] {
+            assert_eq!(zhtricat(a, b, c), tricat(a, b, c),
+                "lane divergence at ({:?}, {:?}, {:?})", a, b, c);
+        }
+    }
+
+    /// `Src/string.c:171-181` — `ztrduppfx(s, len)` is `dupstrpfx`
+    /// with permanent storage. We already pinned the body-identical
+    /// contract above; this test pins behaviour for `len > strlen`
+    /// specifically (the C source would `memcpy` past the source
+    /// buffer — UB; the Rust port clamps).
+    #[test]
+    fn ztrduppfx_clamps_oversize_len_safely() {
+        assert_eq!(ztrduppfx("hi", 100), "hi");
+        assert_eq!(ztrduppfx("",   5),   "");
+        assert_eq!(ztrduppfx("abc", 2),  "ab");
+    }
 }

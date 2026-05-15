@@ -247,9 +247,14 @@ pub const T_THINGY_NAMES: &[&str] = &[
 #[inline] pub fn ZC_ialpha(c: ZLE_CHAR_T) -> bool { c.is_alphabetic() }      // c:60
 /// Port of `ZC_ialnum` from zle.h:61.
 #[inline] pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() }    // c:61
-/// Port of `ZC_iblank` from zle.h:62 (`wcsiblank`). True for blank
-/// chars excluding newline (matches zsh's `iblank` predicate).
-#[inline] pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool { c == ' ' || c == '\t' }  // c:62
+/// Port of `ZC_iblank` from zle.h:62 (`#define ZC_iblank wcsiblank`).
+/// Routes through the canonical `wcsiblank` impl at
+/// `Src/utils.c:4302-4307` — `iswspace(wc) && wc != L'\n'`. Catches
+/// CR/FF/VT/NBSP/U+2028/etc. in addition to space and tab; only
+/// newline is explicitly excluded.
+#[inline] pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool {                          // c:62
+    crate::ported::utils::wcsiblank(c)
+}
 /// Port of `ZC_icntrl` from zle.h:63.
 #[inline] pub fn ZC_icntrl(c: ZLE_CHAR_T) -> bool { c.is_control() }         // c:63
 /// Port of `ZC_idigit` from zle.h:64.
@@ -965,20 +970,47 @@ mod tests {
         assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'z'), None);
     }
 
+    /// `Src/Zle/zle.h:62 #define ZC_iblank wcsiblank` →
+    /// `Src/utils.c:4302-4307 wcsiblank(wc): iswspace(wc) && wc != L'\n'`.
+    /// Pin BOTH the ASCII subset AND the wide-char cases (CR/FF/VT/NBSP)
+    /// to catch a regression that re-narrows to plain `space || tab`.
+    /// Newline is the only iswspace char explicitly excluded.
     #[test]
-    fn zc_iblank_excludes_newline() {
+    fn zc_iblank_matches_wcsiblank_semantics() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert!(ZC_iblank(' '));
-        assert!(ZC_iblank('\t'));
-        assert!(!ZC_iblank('\n'));
+        // Canonical ASCII blanks.
+        assert!(ZC_iblank(' '),  "space is iblank");
+        assert!(ZC_iblank('\t'), "tab is iblank");
+        // Other iswspace chars in C wcsiblank (≠ '\n'):
+        assert!(ZC_iblank('\r'),   "CR is iblank per wcsiblank");
+        assert!(ZC_iblank('\x0c'), "FF is iblank per wcsiblank");
+        assert!(ZC_iblank('\x0b'), "VT is iblank per wcsiblank");
+        assert!(ZC_iblank('\u{00A0}'), "NBSP is iblank per wcsiblank");
+        assert!(ZC_iblank('\u{2028}'), "line-separator U+2028 is iblank");
+        // The one explicit exclusion at c:4304 `wc != L'\n'`.
+        assert!(!ZC_iblank('\n'), "newline is the sole iswspace exclusion");
+        // Non-whitespace chars must NOT be iblank.
+        assert!(!ZC_iblank('a'));
+        assert!(!ZC_iblank('0'));
+        assert!(!ZC_iblank('_'));
     }
 
+    /// `Src/Zle/zle.h:67 #define ZC_inblank iswspace` — broader than
+    /// ZC_iblank, INCLUDING newline. Pin so a regression that
+    /// narrows back to `space || tab || \n` (the prior buggy form)
+    /// fails this test.
     #[test]
-    fn zc_inblank_includes_newline() {
+    fn zc_inblank_matches_iswspace_semantics() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert!(ZC_inblank('\n'));
+        assert!(ZC_inblank('\n'), "newline IS iswspace");
         assert!(ZC_inblank(' '));
+        assert!(ZC_inblank('\t'));
+        assert!(ZC_inblank('\r'),   "CR is iswspace");
+        assert!(ZC_inblank('\x0c'), "FF is iswspace");
+        assert!(ZC_inblank('\x0b'), "VT is iswspace");
+        assert!(ZC_inblank('\u{00A0}'), "NBSP is iswspace");
         assert!(!ZC_inblank('a'));
+        assert!(!ZC_inblank('0'));
     }
 
     #[test]

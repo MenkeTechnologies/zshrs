@@ -291,6 +291,15 @@ pub fn ihgetc() -> i32 {                                                     // 
 /// move-all-three is a follow-up cleanup.
 pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32);                 // c:params.c:132
 
+/// Port of `unsigned char hashchar` from `Src/params.c:132`. Comment-
+/// start character; init'd to `'#'` at `Src/init.c:1101`. Read by
+/// `gettokstr` (`Src/lex.c:678`). Made atomic so `histcharssetfn`
+/// (`Src/params.c:5097`) can update it dynamically when `$HISTCHARS`
+/// changes — previously was a `const char` in `lex.rs:3507`, which
+/// silently diverged from C (no `setopt HISTCHARS='!^@'` syntax
+/// could change the comment character).
+pub static hashchar: AtomicI32 = AtomicI32::new(b'#' as i32);                // c:params.c:132
+
 /// Port of `static int marg` from `Src/hist.c:599`. Argument index of the
 /// most-recent `!?str?` event match; `-1` when no match has happened.
 pub static marg: AtomicI32 = AtomicI32::new(-1);                             // c:599
