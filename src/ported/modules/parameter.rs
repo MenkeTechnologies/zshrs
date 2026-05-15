@@ -161,8 +161,36 @@ use crate::ported::zsh_h::module;
 /// this fn; structural pass-through retained for C name parity.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmparameters(_ht: *mut HashTable, _func: Option<ScanFunc>,        // c:124
-                        _flags: i32) {
+pub fn scanpmparameters(_ht: *mut HashTable, func: Option<ScanFunc>,        // c:124
+                        flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    let func = match func { Some(f) => f, None => return };                 // c:131-141 no-op without func
+    // Snapshot names + per-entry data under read lock so func() can
+    // re-enter paramtab without deadlock — C is single-threaded so
+    // walks the live table directly.
+    let entries: Vec<(String, u32, String)> = {
+        let tab = crate::ported::params::realparamtab().read().expect("realparamtab poisoned");  // c:135 realparamtab walk
+        tab.iter()
+            .filter(|(_, p)| (p.node.flags as u32 & PM_UNSET) == 0)          // c:138 PM_UNSET skip
+            .map(|(name, p)| {
+                let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+                    || (flags as u32 & SCANPM_WANTKEYS) == 0;                // c:140-142
+                let val = if want_val { paramtypestr(p) } else { String::new() };
+                (name.clone(), p.node.flags as u32, val)
+            }).collect()
+    };
+    for (name, _orig_flags, val) in entries {                                // c:135-145
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {                           // c:128 memset(&pm, 0)
+                next: None, nam: name, flags: (PM_SCALAR | PM_READONLY) as i32,  // c:129
+            },
+            u_data: 0, u_arr: None, u_str: Some(val),                        // c:144 pm.u.str
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None, // c:130 gsu.s = nullsetscalar_gsu (vtable not modelled)
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        func(&Box::new(pm.node), flags);                                     // c:145 func(&pm.node, flags)
+    }
 }
 
 /// Port of `setpmcommand(Param pm, char *value)` from Src/Modules/parameter.c:151.
@@ -1101,9 +1129,58 @@ pub fn getpmmodule(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 /// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmmodules(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1074
-                     _flags: i32) {
-    // c:1077-1103 — walks modules linked-list, emits "loaded"/"alias".
+pub fn scanpmmodules(_ht: *mut HashTable, func: Option<ScanFunc>,            // c:1074
+                     flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY};
+    let func = match func { Some(f) => f, None => return };
+    let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();  // c:1080 done linklist
+    let pm_flags = (PM_SCALAR | PM_READONLY) as i32;                         // c:1084
+    let emit = |name: &str, val: &str| -> crate::ported::zsh_h::hashnode {   // c:1083-1086 memset(&pm, 0); pm.node.flags = ...; pm.u.str = ...
+        let _ = val; // u.str carried via the parent func; node carries name+flags only.
+        crate::ported::zsh_h::hashnode { next: None, nam: name.to_string(), flags: pm_flags }
+    };
+    // c:1088-1100 — modulestab walk, emit each loaded module.
+    let modules: Vec<String> = {
+        let tab = crate::ported::module::MODULESTAB.lock().unwrap();
+        tab.modules.keys().cloned().collect()                                // c:1088
+    };
+    for name in modules {                                                    // c:1090
+        done.insert(name.clone());                                           // c:1095 addlinknode(done, ...)
+        let node = emit(&name, "loaded");                                    // c:1093 dyncat or "loaded"
+        func(&Box::new(node), flags);                                        // c:1096
+    }
+    // c:1102-1110 — builtintab autoloaded (BINF_ADDED clear with optstr → module).
+    let bt = crate::ported::builtin::createbuiltintable();
+    for (_nam, b) in bt.iter() {
+        if (b.node.flags & crate::ported::zsh_h::BINF_ADDED as i32) == 0 {
+            if let Some(opt) = b.optstr.as_ref() {                           // c:1106 optstr is module name
+                if done.insert(opt.clone()) {
+                    let node = emit(opt, "autoloaded");                      // c:1108
+                    func(&Box::new(node), flags);                            // c:1109
+                }
+            }
+        }
+    }
+    // c:1112-1117 — condtab autoloaded (p->module set).
+    let cond_modules: Vec<String> = crate::ported::module::CONDTAB.lock().unwrap()
+        .iter().filter_map(|p| p.module.clone()).collect();
+    for m in cond_modules {                                                  // c:1112
+        if done.insert(m.clone()) {
+            let node = emit(&m, "autoloaded");
+            func(&Box::new(node), flags);                                    // c:1116
+        }
+    }
+    // c:1119-1124 — realparamtab PM_AUTOLOAD entries.
+    let auto_param_modules: Vec<String> = {
+        let tab = crate::ported::module::MODULESTAB.lock().unwrap();
+        tab.autoload_params.values().cloned().collect()                      // c:1121
+    };
+    for m in auto_param_modules {
+        if done.insert(m.clone()) {
+            let node = emit(&m, "autoloaded");
+            func(&Box::new(node), flags);                                    // c:1124
+        }
+    }
 }
 
 /// Port of `dirssetfn(UNUSED(Param pm), char **x)` from Src/Modules/parameter.c:1131.
@@ -1181,9 +1258,34 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
 /// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmhistory(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1188
-                     _flags: i32) {
-    // c:1191-1213 — addhistnum + walk via getHistEnt.
+pub fn scanpmhistory(_ht: *mut HashTable, func: Option<ScanFunc>,            // c:1188
+                     flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    let func = match func { Some(f) => f, None => return };
+    // Snapshot (histnum, command) pairs so func() can re-enter without
+    // deadlocking on the hist_ring mutex.
+    let entries: Vec<(i64, String)> = {
+        let ring = crate::ported::hist::hist_ring.lock().unwrap();           // c:1196 walk via up_histent
+        ring.iter().rev()                                                    // c:1199 up_histent walks newest→oldest
+            .map(|h| (h.histnum, h.node.nam.clone())).collect()
+    };
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    for (histnum, cmd) in entries {                                          // c:1199-1207
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {                           // c:1194 memset(&pm, 0)
+                next: None,
+                nam: crate::ported::params::convbase(histnum, 10),           // c:1202 convbase(buf, he->histnum, 10)
+                flags: (PM_SCALAR | PM_READONLY) as i32,                     // c:1195
+            },
+            u_data: 0, u_arr: None,
+            u_str: if want_val { Some(cmd) } else { None },                  // c:1204 pm.u.str = he->node.nam
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        func(&Box::new(pm.node), flags);                                     // c:1206
+    }
 }
 
 /// Port of `histwgetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:1217.
@@ -1255,9 +1357,32 @@ pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
 /// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmjobtexts(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:1308
-                      _flags: i32) {
-    // c:1311-1337 — walks jobtab, emits pmjobtext per job.
+pub fn scanpmjobtexts(_ht: *mut HashTable, func: Option<ScanFunc>,           // c:1308
+                      flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, STAT_NOPRINT, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    let func = match func { Some(f) => f, None => return };
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();                  // c:1319
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    for job in 1..=jmax {                                                    // c:1321
+        if let Some(j) = jtab.get(job) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {  // c:1322-1323
+                let val = if want_val { pmjobtext(std::ptr::null_mut(), job as i32) } else { String::new() };  // c:1330 pmjobtext
+                let pm = crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: format!("{}", job),                             // c:1327
+                        flags: (PM_SCALAR | PM_READONLY) as i32,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                };
+                func(&Box::new(pm.node), flags);                             // c:1333
+            }
+        }
+    }
 }
 
 /// Port of `pmjobstate(Job jtab, int job)` from Src/Modules/parameter.c:1340.
@@ -1288,9 +1413,32 @@ pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {     // c
 /// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmjobstates(_ht: *mut HashTable, _func: Option<ScanFunc>,         // c:1415
-                       _flags: i32) {
-    // c:1418-1444 — walks jobtab, emits pmjobstate per job.
+pub fn scanpmjobstates(_ht: *mut HashTable, func: Option<ScanFunc>,          // c:1415
+                       flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, STAT_NOPRINT, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    let func = match func { Some(f) => f, None => return };
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();                  // c:1426
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    for job in 1..=jmax {                                                    // c:1428
+        if let Some(j) = jtab.get(job) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {  // c:1429-1430
+                let val = if want_val { pmjobstate(std::ptr::null_mut(), job as i32) } else { String::new() };  // c:1437 pmjobstate
+                let pm = crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: format!("{}", job),                             // c:1434 sprintf(buf, "%d", job)
+                        flags: (PM_SCALAR | PM_READONLY) as i32,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                };
+                func(&Box::new(pm.node), flags);                             // c:1440
+            }
+        }
+    }
 }
 
 /// Port of `pmjobdir(Job jtab, int job)` from Src/Modules/parameter.c:1447.
@@ -1327,9 +1475,32 @@ pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 /// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
-pub fn scanpmjobdirs(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1487
-                     _flags: i32) {
-    // c:1490-1516 — walks jobtab[1..maxjob], emits pwd per job.
+pub fn scanpmjobdirs(_ht: *mut HashTable, func: Option<ScanFunc>,            // c:1487
+                     flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, STAT_NOPRINT, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    let func = match func { Some(f) => f, None => return };
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();                  // c:1500
+    let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
+        || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    for job in 1..=jmax {                                                    // c:1502
+        if let Some(j) = jtab.get(job) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {  // c:1503-1504
+                let val = if want_val { pmjobdir(std::ptr::null_mut(), job as i32) } else { String::new() };  // c:1511 pmjobdir
+                let pm = crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: format!("{}", job),                             // c:1508
+                        flags: (PM_SCALAR | PM_READONLY) as i32,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                };
+                func(&Box::new(pm.node), flags);                             // c:1514
+            }
+        }
+    }
 }
 
 /// Port of `setpmnameddir(Param pm, char *value)` from Src/Modules/parameter.c:1519.

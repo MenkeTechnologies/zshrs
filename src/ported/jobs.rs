@@ -657,42 +657,31 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
 // flat C globals already ported as `NUMPIPESTATS` / `PIPESTATS` at
 // file scope above. Read/write the canonical globals directly.
 
-/// Signal message lookup (from jobs.c sigmsg lines 1106-1118)
+/// File-static `sig_msg[]` from `Src/signames1.awk` /
+/// `signames.h` — name-by-signal-number lookup table consulted by
+/// `sigmsg()` at `jobs.c:1118`.
+static SIG_MSG: &[(libc::c_int, &str)] = &[                                  // c:signames.h
+    (libc::SIGHUP,    "hangup"),                  (libc::SIGINT,    "interrupt"),
+    (libc::SIGQUIT,   "quit"),                    (libc::SIGILL,    "illegal instruction"),
+    (libc::SIGTRAP,   "trace trap"),              (libc::SIGABRT,   "abort"),
+    (libc::SIGBUS,    "bus error"),               (libc::SIGFPE,    "floating point exception"),
+    (libc::SIGKILL,   "killed"),                  (libc::SIGUSR1,   "user-defined signal 1"),
+    (libc::SIGSEGV,   "segmentation fault"),      (libc::SIGUSR2,   "user-defined signal 2"),
+    (libc::SIGPIPE,   "broken pipe"),             (libc::SIGALRM,   "alarm"),
+    (libc::SIGTERM,   "terminated"),              (libc::SIGCHLD,   "child exited"),
+    (libc::SIGCONT,   "continued"),               (libc::SIGSTOP,   "stopped (signal)"),
+    (libc::SIGTSTP,   "stopped"),                 (libc::SIGTTIN,   "stopped (tty input)"),
+    (libc::SIGTTOU,   "stopped (tty output)"),    (libc::SIGURG,    "urgent I/O condition"),
+    (libc::SIGXCPU,   "CPU time exceeded"),       (libc::SIGXFSZ,   "file size exceeded"),
+    (libc::SIGVTALRM, "virtual timer expired"),   (libc::SIGPROF,   "profiling timer expired"),
+    (libc::SIGWINCH,  "window changed"),          (libc::SIGIO,     "I/O ready"),
+    (libc::SIGSYS,    "bad system call"),
+];
+
 /// Render a signal number as a one-line description.
 /// Port of `sigmsg(int sig)` from Src/jobs.c:1107.
 pub fn sigmsg(sig: i32) -> &'static str {                                    // c:1107
-    match sig {
-        libc::SIGHUP => "hangup",
-        libc::SIGINT => "interrupt",
-        libc::SIGQUIT => "quit",
-        libc::SIGILL => "illegal instruction",
-        libc::SIGTRAP => "trace trap",
-        libc::SIGABRT => "abort",
-        libc::SIGBUS => "bus error",
-        libc::SIGFPE => "floating point exception",
-        libc::SIGKILL => "killed",
-        libc::SIGUSR1 => "user-defined signal 1",
-        libc::SIGSEGV => "segmentation fault",
-        libc::SIGUSR2 => "user-defined signal 2",
-        libc::SIGPIPE => "broken pipe",
-        libc::SIGALRM => "alarm",
-        libc::SIGTERM => "terminated",
-        libc::SIGCHLD => "child exited",
-        libc::SIGCONT => "continued",
-        libc::SIGSTOP => "stopped (signal)",
-        libc::SIGTSTP => "stopped",
-        libc::SIGTTIN => "stopped (tty input)",
-        libc::SIGTTOU => "stopped (tty output)",
-        libc::SIGURG => "urgent I/O condition",
-        libc::SIGXCPU => "CPU time exceeded",
-        libc::SIGXFSZ => "file size exceeded",
-        libc::SIGVTALRM => "virtual timer expired",
-        libc::SIGPROF => "profiling timer expired",
-        libc::SIGWINCH => "window changed",
-        libc::SIGIO => "I/O ready",
-        libc::SIGSYS => "bad system call",
-        _ => "unknown signal",
-    }
+    SIG_MSG.iter().find(|(s, _)| *s == sig).map(|(_, m)| *m).unwrap_or("unknown signal")  // c:1118 sig_msg[sig] : unknown
 }
 
 /// Print job with full detail (from jobs.c printjob)

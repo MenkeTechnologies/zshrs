@@ -122,6 +122,26 @@ pub fn createkeymapnamtab() {                                                // 
     let _ = keymapnamtab();
 }
 
+/// Direct port of `void init_keymaps(void)` from `Src/Zle/zle_keymap.c:1224`.
+/// Module-load entry point — bootstraps the keymap-name table, installs
+/// the default emacs/viins/vicmd bindings, allocates the keybuf, and
+/// seeds `lastnamed` to the undefined-key sentinel (Rust None).
+pub fn init_keymaps() {                                                      // c:1224
+    createkeymapnamtab();                                                    // c:1227
+    default_bindings();                                                      // c:1228
+    *keybuf.lock().unwrap() = vec![0u8; 32];                                 // c:1229 zshcalloc(keybufsz)
+    *lastnamed.lock().unwrap() = None;                                       // c:1230 refthingy(t_undefinedkey)
+}
+
+/// Direct port of `void cleanup_keymaps(void)` from
+/// `Src/Zle/zle_keymap.c:1236`. Module-unload entry point — drops
+/// `lastnamed`, the keymap-name table, and the keybuf.
+pub fn cleanup_keymaps() {                                                   // c:1236
+    *lastnamed.lock().unwrap() = None;                                       // c:1239 unrefthingy(lastnamed)
+    keymapnamtab().lock().unwrap().clear();                                  // c:1240 deletehashtable(keymapnamtab)
+    keybuf.lock().unwrap().clear();                                          // c:1241 zfree(keybuf, keybufsz)
+}
+
 /// Port of `makekeymapnamnode(Keymap keymap)` from Src/Zle/zle_keymap.c:173.
 pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:173
     // c:173-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
@@ -716,6 +736,32 @@ pub fn reselectkeymap() {             // c:549
 /// Test whether `seq` is a strict prefix of some longer binding in
 /// `km`. Returns 1 if `seq` is a prefix (incl. empty input), 0 if
 /// `seq` is itself a complete binding or no match exists.
+/// Direct port of `Thingy keybind(Keymap km, char *seq, char **strp)`
+/// from `Src/Zle/zle_keymap.c:659`. Returns the Thingy bound to `seq`
+/// in `km` along with any associated send-string. Returns
+/// `(None, None)` for `t_undefinedkey` (the unbound sentinel).
+/// WARNING: param names don't match C — Rust=(km, seq) vs C=(km, seq, strp)
+pub fn keybind(km: &Keymap, seq: &[u8]) -> (Option<Thingy>, Option<String>) { // c:659
+    // c:664 — `if(ztrlen(seq) == 1)`. Single-char (after Meta-decode) → first[f].
+    let single = if seq.len() == 1 {
+        Some(seq[0])
+    } else if seq.len() == 2 && seq[0] == 0x83 {
+        Some(seq[1] ^ 32)                                                    // c:665 Meta-decode
+    } else {
+        None
+    };
+    if let Some(f) = single {
+        if let Some(bind) = km.first[f as usize].as_ref() {                  // c:666-669
+            return (Some(bind.clone()), None);
+        }
+    }
+    // c:670 — `k = km->multi->getnode(km->multi, seq);`
+    match km.multi.get(seq) {
+        None => (None, None),                                                // c:671 t_undefinedkey
+        Some(k) => (k.bind.clone(), k.str.clone()),                          // c:673-674
+    }
+}
+
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // c:683
     // c:683-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
     if seq.is_empty() {

@@ -961,38 +961,16 @@ pub fn getparamnode(ht: &crate::ported::zsh_h::HashTable, nam: &str)         // 
 /// global `outtable`; Rust port plumbs it in explicitly.
 /// WARNING: param names don't match C — Rust=(pm, _flags, outtable) vs C=(hn, flags)
 pub fn scancopyparams(
-    pm: &crate::ported::zsh_h::param,
+    pm: &mut crate::ported::zsh_h::param,
     _flags: i32,
     outtable: &mut std::collections::HashMap<String, Box<crate::ported::zsh_h::param>>,
 ) {
-    // copyparam(tpm, pm, 0): per Src/params.c:1056 copies u + gsu +
-    // level + base + width but zeroes pm->old/ename/env links.
-    let tpm = crate::ported::zsh_h::param {
-        node: crate::ported::zsh_h::hashnode {
-            next: None,
-            nam: pm.node.nam.clone(),
-            flags: pm.node.flags,
-        },
-        u_data: pm.u_data,
-        u_arr: pm.u_arr.clone(),
-        u_str: pm.u_str.clone(),
-        u_val: pm.u_val,
-        u_dval: pm.u_dval,
-        u_hash: None,
-        gsu_s: None,
-        gsu_i: None,
-        gsu_f: None,
-        gsu_a: None,
-        gsu_h: None,
-        base: pm.base,
-        width: pm.width,
-        env: None,
-        ename: None,
-        old: None,
-        level: pm.level,
-    };
+    // c:586-588 — `tpm = (Param) zshcalloc(...); copyparam(tpm, pm, 0); addnode(...)`.
+    let mut tpm = Box::new(pm.clone());                                      // c:586 zshcalloc
+    tpm.old = None; tpm.env = None; tpm.ename = None;                        // c:1242 (calloc-zero fields copyparam doesn't set)
+    copyparam(&mut tpm, pm, 0);                                              // c:587
     let nam = tpm.node.nam.clone();
-    outtable.insert(nam, Box::new(tpm));
+    outtable.insert(nam, tpm);                                               // c:588 addnode(outtable, ztrdup(pm->node.nam), tpm)
 }
 
 /// Port of `copyparamtable(HashTable ht, char *name)` from `Src/params.c:596`. C body:

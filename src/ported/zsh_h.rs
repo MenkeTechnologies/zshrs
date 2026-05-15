@@ -1323,6 +1323,7 @@ pub const CONDF_AUTOALL: i32 = 4; // c:699
 pub const REDIRF_FROM_HEREDOC: i32 = 1; // c:708
 
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct redir {
     // c:713
     pub typ: i32,
