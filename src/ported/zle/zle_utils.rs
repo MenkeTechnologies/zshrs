@@ -81,13 +81,11 @@ pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {                 
     (buf.len() - start) as i32
 }
 
-/// Port of `zlelineasstring(ZLE_STRING_T instr, int inll, int incs, int *outllp, int *outcsp, int useheap)` from Src/Zle/zle_utils.c:192.
+/// Port of `zlelineasstring(...)` from Src/Zle/zle_utils.c:192.
+/// Vec<char>→String is the direct Rust port; C's mb_len/wcrtomb/
+/// metafy pipeline collapses since Rust char is already UTF-32.
 /// WARNING: param names don't match C — Rust=(line, ll, _flags) vs C=(instr, inll, incs, outllp, outcsp, useheap)
 pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // c:192
-    // C body c:284-373 — encodes ZLE_CHAR_T array to a metafied
-    //                    multibyte string. Vec<char> → String is
-    //                    direct; meta encoding skipped (we don't run
-    //                    through zsh's parser path).
     line.iter().take(ll).collect()
 }
 

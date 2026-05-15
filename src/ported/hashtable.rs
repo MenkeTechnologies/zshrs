@@ -1214,16 +1214,59 @@ pub fn printreswdnode(hn: &str, printflags: u32) -> String {
     }
 }
 
-/// Port of `createaliastable(HashTable ht)` from `Src/hashtable.c:1188`.
-/// C: `void createaliastable(HashTable ht)` — assign 12 GSU vtable
-///   slots on `ht` (hasher/cmpnodes/addnode/getnode/getnode2/removenode/
-///   disablenode/enablenode/freenode/printnode). Rust port: alias_table's
-///   methods already implement these semantics directly, so no vtable
-///   to install — call site doesn't need a per-table dispatch.
-#[allow(unused_variables)]
-pub fn createaliastable(ht: *mut crate::ported::zsh_h::hashtable) {         // c:1188
-    // c:1188-1201 — vtable wireup. Rust path: alias_table already
-    // exposes add/get/remove/disable/enable/free/print as inherent methods.
+/// Port of `void createaliastable(HashTable ht)` from `Src/hashtable.c:1186`.
+/// ```c
+/// void
+/// createaliastable(HashTable ht)
+/// {
+///     ht->hash        = hasher;
+///     ht->emptytable  = NULL;
+///     ht->filltable   = NULL;
+///     ht->cmpnodes    = strcmp;
+///     ht->addnode     = addhashnode;
+///     ht->getnode     = gethashnode;
+///     ht->getnode2    = gethashnode2;
+///     ht->removenode  = removehashnode;
+///     ht->disablenode = disablehashnode;
+///     ht->enablenode  = enablehashnode;
+///     ht->freenode    = freealiasnode;
+///     ht->printnode   = printaliasnode;
+/// }
+/// ```
+/// The Rust `hashtable.addnode/.getnode/.removenode/.disablenode/.enablenode/
+/// .freenode/.printnode` function-pointer types take untyped HashNode
+/// arguments. The generic Rust helpers (`addhashnode<T>`/`gethashnode<T>`/
+/// etc.) take typed `&mut HashMap<String, T>` so they can't directly
+/// satisfy the untyped slot signature; downstream consumers of `aliastab`
+/// dispatch through `aliastab_lock()` (the typed wrapper) instead of
+/// the C-style slot. Mirror the C structure verbatim: assign every slot
+/// either to the matching adapter or `None`, with each line citing the
+/// matching c:NNN.
+pub fn createaliastable(ht: &mut crate::ported::zsh_h::hashtable) {          // c:1188
+    fn cmpnodes_strcmp(a: &str, b: &str) -> i32 {                            // c:1193 strcmp
+        a.cmp(b) as i32
+    }
+    ht.hash        = Some(hasher);                                           // c:1190
+    ht.emptytable  = None;                                                   // c:1191
+    ht.filltable   = None;                                                   // c:1192
+    ht.cmpnodes    = Some(cmpnodes_strcmp);                                  // c:1193
+    // c:1194-1201 — addnode/getnode/getnode2/removenode/disablenode/
+    // enablenode/freenode/printnode: their C signatures are `void(*)(
+    // HashTable, char *, void *)` / `HashNode(*)(HashTable, char *)` /
+    // ... — they take untyped `void *`. The typed Rust helpers
+    // (`addhashnode<T>(ht: &mut HashMap<String, T>, ...)`) can't be
+    // coerced through the `fn(&mut hashtable, String, usize)` slot
+    // shape without per-value-type trampoline closures. Leave the
+    // slots `None`; the typed dispatch through `aliastab_lock` is the
+    // canonical Rust path for this table.
+    ht.addnode     = None;                                                   // c:1194 addhashnode
+    ht.getnode     = None;                                                   // c:1195 gethashnode
+    ht.getnode2    = None;                                                   // c:1196 gethashnode2
+    ht.removenode  = None;                                                   // c:1197 removehashnode
+    ht.disablenode = None;                                                   // c:1198 disablehashnode
+    ht.enablenode  = None;                                                   // c:1199 enablehashnode
+    ht.freenode    = None;                                                   // c:1200 freealiasnode
+    ht.printnode   = None;                                                   // c:1201 printaliasnode
 }
 
 /// Trait exposing the DISABLED flag on a hash-node value.
@@ -1629,32 +1672,80 @@ pub fn freehistdata(idx: usize, unlink: i32) {                              // c
 ///
 /// Rust port: routes through dircache_lock() with refcount-by-
 /// HashMap-value (i32). Add/remove via the (name, value) pair.
-pub fn dircache_set(name: &str, value: Option<&str>) {
+pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {        // c:1537
+    use std::sync::atomic::Ordering;
     let mut cache = dircache_lock().lock().expect("dircache poisoned");
-    match value {
-        None => {
-            // Find the entry by name; decrement refs; remove on 0.
-            // Mirrors the C `release_dircache_entry` flow used by
-            // `freeshfuncnode` (hashtable.c:888).
-            if let Some(idx) = cache.iter().position(|e| e.name == name) {
-                cache[idx].refs -= 1;
-                if cache[idx].refs <= 0 {
-                    cache.remove(idx);
+
+    if value.is_none() {                                                     // c:1541
+        // c:1542-1543 — `if (!*name) return;`
+        let key = match name.as_deref() {
+            None => return,                                                  // c:1543
+            Some(s) => s.to_string(),
+        };
+        // c:1544-1548 — `if (!dircache_size) { zsfree(*name); *name = NULL; return; }`
+        if cache.is_empty() {                                                // c:1544
+            *name = None;                                                    // c:1546
+            return;                                                          // c:1547
+        }
+        // c:1550-1582 — scan cache, decrement matching entry's refs;
+        // on refs==0, drop the entry. Rust keys by string equality
+        // since we don't share the C pointer-identity used at c:1553.
+        if let Some(idx) = cache.iter().position(|e| e.name == key) {        // c:1550
+            cache[idx].refs -= 1;                                            // c:1555
+            if cache[idx].refs == 0 {                                        // c:1556
+                cache.remove(idx);                                           // c:1558-1577 collapsed
+                DIRCACHE_LASTENTRY.store(usize::MAX, Ordering::SeqCst);              // c:1564/1577
+            }
+            *name = None;                                                    // c:1579
+            return;                                                          // c:1580
+        }
+        // c:1583-1584 — `zsfree(*name); *name = NULL;`
+        *name = None;                                                        // c:1584
+    } else {                                                                 // c:1585
+        let mut v = value.unwrap().to_string();
+        // c:1590-1594 — absolute-path normalization for relative input.
+        if !v.starts_with('/') {                                             // c:1590
+            if let Some(cwd) = crate::ported::utils::zgetcwd() {              // c:1591 zgetcwd
+                v = format!("{}/{}", cwd, v);                                // c:1591 zhtricat
+                if let Some(resolved) = crate::ported::utils::xsymlink(&v) { // c:1593 xsymlink(..., 1)
+                    v = resolved;
                 }
             }
         }
-        Some(v) => {
-            // Find-or-insert by name; bump refs. Mirrors the C
-            // `get_dircache_entry` flow at hashtable.c:1539+.
-            if let Some(idx) = cache.iter().position(|e| e.name == v) {
-                cache[idx].refs += 1;
-            } else {
-                cache.push(dircache_entry { name: v.to_string(), refs: 1 });
-            }
-            let _ = name; // C uses *name for refcount keying; Rust keys by value path
+        // c:1602-1606 — `dircache_lastentry` fast-path: same path as last.
+        let last_idx = DIRCACHE_LASTENTRY.load(Ordering::SeqCst);
+        if last_idx != usize::MAX && last_idx < cache.len()
+            && cache[last_idx].name == v
+        {
+            *name = Some(cache[last_idx].name.clone());                      // c:1604
+            cache[last_idx].refs += 1;                                       // c:1605
+            return;                                                          // c:1606
         }
+        // c:1607-1610 — empty-cache: allocate first entry.
+        if cache.is_empty() {                                                // c:1607
+            cache.push(dircache_entry { name: v.clone(), refs: 1 });         // c:1609-1610
+            DIRCACHE_LASTENTRY.store(0usize, Ordering::SeqCst);
+            *name = Some(v);
+            return;
+        }
+        // c:1611-1619 — scan for existing entry, bump refs.
+        if let Some(idx) = cache.iter().position(|e| e.name == v) {          // c:1612-1614
+            *name = Some(cache[idx].name.clone());                           // c:1615
+            cache[idx].refs += 1;                                            // c:1616
+            DIRCACHE_LASTENTRY.store(idx, Ordering::SeqCst);
+            return;
+        }
+        // c:1620+ — push new entry.
+        cache.push(dircache_entry { name: v.clone(), refs: 1 });
+        let new_idx = cache.len() - 1;
+        DIRCACHE_LASTENTRY.store(new_idx, Ordering::SeqCst);
+        *name = Some(v);
     }
 }
+
+// `DIRCACHE_LASTENTRY` already declared below at hashtable.rs:1849
+// as `AtomicUsize` (`usize::MAX` sentinel). Reuse that — the new
+// body above adapts via i32 cast.
 
 // `SuffixAliasTable` type alias deleted — Rust-only convenience.
 // C has no `SuffixAliasTable`; the same generic `HashTable` powers
@@ -2438,8 +2529,10 @@ mod tests {
     #[test]
     fn test_dircache_set_refcounts() {
         // Refcount add → entries grow.
-        dircache_set("k", Some("/usr/bin"));
-        dircache_set("k", Some("/usr/bin"));
+        let mut k: Option<String> = None;
+        dircache_set(&mut k, Some("/usr/bin"));
+        let mut k2: Option<String> = None;
+        dircache_set(&mut k2, Some("/usr/bin"));
         let cache_size = dircache_lock().lock().unwrap().len();
         assert!(cache_size >= 1);
     }

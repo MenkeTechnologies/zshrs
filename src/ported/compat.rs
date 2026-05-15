@@ -385,17 +385,89 @@ pub fn strtoul(nptr: &str, base: u32) -> (u64, usize) {                      // 
 
 /// Port of `long zpathmax(char *dir)` from `Src/compat.c:236`.
 /// C source is wrapped in `#if 0` (compat.c:203-282) — entirely
-/// disabled in upstream zsh. Provides a `pathconf(_PC_PATH_MAX)`-based
-/// per-directory limit; the disabled state means real callers always
-/// fall back to PATH_MAX. Shim returns the libc PATH_MAX equivalent.
+/// disabled in upstream zsh. Faithful translation of the HAVE_PATHCONF
+/// recursive walk: try pathconf(dir); on EINVAL/ENOENT/ENOTDIR strip
+/// the last path component and retry, accumulating taillen, until we
+/// hit "/" or "." or run out.
 pub fn zpathmax(dir: &str) -> i64 {                                          // c:236
-    #[cfg(unix)] {
-        // c:241 pathconf(dir, _PC_PATH_MAX) — disabled in C, use libc shim.
-        let cs = match std::ffi::CString::new(dir) { Ok(c) => c, Err(_) => return -1 };
-        let r = unsafe { libc::pathconf(cs.as_ptr(), libc::_PC_PATH_MAX) };
-        if r >= 0 { r as i64 } else { libc::PATH_MAX as i64 }                // c:283 PATH_MAX fallback
+    #[cfg(unix)] unsafe {
+        let mut buf: Vec<u8> = dir.as_bytes().to_vec();                      // c:237 char *dir buffer
+        // c:241 errno access — pick the right per-platform getter
+        // (`__error()` on macOS, `__errno_location()` on Linux/BSD).
+        #[cfg(target_os = "macos")]
+        let errno_loc: *mut libc::c_int = libc::__error();
+        #[cfg(target_os = "linux")]
+        let errno_loc: *mut libc::c_int = libc::__errno_location();
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let errno_loc: *mut libc::c_int = std::ptr::null_mut();
+        if errno_loc.is_null() {
+            // c:274-279 — fallback path (no working errno access).
+            let dirlen = buf.len() as i64;
+            let path_max = 4096i64;
+            return if dirlen >= path_max { -1 } else { path_max - dirlen };
+        }
+        let mut accumulated_taillen: libc::c_long = 0;                       // c:262 taillen accumulator
+        loop {
+            let cs = match std::ffi::CString::new(buf.clone()) {
+                Ok(c) => c,
+                Err(_) => return -1,
+            };
+            *errno_loc = 0;                                                  // c:241 errno = 0
+            let pathmax = libc::pathconf(cs.as_ptr(), libc::_PC_PATH_MAX);   // c:242
+            if pathmax >= 0 {                                                // c:242
+                if accumulated_taillen == 0 {
+                    return pathmax as i64;                                   // c:244
+                }
+                if accumulated_taillen < pathmax {
+                    return (pathmax - accumulated_taillen) as i64;           // c:264
+                } else {
+                    *errno_loc = libc::ENAMETOOLONG;                         // c:266
+                    return -1;
+                }
+            }
+            let err = *errno_loc;
+            if err != libc::EINVAL && err != libc::ENOENT && err != libc::ENOTDIR {
+                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
+            }
+            // c:247 — strip the last '/' run.
+            let tail_pos: Option<usize> = buf.iter().rposition(|&b| b == b'/');
+            let mut tail = match tail_pos { Some(t) => t, None => {
+                // c:259 — no '/': try pathconf(".") with taillen = strlen(dir)+1.
+                *errno_loc = 0;
+                let dot = std::ffi::CString::new(".").unwrap();
+                let pm = libc::pathconf(dot.as_ptr(), libc::_PC_PATH_MAX);
+                let taillen = (buf.len() + 1) as libc::c_long;
+                if pm > 0 && taillen < pm {
+                    return (pm - taillen) as i64;                            // c:264
+                }
+                if pm > 0 { *errno_loc = libc::ENAMETOOLONG; }               // c:266
+                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
+            }};
+            while tail > 0 && buf[tail - 1] == b'/' { tail -= 1; }           // c:248-249
+            let taillen_now = (buf.len() - tail) as libc::c_long;            // c:262
+            accumulated_taillen += taillen_now;
+            if tail > 0 {                                                    // c:250
+                buf.truncate(tail);                                          // c:251 *tail = 0
+                continue;
+            } else {
+                // c:255 — exhausted the path; try pathconf("/").
+                *errno_loc = 0;
+                let root = std::ffi::CString::new("/").unwrap();
+                let pm = libc::pathconf(root.as_ptr(), libc::_PC_PATH_MAX);
+                if pm > 0 && accumulated_taillen < pm {
+                    return (pm - accumulated_taillen) as i64;                // c:264
+                }
+                if pm > 0 { *errno_loc = libc::ENAMETOOLONG; }               // c:266
+                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
+            }
+        }
     }
-    #[cfg(not(unix))] { 4096 }
+    #[cfg(not(unix))] {
+        // c:274-279 — non-HAVE_PATHCONF fallback returns PATH_MAX - dirlen.
+        let dirlen = dir.len() as i64;
+        let path_max = 4096i64;
+        if dirlen >= path_max { -1 } else { path_max - dirlen }
+    }
 }
 
 #[cfg(test)]

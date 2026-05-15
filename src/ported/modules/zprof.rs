@@ -343,11 +343,192 @@ pub fn name_for_anonymous_function(name: &str, filename: &str, lineno: i32) -> S
 /// the static-link stub that mirrors C's `return 0;` exit path; the
 /// actual timing accumulation happens via direct CALLS/ARCS/STACK
 /// updates from the executor when `ZPROF_MODULE` is true.
-pub fn zprof_wrapper(_name: &str) -> i32 {                               // c:236
-    // Static-link path: the runshfunc dispatch isn't installable in
-    // zshrs's executor, so this wrapper is a no-op. The real
-    // CALLS/ARCS/STACK accounting lives at the funcstack hook.
-    0                                                                    // c:311
+/// Port of `static int zprof_wrapper(Eprog prog, FuncWrap w, char *name)`
+/// from `Src/Modules/zprof.c:236`.
+///
+/// ```c
+/// static int
+/// zprof_wrapper(Eprog prog, FuncWrap w, char *name)
+/// {
+///     int active = 0;
+///     struct sfunc sf, *sp;
+///     Pfunc f = NULL;
+///     Parc a = NULL;
+///     struct timespec ts;
+///     double prev = 0, now;
+///     char *name_for_lookups;
+///     if (is_anonymous_function_name(name))
+///         name_for_lookups = name_for_anonymous_function(name);
+///     else
+///         name_for_lookups = name;
+///     if (zprof_module && !(zprof_module->node.flags & MOD_UNLOAD)) {
+///         active = 1;
+///         if (!(f = findpfunc(name_for_lookups))) { ... append calls ... }
+///         if (stack) {
+///             if (!(a = findparc(stack->p, f))) { ... append arcs ... }
+///         }
+///         sf.prev = stack; sf.p = f; stack = &sf;
+///         f->calls++;
+///         zgettime_monotonic_if_available(&ts);
+///         sf.beg = prev = ms_now(ts);
+///     }
+///     runshfunc(prog, w, name);
+///     if (active) {
+///         if (zprof_module && !(zprof_module->node.flags & MOD_UNLOAD)) {
+///             zgettime_monotonic_if_available(&ts);
+///             now = ms_now(ts);
+///             f->self += now - sf.beg;
+///             for (sp = sf.prev; sp && sp->p != f; sp = sp->prev);
+///             if (!sp) f->time += now - prev;
+///             if (a) { a->calls++; a->self += now - sf.beg; }
+///             stack = sf.prev;
+///             if (stack) { stack->beg += now - prev;
+///                          if (a) a->time += now - prev; }
+///         } else stack = sf.prev;
+///     }
+///     return 0;
+/// }
+/// ```
+#[allow(non_snake_case)]
+pub fn zprof_wrapper(prog: *const crate::ported::zsh_h::eprog,              // c:236
+                     w: *const crate::ported::zsh_h::funcwrap,
+                     name: &str) -> i32 {
+    let mut active: i32 = 0;                                                 // c:238
+    let mut sf = Sfunc { p: 0, beg: 0.0 };                                   // c:239 struct sfunc sf
+    let mut f: Option<usize> = None;                                         // c:240 Pfunc f = NULL
+    let mut a: Option<usize> = None;                                         // c:241 Parc a = NULL
+    let mut prev: f64 = 0.0;                                                 // c:243 double prev = 0
+
+    // c:246-250 — resolve display name for anonymous functions.
+    // `is_anonymous_function_name(name)` is `!strcmp(name, "(anon)")`
+    // per Src/exec.c:5303-5306. ANONYMOUS_FUNCTION_NAME = "(anon)".
+    let name_for_lookups: String = if name == "(anon)" {                     // c:246
+        // `name_for_anonymous_function(name)` (exec.c:5292): walks the
+        // funcstack to recover the source filename + line. The Rust
+        // port (above in this file) takes (name, filename, lineno);
+        // without the funcstack walk wired here, pass empty placeholders
+        // so the call shape is preserved.
+        name_for_anonymous_function(name, "", 0)                             // c:247
+    } else {                                                                 // c:248
+        name.to_string()                                                     // c:249
+    };
+
+    if ZPROF_MODULE.load(Ordering::SeqCst) {                                 // c:252
+        active = 1;                                                          // c:253
+        f = findpfunc(&name_for_lookups);                                    // c:254
+        if f.is_none() {                                                     // c:254
+            // c:255-261 — `f = zalloc(...); f->name = ztrdup(...); f->next = calls; calls = f; ncalls++;`
+            let new_pfunc = Pfunc {                                          // c:255
+                name: crate::ported::mem::ztrdup(&name_for_lookups),         // c:256
+                calls: 0,                                                    // c:257
+                time: 0.0,                                                   // c:258 self/time = 0
+                self_time: 0.0,                                              // c:258
+                num: 0,
+            };
+            let mut calls = CALLS.lock().unwrap();
+            f = Some(calls.len());                                           // c:260 head-insert in C; Rust appends
+            calls.push(new_pfunc);                                           // c:260
+            NCALLS.fetch_add(1, Ordering::SeqCst);                           // c:261
+        }
+        // c:263 — `if (stack)` — top-of-stack frame exists.
+        let stack_top: Option<Sfunc> = {                                     // c:263
+            let st = STACK.lock().unwrap();
+            st.last().copied()
+        };
+        if let Some(top) = stack_top {                                       // c:263
+            a = findparc(top.p, f.unwrap());                                 // c:264
+            if a.is_none() {                                                 // c:264
+                let new_parc = Parc {                                        // c:265
+                    from: top.p,                                             // c:266
+                    to: f.unwrap(),                                          // c:267
+                    calls: 0,                                                // c:268
+                    self_time: 0.0,                                          // c:269
+                    time: 0.0,                                               // c:269
+                };
+                let mut arcs = ARCS.lock().unwrap();
+                a = Some(arcs.len());                                        // c:271
+                arcs.push(new_parc);                                         // c:271
+                NARCS.fetch_add(1, Ordering::SeqCst);                        // c:272
+            }
+        }
+        // c:275-277 — `sf.prev = stack; sf.p = f; stack = &sf;`
+        sf.p = f.unwrap();                                                   // c:276
+        STACK.lock().unwrap().push(sf);                                      // c:277 stack = &sf
+
+        // c:279 — `f->calls++;`
+        {
+            let mut calls = CALLS.lock().unwrap();
+            calls[f.unwrap()].calls += 1;                                    // c:279
+        }
+        // c:280-283 — read monotonic clock, compute prev (ms).
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };               // c:280
+        crate::ported::compat::zgettime_monotonic_if_available(&mut ts);     // c:281
+        sf.beg = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0;  // c:282-283
+        prev = sf.beg;                                                       // c:282
+        // Update the stack-top copy we just pushed.
+        let mut st = STACK.lock().unwrap();
+        if let Some(top) = st.last_mut() { top.beg = sf.beg; }
+    }
+
+    // c:285 — `runshfunc(prog, w, name);`
+    // runshfunc isn't yet ported as a free fn — the wrapped invocation
+    // happens at the executor level (src/exec.rs::dispatch_function_call).
+    // Keep the C call slot visible; live integration occurs there.
+    let _ = (prog, w);                                                       // c:285 runshfunc(prog, w, name)
+
+    if active != 0 {                                                         // c:286
+        if ZPROF_MODULE.load(Ordering::SeqCst) {                             // c:287
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };           // c:288
+            crate::ported::compat::zgettime_monotonic_if_available(&mut ts); // c:289
+            let now = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0;  // c:291-292
+
+            // c:293 — `f->self += now - sf.beg;`
+            {
+                let mut calls = CALLS.lock().unwrap();
+                if let Some(idx) = f {
+                    calls[idx].self_time += now - sf.beg;                    // c:293
+                }
+            }
+            // c:294 — recursion-detect: walk sf.prev looking for f.
+            let recursion: bool = {                                          // c:294
+                let st = STACK.lock().unwrap();
+                let cur_f = f.unwrap();
+                // sf.prev = the frame underneath sf — walk it down.
+                st.iter().rev().skip(1).any(|fr| fr.p == cur_f)
+            };
+            if !recursion {                                                  // c:295
+                let mut calls = CALLS.lock().unwrap();
+                if let Some(idx) = f {
+                    calls[idx].time += now - prev;                           // c:296
+                }
+            }
+            if let Some(arc_idx) = a {                                       // c:297
+                let mut arcs = ARCS.lock().unwrap();
+                arcs[arc_idx].calls += 1;                                    // c:298
+                arcs[arc_idx].self_time += now - sf.beg;                     // c:299
+            }
+            // c:301 — `stack = sf.prev;`
+            {
+                let mut st = STACK.lock().unwrap();
+                st.pop();                                                    // c:301
+            }
+            // c:303-307 — propagate elapsed up to caller frame.
+            let mut st = STACK.lock().unwrap();
+            if let Some(top) = st.last_mut() {                               // c:303
+                top.beg += now - prev;                                       // c:304
+                if let Some(arc_idx) = a {                                   // c:305
+                    drop(st);
+                    let mut arcs = ARCS.lock().unwrap();
+                    arcs[arc_idx].time += now - prev;                        // c:306
+                }
+            }
+        } else {                                                             // c:308
+            // c:309 — `stack = sf.prev;`
+            let mut st = STACK.lock().unwrap();
+            st.pop();
+        }
+    }
+    0                                                                        // c:311
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (zprof.c:309).
@@ -648,7 +829,10 @@ mod tests {
     /// path mirrors C's `return 0;` exit at c:311).
     #[test]
     fn zprof_wrapper_returns_zero() {
-        assert_eq!(zprof_wrapper("foo"), 0);
+        assert_eq!(
+            zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo"),
+            0,
+        );
     }
 
     /// Verifies `name_for_anonymous_function` formats as

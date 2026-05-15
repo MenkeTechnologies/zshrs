@@ -96,12 +96,20 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // 
     }
 }
 
-/// Port of `zstrcmp(const char *as, const char *bs, int sortflags)` from `Src/sort.c:191`.
+/// Port of `int zstrcmp(const char *as, const char *bs, int sortflags)` from
+/// `Src/sort.c:191`.
 ///
-/// C fixes `sortdir = 1`, sets only `sortnobslash` and `sortnumeric`
-/// from `sortflags` (`sort.c:207-210`), then calls `eltpcmp`. It does
-/// **not** consult `SORTIT_BACKWARDS` or `SORTIT_IGNORING_CASE` — those
-/// apply in `strmetasort` via `sortdir` and the pre-transform loop.
+/// **Structural divergence from C:** C `zstrcmp` is a 20-line wrapper
+/// that sets `sortdir`/`sortnobslash`/`sortnumeric` globals then calls
+/// `eltpcmp(&aeptr, &beptr)` (which is the comparator). The Rust port
+/// has those roles **inverted**: `zstrcmp` holds the full comparator
+/// body (numeric run-detect, backslash strip, strcoll fallback) and
+/// `eltpcmp` is the wrapper that handles embedded-NUL `len` paths
+/// then delegates to `zstrcmp`. Net work matches C; only the name
+/// holding the body is swapped. Restructuring to match C role
+/// assignment requires moving the comparator body into `eltpcmp` and
+/// extending the latter's signature to accept the flag bits directly
+/// (tracked as a follow-up; not a behavioral bug).
 /// WARNING: param names don't match C — Rust=(a, bs, sortflags) vs C=(as, bs, sortflags)
 pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // c:191
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {

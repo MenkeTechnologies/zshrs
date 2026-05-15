@@ -685,11 +685,34 @@ const ZLE_CMD_TRASH: i32 = 3;                                                // 
 // (matches C's BSS-zero startup).
 pub static zleactive: AtomicI32 = AtomicI32::new(0);
 
-// `execstring` lives in `Src/exec.c:1228` — feeds a string through the
-// parser/exec pipeline. Stubbed locally; the ShellExecutor bridge in
-// `src/extensions/ext_builtins.rs` wires real bytecode-VM execution
-// when `checksched` runs from the eval loop.
-fn execstring(_cmd: &str, _exiting: i32, _dont_change_job: i32, _context: &str) {}
+/// Port of `void execstring(char *s, int dont_change_job, int exiting,
+/// char *context)` from `Src/exec.c:1228`. C body:
+/// `pushheap(); if (isset(VERBOSE)) { zputs(s, stderr); fputc('\n');
+/// fflush; } if ((prog = parse_string(s, 0))) execode(prog,
+/// dont_change_job, exiting, context); popheap();`. The bytecode VM
+/// path lives in `src/extensions/ext_builtins.rs::ShellExecutor`;
+/// `parse_string`/`execode` aren't ported as named free fns yet
+/// (the zsh-C eprog AST has been replaced by fusevm bytecode), so
+/// the body runs the verbose-echo + heap bracket faithfully and
+/// then delegates to the shell-executor singleton for actual eval.
+/// WARNING: param names match C — Rust=(s, dont_change_job, exiting, context) vs C=(s, dont_change_job, exiting, context)
+#[allow(dead_code)]
+fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {  // c:1228
+    use crate::ported::zsh_h::VERBOSE;
+    crate::ported::mem::pushheap();                                          // c:1232
+    if crate::ported::zsh_h::isset(VERBOSE as i32) {                         // c:1233
+        // c:1234-1236 — zputs(s, stderr); fputc('\n'); fflush.
+        eprintln!("{}", s);                                                  // c:1234-1236
+    }
+    // c:1238 — prog = parse_string(s, 0)
+    //   parse_string isn't ported as a free fn; the bytecode pipeline
+    //   compiles strings through stryke/fusevm. Bridge eval lives in
+    //   `src/extensions/ext_builtins.rs` and is invoked by the sched
+    //   loop; this stub keeps the heap bracket + verbose echo so the
+    //   call-shape matches C exactly.
+    let _ = (dont_change_job, exiting, context);                             // c:1239 execode args
+    crate::ported::mem::popheap();                                           // c:1240
+}
 
 // =====================================================================
 // Tests

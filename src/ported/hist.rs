@@ -177,10 +177,681 @@ pub fn iaddtoline(c: i32) {                                                  // 
     chline.lock().unwrap().push(c as u8 as char);
 }
 
-/// Port of `void safeinungetc(int c)` from Src/hist.c.
-pub fn safeinungetc(_c: i32) {
-    // The C version pushes back via inungetc; without the input-stream
-    // port wired here the call site uses InputBuffer::inungetc directly.
+/// Port of `void safeinungetc(int c)` from Src/hist.c:466.
+/// ```c
+/// static void
+/// safeinungetc(int c)
+/// {
+///     if (lexstop)
+///         lexstop = 0;
+///     else
+///         inungetc(c);
+/// }
+/// ```
+pub fn safeinungetc(c: i32) {                                                // c:467
+    if lexstop.load(Ordering::SeqCst) {                                      // c:469
+        lexstop.store(false, Ordering::SeqCst);                              // c:470
+    } else {                                                                 // c:471
+        if let Some(ch) = char::from_u32(c as u32) {                         // c:472 inungetc(c)
+            crate::ported::input::inungetc(ch);
+        }
+    }
+}
+
+/// Port of `int ihgetc(void)` from Src/hist.c:418. Returns the next
+/// character from the input stream, optionally performing history
+/// expansion via `histsubchar`. Sets `lexstop`/`errflag` and bumps
+/// `qbang` per the bang-escape rules.
+/// ```c
+/// static int
+/// ihgetc(void)
+/// {
+///     int c = ingetc();
+///     if (exit_pending) { lexstop = 1; errflag |= ERRFLAG_ERROR; return ' '; }
+///     qbang = 0;
+///     if (!stophist && !(inbufflags & INP_ALIAS)) {
+///         c = histsubchar(c);
+///         if (c < 0) { lexstop = 1; errflag |= ERRFLAG_ERROR; return ' '; }
+///     }
+///     if ((inbufflags & INP_HIST) && !stophist) {
+///         qbang = 0;
+///         if (c == '\\' && !(qbang = (c = ingetc()) == bangchar))
+///             safeinungetc(c), c = '\\';
+///     } else if (stophist || (inbufflags & INP_ALIAS))
+///         qbang = c == bangchar && (stophist < 2);
+///     hwaddc(c);
+///     addtoline(c);
+///     return c;
+/// }
+/// ```
+pub fn ihgetc() -> i32 {                                                     // c:418
+    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+    let mut c: i32 = crate::ported::input::ingetc()                          // c:420 int c = ingetc();
+        .map(|ch| ch as i32)
+        .unwrap_or(-1);
+    if exit_pending.load(Ordering::SeqCst) {                                 // c:422
+        lexstop.store(true, Ordering::SeqCst);                               // c:424
+        crate::ported::utils::errflag.fetch_or(                              // c:425 errflag |= ERRFLAG_ERROR
+            crate::ported::utils::ERRFLAG_ERROR,
+            Ordering::SeqCst,
+        );
+        return b' ' as i32;                                                  // c:426
+    }
+    qbang.store(false, Ordering::SeqCst);                                    // c:428 qbang = 0
+    let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
+    if stophist.load(Ordering::SeqCst) == 0                                  // c:429 !stophist
+        && (inbufflags_v & INP_ALIAS) == 0                                   // c:429 !(inbufflags & INP_ALIAS)
+    {
+        c = histsubchar(c);                                                  // c:431 c = histsubchar(c)
+        if c < 0 {                                                           // c:432
+            lexstop.store(true, Ordering::SeqCst);                           // c:434
+            crate::ported::utils::errflag.fetch_or(                          // c:435
+                crate::ported::utils::ERRFLAG_ERROR,
+                Ordering::SeqCst,
+            );
+            return b' ' as i32;                                              // c:436
+        }
+    }
+    let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
+    let bc = bangchar.load(Ordering::SeqCst);
+    if (inbufflags_v & INP_HIST) != 0 && stophist.load(Ordering::SeqCst) == 0 {  // c:439
+        // c:447 qbang = 0
+        qbang.store(false, Ordering::SeqCst);
+        if c == b'\\' as i32 {                                               // c:448 c == '\\'
+            let g = crate::ported::input::ingetc()                           // c:448 c = ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if g == bc {                                                     // c:448 qbang = (c == bangchar)
+                qbang.store(true, Ordering::SeqCst);
+                c = g;
+            } else {
+                // c:449 safeinungetc(c), c = '\\';
+                safeinungetc(g);
+                c = b'\\' as i32;
+            }
+        }
+    } else if stophist.load(Ordering::SeqCst) != 0                           // c:450 stophist
+        || (inbufflags_v & INP_ALIAS) != 0                                   // c:450 (inbufflags & INP_ALIAS)
+    {
+        // c:458 qbang = c == bangchar && (stophist < 2)
+        let v = c == bc && stophist.load(Ordering::SeqCst) < 2;
+        qbang.store(v, Ordering::SeqCst);
+    }
+    ihwaddc(c);                                                              // c:459 hwaddc(c)
+    iaddtoline(c);                                                           // c:460 addtoline(c)
+    c                                                                        // c:462 return c
+}
+
+/// Port of `unsigned char hatchar` from `Src/params.c:132`. Caret used
+/// as the substitution-shortcut lead character on first column; init'd
+/// to `'^'` at `Src/init.c:1102`. Read by `histsubchar` (c:618).
+/// NOTE on placement: canonical home per PORT.md Rule C would be
+/// `params.rs`, alongside `bangchar`/`hashchar`. Kept here to mirror
+/// the existing (pre-2026-05) placement of `bangchar` at hist.rs:1858;
+/// move-all-three is a follow-up cleanup.
+pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32);                 // c:params.c:132
+
+/// Port of `static int marg` from `Src/hist.c:599`. Argument index of the
+/// most-recent `!?str?` event match; `-1` when no match has happened.
+pub static marg: AtomicI32 = AtomicI32::new(-1);                             // c:599
+
+/// Port of `static zlong mev` from `Src/hist.c:600`. Event number of the
+/// most-recent `!?str?` event match; `-1` when no match has happened.
+pub static mev: AtomicI64 = AtomicI64::new(-1);                              // c:600
+
+/// Port of `static int histsubchar(int c)` from Src/hist.c:594.
+/// Implements `^foo^bar` and full `!` history expansion: walks the input
+/// stream pulling event-spec, word-designator, and modifier characters,
+/// looks up the matching history entry, applies any modifiers, then
+/// pushes the resulting string back onto the input stack via `inpush`.
+/// Returns the first character of the expanded result or `-1` on error.
+///
+/// ```c
+/// static int
+/// histsubchar(int c)
+/// {
+///     int farg, evset = -1, larg, argc, cflag = 0, bflag = 0;
+///     zlong ev;
+///     static int marg = -1;
+///     static zlong mev = -1;
+///     char *buf, *ptr;
+///     char *sline;
+///     int lexraw_mark;
+///     Histent ehist;
+///     size_t buflen;
+///     /* ... see Src/hist.c:594-983 for full body ... */
+/// }
+/// ```
+pub fn histsubchar(c_in: i32) -> i32 {                                       // c:595
+    use crate::ported::zsh_h::{CSHJUNKIEHISTORY, HISTVERIFY};
+    let mut c: i32 = c_in;
+    let mut farg: i32;                                                       // c:597
+    let mut evset: i32 = -1;                                                 // c:597
+    let mut larg: i32;
+    let mut argc: i32;                                                       // c:597
+    let mut cflag: i32 = 0;                                                  // c:597
+    let mut bflag: i32 = 0;                                                  // c:597
+    let mut ev: i64;                                                         // c:598
+    let mut buf: String;                                                     // c:601 char *buf, *ptr
+    let mut sline: String;                                                   // c:602
+    // c:603 lexraw_mark — Rust port's lexer doesn't expose `zshlex_raw_mark`
+    // hook yet; mirror the C `lexraw_mark` / `zshlex_raw_back_to_mark` calls
+    // as a no-op `i32` carry.
+    let lexraw_mark: i32 = 0;                                                // c:603,615
+
+    // c:618 — `^foo^bar` shortcut: only valid on first column of input.
+    let hat = hatchar.load(Ordering::SeqCst);
+    if crate::ported::lex::LEX_ISFIRSTCH.with(|f| f.get()) && c == hat {                                         // c:618
+        let mut gbal: i32 = 0;                                               // c:619
+        // c:622 — clear isfirstch
+        crate::ported::lex::LEX_ISFIRSTCH.with(|f| f.set(false));                                                // c:622
+        // c:623 — push hatchar back so getargs parses the leading ^.
+        if let Some(ch) = char::from_u32(hat as u32) {
+            crate::ported::input::inungetc(ch);                              // c:623
+        }
+        let ehist = match gethist(defev.load(Ordering::SeqCst)) {            // c:624
+            Some(h) => h,
+            None => return -1,                                               // c:626
+        };
+        let argc_local = getargc(&ehist) as usize;
+        sline = match getargs(&ehist, 0, argc_local.saturating_sub(0)) {     // c:625
+            Some(s) => s,
+            None => return -1,                                               // c:626
+        };
+
+        if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {                 // c:628
+            return substfailed();                                            // c:629
+        }
+        if hsubl.lock().unwrap().is_none() {                                 // c:630
+            return -1;                                                       // c:631
+        }
+        let in_pat = hsubl.lock().unwrap().clone().unwrap_or_default();
+        let out_pat = hsubr.lock().unwrap().clone().unwrap_or_default();
+        let new = subst(&sline, &in_pat, &out_pat, gbal != 0);               // c:632
+        if new == sline {                                                    // c:632 subst returned 0 (no match)
+            return substfailed();                                            // c:633
+        }
+        sline = new;
+    } else {
+        // c:636 — !c shortcut: first-column flag clears unless c==' '.
+        if c != b' ' as i32 {                                                // c:636
+            crate::ported::lex::LEX_ISFIRSTCH.with(|f| f.set(false));                                            // c:637
+        }
+        let bc = bangchar.load(Ordering::SeqCst);
+        if c == b'\\' as i32 {                                               // c:638
+            let g = crate::ported::input::ingetc()                           // c:639 ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if g != bc {                                                     // c:641
+                safeinungetc(g);                                             // c:642
+            } else {                                                         // c:643
+                qbang.store(true, Ordering::SeqCst);                         // c:644
+                return bc;                                                   // c:645 return bangchar
+            }
+        }
+        if c != bc {                                                         // c:648
+            return c;                                                        // c:649
+        }
+        // c:650 — `*hptr = '\0'` truncates chline at the current position.
+        let pos = hptr.load(Ordering::SeqCst);                               // c:650
+        {
+            let mut cl = chline.lock().unwrap();
+            if pos < cl.len() {
+                cl.truncate(pos);
+            }
+        }
+        c = crate::ported::input::ingetc()                                   // c:651
+            .map(|ch| ch as i32)
+            .unwrap_or(-1);
+        if c == b'{' as i32 {                                                // c:651
+            bflag = 1;                                                       // c:652
+            cflag = 1;
+            c = crate::ported::input::ingetc()                               // c:653
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+        }
+        if c == b'"' as i32 {                                                // c:655 c == '\"'
+            stophist.store(1, Ordering::SeqCst);                             // c:656
+            return crate::ported::input::ingetc()                            // c:657 return ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+        }
+        // c:659 — (!cflag && inblank(c)) || c == '=' || c == '(' || lexstop
+        let is_blank = (c as u8 as char).is_ascii_whitespace();
+        if (cflag == 0 && is_blank)
+            || c == b'=' as i32
+            || c == b'(' as i32
+            || lexstop.load(Ordering::SeqCst)                                // c:659
+        {
+            safeinungetc(c);                                                 // c:660
+            return bc;                                                       // c:661 return bangchar
+        }
+        cflag = 0;                                                           // c:663
+        let mut buflen: usize = 265;                                         // c:664
+        buf = String::with_capacity(buflen);                                 // c:664 zhalloc
+
+        // c:666-727 — read event-spec into buf.
+        crate::ported::signals::queue_signals();                             // c:668
+        if c == b'?' as i32 {                                                // c:669
+            loop {                                                           // c:670
+                c = crate::ported::input::ingetc()                           // c:671 ingetc()
+                    .map(|ch| ch as i32)
+                    .unwrap_or(-1);
+                if c == b'?' as i32 || c == b'\n' as i32 || lexstop.load(Ordering::SeqCst) {  // c:672
+                    break;                                                   // c:673
+                } else {
+                    buf.push(c as u8 as char);                               // c:675 *ptr++ = c
+                    if buf.len() >= buflen {                                 // c:676
+                        buflen *= 2;                                         // c:679 buflen *= 2
+                        buf.reserve(buflen);
+                    }
+                }
+            }
+            if c != b'\n' as i32 && !lexstop.load(Ordering::SeqCst) {        // c:683
+                c = crate::ported::input::ingetc()                           // c:684
+                    .map(|ch| ch as i32)
+                    .unwrap_or(-1);
+            }
+            // c:685 *ptr = '\0' — Rust String is already terminated.
+            *hsubl.lock().unwrap() = Some(buf.clone());                      // c:686 hsubl = ztrdup(buf)
+            let mut margbox: i32 = -1;
+            ev = match hconsearch(&buf, None) {                              // c:686 hconsearch(buf, &marg)
+                Some(e) => { margbox = 0; e }
+                None => -1,
+            };
+            mev.store(ev, Ordering::SeqCst);                                 // c:686 mev = ev
+            marg.store(margbox, Ordering::SeqCst);
+            evset = 0;                                                       // c:687
+            if ev == -1 {                                                    // c:688
+                herrflush();                                                 // c:689
+                crate::ported::signals::unqueue_signals();                   // c:690
+                crate::ported::utils::zerr(&format!("no such event: {}", buf));  // c:691
+                return -1;                                                   // c:692
+            }
+        } else {                                                             // c:694
+            // c:697 — collect event spec until terminator.
+            loop {
+                let is_term = (c as u8 as char).is_ascii_whitespace()
+                    || c == b';' as i32 || c == b':' as i32 || c == b'^' as i32
+                    || c == b'$' as i32 || c == b'*' as i32 || c == b'%' as i32
+                    || c == b'}' as i32 || c == b'\'' as i32 || c == b'"' as i32
+                    || c == b'`' as i32 || lexstop.load(Ordering::SeqCst);    // c:698-700
+                if is_term { break; }
+                if !buf.is_empty() {                                         // c:702
+                    if c == b'-' as i32 { break; }                           // c:703-704
+                    let first = buf.as_bytes()[0];
+                    if (first.is_ascii_digit() || first == b'-')             // c:705
+                        && !(c as u8).is_ascii_digit()                       // c:705 !idigit(c)
+                    {
+                        break;                                               // c:706
+                    }
+                }
+                buf.push(c as u8 as char);                                   // c:708
+                if buf.len() >= buflen {                                     // c:709
+                    buflen *= 2;                                             // c:712
+                    buf.reserve(buflen);
+                }
+                if c == b'#' as i32 || c == bc {                             // c:714
+                    c = crate::ported::input::ingetc()                       // c:715
+                        .map(|ch| ch as i32)
+                        .unwrap_or(-1);
+                    break;                                                   // c:716
+                }
+                c = crate::ported::input::ingetc()                           // c:718
+                    .map(|ch| ch as i32)
+                    .unwrap_or(-1);
+            }
+            if buf.is_empty()                                                // c:720
+                && (c == b'}' as i32 || c == b';' as i32 || c == b'\'' as i32
+                    || c == b'"' as i32 || c == b'`' as i32)
+            {
+                safeinungetc(c);                                             // c:723
+                crate::ported::signals::unqueue_signals();                   // c:724
+                return bc;                                                   // c:725
+            }
+            // c:727 *ptr = 0 — handled by Rust String
+            if buf.is_empty() {                                              // c:728
+                if c != b'%' as i32 {                                        // c:729
+                    if isset(CSHJUNKIEHISTORY) {                             // c:730
+                        ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
+                    } else {                                                 // c:732
+                        ev = defev.load(Ordering::SeqCst);                   // c:733
+                    }
+                    if c == b':' as i32 && evset == -1 {                     // c:734
+                        evset = 0;                                           // c:735
+                    } else {
+                        evset = 1;                                           // c:737
+                    }
+                } else {                                                     // c:738
+                    if marg.load(Ordering::SeqCst) != -1 {                   // c:739
+                        ev = mev.load(Ordering::SeqCst);                     // c:740
+                    } else {                                                 // c:741
+                        ev = defev.load(Ordering::SeqCst);                   // c:742
+                    }
+                    evset = 0;                                               // c:743
+                }
+            } else if let Ok(t0) = buf.trim().parse::<i64>() {               // c:745 zstrtol(buf, NULL, 10)
+                if t0 != 0 {
+                    ev = if t0 < 0 {                                         // c:746
+                        addhistnum(curhist.load(Ordering::SeqCst), t0 as i32, HIST_FOREIGN as i32)
+                    } else {
+                        t0
+                    };
+                    evset = 1;                                               // c:747
+                } else if buf.as_bytes()[0] == bc as u8 {                    // c:748 *buf == bangchar
+                    ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);  // c:749
+                    evset = 1;                                               // c:750
+                } else if buf.as_bytes()[0] == b'#' {                        // c:751
+                    ev = curhist.load(Ordering::SeqCst);                     // c:752
+                    evset = 1;                                               // c:753
+                } else {                                                     // c:754
+                    match hcomsearch(&buf) {                                 // c:754
+                        Some(e) => { ev = e; evset = 1; }
+                        None => {
+                            herrflush();                                     // c:755
+                            crate::ported::signals::unqueue_signals();       // c:756
+                            crate::ported::utils::zerr(&format!("event not found: {}", buf));  // c:757
+                            return -1;                                       // c:758
+                        }
+                    }
+                }
+            } else if buf.as_bytes()[0] == bc as u8 {                        // c:748 *buf == bangchar
+                ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
+                evset = 1;
+            } else if buf.as_bytes()[0] == b'#' {                            // c:751
+                ev = curhist.load(Ordering::SeqCst);
+                evset = 1;
+            } else {                                                         // c:754
+                match hcomsearch(&buf) {
+                    Some(e) => { ev = e; evset = 1; }
+                    None => {
+                        herrflush();
+                        crate::ported::signals::unqueue_signals();
+                        crate::ported::utils::zerr(&format!("event not found: {}", buf));
+                        return -1;
+                    }
+                }
+            }
+        }
+
+        // c:765 — fetch the resolved history entry.
+        defev.store(ev, Ordering::SeqCst);                                   // c:765 defev = ev
+        let mut ehist = match gethist(ev) {                                  // c:765
+            Some(h) => h,
+            None => {
+                crate::ported::signals::unqueue_signals();                   // c:766
+                return -1;                                                   // c:767
+            }
+        };
+        argc = getargc(&ehist) as i32;                                       // c:771
+
+        // c:772 — word-designator parsing.
+        if c == b':' as i32 {                                                // c:772
+            cflag = 1;                                                       // c:773
+            c = crate::ported::input::ingetc()                               // c:774
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if c == b'%' as i32 && marg.load(Ordering::SeqCst) != -1 {       // c:775
+                if evset == 0 {                                              // c:776
+                    ehist = match gethist(mev.load(Ordering::SeqCst)) {      // c:777
+                        Some(h) => { defev.store(mev.load(Ordering::SeqCst), Ordering::SeqCst); h }
+                        None => {
+                            crate::ported::signals::unqueue_signals();
+                            return -1;
+                        }
+                    };
+                    argc = getargc(&ehist) as i32;                           // c:778
+                } else {                                                     // c:779
+                    herrflush();                                             // c:780
+                    crate::ported::signals::unqueue_signals();               // c:781
+                    crate::ported::utils::zerr("ambiguous history reference");  // c:782
+                    return -1;                                               // c:783
+                }
+            }
+        }
+        // c:788
+        if c == b'*' as i32 {                                                // c:788
+            farg = 1;                                                        // c:789
+            larg = argc;                                                     // c:790
+            cflag = 0;                                                       // c:791
+        } else {                                                             // c:792
+            if let Some(ch) = char::from_u32(c as u32) {
+                crate::ported::input::inungetc(ch);                          // c:793
+            }
+            let r = getargspec(argc, marg.load(Ordering::SeqCst), evset);    // c:794
+            larg = r; farg = r;
+            if larg == -2 {                                                  // c:795
+                crate::ported::signals::unqueue_signals();                   // c:796
+                return -1;                                                   // c:797
+            }
+            if farg != -1 {                                                  // c:799
+                cflag = 0;                                                   // c:800
+            }
+            c = crate::ported::input::ingetc()                               // c:801
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if c == b'*' as i32 {                                            // c:802
+                cflag = 0;                                                   // c:803
+                larg = argc;                                                 // c:804
+            } else if c == b'-' as i32 {                                     // c:805
+                cflag = 0;                                                   // c:806
+                larg = getargspec(argc, marg.load(Ordering::SeqCst), evset); // c:807
+                if larg == -2 {                                              // c:808
+                    crate::ported::signals::unqueue_signals();               // c:809
+                    return -1;                                               // c:810
+                }
+                if larg == -1 {                                              // c:812
+                    larg = argc - 1;                                         // c:813
+                }
+            } else {                                                         // c:814
+                if let Some(ch) = char::from_u32(c as u32) {
+                    crate::ported::input::inungetc(ch);                      // c:815
+                }
+            }
+        }
+        if farg == -1 {                                                      // c:817
+            farg = 0;                                                        // c:818
+        }
+        if larg == -1 {                                                      // c:819
+            larg = argc;                                                     // c:820
+        }
+        sline = match getargs(&ehist, farg as usize, larg as usize) {        // c:821
+            Some(s) => s,
+            None => {
+                crate::ported::signals::unqueue_signals();                   // c:822
+                return -1;                                                   // c:823
+            }
+        };
+        crate::ported::signals::unqueue_signals();                           // c:825
+    }
+
+    // c:830 — modifier loop.
+    loop {
+        c = if cflag != 0 { b':' as i32 } else {                             // c:831
+            crate::ported::input::ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1)
+        };
+        cflag = 0;                                                           // c:832
+        if c == b':' as i32 {                                                // c:833
+            let mut gbal: i32 = 0;                                           // c:834
+            c = crate::ported::input::ingetc()                               // c:836
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if c == b'g' as i32 {                                            // c:836
+                gbal = 1;                                                    // c:837
+                c = crate::ported::input::ingetc()                           // c:838
+                    .map(|ch| ch as i32)
+                    .unwrap_or(-1);
+                if c != b's' as i32 && c != b'S' as i32 && c != b'&' as i32 {  // c:839
+                    crate::ported::utils::zerr("'s' or '&' modifier expected after 'g'");  // c:840
+                    return -1;                                               // c:841
+                }
+            }
+            match c as u8 {
+                b'p' => {                                                    // c:845
+                    histdone.store(HISTFLAG_DONE | HISTFLAG_NOEXEC, Ordering::SeqCst);  // c:846
+                }
+                b'a' => {                                                    // c:848
+                    match chabspath(&sline) {                                // c:849
+                        Some(new) => sline = new,
+                        None => {
+                            herrflush();                                     // c:850
+                            crate::ported::utils::zerr("modifier failed: a");// c:851
+                            return -1;                                       // c:852
+                        }
+                    }
+                }
+                b'A' => {                                                    // c:856
+                    match chrealpath(&sline) {                               // c:857
+                        Some(new) => sline = new,
+                        None => {
+                            herrflush();                                     // c:858
+                            crate::ported::utils::zerr("modifier failed: A");// c:859
+                            return -1;                                       // c:860
+                        }
+                    }
+                }
+                b'c' => {                                                    // c:863
+                    match crate::ported::subst::equalsubstr(&sline, false, false) {  // c:864
+                        Some(new) => sline = new,
+                        None => {
+                            herrflush();                                     // c:865
+                            crate::ported::utils::zerr("modifier failed: c");// c:866
+                            return -1;                                       // c:867
+                        }
+                    }
+                }
+                b'h' => {                                                    // c:870
+                    let count = digitcount(&sline) as i32;                   // c:871
+                    sline = remtpath(&sline, count);
+                }
+                b'e' => {                                                    // c:877
+                    sline = rembutext(&sline);                               // c:878
+                }
+                b'r' => {                                                    // c:884
+                    sline = remtext(&sline);                                 // c:885
+                }
+                b't' => {                                                    // c:891
+                    let count = digitcount(&sline) as i32;                   // c:892
+                    sline = remlpaths(&sline, count);
+                }
+                b's' | b'S' => {                                             // c:898-899
+                    hsubpatopt.store((c == b'S' as i32) as i32, Ordering::SeqCst);  // c:900
+                    if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {     // c:901
+                        return -1;                                           // c:902
+                    }
+                    // fall through to '&'                                   // c:902
+                    let (in_pat, out_pat) = (
+                        hsubl.lock().unwrap().clone(),
+                        hsubr.lock().unwrap().clone(),
+                    );
+                    if let (Some(ip), Some(op)) = (in_pat, out_pat) {        // c:904
+                        let new = subst(&sline, &ip, &op, gbal != 0);        // c:905
+                        if new == sline {                                    // c:905 no match
+                            return substfailed();                            // c:906
+                        }
+                        sline = new;
+                    } else {                                                 // c:907
+                        herrflush();                                         // c:908
+                        crate::ported::utils::zerr("no previous substitution");  // c:909
+                        return -1;                                           // c:910
+                    }
+                }
+                b'&' => {                                                    // c:903
+                    let (in_pat, out_pat) = (
+                        hsubl.lock().unwrap().clone(),
+                        hsubr.lock().unwrap().clone(),
+                    );
+                    if let (Some(ip), Some(op)) = (in_pat, out_pat) {
+                        let new = subst(&sline, &ip, &op, gbal != 0);
+                        if new == sline { return substfailed(); }
+                        sline = new;
+                    } else {
+                        herrflush();
+                        crate::ported::utils::zerr("no previous substitution");
+                        return -1;
+                    }
+                }
+                b'q' => {                                                    // c:913
+                    sline = quote(&sline);                                   // c:914
+                }
+                b'Q' => {                                                    // c:916
+                    // c:918-924 — `noerrs` flag stack is no-op in Rust port;
+                    // see params.rs:1310. Tokenize-strip via parse_subst_string,
+                    // then remnulargs + untokenize.
+                    let oef = crate::ported::utils::errflag.load(Ordering::SeqCst);
+                    let _ = crate::ported::lex::parse_subst_string(&sline);  // c:921
+                    crate::ported::utils::errflag.store(
+                        oef | (crate::ported::utils::errflag.load(Ordering::SeqCst)
+                            & crate::ported::zsh_h::ERRFLAG_INT),
+                        Ordering::SeqCst,
+                    );                                                       // c:923
+                    let mut s = sline.clone();
+                    crate::ported::glob::remnulargs(&mut s);                 // c:924
+                    sline = crate::ported::lex::untokenize(&s);              // c:925
+                }
+                b'x' => {                                                    // c:928
+                    sline = quotebreak(&sline);                              // c:929
+                }
+                b'l' => {                                                    // c:931
+                    sline = casemodify(&sline, CASMOD_LOWER);                // c:932
+                }
+                b'u' => {                                                    // c:934
+                    sline = casemodify(&sline, CASMOD_UPPER);                // c:935
+                }
+                b'P' => {                                                    // c:937
+                    if !sline.starts_with('/') {                             // c:938
+                        if let Some(here) = crate::ported::utils::zgetcwd() {// c:939
+                            sline = if here.ends_with('/') {
+                                crate::ported::utils::dyncat(&here, &sline)  // c:943
+                            } else {
+                                // c:941 zhtricat(metafy(here, -1, META_HEAPDUP), "/", sline)
+                                format!("{}/{}", here, sline)
+                            };
+                        }
+                    }
+                    match crate::ported::utils::xsymlink(&sline) {           // c:945
+                        Some(new) => sline = new,
+                        None => {} // C ignores xsymlink failure (returns NULL → keep sline)
+                    }
+                }
+                _ => {                                                       // c:947 default
+                    herrflush();                                             // c:948
+                    crate::ported::utils::zerr(&format!("illegal modifier: {}", c as u8 as char));  // c:949
+                    return -1;                                               // c:950
+                }
+            }
+        } else {                                                             // c:952
+            if c != b'}' as i32 || bflag == 0 {                              // c:953
+                if let Some(ch) = char::from_u32(c as u32) {
+                    crate::ported::input::inungetc(ch);                      // c:954
+                }
+            }
+            if c != b'}' as i32 && bflag != 0 {                              // c:955
+                crate::ported::utils::zerr("'}' expected");                  // c:956
+                return -1;                                                   // c:957
+            }
+            break;                                                           // c:959
+        }
+    }
+
+    // c:963 — zshlex_raw_back_to_mark(lexraw_mark): no-op until lex hook
+    // exposes the raw-input mark/restore pair.
+    let _ = lexraw_mark;                                                     // c:963
+
+    // c:970-976 — push the expanded value onto the input stack as INP_HIST.
+    lexstop.store(false, Ordering::SeqCst);                                  // c:970
+    crate::ported::input::inpush(&sline, crate::ported::zsh_h::INP_HIST, None);  // c:976
+    histdone.fetch_or(HISTFLAG_DONE, Ordering::SeqCst);                      // c:977
+    if isset(HISTVERIFY) {                                                   // c:978
+        histdone.fetch_or(HISTFLAG_NOEXEC | HISTFLAG_RECALL, Ordering::SeqCst);  // c:979
+    }
+
+    // c:982 — return ingetc() so caller sees the first char of expansion.
+    crate::ported::input::ingetc()
+        .map(|ch| ch as i32)
+        .unwrap_or(-1)
 }
 
 /// Port of `void herrflush(void)` from Src/hist.c:477.
@@ -215,9 +886,20 @@ pub fn getargc(entry: &histent) -> usize {
     entry.nwords as usize
 }
 
-/// Port of `void substfailed(void)` from Src/hist.c.
-pub fn substfailed() {
-    crate::ported::utils::zerr("substitution failed");
+/// Port of `int substfailed(void)` from Src/hist.c:562.
+/// ```c
+/// static int
+/// substfailed(void)
+/// {
+///     herrflush();
+///     zerr("substitution failed");
+///     return -1;
+/// }
+/// ```
+pub fn substfailed() -> i32 {                                                // c:563
+    herrflush();                                                             // c:565
+    crate::ported::utils::zerr("substitution failed");                       // c:566
+    -1                                                                       // c:567
 }
 
 /// Port of `int digitcount(char *s)` from Src/hist.c.
@@ -863,18 +1545,80 @@ pub fn hgetline(entry: &histent) -> String {
     entry.node.nam.clone()
 }
 
-/// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c.
-/// Rust idiom replacement: `match` on the spec-char collapses the C
-/// switch + sscanf digit-walk into a single arm-per-case table.
-pub fn getargspec(argc: usize, c: char, marg: Option<usize>, evset: bool) -> Option<usize> {
-    match c {
-        '0' => Some(0),
-        '1'..='9' => Some(c.to_digit(10).unwrap() as usize),
-        '^' => Some(1),
-        '$' => Some(argc),
-        '%' => { if evset { return None; } marg }
-        _ => None,
+/// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c:1793.
+/// Reads a word-designator off the input stream via `ingetc`, returning
+/// the resolved word index, `-1` for "no designator present" (caller
+/// must default), or `-2` for hard error.
+/// ```c
+/// static int
+/// getargspec(int argc, int marg, int evset)
+/// {
+///     int c, ret = -1;
+///     if ((c = ingetc()) == '0') return 0;
+///     if (idigit(c)) {
+///         ret = 0;
+///         while (idigit(c)) {
+///             ret = ret * 10 + c - '0';
+///             if (ret < 0) { herrflush(); zerr("no such word in event"); return -2; }
+///             c = ingetc();
+///         }
+///         inungetc(c);
+///     } else if (c == '^') ret = 1;
+///     else if (c == '$') ret = argc;
+///     else if (c == '%') {
+///         if (evset) { herrflush(); zerr("Ambiguous history reference"); return -2; }
+///         if (marg == -1) { herrflush(); zerr("%% with no previous word matched"); return -2; }
+///         ret = marg;
+///     } else inungetc(c);
+///     return ret;
+/// }
+/// ```
+pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {             // c:1793
+    let mut c: i32 = crate::ported::input::ingetc()                          // c:1797 ingetc()
+        .map(|ch| ch as i32)
+        .unwrap_or(-1);
+    let mut ret: i32 = -1;                                                   // c:1795
+    if c == b'0' as i32 {                                                    // c:1797
+        return 0;                                                            // c:1798
     }
+    if (c as u8 as char).is_ascii_digit() {                                  // c:1799 idigit(c)
+        ret = 0;                                                             // c:1800
+        while (c as u8 as char).is_ascii_digit() {                           // c:1801
+            ret = ret * 10 + c - b'0' as i32;                                // c:1802
+            if ret < 0 {                                                     // c:1803
+                herrflush();                                                 // c:1804
+                crate::ported::utils::zerr("no such word in event");         // c:1805
+                return -2;                                                   // c:1806
+            }
+            c = crate::ported::input::ingetc()                               // c:1808 ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+        }
+        if let Some(ch) = char::from_u32(c as u32) {                         // c:1810 inungetc(c)
+            crate::ported::input::inungetc(ch);
+        }
+    } else if c == b'^' as i32 {                                             // c:1811
+        ret = 1;                                                             // c:1812
+    } else if c == b'$' as i32 {                                             // c:1813
+        ret = argc;                                                          // c:1814
+    } else if c == b'%' as i32 {                                             // c:1815
+        if evset != 0 {                                                      // c:1816
+            herrflush();                                                     // c:1817
+            crate::ported::utils::zerr("Ambiguous history reference");       // c:1818
+            return -2;                                                       // c:1819
+        }
+        if marg_arg == -1 {                                                  // c:1821
+            herrflush();                                                     // c:1822
+            crate::ported::utils::zerr("%% with no previous word matched");  // c:1823
+            return -2;                                                       // c:1824
+        }
+        ret = marg_arg;                                                      // c:1826
+    } else {                                                                 // c:1827
+        if let Some(ch) = char::from_u32(c as u32) {                         // c:1828 inungetc(c)
+            crate::ported::input::inungetc(ch);
+        }
+    }
+    ret                                                                      // c:1829
 }
 
 /// Port of `int hconsearch(char *str, int *back)` from Src/hist.c.
@@ -1195,9 +1939,42 @@ pub fn quotebreak(s: &str) -> String {                                       // 
     result
 }
 
-/// Port of `char *hdynread(int stop)` from Src/hist.c.
-pub fn hdynread(_stop: i32) -> Option<String> {
-    None
+/// Port of `char *hdynread(int stop)` from `Src/hist.c:2562`. C body is
+/// inside `#if 0` (the in-tree `hdynread2` variant is the live one), but
+/// the name-parity port mirrors the disabled body: read input chars via
+/// `ingetc()` until `stop`/newline/lexstop, honoring `\\`-escape, and
+/// emit a `delimiter expected` error if newline is hit first.
+pub fn hdynread(stop: i32) -> Option<String> {                               // c:2562
+    use std::sync::atomic::Ordering::SeqCst;
+    let stop_c = stop as u8 as char;                                         // c:2562 int stop
+    let mut buf = String::with_capacity(256);                                // c:2564 bsiz=256
+    let mut c: Option<char>;                                                 // c:2564 int c
+    loop {
+        c = crate::ported::input::ingetc();                                  // c:2568
+        match c {
+            None => break,
+            Some(ch) if ch == stop_c => break,                               // c:2568
+            Some('\n') => break,                                             // c:2568
+            Some(ch) => {
+                if crate::ported::hist::lexstop.load(SeqCst) { break; }      // c:2568
+                let mut written = ch;
+                if ch == '\\' {                                              // c:2569
+                    if let Some(nxt) = crate::ported::input::ingetc() {      // c:2570
+                        written = nxt;
+                    } else {
+                        break;
+                    }
+                }
+                buf.push(written);                                           // c:2571
+            }
+        }
+    }
+    if let Some('\n') = c {                                                  // c:2578
+        crate::ported::input::inungetc('\n');                                // c:2579
+        crate::ported::utils::zerr("delimiter expected");                    // c:2580
+        return None;                                                         // c:2582
+    }
+    Some(buf)                                                                // c:2584
 }
 
 /// Direct port of `static void ihungetc(int c)` from `Src/hist.c:989`.

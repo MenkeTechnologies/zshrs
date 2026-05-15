@@ -377,42 +377,95 @@ pub struct ztmout {                                                          // 
     /// envelope is complete, then `str::from_utf8` produces the char.
     /// Updates `lastchar_wide` so widgets can inspect the triggering
     /// codepoint regardless of byte width.
+    /// ```c
+    /// int
+    /// getfullchar(int do_keytmout)
+    /// {
+    ///     int inchar = getbyte((long)do_keytmout, NULL, 1);
+    ///     return getrestchar(inchar, NULL, NULL);
+    /// }
+    /// ```
     pub fn getfullchar(do_keytmout: bool) -> Option<char> {                  // c:967
-        use std::sync::atomic::Ordering::SeqCst;
-        let b = getbyte(do_keytmout)?;
-        let expected = if b < 0x80 { 1 } else if b < 0xE0 { 2 } else if b < 0xF0 { 3 } else { 4 };
-        let mut bytes = vec![b];
-        while bytes.len() < expected {
-            match getbyte(true) {
-                Some(n) if (n & 0xC0) == 0x80 => bytes.push(n),
-                Some(n) => { ungetbyte(n); break; }                          // c:990 getrestchar — invalid continuation
-                None => break,
-            }
-        }
-        let c = std::str::from_utf8(&bytes).ok().and_then(|s| s.chars().next());
-        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(c.is_some() as i32, SeqCst);
-        if let Some(ch) = c {
-            crate::ported::zle::zle_main::LASTCHAR_WIDE.store(ch as i32, SeqCst);
-        }
-        c
+        let inchar = getbyte(do_keytmout).map(|b| b as i32).unwrap_or(-1);   // c:969
+        let r = crate::ported::zle::zle_main::getrestchar(inchar);           // c:972
+        if r < 0 { None } else { char::from_u32(r as u32) }
     }
 
-/// Port of `getrestchar(int inchar, char *outstr, int *outcount)` from Src/Zle/zle_main.c:990.
-/// WARNING: param names don't match C — Rust=(zle, inchar) vs C=(inchar, outstr, outcount)
-pub fn getrestchar(inchar: i32) -> i32 {                      // c:990
-    // c:990 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
-    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
-    // c:1006-1009 — `if (inchar == EOF) return WEOF (cached)`.
-    if inchar < 0 {
-        crate::ported::zle::zle_main::LASTCHAR_WIDE.store((-1) as i32, std::sync::atomic::Ordering::SeqCst);
-        return -1;                                                           // c:1009 ZLEEOF
+/// Port of `int getrestchar(int inchar, char *outstr, int *outcount)`
+/// from `Src/Zle/zle_main.c:990`. Given the first byte of a possibly
+/// multibyte UTF-8 sequence, reads continuation bytes via `getbyte`
+/// until the codepoint is complete, then writes it to `lastchar_wide`
+/// and returns it.
+///
+/// ```c
+/// int
+/// getrestchar(int inchar, char *outstr, int *outcount)
+/// {
+///     wchar_t outchar;
+///     int ret;
+///     mbstate_t mbs;
+///     lastchar_wide_valid = 1;
+///     if (outcount) *outcount = 0;
+///     if (inchar == EOF) { lastchar_wide = WEOF; return WEOF; }
+///     memset(&mbs, 0, sizeof(mbs));
+///     for (;;) {
+///         char c = (char) inchar;
+///         if (outstr) { outstr[*outcount] = c; (*outcount)++; }
+///         ret = mbrtowc(&outchar, &c, 1, &mbs);
+///         if (ret != -2) {  /* not "incomplete" */
+///             if (ret < 0) outchar = WEOF;
+///             lastchar_wide = (ZLE_INT_T) outchar;
+///             return (int) outchar;
+///         }
+///         if ((inchar = getbyte(...)) == EOF) {
+///             lastchar_wide = WEOF;
+///             return WEOF;
+///         }
+///     }
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(inchar) vs C=(inchar, outstr, outcount)
+pub fn getrestchar(inchar: i32) -> i32 {                                     // c:990
+    use std::sync::atomic::Ordering::SeqCst;
+    LASTCHAR_WIDE_VALID.store(1, SeqCst);                                    // c:994
+    if inchar < 0 {                                                          // c:998 inchar == EOF
+        LASTCHAR_WIDE.store(-1, SeqCst);                                     // c:999 WEOF
+        return -1;
     }
-    // c:1016+ — multibyte byte-stream → wide-char accumulator.
-    // zshrs is UTF-8 native; for an ASCII char inchar fits in
-    // lastchar_wide directly (mb_metacharlenconv state machine
-    // collapses to identity for the BMP single-byte path).
-    crate::ported::zle::zle_main::LASTCHAR_WIDE.store((inchar) as i32, std::sync::atomic::Ordering::SeqCst);
-    inchar
+    // c:1003-1050 — multibyte assembly. Rust's char type is UTF-32;
+    // walk continuation bytes (0x80-0xBF) until the codepoint is
+    // valid UTF-8, then decode.
+    let b0 = inchar as u8;
+    let expected = if b0 < 0x80 { 1 }
+                   else if b0 < 0xC0 { 1 }  // invalid start byte
+                   else if b0 < 0xE0 { 2 }
+                   else if b0 < 0xF0 { 3 }
+                   else { 4 };
+    let mut bytes: Vec<u8> = vec![b0];
+    while bytes.len() < expected {
+        match getbyte(true) {                                                // c:1042 inchar = getbyte()
+            Some(n) if (n & 0xC0) == 0x80 => bytes.push(n),                  // continuation
+            Some(n) => {
+                ungetbyte(n);                                                // c:1042 unget non-continuation
+                break;
+            }
+            None => {
+                LASTCHAR_WIDE.store(-1, SeqCst);
+                return -1;
+            }
+        }
+    }
+    let c_opt = std::str::from_utf8(&bytes).ok().and_then(|s| s.chars().next());
+    match c_opt {
+        Some(c) => {
+            LASTCHAR_WIDE.store(c as i32, SeqCst);                           // c:1027
+            c as i32
+        }
+        None => {
+            LASTCHAR_WIDE.store(b0 as i32, SeqCst);                          // c:1024 ret < 0 → WEOF
+            b0 as i32
+        }
+    }
 }
 
     /// Run the registered redraw hook (`zle-line-pre-redraw` in zsh).
@@ -1387,10 +1440,159 @@ pub fn zle_reset() {
 // from `Options ops` via OPT_ARG/OPT_ISSET inline, no separate
 // struct. The fake had no users after `vared_zle_run` was deleted.
 
-// `zle_main_entry` / `ZleOperation` / `ZleData` deleted — none of
-// these names exist in Src/Zle/zle_main.c. The C module entry
-// points are `setup_` (c:2123), `boot_`, `cleanup_`, `finish_`
-// (the standard module-loader callbacks).
+/// Args carried into `zle_main_entry` — replaces C's `va_list ap`
+/// (Rust has no ergonomic va_list). Each variant maps to the
+/// matching ZLE_CMD_* arm in the C switch at Src/Zle/zle_main.c:2125.
+///
+/// WARNING: RUST-ONLY — no C counterpart; the C source uses `va_arg`
+/// to pull per-cmd args from the va_list at lines 2128-2197.
+pub enum zle_main_entry_args<'a> {                                           // c:2123 va_list ap shape
+    GetLine { ll: &'a mut i32, cs: &'a mut i32 },                            // c:2127
+    Read { lp: &'a mut Option<String>, rp: &'a mut Option<String>, flags: i32, context: i32 }, // c:2135
+    AddToLine(i32),                                                          // c:2149
+    Trash,                                                                   // c:2152
+    ResetPrompt,                                                             // c:2156
+    Refresh,                                                                 // c:2160
+    SetKeymap(i32),                                                          // c:2164
+    GetKey { do_keytmout: i64, timeout: &'a mut i32, chrp: &'a mut i32 },    // c:2168
+    SetHistLine(i64),                                                        // c:2180
+    Preexec,                                                                 // c:2187
+    Postexec,                                                                // c:2191
+    Chpwd,                                                                   // c:2195
+}
+
+/// Port of `static char *zle_main_entry(int cmd, va_list ap)` from
+/// `Src/Zle/zle_main.c:2123`. Per-module dispatcher invoked through the
+/// `zle_entry_ptr` indirection set up at c:2248. Routes ZLE_CMD_* into
+/// the underlying ZLE primitives (`zlegetline`, `zleread`, `zleaddtoline`,
+/// `trashzle`, `zle_resetprompt`, `zrefresh`, `zlesetkeymap`, `getbyte`,
+/// `mark_output`, `notify_pwd`).
+///
+/// ```c
+/// static char *
+/// zle_main_entry(int cmd, va_list ap)
+/// {
+///     switch (cmd) {
+///     case ZLE_CMD_GET_LINE:
+///     {
+///         int *ll, *cs;
+///         ll = va_arg(ap, int *);
+///         cs = va_arg(ap, int *);
+///         return zlegetline(ll, cs);
+///     }
+///     case ZLE_CMD_READ: ... return zleread(lp, rp, flags, context, "zle-line-init", "zle-line-finish");
+///     case ZLE_CMD_ADD_TO_LINE: zleaddtoline(va_arg(ap, int)); break;
+///     case ZLE_CMD_TRASH: trashzle(); break;
+///     case ZLE_CMD_RESET_PROMPT: zle_resetprompt(); break;
+///     case ZLE_CMD_REFRESH: zrefresh(); break;
+///     case ZLE_CMD_SET_KEYMAP: zlesetkeymap(va_arg(ap, int)); break;
+///     case ZLE_CMD_GET_KEY: { ... *chrp = getbyte(do_keytmout, timeout, 0); break; }
+///     case ZLE_CMD_SET_HIST_LINE: histline = va_arg(ap, zlong); break;
+///     case ZLE_CMD_PREEXEC: mark_output(1); break;
+///     case ZLE_CMD_POSTEXEC: mark_output(0); break;
+///     case ZLE_CMD_CHPWD: notify_pwd(); break;
+///     default:
+/// #ifdef DEBUG
+///         dputs("Bad command %d in zle_main_entry", cmd);
+/// #endif
+///         break;
+///     }
+///     return NULL;
+/// }
+/// ```
+pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> {  // c:2123
+    use crate::ported::zsh_h::{
+        ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE,
+        ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH,
+        ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP,
+        ZLE_CMD_TRASH,
+    };
+
+    match cmd {                                                              // c:2125 switch (cmd)
+        x if x == ZLE_CMD_GET_LINE => {                                      // c:2126
+            if let zle_main_entry_args::GetLine { ll, cs } = ap {            // c:2128-2130
+                let mut ll_u: usize = 0;
+                let mut cs_u: usize = 0;
+                let line = crate::ported::zle::zle_utils::zlegetline(        // c:2131
+                    &mut ll_u, &mut cs_u,
+                );
+                **ll = ll_u as i32;
+                **cs = cs_u as i32;
+                return Some(line.into_iter().collect());                     // c:2131 return char*
+            }
+        }
+        x if x == ZLE_CMD_READ => {                                          // c:2134
+            if let zle_main_entry_args::Read { lp, rp, flags, context } = ap { // c:2139-2142
+                // c:2144 — `return zleread(lp, rp, flags, context,
+                //                          "zle-line-init", "zle-line-finish");`
+                // The "init"/"finish" args (zle-line-init / zle-line-finish
+                // hooks) aren't yet wired into the Rust `zleread` entry —
+                // it dispatches them through ZLE_WIDGET_HOOK at the call
+                // path. Keep the C arg structure faithful via the comment.
+                let lprompt = lp.as_deref().unwrap_or("");
+                let rprompt = rp.as_deref().unwrap_or("");
+                let r = crate::ported::zle::zle_main::zleread(
+                    lprompt, rprompt, *flags, *context,
+                );
+                return r.ok();
+            }
+        }
+        x if x == ZLE_CMD_ADD_TO_LINE => {                                   // c:2148
+            if let zle_main_entry_args::AddToLine(c) = ap {                  // c:2149 va_arg(ap, int)
+                crate::ported::zle::zle_utils::zleaddtoline(*c);             // c:2149
+            }
+        }
+        x if x == ZLE_CMD_TRASH => {                                         // c:2152
+            crate::ported::zle::zle_main::trashzle();                        // c:2153
+        }
+        x if x == ZLE_CMD_RESET_PROMPT => {                                  // c:2156
+            crate::ported::zle::zle_main::zle_resetprompt();                 // c:2157
+        }
+        x if x == ZLE_CMD_REFRESH => {                                       // c:2160
+            crate::ported::zle::zle_refresh::zrefresh();                     // c:2161
+        }
+        x if x == ZLE_CMD_SET_KEYMAP => {                                    // c:2164
+            if let zle_main_entry_args::SetKeymap(m) = ap {                  // c:2165 va_arg(ap, int)
+                crate::ported::zle::zle_keymap::zlesetkeymap(*m);            // c:2165
+            }
+        }
+        x if x == ZLE_CMD_GET_KEY => {                                       // c:2168
+            if let zle_main_entry_args::GetKey { do_keytmout, timeout: _, chrp } = ap {  // c:2173-2175
+                // c:2176 — `*chrp = getbyte(do_keytmout, timeout, 0);`
+                let byte = crate::ported::zle::zle_main::getbyte(            // c:2176
+                    *do_keytmout != 0,
+                ).unwrap_or(0);
+                **chrp = byte as i32;
+            }
+        }
+        x if x == ZLE_CMD_SET_HIST_LINE => {                                 // c:2180
+            if let zle_main_entry_args::SetHistLine(v) = ap {                // c:2182 histline = va_arg
+                crate::ported::zle::zle_hist::histline.store(
+                    *v as i32,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+        }
+        x if x == ZLE_CMD_PREEXEC => {                                       // c:2187
+            crate::ported::zle::termquery::mark_output(true);                // c:2188 mark_output(1)
+        }
+        x if x == ZLE_CMD_POSTEXEC => {                                      // c:2191
+            crate::ported::zle::termquery::mark_output(false);               // c:2192 mark_output(0)
+        }
+        x if x == ZLE_CMD_CHPWD => {                                         // c:2195
+            crate::ported::zle::termquery::notify_pwd();                     // c:2196
+        }
+        _ => {                                                               // c:2199 default
+            // c:2200-2202 — DEBUG: dputs("Bad command %d in zle_main_entry", cmd);
+            tracing::debug!("Bad command {} in zle_main_entry", cmd);
+        }
+    }
+    None                                                                     // c:2205 return NULL
+}
+
+// `histline` lives at `Src/Zle/zle_hist.c:42` (`int histline;`) —
+// ported to `crate::ported::zle::zle_hist::histline`. ZLE_CMD_SET_HIST_LINE
+// above writes to that canonical location per PORT.md Rule C.
 
 /// Module for termios operations
 mod termios {

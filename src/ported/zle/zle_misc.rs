@@ -2127,12 +2127,11 @@ pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
 /// bind to the same C fn `processcmd`; the runtime distinguishes
 /// based on `bindk->nam` to decide whether to emit "whence" output
 /// or invoke `$HELPDIR/cmd`).
-pub fn processcmd(_args: &[String]) -> i32 {                                 // c:zle_tricky.c:processcmd
-    // C body reads bindk->nam and dispatches: "which-command" →
-    // whence-style lookup; "run-help" → `$HELPDIR/<cmd>` invocation.
-    // The actual host-side dispatch happens via the
-    // ShellExecutor; the widget just signals the request.
-    0
+pub fn processcmd(_args: &[String]) -> i32 {                                 // c:2971
+    // The canonical port lives at zle_tricky.rs:1003 with the same
+    // C-fn name. Delegate so the misc.rs entry point (widget table
+    // wiring) goes through the real body.
+    crate::ported::zle::zle_tricky::processcmd()
 }
 
 /// Port of `zgetline(UNUSED(char **args))` from

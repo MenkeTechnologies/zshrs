@@ -59,7 +59,9 @@ use std::io::Write;
 
 /// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
 /// zshrs does not call this from production; fusevm lowers `for` in compile_zsh.rs. This entry is
-/// `unreachable!()` to crash if regressed.
+/// Port of `execfor(Estate state, int do_exec)` from Src/loop.c:50.
+/// Architectural canonical: tree-walker replaced by fusevm bytecode;
+/// pinned by tests/tree_walker_absent.rs.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
     unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
@@ -75,15 +77,26 @@ pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
 //
 //     zlong try_errflag = -1;       // line 719 (TRY_BLOCK_ERROR)
 //     zlong try_interrupt = -1;     // line 727 (TRY_BLOCK_INTERRUPT)
+//     zlong try_tryflag = 0;        // line 731 (TRY_BLOCK_DEPTH)
 //
 // Exported via `IPDEF6` paramdef in `Src/params.c:364`, so they're
 // cross-compilation-unit globals → PORT_PLAN Phase 3 bucket-2
 // (Arc<RwLock>) work, not the Phase 2 bucket-1 (thread_local!) wave.
 
+/// Port of `mod_export zlong try_tryflag` from `Src/loop.c:731`.
+/// Depth-counter for active `always {}` blocks; bumped at try entry
+/// (`exectry`), decremented at exit. `dotrapargs` (`signals.c:1215`)
+/// reads it to decide whether a trap's `errflag` propagates.
+pub static try_tryflag: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(0);                                    // c:731
 
 
-/// Port of `execselect(Estate state, UNUSED(int do_exec))` from `Src/loop.c:217`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
+
+/// Port of `execselect(Estate state, UNUSED(int do_exec))` from
+/// Src/loop.c:217. Architectural canonical: tree-walker replaced
+/// by fusevm bytecode. `selectlist(items, start)` IS ported above
+/// as a callable helper. WARNING: param names don't match C —
+/// Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
     unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
 }
@@ -214,7 +227,8 @@ pub fn execif(_do_exec: i32) -> i32 {                                    // c:55
     unreachable!("execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs")
 }
 
-/// Port of `execcase(Estate state, int do_exec)` from `Src/loop.c:600`.
+/// Port of `execcase(Estate state, int do_exec)` from Src/loop.c:600.
+/// Architectural canonical: tree-walker replaced by fusevm bytecode.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execcase(_do_exec: i32) -> i32 {                                  // c:600
     unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")

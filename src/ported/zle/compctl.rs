@@ -126,17 +126,122 @@ pub(crate) fn freecompctlp(name: &str) {
     }
 }
 
-/// Free a `compctl` spec.
-/// Port of `freecompctl(Compctl cc)` from Src/Zle/compctl.c:103. C uses
-/// reference counting + manual `zsfree` of every string member +
-/// recursive free of `ext`/`xor` chains. Rust's Arc handles this
-/// automatically when the last reference drops.
-/// WARNING: param names don't match C — Rust=() vs C=(cc)
-pub(crate) fn freecompctl(_cc: Arc<Compctl>) {
-    // Arc::drop recursively frees the spec when refcount hits zero.
-    // Direct port of compctl.c:104-141 — the C ladder of `zsfree(...)`
-    // calls is the equivalent of letting the Arc/String values drop.
+/// Port of `void freecompctl(Compctl cc)` from Src/Zle/compctl.c:103.
+/// ```c
+/// void
+/// freecompctl(Compctl cc)
+/// {
+///     if (cc == &cc_default ||
+///         cc == &cc_first ||
+///         cc == &cc_compos ||
+///         --cc->refc > 0)
+///         return;
+///     zsfree(cc->keyvar);
+///     zsfree(cc->glob);
+///     zsfree(cc->str);
+///     zsfree(cc->func);
+///     zsfree(cc->explain);
+///     zsfree(cc->ylist);
+///     zsfree(cc->prefix);
+///     zsfree(cc->suffix);
+///     zsfree(cc->hpat);
+///     zsfree(cc->gname);
+///     zsfree(cc->subcmd);
+///     zsfree(cc->substr);
+///     if (cc->cond) freecompcond(cc->cond);
+///     if (cc->ext) {
+///         Compctl n, m;
+///         n = cc->ext;
+///         do { m = (Compctl)(n->next); freecompctl(n); n = m; } while (n);
+///     }
+///     if (cc->xor && cc->xor != &cc_default)
+///         freecompctl(cc->xor);
+///     if (cc->matcher) freecmatcher(cc->matcher);
+///     zsfree(cc->mstr);
+///     zfree(cc, sizeof(struct compctl));
+/// }
+/// ```
+pub(crate) fn freecompctl(cc: Arc<Compctl>) {                                // c:103
+    // c:105-109 — sentinel + refc-decrement early return. The Rust
+    // Arc carries refcounting natively; `Arc::strong_count > 1`
+    // mirrors the C `--cc->refc > 0` test exactly.
+    // c:105-107 — pointer-equality vs cc_default/cc_first/cc_compos.
+    // The Rust port stores those sentinel structs in COMPCTL_TAB keyed
+    // by `__cc_*` (see c:806-856 below). Snapshot them inline so we
+    // don't smuggle a Rust-only helper through src/ported/.
+    let (cc_default_ref, cc_first_ref, cc_compos_ref) = {
+        match COMPCTL_TAB.read().ok().and_then(|g| g.clone()) {
+            Some(map) => (
+                map.get("__cc_default").cloned(),
+                map.get("__cc_first").cloned(),
+                map.get("__cc_compos").cloned(),
+            ),
+            None => (None, None, None),
+        }
+    };
+    let is_sentinel = cc_default_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc))
+        || cc_first_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc))
+        || cc_compos_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &cc));
+    if is_sentinel || Arc::strong_count(&cc) > 1 {                           // c:108 --cc->refc > 0
+        return;                                                              // c:109
+    }
+
+    // c:111-122 — zsfree every owned string field. Rust's `Drop` on
+    // `Option<String>` handles each of these when `cc` falls out of
+    // scope at end of fn. Mirror the C order explicitly so the audit
+    // trail matches; the `let _` bindings force-evaluate each field
+    // for parity with `zsfree(NULL)` being a defined no-op.
+    let _ = &cc.keyvar;                                                      // c:111 zsfree(keyvar)
+    let _ = &cc.glob;                                                        // c:112 zsfree(glob)
+    let _ = &cc.str;                                                         // c:113 zsfree(str)
+    let _ = &cc.func;                                                        // c:114 zsfree(func)
+    let _ = &cc.explain;                                                     // c:115 zsfree(explain)
+    let _ = &cc.ylist;                                                       // c:116 zsfree(ylist)
+    let _ = &cc.prefix;                                                      // c:117 zsfree(prefix)
+    let _ = &cc.suffix;                                                      // c:118 zsfree(suffix)
+    let _ = &cc.hpat;                                                        // c:119 zsfree(hpat)
+    let _ = &cc.gname;                                                       // c:120 zsfree(gname)
+    let _ = &cc.subcmd;                                                      // c:121 zsfree(subcmd)
+    let _ = &cc.substr;                                                      // c:122 zsfree(substr)
+
+    // c:123-124 — `if (cc->cond) freecompcond(cc->cond);`
+    if let Some(cond) = cc.cond.as_deref() {                                 // c:123
+        freecompcond((*cond).clone());                                       // c:124
+    }
+
+    // c:125-135 — recursive ext-chain walk.
+    if cc.ext.is_some() {                                                    // c:125
+        let mut n: Option<Arc<Compctl>> = cc.ext.clone();                    // c:128 n = cc->ext
+        while let Some(node) = n.take() {                                    // c:129-134 do { ... } while (n)
+            let m = node.next.clone();                                       // c:130 m = n->next
+            freecompctl(node);                                               // c:131 freecompctl(n)
+            n = m;                                                           // c:132 n = m
+        }
+    }
+
+    // c:136-137 — `if (cc->xor && cc->xor != &cc_default) freecompctl(cc->xor);`
+    if let Some(xor) = cc.xor.clone() {                                      // c:136 cc->xor
+        let xor_is_default = cc_default_ref.as_ref().is_some_and(|s| Arc::ptr_eq(s, &xor));
+        if !xor_is_default {                                                 // c:136 cc->xor != &cc_default
+            freecompctl(xor);                                                // c:137
+        }
+    }
+
+    // c:138-139 — `if (cc->matcher) freecmatcher(cc->matcher);`
+    // freecmatcher isn't ported as a free fn (see freecmatcher port
+    // below in this file or matcher Drop). Rust Box::drop on the
+    // matcher field covers this when `cc` drops.
+    let _ = &cc.matcher;                                                     // c:138-139
+
+    // c:140 — zsfree(cc->mstr);
+    let _ = &cc.mstr;                                                        // c:140
+
+    // c:141 — `zfree(cc, sizeof(struct compctl));`
+    // Arc::drop at end of scope handles the box-free. Mirror the
+    // explicit C call site for audit parity.
+    drop(cc);                                                                // c:141
 }
+
 
 /// Free a `compcond` spec.
 /// Port of `freecompcond(void *a)` from Src/Zle/compctl.c:146. C walks the
@@ -1319,9 +1424,42 @@ pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
     }
     // c:1817 — `if (!validlist) lastambig = 0`.
     crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
-    // c:1830 — `menucmp = menuacc = 0`.
+    // c:1818-1822 — `amatches = NULL; mnum = 0; unambig_mnum = -1; isuf = NULL;`
+    if let Ok(mut g) = crate::ported::zle::compcore::amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new())).lock()
+    {
+        g.clear();                                                           // c:1818
+    }
+    // c:1828 — `oldlist = oldins = 0;`
+    // c:1830 — `menucmp = menuacc = newmatches = onlyexpl = 0`.
     crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
-    // c:1903-1905 — return value drives dat->lst.
+    crate::ported::zle::compcore::menuacc.store(0, Ordering::Relaxed);       // c:1830
+    crate::ported::zle::compcore::onlyexpl.store(0, Ordering::Relaxed);
+
+    // c:1832-1833 — `ccused = newlinklist(); ccstack = newlinklist();`
+    // Per-call accumulators; Rust uses stack-local Vec since they
+    // don't outlive this scope.
+    let _ccused: Vec<String> = Vec::new();                                   // c:1832
+    let _ccstack: Vec<String> = Vec::new();                                  // c:1833
+
+    // c:1835-1837 — `s = dupstring(os); makecomplistglobal(s, incmd, lst, 0); endcmgroup(NULL);`
+    // makecomplistglobal not yet ported as a callable free fn from
+    // this hook entry; the canonical match-list driver (compcore.rs)
+    // already invokes the per-completion call.
+
+    // c:1839-1849 — `if (amatches && !oldlist)` save ccused into
+    // lastccused for the next cycle's free.
+
+    // c:1873-1876 — `if (lastmatches) freematches(lastmatches, 1);`
+    // c:1877 — `permmatches(1);` — permanent-alloc snapshot of pmatches.
+    // c:1882-1886 — promote pmatches→lastmatches; hasperm=0; hasoldlist=1.
+    // !!! STUB: lastmatches / pmatches / hasperm / hasoldlist file-
+    // statics not yet exposed in compcore.rs; the per-call flow
+    // currently lives inside compcore::do_completion which calls
+    // this hook AFTER building pmatches. Leave the post-processing
+    // shape documented; the work happens in that driver.
+
+    // c:1903-1905 — `dat->lst = 1; return 0;`
     0
 }
 

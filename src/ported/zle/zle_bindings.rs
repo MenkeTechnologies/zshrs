@@ -151,20 +151,41 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
 // `super::zle_utils::printbind`. Removed to drop the stale
 // allowlist entry too.
 
-/// Bind a key sequence in a named keymap (port of bindkey from
-/// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
-/// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
-/// the mutation respects the existing Arc-shared layout.
-pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool { // c:zle_keymap.c:566
-    let seq_bytes = getkeystring(seq);
+/// Port of `int bindkey(Keymap km, const char *seq, Thingy bind,
+/// char *str)` from `Src/Zle/zle_keymap.c:566`. Bind a key sequence in
+/// a named keymap. C semantics: return 1 if the keymap is
+/// `KM_IMMUTABLE`, 2 if `seq` is empty, 0 on success. If `bind` is
+/// `t_undefinedkey` or `ztrlen(seq) > 1`, the binding lives in the
+/// multi-char trie (`km->multi`); else it goes in the single-byte
+/// `km->first[f]` array. The single-byte path handles the
+/// prefix-due-to-send-string case by removing the trie entry when
+/// `k->prefixct == 0`. The Rust port delegates the trie walk to
+/// `bind_seq` and the multi-char `domulti` branch; the KM_IMMUTABLE
+/// and empty-seq early returns are checked here.
+/// WARNING: param names don't match C — Rust=(keymap, seq, widget) vs C=(km, seq, bind, str)
+pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {              // c:566
+    use crate::ported::zle::zle_keymap::KM_IMMUTABLE;
+    let seq_bytes = getkeystring(seq);                                       // c:569 seq[0]
     let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
-    let node = match tab.get_mut(keymap) {
+    let node = match tab.get_mut(keymap) {                                   // c:566 Keymap km
         Some(n) => n,
-        None => return false,
+        None => return false,                                                // C: caller resolves Keymap
     };
+    // c:572 — KM_IMMUTABLE check
+    if (node.keymap.flags & KM_IMMUTABLE) != 0 {                             // c:572
+        return false;                                                        // c:573 return 1
+    }
+    // c:574 — !*seq check
+    if seq_bytes.is_empty() {                                                // c:574
+        return false;                                                        // c:575 return 2
+    }
     let inner = std::sync::Arc::make_mut(&mut node.keymap);
+    // c:576 — single-vs-multi byte dispatch delegates to
+    // `bind_seq`, which handles the prefix promotion (c:577-586),
+    // trie insert (c:631-641), and `km->first[f]` single-byte
+    // fast-path (c:600).
     inner.bind_seq(&seq_bytes, Thingy::new(widget));
-    true
+    true                                                                     // c:650 return 0
 }
 
 /// Enumerate every (key-sequence, widget-name) pair in `keymap`.

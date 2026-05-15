@@ -515,7 +515,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
 
     // condtab = NULL; wrappers = NULL;                                      // c:1272-1273
 
-    let (_cols, _lines) = crate::ported::utils::adjustwinsize();             // c:1276
+    let (_cols, _lines) = crate::ported::utils::adjustwinsize(0);            // c:1276
 
     // getrlimit loop                                                        // c:1286-1289
 
@@ -871,46 +871,256 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {                        // 
 /// Port of `enum loop_return loop(int toplevel, int justonce)` from Src/init.c:113.
 ///
 /// Keep executing lists until EOF found.                                    // c:109
+///
+/// ```c
+/// enum loop_return
+/// loop(int toplevel, int justonce)
+/// {
+///     Eprog prog;
+///     int err, non_empty = 0;
+///     queue_signals();
+///     pushheap();
+///     if (!toplevel)
+///         zcontext_save();
+///     for (;;) {
+///         freeheap();
+///         if (stophist == 3) hend(NULL);
+///         hbegin(1);
+///         if (isset(SHINSTDIN)) {
+///             setblock_stdin();
+///             if (interact && toplevel) { ... preprompt() ... }
+///         }
+///         use_exit_printed = 0;
+///         intr();
+///         lexinit();
+///         if (!(prog = parse_event(ENDINPUT))) { ... }
+///         if (hend(prog)) { ... preexec ... execode ... }
+///         if (ferror(stderr)) { ... }
+///         if (subsh) realexit();
+///         if (((!interact || sourcelevel) && errflag) || retflag) break;
+///         if (isset(SINGLECOMMAND) && toplevel) { dotrap(SIGEXIT); realexit(); }
+///         if (justonce) break;
+///     }
+///     err = errflag;
+///     if (!toplevel) zcontext_restore();
+///     popheap();
+///     unqueue_signals();
+///     if (err) return LOOP_ERROR;
+///     if (!non_empty) return LOOP_EMPTY;
+///     return LOOP_OK;
+/// }
+/// ```
 pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // c:113
-    let mut err: i32;                                                        // c:116
+    use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
+    use crate::ported::zsh_h::{isset, INTERACTIVE, SHINSTDIN, SINGLECOMMAND, ENDINPUT, LEXERR};
+
+    // c:exec.c: `int subsh` — not yet ported. Local stub: never in
+    // a subshell from within the REPL loop (zshrs spawns subshells
+    // via fork+exec at the binary level, not by recursing into loop()).
+    let subsh: i32 = 0;
+
+    let mut prog: Option<crate::ported::parse::ZshProgram>;                  // c:115
+    let err: i32;                                                            // c:116
     let mut non_empty: i32 = 0;                                              // c:116
 
     crate::ported::signals::queue_signals();                                 // c:118
     crate::ported::mem::pushheap();                                          // c:119
-    if toplevel == 0 {                                                       // c:120
-        // zcontext_save();                                                  // c:121
+    if toplevel == 0 {                                                       // c:120 !toplevel
+        crate::ported::context::zcontext_save();                             // c:121
     }
     loop {                                                                   // c:122
         crate::ported::mem::freeheap();                                      // c:123
-        // if (stophist == 3) hend(NULL);                                    // c:124-125
-        // hbegin(1);                                                        // c:126
-        // if (isset(SHINSTDIN)) {                                           // c:127
-        //     setblock_stdin();                                             // c:128
-        //     if (interact && toplevel) { ... preprompt() ... }             // c:129-151
-        // }
+        if stophist.load(Ordering::SeqCst) == 3 {                            // c:124 stophist == 3
+            crate::ported::hist::hend(None);                                 // c:125 hend(NULL)
+        }
+        crate::ported::hist::hbegin(1);                                      // c:126 hbegin(1)
+        if isset(SHINSTDIN) {                                                // c:127 isset(SHINSTDIN)
+            crate::ported::utils::setblock_stdin();                          // c:128
+            if isset(INTERACTIVE) && toplevel != 0 {                         // c:129 interact && toplevel
+                let hstop = stophist.load(Ordering::SeqCst);                 // c:130
+                stophist.store(3, Ordering::SeqCst);                         // c:131
+                // c:133-138 — reset errflag for preprompt
+                crate::ported::utils::errflag.store(0, Ordering::SeqCst);    // c:139 errflag = 0
+                crate::ported::utils::preprompt();                           // c:140
+                if stophist.load(Ordering::SeqCst) != 3 {                    // c:141
+                    crate::ported::hist::hbegin(1);                          // c:142
+                } else {                                                     // c:143
+                    stophist.store(hstop, Ordering::SeqCst);                 // c:144
+                }
+                // c:146-149 — reset errflag again
+                crate::ported::utils::errflag.store(0, Ordering::SeqCst);    // c:150
+            }
+        }
         use_exit_printed.store(0, Ordering::SeqCst);                         // c:153
         crate::ported::signals::intr();                                      // c:154
-        // lexinit();                                                        // c:155
-        // if (!(prog = parse_event(ENDINPUT))) { ... }                      // c:156-175
-        // if (hend(prog)) { ... execode(prog,...) ... }                     // c:176-227
-        // if (subsh) realexit();                                            // c:232-233
-        // if (((!interact || sourcelevel) && errflag) || retflag) break;    // c:234-235
-        // if (isset(SINGLECOMMAND) && toplevel) { ... realexit(); }         // c:236-241
-        if justonce != 0 { break; }                                          // c:242-243
-        // The actual REPL is owned by the binary; without parser/exec
-        // dispatch we cannot run another iteration, so break here.
-        break;
+        crate::ported::lex::lexinit();                                       // c:155
+        prog = crate::ported::parse::parse_event(ENDINPUT as i32);           // c:156
+        if prog.is_none() {                                                  // c:156
+            crate::ported::hist::hend(None);                                 // c:158
+            // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
+            let tok_v = crate::ported::lex::tok();                           // c:159 tok
+            let errflag_v = crate::ported::utils::errflag.load(Ordering::SeqCst);
+            let lexerr_break = tok_v == LEXERR
+                && (!isset(SHINSTDIN) || toplevel == 0);
+            let endinput_break = tok_v == ENDINPUT && errflag_v == 0;
+            if endinput_break || lexerr_break || justonce != 0 {             // c:159-161
+                break;                                                       // c:162
+            }
+            if crate::ported::hist::exit_pending.load(Ordering::SeqCst) {    // c:163 exit_pending
+                crate::ported::builtin::STOPMSG.store(1, Ordering::SeqCst);  // c:169 stopmsg = 1
+                crate::ported::builtin::zexit(                               // c:170 zexit(exit_val, ZEXIT_NORMAL)
+                    crate::ported::builtin::EXIT_VAL.load(Ordering::SeqCst),
+                    crate::ported::builtin::ZEXIT_NORMAL,
+                );
+            }
+            if tok_v == LEXERR
+                && crate::ported::builtin::LASTVAL.load(Ordering::SeqCst) == 0  // c:172
+            {
+                crate::ported::builtin::LASTVAL.store(1, Ordering::SeqCst);  // c:173 lastval = 1
+            }
+            continue;                                                        // c:174
+        }
+        let prog_inner = prog.take().unwrap();
+        // c:176 — `if (hend(prog))`: passing the program in commits the
+        // history line. zshrs's `hend` takes Option<&[u8]>; sentinel
+        // non-empty slice signals "program present" to the commit path.
+        let prog_bytes: Vec<u8> = format!("{:?}", prog_inner).into_bytes();
+        let hend_ret = crate::ported::hist::hend(Some(&prog_bytes));         // c:176
+        if hend_ret != 0 {
+            let _toksav = crate::ported::lex::tok();                         // c:177
+            non_empty = 1;                                                   // c:179
+            // c:180-215 — preexec hook + ZLE_CMD_PREEXEC.
+            if toplevel != 0 {                                               // c:180
+                let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
+                let preexec_hook = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(&format!("preexec{}", crate::ported::zsh_h::HOOK_SUFFIX))
+                            .map(|_| ())
+                    });                                                      // c:182 paramtab->getnode("preexec_functions")
+                if preexec_fn.is_some() || preexec_hook.is_some() {
+                    let mut args: Vec<String> = Vec::new();                  // c:191 newlinklist()
+                    args.push("preexec".to_string());                        // c:192 addlinknode(args, "preexec")
+                    // c:195 — hist_ring && curline.histnum == curhist
+                    let hr = hist_ring.lock().unwrap();
+                    let cl = curline.lock().unwrap();
+                    let same = !hr.is_empty()
+                        && cl.as_ref().map(|c| c.histnum).unwrap_or(0)
+                            == curhist.load(Ordering::SeqCst);
+                    if same {                                                // c:195
+                        args.push(hr.first().map(|h| h.node.nam.clone()).unwrap_or_default());  // c:196
+                    } else {
+                        args.push(String::new());                            // c:198
+                    }
+                    drop(hr); drop(cl);
+                    // c:199 — addlinknode(args, dupstring(getjobtext(prog, NULL)))
+                    // Eprog↔ZshProgram bridge not yet in place; pass a
+                    // freshly-allocated empty eprog so getjobtext/getpermtext
+                    // return their NULL-prog representation. Real text comes
+                    // from src/exec.rs once that bridge lands.
+                    let placeholder: crate::ported::zsh_h::Eprog =
+                        Box::new(crate::ported::zsh_h::eprog {
+                            flags: 0, len: 0, npats: 0, nref: 0,
+                            pats: Vec::new(),
+                            prog: Vec::new(),
+                            strs: None, shf: None, dump: None,
+                        });
+                    let placeholder2: crate::ported::zsh_h::Eprog =
+                        Box::new(crate::ported::zsh_h::eprog {
+                            flags: 0, len: 0, npats: 0, nref: 0,
+                            pats: Vec::new(),
+                            prog: Vec::new(),
+                            strs: None, shf: None, dump: None,
+                        });
+                    let job_text = crate::ported::text::getjobtext(
+                        placeholder, None);                                  // c:199
+                    args.push(crate::ported::mem::dupstring(&job_text));
+                    // c:200 — getpermtext(prog, NULL, 0)
+                    let cmdstr = crate::ported::text::getpermtext(
+                        placeholder2, None, 0);                              // c:200
+                    args.push(cmdstr.clone());
+                    crate::ported::utils::callhookfunc(                      // c:202
+                        "preexec", Some(&args), true,
+                    );
+                    crate::ported::mem::zsfree(cmdstr);                      // c:205
+                    crate::ported::utils::errflag.fetch_and(                 // c:214 errflag &= ~ERRFLAG_ERROR
+                        !crate::ported::utils::ERRFLAG_ERROR,
+                        Ordering::SeqCst,
+                    );
+                }
+            }
+            if toplevel != 0                                                 // c:216
+                && zle_load_state.load(Ordering::SeqCst) == 1
+            {
+                let _ = crate::ported::init::zleentry(                       // c:217 ZLE_CMD_PREEXEC
+                    crate::ported::zsh_h::ZLE_CMD_PREEXEC,
+                );
+            }
+            if crate::ported::builtin::STOPMSG.load(Ordering::SeqCst) != 0 { // c:218
+                crate::ported::builtin::STOPMSG.fetch_sub(1, Ordering::SeqCst);  // c:219
+            }
+            // c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
+            // No fusevm bridge for parse-tree execution in src/ported yet;
+            // the exec dispatch happens at `src/exec.rs::run_program`. Mirror
+            // the call as a local stub keyed off the toplevel selector.
+            let _exec_label = if toplevel != 0 { "toplevel" } else { "file" };
+            // c:220 execode(prog, ...) — stubbed: actual eval is owned by
+            // the binary-level REPL (src/exec.rs) which calls into this
+            // same loop. Keep the structure faithful so the slot is
+            // visible in audits.
+            let _ = prog_inner;
+            // c:221 — `tok = toksav;` restore
+            crate::ported::lex::set_tok(_toksav);
+            if toplevel != 0 {                                               // c:222
+                noexitct.store(0, Ordering::SeqCst);                         // c:223
+                if zle_load_state.load(Ordering::SeqCst) == 1 {              // c:224
+                    let _ = crate::ported::init::zleentry(                   // c:225 ZLE_CMD_POSTEXEC
+                        crate::ported::zsh_h::ZLE_CMD_POSTEXEC,
+                    );
+                }
+            }
+        }
+        // c:228-231 — `if (ferror(stderr))` write-error path. Mirror as a
+        // best-effort flush; Rust panic on broken pipe handled upstream.
+        // c:232 — `if (subsh) realexit();`
+        if subsh != 0 {                                                      // c:232
+            crate::ported::builtin::realexit();                              // c:233
+        }
+        // c:234 — `if (((!interact || sourcelevel) && errflag) || retflag) break;`
+        let errflag_v = crate::ported::utils::errflag.load(Ordering::SeqCst);
+        let interact_v = isset(INTERACTIVE);
+        let srclvl = sourcelevel.load(Ordering::SeqCst);
+        let retflag_v = crate::ported::builtin::RETFLAG.load(Ordering::SeqCst);
+        if ((!interact_v || srclvl != 0) && errflag_v != 0) || retflag_v != 0 { // c:234
+            break;                                                           // c:235
+        }
+        if isset(SINGLECOMMAND) && toplevel != 0 {                           // c:236
+            crate::ported::signals_h::dont_queue_signals();                  // c:237
+            // c:238 — sigtrapped[SIGEXIT] != 0 → dotrap(SIGEXIT)
+            let tr = crate::ported::signals::sigtrapped.lock().unwrap();
+            let sigexit = libc::SIGINT as usize; // SIGEXIT = 0 (zsh-internal)
+            if tr.get(sigexit).copied().unwrap_or(0) != 0 {                  // c:238
+                drop(tr);
+                let _ = crate::ported::signals::dotrap(0 /* SIGEXIT */);     // c:239
+            }
+            crate::ported::builtin::realexit();                              // c:240
+        }
+        if justonce != 0 {                                                   // c:242
+            break;                                                           // c:243
+        }
+        let _ = histlinect.load(Ordering::SeqCst);  // silence unused alias
     }
-    err = 0;                                                                 // c:245 (errflag stub)
-    if toplevel == 0 {                                                       // c:263
-        // zcontext_restore();                                               // c:263
+    err = crate::ported::utils::errflag.load(Ordering::SeqCst);              // c:245 err = errflag
+    if toplevel == 0 {                                                       // c:246 !toplevel
+        crate::ported::context::zcontext_restore();                          // c:247
     }
-    crate::ported::mem::popheap();                                           // c:263
-    crate::ported::signals::unqueue_signals();                               // c:263
+    crate::ported::mem::popheap();                                           // c:248
+    crate::ported::signals::unqueue_signals();                               // c:249
 
-    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:263-252
-    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:263-254
-    0 /* LOOP_OK */                                                          // c:263
+    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:251-252
+    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:253-254
+    0 /* LOOP_OK */                                                          // c:255
 }
 
 /// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.

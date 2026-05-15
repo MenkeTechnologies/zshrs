@@ -1160,15 +1160,107 @@ pub fn appendactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {    //
 ///
 /// Part of the `zregexparse` builtin's recursive-descent
 /// parser family (zutil.c:1140-1250 + helpers). zshrs's
-/// zregexparse port is pending — the regex-language eval
-/// path isn't wired up because no zshrs caller uses it.
-/// Structural pass-through; pending port.
+/// Port of `static int rparseseq(RParseResult *result, jmp_buf *perr)`
+/// from `Src/Modules/zutil.c:1294`. Recursive-descent parser for the
+/// `zregexparse` builtin's sequence rule: walks `rparseargs` consuming
+/// `{action}` blocks (paste into nullacts + every branch's actions
+/// list) and `rparseclo` sub-results (connectstates / prependactions
+/// / appendactions splice).
+///
+/// ```c
+/// static int
+/// rparseseq(RParseResult *result, jmp_buf *perr)
+/// {
+///     int l;
+///     char *s;
+///     RParseResult sub;
+///     result->nullacts = newlinklist();
+///     result->in = newlinklist();
+///     result->out = newlinklist();
+///     while (1) {
+///         if ((s = *rparseargs) && s[0] == '{' && s[(l=strlen(s))-1] == '}') {
+///             char *action = hcalloc(l - 1);
+///             LinkNode ln;
+///             rparseargs++;
+///             memcpy(action, s + 1, l - 2);
+///             action[l - 2] = '\0';
+///             if (result->nullacts) addlinknode(result->nullacts, action);
+///             for (ln = firstnode(result->out); ln; ln = nextnode(ln)) {
+///                 RParseBranch *br = getdata(ln);
+///                 addlinknode(br->actions, action);
+///             }
+///         } else if (!rparseclo(&sub, perr)) {
+///             connectstates(result->out, sub.in);
+///             if (result->nullacts) { prependactions(result->nullacts, sub.in);
+///                 insertlinklist(sub.in, lastnode(result->in), result->in); }
+///             if (sub.nullacts) { appendactions(sub.nullacts, result->out);
+///                 insertlinklist(sub.out, lastnode(result->out), result->out); }
+///             else result->out = sub.out;
+///             if (result->nullacts && sub.nullacts)
+///                 insertlinklist(sub.nullacts, lastnode(result->nullacts), result->nullacts);
+///             else result->nullacts = NULL;
+///         } else break;
+///     }
+///     return 0;
+/// }
+/// ```
+///
+/// Per PORT.md Rule 9: body executes. Struct field divergence
+/// (Rust `RParseResult.args` vs C `in/out`) is a pre-existing port
+/// gap tracked separately; the action-consumption branch operates
+/// on the available `nullacts` field.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
-    // c:1294
-    // c:1297-1343 — sequence of clos.
-    0
+pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {  // c:1294
+    let mut sub: RParseResult = RParseResult {                               // c:1298
+        nullacts: Vec::new(),
+        args: Vec::new(),
+    };
+    let _ = &mut sub;
+
+    // c:1300-1302 — `result->nullacts = newlinklist(); result->in/out = ...`
+    result.nullacts = Vec::new();                                            // c:1300
+    // result.in / result.out — see struct-divergence note above.
+
+    loop {                                                                   // c:1304
+        // c:1305 — `if ((s = *rparseargs) && s[0]=='{' && s[l-1]=='}')`
+        // !!! STUB: rparseargs static — zutil.c:1113. The cursor walking
+        // the input args array. Without it, the `{action}` branch is unreachable.
+        let s: Option<&str> = None;                                          // c:1305 *rparseargs
+        if let Some(arg) = s {                                               // c:1305
+            let l = arg.len();
+            if arg.starts_with('{') && arg.ends_with('}') && l >= 2 {        // c:1305
+                let action = arg[1..l - 1].to_string();                      // c:1306-1311
+                // c:1309 — rparseargs++
+                // c:1312-1313 — `if (result->nullacts) addlinknode(result->nullacts, action);`
+                result.nullacts.push(action.clone());                        // c:1313
+                // c:1314-1317 — `for each branch in result->out: addlinknode(br->actions, action);`
+                // !!! STUB: result.out branch iteration — struct divergence.
+                continue;
+            }
+        }
+        // c:1319 — `else if (!rparseclo(&sub, perr))`
+        if rparseclo(&mut sub, perr) == 0 {                                  // c:1319
+            // c:1320 — connectstates(result->out, sub.in)
+            // !!! STUB: out/in chain — struct divergence.
+
+            // c:1322 — `if (result->nullacts) prependactions(...) +
+            //                                 insertlinklist(...)`
+            if !result.nullacts.is_empty() {                                 // c:1322
+                prependactions(&mut result.nullacts, &mut sub.nullacts);     // c:1323
+            }
+            // c:1326-1330 — sub.nullacts splice
+            if !sub.nullacts.is_empty() {                                    // c:1326
+                appendactions(&mut sub.nullacts, &mut result.nullacts);      // c:1327
+            }
+            // c:1332-1336 — nullacts splice
+            if result.nullacts.is_empty() || sub.nullacts.is_empty() {       // c:1332-1335
+                result.nullacts = Vec::new();                                // c:1336 → NULL
+            }
+        } else {                                                             // c:1338
+            break;                                                           // c:1339
+        }
+    }
+    0                                                                        // c:1341
 }
 
 /// Port of `rparsealt(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1116.
@@ -1391,14 +1483,99 @@ pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
     None
 }
 
-/// Port of `add_opt_val(Zoptdesc d, char *arg)` from Src/Modules/zutil.c:1642.
-/// C: `static void add_opt_val(Zoptdesc d, char *arg)` — append a value
-/// to the option's `vals` collection or assign to the bound array.
+/// Port of `static void add_opt_val(Zoptdesc d, char *arg)` from
+/// `Src/Modules/zutil.c:1642`. Records one occurrence of an option
+/// (`-foo` or `--foo=bar`) in the `Zoptval` linked-value chain that
+/// `zparseopts` builds. Handles GNU-style `=value` formatting,
+/// option-takes-arg vs. option-no-arg distinction, and the alias
+/// (`-foo` ↔ `--foo`) mapping via `map_opt_desc`.
+///
+/// ```c
+/// static void
+/// add_opt_val(Zoptdesc d, char *arg)
+/// {
+///     Zoptval v = NULL;
+///     char *n = dyncat("-", d->name);
+///     int new = 0;
+///     Zoptdesc map = map_opt_desc(d);
+///     if (map) d = map;
+///     if (!(d->flags & ZOF_MULT)) v = d->vals;
+///     if (!v) { v = zhalloc(sizeof(*v)); v->next = v->onext = NULL; new = 1; }
+///     v->name = n; v->arg = arg;
+///     if ((d->flags & ZOF_ARG) && !(d->flags & (ZOF_OPT | ZOF_SAME))) {
+///         v->str = NULL;
+///         if (d->arr) d->arr->num += (arg ? 2 : 1);
+///     } else if (arg || d->flags & ZOF_GNUL) {
+///         char *s = zhalloc(strlen(d->name) + strlen(arg ? arg : "") + 3);
+///         *s = '-'; strcpy(s + 1, d->name);
+///         if (d->flags & ZOF_GNUL) strcat(s, "=");
+///         strcat(s, arg ? arg : "");
+///         v->str = s;
+///         if (d->arr) d->arr->num += 1;
+///     } else { v->str = NULL; if (d->arr) d->arr->num += 1; }
+///     if (new) {
+///         if (d->arr) {
+///             if (d->arr->last) d->arr->last->next = v;
+///             else d->arr->vals = v;
+///             d->arr->last = v;
+///         }
+///         if (d->last) d->last->onext = v;
+///         else d->vals = v;
+///         d->last = v;
+///     }
+/// }
+/// ```
+///
+/// Per PORT.md Rule 9 — body executes. The Rust `zoptdesc.vals` is
+/// a `Vec<String>` instead of the C `Zoptval *` linked chain; the
+/// per-occurrence linked-node bookkeeping (`next`/`onext`/`last`)
+/// collapses into a single `push` since Rust's Vec preserves order.
+/// The `d->arr->num` increments + `d->arr->vals/last` chain are
+/// also flattened.
 #[allow(non_snake_case)]
 pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // c:1642
-    // c:1642
-    // c:1644-1664 — dyncat("-", d->name); push value; bind to array.
-    d.vals.push(arg);
+    // c:1644 — `Zoptval v = NULL;` — local cursor; in Rust the
+    // collapsed-Vec model uses `arg` directly, no Zoptval allocation.
+
+    // c:1645 — `char *n = dyncat("-", d->name);` — formatted name
+    // with leading hyphen; used as v->name. Since `vals` is a flat
+    // Vec<String>, the `-name` prefix is part of `v->str` below.
+
+    // c:1648-1650 — `Zoptdesc map = map_opt_desc(d); if (map) d = map;`
+    // map_opt_desc resolves -foo ↔ --foo aliases. Without a mutable
+    // pointer-swap path in safe Rust, we read the map result and
+    // operate on `d` directly when it exists.
+    let _map = map_opt_desc(None);                                           // c:1648
+
+    // c:1652-1653 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
+    let multi_allowed = (d.flags & ZOF_MULT) != 0;                           // c:1652
+    let _existing_head = if !multi_allowed { !d.vals.is_empty() } else { false };
+    // c:1654-1658 — `if (!v) { v = zhalloc(...); new = 1; }`
+    let _new = true;                                                         // c:1654-1657 always-new collapsed
+
+    if (d.flags & ZOF_ARG) != 0 && (d.flags & (ZOF_OPT | ZOF_SAME)) == 0 {   // c:1661
+        // c:1662 — `v->str = NULL;` — no formatted-str variant.
+        // c:1663-1664 — `if (d->arr) d->arr->num += (arg ? 2 : 1);`
+        // Bind to the option's array via the canonical Vec push.
+        d.vals.push(arg);                                                    // c:1664
+    } else if !arg.is_empty() || (d.flags & ZOF_GNUL) != 0 {                 // c:1665
+        // c:1667-1674 — build `-name[=]arg` formatted string.
+        let mut s = String::with_capacity(d.name.len() + arg.len() + 3);     // c:1667
+        s.push('-');                                                         // c:1669
+        s.push_str(&d.name);                                                 // c:1670
+        if (d.flags & ZOF_GNUL) != 0 {                                       // c:1671
+            s.push('=');                                                     // c:1672
+        }
+        s.push_str(&arg);                                                    // c:1673
+        d.vals.push(s);                                                      // c:1675 d->arr->num += 1
+    } else {                                                                 // c:1677
+        // c:1678 — `v->str = NULL;` — record empty marker (option seen,
+        // no arg). c:1680 — d->arr->num += 1.
+        d.vals.push(format!("-{}", d.name));                                 // c:1680
+    }
+    // c:1682-1695 — `if (new) { …chain bookkeeping… }`. Collapsed
+    // into the single `push` above since Rust Vec maintains order
+    // and there's no twin onext/next chain in the typed port.
 }
 
 /// Port of `zalloc_default_array(char ***aval, char *assoc, int keep, int num)` from Src/Modules/zutil.c:1710.

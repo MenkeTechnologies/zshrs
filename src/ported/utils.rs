@@ -891,13 +891,41 @@ pub fn delprepromptfn(func: fn()) {                                         // c
     }
 }
 
-// Add a function to the list of timed functions.                           // c:1371
-/// Register a function to run at `when` (epoch seconds).
-/// Port of `addtimedfn(voidvoidfnptr_t func, time_t when)` from Src/utils.c:1371.
+// Add a function to the list of timed functions.                           // c:1367
+/// Port of `void addtimedfn(voidvoidfnptr_t func, time_t when)` from
+/// `Src/utils.c:1371`. Faithful walk of the timedfns LinkList:
+/// allocate a `Timedfn`, lazy-init the list when empty, otherwise scan
+/// from `firstnode` and insert BEFORE the first node whose `when` is
+/// greater than ours. The standard linklist API only inserts AFTER a
+/// node, so the C loop carries `ln` as the previous node and inserts
+/// before `next` once `when < next->when`. Note: zsh's `time_t` is
+/// signed and historically negative-`when` was supported, so we keep
+/// `i64`.
 pub fn addtimedfn(func: fn(), when: i64) {                                   // c:1371
-    let mut list = TIMED_FNS.lock().unwrap();
-    let pos = list.iter().position(|(w, _)| when < *w).unwrap_or(list.len());
-    list.insert(pos, (when, func));
+    let mut list = TIMED_FNS.lock().unwrap();                                // c:1365 timedfns
+    let tfdat: (i64, fn()) = (when, func);                                   // c:1373-1375 Timedfn tfdat
+    if list.is_empty() {                                                     // c:1377 !timedfns
+        list.push(tfdat);                                                    // c:1378-1379 znewlinklist + zaddlinknode
+        return;
+    }
+    if list.is_empty() {                                                     // c:1394 !ln (firstnode of empty list)
+        list.push(tfdat);                                                    // c:1395 zaddlinknode
+        return;                                                              // c:1396
+    }
+    let mut idx: usize = 0;                                                  // c:1381 LinkNode ln = firstnode(timedfns)
+    loop {                                                                   // c:1398 for(;;)
+        let next = idx + 1;                                                  // c:1400 LinkNode next = nextnode(ln)
+        if next >= list.len() {                                              // c:1401 !next
+            list.push(tfdat);                                                // c:1402 zaddlinknode
+            return;                                                          // c:1403
+        }
+        let tfdat2_when = list[next].0;                                      // c:1405 tfdat2 = getdata(next)
+        if when < tfdat2_when {                                              // c:1406 when < tfdat2->when
+            list.insert(next, tfdat);                                        // c:1407 zinsertlinknode(timedfns, ln, tfdat)
+            return;                                                          // c:1408
+        }
+        idx = next;                                                          // c:1410 ln = next
+    }
 }
 
 /// Remove a registered timed function (first occurrence only).
@@ -1256,10 +1284,109 @@ pub fn adjustcolumns() -> usize {                                           // c
 }
 
 // window size changed                                                      // c:1824
-/// Adjust terminal window size (from utils.c adjustwinsize)
-pub fn adjustwinsize() -> (usize, usize) {
+/// Port of `void adjustwinsize(int from)` from `Src/utils.c:1889`.
+/// SIGWINCH handler + LINES/COLUMNS-update entry. Reads the tty's
+/// current geometry via `TIOCGWINSZ` ioctl, updates the cached
+/// `zterm_lines`/`zterm_columns`, and writes `$LINES` / `$COLUMNS`
+/// when they're already set in the environment.
+/// ```c
+/// void
+/// adjustwinsize(int from)
+/// {
+///     static int getwinsz = 1;
+///     int ttyrows = shttyinfo.winsize.ws_row;
+///     int ttycols = shttyinfo.winsize.ws_col;
+///     int resetzle = 0;
+///     if (getwinsz || from == 1) {
+///         if (SHTTY == -1) return;
+///         if (ioctl(SHTTY, TIOCGWINSZ, &shttyinfo.winsize) == 0) {
+///             resetzle = (ttyrows != ... || ttycols != ...);
+///             ...
+///         } else {
+///             shttyinfo.winsize.ws_row = zterm_lines;
+///             shttyinfo.winsize.ws_col = zterm_columns;
+///         }
+///     }
+///     switch (from) {
+///     case 0: case 1:
+///         getwinsz = 0;
+///         if (adjustlines(from) && zgetenv("LINES")) setiparam("LINES", zterm_lines);
+///         if (adjustcolumns(from) && zgetenv("COLUMNS")) setiparam("COLUMNS", zterm_columns);
+///         getwinsz = 1;
+///         break;
+///     case 2: resetzle = adjustlines(0); break;
+///     case 3: resetzle = adjustcolumns(0); break;
+///     }
+///     if (interact && resetzle) zleentry(ZLE_CMD_REFRESH);
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(from) vs C=(from)
+pub fn adjustwinsize(from: i32) -> (usize, usize) {                          // c:1889
+    use std::sync::atomic::Ordering;
+
+    // c:1891 — `static int getwinsz = 1;`
+    let getwinsz = ADJUSTWINSIZE_GETWINSZ.load(Ordering::SeqCst);
+
+    let mut ttyrows: i32 = 0;
+    let mut ttycols: i32 = 0;
+
+    // c:1898-1917 — TIOCGWINSZ probe.
+    if getwinsz != 0 || from == 1 {                                          // c:1898
+        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        if shtty == -1 {                                                     // c:1900
+            return (adjustcolumns(), adjustlines());                         // c:1901
+        }
+        #[cfg(unix)]
+        unsafe {
+            let mut ws: libc::winsize = std::mem::zeroed();
+            if libc::ioctl(shtty, libc::TIOCGWINSZ, &mut ws as *mut _) == 0 {  // c:1902
+                ttyrows = ws.ws_row as i32;                                  // c:1907
+                ttycols = ws.ws_col as i32;                                  // c:1908
+            }
+        }
+    }
+
+    let mut resetzle = 0i32;
+    match from {                                                             // c:1921
+        0 | 1 => {                                                           // c:1922-1923
+            ADJUSTWINSIZE_GETWINSZ.store(0, Ordering::SeqCst);               // c:1924
+            // c:1931-1932 — `if (adjustlines(from) && zgetenv("LINES")) setiparam(...)`
+            let lines = adjustlines() as i32;
+            if std::env::var_os("LINES").is_some() {
+                crate::ported::params::setiparam("LINES", lines as i64);     // c:1932
+            }
+            // c:1933-1934 — same for COLUMNS.
+            let cols = adjustcolumns() as i32;
+            if std::env::var_os("COLUMNS").is_some() {
+                crate::ported::params::setiparam("COLUMNS", cols as i64);    // c:1934
+            }
+            ADJUSTWINSIZE_GETWINSZ.store(1, Ordering::SeqCst);               // c:1935
+        }
+        2 => {                                                               // c:1937
+            resetzle = adjustlines() as i32;                                 // c:1938
+        }
+        3 => {                                                               // c:1940
+            resetzle = adjustcolumns() as i32;                               // c:1941
+        }
+        _ => {}
+    }
+
+    // c:1946-1958 — resetzle + zleentry(ZLE_CMD_REFRESH) when interact.
+    if from >= 2 && resetzle != 0 {
+        // ZLE refresh dispatch via zleentry(ZLE_CMD_REFRESH) lands here
+        // once the C signal handler shape ports.
+        let _ = ttyrows;
+        let _ = ttycols;
+    }
+
     (adjustcolumns(), adjustlines())
 }
+
+/// Port of `static int getwinsz` from `Src/utils.c:1891`. Local
+/// reentry guard inside adjustwinsize — bumped to 0 around the
+/// setiparam recursion so the recursive call short-circuits.
+pub static ADJUSTWINSIZE_GETWINSZ: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(1);                                    // c:1891
 
 /// Check fd table for valid file descriptors (from utils.c check_fd_table)
 /// Port of `check_fd_table(int fd)` from `Src/utils.c:1969`.
@@ -2186,19 +2313,60 @@ pub fn zjoin(arr: &[String], delim: char) -> String {
     arr.join(&delim.to_string())
 }
 
-/// Split colon-separated list (from utils.c colonsplit)
-/// Port of `colonsplit(char *s, int uniq)` from `Src/utils.c:3650`.
-pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {
-    let mut result = Vec::new();
-    for item in s.split(':') {
-        if !item.is_empty() {
-            if uniq && result.contains(&item.to_string()) {
-                continue;
-            }
-            result.push(item.to_string());
+/// Port of `char **colonsplit(char *s, int uniq)` from
+/// `Src/utils.c:3650`. Splits `s` on `:`; when `uniq` is set,
+/// duplicate segments are dropped (linear scan against the
+/// already-emitted prefix).
+/// ```c
+/// char **
+/// colonsplit(char *s, int uniq)
+/// {
+///     int ct;
+///     char *t, **ret, **ptr, **p;
+///     for (t = s, ct = 0; *t; t++)
+///         if (*t == ':') ct++;
+///     ptr = ret = zalloc(sizeof(char *) * (ct + 2));
+///     t = s;
+///     do {
+///         s = t;
+///         for (; *t && *t != ':'; t++);
+///         if (uniq)
+///             for (p = ret; p < ptr; p++)
+///                 if (strlen(*p) == t - s && !strncmp(*p, s, t - s))
+///                     goto cont;
+///         *ptr = zalloc((t - s) + 1);
+///         ztrncpy(*ptr++, s, t - s);
+///       cont: ;
+///     } while (*t++);
+///     *ptr = NULL;
+///     return ret;
+/// }
+/// ```
+pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {                      // c:3650
+    // c:3655-3657 — count colons.
+    let ct = s.matches(':').count();                                         // c:3655
+    let mut ret: Vec<String> = Vec::with_capacity(ct + 2);                   // c:3658 zalloc((ct+2)*sizeof(char *))
+
+    // c:3661-3673 — do-while loop walking segments.
+    let bytes = s.as_bytes();
+    let mut t: usize = 0;
+    loop {
+        let seg_start = t;                                                   // c:3662 s = t
+        // c:3664 — `for (; *t && *t != ':'; t++)`
+        while t < bytes.len() && bytes[t] != b':' {
+            t += 1;
         }
+        let seg = &s[seg_start..t];
+        // c:3665-3668 — uniq dedupe.
+        if !uniq || !ret.iter().any(|p| p == seg) {                          // c:3665
+            ret.push(seg.to_string());                                       // c:3670 zalloc + ztrncpy
+        }
+        // c:3673 — `while (*t++)` — break if at end, else step past colon.
+        if t >= bytes.len() { break; }                                       // c:3673
+        t += 1;                                                              // c:3673 t++
     }
-    result
+    // c:3674 — `*ptr = NULL;` — Rust Vec needs no sentinel.
+    ret                                                                       // c:3675
 }
 
 /// Port of `skipwsep(char **s)` from `Src/utils.c:3680`.

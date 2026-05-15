@@ -907,11 +907,9 @@ pub fn free_cursor_forms() {                                                 // 
     CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
-/// Port of `cursor_form()` from Src/Zle/termquery.c:913.
-pub fn cursor_form() -> Vec<String> {                                        // c:913
-    // C body c:915-902 — emits the current cursor-shape escape based
-    //                    on `cursor_form_list`. Without form list:
-    //                    empty.
+/// Port of `cursor_form()` from Src/Zle/termquery.c:933. Stub:
+/// CURF_/CURC_/cursor_forms substrate pending.
+pub fn cursor_form() -> Vec<String> {                                        // c:933
     Vec::new()
 }
 

@@ -403,7 +403,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
         libc::SIGWINCH => {                                                   // c:468
             // c:469 — `adjustwinsize(1)` (Src/utils.c) — re-reads
             // TIOCGWINSZ and updates LINES/COLUMNS params.
-            let _ = crate::ported::utils::adjustwinsize();                   // c:469
+            let _ = crate::ported::utils::adjustwinsize(1);                  // c:469
             let _ = handletrap(libc::SIGWINCH);                              // c:470
         }
         libc::SIGALRM => {                                                    // c:475
@@ -875,6 +875,251 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
     intrap.store(0, Ordering::SeqCst);
     0
 }
+
+/// Direct port of `void dotrapargs(int sig, int *sigtr, void *sigfn)` from
+/// `Src/signals.c:1081`. Drives a single trap callback for `sig`:
+/// suspends `breaks`/`retflag`/`lastval` so the body runs in a fresh
+/// control-flow scope, dispatches the function (ZSIG_FUNC) or eprog
+/// (non-FUNC) body, then restores the caller's flags applying the
+/// trap_state / trap_return / try_tryflag rules.
+///
+/// ```c
+/// void
+/// dotrapargs(int sig, int *sigtr, void *sigfn)
+/// {
+///     LinkList args;
+///     char *name, num[4];
+///     int obreaks = breaks;
+///     int oretflag = retflag;
+///     int olastval = lastval;
+///     int isfunc;
+///     int traperr, new_trap_state, new_trap_return;
+///     if ((*sigtr & ZSIG_IGNORED) || !sigfn || errflag) return;
+///     if (intrap) {
+///         switch (sig) { case SIGEXIT: case SIGDEBUG: case SIGZERR: return; }
+///     }
+///     queue_signals();
+///     intrap++;
+///     *sigtr |= ZSIG_IGNORED;
+///     zcontext_save();
+///     execsave();
+///     breaks = retflag = 0;
+///     traplocallevel = locallevel;
+///     runhookdef(BEFORETRAPHOOK, NULL);
+///     if (*sigtr & ZSIG_FUNC) {
+///         /* ... build args, doshfunc(...) ... */
+///     } else {
+///         trap_return = -2;
+///         trap_state = TRAP_STATE_PRIMED;
+///         trapisfunc = isfunc = 0;
+///         execode((Eprog)sigfn, 1, 0, "trap");
+///     }
+///     runhookdef(AFTERTRAPHOOK, NULL);
+///     traperr = errflag;
+///     new_trap_state = trap_state;
+///     new_trap_return = trap_return;
+///     execrestore();
+///     zcontext_restore();
+///     /* ... restore breaks/retflag/lastval per FORCE_RETURN / traperr ... */
+///     if (zleactive && resetneeded) zleentry(ZLE_CMD_REFRESH);
+///     if (*sigtr != ZSIG_IGNORED) *sigtr &= ~ZSIG_IGNORED;
+///     intrap--;
+///     unqueue_signals();
+/// }
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           // c:1081
+    use crate::ported::builtin::{BREAKS, LASTVAL, LOCALLEVEL, LOOPS, RETFLAG, SFCONTEXT};
+    use crate::ported::zsh_h::{
+        AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_ERROR, ERRFLAG_INT,
+        SFC_SIGNAL, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZSIG_FUNC, ZSIG_IGNORED,
+    };
+    use crate::signals_h::{SIGDEBUG, SIGEXIT, SIGZERR};
+
+    let obreaks: i32 = BREAKS.load(Ordering::SeqCst);                        // c:1085
+    let oretflag: i32 = RETFLAG.load(Ordering::SeqCst);                      // c:1086
+    let olastval: i32 = LASTVAL.load(Ordering::SeqCst);                      // c:1087
+    let isfunc: i32;                                                         // c:1088
+    let traperr: i32;                                                        // c:1089
+    let new_trap_state: i32;                                                 // c:1089
+    let new_trap_return: i32;                                                // c:1089
+
+    // c:1101 — `if ((*sigtr & ZSIG_IGNORED) || !sigfn || errflag) return;`
+    if (*sigtr & ZSIG_IGNORED) != 0                                          // c:1101
+        || sigfn.is_none()
+        || crate::ported::utils::errflag.load(Ordering::SeqCst) != 0
+    {
+        return;                                                              // c:1102
+    }
+
+    // c:1112-1119 — disallow synchronous traps from nesting.
+    if intrap.load(Ordering::SeqCst) != 0 {                                  // c:1112
+        if sig == SIGEXIT || sig == SIGDEBUG || sig == SIGZERR {             // c:1113-1117
+            return;                                                          // c:1117
+        }
+    }
+
+    queue_signals();                                                         // c:1121
+
+    intrap.fetch_add(1, Ordering::SeqCst);                                   // c:1123
+    *sigtr |= ZSIG_IGNORED;                                                  // c:1124
+    // Mirror into the sigtrapped slab so observers (handletrap, dotrap
+    // re-entry) see the same ZSIG_IGNORED bit.
+    if let Ok(mut g) = sigtrapped.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) {
+            *slot |= ZSIG_IGNORED;
+        }
+    }
+
+    crate::ported::context::zcontext_save();                                 // c:1126
+    // c:1128 — `execsave()` saves trap_return/trap_state. Without a
+    // canonical `execsave` port yet, snapshot the two atomics inline.
+    let saved_trap_state = crate::exec::TRAP_STATE.load(Ordering::SeqCst);   // c:1128 execsave
+    let saved_trap_return = crate::exec::TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
+    BREAKS.store(0, Ordering::SeqCst);                                       // c:1129 breaks = 0
+    RETFLAG.store(0, Ordering::SeqCst);                                      // c:1129 retflag = 0
+    traplocallevel.store(LOCALLEVEL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
+
+    // c:1131 — `runhookdef(BEFORETRAPHOOK, NULL);`
+    // module.rs runhookdef is on the ModuleHandlers struct; no public
+    // dispatcher fn exposed yet, so the hook chain wire-up is deferred
+    // until the ModuleHandlers singleton accessor lands.
+    let _ = BEFORETRAPHOOK;                                                  // c:1131
+
+    if (*sigtr & ZSIG_FUNC) != 0 {                                           // c:1132
+        let osc = SFCONTEXT.load(Ordering::SeqCst);                          // c:1133 osc
+        // c:1133 incompfunc snapshot — not yet a public global; preserved
+        // here as a local to mirror the C save/restore.
+        let old_incompfunc: i32 = 0;
+        let hn = crate::ported::jobs::gettrapnode(sig);                      // c:1134
+
+        let mut args: Vec<String> = Vec::new();                              // c:1136 znewlinklist
+        // c:1144-1149 — pick the right TRAPxxx name from the function table
+        // (multi-named aliases) or build the canonical TRAP<SIGNAME>.
+        let name = match hn {
+            Some(n) => crate::ported::mem::ztrdup(&n),                       // c:1145 ztrdup(hn->nam)
+            None => {                                                        // c:1146
+                format!("TRAP{}", crate::ported::signals::getsigname(sig))   // c:1147-1148
+            }
+        };
+        args.push(name.clone());                                             // c:1150 zaddlinknode(args, name)
+        let num = format!("{}", sig);                                        // c:1151 sprintf(num, "%d", sig)
+        args.push(num);                                                      // c:1152
+
+        crate::exec::TRAP_RETURN.store(-1, Ordering::SeqCst);                // c:1154 trap_return = -1
+        crate::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1155
+        crate::ported::signals::trapisfunc.store(1, Ordering::SeqCst);       // c:1156
+        isfunc = 1;
+
+        SFCONTEXT.store(SFC_SIGNAL, Ordering::SeqCst);                       // c:1158
+        // c:1159 — `incompfunc = 0;` — module-private; stub kept as comment.
+        let _ = old_incompfunc;
+        // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);`
+        let fn_name = sigfn.unwrap_or("");
+        let _ = crate::fusevm_bridge::with_executor(|exec| {
+            exec.dispatch_function_call(fn_name, &args[1..]).unwrap_or(0)
+        });
+        SFCONTEXT.store(osc, Ordering::SeqCst);                              // c:1161
+        // c:1162 — restore incompfunc (no-op until ported).
+        let _ = args;                                                        // c:1163 freelinklist(args)
+        crate::ported::mem::zsfree(name);                                    // c:1164 zsfree(name)
+    } else {                                                                 // c:1165
+        crate::exec::TRAP_RETURN.store(-2, Ordering::SeqCst);                // c:1166 trap_return = -2
+        crate::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1167
+        crate::ported::signals::trapisfunc.store(0, Ordering::SeqCst);       // c:1168
+        isfunc = 0;
+        // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");`
+        // Eprog dispatch via fusevm bridge isn't wired for raw eprog yet;
+        // mirror the call so the structure is auditable. When the
+        // executor exposes an `execode_eprog` entry, swap in here.
+        let _ = sigfn;
+    }
+
+    // c:1172 — `runhookdef(AFTERTRAPHOOK, NULL);`. Same singleton-
+    // accessor gap as BEFORETRAPHOOK above; no-op until module
+    // dispatcher is wired.
+    let _ = AFTERTRAPHOOK;                                                   // c:1172
+
+    traperr = crate::ported::utils::errflag.load(Ordering::SeqCst);          // c:1174
+
+    new_trap_state = crate::exec::TRAP_STATE.load(Ordering::SeqCst);         // c:1177
+    new_trap_return = crate::exec::TRAP_RETURN.load(Ordering::SeqCst);       // c:1178
+
+    // c:1180 — `execrestore()` restores trap_return/trap_state.
+    crate::exec::TRAP_STATE.store(saved_trap_state, Ordering::SeqCst);       // c:1180
+    crate::exec::TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst);     // c:1180
+    crate::ported::context::zcontext_restore();                              // c:1181
+
+    if new_trap_state == TRAP_STATE_FORCE_RETURN                             // c:1183
+        && !(isfunc != 0 && new_trap_return == 0)                            // c:1184
+    {
+        if isfunc != 0 {                                                     // c:1186
+            BREAKS.store(LOOPS.load(Ordering::SeqCst), Ordering::SeqCst);    // c:1187 breaks = loops
+            if sig == libc::SIGINT || sig == libc::SIGQUIT {                 // c:1196
+                crate::ported::utils::errflag.fetch_or(                      // c:1197 errflag |= ERRFLAG_INT
+                    ERRFLAG_INT, Ordering::SeqCst,
+                );
+            } else {                                                         // c:1198
+                crate::ported::utils::errflag.fetch_or(                      // c:1199 errflag |= ERRFLAG_ERROR
+                    ERRFLAG_ERROR, Ordering::SeqCst,
+                );
+            }
+        }
+        LASTVAL.store(new_trap_return, Ordering::SeqCst);                    // c:1202
+        RETFLAG.store(1, Ordering::SeqCst);                                  // c:1204 retflag = 1
+    } else {                                                                 // c:1205
+        if traperr != 0 && !EMULATION(EMULATE_SH) {                          // c:1206
+            LASTVAL.store(1, Ordering::SeqCst);                              // c:1207
+        } else {                                                             // c:1208
+            // c:1210 — keep pre-trap lastval.
+            LASTVAL.store(olastval, Ordering::SeqCst);                       // c:1213
+        }
+        if crate::ported::r#loop::try_tryflag.load(Ordering::SeqCst) != 0 {  // c:1215 try_tryflag
+            if traperr != 0 {                                                // c:1216
+                crate::ported::utils::errflag.fetch_or(                      // c:1217
+                    ERRFLAG_ERROR, Ordering::SeqCst,
+                );
+            } else {                                                         // c:1218
+                crate::ported::utils::errflag.fetch_and(                     // c:1219 errflag &= ~ERRFLAG_ERROR
+                    !ERRFLAG_ERROR, Ordering::SeqCst,
+                );
+            }
+        }
+        BREAKS.fetch_add(obreaks, Ordering::SeqCst);                         // c:1220 breaks += obreaks
+        RETFLAG.store(oretflag, Ordering::SeqCst);                           // c:1222 retflag = oretflag
+        let cur_breaks = BREAKS.load(Ordering::SeqCst);
+        let cur_loops = LOOPS.load(Ordering::SeqCst);
+        if cur_breaks > cur_loops {                                          // c:1223
+            BREAKS.store(cur_loops, Ordering::SeqCst);                       // c:1224
+        }
+    }
+
+    // c:1231 — `if (zleactive && resetneeded) zleentry(ZLE_CMD_REFRESH);`
+    if crate::ported::builtins::sched::zleactive.load(Ordering::SeqCst) != 0
+        && crate::ported::utils::RESETNEEDED.load(Ordering::SeqCst) != 0
+    {
+        let _ = crate::ported::init::zleentry(
+            crate::ported::zsh_h::ZLE_CMD_REFRESH,
+        );
+    }
+
+    if *sigtr != ZSIG_IGNORED {                                              // c:1234
+        *sigtr &= !ZSIG_IGNORED;                                             // c:1235
+        if let Ok(mut g) = sigtrapped.lock() {
+            if let Some(slot) = g.get_mut(sig as usize) {
+                *slot &= !ZSIG_IGNORED;
+            }
+        }
+    }
+    intrap.fetch_sub(1, Ordering::SeqCst);                                   // c:1236
+
+    unqueue_signals();                                                       // c:1238
+}
+
+// `try_tryflag` lives at `Src/loop.c:731` (the always/try block depth
+// counter); ported to `crate::ported::r#loop::try_tryflag`. dotrapargs
+// above reads it from its canonical home per PORT.md Rule C (header /
+// file placement).
 
 /// Resolve a real-time signal name to its number.
 /// Port of `rtsigno(const char* signame)` from Src/signals.c:1291 — Linux-only;

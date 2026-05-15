@@ -1282,14 +1282,9 @@ pub fn getrestchar_keybuf() -> i32 {  // c:1504
     crate::ported::zle::zle_main::getrestchar(c)
 }
 
-/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)`
-/// from Src/Zle/zle_keymap.c:1581. Walks the keymap trie reading
-/// bytes through `getkeybuf` until a non-prefix Thingy resolves.
-/// The fully-featured Rust dispatch lives in `zle_main::get_key_cmd`
-/// (the byte-loop reader with CSI / multibyte / vi-oper handling);
-/// this wrapper is kept for C-ABI parity. Returns -1 (EOF) when no
-/// input substrate is attached, matching what `get_key_cmd` would
-/// itself return on EOF.
+/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from
+/// Src/Zle/zle_keymap.c:1581. Stub: keymap-trie walk lives at
+/// zle_main::get_key_cmd; full extraction pending.
 pub fn getkeymapcmd(_km: i32) -> i32 { // c:1581
     -1
 }

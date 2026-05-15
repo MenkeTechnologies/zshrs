@@ -729,16 +729,11 @@ pub fn inststrlen(                                                           // 
     len
 }
 
-/// Port of `doexpansion(char *s, int lst, int olst, int explincmd)` from Src/Zle/zle_tricky.c:2263.
+/// Port of `doexpansion(char *s, int lst, int olst, int explincmd)`
+/// from Src/Zle/zle_tricky.c:2263. Stub: live expand-or-complete
+/// routes through docomplete(COMP_EXPAND); Cmatch pipeline pending.
 /// WARNING: param names don't match C — Rust=() vs C=(s, lst, olst, explincmd)
 pub fn doexpansion() -> i32 {                                                // c:2263
-    // C body c:2265-2336 — invoked via docomplete(COMP_EXPAND); calls
-    //                      callcompfunc when bound, else falls through
-    //                      to the in-tree expansion driver (filename
-    //                      glob, history, brace, $... ). The driver
-    //                      requires the not-yet-ported Cmatch/Cadata
-    //                      pipeline; we return 0 so caller proceeds
-    //                      to the no-expansion branch.
     0
 }
 

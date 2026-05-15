@@ -1967,17 +1967,60 @@ pub fn fcedit(ename: &str, fn_: &str) -> i32 {                               // 
 /// C: `static Asgment getasg(char ***argvp, LinkList assigns)` —
 ///   parse one assignment-form arg (`name=value` / `name`) from
 ///   `*argvp`. Returns NULL when exhausted.
-/// WARNING: param names don't match C — Rust=(argvp) vs C=(argvp, assigns)
+/// ```c
+/// static Asgment
+/// getasg(char ***argvp, LinkList assigns)
+/// {
+///     char *s = **argvp;
+///     static struct asgment asg;
+///     if (!s) {
+///         if (assigns) {
+///             Asgment asgp = (Asgment)firstnode(assigns);
+///             if (!asgp) return NULL;
+///             (void)uremnode(assigns, &asgp->node);
+///             return asgp;
+///         }
+///         return NULL;
+///     }
+///     if (*s == '=') { zerr("bad assignment"); return NULL; }
+///     asg.name = s;
+///     asg.flags = 0;
+///     for (; *s && *s != '='; s++);
+///     if (*s) { *s = '\0'; asg.value.scalar = s + 1; }
+///     else asg.value.scalar = NULL;
+///     (*argvp)++;
+///     return &asg;
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(argvp, assigns) vs C=(argvp, assigns)
 pub fn getasg(argvp: &mut Vec<String>,                                       // c:1908
-              _assigns: &mut Vec<(String, String)>) -> Option<(String, String)> {
-    // c:1912-1955 — sanity check, split on '=', metafy/dupstring values.
-    if argvp.is_empty() {                                                    // c:1916
-        return None;
+              assigns: &mut Vec<(String, String)>) -> Option<(String, String)> {
+    // c:1914-1923 — out-of-args path: drain from assigns list if non-empty.
+    if argvp.is_empty() {                                                    // c:1914 !s
+        if !assigns.is_empty() {                                             // c:1915
+            return Some(assigns.remove(0));                                  // c:1916-1920 firstnode + uremnode
+        }
+        return None;                                                         // c:1922
     }
-    let s = argvp.remove(0);
-    match s.find('=') {                                                      // c:1936
-        Some(i) => Some((s[..i].to_string(), s[i+1..].to_string())),
-        None    => Some((s, String::new())),                                 // c:1961
+
+    let s = argvp.remove(0);                                                 // c:1944 (*argvp)++
+
+    // c:1926-1929 — empty-name guard: bare `=value` is an error.
+    if s.starts_with('=') {                                                  // c:1926
+        crate::ported::utils::zerr("bad assignment");                        // c:1927
+        return None;                                                         // c:1928
+    }
+
+    // c:1934-1943 — split on `=`. No `=` → name-only (scalar = NULL).
+    match s.find('=') {                                                      // c:1934
+        Some(i) => {
+            // c:1938-1939 — `*s = '\0'; asg.value.scalar = s + 1;`
+            Some((s[..i].to_string(), s[i + 1..].to_string()))               // c:1939
+        }
+        None => {
+            // c:1942 — `asg.value.scalar = NULL;` — name-only.
+            Some((s, String::new()))                                         // c:1942
+        }
     }
 }
 
@@ -2077,23 +2120,229 @@ pub fn typeset_setwidth(name: &str, pm: *mut crate::ported::zsh_h::param,    // 
 }
 
 /// Port of `typeset_single(char *cname, char *pname, Param pm, int func, int on, int off, int roff, Asgment asg, Param altpm, Options ops, int joinchar)` from Src/builtin.c:2025.
-/// C: `static Param typeset_single(char *cname, char *pname, Param pm,
-///     int func, int on, int off, int roff, Asgment asg, Param altpm,
-///     Options ops, int joinchar)` — apply attribute changes + assignment
-///     to one parameter; returns the (possibly recreated) Param.
-/// WARNING: param names don't match C — Rust=(_cname, _pname, _func, _on, _off, _roff, _asg, _altpm, _ops, _joinchar) vs C=(cname, pname, pm, func, on, off, roff, asg, altpm, ops, joinchar)
-pub fn typeset_single(_cname: &str, _pname: &str,                            // c:2025
-                      _pm: *mut crate::ported::zsh_h::param,
-                      _func: i32, _on: i32, _off: i32, _roff: i32,
-                      _asg: *mut crate::ported::zsh_h::asgment,
-                      _altpm: *mut crate::ported::zsh_h::param,
-                      _ops: &crate::ported::zsh_h::options,
+/// Port of `static Param typeset_single(char *cname, char *pname,
+/// Param pm, int func, int on, int off, int roff, Asgment asg,
+/// Param altpm, Options ops, int joinchar)` from `Src/builtin.c:2025`.
+/// Per-name attribute resolver + assignment dispatcher invoked once
+/// per arg from `bin_typeset`.
+#[allow(clippy::too_many_arguments)]
+pub fn typeset_single(cname: &str, pname: &str,                              // c:2025
+                      pm: *mut crate::ported::zsh_h::param,
+                      func: i32, mut on: i32, mut off: i32, _roff: i32,
+                      asg: *mut crate::ported::zsh_h::asgment,
+                      altpm: *mut crate::ported::zsh_h::param,
+                      ops: &crate::ported::zsh_h::options,
                       _joinchar: i32)
                       -> *mut crate::ported::zsh_h::param {
-    // c:2030-3160 — full typeset attribute resolver: scope, locallevel,
-    // newspecial dispatch, then assign. Static-link path defers to
-    // src/ported/params.rs typed setters.
-    std::ptr::null_mut()
+    use crate::ported::zsh_h::{
+        ASG_ARRAYP, ASG_VALUEP, OPT_ISSET, OPT_MINUS, OPT_PLUS,
+        PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HASHED,
+        PM_HIDE, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_TYPE, PM_UNSET,
+        POSIXBUILTINS, isset,
+    };
+
+    let mut usepm: i32;                                                      // c:2029
+    let mut tc: i32 = 0;                                                     // c:2029
+    let _keeplocal: i32 = 0;                                                 // c:2029
+    let mut newspecial: i32 = 0; /* NS_NONE */                               // c:2029
+    let _readonly: i32 = 0;                                                  // c:2029
+    let _dont_set: i32 = 0;                                                  // c:2029
+    let mut pname_owned: String = pname.to_string();                         // c:2030 subscript path
+
+    // c:2032-2050 — nameref resolution.
+    let pm_ref = unsafe { pm.as_mut() };
+    if let Some(pm_r) = &pm_ref {
+        let pm_flags = pm_r.node.flags as u32;
+        let locallevel_v = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+        if (pm_flags & PM_NAMEREF) != 0
+            && ((off | on) as u32 & PM_NAMEREF) == 0
+            && (pm_r.level == locallevel_v || (on as u32 & PM_LOCAL) == 0)
+        {
+            // c:2034 — pm = resolve_nameref(pm)
+            //          pname = pm->node.nam (when resolved)
+            // resolve_nameref not yet ported; skip the rewrite.
+            let unresolved_flags = pm_r.node.flags as u32;
+            let extra_on_mask = !(PM_NAMEREF | PM_LOCAL | PM_READONLY) as i32;
+            if (pm_flags & PM_NAMEREF) != 0
+                && ((unresolved_flags & PM_UNSET) == 0
+                    || (unresolved_flags & PM_DECLARED) != 0)
+                && (on & extra_on_mask) != 0
+            {
+                // c:2042-2048 — error: can't change type of a nameref.
+                if pm_r.width != 0 {                                         // c:2041
+                    crate::ported::utils::zwarnnam(cname,                    // c:2042
+                        &format!("{}: can't change type via subscript reference", pname));
+                } else {
+                    crate::ported::utils::zwarnnam(cname,                    // c:2046
+                        &format!("{}: can't change type of a named reference", pname));
+                }
+                return std::ptr::null_mut();                                 // c:2048
+            }
+        }
+    }
+
+    // c:2062-2064 — `usepm = pm && (!(pm_flags & PM_UNSET) || OPT_ISSET(ops,'p') || ...)`
+    let pm_flags = pm_ref.as_ref().map(|p| p.node.flags as u32).unwrap_or(0);
+    usepm = if pm_ref.is_some()
+        && ((pm_flags & PM_UNSET) == 0
+            || OPT_ISSET(ops, b'p')
+            || (isset(POSIXBUILTINS)
+                && (pm_flags & (PM_READONLY | PM_EXPORTED)) != 0))
+    {
+        1
+    } else {
+        0
+    };
+
+    // c:2070-2071 — preserve PM_UNSET for special params.
+    if usepm == 0 && pm_ref.is_some() && (pm_flags & crate::ported::zsh_h::PM_SPECIAL) != 0 {
+        usepm = 2;                                                           // c:2071
+    }
+
+    // c:2078-2091 — don't reuse if local-level changed and PM_LOCAL set.
+    let pm_level = pm_ref.as_ref().map(|p| p.level).unwrap_or(0);
+    let locallevel_v = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    if usepm != 0 && locallevel_v != pm_level && (on as u32 & PM_LOCAL) != 0 {  // c:2078
+        if (pm_flags & crate::ported::zsh_h::PM_SPECIAL) != 0                // c:2087
+            && (on as u32 & PM_HIDE) == 0
+            && (pm_flags & PM_HIDE & !off as u32) == 0
+        {
+            newspecial = 1; /* NS_NORMAL */                                  // c:2089
+        }
+        usepm = 0;                                                           // c:2090
+    }
+
+    // c:2093-2116 — type-conversion / tied-colonarray detection.
+    let asg_ref = unsafe { asg.as_ref() };
+    tc = 0;
+    if let Some(a) = asg_ref {
+        if ASG_ARRAYP(a) && PM_TYPE(on as u32) == crate::ported::zsh_h::PM_SCALAR
+            && !(usepm != 0 && (PM_TYPE(pm_flags) & (PM_ARRAY | PM_HASHED)) != 0)
+        {
+            on |= PM_ARRAY as i32;                                           // c:2097
+        }
+        if usepm != 0 && ASG_ARRAYP(a) && newspecial == 0                    // c:2098
+            && PM_TYPE(pm_flags) != PM_ARRAY
+            && PM_TYPE(pm_flags) != PM_HASHED
+        {
+            if (on as u32 & (crate::ported::zsh_h::PM_EFLOAT
+                | crate::ported::zsh_h::PM_FFLOAT
+                | crate::ported::zsh_h::PM_INTEGER)) != 0
+            {
+                crate::ported::utils::zerrnam(cname,                         // c:2102
+                    &format!("{}: can't assign array value to non-array", pname));
+                return std::ptr::null_mut();
+            }
+            if (pm_flags & crate::ported::zsh_h::PM_SPECIAL) != 0 {          // c:2105
+                crate::ported::utils::zerrnam(cname,                         // c:2106
+                    &format!("{}: can't assign array value to non-array special", pname));
+                return std::ptr::null_mut();
+            }
+            tc = 1;                                                          // c:2109
+            usepm = if OPT_MINUS(ops, b'p') {                                // c:2110
+                (on as u32 & pm_flags) as i32
+            } else if OPT_PLUS(ops, b'p') {                                  // c:2112
+                (off as u32 & pm_flags) as i32
+            } else {
+                0                                                            // c:2115
+            };
+        }
+    }
+
+    // c:2117-2199 — attribute-mask compatibility checks (chflags compute).
+    if usepm != 0 || newspecial != 0 {
+        let chflags = ((off as u32 & pm_flags) | (on as u32 & !pm_flags))    // c:2118
+            & (crate::ported::zsh_h::PM_INTEGER
+               | crate::ported::zsh_h::PM_EFLOAT
+               | crate::ported::zsh_h::PM_FFLOAT
+               | PM_HASHED | PM_ARRAY | PM_TIED | PM_AUTOLOAD);
+        if chflags != 0
+            && chflags != (crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT)
+        {
+            tc = 1;                                                          // c:2122
+            if OPT_MINUS(ops, b'p') {                                        // c:2123
+                usepm = (on as u32 & pm_flags) as i32;
+            } else if OPT_PLUS(ops, b'p') {
+                usepm = (off as u32 & pm_flags) as i32;
+            }
+        }
+    }
+
+    // c:2202-2214 — readonly/exported preservation rules.
+    if usepm != 0 || newspecial != 0 {
+        if (on as u32 & (PM_READONLY | PM_EXPORTED)) != 0                    // c:2202
+            && (usepm == 0 || (pm_flags & PM_UNSET) != 0)
+            && asg_ref.is_some_and(|a| !ASG_VALUEP(a))
+        {
+            on |= PM_UNSET as i32;                                           // c:2205
+        } else if usepm != 0 && (pm_flags & PM_READONLY) != 0                // c:2206
+            && (on as u32 & PM_READONLY) == 0
+            && func != BIN_EXPORT
+        {
+            crate::ported::utils::zerr(&format!(                             // c:2208
+                "read-only variable: {}", pm_ref.as_ref().unwrap().node.nam));
+            return std::ptr::null_mut();
+        }
+    }
+
+    // c:2226-2248 — reuse-existing-param fast paths.
+    if usepm != 0 {
+        let pm_r = pm_ref.as_ref().unwrap();
+        if OPT_MINUS(ops, b'p') && on != 0
+            && !((on as u32 & pm_flags) != 0
+                || ((on as u32 & PM_LOCAL) != 0 && pm_r.level != 0))
+        {
+            return std::ptr::null_mut();                                     // c:2229
+        }
+        if OPT_PLUS(ops, b'p') && off != 0 && (off as u32 & pm_flags) == 0 {
+            return std::ptr::null_mut();                                     // c:2231
+        }
+        // c:2232-2238 — array/scalar consistency check
+        if let Some(a) = asg_ref {
+            let array_assign = (a.flags & crate::ported::zsh_h::ASG_ARRAY) != 0;
+            let pm_is_arr = (PM_TYPE(pm_flags) & (PM_ARRAY | PM_HASHED)) != 0;
+            if array_assign && !pm_is_arr {                                  // c:2232
+                crate::ported::utils::zerrnam(cname,                         // c:2236
+                    &format!("{}: inconsistent type for assignment", pname));
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
+    // c:2240-2247 — print-only path: typeset -p / typeset name (no value).
+    if usepm != 0 && on == 0 && asg_ref.is_some_and(|a| !ASG_VALUEP(a)) {
+        // Live printnode dispatch would land here; deferred until
+        // paramtab.printnode is exposed as a free fn.
+        return pm;
+    }
+
+    // c:2355-2378 — tc (type-conversion) branch: recreate the param.
+    if tc != 0 && !OPT_ISSET(ops, b'p') {
+        on |= (!off as u32 & (PM_READONLY | PM_EXPORTED) & pm_flags) as i32; // c:2357
+        if let Some(pm_r) = pm_ref {
+            pm_r.node.flags &= !(PM_READONLY as i32);                        // c:2359
+        }
+        // c:2364 — keeplocal = pm->level (used by createparam path)
+        // c:2372-2375 — carry scalar value across type change.
+        // c:2378 — unsetparam_pm(pm, 0, 1)
+        if let Some(pm_r) = unsafe { pm.as_mut() } {
+            crate::ported::params::unsetparam_pm(pm_r, 0, 1);
+        }
+        pname_owned = pname.to_string();                                     // c:2377
+    }
+
+    // c:2381-2467 — newspecial path: preserve special-param struct.
+    // c:2469-2510 — createparam + assignment dispatch for new/converted.
+    // c:2512-2453 — apply value via assignsparam/setaparam/sethparam.
+    // These call into a 2-level helper chain (typeset_setwidth,
+    // typeset_setbase, assignsparam, etc.) — the available Rust
+    // ports drive single-attribute setters. The dispatcher entry
+    // (bin_typeset at c:2655) walks the option matrix and invokes
+    // those setters directly today.
+    let _ = (altpm, pname_owned, _keeplocal, _dont_set, _readonly);
+
+    // c:2547 — `return pm;`
+    pm
 }
 
 /// Port of `bin_typeset(char *name, char **argv, LinkList assigns, Options ops, int func)` from Src/builtin.c:2655.
@@ -2578,17 +2827,12 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
             && dir_path.is_some()
         {
             // c:3220-3228 — dircache_set + relative-path absolutize.
-            if let Some(old) = shf_mut.filename.take() {
-                crate::ported::hashtable::dircache_set(&old, None);          // c:3220
-            }
-            let mut dp = dir_path.unwrap();
-            if !dp.starts_with('/') {                                        // c:3222
-                if let Some(cwd) = crate::ported::utils::zgetcwd() {
-                    dp = format!("{}/{}", cwd, dp);                          // c:3223-3224
-                }
-            }
-            crate::ported::hashtable::dircache_set(&dp, Some(&dp));          // c:3228
-            shf_mut.filename = Some(dp);
+            let mut old_slot = shf_mut.filename.take();
+            crate::ported::hashtable::dircache_set(&mut old_slot, None);     // c:3220
+            let dp = dir_path.unwrap();
+            let mut new_slot: Option<String> = None;
+            crate::ported::hashtable::dircache_set(&mut new_slot, Some(&dp));// c:3228
+            shf_mut.filename = new_slot;
             shf_mut.node.flags |= PM_LOADDIR as i32;                         // c:3229
             return 0;                                                        // c:3230
         }
@@ -2671,11 +2915,11 @@ pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // 
              funcname[nam_idx + 1..].to_string())
         };
         // c:3296 — `dircache_set(&shf->filename, NULL); dircache_set(..., dir);`
-        if let Some(old) = shf_ref.filename.take() {
-            crate::ported::hashtable::dircache_set(&old, None);              // c:3296
-        }
-        crate::ported::hashtable::dircache_set(&dir, Some(&dir));            // c:3297
-        shf_ref.filename = Some(dir);
+        let mut old_slot = shf_ref.filename.take();
+        crate::ported::hashtable::dircache_set(&mut old_slot, None);         // c:3296
+        let mut new_slot: Option<String> = None;
+        crate::ported::hashtable::dircache_set(&mut new_slot, Some(&dir));   // c:3297
+        shf_ref.filename = new_slot;
         // c:3298-3299 — `shf->node.flags |= PM_LOADDIR | PM_ABSPATH_USED;`
         shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32;         // c:3298
         // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);`
@@ -2717,12 +2961,12 @@ pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // 
                             let buf_c = std::ffi::CString::new(buf.clone()).ok();
                             if let Some(bc) = buf_c {
                                 if unsafe { libc::access(bc.as_ptr(), libc::R_OK) } == 0 { // c:3324
-                                    if let Some(old) = shf_ref.filename.take() {
-                                        crate::ported::hashtable::dircache_set(&old, None); // c:3325
-                                    }
+                                    let mut old_slot = shf_ref.filename.take();
+                                    crate::ported::hashtable::dircache_set(&mut old_slot, None); // c:3325
                                     let dir2c = dir2.clone();
-                                    crate::ported::hashtable::dircache_set(&dir2c, Some(&dir2c)); // c:3326
-                                    shf_ref.filename = Some(dir2c);
+                                    let mut new_slot: Option<String> = None;
+                                    crate::ported::hashtable::dircache_set(&mut new_slot, Some(&dir2c)); // c:3326
+                                    shf_ref.filename = new_slot;
                                     shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32; // c:3327
                                 }
                             }
@@ -3131,12 +3375,11 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             if !argv.is_empty() {                                            // c:3648
                 if !shf_ptr.is_null() {
                     let shf_mut = unsafe { &mut *shf_ptr };
-                    if let Some(old) = shf_mut.filename.take() {
-                        crate::ported::hashtable::dircache_set(&old, None);  // c:3649
-                    }
-                    crate::ported::hashtable::dircache_set(&argv[0],
-                        Some(&argv[0]));                                     // c:3650
-                    shf_mut.filename = Some(argv[0].clone());
+                    let mut old_slot = shf_mut.filename.take();
+                    crate::ported::hashtable::dircache_set(&mut old_slot, None);  // c:3649
+                    let mut new_slot: Option<String> = None;
+                    crate::ported::hashtable::dircache_set(&mut new_slot, Some(&argv[0])); // c:3650
+                    shf_mut.filename = new_slot;
                     on |= PM_UNDEFINED >> 9 << 9; // placeholder for PM_LOADDIR bit set
                 }
             }
@@ -3284,11 +3527,11 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                             } else {
                                 fname[..fname.len() - base.len() - 1].to_string() // c:3749-3751
                             };
-                            if let Some(old) = bs.filename.take() {
-                                crate::ported::hashtable::dircache_set(&old, None); // c:3753
-                            }
-                            crate::ported::hashtable::dircache_set(&dir, Some(&dir)); // c:3754
-                            bs.filename = Some(dir);
+                            let mut old_slot = bs.filename.take();
+                            crate::ported::hashtable::dircache_set(&mut old_slot, None); // c:3753
+                            let mut new_slot: Option<String> = None;
+                            crate::ported::hashtable::dircache_set(&mut new_slot, Some(&dir)); // c:3754
+                            bs.filename = new_slot;
                         }
                         if check_autoload(base_ptr, &bs.node.nam, ops, _func) != 0 { // c:3756
                             returnval = 1;
@@ -6342,12 +6585,14 @@ fn getsigidx(name: &str) -> i32 {
     }
 }
 
-// `pat_enables` from Src/options.c — toggle disable-pattern list. Static-
-// link path: store/clear in a Mutex<Vec<String>> for future pattern-disable
-// scan. Argv-empty + -L lists current patterns.
-fn pat_enables(_name: &str, argv: &[String], _on: bool) -> i32 {
-    let _ = argv;
-    0
+/// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
+/// from `Src/pattern.c:4171`. Local builtin.rs shim that delegates to
+/// the canonical pattern.rs port. Static-link path: the actual
+/// zpc_strings/zpc_disables manipulation lives in
+/// `crate::ported::pattern::pat_enables`.
+fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {               // c:4171
+    let patp: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    crate::ported::pattern::pat_enables(name, &patp, on)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
