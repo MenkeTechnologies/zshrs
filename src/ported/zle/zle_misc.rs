@@ -1296,13 +1296,12 @@ pub fn copyprevshellword() -> i32 {                             // c:1108
 /// raising both `ERRFLAG_ERROR` and `ERRFLAG_INT` on the global
 /// `errflag`, so `zleread` returns -1 to its caller.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
+/// C body (2 lines):
+///   `errflag |= ERRFLAG_ERROR|ERRFLAG_INT;
+///    return 1;`
 pub fn sendbreak() -> i32 {                                                  // c:1144
-    // c:1144 — `errflag |= ERRFLAG_ERROR | ERRFLAG_INT`.
-    crate::ported::utils::errflag.fetch_or(
-        crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    1                                                                        // c:1147 return 1
+    crate::ported::utils::errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT, std::sync::atomic::Ordering::Relaxed); // c:1146
+    1                                                                        // c:1147
 }
 
 /// Port of `quoteregion(UNUSED(char **args))` from Src/Zle/zle_misc.c:1152.

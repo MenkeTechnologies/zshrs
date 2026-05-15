@@ -438,13 +438,10 @@ pub fn prompttrunc(arg: i32, truncchar: i32, doprint: i32, endchar: i32) -> i32 
 /// Push a parser context token. Port of `cmdpush()` from
 /// Src/prompt.c. Bounded at CMDSTACKSZ; over-push is silently
 /// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
-pub fn cmdpush(cmdtok: u8) {
-    CMDSTACK.with(|s| {
-        let mut stack = s.borrow_mut();
-        if stack.len() < CMDSTACKSZ {
-            stack.push(cmdtok);
-        }
-    });
+/// C body (2 lines):
+///   `if (cmdsp >= 0 && cmdsp < CMDSTACKSZ) cmdstack[cmdsp++] = cmdtok;`
+pub fn cmdpush(cmdtok: u8) {                                                 // c:1624
+    CMDSTACK.with(|s| { let mut st = s.borrow_mut(); if st.len() < CMDSTACKSZ { st.push(cmdtok); } });
 }
 
 /// Pop the top parser context token. Port of `cmdpop()` from
