@@ -1483,30 +1483,17 @@ static ORDEROPTS: &[OrderOpt] = &[                                           // 
 /// to `unambig_data` which computes the LCP.
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
-    use crate::ported::zle::comp_h::CMF_HIDE;
+    use crate::ported::zle::{compcore, compresult, comp_h::CMF_HIDE};
     // c:1431 — `unambig_data(NULL, NULL, NULL); return scache`.
-    // Real path: walk `ainfo->line` (c:535) via cline_str.
-    let ainfo_line = crate::ported::zle::compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
-    if let Some(line) = ainfo_line {
-        let s = crate::ported::zle::compresult::cline_str(Some(line.as_ref()));
-        if !s.is_empty() { return s; }
-    }
-    // Fallback LCP — when ainfo->line isn't populated.
-    let groups = crate::ported::zle::compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
-    let mut strs: Vec<String> = Vec::new();
-    for g in &groups {
-        for m in &g.matches {
-            if (m.flags & CMF_HIDE) != 0 { continue; }
-            if let Some(s) = m.str.as_deref() {
-                strs.push(s.to_string());
-            }
-        }
-    }
-    crate::ported::zle::compresult::unambig_data(&strs)
+    if let Some(s) = compcore::ainfo.get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
+        .map(|l| compresult::cline_str(Some(l.as_ref())))
+        .filter(|s| !s.is_empty()) { return s; }
+    let strs: Vec<String> = compcore::amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.iter().flat_map(|gr| gr.matches.iter())
+            .filter(|m| (m.flags & CMF_HIDE) == 0)
+            .filter_map(|m| m.str.clone()).collect()).unwrap_or_default();
+    compresult::unambig_data(&strs)
 }
 
 /// Direct port of `zlong get_unambig_curs(UNUSED(Param pm))` from
@@ -1599,41 +1586,18 @@ const COMPKPARAMS: &[compparam] = &[
 /// live `amatches` strings.
 #[allow(unused_variables)]
 pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
-    use crate::ported::zle::comp_h::CMF_HIDE;
-    // Real path: ainfo->line via cline_str produces the unambig
-    // string; we report its length as the position of divergence.
-    let ainfo_line = crate::ported::zle::compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
-    if let Some(line) = ainfo_line {
-        let s = crate::ported::zle::compresult::cline_str(Some(line.as_ref()));
-        if !s.is_empty() {
-            return format!("{}", s.chars().count());
-        }
-    }
-    // Fallback LCP-derived position.
-    let groups = crate::ported::zle::compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
-    let mut strs: Vec<String> = Vec::new();
-    for g in &groups {
-        for m in &g.matches {
-            if (m.flags & CMF_HIDE) != 0 { continue; }
-            if let Some(s) = m.str.as_deref() {
-                strs.push(s.to_string());
-            }
-        }
-    }
-    if strs.len() < 2 {
-        return String::new();
-    }
-    let lcp = crate::ported::zle::compresult::unambig_data(&strs);
-    let any_longer = strs.iter().any(|s| s.chars().count() > lcp.chars().count());
-    if any_longer {
-        format!("{}", lcp.chars().count())
-    } else {
-        String::new()
-    }
+    use crate::ported::zle::{compcore, compresult, comp_h::CMF_HIDE};
+    if let Some(s) = compcore::ainfo.get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
+        .map(|l| compresult::cline_str(Some(l.as_ref())))
+        .filter(|s| !s.is_empty()) { return format!("{}", s.chars().count()); }
+    let strs: Vec<String> = compcore::amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.iter().flat_map(|gr| gr.matches.iter())
+            .filter(|m| (m.flags & CMF_HIDE) == 0)
+            .filter_map(|m| m.str.clone()).collect()).unwrap_or_default();
+    if strs.len() < 2 { return String::new(); }
+    let lcp_len = compresult::unambig_data(&strs).chars().count();
+    if strs.iter().any(|s| s.chars().count() > lcp_len) { format!("{}", lcp_len) } else { String::new() }
 }
 
 /// Direct port of `char *get_insert_pos(UNUSED(Param pm))` from
