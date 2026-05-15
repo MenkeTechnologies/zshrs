@@ -329,12 +329,7 @@ pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { 
 /// C body: `hn->flags |= DISABLED;`. Generic helper that flips
 /// the DISABLED bit on the named entry via [`HashNodeFlags`].
 pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    if let Some(node) = hn.get_mut(flags) {
-        node.set_disabled(true);
-        true
-    } else {
-        false
-    }
+    hn.get_mut(flags).map(|node| { node.set_disabled(true); true }).unwrap_or(false)   // c:323
 }
 
 impl shfunc_table {
@@ -435,12 +430,7 @@ pub use crate::ported::zsh_h::reswd as Reswd;                                // 
 ///
 /// C body: `hn->flags &= ~DISABLED;`. Inverse of [`disablehashnode`].
 pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    if let Some(node) = hn.get_mut(flags) {
-        node.set_disabled(false);
-        true
-    } else {
-        false
-    }
+    hn.get_mut(flags).map(|node| { node.set_disabled(false); true }).unwrap_or(false)  // c:332
 }
 
 impl reswd_table {
