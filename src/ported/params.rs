@@ -5202,13 +5202,12 @@ pub const TERM_UNKNOWN: i32 = 1 << 0;
 
 /// Port of `uidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4698`. C body:
 /// `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`
+/// C body (2 lines):
+///   `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn uidsetfn(x: i64) {
-    if unsafe { libc::setuid(x as libc::uid_t) } != 0 {
-        zerr(&format!(
-            "failed to change user ID: {}",
-            std::io::Error::last_os_error()
-        ));
+pub fn uidsetfn(x: i64) {                                                    // c:4698
+    if unsafe { libc::setuid(x as libc::uid_t) } != 0 {                      // c:4701
+        zerr(&format!("failed to change user ID: {}", std::io::Error::last_os_error())); // c:4702
     }
 }
 
@@ -5222,12 +5221,9 @@ pub fn euidgetfn() -> i64 {
 /// Port of `euidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4719`. C body:
 /// `if (seteuid((uid_t)x)) zerr("failed to change effective user ID: %e", errno);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn euidsetfn(x: i64) {
-    if unsafe { libc::seteuid(x as libc::uid_t) } != 0 {
-        zerr(&format!(
-            "failed to change effective user ID: {}",
-            std::io::Error::last_os_error()
-        ));
+pub fn euidsetfn(x: i64) {                                                   // c:4719
+    if unsafe { libc::seteuid(x as libc::uid_t) } != 0 {                     // c:4722
+        zerr(&format!("failed to change effective user ID: {}", std::io::Error::last_os_error())); // c:4723
     }
 }
 
@@ -5240,12 +5236,9 @@ pub fn gidgetfn() -> i64 {
 /// Port of `gidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4740`. C body:
 /// `if (setgid((gid_t)x)) zerr("failed to change group ID: %e", errno);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn gidsetfn(x: i64) {
-    if unsafe { libc::setgid(x as libc::gid_t) } != 0 {
-        zerr(&format!(
-            "failed to change group ID: {}",
-            std::io::Error::last_os_error()
-        ));
+pub fn gidsetfn(x: i64) {                                                    // c:4740
+    if unsafe { libc::setgid(x as libc::gid_t) } != 0 {                      // c:4743
+        zerr(&format!("failed to change group ID: {}", std::io::Error::last_os_error())); // c:4744
     }
 }
 
@@ -5258,12 +5251,9 @@ pub fn egidgetfn() -> i64 {
 /// Port of `egidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4761`. C body:
 /// `if (setegid((gid_t)x)) zerr("failed to change effective group ID: %e", errno);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn egidsetfn(x: i64) {
-    if unsafe { libc::setegid(x as libc::gid_t) } != 0 {
-        zerr(&format!(
-            "failed to change effective group ID: {}",
-            std::io::Error::last_os_error()
-        ));
+pub fn egidsetfn(x: i64) {                                                   // c:4761
+    if unsafe { libc::setegid(x as libc::gid_t) } != 0 {                     // c:4764
+        zerr(&format!("failed to change effective group ID: {}", std::io::Error::last_os_error())); // c:4765
     }
 }
 
