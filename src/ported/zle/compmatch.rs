@@ -179,55 +179,25 @@ pub fn cmatchers_same(                                                       // 
 /// `bmatchers` Cmlist. Original chain head is appended after the new
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
 pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // c:101
-    use crate::ported::zle::comp_h::{Cmatcher, Cmlist, CMF_RIGHT};
-
-    let old = {                                                              // c:104 Cmlist old = bmatchers
-        let cell = crate::ported::zle::compcore::bmatchers
-            .get_or_init(|| std::sync::Mutex::new(None));
-        cell.lock().ok().and_then(|mut g| g.take())
-    };
-
-    let mut head: Option<Box<Cmlist>> = None;                                // c:104 *q = &bmatchers
-    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
-    let mut cur = m;
-    while let Some(mat) = cur {                                              // c:106 for (; m; m = m->next)
+    use crate::ported::zle::comp_h::{Cmlist, CMF_RIGHT};
+    let cell = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None));
+    let old = cell.lock().ok().and_then(|mut g| g.take());                   // c:104 Cmlist old = bmatchers
+    // c:105-113 — qualify each m; prepend matches in C order (reversed
+    // iter so the final list is `[new_entries..., old]` per c:114 *q=old).
+    let mut head = old;
+    for mat in std::iter::successors(m, |p| p.next.as_deref())
+        .collect::<Vec<_>>().into_iter().rev()                               // c:105 walk m
+    {
         let qual = (mat.flags == 0 && mat.wlen > 0 && mat.llen > 0)          // c:107-108
                 || (mat.flags == CMF_RIGHT && mat.wlen < 0 && mat.llen == 0);
-        if qual {
-            // c:109 — n = zhalloc(sizeof(struct cmlist))
-            let n = Box::new(Cmlist {
-                next: None,
-                matcher: Box::new(Cmatcher {
-                    refc:  mat.refc,
-                    next:  mat.next.clone(),
-                    flags: mat.flags,
-                    line:  mat.line.clone(),
-                    llen:  mat.llen,
-                    word:  mat.word.clone(),
-                    wlen:  mat.wlen,
-                    left:  mat.left.clone(),
-                    lalen: mat.lalen,
-                    right: mat.right.clone(),
-                    ralen: mat.ralen,
-                }),
-                str: String::new(),
-            });
-            unsafe {
-                *tail_ref = Some(n);
-                if let Some(ref mut newnode) = *tail_ref {
-                    tail_ref = &mut newnode.next as *mut _;                  // c:112 q = &(n->next)
-                }
-            }
+        if qual {                                                            // c:109-112
+            head = Some(Box::new(Cmlist {
+                next: head, matcher: Box::new(mat.clone()), str: String::new(),
+            }));
         }
-        cur = mat.next.as_deref();                                           // c:106 m = m->next
     }
-    // c:114 — `*q = old;` (append old chain after new entries)
-    unsafe { *tail_ref = old; }
-    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
-        .get_or_init(|| std::sync::Mutex::new(None)).lock()
-    {
-        *g = head;
-    }
+    if let Ok(mut g) = cell.lock() { *g = head; }
 }
 
 /// Port of `Cline get_cline(char *l, int ll, char *w, int wl, char *o,
