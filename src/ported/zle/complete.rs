@@ -1408,17 +1408,10 @@ pub fn get_nmatches(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c
 /// COMPLISTLINES atomic when listdat isn't initialized.
 #[allow(unused_variables)]
 pub fn get_listlines(pm: *mut crate::ported::zsh_h::param) -> i64 {         // c:1408
-    // c:1410 — `return list_lines();`. Drive calclist so listdat
-    //          reflects the current match set.
-    let _ = crate::ported::zle::compresult::calclist(0);
-    let listdat = crate::ported::zle::compcore::listdat
-        .get()
-        .and_then(|m| m.lock().ok().map(|g| g.clone()));
-    if let Some(ld) = listdat {
-        return ld.nlines as i64;
-    }
-    // Pre-init fallback — atomic mirror set by other listdat writes.
-    COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed)
+    let _ = crate::ported::zle::compresult::calclist(0);                     // c:1410 list_lines
+    crate::ported::zle::compcore::listdat.get()
+        .and_then(|m| m.lock().ok().map(|g| g.nlines as i64))
+        .unwrap_or_else(|| COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Direct port of `set_complist(UNUSED(Param pm), char *v)` from `Src/Zle/complete.c:1415`.

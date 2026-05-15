@@ -1358,15 +1358,9 @@ pub fn zcurses_attrgetfn() -> Vec<String> {                                  // 
 /// Static-link path: walk the canonical KEY_* set the Rust port
 /// already enumerates via keypad_name.
 pub fn zcurses_keycodesgetfn() -> Vec<String> {                              // c:1661
-    let mut out = Vec::new();
-    for code in [KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
-                 KEY_DC, KEY_IC, KEY_NPAGE, KEY_PPAGE] {
-        if let Some(n) = keypad_name(code) { out.push(n); }
-    }
-    for f in 1..=64 {                                                        // F-keys
-        if let Some(n) = keypad_name(KEY_F0 + f) { out.push(n); }
-    }
-    out
+    [KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_DC, KEY_IC, KEY_NPAGE, KEY_PPAGE].into_iter()
+        .chain((1..=64).map(|f| KEY_F0 + f))                                 // F-keys
+        .filter_map(keypad_name).collect()
 }
 
 /// Direct port of `zcurses_windowsgetfn()` from `Src/Modules/

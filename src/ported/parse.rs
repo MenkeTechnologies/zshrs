@@ -3511,14 +3511,9 @@ pub fn check_dump_file(
 /// funcdump values inside a `Mutex<Vec<...>>`; same observable
 /// effect (the count of the matching entry increments).
 pub fn incrdumpcount(f: &crate::ported::zsh_h::funcdump) {
-    // c:3970
-    let key = f.filename.as_deref();
-    let mut g = DUMPS.lock().unwrap();
-    for d in g.iter_mut() {
-        if d.filename.as_deref() == key {
-            d.count += 1; // c:3973
-            return;
-        }
+    // c:3970 — `f->count++;`
+    if let Some(d) = DUMPS.lock().unwrap().iter_mut().find(|d| d.filename.as_deref() == f.filename.as_deref()) {
+        d.count += 1; // c:3973
     }
 }
 
