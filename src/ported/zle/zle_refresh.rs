@@ -72,23 +72,19 @@ impl TextAttr {
 /// ```
 /// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
 /// `dst`. The terminator is INCLUDED in the copy.
+/// C body (Src/Zle/zle_refresh.c:95) is a single while-loop:
+///     `while ((*dst++ = *src++).chr != ZWC('\\0'));`
+/// Rust uses a take-up-to-NUL iterator chain to express the same
+/// pointer-walking copy as a single statement.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
 pub fn ZR_strcpy(                                                            // c:95
     dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
     src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 ) {
-    let mut i = 0;
-    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
-        if i >= dst.len() || i >= src.len() {
-            break;
-        }
-        dst[i] = src[i];
-        if src[i].chr == '\0' {
-            break;
-        }
-        i += 1;
-    }
+    let n = src.iter().take_while(|e| e.chr != '\0').count() + 1;            // c:97 incl trailing NUL
+    let n = n.min(src.len()).min(dst.len());
+    dst[..n].copy_from_slice(&src[..n]);
 }
 
 impl RefreshElement {
