@@ -524,3 +524,29 @@ fn module_features() -> &'static Mutex<features_t> {
         n_abstract: 0,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// c:135 — `getterminfo` for an unknown capability name must
+    /// return None regardless of `$TERM`. Catches a regression where
+    /// libc::tigetstr's `(unsigned char*)-1` sentinel (returned when
+    /// the cap is unknown) leaks through as a valid pointer.
+    #[test]
+    fn getterminfo_unknown_cap_returns_none() {
+        assert!(getterminfo("definitely_not_a_real_cap_name_zshrs").is_none());
+    }
+
+    /// c:64 — `echoti` without a cap-name argument must error. The
+    /// cap-name is the first positional; missing args means no work to
+    /// do, and silent success would mask a usage bug.
+    #[test]
+    fn echoti_with_no_args_is_usage_error() {
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        assert_eq!(bin_echoti("echoti", &[], &ops, 0), 1);
+    }
+}

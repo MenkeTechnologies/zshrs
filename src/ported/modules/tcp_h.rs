@@ -126,3 +126,17 @@ pub const INET_ADDRSTRLEN:  usize = 16;                                   // c:9
 /// "46" matches the C source's fallback, equal to `libc::INET6_ADDRSTRLEN`
 /// on every supported platform.
 pub const INET6_ADDRSTRLEN: usize = 46;                                   // c:101
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ZTCP_ZFTP` must occupy a bit clear of LISTEN/INBOUND so the
+    /// zftp module's combined-mode flags (`listening zftp socket`) can
+    /// OR them without ambiguity. This is the real ABI invariant —
+    /// the individual values are just enum scaffolding.
+    #[test]
+    fn ztcp_zftp_bit_does_not_overlap_listen_or_inbound() {
+        assert_eq!(ZTCP_ZFTP & (ZTCP_LISTEN | ZTCP_INBOUND), 0);
+    }
+}

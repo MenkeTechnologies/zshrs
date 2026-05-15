@@ -4258,4 +4258,33 @@ mod tests {
         let status = bin_zftp("zftp", &["test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
     }
+
+    fn zftp_empty_ops() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+
+    /// c:3002 — unknown subcommand returns 1 (zwarnnam "unknown
+    /// subcommand"). Regression accepting bogus names would let
+    /// `zftp xyz_not_real` silently succeed and confuse scripts.
+    #[test]
+    fn zftp_unknown_subcommand_returns_one() {
+        zftp_cleanup();
+        let ops = zftp_empty_ops();
+        let r = bin_zftp("zftp",
+            &["definitely_not_a_subcommand_xyz".to_string()], &ops, 0);
+        assert_eq!(r, 1);
+        zftp_cleanup();
+    }
+
+    /// `zftp_state` is empty after cleanup. A regression that
+    /// pre-populates a "default" session would let `zftp test` succeed
+    /// before any open command — wrong shell semantics.
+    #[test]
+    fn zftp_state_empty_after_cleanup() {
+        zftp_cleanup();
+        assert!(zftp_state().lock().unwrap().sessions.is_empty());
+    }
 }

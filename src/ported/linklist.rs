@@ -456,4 +456,68 @@ mod tests {
         assert!(uinsertlinknode(&mut list, 0, "a".to_string()).is_none());
         assert_eq!(list.len(), 2);
     }
+
+    /// c:360 — `joinlists(first, second)` moves all of `second` onto
+    /// the end of `first`, draining second. A regression where second
+    /// isn't drained would let the caller iterate doubled entries.
+    #[test]
+    fn joinlists_drains_second_into_first() {
+        let mut a: LinkList<i32> = vec![1, 2].into_iter().collect();
+        let mut b: LinkList<i32> = vec![3, 4, 5].into_iter().collect();
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.to_vec(), vec![1, 2, 3, 4, 5]);
+        assert!(b.is_empty(), "second list must be drained after join");
+    }
+
+    /// c:360 — joining an empty `second` is a no-op. Catches a
+    /// regression that adds phantom empty sentinels.
+    #[test]
+    fn joinlists_empty_second_is_noop() {
+        let mut a: LinkList<i32> = vec![1, 2].into_iter().collect();
+        let mut b: LinkList<i32> = LinkList::new();
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.to_vec(), vec![1, 2]);
+        assert!(b.is_empty());
+    }
+
+    /// c:360 — joining INTO an empty `first` transfers second
+    /// cleanly. The empty-head edge case in the C body has a
+    /// dedicated branch — regression there would lose the data.
+    #[test]
+    fn joinlists_empty_first_receives_all_of_second() {
+        let mut a: LinkList<i32> = LinkList::new();
+        let mut b: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.to_vec(), vec![1, 2, 3]);
+        assert!(b.is_empty());
+    }
+
+    /// c:386 — `linknodebydatum` returns Some(idx) for the first
+    /// matching entry, None for miss. Used by `unhash -d` lookups.
+    #[test]
+    fn linknodebydatum_finds_first_match() {
+        let list: LinkList<i32> = vec![10, 20, 30, 20].into_iter().collect();
+        assert_eq!(linknodebydatum(&list, &20), Some(1),
+            "must return FIRST match index");
+        assert_eq!(linknodebydatum(&list, &99), None);
+    }
+
+    /// c:403 — `linknodebystring` is the string-specialised variant.
+    /// Verifies same FIRST-match contract for the alias-table walks.
+    #[test]
+    fn linknodebystring_finds_first_match() {
+        let list: LinkList<String> = vec!["a".into(), "b".into(), "a".into()].into_iter().collect();
+        assert_eq!(linknodebystring(&list, "a"), Some(0));
+        assert_eq!(linknodebystring(&list, "b"), Some(1));
+        assert_eq!(linknodebystring(&list, "x"), None);
+    }
+
+    /// c:423 — `hlinklist2array` flattens to Vec preserving order.
+    /// Used by `${(@k)hash}` array materialisation.
+    #[test]
+    fn hlinklist2array_preserves_order() {
+        let list: LinkList<String> = vec!["a".into(), "b".into(), "c".into()].into_iter().collect();
+        let arr = hlinklist2array(&list);
+        assert_eq!(arr, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
 }

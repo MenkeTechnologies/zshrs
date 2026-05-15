@@ -922,3 +922,71 @@ fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // 
     // opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;              // c:366-368
     // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `fallback_compctlread` is the dispatch target when the zle
+    /// module isn't loaded — `compctl -K read` paths need SOMETHING
+    /// callable. C returns 1 + zwarnnam to signal "no provider". A
+    /// regression returning 0 would make completers believe a read
+    /// happened when nothing did (silent data corruption in completion).
+    #[test]
+    fn fallback_compctlread_signals_failure() {
+        assert_eq!(fallback_compctlread("test"), 1);
+    }
+
+    /// c:418 — `parseopts` advances `idx` past every consumed option.
+    /// `-c CMD` consumes 2 slots and stores CMD in cmdp. Regression
+    /// that doesn't advance idx would loop forever or skip args.
+    #[test]
+    fn parseopts_dash_c_captures_command_string() {
+        let mut argv = vec!["-c".to_string(), "echo hi".to_string()];
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        let r = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0);
+        assert_eq!(r, 0);
+        assert_eq!(cmd.as_deref(), Some("echo hi"),
+            "-c must capture the next arg as the command");
+        assert_eq!(idx, 2, "idx must advance past both -c AND its arg");
+    }
+
+    /// c:418 — `parseopts` stops at the first non-option positional.
+    /// Regression that keeps walking past `--` or first bareword would
+    /// silently consume the script name as an option.
+    #[test]
+    fn parseopts_stops_at_first_positional() {
+        let mut argv = vec!["script.sh".to_string(), "arg1".to_string()];
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0);
+        assert_eq!(idx, 0, "must stop AT the first bareword (no advance)");
+        assert!(cmd.is_none(), "no -c → cmd stays None");
+    }
+
+    /// c:418 — `parseopts` on empty argv exits cleanly with idx=0
+    /// and cmd=None. Regression panicking on empty would crash
+    /// startup with weird args.
+    #[test]
+    fn parseopts_empty_argv_is_safe() {
+        let mut argv: Vec<String> = Vec::new();
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        assert_eq!(parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0), 0);
+        assert_eq!(idx, 0);
+        assert!(cmd.is_none());
+    }
+
+    /// c:756 — `tccap_get_name` indexes into the terminal-capability
+    /// name array. Out-of-range MUST NOT panic — it returns "" so
+    /// downstream tigetstr calls fail-soft. Regression panicking
+    /// would crash the prompt subsystem on tiny terminals.
+    #[test]
+    fn tccap_get_name_out_of_range_returns_empty() {
+        // index 9999 is well past the cap table (~39 entries per
+        // init.c:75). Must return safely.
+        let n = tccap_get_name(9999);
+        assert!(n.is_empty(), "out-of-range index must return empty (got {n:?})");
+    }
+}

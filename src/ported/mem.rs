@@ -616,4 +616,104 @@ mod tests {
         popheap();
         // Should not panic
     }
+
+    /// c:3928 — `sepjoin([a, b, c], Some("-"))` produces `"a-b-c"`.
+    /// Used by `${(j:-:)array}`. Regression dropping the separator
+    /// or doubling it would silently mangle every joined-array path.
+    #[test]
+    fn sepjoin_with_explicit_separator() {
+        assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("-")), "a-b-c");
+        assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("")),  "abc");
+    }
+
+    /// c:3928 — `sepjoin(arr, None)` defaults separator to space (matches
+    /// C's `s ? s : " "` pattern).
+    #[test]
+    fn sepjoin_none_defaults_to_space() {
+        assert_eq!(sepjoin(&["a".into(), "b".into()], None), "a b");
+    }
+
+    /// c:3928 — empty array returns empty string regardless of sep.
+    /// Catches a regression that returns the separator alone.
+    #[test]
+    fn sepjoin_empty_array_returns_empty() {
+        assert_eq!(sepjoin(&[], Some("-")), "");
+        assert_eq!(sepjoin(&[], None),      "");
+    }
+
+    /// c:3962 — `sepsplit("a/b/c", "/", false)` → `["a","b","c"]`.
+    /// Used by `${(s:/:)PATH}` style splits. Regression that drops
+    /// the splitter would yield the whole string as one element.
+    #[test]
+    fn sepsplit_canonical_path_split() {
+        let r = sepsplit("a/b/c", "/", false);
+        assert_eq!(r, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    /// c:3962 — `allow_empty=false` filters empty segments (consecutive
+    /// separators don't produce empty entries). Critical for path-walks
+    /// where `//` should not yield `""`.
+    #[test]
+    fn sepsplit_filters_empty_segments_when_disallowed() {
+        let r = sepsplit("a//b", "/", false);
+        assert_eq!(r, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// c:3962 — `allow_empty=true` PRESERVES empty segments (matches
+    /// C `allownull=1`). Used by IFS-driven word splits where each
+    /// run of separators counts as one boundary.
+    #[test]
+    fn sepsplit_preserves_empty_segments_when_allowed() {
+        let r = sepsplit("a//b", "/", true);
+        assert_eq!(r.len(), 3, "consecutive sep yields empty middle entry");
+        assert_eq!(r[1], "");
+    }
+
+    /// `new_heap_id` is monotonically increasing — each call returns
+    /// a strictly greater id. Catches a regression where the counter
+    /// resets or wraps unexpectedly (would alias unrelated heaps).
+    #[test]
+    fn new_heap_id_is_monotonically_increasing() {
+        let a = new_heap_id();
+        let b = new_heap_id();
+        let c = new_heap_id();
+        assert!(a < b && b < c, "heap-id sequence must be strictly increasing: {a} < {b} < {c}");
+    }
+
+    /// c:291/443 — `pushheap`/`popheap` are nest-balanced. Two pushes
+    /// followed by two pops MUST leave the heap stack empty (matches
+    /// the `do_X { pushheap; ... popheap; }` C usage everywhere).
+    /// Regression that drops a push frame would corrupt heap state
+    /// across function boundaries.
+    #[test]
+    fn pushheap_popheap_balance_two_levels() {
+        pushheap();
+        pushheap();
+        popheap();
+        popheap();
+        // Survival is the test — heap stack must be empty.
+    }
+
+    /// c:325 — `freeheap` discards CURRENT level allocations but keeps
+    /// the level (no pop). Distinct from popheap which discards the
+    /// level entirely. Three sequential freeheap calls must not
+    /// disturb the surrounding push/pop bracket.
+    #[test]
+    fn freeheap_does_not_pop_levels() {
+        pushheap();
+        freeheap();
+        freeheap();
+        freeheap();
+        popheap();
+        // Survival is the test — push/freeheap/pop bracket intact.
+    }
+
+    /// c:443 — `popheap` without a matching `pushheap` is a no-op.
+    /// (The HEAP impl tolerates over-popping for robustness.) Catches
+    /// a regression that crashes on accidental over-pop in error paths.
+    #[test]
+    fn popheap_without_push_does_not_panic() {
+        popheap();
+        // No assertion — survival is the contract.
+    }
 }

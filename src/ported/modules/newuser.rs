@@ -143,3 +143,35 @@ pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
 // startup script (`init.c:1551` family). zshrs's canonical
 // `crate::ported::init::source` returns the same numeric code.
 const SOURCE_NOT_FOUND: i32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// c:62 — `access(F_OK)` returns 0 when path exists, -1 otherwise.
+    /// Test against a known-existing file and a known-missing file.
+    #[test]
+    fn check_dotfile_returns_zero_when_file_exists() {
+        let tmp = std::env::temp_dir();
+        let p = tmp.join("zshrs_test_dotfile_exists");
+        fs::write(&p, "").expect("write tmp");
+        assert_eq!(check_dotfile(tmp.to_str().unwrap(), "zshrs_test_dotfile_exists"), 0);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn check_dotfile_returns_minus_one_when_missing() {
+        let tmp = std::env::temp_dir();
+        // Use a name guaranteed not to exist.
+        assert_eq!(check_dotfile(tmp.to_str().unwrap(), "zshrs_test_definitely_nothere_xyz"), -1);
+    }
+
+    /// Module entry points all return 0 per `Src/Modules/newuser.c:37-116`.
+    #[test]
+    fn module_entry_points_return_zero() {
+        assert_eq!(setup_(std::ptr::null()),   0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()),  0);
+    }
+}

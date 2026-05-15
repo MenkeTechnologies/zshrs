@@ -52,3 +52,31 @@ pub const BIN_EXPORT:     i32 = 32;                                      // c:66
 // c:69-70 — These currently depend on being 0 and 1.
 pub const BIN_SETOPT:    i32 = 0;                                        // c:69
 pub const BIN_UNSETOPT:  i32 = 1;                                        // c:70
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The overload family (c:34-66) MUST be pairwise distinct so
+    /// `bin_break` / `bin_typeset` etc. can disambiguate which builtin
+    /// is being dispatched via the funcid. The c:69 comment carves out
+    /// SETOPT/UNSETOPT specifically because they re-use 0/1 — that
+    /// overlap is intentional and load-bearing; testing distinctness
+    /// just within the overload family is the real invariant.
+    #[test]
+    fn overloaded_bin_ids_are_pairwise_distinct() {
+        let ids = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED,
+            BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+            BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION, BIN_UNSET,
+            BIN_EXPORT,
+        ];
+        let mut sorted = ids.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len());
+    }
+}

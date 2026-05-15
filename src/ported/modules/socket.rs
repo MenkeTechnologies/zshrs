@@ -354,3 +354,36 @@ fn module_features() -> &'static Mutex<features_t> {
         n_abstract: 0,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// c:88-90 — `zsocket -l` with no path arg MUST fail-fast BEFORE
+    /// any libc::socket(2) call. A regression where the missing-arg
+    /// check is bypassed would leak a socket fd per invocation.
+    #[test]
+    fn zsocket_l_without_arg_fails_before_socket_call() {
+        let mut ops = empty_ops();
+        ops.ind[b'l' as usize] = 1;
+        assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
+    }
+
+    /// c:71-75 — non-numeric `-d <fd>` MUST fail-fast (atoi → 0 → bad
+    /// fd) BEFORE socket(2). A regression that lets `0` through would
+    /// dup2 the new socket onto stdin silently.
+    #[test]
+    fn zsocket_d_non_numeric_fails_before_dup2() {
+        let mut ops = empty_ops();
+        ops.ind[b'd' as usize] = (1 << 2) | 1;
+        ops.args.push("not-a-number".to_string());
+        assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
+    }
+
+    fn empty_ops() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+}

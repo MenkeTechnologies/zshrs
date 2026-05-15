@@ -2443,4 +2443,97 @@ mod tests {
         let cache_size = dircache_lock().lock().unwrap().len();
         assert!(cache_size >= 1);
     }
+
+    /// c:1230 — `createaliasnode(name, text, flags)` builds an Alias
+    /// with the text field populated. Regression that drops `text`
+    /// would silently install aliases that expand to nothing.
+    #[test]
+    fn createaliasnode_round_trips_name_and_text() {
+        let a = createaliasnode("ls-color", "ls --color=auto", 0);
+        assert_eq!(a.text, "ls --color=auto");
+        assert_eq!(a.node.nam, "ls-color");
+    }
+
+    /// `aliastab_lock` initialises with the two default aliases
+    /// `run-help` and `which-command` per hashtable.c:1215-1216.
+    /// A regression here breaks zsh's documented default behaviour
+    /// where `run-help` resolves to `man` after `autoload -U run-help`.
+    #[test]
+    fn aliastab_seeds_run_help_and_which_command_defaults() {
+        createaliastables();
+        let tab = aliastab_lock().read().expect("aliastab poisoned");
+        assert!(tab.get("run-help").is_some(),    "run-help default missing");
+        assert!(tab.get("which-command").is_some(),"which-command default missing");
+    }
+
+    /// c:86 — `hasher` is the canonical zsh string hash. Same input
+    /// MUST produce same output (basic determinism); different inputs
+    /// SHOULD produce different outputs (no pathological collisions
+    /// for single-char-different strings). The wrapping_add chain in
+    /// the impl makes this a Bernstein-style hash; verify it's stable.
+    #[test]
+    fn hasher_is_deterministic_across_calls() {
+        assert_eq!(hasher("foo"), hasher("foo"));
+        assert_eq!(hasher(""),    hasher(""));
+        // Common shell names should not collide trivially.
+        assert_ne!(hasher("ls"),  hasher("cd"));
+        assert_ne!(hasher("foo"), hasher("bar"));
+    }
+
+    /// c:86 — empty input hashes to 0 (the seed value). A regression
+    /// changing the seed would invalidate every persisted hash + cause
+    /// silent rebuild storms in the cache layer.
+    #[test]
+    fn hasher_empty_string_hashes_to_zero() {
+        assert_eq!(hasher(""), 0);
+    }
+
+    /// c:86 — single-byte input `c` hashes to `c as u32` exactly
+    /// (the loop runs once: hashval = 0 + 0<<5 + c = c). Pins the
+    /// canonical first-iteration formula.
+    #[test]
+    fn hasher_single_byte_equals_byte_value() {
+        assert_eq!(hasher("a"), b'a' as u32);
+        assert_eq!(hasher("Z"), b'Z' as u32);
+        assert_eq!(hasher("0"), b'0' as u32);
+    }
+
+    /// c:157 — `addhashnode` inserts; `gethashnode2` reads back.
+    /// Round-trip MUST yield the value just inserted. Regression
+    /// returning None on a present key would break every command-
+    /// table lookup.
+    #[test]
+    fn addhashnode_then_gethashnode2_round_trips() {
+        let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        addhashnode(&mut h, "key1", 42);
+        assert_eq!(gethashnode2(&h, "key1"), Some(&42));
+        assert_eq!(gethashnode2(&h, "missing"), None);
+    }
+
+    /// c:275 — `removehashnode` returns Some(value) when present and
+    /// drops the entry. Subsequent lookup MUST miss. Regression
+    /// returning Some without removing would let callers think they
+    /// removed when they actually didn't.
+    #[test]
+    fn removehashnode_returns_value_and_drops_entry() {
+        let mut h: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        addhashnode(&mut h, "key1", "val".to_string());
+        let removed = removehashnode(&mut h, "key1");
+        assert_eq!(removed.as_deref(), Some("val"));
+        assert!(gethashnode2(&h, "key1").is_none(),
+            "after removehashnode, lookup must miss");
+    }
+
+    /// c:275 — `removehashnode` on a missing key returns None and
+    /// doesn't mutate the table. A regression where it errors or
+    /// inserts a sentinel would break `unalias missing` (which is
+    /// supposed to fail-soft).
+    #[test]
+    fn removehashnode_missing_key_returns_none() {
+        let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        addhashnode(&mut h, "k1", 1);
+        let len_before = h.len();
+        assert!(removehashnode(&mut h, "missing").is_none());
+        assert_eq!(h.len(), len_before, "missing-key remove must not mutate");
+    }
 }

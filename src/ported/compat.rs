@@ -453,4 +453,66 @@ mod tests {
         assert!(u9_wcwidth('\x00') <= 0);
     }
 
+    // ===== Tests for compat.c shim ports landed this session.
+
+    #[test]
+    fn strstr_substring_hit_returns_byte_offset() {
+        // C strstr returns pointer to the match (== bytes-from-start);
+        // Rust port returns Option<usize> byte offset. Verify hits +
+        // miss + edge cases (empty needle is documented to return 0).
+        assert_eq!(strstr("hello world", "world"), Some(6));
+        assert_eq!(strstr("hello world", "hello"), Some(0));
+        assert_eq!(strstr("hello world", "xyz"),   None);
+        assert_eq!(strstr("", "x"),                None);
+        assert_eq!(strstr("anything", ""),         Some(0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gettimeofday_returns_positive_secs() {
+        // C contract: always returns 0; tv_sec is unix-epoch seconds.
+        // Anything past 2001-09-09 is > 1_000_000_000.
+        let (sec, _usec) = gettimeofday();
+        assert!(sec > 1_000_000_000, "epoch seconds should be past 2001");
+    }
+
+    #[test]
+    fn strtoul_parses_decimal() {
+        // Base 10: simple positive integer.
+        let (v, n) = strtoul("12345", 10);
+        assert_eq!(v, 12345);
+        assert_eq!(n, 5);
+    }
+
+    #[test]
+    fn strtoul_parses_hex_with_0x_prefix_when_base_zero() {
+        // base==0 with `0x` prefix → C falls into base 16 (c:714-718).
+        let (v, n) = strtoul("0xff", 0);
+        assert_eq!(v, 255);
+        assert_eq!(n, 4);
+    }
+
+    #[test]
+    fn strtoul_parses_octal_when_base_zero_with_leading_zero() {
+        // base==0 with leading '0' → C falls into base 8 (c:719-720).
+        let (v, _n) = strtoul("0777", 0);
+        assert_eq!(v, 511);
+    }
+
+    #[test]
+    fn strtoul_skips_leading_whitespace() {
+        // c:704 — `do { c = *s++; } while (isspace(c))`.
+        let (v, _) = strtoul("   42", 10);
+        assert_eq!(v, 42);
+    }
+
+    #[test]
+    fn strtoul_stops_at_first_non_digit() {
+        // Mixed input: parse stops when the digit run ends; bytes-consumed
+        // reports where it stopped so a caller can pick up *endptr-style.
+        let (v, n) = strtoul("100abc", 10);
+        assert_eq!(v, 100);
+        assert_eq!(n, 3);
+    }
+
 }

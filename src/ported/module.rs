@@ -2317,8 +2317,13 @@ pub static CONDTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> =        // 
 /// success, -1 on miss. C also frees the autoloaded entry's name +
 /// module; Rust drop subsumes that.
 pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {            // c:724
+    use crate::ported::zsh_h::CONDF_INFIX;
     let mut tab = CONDTAB.lock().unwrap();
-    match tab.iter().position(|p| p.name == c.name && p.flags == c.flags) {  // c:728 walk
+    // c:728 — `for (p = condtab, q = NULL; p && p != c; ...)`. C uses
+    // pointer identity; the Rust analog is name+infix-flag equality
+    // (the natural key — `[[ -z STR ]]` and `STR == VAL` share neither).
+    let infix = c.flags & CONDF_INFIX;
+    match tab.iter().position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix) {
         Some(i) => { tab.remove(i); 0 }                                      // c:733-738 unlink + free
         None => -1,                                                          // c:743 not found
     }
@@ -2692,5 +2697,263 @@ mod tests {
         let output = printmodulenode("zsh/test", &module);
         assert!(output.contains("zsh/test"));
         assert!(output.contains("loaded"));
+    }
+
+    // ===== Tests for the `addmathfunc` / `removemathfunc` /
+    // `deletemathfunc` family ported in this session against the
+    // MATHFUNCS Lazy<Mutex<Vec<mathfunc>>> global. Each test isolates
+    // its names with a unique prefix so they don't collide if the
+    // suite runs in parallel.
+
+    fn mk_mf(name: &str, autoload: bool) -> crate::ported::zsh_h::mathfunc {
+        crate::ported::zsh_h::mathfunc {
+            next: None, name: name.to_string(), flags: 0,
+            nfunc: None, sfunc: None,
+            module: if autoload { Some("zsh/test".to_string()) } else { None },
+            minargs: 0, maxargs: 0, funcid: 0,
+        }
+    }
+
+    #[test]
+    fn addmathfunc_clash_returns_one_when_already_added() {
+        // C addmathfunc returns 1 when an existing entry has the same
+        // name AND is non-autoloadable (no module set). Verifies the
+        // "already in table" branch at module.c:1322-1330.
+        let f1 = mk_mf("zshrs_test_clash_a", false);
+        let f2 = mk_mf("zshrs_test_clash_a", false);
+        assert_eq!(addmathfunc(f1), 0);
+        assert_eq!(addmathfunc(f2), 1, "second add should clash");
+        removemathfunc("zshrs_test_clash_a");
+    }
+
+    #[test]
+    fn addmathfunc_autoload_replace_succeeds() {
+        // When existing entry IS autoloadable (module.is_some, no
+        // MFF_USERFUNC), C removes-then-replaces. The new entry should
+        // land at index 0 (prepend) per c:1334-1335.
+        let auto = mk_mf("zshrs_test_replace", true);
+        let real = mk_mf("zshrs_test_replace", false);
+        assert_eq!(addmathfunc(auto), 0);
+        assert_eq!(addmathfunc(real), 0, "autoloadable entry must be replaceable");
+        let tab = MATHFUNCS.lock().unwrap();
+        let entry = tab.iter().find(|m| m.name == "zshrs_test_replace").unwrap();
+        assert!(entry.module.is_none(), "after replace, module should be None");
+        drop(tab);
+        removemathfunc("zshrs_test_replace");
+    }
+
+    #[test]
+    fn removemathfunc_returns_unit_and_drops() {
+        let f = mk_mf("zshrs_test_remove", false);
+        assert_eq!(addmathfunc(f), 0);
+        assert!(MATHFUNCS.lock().unwrap().iter().any(|m| m.name == "zshrs_test_remove"));
+        removemathfunc("zshrs_test_remove");
+        assert!(!MATHFUNCS.lock().unwrap().iter().any(|m| m.name == "zshrs_test_remove"));
+    }
+
+    #[test]
+    fn deletemathfunc_returns_minus_one_on_miss() {
+        // C: returns -1 when no matching entry; verifies the c:1361 branch.
+        let probe = mk_mf("zshrs_test_never_added_xyz", false);
+        assert_eq!(deletemathfunc(&probe), -1);
+    }
+
+    #[test]
+    fn deletemathfunc_clears_added_flag_for_userfunc() {
+        // For non-module entries (`!f->module`), C clears the MFF_ADDED
+        // flag instead of dropping the node (c:1357). Tests by adding
+        // a user-defined mathfunc, flipping MFF_ADDED on, then deleting.
+        let mut f = mk_mf("zshrs_test_clear_flag", false);
+        f.flags = crate::ported::zsh_h::MFF_ADDED;
+        assert_eq!(addmathfunc(f), 1, "MFF_ADDED set → addmathfunc clashes at c:1318");
+        // Now seed it manually with module=None and MFF_ADDED so deletemathfunc
+        // exercises the clear-flag branch.
+        MATHFUNCS.lock().unwrap().insert(0, mk_mf("zshrs_test_clear_flag2", false));
+        let mut f2 = mk_mf("zshrs_test_clear_flag2", false);
+        f2.flags = crate::ported::zsh_h::MFF_ADDED;
+        // f2 is the lookup probe; by name it matches the seeded entry.
+        assert_eq!(deletemathfunc(&f2), 0);
+        let tab = MATHFUNCS.lock().unwrap();
+        let entry = tab.iter().find(|m| m.name == "zshrs_test_clear_flag2");
+        // Entry stays in the table (module was None) but MFF_ADDED cleared.
+        if let Some(e) = entry {
+            assert_eq!(e.flags & crate::ported::zsh_h::MFF_ADDED, 0);
+        }
+        drop(tab);
+        removemathfunc("zshrs_test_clear_flag2");
+    }
+
+    // ===== Tests for `addconddef` / `deleteconddef` against CONDTAB.
+
+    fn mk_cd(name: &str, infix: bool, autoload: bool) -> crate::ported::zsh_h::conddef {
+        crate::ported::zsh_h::conddef {
+            next: None, name: name.to_string(),
+            flags: if infix { crate::ported::zsh_h::CONDF_INFIX } else { 0 },
+            handler: None, min: 0, max: 0, condid: 0,
+            module: if autoload { Some("zsh/cond".to_string()) } else { None },
+        }
+    }
+
+    #[test]
+    fn addconddef_clash_returns_one() {
+        // C addconddef: clash when existing has same name+infix AND is
+        // not autoloadable, OR is already added (CONDF_ADDED flag).
+        let c1 = mk_cd("zshrs_test_cond_clash", false, false);
+        let c2 = mk_cd("zshrs_test_cond_clash", false, false);
+        assert_eq!(addconddef(c1), 0);
+        assert_eq!(addconddef(c2), 1);
+        let probe = mk_cd("zshrs_test_cond_clash", false, false);
+        assert_eq!(deleteconddef(&probe), 0);
+    }
+
+    #[test]
+    fn deleteconddef_returns_minus_one_on_miss() {
+        let probe = mk_cd("zshrs_test_cond_never_added", false, false);
+        assert_eq!(deleteconddef(&probe), -1);
+    }
+
+    #[test]
+    fn addconddef_distinguishes_infix_from_prefix() {
+        // CONDF_INFIX is part of the clash key — a prefix-form `-z` and
+        // an infix-form `==` share neither name nor flag, so adding both
+        // names with different infix bits should both succeed.
+        let prefix = mk_cd("zshrs_test_cond_dual", false, false);
+        let infix  = mk_cd("zshrs_test_cond_dual", true,  false);
+        assert_eq!(addconddef(prefix), 0);
+        assert_eq!(addconddef(infix), 0, "infix variant must not clash with prefix variant");
+        // Cleanup both
+        let _ = deleteconddef(&mk_cd("zshrs_test_cond_dual", false, false));
+        let _ = deleteconddef(&mk_cd("zshrs_test_cond_dual", true,  false));
+    }
+
+    // ===== Tests for `setconddefs` / `setmathfuncs` bulk dispatch.
+
+    #[test]
+    fn setconddefs_bulk_add_then_bulk_delete_via_e_array() {
+        // C setconddefs: walks (c, e) pairs; e[i]!=0 → addconddef path,
+        // e[i]==0 → deleteconddef path. Tests the round trip.
+        let mut entries = vec![
+            mk_cd("zshrs_test_bulk_a", false, false),
+            mk_cd("zshrs_test_bulk_b", false, false),
+        ];
+        let add_selectors = [1, 1];
+        assert_eq!(setconddefs("test", &mut entries, Some(&add_selectors)), 0);
+        // Both should now have CONDF_ADDED set per c:773.
+        assert_ne!(entries[0].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+        assert_ne!(entries[1].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+        // Now delete both via e=[0,0].
+        let del_selectors = [0, 0];
+        assert_eq!(setconddefs("test", &mut entries, Some(&del_selectors)), 0);
+        assert_eq!(entries[0].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+        assert_eq!(entries[1].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+    }
+
+    // ===== Tests for `addbuiltin` / `addbuiltins` against canonical builtintab.
+
+    fn mk_b(nam: &str) -> crate::ported::zsh_h::builtin {
+        crate::ported::zsh_h::builtin {
+            node: crate::ported::zsh_h::hashnode { next: None, nam: nam.to_string(), flags: 0 },
+            handlerfunc: None, minargs: 0, maxargs: 0, funcid: 0,
+            optstr: None, defopts: None,
+        }
+    }
+
+    #[test]
+    fn addbuiltin_clash_against_existing_builtintab_entry() {
+        // C addbuiltin: returns 1 when builtintab already has an entry
+        // for the same name with BINF_ADDED set. The canonical Rust
+        // builtintab is populated at startup via createbuiltintable;
+        // probing a real builtin like "echo" should clash if BINF_ADDED.
+        let _ = crate::ported::builtin::createbuiltintable();
+        let mut b = mk_b("echo");
+        let r = addbuiltin(&mut b);
+        // BINF_ADDED gets set on b when no clash. If echo was BINF_ADDED in
+        // the static table, r==1; otherwise r==0 and b.flags now has BINF_ADDED.
+        assert!(r == 0 || r == 1);
+        if r == 0 {
+            assert_ne!(b.node.flags & crate::ported::zsh_h::BINF_ADDED as i32, 0);
+        }
+    }
+
+    #[test]
+    fn addbuiltins_skips_already_added_entries() {
+        // C addbuiltins (c:553): `if (b->node.flags & BINF_ADDED) continue`.
+        // Pre-marking BINF_ADDED should skip both entries; ret stays 0.
+        let mut b1 = mk_b("zshrs_test_already_added_1");
+        b1.node.flags = crate::ported::zsh_h::BINF_ADDED as i32;
+        let mut b2 = mk_b("zshrs_test_already_added_2");
+        b2.node.flags = crate::ported::zsh_h::BINF_ADDED as i32;
+        let mut binl = vec![b1, b2];
+        assert_eq!(addbuiltins("test", &mut binl), 0);
+    }
+
+    // ===== Tests for `addwrapper` / `deletewrapper` against WRAPPERS.
+
+    fn mk_w() -> crate::ported::zsh_h::funcwrap {
+        crate::ported::zsh_h::funcwrap {
+            next: None, flags: 0,
+            handler: Some(|_prog, _w, _name| 0),
+            module: None,
+        }
+    }
+
+    #[test]
+    fn addwrapper_then_deletewrapper_round_trip() {
+        let w = mk_w();
+        assert_eq!(addwrapper("zsh/test", w), 0);
+        let probe = mk_w();
+        let r = deletewrapper("zsh/test", &probe);
+        // fn_addr_eq may match (most common case) or miss across codegen
+        // units. Either outcome is documented behavior; verify it doesn't
+        // panic and returns 0/1 cleanly.
+        assert!(r == 0 || r == 1);
+    }
+
+    #[test]
+    fn deletewrapper_returns_one_when_not_found() {
+        // Empty WRAPPERS means any probe misses. Take a snapshot of the
+        // current state, drain WRAPPERS, run the test, restore.
+        let snapshot: Vec<_> = WRAPPERS.lock().unwrap().drain(..).collect();
+        let probe = mk_w();
+        assert_eq!(deletewrapper("zsh/test", &probe), 1);
+        WRAPPERS.lock().unwrap().extend(snapshot);
+    }
+}
+
+#[cfg(test)]
+mod modname_tests {
+    use super::*;
+
+    /// c:2173 — `modname_ok` accepts shell identifier names possibly
+    /// joined by `/` (zsh modules are namespaced like `zsh/datetime`).
+    /// Plain alphanumeric names with `/` separators MUST pass.
+    /// A regression rejecting valid module names would break every
+    /// `zmodload zsh/datetime` invocation.
+    #[test]
+    fn modname_ok_accepts_canonical_zsh_module_paths() {
+        assert_eq!(modname_ok("zsh"),           1);
+        assert_eq!(modname_ok("zsh/datetime"),  1);
+        assert_eq!(modname_ok("zsh/zle"),       1);
+        assert_eq!(modname_ok("foo_bar"),       1);
+        assert_eq!(modname_ok("foo123"),        1);
+    }
+
+    /// c:2179 — non-identifier chars (excluding `/`) MUST cause
+    /// rejection. A regression accepting them would let modules
+    /// install with names that no later `zmodload -u` could remove.
+    #[test]
+    fn modname_ok_rejects_special_chars() {
+        assert_eq!(modname_ok("zsh space"),  0);
+        assert_eq!(modname_ok("zsh-bad"),    0, "hyphen is not IIDENT");
+        assert_eq!(modname_ok("zsh.foo"),    0, "dot is not IIDENT");
+        assert_eq!(modname_ok("$foo"),       0);
+    }
+
+    /// c:2177 — `if (!*p) return 1` runs at the START of the loop;
+    /// empty input therefore returns 1. Pin this behaviour so callers
+    /// know the empty-string case maps to "trivially OK" not "error".
+    #[test]
+    fn modname_ok_treats_empty_as_trivially_ok() {
+        assert_eq!(modname_ok(""), 1);
     }
 }

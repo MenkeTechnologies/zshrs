@@ -1874,4 +1874,96 @@ mod tests {
         km.bind_char(b'A', dummy_thingy());
         assert_eq!(keyisprefix(&km, &[0x83, 0x61]), 0);
     }
+
+    // ---------- keybind real-port tests (this session). ----------
+
+    #[test]
+    fn keybind_single_byte_returns_first_bound_thingy() {
+        // c:664-669 — `if (ztrlen(seq) == 1) { f = seq[0]; if (km->first[f])
+        // return bind; }`. Bind 'q' in first[], call keybind with "q",
+        // expect the Thingy back and no send-string.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut km = Keymap::default();
+        km.bind_char(b'q', Thingy::new("quit-widget"));
+        let (bind, send) = keybind(&km, b"q");
+        assert!(bind.is_some());
+        assert_eq!(bind.as_ref().unwrap().nam, "quit-widget");
+        assert!(send.is_none(), "no str on first[] path");
+    }
+
+    #[test]
+    fn keybind_meta_pair_decodes_to_single_byte() {
+        // c:665 — `seq[0]==Meta ? seq[1]^32 : seq[0]`. [0x83, 0x61]
+        // decodes to 0x41 = 'A'. Verify it lands on the first[] entry
+        // for 'A' just like a literal 'A' byte would.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut km = Keymap::default();
+        km.bind_char(b'A', Thingy::new("uppercase-A-widget"));
+        let (bind, _) = keybind(&km, &[0x83, 0x61]);
+        assert_eq!(bind.as_ref().map(|t| t.nam.as_str()), Some("uppercase-A-widget"));
+    }
+
+    #[test]
+    fn keybind_unbound_byte_returns_none() {
+        // c:670-671 — single-byte but km->first[f] is None, falls
+        // through to the multi-byte lookup which also misses → (None, None).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let km = Keymap::default();
+        let (bind, send) = keybind(&km, b"z");
+        assert!(bind.is_none(), "unbound byte → t_undefinedkey sentinel (None)");
+        assert!(send.is_none());
+    }
+
+    #[test]
+    fn keybind_multi_byte_sequence_via_multi_map() {
+        // c:670-674 — `k = km->multi->getnode(km->multi, seq)`. Bind
+        // a multi-byte sequence in `multi`, expect the lookup to find it.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut km = Keymap::default();
+        km.multi.insert(b"\x1b[A".to_vec(), KeyBinding {
+            bind: Some(Thingy::new("up-line")),
+            str: None,
+            prefixct: 0,
+        });
+        let (bind, _) = keybind(&km, b"\x1b[A");
+        assert_eq!(bind.as_ref().map(|t| t.nam.as_str()), Some("up-line"));
+    }
+
+    #[test]
+    fn keybind_returns_send_string_when_multi_entry_has_str() {
+        // c:673-674 — `*strp = k->str; return k->bind`. Send-string
+        // entries (`bindkey -s`) have bind=None + str=Some.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut km = Keymap::default();
+        km.multi.insert(b"\x1b[Z".to_vec(), KeyBinding {
+            bind: None,
+            str: Some("hello".to_string()),
+            prefixct: 0,
+        });
+        let (bind, send) = keybind(&km, b"\x1b[Z");
+        assert!(bind.is_none(), "send-string entries have no bind");
+        assert_eq!(send.as_deref(), Some("hello"));
+    }
+
+    // ---------- init_keymaps / cleanup_keymaps round-trip ----------
+
+    #[test]
+    fn init_keymaps_seeds_keybuf_and_clears_lastnamed() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // After init: keybuf is allocated (non-empty Vec), lastnamed is None
+        // (the `t_undefinedkey` sentinel in Rust convention).
+        init_keymaps();
+        assert!(!keybuf.lock().unwrap().is_empty(), "keybuf zshcalloc(keybufsz)");
+        assert!(lastnamed.lock().unwrap().is_none(), "lastnamed = t_undefinedkey (None)");
+    }
+
+    #[test]
+    fn cleanup_keymaps_drains_namtab_and_keybuf() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        init_keymaps();
+        assert!(!keybuf.lock().unwrap().is_empty());
+        cleanup_keymaps();
+        assert!(keybuf.lock().unwrap().is_empty(), "zfree(keybuf, ...)");
+        assert!(keymapnamtab().lock().unwrap().is_empty(), "deletehashtable(keymapnamtab)");
+    }
 }

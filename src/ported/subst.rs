@@ -7807,6 +7807,198 @@ mod tests {
     // ─── (kv) paired keys+values ─────────────────────────────────
 
     // ─── nested with literal `~` glob_subst ──────────────────────
+
+    /// c:1348 — `get_strarg` parses `(c<str>c)` or `(c str c)` where
+    /// `c` is the delimiter. The C source uses this for printf-style
+    /// padding/quoting specifiers. Verify the canonical paren-delim
+    /// AND the alternative `{...}` brace-delim shape — both are used
+    /// in zsh substitution syntax (`${(p<TAB>)}` vs `${(l:5:)}`).
+    #[test]
+    fn get_strarg_extracts_paren_delimited_content() {
+        let r = get_strarg("(foo)rest");
+        assert_eq!(r, Some(('(', "foo".to_string(), "rest")),
+            "(foo)rest must split into delim=( , content='foo', tail='rest'");
+    }
+
+    /// c:1348 — `get_strarg("")` returns None (no delimiter).
+    #[test]
+    fn get_strarg_empty_input_returns_none() {
+        assert_eq!(get_strarg(""), None);
+    }
+
+    /// c:1428 — `get_intarg` reads `(N)` integer-padding args. Plain
+    /// digit run with paren-delim should return (n, tail).
+    #[test]
+    fn get_intarg_parses_paren_int() {
+        let r = get_intarg("(42)rest");
+        assert_eq!(r, Some((42, "rest")),
+            "(42)rest must yield 42 + tail 'rest'");
+    }
+
+    /// c:1428 — `get_intarg("")` returns None.
+    #[test]
+    fn get_intarg_empty_input_returns_none() {
+        assert_eq!(get_intarg(""), None);
+    }
+
+    /// c:814 — `strcatsub` concatenates prefix + src + suffix.
+    /// glob_subst=false means no glob escaping; output is the
+    /// straight concatenation. A regression that drops or duplicates
+    /// any of the 3 parts would break every `${var:-fallback}` path.
+    #[test]
+    fn strcatsub_concatenates_three_parts_plain() {
+        assert_eq!(strcatsub("a", "b", "c", false), "abc");
+        assert_eq!(strcatsub("", "X", "",  false), "X");
+        assert_eq!(strcatsub("[", "y", "]", false), "[y]");
+    }
+
+    /// c:848 — `wcpadwidth` reports 1 for ASCII chars (default) AND
+    /// honours the multi_width flag for wide chars. Regression that
+    /// always returns 1 would mis-align `${(l:5:): -}`-style padding
+    /// on CJK chars.
+    #[test]
+    fn wcpadwidth_reports_one_for_ascii() {
+        assert_eq!(wcpadwidth('a', 0), 1);
+        assert_eq!(wcpadwidth('Z', 0), 1);
+    }
+
+    /// c:848 — wide chars get the multi_width-controlled width.
+    /// `multi_width=2` is the standard zsh "treat wide as 2-cols" mode.
+    #[test]
+    fn wcpadwidth_reports_width_two_for_cjk_when_multi_set() {
+        // multi_width=2 treats wide chars as 2 columns.
+        let w = wcpadwidth('中', 2);
+        assert!(w >= 1, "CJK char must have width >= 1 (got {w})");
+    }
+
+    /// c:737 — `filesubstr` resolves `~/...` to $HOME/... and `~user/...`
+    /// to a user homedir lookup. For plain (non-`~`) input the C body
+    /// returns None — no substitution to apply.
+    #[test]
+    fn filesubstr_non_tilde_input_returns_none() {
+        assert_eq!(filesubstr("/literal/path", false), None);
+        assert_eq!(filesubstr("relative",     false), None);
+        assert_eq!(filesubstr("",             false), None);
+    }
+
+    /// c:737 — `~` with no following path or user-name resolves to
+    /// $HOME directly.
+    #[test]
+    fn filesubstr_bare_tilde_resolves_to_home() {
+        if let Ok(home) = std::env::var("HOME") {
+            let r = filesubstr("~", false);
+            assert_eq!(r.as_deref(), Some(home.as_str()),
+                "`~` must expand to $HOME");
+        }
+    }
+
+    /// c:4531 — `modify(s, ":h")` is the dirname modifier — `${var:h}`
+    /// returns the dir part of a path. `/foo/bar/baz:h` → `/foo/bar`.
+    /// Regression dropping the trailing-component strip would break
+    /// every script using `${PWD:h}` for parent-dir lookups.
+    #[test]
+    fn modify_h_strips_trailing_component() {
+        assert_eq!(modify("/foo/bar/baz", ":h"), "/foo/bar");
+    }
+
+    /// c:4531 — `:t` is the basename modifier (tail). `/foo/bar/baz:t`
+    /// → `baz`. Counterpart to `:h`.
+    #[test]
+    fn modify_t_returns_trailing_component() {
+        assert_eq!(modify("/foo/bar/baz", ":t"), "baz");
+    }
+
+    /// c:4531 — `:r` strips the file extension (root). `foo.txt:r`
+    /// → `foo`. Used by `${file:r}` for filename manipulation.
+    #[test]
+    fn modify_r_strips_extension() {
+        assert_eq!(modify("foo.txt", ":r"), "foo");
+        assert_eq!(modify("foo",     ":r"), "foo", "no ext = no change");
+    }
+
+    /// c:4531 — `:e` returns just the extension. Counterpart to `:r`.
+    #[test]
+    fn modify_e_returns_extension() {
+        assert_eq!(modify("foo.txt", ":e"), "txt");
+    }
+
+    /// c:4531 — `:u` uppercases (used by `${var:u}`). Critical for
+    /// case-normalisation paths in user shell scripts.
+    #[test]
+    fn modify_u_uppercases() {
+        assert_eq!(modify("hello", ":u"), "HELLO");
+    }
+
+    /// c:4531 — `:l` lowercases.
+    #[test]
+    fn modify_l_lowercases() {
+        assert_eq!(modify("HELLO", ":l"), "hello");
+    }
+
+    /// c:4531 — chained modifiers compose left-to-right. `foo.txt:r:u`
+    /// strips the extension THEN uppercases → `FOO`.
+    #[test]
+    fn modify_chained_modifiers_apply_left_to_right() {
+        assert_eq!(modify("foo.txt", ":r:u"), "FOO");
+    }
+
+    /// c:4531 — empty modifier string is a no-op (returns input
+    /// unchanged). Catches a regression that prepends `:` or
+    /// processes phantom flags.
+    #[test]
+    fn modify_empty_modifier_returns_input_unchanged() {
+        assert_eq!(modify("foo/bar", ""), "foo/bar");
+    }
+
+    /// c:1566 — `check_colon_subscript("")` returns None — empty
+    /// input is not a subscript. Used by the `${var:0:5}`-style parser
+    /// to distinguish positional subscripts from modifier letters.
+    #[test]
+    fn check_colon_subscript_empty_returns_none() {
+        assert_eq!(check_colon_subscript(""), None);
+    }
+
+    /// c:1571 — alphabetic-leading input (modifier letter like `:h`,
+    /// `:t`, `:r`) MUST return None so the upper parser dispatches to
+    /// modify(). Regression treating them as subscripts would break
+    /// every `${PWD:h}`.
+    #[test]
+    fn check_colon_subscript_returns_none_on_modifier_letter() {
+        assert_eq!(check_colon_subscript("h"),  None);
+        assert_eq!(check_colon_subscript("t"),  None);
+        assert_eq!(check_colon_subscript("r"),  None);
+        assert_eq!(check_colon_subscript("&5"), None,
+            "`&` is the history-modifier prefix, not a subscript");
+    }
+
+    /// c:1574-1576 — bare `::` (empty subscript) returns Some("0").
+    /// `${var::5}` means "from position 0, take 5 chars". Regression
+    /// returning None on the empty subscript breaks the substring
+    /// shorthand.
+    #[test]
+    fn check_colon_subscript_bare_colon_returns_zero() {
+        let r = check_colon_subscript(":remainder");
+        assert!(r.is_some());
+        let (sub, _rest) = r.unwrap();
+        assert_eq!(sub, "0", "bare `:` subscript defaults to 0");
+    }
+
+    /// c:463 — `quotesubst` quotes meta chars in a string for
+    /// pass-through to a subshell. Plain ASCII passes unchanged.
+    #[test]
+    fn quotesubst_passes_plain_ascii_unchanged() {
+        assert_eq!(quotesubst("hello world"), "hello world");
+        assert_eq!(quotesubst(""),            "");
+    }
+
+    /// c:514 — `singsub` runs `${...}` substitution on its input
+    /// string in-place; plain text with no `$` passes through.
+    #[test]
+    fn singsub_passes_plain_text_unchanged() {
+        assert_eq!(singsub("hello"),  "hello");
+        assert_eq!(singsub(""),       "");
+        assert_eq!(singsub("no var"), "no var");
+    }
 } // c:3193
 
 // ============================================================================

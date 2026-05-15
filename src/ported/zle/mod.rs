@@ -76,3 +76,32 @@ pub mod zle_h;
 pub use zle_keymap::Keymap;
 pub use zle_thingy::Thingy;
 pub use zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keymap default initialises with all 256 first[] slots as None
+    /// (the `t_undefinedkey` sentinel) and empty multi table. Verifies
+    /// the new() / Default::default() contract used by every newkeymap
+    /// + bindkey path — a regression breaking this would mean every
+    /// keymap starts with random state.
+    #[test]
+    fn empty_keymap_has_all_unbound_first_slots() {
+        let km = zle_keymap::Keymap::default();
+        assert!(km.first.iter().all(|t| t.is_none()), "all 256 slots None");
+        assert!(km.multi.is_empty(), "no multi-byte bindings yet");
+        assert_eq!(km.flags, 0);
+    }
+
+    /// Thingy::new builds an immortal stub with rc=1 and no widget.
+    /// Verifies the calloc-equivalent baseline the rest of the thingy
+    /// pipeline (refthingy / unrefthingy) is allowed to assume.
+    #[test]
+    fn freshly_minted_thingy_has_rc_one_and_no_widget() {
+        let t = zle_thingy::Thingy::new("test-widget");
+        assert_eq!(t.rc, 1);
+        assert!(t.widget.is_none());
+        assert_eq!(t.nam, "test-widget");
+    }
+}

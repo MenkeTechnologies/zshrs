@@ -61,3 +61,20 @@ pub mod signals_h;
 pub mod config_h;
 pub mod lex;
 pub mod parse;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The crate's `META` byte (0x83) is the metacharacter sentinel
+    /// embedded in every metafied buffer. Three independent modules
+    /// re-declare it (input.rs:472, utils.rs:4747, zsh_h.rs); the
+    /// invariant is that the THREE constants are EQUAL. If anything
+    /// drifts, lex/quote/unmeta semantics fracture across the codebase.
+    #[test]
+    fn meta_sentinel_consistent_across_modules() {
+        assert_eq!(input::META as u8, zsh_h::META as u8);
+        assert_eq!(utils::Meta,        zsh_h::META as u8);
+        assert_eq!(input::META as u8, 0x83);
+    }
+}

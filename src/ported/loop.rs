@@ -250,14 +250,44 @@ mod tests {
 
     #[test]
     fn test_selectlist_returns_zero_when_full_fits() {
-        // selectlist now matches C: writes to stderr and returns
-        // 0 when the whole list fits in one page.
         let items = ["one", "two", "three"];
-        // start = 0; in a sufficiently tall terminal, all rows fit
-        // and the function returns 0.
         let r = selectlist(&items, 0);
-        // Either 0 (all fit) or a non-zero next-page offset
-        // (terminal tiny). Both are valid C-side outputs.
         assert!(r < items.len() || r == 0);
+    }
+
+    /// `execfor` / `execwhile` / `execrepeat` / `execif` / `execcase` /
+    /// `exectry` / `execselect` are tree-walker stubs that panic with
+    /// `unreachable!()` per the zshrs architectural pin: the tree
+    /// walker is deleted; fusevm lowers these constructs directly in
+    /// compile_zsh.rs. The tree_walker_absent.rs invariant tests this
+    /// at the architectural level. Per-function `should_panic` tests
+    /// here pin the panic message so a regression that re-introduces
+    /// tree-walker exec doesn't slip in silently.
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execfor_panics_with_tree_walker_disabled()    { let _ = execfor(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execwhile_panics_with_tree_walker_disabled()  { let _ = execwhile(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execrepeat_panics_with_tree_walker_disabled() { let _ = execrepeat(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execif_panics_with_tree_walker_disabled()     { let _ = execif(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execcase_panics_with_tree_walker_disabled()   { let _ = execcase(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn exectry_panics_with_tree_walker_disabled()    { let _ = exectry(0); }
+    #[test]
+    #[should_panic(expected = "tree-walker disabled")]
+    fn execselect_panics_with_tree_walker_disabled() { let _ = execselect(0); }
+
+    /// Empty list to selectlist: nothing to draw, returns 0.
+    #[test]
+    fn selectlist_empty_returns_zero() {
+        assert_eq!(selectlist(&[], 0), 0);
     }
 }

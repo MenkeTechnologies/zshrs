@@ -9,3 +9,20 @@
 
 pub mod rlimits;
 pub mod sched;
+
+#[cfg(test)]
+mod tests {
+    /// `ulimit` with no args lists current limits per POSIX. The
+    /// canonical `bin_ulimit` exits with 0 on the listing path. Tests
+    /// the most-used invocation (`$ ulimit`) doesn't error and doesn't
+    /// panic — both regressions zsh users would hit immediately.
+    #[test]
+    fn ulimit_with_no_args_succeeds() {
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = super::rlimits::bin_ulimit("ulimit", &[], &ops, 0);
+        assert_eq!(r, 0, "`ulimit` with no args must succeed (POSIX listing path)");
+    }
+}

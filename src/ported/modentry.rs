@@ -57,4 +57,31 @@ mod tests {
         assert_eq!(modentry(6, &mut m), 1);     // c:38 default
         assert_eq!(modentry(-1, &mut m), 1);
     }
+
+    /// c:22 — `cleanup_` op dispatches to module.cleanup(). Default
+    /// ModuleLifecycle::cleanup returns 0 unless overridden.
+    #[test]
+    fn modentry_cleanup_op_returns_zero() {
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(2, &mut m), 0);
+    }
+
+    /// c:26 — `finish_` op dispatches to module.finish().
+    #[test]
+    fn modentry_finish_op_returns_zero() {
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(3, &mut m), 0);
+    }
+
+    /// c:30/34 — `features_` / `enables_` ops short-circuit to 0
+    /// without invoking the module trait (the module-feature ledger
+    /// is canonicalised in modulestab, not in per-module hooks).
+    #[test]
+    fn modentry_features_enables_short_circuit_zero() {
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(4, &mut m), 0);     // c:30 features_
+        assert_eq!(modentry(5, &mut m), 0);     // c:34 enables_
+        // Confirm boot() wasn't invoked as side effect.
+        assert!(!m.booted);
+    }
 }

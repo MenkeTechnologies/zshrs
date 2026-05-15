@@ -326,4 +326,50 @@ mod tests {
         // Single ASCII char.
         assert_eq!(strend("a"), "a");
     }
+
+    /// c:98 — `tricat(s1,s2,s3)` is the canonical 3-string concat used
+    /// everywhere zsh builds `${prefix}${name}${suffix}`. Regression
+    /// dropping any segment silently corrupts every param-subst path.
+    #[test]
+    fn tricat_concatenates_three_segments_in_order() {
+        assert_eq!(tricat("a", "b", "c"), "abc");
+        assert_eq!(tricat("",  "b", "c"), "bc");
+        assert_eq!(tricat("a", "",  "c"), "ac");
+        assert_eq!(tricat("a", "b", ""),  "ab");
+    }
+
+    /// c:131 — `dyncat(s1,s2)` is the 2-string concat counterpart.
+    #[test]
+    fn dyncat_concatenates_two_segments() {
+        assert_eq!(dyncat("hello", " world"), "hello world");
+        assert_eq!(dyncat("",       "x"),     "x");
+    }
+
+    /// c:62 — `ztrdup` is the owning copy. Verifies the duplicate
+    /// is independent of the source after a mutating clear.
+    #[test]
+    fn ztrdup_returns_independent_owned_copy() {
+        let mut src = String::from("original");
+        let dup = ztrdup(&src);
+        src.clear();
+        assert_eq!(dup, "original",
+            "dup must survive source-side clear");
+    }
+
+    /// c:161 — `dupstrpfx(s, len)` returns first `len` bytes; len > s.len()
+    /// must NOT panic — returns whole string. Critical for any
+    /// truncation path that doesn't pre-clamp.
+    #[test]
+    fn dupstrpfx_handles_len_larger_than_input() {
+        assert_eq!(dupstrpfx("ab",    100), "ab");
+        assert_eq!(dupstrpfx("hello", 0),   "");
+        assert_eq!(dupstrpfx("hello", 3),   "hel");
+    }
+
+    /// c:131 — `dyncat` with both empty inputs returns empty (no
+    /// phantom delimiters).
+    #[test]
+    fn dyncat_empty_inputs_return_empty() {
+        assert_eq!(dyncat("", ""), "");
+    }
 }

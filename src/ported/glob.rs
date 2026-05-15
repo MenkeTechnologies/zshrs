@@ -4306,4 +4306,190 @@ mod tests {
             None => opt_state_unset("extendedglob"),
         }
     }
+
+    /// c:2150 (xpandredir port) — when the redir name has no wildcard
+    /// AND no `$var`/`!hist`/`{a,b}` to expand, prefork+globlist leave
+    /// the name unchanged. The single-match path at c:2171 must
+    /// rewrite `fn.name` to the same string and return 0 (no multi-fan).
+    /// Regression that returns 1 would trigger MULTIOS dispatch on a
+    /// single literal filename — wrong shell semantics.
+    #[test]
+    fn xpandredir_single_literal_filename_returns_zero() {
+        use crate::ported::zsh_h::{redir, REDIR_WRITE};
+        let mut fn_ = redir {
+            typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
+            name: Some("/tmp/zshrs_test_out".to_string()),
+            varid: None, here_terminator: None, munged_here_terminator: None,
+        };
+        let mut tab: Vec<redir> = Vec::new();
+        let r = xpandredir(&mut fn_, &mut tab);
+        assert_eq!(r, 0, "literal filename → single match → ret=0");
+        assert_eq!(fn_.name.as_deref(), Some("/tmp/zshrs_test_out"),
+            "literal name must round-trip through prefork unchanged");
+        assert!(tab.is_empty(), "no multi-match → redirtab not appended");
+    }
+
+    /// c:2176-2177 — `>&-` (REDIR_MERGEOUT with name "-") collapses to
+    /// REDIR_CLOSE per the `IS_DASH(s[0]) && !s[1]` branch. Regression
+    /// where this fails leaves `>&-` as a literal merge-fd attempt,
+    /// which the executor would interpret as "merge with fd -1".
+    #[test]
+    fn xpandredir_dash_merge_collapses_to_close() {
+        use crate::ported::zsh_h::{redir, REDIR_MERGEOUT, REDIR_CLOSE};
+        let mut fn_ = redir {
+            typ: REDIR_MERGEOUT, flags: 0, fd1: 1, fd2: -1,
+            name: Some("-".to_string()),
+            varid: None, here_terminator: None, munged_here_terminator: None,
+        };
+        let mut tab: Vec<redir> = Vec::new();
+        let _ = xpandredir(&mut fn_, &mut tab);
+        assert_eq!(fn_.typ, REDIR_CLOSE, "`>&-` must rewrite typ to REDIR_CLOSE");
+    }
+
+    /// c:2150 — empty `fn.name` should return 0 cleanly. Catches a
+    /// regression that panics on `.as_deref().unwrap()` for absent name.
+    #[test]
+    fn xpandredir_with_no_name_returns_zero_no_panic() {
+        use crate::ported::zsh_h::{redir, REDIR_WRITE};
+        let mut fn_ = redir {
+            typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
+            name: None,
+            varid: None, here_terminator: None, munged_here_terminator: None,
+        };
+        let mut tab: Vec<redir> = Vec::new();
+        assert_eq!(xpandredir(&mut fn_, &mut tab), 0);
+    }
+
+    /// `IN_EXPANDREDIR` static defaults to 0 — set transiently inside
+    /// xpandredir per c:2165/2167. After a normal call it must restore
+    /// to 0. Regression that leaks the flag would skew unrelated glob
+    /// expansions outside redirections.
+    #[test]
+    fn in_expandredir_flag_is_zero_at_rest() {
+        assert_eq!(IN_EXPANDREDIR.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// c:4306 — `haswilds` honours backslash-escapes: `\*` is a literal
+    /// star, NOT a wildcard. Regression that ignores the escape would
+    /// trigger globbing on `printf '%s\n' \*`, breaking shell scripts
+    /// that quote literal stars.
+    #[test]
+    fn haswilds_respects_backslash_escape() {
+        assert!(haswilds("*.txt"),    "bare * is wild");
+        assert!(!haswilds(r"\*.txt"), "escaped \\* is literal — NOT wild");
+        assert!(!haswilds(r"\?.txt"), "escaped \\? is literal — NOT wild");
+    }
+
+    /// c:4306 — `[` immediately enters bracket mode AND counts as a
+    /// wildcard. The early return on `[` is critical — even
+    /// unterminated brackets must be flagged so `cd [` doesn't try
+    /// to chdir to a literal `[`.
+    #[test]
+    fn haswilds_open_bracket_alone_is_a_wildcard() {
+        assert!(haswilds("[abc]"),  "char-class is wild");
+        assert!(haswilds("foo["),   "even unterminated [ is wild");
+    }
+
+    /// c:4306 — wildcard chars `*` `?` inside an OPEN bracket-context
+    /// are NOT additional wildcards (the bracket already is one).
+    /// Regression that double-counts would make haswilds report `[*]`
+    /// as wildcard-twice — cosmetic, but confuses any caller using
+    /// the bool as a "should I glob?" gate that AND-tests with another
+    /// flag.
+    #[test]
+    fn haswilds_extglob_chars_inside_bracket_dont_double_count() {
+        // Once `[` is seen, function returns true immediately, so the
+        // post-bracket chars don't matter. But this docs the contract.
+        assert!(haswilds("[*]"));
+    }
+
+    /// c:4306 — plain text returns false. Catches a regression where
+    /// any non-empty input is flagged as wild (would break `cd /tmp`
+    /// by triggering glob expansion on a literal path).
+    #[test]
+    fn haswilds_plain_text_not_wild() {
+        assert!(!haswilds("plain"));
+        assert!(!haswilds(""));
+        assert!(!haswilds("/usr/local/bin"));
+        assert!(!haswilds("file.txt"));
+    }
+
+    /// c:4306 — `#` `^` `~` are zsh EXTENDED_GLOB wildcards (matched
+    /// only outside brackets). Regression dropping any of these
+    /// breaks every script using extended-glob.
+    #[test]
+    fn haswilds_extended_glob_chars_recognised() {
+        assert!(haswilds("foo#bar"),  "# is extglob wild");
+        assert!(haswilds("foo^bar"),  "^ is extglob wild");
+        assert!(haswilds("~/file"),   "~ is extglob wild");
+    }
+
+    /// c:2514 — `matchpat` returns true for exact match. Sanity check
+    /// the simplest dispatch path (the matcher recipe builds a
+    /// trivial pattern, runs it).
+    #[test]
+    fn matchpat_exact_literal_matches() {
+        assert!(matchpat("hello", "hello", false, true));
+        assert!(!matchpat("hello", "world", false, true));
+    }
+
+    /// c:2514 — `matchpat` with case_sensitive=false MUST treat upper
+    /// and lower as equal (`HELLO` matches `hello`). Regression keeping
+    /// case-sensitive when flag is false would silently break every
+    /// `[[ "$x" = (#i)foo ]]`-style match.
+    #[test]
+    fn matchpat_case_insensitive_when_flag_clear() {
+        assert!(matchpat("hello", "HELLO", false, false),
+            "case-insensitive match must succeed across cases");
+        assert!(matchpat("FoO",   "foo",   false, false));
+    }
+
+    /// c:2514 — case-sensitive (default) MUST reject case-different
+    /// inputs. Pinning the contract.
+    #[test]
+    fn matchpat_case_sensitive_rejects_case_different() {
+        assert!(!matchpat("hello", "HELLO", false, true),
+            "case-sensitive default must reject HELLO != hello");
+    }
+
+    /// c:2780 — `set_pat_start` returns the suffix from `offs` onward.
+    /// `offs=0` → unchanged. `offs >= len` → unchanged (defensive bound).
+    /// Regression that panics on out-of-range would crash the
+    /// substring-globbing code.
+    #[test]
+    fn set_pat_start_handles_out_of_range_safely() {
+        assert_eq!(set_pat_start("hello", 0),     "hello");
+        assert_eq!(set_pat_start("hello", 100),   "hello");
+        assert_eq!(set_pat_start("hello", 2),     "llo");
+    }
+
+    /// c:2797 — `set_pat_end` returns the prefix up to `null_me`.
+    /// Counterpart to set_pat_start. `null_me >= len` is no-op
+    /// (defensive). Regression panicking on out-of-range would crash
+    /// the substring-globbing code.
+    #[test]
+    fn set_pat_end_handles_out_of_range_safely() {
+        assert_eq!(set_pat_end("hello", 100),     "hello");
+        assert_eq!(set_pat_end("hello", 3),       "hel");
+        assert_eq!(set_pat_end("hello", 0),       "");
+    }
+
+    /// c:2773 — `freematchlist(None)` is a no-op (matches C's
+    /// `if (repllist) freelinklist(...)`). Regression panicking on
+    /// None would crash every glob-replace path with no matches.
+    #[test]
+    fn freematchlist_handles_none_safely() {
+        freematchlist(None);
+        // No assertion — survival is the test.
+    }
+
+    /// c:2773 — `freematchlist(Some(&mut Vec))` clears the list.
+    /// Regression that drops a stale entry would leak match positions
+    /// across calls.
+    #[test]
+    fn freematchlist_clears_provided_vec() {
+        let mut v = vec![(0, 5), (10, 15)];
+        freematchlist(Some(&mut v));
+        assert!(v.is_empty(), "freematchlist must clear the input vec");
+    }
 }

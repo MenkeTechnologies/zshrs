@@ -2430,3 +2430,171 @@ fn module_features() -> &'static Mutex<features_t> {
         n_abstract: 0,
     }))
 }
+
+#[cfg(test)]
+mod scan_callback_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    // Module-scoped collector statics. Tests are serialised by name +
+    // each test resets before/after so cross-test bleed is impossible.
+    static COLLECTED_COUNT: AtomicI32 = AtomicI32::new(0);
+    static LAST_NAME_LEN: AtomicI32 = AtomicI32::new(0);
+
+    fn counting_func(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+        COLLECTED_COUNT.fetch_add(1, Ordering::SeqCst);
+        LAST_NAME_LEN.store(node.nam.len() as i32, Ordering::SeqCst);
+    }
+
+    fn reset_counters() {
+        COLLECTED_COUNT.store(0, Ordering::SeqCst);
+        LAST_NAME_LEN.store(0, Ordering::SeqCst);
+    }
+
+    /// c:139-145 — scanpmparameters walks realparamtab calling func per
+    /// non-PM_UNSET entry. Seed paramtab with one entry, verify the
+    /// callback fires exactly once with the right name.
+    #[test]
+    fn scanpmparameters_invokes_func_per_param() {
+        use crate::ported::zsh_h::{param, hashnode, PM_SCALAR};
+        reset_counters();
+        // Seed realparamtab.
+        let pm = param {
+            node: hashnode { next: None, nam: "ZSHRS_TEST_SP_A".to_string(), flags: PM_SCALAR as i32 },
+            u_data: 0, u_arr: None, u_str: Some("v".to_string()),
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        crate::ported::params::realparamtab().write().unwrap()
+            .insert("ZSHRS_TEST_SP_A".to_string(), Box::new(pm));
+        scanpmparameters(std::ptr::null_mut(), Some(counting_func), 0);
+        let observed = COLLECTED_COUNT.load(Ordering::SeqCst);
+        // Cleanup before asserting so failures don't leak state.
+        crate::ported::params::realparamtab().write().unwrap().remove("ZSHRS_TEST_SP_A");
+        assert!(observed >= 1, "callback fires at least once for the seeded param (got {})", observed);
+    }
+
+    /// c:1199 — scanpmhistory walks hist_ring newest→oldest. With an
+    /// empty ring the loop body never runs → zero callback invocations.
+    /// A regression that ran an iter on the sentinel head would emit
+    /// a spurious extra entry; this test catches it.
+    #[test]
+    fn scanpmhistory_empty_ring_invokes_zero_callbacks() {
+        reset_counters();
+        let snapshot: Vec<_> = crate::ported::hist::hist_ring.lock().unwrap().drain(..).collect();
+        scanpmhistory(std::ptr::null_mut(), Some(counting_func), 0);
+        let observed = COLLECTED_COUNT.load(Ordering::SeqCst);
+        crate::ported::hist::hist_ring.lock().unwrap().extend(snapshot);
+        assert_eq!(observed, 0);
+    }
+}
+
+#[cfg(test)]
+mod setalias_tests {
+    use super::*;
+    use crate::ported::zsh_h::{param, hashnode, PM_SCALAR};
+
+    /// setalias wires `aliastab.add(createaliasnode(name, value, flags))`
+    /// per c:1701-1702. After call, aliastab should contain the new
+    /// alias with the given value.
+    #[test]
+    fn setalias_inserts_entry_into_aliastab() {
+        let pm = param {
+            node: hashnode { next: None, nam: "zshrs_test_alias_x".to_string(), flags: PM_SCALAR as i32 },
+            u_data: 0, u_arr: None, u_str: None,
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        setalias(std::ptr::null_mut(), Box::new(pm), "echo hi".to_string(), 0);
+        let tab = crate::ported::hashtable::aliastab_lock().read().expect("aliastab poisoned");
+        let entry = tab.get("zshrs_test_alias_x");
+        assert!(entry.is_some(), "setalias must add to aliastab");
+        if let Some(a) = entry {
+            assert_eq!(a.text, "echo hi", "alias value matches createaliasnode arg");
+        }
+    }
+}
+
+#[cfg(test)]
+mod paramtypestr_table_tests {
+    use super::*;
+    use crate::ported::zsh_h::{
+        hashnode, param, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_ARRAY,
+        PM_HASHED, PM_READONLY, PM_EXPORTED, PM_LOCAL,
+    };
+
+    fn pm(flags: u32) -> param {
+        param {
+            node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        }
+    }
+
+    /// c:43 — paramtypestr's per-flag dispatch table emits the type
+    /// name `${(t)foo}` reports. Each PM_TYPE bit pattern maps to
+    /// a distinct user-visible string. A regression that emits
+    /// `"scalar"` for every type would break every typeset-introspecting
+    /// script (many shell scripts grep for "array"/"integer" output).
+    #[test]
+    fn integer_param_renders_as_integer() {
+        assert_eq!(paramtypestr(&pm(PM_INTEGER)), "integer");
+    }
+
+    #[test]
+    fn float_e_param_renders_as_float() {
+        assert_eq!(paramtypestr(&pm(PM_EFLOAT)), "float");
+    }
+
+    #[test]
+    fn float_f_param_renders_as_float() {
+        assert_eq!(paramtypestr(&pm(PM_FFLOAT)), "float");
+    }
+
+    #[test]
+    fn array_param_renders_as_array() {
+        assert_eq!(paramtypestr(&pm(PM_ARRAY)), "array");
+    }
+
+    #[test]
+    fn hashed_param_renders_as_association() {
+        assert_eq!(paramtypestr(&pm(PM_HASHED)), "association");
+    }
+
+    /// c:43 — `${(t)foo}` includes per-modifier suffixes for readonly /
+    /// exported / local. They appear after the type name separated by
+    /// `-`. Regression dropping any modifier breaks typeset-output
+    /// parsing in user scripts.
+    #[test]
+    fn readonly_modifier_appears_after_type_name() {
+        let s = paramtypestr(&pm(PM_INTEGER | PM_READONLY));
+        assert!(s.contains("readonly"),
+            "PM_READONLY must appear in type-string (got {s:?})");
+    }
+
+    /// c:81-82 — PM_EXPORTED renders as `-export` (note: NOT
+    /// `-exported`; this is the canonical zsh suffix). Catches a
+    /// regression where the suffix changes spelling.
+    #[test]
+    fn exported_modifier_renders_as_export_suffix() {
+        let s = paramtypestr(&pm(PM_INTEGER | PM_EXPORTED));
+        assert!(s.contains("-export"),
+            "PM_EXPORTED must produce '-export' suffix (got {s:?})");
+    }
+
+    /// c:63-64 — `-local` suffix is gated on `pm.level != 0`, NOT a
+    /// PM_LOCAL flag (which is a different concept). Verifies the
+    /// level-based rendering path; regression flipping the gate would
+    /// break `local foo` reporting in nested function scopes.
+    #[test]
+    fn local_modifier_renders_when_level_nonzero() {
+        let mut p = pm(PM_INTEGER);
+        p.level = 1;
+        let s = paramtypestr(&p);
+        assert!(s.contains("-local"), "level>0 must add '-local' (got {s:?})");
+    }
+}

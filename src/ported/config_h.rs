@@ -1291,3 +1291,24 @@ pub type ZSOCKLEN_T = libc::socklen_t;
 // Define as 'int' if <sys/types.h> doesn't define.
 // /* #undef uid_t */
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JOB_CONTROL + USE_SUSPENDED gate every job-management feature
+    /// (`bg`/`fg`/`jobs`/SIGTSTP handling). Both must be 1 — a regen
+    /// flipping either silently disables half the shell.
+    #[test]
+    fn job_control_is_enabled() {
+        assert_eq!(JOB_CONTROL,   1);
+        assert_eq!(USE_SUSPENDED, 1);
+    }
+
+    /// PASSWD_FILE is consulted by init.c when populating $USERNAME /
+    /// $HOME from /etc/passwd. Hard-pins the POSIX-standard location.
+    #[test]
+    fn passwd_file_is_posix_standard_location() {
+        assert_eq!(PASSWD_FILE, "/etc/passwd");
+    }
+}

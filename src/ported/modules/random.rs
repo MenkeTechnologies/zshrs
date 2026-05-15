@@ -537,4 +537,51 @@ mod tests {
         getrandom_buffer(&mut buf).unwrap();
         assert!(!buf.iter().all(|&b| b == 0));
     }
+
+    /// c:161 — `math_zrand_int(upper, lower, inclusive=true)` returns
+    /// values in `[lower, upper]`. 50 iterations to verify EVERY
+    /// returned value lies in range — regression returning out-of-
+    /// bounds values would silently corrupt arithmetic-driven scripts.
+    #[test]
+    fn math_zrand_int_inclusive_range_respects_bounds() {
+        for _ in 0..50 {
+            let v = math_zrand_int(Some(10), Some(5), true).unwrap();
+            assert!((5..=10).contains(&v),
+                "value {v} out of inclusive range [5, 10]");
+        }
+    }
+
+    /// c:161 — `inclusive=false` excludes upper bound. `random_int(0,10)`
+    /// must NEVER return 10 in this mode.
+    #[test]
+    fn math_zrand_int_exclusive_excludes_upper_bound() {
+        for _ in 0..50 {
+            let v = math_zrand_int(Some(10), Some(5), false).unwrap();
+            assert!((5..10).contains(&v),
+                "value {v} out of exclusive range [5, 10)");
+        }
+    }
+
+    /// c:204 — `math_zrand_float` returns a float in `[0.0, 1.0)`.
+    /// Regression returning negative or >=1.0 would break PRNGs users
+    /// layer on top.
+    #[test]
+    fn math_zrand_float_in_unit_interval() {
+        for _ in 0..50 {
+            let v = math_zrand_float();
+            assert!((0.0..1.0).contains(&v),
+                "value {v} out of unit interval [0.0, 1.0)");
+        }
+    }
+
+    /// `getrandom_buffer` produces different output on successive
+    /// calls. Catches a regression where the RNG is fixed-seeded.
+    #[test]
+    fn getrandom_buffer_two_calls_differ() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        getrandom_buffer(&mut a).unwrap();
+        getrandom_buffer(&mut b).unwrap();
+        assert_ne!(a, b, "two random reads must differ (or RNG is broken)");
+    }
 }

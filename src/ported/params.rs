@@ -7787,4 +7787,57 @@ mod tests {
         let out = getarg("(en.2.r)b", None, None, Some("abab")).expect("Some");
         assert_eq!(val_str(out), "b");
     }
+
+    /// c:3076/3193 — assignsparam writes into paramtab; getsparam
+    /// reads it back. The round-trip is the spine of every
+    /// `foo=bar; print $foo` flow. Regression here would silently
+    /// drop assignments.
+    #[test]
+    fn assignsparam_then_getsparam_round_trips() {
+        let name = "ZSHRS_TEST_ASSIGN_GET";
+        crate::ported::params::assignsparam(name, "test_value_42", 0);
+        assert_eq!(
+            crate::ported::params::getsparam(name).as_deref(),
+            Some("test_value_42")
+        );
+        // Cleanup so other tests don't see leaked param.
+        let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
+    }
+
+    /// c:3076 — getsparam on a non-existent param returns None.
+    /// A regression returning Some("") would mask unset-param errors.
+    #[test]
+    fn getsparam_unknown_param_returns_none() {
+        assert!(crate::ported::params::getsparam("ZSHRS_TEST_DEFINITELY_UNSET").is_none());
+    }
+
+    /// c:3819 — direct paramtab.remove drops the entry; subsequent
+    /// getsparam returns None. The set→remove→lookup gap verifies
+    /// the canonical paramtab is actually backing both reads + writes.
+    #[test]
+    fn paramtab_remove_makes_getsparam_return_none() {
+        let name = "ZSHRS_TEST_UNSET_FLOW";
+        crate::ported::params::assignsparam(name, "to_be_removed", 0);
+        assert!(crate::ported::params::getsparam(name).is_some(),
+            "param must be set before remove path");
+        let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
+        assert!(crate::ported::params::getsparam(name).is_none(),
+            "after remove, getsparam must return None");
+    }
+
+    /// c:3357 — assignaparam stores an array. getsparam on an array
+    /// param returns the first element OR a join (depends on IFS).
+    /// Verify the slot was populated AT ALL by querying paramtab.
+    #[test]
+    fn assignaparam_populates_paramtab_with_array() {
+        let name = "ZSHRS_TEST_ARR_X";
+        crate::ported::params::assignaparam(
+            name, vec!["a".into(), "b".into(), "c".into()], 0);
+        let tab = crate::ported::params::paramtab().read().expect("paramtab poisoned");
+        let pm = tab.get(name).expect("param installed");
+        assert_eq!(pm.u_arr.as_deref(), Some(&["a".to_string(), "b".to_string(), "c".to_string()][..]),
+            "assignaparam stores all three elements");
+        drop(tab);
+        let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
+    }
 }

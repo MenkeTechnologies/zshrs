@@ -2796,4 +2796,60 @@ mod tests {
         assert_eq!(mathevali("1, 2, 3").unwrap(), 3);
         assert_eq!(mathevali("(x = 1, y = 2, x + y)").unwrap(), 3);
     }
+
+    /// c:1505 — integer divide-by-zero is a runtime error in `$(( ))`.
+    /// A regression returning 0 silently masks programmer errors.
+    #[test]
+    fn mathevali_divide_by_zero_errors() {
+        assert!(mathevali("1/0").is_err());
+        assert!(mathevali("5/(2-2)").is_err());
+    }
+
+    /// c:1480 — mod-by-zero is also an error (matches POSIX).
+    #[test]
+    fn mathevali_mod_by_zero_errors() {
+        assert!(mathevali("5 % 0").is_err());
+    }
+
+    /// c:1505 — operator precedence: `*` binds tighter than `+`.
+    /// Regression flipping this would silently break every
+    /// `$(( a + b * c ))` users compute.
+    #[test]
+    fn mathevali_respects_multiplicative_over_additive_precedence() {
+        assert_eq!(mathevali("1 + 2 * 3").unwrap(),  7);
+        assert_eq!(mathevali("(1 + 2) * 3").unwrap(), 9);
+        assert_eq!(mathevali("10 - 2 * 3").unwrap(), 4);
+    }
+
+    /// c:1505 — bitshift `<<` `>>` from `$(( ))` grammar. Regression
+    /// dropping them breaks any hex-mask / bit-pack computation.
+    #[test]
+    fn mathevali_bitshift_operators() {
+        assert_eq!(mathevali("1 << 4").unwrap(),  16);
+        assert_eq!(mathevali("256 >> 3").unwrap(), 32);
+    }
+
+    /// c:1505 — `&&` short-circuits on zero LHS. Regression that
+    /// evaluates the RHS would surface side-effects (or divide-
+    /// by-zero) the user expected NOT to fire.
+    #[test]
+    fn mathevali_logical_and_short_circuits_on_zero_lhs() {
+        // If RHS evaluated, `1/0` would error. Short-circuit must skip.
+        assert_eq!(mathevali("0 && 1/0").unwrap(), 0);
+    }
+
+    /// c:1505 — `||` short-circuits on non-zero LHS. Same rationale.
+    #[test]
+    fn mathevali_logical_or_short_circuits_on_nonzero_lhs() {
+        assert_eq!(mathevali("1 || 1/0").unwrap(), 1);
+    }
+
+    /// c:1505 — ternary `cond ? a : b` evaluates ONLY the selected
+    /// branch. Regression that evaluates both surfaces side-effects
+    /// in the unused branch.
+    #[test]
+    fn mathevali_ternary_evaluates_only_selected_branch() {
+        assert_eq!(mathevali("1 ? 42 : 1/0").unwrap(), 42);
+        assert_eq!(mathevali("0 ? 1/0 : 42").unwrap(), 42);
+    }
 }
