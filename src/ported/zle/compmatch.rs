@@ -200,6 +200,38 @@ pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // 
     if let Ok(mut g) = cell.lock() { *g = head; }
 }
 
+/// Direct port of `mod_export void update_bmatchers(void)` from
+/// `Src/Zle/compmatch.c:121`. Called when mstack changes — ensures
+/// `bmatchers` contains no matchers absent from `mstack`.
+pub fn update_bmatchers() {                                                  // c:121
+    let bm_cell = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None));
+    let ms_cell = crate::ported::zle::compcore::mstack
+        .get_or_init(|| std::sync::Mutex::new(None));
+    let mut p = bm_cell.lock().ok().and_then(|mut g| g.take());              // c:124 Cmlist p = bmatchers
+    let ms_head = ms_cell.lock().ok().and_then(|g| g.as_ref().map(|b| (**b).clone()));
+    let mut new_bmatchers: Option<Box<crate::ported::zle::comp_h::Cmlist>> = p.as_ref().map(|b| (**b).clone()).map(Box::new);
+    while let Some(node) = p {                                               // c:128 while (p)
+        let mut t = false;                                                   // c:129 t = 0
+        let mut ms = ms_head.as_ref();                                       // c:130 ms = mstack
+        while let Some(mscur) = ms {
+            if t { break; }
+            let mut mp = Some(mscur.matcher.as_ref());                       // c:131 mp = ms->matcher
+            while let Some(mpcur) = mp {
+                if t { break; }
+                t = cmatchers_same(mpcur, &*node.matcher);                   // c:132 cmatchers_same
+                mp = mpcur.next.as_deref();
+            }
+            ms = mscur.next.as_deref();
+        }
+        p = node.next;                                                       // c:134 p = p->next
+        if !t {                                                              // c:135 if (!t)
+            new_bmatchers = p.as_ref().map(|b| (**b).clone()).map(Box::new); // c:136 bmatchers = p
+        }
+    }
+    if let Ok(mut g) = bm_cell.lock() { *g = new_bmatchers; }
+}
+
 /// Port of `Cline get_cline(char *l, int ll, char *w, int wl, char *o,
 ///                            int ol, int fl)` from Src/Zle/compmatch.c:144.
 ///
