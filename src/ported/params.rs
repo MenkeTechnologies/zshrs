@@ -5473,28 +5473,26 @@ pub fn savehistsizesetfn(v: i64) {
 /// which captures the *last* call. To set errno for subsequent
 /// `last_os_error()` reads on macOS / Linux, write through the libc
 /// `__error()`/`__errno_location()` accessor.
+/// C body (Src/params.c:5004):
+///     `errno = (int)x;
+///      if ((zlong)errno != x) zwarn("errno truncated on assignment");`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn errnosetfn(x: i64) {
-    extern "C" {
-        #[cfg(target_os = "macos")]
-        fn __error() -> *mut libc::c_int;
-        #[cfg(target_os = "linux")]
-        fn __errno_location() -> *mut libc::c_int;
-    }
+pub fn errnosetfn(x: i64) {                                                  // c:5004
     let truncated = x as i32;
-    unsafe {
-        #[cfg(target_os = "macos")]
-        {
-            *__error() = truncated;
-        }
-        #[cfg(target_os = "linux")]
-        {
-            *__errno_location() = truncated;
-        }
-    }
-    if truncated as i64 != x {
-        zerr("errno truncated on assignment");
-    }
+    unsafe { *errno_ptr() = truncated; }                                     // c:5006 errno = (int)x
+    if truncated as i64 != x { zerr("errno truncated on assignment"); }      // c:5007-5008
+}
+
+/// !!! RUST-ONLY HELPER — no direct C counterpart. C accesses
+/// `errno` through the standard macro which the compiler resolves
+/// to the per-platform getter (`__error()` on macOS, `__errno_location()`
+/// on Linux). Rust libc exposes both as raw FFI; this helper picks
+/// the right one per target so errnosetfn/errnogetfn stay one-liners.
+#[inline]
+unsafe fn errno_ptr() -> *mut libc::c_int {
+    #[cfg(target_os = "macos")] { libc::__error() }
+    #[cfg(target_os = "linux")] { libc::__errno_location() }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))] { std::ptr::null_mut() }
 }
 
 /// Port of `errnogetfn(UNUSED(Param pm))` from `Src/params.c:5015`. C body: `return errno;`
