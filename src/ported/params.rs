@@ -90,24 +90,14 @@ pub fn rprompt_indent_unsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL|C},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF1(A: &str, B: usize, C: i32) -> paramdef {        // c:params.c:296
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_INTEGER | PM_SPECIAL) as i32 | C,
-        var: 0, gsu: B,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_INTEGER | PM_SPECIAL) as i32 | C, gsu: B, ..Default::default() }
 }
 
 /// Port of `IPDEF2(A,B,C)` from `Src/params.c:309` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL|C},BR(NULL),GSU(B),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF2(A: &str, B: usize, C: i32) -> paramdef {        // c:params.c:309
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL) as i32 | C,
-        var: 0, gsu: B,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_SCALAR | PM_SPECIAL) as i32 | C, gsu: B, ..Default::default() }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,80 +138,45 @@ pub fn LCIPDEF(name: &str) -> paramdef {                                     // 
 ///   GSU(varint_readonly_gsu),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF4(A: &str, B: usize) -> paramdef {                          // c:params.c:344
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_INTEGER | PM_READONLY_SPECIAL) as i32,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_INTEGER | PM_READONLY_SPECIAL) as i32, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF5(A,B,F)` from `Src/params.c:353` —
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL},BR((void*)B),GSU(F),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF5(A: &str, B: usize, F: usize) -> paramdef {              // c:params.c:353
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_INTEGER | PM_SPECIAL) as i32,
-        var: B, gsu: F,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_INTEGER | PM_SPECIAL) as i32, var: B, gsu: F, ..Default::default() }
 }
 
 /// Port of `IPDEF5U(A,B,F)` from `Src/params.c:354` — c:353 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF5U(A: &str, B: usize, F: usize) -> paramdef {             // c:params.c:354
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_INTEGER | PM_SPECIAL | PM_UNSET) as i32,
-        var: B, gsu: F,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_INTEGER | PM_SPECIAL | PM_UNSET) as i32, var: B, gsu: F, ..Default::default() }
 }
 
 /// Port of `IPDEF6(A,B,F)` from `Src/params.c:362` — c:353 + PM_DONTIMPORT.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF6(A: &str, B: usize, F: usize) -> paramdef {              // c:params.c:362
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_INTEGER | PM_SPECIAL | PM_DONTIMPORT) as i32,
-        var: B, gsu: F,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_INTEGER | PM_SPECIAL | PM_DONTIMPORT) as i32, var: B, gsu: F, ..Default::default() }
 }
 
 /// Port of `IPDEF7(A,B)` from `Src/params.c:367` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL},BR((void*)B),GSU(varscalar_gsu),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF7(A: &str, B: usize) -> paramdef {                          // c:params.c:367
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL) as i32,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_SCALAR | PM_SPECIAL) as i32, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF7U(A,B)` from `Src/params.c:369` — c:367 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF7U(A: &str, B: usize) -> paramdef {                         // c:params.c:369
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL | PM_UNSET) as i32,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_SCALAR | PM_SPECIAL | PM_UNSET) as i32, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF7R(A,B)` from `Src/params.c:368` — c:367 + PM_DONTIMPORT_SUID.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF7R(A: &str, B: usize) -> paramdef {                         // c:params.c:368
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL | PM_DONTIMPORT_SUID) as i32,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_SCALAR | PM_SPECIAL | PM_DONTIMPORT_SUID) as i32, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF9(A,B,C,D)` from `Src/params.c:431` —
@@ -229,12 +184,7 @@ pub fn IPDEF7R(A: &str, B: usize) -> paramdef {                         // c:par
 ///   GSU(vararray_gsu),0,0,NULL,C,NULL,0}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF9(A: &str, B: usize, C: usize, D: i32) -> paramdef { // c:params.c:384
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT) as i32 | D,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT) as i32 | D, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF8(A,B,C,D)` from `Src/params.c:394` —
@@ -245,24 +195,14 @@ pub fn IPDEF9(A: &str, B: usize, C: usize, D: i32) -> paramdef { // c:params.c:3
 /// ported.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF8(A: &str, B: usize, C: usize, D: i32) -> paramdef { // c:params.c:394
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL) as i32 | D,
-        var: B, gsu: 0,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_SCALAR | PM_SPECIAL) as i32 | D, var: B, ..Default::default() }
 }
 
 /// Port of `IPDEF10(A,B)` from `Src/params.c:438` —
 /// `{{NULL,A,PM_ARRAY|PM_SPECIAL},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
 pub fn IPDEF10(A: &str, B: usize) -> paramdef {                         // c:params.c:406
-    paramdef {
-        name: A.to_string(),
-        flags: (PM_ARRAY | PM_SPECIAL) as i32,
-        var: 0, gsu: B,
-        getnfn: None, scantfn: None, pm: None,
-    }
+    paramdef { name: A.into(), flags: (PM_ARRAY | PM_SPECIAL) as i32, gsu: B, ..Default::default() }
 }
 
 /// Port of `newparamtable(int size, char const *name)` from `Src/params.c:519`. C body
