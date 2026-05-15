@@ -624,21 +624,20 @@ pub fn vibackwarddeletechar() -> i32 {  // c:888
 }
 
 /// Port of `vikillline(UNUSED(char **args))` from Src/Zle/zle_vi.c:923.
-pub fn vikillline() -> i32 {      // c:vikillline
-    // C body: kill from cursor back to bol.
-    startvichange(1);
-    let bol = crate::ported::zle::zle_utils::findbol();
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > bol {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(bol..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - bol, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::ZLECS.store(bol, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
+/// C body (4 lines):
+///     `if (viinsbegin > zlecs) return 1;
+///      backdel(zlecs - viinsbegin, CUT_RAW);
+///      return 0;`
+/// (Previous Rust port killed back to BOL — wrong; vikillline kills
+/// back to the start of the current vi insert session, not the
+/// beginning of the line.)
+pub fn vikillline() -> i32 {                                                 // c:923
+    use std::sync::atomic::Ordering;
+    let zlecs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+    let viinsbegin = crate::ported::zle::zle_main::VIINSBEGIN.load(Ordering::SeqCst) as i32;
+    if viinsbegin > zlecs { return 1; }                                      // c:925
+    crate::ported::zle::zle_utils::backdel(zlecs - viinsbegin, crate::ported::zle::zle_h::CUT_RAW); // c:927
+    0                                                                        // c:928
 }
 
 /// Port of `vijoin(UNUSED(char **args))` from Src/Zle/zle_vi.c:933.

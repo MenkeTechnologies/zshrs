@@ -533,30 +533,18 @@ pub fn acceptline() -> i32 {                                                 // 
 
 
 /// Port of `acceptandhold(UNUSED(char **args))` from Src/Zle/zle_misc.c:409.
-pub fn acceptandhold() -> i32 {                                 // c:409
-    // Direct port of `int acceptandhold(char **args)` from
-    // zle_misc.c:408-415:
-    // ```c
-    // zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
-    // stackcs = zlecs;
-    // done = 1;
-    // return 0;
-    // ```
+/// C body (4 lines):
+///     `zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
+///      stackcs = zlecs;
+///      done = 1;
+///      return 0;`
+pub fn acceptandhold() -> i32 {                                              // c:409
     use std::sync::atomic::Ordering;
-    // c:411 — `zpushnode(bufstack, zlelineasstring(...))`.
-    let line_str: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().take(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)).collect();
-    crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().insert(0, line_str.clone());                                // c:411 push to front
-    crate::ported::zle::zle_main::STACKCS.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                                 // c:412
-    // Keep killring snapshot for backward-compat with callers that
-    // recover via the kill-buffer surface.
-    let line: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().take(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)).copied().collect();
-    if !line.is_empty() {
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(line);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-    }
-    DONE.store(1, Ordering::SeqCst);                                         // c:413 done = 1
+    let zlell = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
+    let line: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().take(zlell).collect();
+    crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().insert(0, line);  // c:411 zpushnode
+    crate::ported::zle::zle_main::STACKCS.store(crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:412
+    DONE.store(1, Ordering::SeqCst);                                         // c:413
     0                                                                        // c:414
 }
 
