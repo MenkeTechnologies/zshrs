@@ -3979,22 +3979,17 @@ pub fn dquotedztrdup(s: &str) -> String {
     metafy(&out)
 }
 
-/// Double-bslashquote and print string (from utils.c dquotedzputs)
-pub fn dquotedzputs(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 2);
-    result.push('"');
-    for c in s.chars() {
-        match c {
-            '$' | '`' | '"' | '\\' => {
-                result.push('\\');
-                result.push(c);
-            }
-            '\n' => result.push_str("\\n"),
-            _ => result.push(c),
-        }
-    }
-    result.push('"');
-    result
+/// Port of `dquotedzputs(char const *s, FILE *stream)` from
+/// Src/utils.c:6729. C body (4 lines):
+///     `char *d = dquotedztrdup(s);
+///      int ret = zputs(d, stream);
+///      zsfree(d);
+///      return ret;`
+/// Rust returns the quoted string directly (callers compose via
+/// `format!` rather than streaming through a FILE*), so the zputs
+/// call drops.
+pub fn dquotedzputs(s: &str) -> String {                                     // c:6729
+    dquotedztrdup(s)                                                         // c:6731
 }
 
 /// Convert UCS-4 to UTF-8 (from utils.c ucs4toutf8)
