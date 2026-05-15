@@ -295,25 +295,13 @@ pub fn evalcond(                                                             // 
 /// satisfies POSIX `R_OK`/`W_OK`/`X_OK` if its descriptor permits
 /// the action; portable equivalent for our uses).
 pub fn doaccess(s: &str, c: i32) -> i32 {                                    // c:438
-    if let Some(rest) = s.strip_prefix("/dev/fd/") {
-        if rest.parse::<i32>().is_ok() {
-            return 1;
-        }
-    }
-    let mode = match c {
-        0 => libc::F_OK,
-        4 => libc::R_OK,
-        2 => libc::W_OK,
-        1 => libc::X_OK,
-        _ => libc::F_OK,
+    // C body: HAVE_FACCESSX branch is skipped on all Linux/macOS
+    // builds (Solaris-only). Main path:
+    //     return !access(unmeta(s), c);
+    let cs = match std::ffi::CString::new(crate::ported::utils::unmeta(s)) {  // c:445 unmeta(s)
+        Ok(v) => v, Err(_) => return 0,
     };
-    let cs = match std::ffi::CString::new(s) {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    unsafe {
-        if libc::access(cs.as_ptr(), mode) == 0 { 1 } else { 0 }
-    }
+    (unsafe { libc::access(cs.as_ptr(), c) } == 0) as i32                    // c:445 !access(...)
 }
 
 /// Port of `getstat(char *s)` from Src/cond.c:452 — `stat(2)` wrapper that
