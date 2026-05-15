@@ -837,12 +837,37 @@ pub fn cd_prep() -> i32 {                                                    // 
     0                                                                        // c:438
 }
 
-/// Direct port of `static char **cd_arrcat(char **a, char **b)` from
-/// `Src/Zle/computil.c:599`.
+/// Port of `static char **cd_arrcat(char **a, char **b)` from
+/// `Src/Zle/computil.c:444`. Concatenates string arrays `a` + `b`
+/// into a fresh heap-allocated NULL-terminated array.
+/// ```c
+/// static char **
+/// cd_arrcat(char **a, char **b)
+/// {
+///     if (!b) return zarrdup(a);
+///     else {
+///         char **r = zalloc((arrlen(a) + arrlen(b) + 1) * sizeof(char *));
+///         char **p = r;
+///         for (; *a; a++) *p++ = ztrdup(*a);
+///         for (; *b; b++) *p++ = ztrdup(*b);
+///         *p = NULL;
+///         return r;
+///     }
+/// }
+/// ```
 pub fn cd_arrcat(a: &[String], b: &[String]) -> Vec<String> {                // c:444
-    let mut out = a.to_vec();
-    out.extend_from_slice(b);
-    out
+    // c:446-447 — `if (!b) return zarrdup(a);` collapses to the
+    // generic path since `&[String]` is never null in Rust; an
+    // empty slice yields the same result as zarrdup(a).
+    let mut r: Vec<String> = Vec::with_capacity(a.len() + b.len());          // c:449
+    for s in a {                                                             // c:453 for (; *a; a++)
+        r.push(crate::ported::mem::ztrdup(s));                               // c:454 *p++ = ztrdup(*a)
+    }
+    for s in b {                                                             // c:455 for (; *b; b++)
+        r.push(crate::ported::mem::ztrdup(s));                               // c:456 *p++ = ztrdup(*b)
+    }
+    // c:458 — `*p = NULL;` — Rust Vec doesn't need a sentinel
+    r                                                                         // c:460
 }
 
 /// Direct port of `static int cd_init(char *nam, char *hide, char *mlen,
@@ -6159,7 +6184,6 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
     use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
         CPAT_EQUIV, CPAT_NCLASS};
     use crate::ported::zle::compmatch::{pattern_match1, pattern_match_equivalence};
-    use crate::ported::pattern::pattern_range_to_string;
     use crate::ported::utils::imeta;
 
     // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
@@ -6274,8 +6298,16 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
                             i += 3;
                         } else if b >= 0x80 {
                             let cls = (b as usize) - 0x80;
-                            if let Some(s) = pattern_range_to_string(cls) {
-                                out.push_str(&s);
+                            // c:1240+ — POSIX class marker byte → `[:name:]`.
+                            // Inverse of `range_type`: index into the
+                            // POSIX_CLASS_NAMES table.
+                            const POSIX_CLASSES: &[&str] = &[
+                                "alpha", "alnum", "blank", "cntrl",
+                                "digit", "graph", "lower", "print",
+                                "punct", "space", "upper", "xdigit",
+                            ];
+                            if cls > 0 && cls - 1 < POSIX_CLASSES.len() {
+                                out.push_str(&format!("[:{}:]", POSIX_CLASSES[cls - 1]));
                             }
                             i += 1;
                         } else {

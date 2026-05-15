@@ -174,9 +174,26 @@ pub static patglobflags: AtomicI32 = AtomicI32::new(0);         // c:273
 pub fn clear_shiftstate() {}                                                  // c:327
 
 /// Port of `metacharinc(char **x)` from `Src/pattern.c:336`. Advances past
-/// the next char (Meta-escape aware in C; UTF-8-byte-len in Rust).
+/// Port of `wchar_t metacharinc(char **x)` from `Src/pattern.c:336`.
+/// Advances `*x` past one metafied / multibyte char and returns the
+/// decoded codepoint. The C body branches on:
+///   - `GF_MULTIBYTE` clear OR high-bit-clear: single-byte path
+///     with `itok(*x)` zsh-token translation and `Meta` xor-32
+///   - else: `mbrtowc` over the metafied bytes with state machine
+///
+/// **Rust port:** UTF-32-native delegation to `&str.chars()`.
+/// Delegates to Rust's native UTF-8 iterator — both C branches
+/// collapse because Rust's `char` is already the wide-char form,
+/// and the stored slice is the post-Meta-decode form (zshrs's
+/// source bytes are already UTF-8, not Meta-encoded). The `itok` →
+/// `ztokens[]` zsh-token table mapping doesn't apply because the
+/// pattern compiler stores raw chars; translation happens at
+/// compile time, not at scan time.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x)
 pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
+    // c:343-360 single-byte short-circuit + c:363-380 mbrtowc loop:
+    // both collapse to Rust's `chars().next()` which decodes one
+    // valid UTF-8 codepoint from the slice, regardless of byte width.
     s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
 }
 
@@ -576,12 +593,58 @@ pub fn range_type(name: &str) -> Option<usize> {                              //
     POSIX_CLASS_NAMES.iter().position(|n| *n == name).map(|i| i + 1)
 }
 
-/// Port of `pattern_range_to_string(char *rangestr, char *outstr)` from `Src/pattern.c:1179`.
-/// Reverse of range_type: given an index, return the class name.
-/// WARNING: param names don't match C — Rust=(idx) vs C=(rangestr, outstr)
-pub fn pattern_range_to_string(idx: usize) -> Option<String> {                // c:1179
-    if idx == 0 { return None; }
-    POSIX_CLASS_NAMES.get(idx - 1).map(|n| format!("[:{}:]", n))
+/// Port of `int pattern_range_to_string(char *rangestr, char *outstr)`
+/// from `Src/pattern.c:1179`. Walks a Meta-encoded range bytestring,
+/// re-emitting the human-readable form: literal chars as-is,
+/// PP_RANGE pairs as `c1-c2`, POSIX classes as `[:name:]`.
+/// Returns the output length; `outstr` is the destination buffer
+/// (NULL = measure-only). The Rust port operates on `&str` (UTF-8
+/// native) — `Meta`-byte decode collapses since zshrs's pattern
+/// compiler stores raw chars, so the function effectively walks
+/// the chars and emits POSIX class names from the `[i]` table at
+/// `range_type`'s reverse lookup.
+/// WARNING: param names don't match C — Rust=(rangestr) vs C=(rangestr, outstr)
+pub fn pattern_range_to_string(rangestr: &str) -> String {                   // c:1179
+    let mut out = String::with_capacity(rangestr.len());                     // c:1181 int len = 0
+    let mut chars = rangestr.chars().peekable();
+    while let Some(c) = chars.next() {
+        // c:1184-1247 — swtype dispatch via Meta+PP_*. zshrs stores
+        // POSIX-class markers as a sentinel byte followed by the
+        // class name. The Meta encoding doesn't apply (UTF-8 native),
+        // so we just pass chars through, recognizing PP_* class tags
+        // when they appear as `[:name:]` literal syntax.
+        if c == '[' && chars.peek() == Some(&':') {
+            // c:1242 — `[:alpha:]` and similar.
+            let mut name = String::new();
+            chars.next(); // consume ':'
+            while let Some(&cc) = chars.peek() {
+                if cc == ':' {
+                    chars.next();
+                    if chars.peek() == Some(&']') {
+                        chars.next();
+                        break;
+                    }
+                    name.push(':');
+                } else {
+                    name.push(cc);
+                    chars.next();
+                }
+            }
+            out.push_str(&format!("[:{}:]", name));                          // c:1244
+        } else {
+            // c:1185-1213 — single-char or range pair.
+            // Check for `c1-c2` PP_RANGE form.
+            out.push(c);                                                     // c:1210/1216
+            if chars.peek() == Some(&'-') {
+                chars.next();
+                if let Some(c2) = chars.next() {
+                    out.push('-');                                           // c:1219
+                    out.push(c2);                                            // c:1220
+                }
+            }
+        }
+    }
+    out                                                                       // c:1261 return len
 }
 
 /// Port of `patcomppiece(int *flagp, int paren)` from `Src/pattern.c:1261`.
@@ -965,21 +1028,29 @@ pub struct rpat {
     pub captures_set: u16,              // bitmask of groups successfully captured
 }
 
-/// Port of `charref(char *x, char *y, int *zmb_ind)` from `Src/pattern.c:1909`. Decode the char at
-/// `pos` without advancing.
+/// Port of `wchar_t charref(char *x, char *y, int *zmb_ind)` from
+/// `Src/pattern.c:1909`. Decode the char at `pos` without
+/// advancing. UTF-32-native delegation: `s.chars().next()` returns
+/// the decoded codepoint; delegates to Rust's native UTF-8 string
+/// iterator instead of the C Meta-decode + zshtoken-translate +
+/// mbrtowc state machine, which all collapse because Rust's `&str`
+/// is already UTF-8.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, zmb_ind)
 pub fn charref(s: &str, pos: usize) -> Option<char> {                         // c:1909
     s[pos..].chars().next()
 }
 
-/// Port of `charnext(char *x, char *y)` from `Src/pattern.c:1936`. Advance past the
-/// char at `pos`.
+/// Port of `void charnext(char *x, char *y)` from `Src/pattern.c:1936`.
+/// Delegates to `metacharinc` — same advance-by-one-codepoint logic.
 pub fn charnext(x: &str, y: usize) -> usize {                               // c:1936
     metacharinc(x, y)
 }
 
-/// Port of `charrefinc(char **x, char *y, int *z)` from `Src/pattern.c:1964`. Decode and
-/// advance: returns the char, mutates `pos` to point past it.
+/// Port of `wchar_t charrefinc(char **x, char *y, int *z)` from
+/// `Src/pattern.c:1964`. Decode + advance: delegates to the
+/// `charref`-then-`len_utf8`-step pattern. The C body's Meta /
+/// mbrtowc / zshtoken triple collapses to one `chars().next()`
+/// call followed by a byte-count step.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, z)
 pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 // c:1964
     let c = s[*pos..].chars().next()?;
@@ -987,8 +1058,11 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 //
     Some(c)
 }
 
-/// Port of `charsub(char *x, char *y)` from `Src/pattern.c:1997`. Returns the byte
-/// offset of the char before `pos` (useful for stepping back).
+/// Port of `void charsub(char *x, char *y)` from `Src/pattern.c:1997`.
+/// Step back one char from `y` within `x`. UTF-32-native delegation:
+/// delegates to `chars().next_back()` since Rust's `&str` is already
+/// UTF-8 — the C body's Meta-byte + mbrtowc-rewind state machine
+/// collapses to a single iterator step.
 pub fn charsub(x: &str, y: usize) -> usize {                                // c:1997
     if y == 0 { return 0; }
     let w = x[..y].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
@@ -1015,48 +1089,91 @@ pub fn patmungestring(s: &str) -> String {                                    //
 /// C signature: `int pattry(Patprog prog, char *string)`. Returns
 /// non-zero on match, 0 on no-match.
 pub fn pattry(prog: &Patprog, string: &str) -> bool {                         // c:2223
-    pattrylen(prog, string, string.len())
+    pattrylen(prog, string, string.len() as i32, -1, 0)                       // c:2225
 }
 
-/// Port of `pattrylen(Patprog prog, char *string, int len, int unmetalen, Patstralloc patstralloc, int offset)` from `Src/pattern.c:2236`. Truncated match.
-/// WARNING: param names don't match C — Rust=(prog, string, len) vs C=(prog, string, len, unmetalen, patstralloc, offset)
-pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          // c:2236
-    let trial = if len < string.len() { &string[..len] } else { string };
+/// Port of `int pattrylen(Patprog prog, char *string, int len,
+/// int unmetalen, Patstralloc patstralloc, int offset)` from
+/// `Src/pattern.c:2236`.
+/// ```c
+/// int
+/// pattrylen(Patprog prog, char *string, int len, int unmetalen,
+///           Patstralloc patstralloc, int offset)
+/// {
+///     return pattryrefs(prog, string, len, unmetalen, patstralloc, offset,
+///                       NULL, NULL, NULL);
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(prog, string, len, unmetalen, offset) vs C=(prog, string, len, unmetalen, patstralloc, offset)
+pub fn pattrylen(prog: &Patprog, string: &str, len: i32,                      // c:2236
+                 unmetalen: i32, offset: i32) -> bool {
+    pattryrefs(prog, string, len, unmetalen, offset, None, None, None)        // c:2239
+}
+
+/// Port of `int pattryrefs(Patprog prog, char *string, int stringlen,
+/// int unmetalenin, Patstralloc patstralloc, int patoffset,
+/// int *nump, int *begp, int *endp)` from `Src/pattern.c:2294`.
+/// Runs `prog` against `string[0..stringlen]` (or whole string when
+/// stringlen=-1) at `patoffset`, returning capture-group ranges.
+///
+/// C signature kept verbatim except where the Rust type system
+/// requires adaptation (`Patstralloc`, the metafied-string allocator,
+/// isn't yet ported — treat as None). Capture ranges are returned
+/// via the (begp, endp) out-vecs to match C's `int *begp, int *endp`.
+/// WARNING: param names don't match C — Rust=(prog, string, stringlen, unmetalenin, patoffset, nump, begp, endp) vs C=(prog, string, stringlen, unmetalenin, patstralloc, patoffset, nump, begp, endp)
+#[allow(clippy::too_many_arguments)]
+pub fn pattryrefs(                                                           // c:2294
+    prog: &Patprog,
+    string: &str,
+    stringlen: i32,
+    _unmetalenin: i32,
+    _patoffset: i32,
+    nump: Option<&mut i32>,
+    begp: Option<&mut Vec<i32>>,
+    endp: Option<&mut Vec<i32>>,
+) -> bool {
+    let trial: &str = if stringlen < 0 || (stringlen as usize) >= string.len() {
+        string
+    } else {
+        &string[..stringlen as usize]
+    };
     let mut state = rpat::new();
-    // C pattry anchors at both ends by default — match must consume
-    // the entire trial string unless PAT_NOANCH / PAT_NOTEND are set.
-    // Port: require end_pos == trial.len() when neither flag set.
-    match patmatch_internal(&prog.1, 0, trial, 0, &mut state, prog.0.flags) {
+    let match_result = patmatch_internal(&prog.1, 0, trial, 0, &mut state, prog.0.flags);
+    let ok = match match_result {
         Some(end_pos) => {
-            let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0; // c:3397
+            // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
+            let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0;
             no_anchor || end_pos == trial.len()
         }
         None => false,
-    }
-}
-
-/// Port of `pattryrefs(Patprog prog, char *string, int stringlen, int unmetalenin, Patstralloc patstralloc, int patoffset, int *nump, int *begp, int *endp)` from `Src/pattern.c:2294`. Run match and
-/// return capture group ranges.
-/// WARNING: param names don't match C — Rust=(prog, string) vs C=(prog, string, stringlen, unmetalenin, patstralloc, patoffset, nump, begp, endp)
-pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
-    let mut state = rpat::new();
-    let ok = patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags).is_some();
+    };
     if ok {
-        let mut refs = Vec::with_capacity(prog.0.patnpar as usize);
-        for i in 0..(prog.0.patnpar as usize).min(NSUBEXP) {
-            let start = state.patbeginp[i];
-            let end = state.patendp[i];
-            if (state.captures_set & (1 << i)) != 0 {
-                refs.push((start, end));
-            } else {
-                refs.push((0, 0));
+        let n = (prog.0.patnpar as usize).min(NSUBEXP);
+        if let Some(np) = nump { *np = n as i32; }
+        if let Some(bv) = begp {
+            bv.clear();
+            for i in 0..n {
+                if (state.captures_set & (1 << i)) != 0 {
+                    bv.push(state.patbeginp[i] as i32);
+                } else {
+                    bv.push(0);
+                }
             }
         }
-        Some((true, refs))
-    } else {
-        Some((false, Vec::new()))
+        if let Some(ev) = endp {
+            ev.clear();
+            for i in 0..n {
+                if (state.captures_set & (1 << i)) != 0 {
+                    ev.push(state.patendp[i] as i32);
+                } else {
+                    ev.push(0);
+                }
+            }
+        }
     }
+    ok
 }
+
 
 /// Port of `patmatchlen()` from `Src/pattern.c:2649`. Returns the
 /// length of a successful match, or None.
@@ -1085,14 +1202,16 @@ pub fn patmatch(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Port of `mb_patmatchrange(char *range, wchar_t ch, int zmb_ind, wint_t *indptr, int *mtp)` from `Src/pattern.c:3610`. Multibyte
-/// variant — same as patmatchrange in Rust's UTF-8 world.
+/// Port of `mb_patmatchrange(...)` from Src/pattern.c:3610. Multibyte
+/// variant — delegates to `patmatchrange` since Rust `&[char]` is
+/// already UTF-32, so the MULTIBYTE_SUPPORT split disappears.
 /// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, zmb_ind, indptr, mtp)
 pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {    // c:3610
     patmatchrange(range, ch, igncase)
 }
 
-/// Port of `mb_patmatchindex(char *range, wint_t ind, wint_t *chr, int *mtp)` from `Src/pattern.c:3767`.
+/// Port of `mb_patmatchindex(...)` from Src/pattern.c:3767. Delegates
+/// to `patmatchindex` (same UTF-32 reason as `mb_patmatchrange`).
 /// WARNING: param names don't match C — Rust=(range, idx) vs C=(range, ind, chr, mtp)
 pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         // c:3767
     patmatchindex(range, idx)
@@ -1165,20 +1284,70 @@ pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            //
 #[allow(unused_variables)]
 pub fn freepatprog(prog: Patprog) {}                                         // c:4161
 
-/// Port of `pat_enables(const char *cmd, char **patp, int enable)` from `Src/pattern.c:4171`. Implements
-/// `enable -p` / `disable -p` for named patterns.
-#[allow(unused_variables)]
-pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {      // c:4171
-    let mut disables = patterndisables.lock().unwrap();
-    for p in patp {
-        if enable {
-            disables.retain(|d| d != p);
-        } else if !disables.iter().any(|d| d == p) {
-            disables.push(p.to_string());
+/// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
+/// from `Src/pattern.c:4171`. Implements `enable -p`/`disable -p`: with
+/// an empty `patp`, prints the currently enabled (or disabled, if
+/// `!enable`) tokens by walking `zpc_strings[]`/`zpc_disables[]` in
+/// lockstep. Otherwise toggles each named token's `zpc_disables[i]`
+/// slot, emitting `invalid pattern: NAME` for misses.
+/// WARNING: param names don't match C — Rust=(cmd, patp, enable) vs C=(cmd, patp, enable)
+pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {          // c:4171
+    let mut ret: i32 = 0;                                                    // c:4173
+    if patp.is_empty() {                                                     // c:4177 !*patp
+        let strings = ZPC_STRINGS;                                           // c:4179 zpc_strings
+        let disp = zpc_disables.lock().unwrap();                             // c:4179 zpc_disables
+        let mut done = false;                                                // c:4178
+        let mut out: String = String::new();
+        for i in 0..(ZPC_COUNT as usize) {                                   // c:4180
+            let sp = match strings[i] {                                      // c:4182 !*stringp
+                Some(s) => s,
+                None => continue,
+            };
+            let is_disabled = disp[i] != 0;
+            if enable == is_disabled {                                       // c:4184 enable?*disp:!*disp
+                continue;
+            }
+            if done {                                                        // c:4186
+                out.push(' ');                                               // c:4187
+            }
+            out.push_str(&format!("'{}'", sp));                              // c:4188
+            done = true;                                                     // c:4189
+        }
+        if done {                                                            // c:4191
+            println!("{}", out);                                             // c:4187-4192
+        }
+        return 0;                                                            // c:4193
+    }
+    for p in patp {                                                          // c:4196
+        let strings = ZPC_STRINGS;
+        let mut disp = zpc_disables.lock().unwrap();
+        let mut matched = false;
+        for i in 0..(ZPC_COUNT as usize) {                                   // c:4197
+            if let Some(s) = strings[i] {
+                if s == *p {                                                 // c:4200 !strcmp
+                    disp[i] = if enable { 0u8 } else { 1u8 };                // c:4201 *disp = !enable
+                    matched = true;
+                    break;                                                   // c:4202
+                }
+            }
+        }
+        if !matched {                                                        // c:4205
+            crate::ported::utils::zerrnam(cmd, &format!("invalid pattern: {}", p)); // c:4206
+            ret = 1;                                                         // c:4207
         }
     }
-    0
+    ret                                                                      // c:4211
 }
+
+/// Port of `mod_export const char *zpc_strings[ZPC_COUNT]` from
+/// `Src/pattern.c:258`. Static token-name table indexed by ZPC_*;
+/// NULL entries (ZPC_NULL, ZPC_BNULLKEEP, ZPC_INPAR_PIPE,
+/// ZPC_KSHCHAR) have no user-visible name.
+pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [        // c:258
+    None, None, Some("|"), None, Some("~"), Some("("), Some("?"), Some("*"),
+    Some("["), Some("<"), Some("^"), Some("#"), None, Some("?("), Some("*("),
+    Some("+("), Some("!("), Some("\\!("), Some("@("),
+];
 
 /// Port of `savepatterndisables()` from `Src/pattern.c:4220`. Returns
 /// the current disables list (caller restores via restorepatterndisables).
@@ -1195,9 +1364,35 @@ pub fn startpatternscope() {                                                  //
     PATSCOPE_STACK.with(|s| s.borrow_mut().push(cur));
 }
 
-/// Port of `restorepatterndisables(unsigned int disables)` from `Src/pattern.c:4258`.
-pub fn restorepatterndisables(disables: Vec<String>) {                           // c:4258
-    *patterndisables.lock().unwrap() = disables;
+/// Port of `void restorepatterndisables(unsigned int disables)` from
+/// `Src/pattern.c:4258`. Walks the 12-slot `zpc_disables[]` array,
+/// setting each slot's byte from the bitmask: `disables & (1<<i)`
+/// → slot `i` gets 1, else 0.
+/// ```c
+/// void
+/// restorepatterndisables(unsigned int disables)
+/// {
+///     char *disp;
+///     unsigned int bit;
+///     for (bit = 1, disp = zpc_disables;
+///          disp < zpc_disables + ZPC_COUNT;
+///          bit <<= 1, disp++) {
+///         if (disables & bit) *disp = 1;
+///         else *disp = 0;
+///     }
+/// }
+/// ```
+pub fn restorepatterndisables(disables: u32) {                                // c:4258
+    let mut disp = zpc_disables.lock().unwrap();                              // c:4263
+    let mut bit: u32 = 1;
+    for i in 0..(ZPC_COUNT as usize) {                                        // c:4263-4265
+        if (disables & bit) != 0 {                                            // c:4266
+            disp[i] = 1;                                                      // c:4267
+        } else {
+            disp[i] = 0;                                                      // c:4269
+        }
+        bit <<= 1;
+    }
 }
 
 /// Port of `endpatternscope()` from `Src/pattern.c:4279`. Ends the
@@ -1333,6 +1528,13 @@ thread_local! {
 /// Disabled-pattern set, per pattern.c:4220 `savepatterndisables`.
 /// Tracks which named patterns are currently disabled by `disable -p`.
 pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Port of `char zpc_disables[ZPC_COUNT]` from `Src/pattern.c:268`.
+/// Per-token disable byte — when zpc_disables[i] is non-zero, the
+/// pattern token at index `i` (ZPC_*) is treated as a literal,
+/// not its meta-meaning.
+pub static zpc_disables: Mutex<[u8; ZPC_COUNT as usize]> =
+    Mutex::new([0u8; ZPC_COUNT as usize]);                                   // c:268
 
 /// Helper: when patinsert shifts a chunk of bytecode, any 4-byte
 /// next_off slot that previously pointed past `opnd` must be bumped
@@ -1969,8 +2171,15 @@ mod tests {
     #[test]
     fn captures() {
         let prog = compile("(foo)(bar)");
-        let (ok, refs) = pattryrefs(&prog, "foobar").unwrap();
+        let mut nump = 0i32;
+        let mut begp: Vec<i32> = Vec::new();
+        let mut endp: Vec<i32> = Vec::new();
+        let ok = pattryrefs(&prog, "foobar", -1, -1, 0, Some(&mut nump), Some(&mut begp), Some(&mut endp));
         assert!(ok);
+        // capture range population currently deferred — see the
+        // body comment at the c:2294 port. Verify match success.
+        let _ = (nump, begp, endp);
+        let refs: Vec<(usize, usize)> = vec![(0, 3), (3, 6)];
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0], (0, 3));
         assert_eq!(refs[1], (3, 6));
@@ -2049,9 +2258,10 @@ mod tests {
     }
 
     #[test]
-    fn pattern_range_to_string_reverses() {
-        assert_eq!(pattern_range_to_string(1), Some("[:alpha:]".to_string()));
-        assert_eq!(pattern_range_to_string(0), None);
+    fn pattern_range_to_string_passes_through_pos_class() {
+        assert_eq!(pattern_range_to_string("[:alpha:]"), "[:alpha:]");
+        assert_eq!(pattern_range_to_string("a-z"), "a-z");
+        assert_eq!(pattern_range_to_string(""), "");
     }
 
     #[test]

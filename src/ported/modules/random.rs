@@ -97,14 +97,34 @@ pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {                  // c:
     Ok(())
 }
 
-/// Fill a buffer with bounded random integers.
-/// Port of `get_bound_random_buffer(uint32_t *buffer, size_t count, uint32_t max)` from Src/Modules/random.c:104
-/// — repeatedly pulls from the kernel and rejection-samples each
-/// slot until the entire buffer is filled with values in `[0, max)`.
+/// Port of `void get_bound_random_buffer(uint32_t *buffer, size_t count,
+/// uint32_t max)` from `Src/Modules/random.c:104`. Lemire (2016)
+/// fast-random-shuffling: multiply, threshold = -max % max, rejection-
+/// sample only the rare `leftover < max` slot. `count` is folded into
+/// `buffer.len()` per Rust idiom.
 /// WARNING: param names don't match C — Rust=(buffer, max) vs C=(buffer, count, max)
 pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // c:104
-    for item in buffer.iter_mut() {
-        *item = bounded(max);
+    // c:112 getrandom_buffer(buffer, count*sizeof(uint32_t)) — fill u32s.
+    let mut bytes: Vec<u8> = vec![0u8; buffer.len() * 4];
+    let _ = getrandom_buffer(&mut bytes);
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        buffer[i] = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    if max == u32::MAX {                                                     // c:113 UINT32_MAX
+        return;                                                              // c:114
+    }
+    for i in 0..buffer.len() {                                               // c:116
+        let mut multi_result: u64 = (buffer[i] as u64) * (max as u64);       // c:117
+        let mut leftover: u32 = multi_result as u32;                         // c:118
+        if leftover < max {                                                  // c:124
+            let threshold: u32 = (max.wrapping_neg()) % max;                 // c:125 -max % max
+            while leftover < threshold {                                     // c:126
+                let j: u32 = get_srandom();                                  // c:127 get_srandom(NULL)
+                multi_result = (j as u64) * (max as u64);                    // c:128
+                leftover = multi_result as u32;                              // c:129
+            }
+        }
+        buffer[i] = (multi_result >> 32) as u32;                             // c:132
     }
 }
 

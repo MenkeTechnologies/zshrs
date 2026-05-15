@@ -1225,6 +1225,12 @@ pub static ISEARCH_STARTPOS: AtomicI32 = AtomicI32::new(0);                  // 
 /// Byte offset of the end of the current isearch match.
 pub static ISEARCH_ENDPOS: AtomicI32 = AtomicI32::new(0);                    // c:1078
 
+/// Port of `int histline` from `Src/Zle/zle_hist.c:42`. Current history
+/// entry the ZLE cursor is parked on. Read by `quietgethist(histline)`
+/// at zle_hist.c:82,422 and bumped by `zle_main_entry(ZLE_CMD_SET_HIST_LINE)`
+/// (zle_main.c:2182).
+pub static histline: AtomicI32 = AtomicI32::new(0);                          // c:zle_hist.c:42
+
 // Per-session ZLE history state. Rust-side aggregate over zsh's C
 // flat-globals (`hist_ring`/`histline`/`searchstr`/`have_edits`/etc.
 // in `Src/hist.c` + `Src/Zle/zle_hist.c`). The C side spreads these

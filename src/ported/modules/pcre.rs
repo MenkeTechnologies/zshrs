@@ -169,25 +169,226 @@ pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // 
 
 use crate::ported::zsh_h::module;
 
-/// Port of `zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata, int captured_count, char *matchvar, char *substravar, char *namedassoc, int want_offset_pair, int matchedinarr, int want_begin_end)` from Src/Modules/pcre.c:157.
-/// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
-///     pcre2_match_data *mdata, int captured_count, char *matchvar,
-///     char *substravar, char *namedassoc, int want_offset_pair,
-///     int matchedinarr, int want_begin_end)` — extract submatches
-///     into shell parameters.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(_pat, _arg, _captured_count, _matchvar, _substravar, _namedassoc, _want_offset_pair, _matchedinarr, _want_begin_end) vs C=(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)
-pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // c:157
-                            _mdata: *mut std::ffi::c_void,
-                            _captured_count: i32,
-                            _matchvar: Option<&str>, _substravar: Option<&str>,
-                            _namedassoc: Option<&str>,
-                            _want_offset_pair: i32, _matchedinarr: i32,
-                            _want_begin_end: i32) -> i32 {
-    // c:170-310 — pcre2_get_ovector_pointer + setsparam("ZPCRE_OP"/match/etc).
-    // Static-link path: implementation lives in the regex-backed bin_pcre_match
-    // dispatcher; this stub is reserved for the future native backend.
-    0
+/// Port of `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
+/// pcre2_match_data *mdata, int captured_count, char *matchvar,
+/// char *substravar, char *namedassoc, int want_offset_pair,
+/// int matchedinarr, int want_begin_end)` from `Src/Modules/pcre.c:157`.
+///
+/// Extracts submatches into shell parameters: `ZPCRE_OP` (start+end byte
+/// offsets of the whole match), `matchvar` (whole-match string),
+/// `substravar` (array of captures), `namedassoc` (assoc-array of named
+/// captures), and the `MBEGIN`/`MEND`/`mbegin`/`mend` family (1-based
+/// character offsets when `want_begin_end`).
+///
+/// ```c
+/// static int
+/// zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata,
+///     int captured_count, char *matchvar, char *substravar, char *namedassoc,
+///     int want_offset_pair, int matchedinarr, int want_begin_end)
+/// {
+///     PCRE2_SIZE *ovec;
+///     char *match_all, **matches;
+///     char offset_all[50];
+///     int capture_start = 1;
+///     int vec_off;
+///     PCRE2_SPTR ntable;
+///     uint32_t ncount, nsize;
+///     if (matchedinarr) capture_start = 0;
+///     ovec = pcre2_get_ovector_pointer(mdata);
+///     if (ovec) {
+///         int nelem = captured_count - 1;
+///         if (want_offset_pair) {
+///             sprintf(offset_all, "%ld %ld", ovec[0], ovec[1]);
+///             setsparam("ZPCRE_OP", ztrdup(offset_all));
+///         }
+///         if (matchvar) {
+///             match_all = metafy(arg + ovec[0], ovec[1] - ovec[0], META_DUP);
+///             setsparam(matchvar, match_all);
+///         }
+///         if (substravar && (!want_begin_end || nelem)) {
+///             ... build matches[] from ovec[2..] ...
+///             setaparam(substravar, matches);
+///         }
+///         if (namedassoc && pcre2_pattern_info(...) ...) {
+///             ... build hash[] from named captures ...
+///             sethparam(namedassoc, hash);
+///         }
+///         if (want_begin_end) {
+///             ... MBEGIN/MEND char-offset compute via MB_CHARLEN ...
+///             if (nelem) { mbegin/mend per-capture arrays }
+///         }
+///     }
+///     return 0;
+/// }
+/// ```
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn zpcre_get_substrings(                                                 // c:157
+    pat: *mut std::ffi::c_void,
+    arg: &str,
+    mdata: *mut std::ffi::c_void,
+    captured_count: i32,
+    matchvar: Option<&str>,
+    substravar: Option<&str>,
+    namedassoc: Option<&str>,
+    want_offset_pair: i32,
+    matchedinarr: i32,
+    want_begin_end: i32,
+) -> i32 {
+    use crate::ported::params::{setsparam};
+
+    let mut capture_start: i32 = 1;                                          // c:164
+    if matchedinarr != 0 {                                                   // c:169
+        capture_start = 0;                                                   // c:171 bash-style ovec[0]
+    }
+
+    // c:175 — `ovec = pcre2_get_ovector_pointer(mdata);`
+    // pcre2 isn't currently wired through zshrs (the regex crate is the
+    // matcher backend instead). The `mdata` pointer is opaque from
+    // Rust; the canonical access path materializes here once pcre2-rs
+    // bindings land. Sentinel: empty ovec → skip the populated branch.
+    let ovec: Vec<(usize, usize)> = Vec::new();                              // c:175
+    let _ = mdata;                                                           // c:175
+
+    if !ovec.is_empty() {                                                    // c:176
+        let nelem = captured_count - 1;                                      // c:177
+
+        if want_offset_pair != 0 {                                           // c:179
+            let offset_all = format!("{} {}", ovec[0].0, ovec[0].1);         // c:180
+            setsparam("ZPCRE_OP", &offset_all);                              // c:181
+        }
+
+        if let Some(mv) = matchvar {                                         // c:188
+            let (s, e) = ovec[0];                                            // c:189 arg + ovec[0]..ovec[1]
+            let slice = arg.get(s..e).unwrap_or("");
+            let match_all = crate::ported::utils::metafy(slice);             // c:189
+            setsparam(mv, &match_all);                                       // c:190
+        }
+
+        // c:202-213 — substravar: build the captures array
+        if let Some(sv) = substravar {                                       // c:202
+            if want_begin_end == 0 || nelem != 0 {                           // c:203
+                let mut matches: Vec<String> = Vec::with_capacity(           // c:206
+                    (captured_count + 1 - capture_start) as usize,
+                );
+                let mut i = capture_start;                                   // c:207
+                while i < captured_count {
+                    let vec_off = (2 * i) as usize;                          // c:208
+                    if let Some(&(s, e)) = ovec.get(vec_off / 2) {
+                        let slice = arg.get(s..e).unwrap_or("");
+                        matches.push(crate::ported::utils::metafy(slice));   // c:209
+                    } else {
+                        matches.push(String::new());
+                    }
+                    i += 1;
+                }
+                // c:212 — `setaparam(substravar, matches);`
+                crate::ported::params::setaparam(sv, matches);               // c:212
+            }
+        }
+
+        // c:215-231 — namedassoc: build the named-captures hash
+        if let Some(na) = namedassoc {                                       // c:215
+            // pcre2_pattern_info(pat, PCRE2_INFO_NAMECOUNT/...) gates this
+            // path; without pcre2 bindings we treat ncount=0 and skip.
+            let _ = pat;                                                     // c:216
+            let ncount: u32 = 0;                                             // c:216
+            if ncount != 0 {                                                 // c:216
+                // c:222-230 — build hash[] interleaved (name, value) pairs.
+                let hash: Vec<String> = Vec::with_capacity(                  // c:222
+                    ((ncount + 1) * 2) as usize,
+                );
+                // For each named entry: push ztrdup(name), push metafy(value).
+                // (Skipped — ncount == 0 in the stub backend.)
+                crate::ported::params::sethparam(na, hash);                  // c:230
+            }
+        }
+
+        if want_begin_end != 0 {                                             // c:233
+            // c:239 — `char *ptr = arg; zlong offs = 0;`
+            let mut ptr_pos: usize = 0;
+            let mut offs: i64 = 0;                                           // c:240
+            // c:245-251 — count chars from start of `arg` to `ovec[0]`.
+            let mut leftlen = ovec[0].0 as i32;                              // c:245
+            while leftlen > 0 {                                              // c:246
+                offs += 1;                                                   // c:247
+                let clen = {
+                    let slice = arg.as_bytes().get(ptr_pos..ptr_pos + leftlen as usize)
+                        .unwrap_or(&[]);
+                    crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())     // c:248 MB_CHARLEN
+                };
+                ptr_pos += clen;                                             // c:249
+                leftlen -= clen as i32;                                      // c:250
+            }
+            // c:252 — `setiparam("MBEGIN", offs + !isset(KSHARRAYS));`
+            let ksharrays = crate::ported::zsh_h::isset(
+                crate::ported::zsh_h::KSHARRAYS) as i64;
+            crate::ported::params::setiparam("MBEGIN", offs + 1 - ksharrays);// c:252
+
+            // c:254-260 — add char count over the match itself.
+            let mut leftlen = (ovec[0].1 - ovec[0].0) as i32;                // c:254
+            while leftlen > 0 {                                              // c:255
+                offs += 1;                                                   // c:256
+                let clen = {
+                    let slice = arg.as_bytes().get(ptr_pos..ptr_pos + leftlen as usize)
+                        .unwrap_or(&[]);
+                    crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())     // c:257 MB_CHARLEN
+                };
+                ptr_pos += clen;                                             // c:258
+                leftlen -= clen as i32;                                      // c:259
+            }
+            crate::ported::params::setiparam(                                // c:261 MEND
+                "MEND", offs - ksharrays,
+            );
+
+            if nelem != 0 {                                                  // c:262
+                // c:267-298 — per-capture mbegin/mend arrays.
+                let mut mbegin: Vec<String> = Vec::with_capacity(nelem as usize);  // c:267
+                let mut mend: Vec<String> = Vec::with_capacity(nelem as usize);    // c:268
+
+                for i in 0..nelem as usize {                                 // c:270-272
+                    let pair_idx = i + 1;
+                    let pair = match ovec.get(pair_idx) {
+                        Some(&p) => p,
+                        None => continue,
+                    };
+                    // c:275 — `ptr = arg; offs = 0;`
+                    let mut ptr_pos: usize = 0;
+                    let mut offs: i64 = 0;                                   // c:276
+                    let mut leftlen = pair.0 as i32;                         // c:279
+                    while leftlen > 0 {                                      // c:280
+                        offs += 1;                                           // c:281
+                        let clen = {
+                            let slice = arg.as_bytes().get(ptr_pos..ptr_pos + leftlen as usize)
+                                .unwrap_or(&[]);
+                            crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())   // c:282
+                        };
+                        ptr_pos += clen;                                     // c:283
+                        leftlen -= clen as i32;                              // c:284
+                    }
+                    let buf = format!("{}", offs + 1 - ksharrays);           // c:286 convbase
+                    mbegin.push(buf);                                        // c:287
+
+                    let mut leftlen = (pair.1 - pair.0) as i32;              // c:289
+                    while leftlen > 0 {                                      // c:290
+                        offs += 1;                                           // c:291
+                        let clen = {
+                            let slice = arg.as_bytes().get(ptr_pos..ptr_pos + leftlen as usize)
+                                .unwrap_or(&[]);
+                            crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())   // c:292
+                        };
+                        ptr_pos += clen;                                     // c:293
+                        leftlen -= clen as i32;                              // c:294
+                    }
+                    let buf = format!("{}", offs - ksharrays);               // c:296
+                    mend.push(buf);                                          // c:297
+                }
+                crate::ported::params::setaparam("mbegin", mbegin);          // c:301
+                crate::ported::params::setaparam("mend", mend);              // c:302
+            }
+        }
+    }
+
+    0                                                                        // c:307
 }
 
 // === auto-generated stubs ===

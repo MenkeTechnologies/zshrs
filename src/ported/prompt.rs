@@ -366,8 +366,14 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // 
 // Remaining prompt.c entry points (after `putpromptchar` / `buf_vars`)
 // ---------------------------------------------------------------------------
 
-/// Src/prompt.c:359 `static int putpromptchar(int doprint, int endchar)`
-pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
+/// Port of `static int putpromptchar(int doprint, int endchar)` from
+/// `Src/prompt.c:359`. Delegates to `buf_vars::run_putpromptchar` +
+/// `buf_vars::process_percent` — the 566-line C body's per-`%X`
+/// escape table lives there split across the inherent-method
+/// dispatch (~100 lines each, real ports). The free-fn entry exists
+/// for C-ABI parity so cross-module call sites match the C symbol.
+pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 { // c:359
+    // Delegates to the buf_vars method that holds the real loop.
     bv.run_putpromptchar(doprint, endchar)
 }
 
@@ -397,42 +403,243 @@ pub fn stradd(buf: &mut String, s: &str) {                                   // 
     buf.push_str(s);
 }
 
-/// Look up a terminal capability and emit its escape.
-/// Port of `tsetcap(int cap, int flags)` from Src/prompt.c:1083 — the C source
-/// resolves termcap/terminfo names; we map the most-common ones
-/// directly onto ANSI sequences.
-/// WARNING: param names don't match C — Rust=(cap) vs C=(cap, flags)
-pub fn tsetcap(cap: &str) -> String {                                        // c:1083
-    // Map common capability names to ANSI sequences
-    match cap {
-        "md" | "bold" => "\x1b[1m".to_string(),
-        "me" | "sgr0" => "\x1b[0m".to_string(),
-        "so" | "smso" => "\x1b[7m".to_string(),
-        "se" | "rmso" => "\x1b[27m".to_string(),
-        "us" | "smul" => "\x1b[4m".to_string(),
-        "ue" | "rmul" => "\x1b[24m".to_string(),
-        _ => String::new(),
+/// Port of `void tsetcap(int cap, int flags)` from `Src/prompt.c:1083`.
+/// Emit a terminal capability escape — raw to tty (TSC_RAW), to
+/// shout (default), or into the prompt buffer with Inpar/Outpar
+/// markers for visible-width counting (TSC_PROMPT).
+/// ```c
+/// void
+/// tsetcap(int cap, int flags)
+/// {
+///     if (tccan(cap) && !(termflags & (TERM_NOUP|TERM_BAD|TERM_UNKNOWN))) {
+///         switch (flags) {
+///         case TSC_RAW:   tputs(tcstr[cap], 1, putraw); break;
+///         case 0:
+///         default:        tputs(tcstr[cap], 1, putshout); break;
+///         case TSC_PROMPT:
+///             if (!bv->dontcount) { addbufspc(1); *bv->bp++ = Inpar; }
+///             tputs(tcstr[cap], 1, putstr);
+///             if (!bv->dontcount) {
+///                 int glitch = 0;
+///                 if (cap == TCSTANDOUTBEG || cap == TCSTANDOUTEND)
+///                     glitch = tgetnum("sg");
+///                 else if (cap == TCUNDERLINEBEG || cap == TCUNDERLINEEND)
+///                     glitch = tgetnum("ug");
+///                 if (glitch < 0) glitch = 0;
+///                 addbufspc(glitch + 1);
+///                 while (glitch--) *bv->bp++ = Nularg;
+///                 *bv->bp++ = Outpar;
+///             }
+///             break;
+///         }
+///     }
+/// }
+/// ```
+/// WARNING: param names don't match C — Rust=(cap, flags) vs C=(cap, flags)
+pub fn tsetcap(cap: i32, flags: i32) -> String {                             // c:1083
+    use std::sync::atomic::Ordering;
+    use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_RAW, TSC_PROMPT};
+
+    let mut out = String::new();
+
+    // c:1085 — `if (tccan(cap) && !(termflags & ...))`
+    let tclen_guard = crate::ported::init::tclen.lock().unwrap();
+    let cap_ok = cap >= 0 && (cap as usize) < tclen_guard.len()
+        && tclen_guard[cap as usize] != 0;
+    drop(tclen_guard);
+    let termflags = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+    if !(cap_ok && (termflags & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN)) == 0) {
+        return out;
     }
+
+    let cap_str = crate::ported::init::tcstr.lock().unwrap()
+        .get(cap as usize).cloned().unwrap_or_default();
+
+    match flags {                                                            // c:1086
+        x if x == TSC_RAW => {                                               // c:1087
+            // c:1088 — `tputs(tcstr[cap], 1, putraw);` — raw write to tty fd.
+            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 2 };
+            let _ = crate::ported::utils::write_loop(out_fd, cap_str.as_bytes());
+        }
+        x if x == TSC_PROMPT => {                                            // c:1094
+            // c:1095-1113 — TSC_PROMPT: emit into the prompt buffer
+            // wrapped in Inpar/Outpar markers so the screen-width
+            // counter knows to skip the escape.
+            out.push('\x01');                                                // c:1097 Inpar marker
+            out.push_str(&cap_str);                                          // c:1099
+            // c:1101-1106 — glitch detection (sg / ug termcap nums).
+            // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
+            // which matches modern terminals.
+            out.push('\x02');                                                // c:1112 Outpar marker
+        }
+        _ => {                                                               // c:1090 default
+            // c:1092 — `tputs(tcstr[cap], 1, putshout);`
+            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = crate::ported::utils::write_loop(out_fd, cap_str.as_bytes());
+        }
+    }
+    out
 }
 
-/// Output a string from a terminal capability.
-/// Port of `putstr(int d)` from Src/prompt.c:1121.
-pub fn putstr(d: &str) -> String {
-    tsetcap(d)
+/// Port of `int putstr(int d)` from `Src/prompt.c:1121`. tputs
+/// per-byte output callback: emit `d` into the prompt-buffer via
+/// `pputc`. Used by `tsetcap(cap, TSC_PROMPT)` to capture termcap
+/// emissions into bv->buf.
+/// ```c
+/// int putstr(int d) { pputc(d); return 0; }
+/// ```
+/// WARNING: param names don't match C — Rust=(d) vs C=(d)
+pub fn putstr(d: &str) -> String {                                           // c:1121
+    // c:1123 — `pputc(d); return 0;` Output goes into the prompt buf.
+    // Caller-supplied string is returned for the buf_vars dispatch to
+    // append; this mirrors the C pputc-then-return-0 semantic since
+    // Rust has no shared bv->bp cursor at this layer.
+    d.to_string()
 }
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
 /// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
 ///
-/// The C implementation mutates `bv` (the `BufVars` scratch struct
-/// in zsh's prompt expander) to insert a truncation string and
-/// re-run `putpromptchar()` against a width-bounded region. The
-/// Rust port handles truncation inline inside `expand_prompt()`
-/// rather than via this recursive callback; this entry exists for
-/// ABI parity.
-#[allow(unused_variables)]
-pub fn prompttrunc(arg: i32, truncchar: i32, doprint: i32, endchar: i32) -> i32 {
-    0
+/// Port of `static int prompttrunc(int arg, int truncchar, int doprint,
+/// int endchar)` from `Src/prompt.c:1276`. Implements the `%<...<`,
+/// `%>...>`, `%[...]` truncation syntax: stashes the truncation
+/// string, recurses `putpromptchar` to expand the bounded region,
+/// then either left- or right-truncates to fit `arg` screen cells.
+///
+/// Operates on the `buf_vars` scratch struct (file-statics in C:
+/// `bv->fm` / `bv->bp` / `bv->buf` / `bv->truncwidth` /
+/// `bv->dontcount` / `bv->trunccount`) — see c:76-121 for the
+/// struct layout. Rust port takes `&mut buf_vars` to match.
+/// WARNING: param names match C — Rust=(bv, arg, truncchar, doprint, endchar) vs C=(arg, truncchar, doprint, endchar)
+pub fn prompttrunc(bv: &mut buf_vars, arg: i32, truncchar: i32,              // c:1276
+                   doprint: i32, endchar: i32) -> i32 {
+    if arg > 0 {                                                             // c:1278
+        // c:1279 — `char ch = *bv->fm;` (peek)
+        let ch = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+        let truncatleft = ch == b'<';                                        // c:1280
+        let w = bv.bp;                                                       // c:1281 bp - buf
+
+        // c:1288-1293 — re-entry guard: if a truncation is already
+        // active, back up to the % marker and return so the outer
+        // call can finish first.
+        if bv.truncwidth != 0 {                                              // c:1288
+            while bv.fm_pos > 0 {
+                bv.fm_pos -= 1;                                              // c:1289
+                if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == b'%' {
+                    break;
+                }
+            }
+            if bv.fm_pos > 0 { bv.fm_pos -= 1; }                             // c:1291
+            return 0;                                                        // c:1292
+        }
+
+        bv.truncwidth = arg;                                                 // c:1295
+        if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) != b']' {   // c:1296
+            bv.fm_pos += 1;                                                  // c:1297
+        }
+
+        // c:1298-1303 — copy truncation string into buf until truncchar.
+        let tchar = truncchar as u8;
+        while let Some(&c) = bv.fm.as_bytes().get(bv.fm_pos) {               // c:1298
+            if c == 0 || c == tchar { break; }
+            let mut cur = c;
+            if cur == b'\\' && bv.fm.as_bytes().get(bv.fm_pos + 1).is_some() {  // c:1299
+                bv.fm_pos += 1;
+                cur = bv.fm.as_bytes()[bv.fm_pos];
+            }
+            // c:1301 — addbufspc(1)
+            if bv.bp >= bv.buf.len() {
+                bv.buf.resize(bv.bp + 1, 0);
+            }
+            bv.buf[bv.bp] = cur;                                             // c:1302 *bv->bp++ = *bv->fm++
+            bv.bp += 1;
+            bv.fm_pos += 1;
+        }
+        if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == 0 {      // c:1304
+            return 0;                                                        // c:1305
+        }
+        if bv.bp == w && truncchar == b']' as i32 {                          // c:1306
+            if bv.bp >= bv.buf.len() {
+                bv.buf.resize(bv.bp + 1, 0);
+            }
+            bv.buf[bv.bp] = b'<';                                            // c:1308
+            bv.bp += 1;
+        }
+        // c:1310 — `ptr = bv->buf + w;` (truncation-string start)
+        let ptr = w;
+        // c:1317 — `truncstr = ztrduppfx(ptr, bv->bp - ptr);`
+        let trunc_bytes = bv.buf[ptr..bv.bp].to_vec();
+        let truncstr = String::from_utf8_lossy(&trunc_bytes).into_owned();
+
+        bv.bp = ptr;                                                         // c:1319
+        let w_save = bv.bp;                                                  // c:1320
+        bv.fm_pos += 1;                                                      // c:1321
+        bv.trunccount = bv.dontcount;                                        // c:1322
+        // c:1323 — `putpromptchar(doprint, endchar);` — recurse to
+        // expand the bounded region; output goes into bv.buf at bp.
+        putpromptchar(bv, doprint, endchar);                                 // c:1323
+        bv.trunccount = 0;                                                   // c:1324
+        let ptr = w_save;                                                    // c:1325
+        // c:1326 — `*bv->bp = '\0';` — null-terminate.
+        if bv.bp < bv.buf.len() {
+            bv.buf[bv.bp] = 0;
+        }
+
+        // c:1343-1344 — `countprompt(ptr, &w, 0, -1)`: compute screen width.
+        let region_bytes = &bv.buf[ptr..bv.bp];
+        let region_str = std::str::from_utf8(region_bytes).unwrap_or("");
+        let mut visible_w: i32 = 0;
+        // Count chars (rough screen width — C's countprompt skips
+        // escape sequences and counts MB_METASTRWIDTH; collapsed to
+        // char count here since the bv buffer stores expanded text).
+        for _ in region_str.chars() { visible_w += 1; }
+
+        if visible_w > bv.truncwidth {                                       // c:1344
+            // c:1354-1410 — truncate. truncstr is the marker; replace
+            // either the head (truncatleft=true: e.g. `%<...<`) or
+            // tail (truncatleft=false: `%>...>`) with the marker.
+            let maxwidth = bv.truncwidth - truncstr.chars().count() as i32;
+            if maxwidth < 0 {
+                // truncation marker is longer than the budget — use marker only
+                bv.bp = ptr;
+                let mb = truncstr.as_bytes();
+                for &b in mb {
+                    if bv.bp >= bv.buf.len() { bv.buf.resize(bv.bp + 1, 0); }
+                    bv.buf[bv.bp] = b;
+                    bv.bp += 1;
+                }
+            } else {
+                let region_chars: Vec<char> = region_str.chars().collect();
+                let len = region_chars.len() as i32;
+                let keep = maxwidth.max(0) as usize;
+                let kept: String = if truncatleft {                          // c:1354 ch == '<'
+                    // keep tail: drop (len-keep) chars from front, prefix marker
+                    let drop_n = (len - keep as i32).max(0) as usize;
+                    let suffix: String = region_chars[drop_n..].iter().collect();
+                    format!("{}{}", truncstr, suffix)
+                } else {
+                    // keep head: take first `keep` chars, append marker
+                    let prefix: String = region_chars[..keep.min(region_chars.len())].iter().collect();
+                    format!("{}{}", prefix, truncstr)
+                };
+                // Rewrite buf[ptr..] with `kept`.
+                bv.bp = ptr;
+                for &b in kept.as_bytes() {
+                    if bv.bp >= bv.buf.len() { bv.buf.resize(bv.bp + 1, 0); }
+                    bv.buf[bv.bp] = b;
+                    bv.bp += 1;
+                }
+            }
+        }
+        if bv.bp < bv.buf.len() {
+            bv.buf[bv.bp] = 0;                                               // c:1421 terminate
+        }
+
+        bv.truncwidth = 0;                                                   // c:1431
+    }
+    0                                                                        // c:1471
 }
 
 /// Push a parser context token. Port of `cmdpush()` from
@@ -475,17 +682,14 @@ pub fn applytextattributes(flags: i32) -> String {
         .lock()
         .expect("pending_attrs poisoned")
         .clone();
-    let diff = treplaceattrs(*current, pending);
-    *current = pending;
-    diff
-}
 
-/// Replace one set of text attributes with another.
-/// Port of `treplaceattrs(zattr newattrs)` from Src/prompt.c:1719 — emits the
-/// minimal SGR delta between two attribute states.
-/// WARNING: param names don't match C — Rust=(old, new) vs C=(newattrs)
-pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
+    // SGR diff emission — inlined from the prior Rust-only helper that
+    // miscarried the `treplaceattrs` name. C emits the same diff via
+    // sequential tsetcap calls (Src/prompt.c:1640-1718). Rust returns
+    // the assembled escape string for the caller to write.
     let mut result = String::new();
+    let old = *current;
+    let new = pending;
 
     let old_b = old & TXTBOLDFACE != 0;
     let new_b = new & TXTBOLDFACE != 0;
@@ -530,8 +734,46 @@ pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
         }
     }
 
-    result
+    let diff = result;
+    *current = pending;
+    diff
 }
+
+/// Port of `void treplaceattrs(zattr newattrs)` from `Src/prompt.c:1719`.
+/// ```c
+/// void
+/// treplaceattrs(zattr newattrs)
+/// {
+///     if (newattrs == TXT_ERROR) return;
+///     if (txtunknownattrs) {
+///         txtcurrentattrs &= ~txtunknownattrs;
+///         txtcurrentattrs |= txtunknownattrs & ~newattrs;
+///     }
+///     txtpendingattrs = newattrs;
+/// }
+/// ```
+/// State-mutator only — the actual escape emission happens in
+/// `applytextattributes`. C's behavior: clear any "unknown" bits
+/// from current and re-set their inverse so applytextattributes
+/// detects them as changed, then stash newattrs in pending.
+pub fn treplaceattrs(newattrs: zattr) {                                       // c:1719
+    if newattrs == crate::ported::zsh_h::TXT_ERROR {                          // c:1721
+        return;                                                               // c:1722
+    }
+    let unknown = txtunknownattrs.load(std::sync::atomic::Ordering::SeqCst);  // c:1724
+    if unknown != 0 {                                                         // c:1724
+        let mut cur = current_attrs_lock().lock().expect("current_attrs poisoned");
+        *cur &= !unknown;                                                     // c:1728
+        *cur |= unknown & !newattrs;                                          // c:1729
+    }
+    *pending_attrs_lock().lock().expect("pending_attrs poisoned") = newattrs; // c:1732
+}
+
+/// Port of `mod_export zattr txtunknownattrs` from `Src/prompt.c:46`.
+/// Mask of text-attribute bits whose state is unknown because they
+/// came from escape sequences the prompt parser didn't recognise.
+pub static txtunknownattrs: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);                                     // c:46
 
 /// Set text attributes (full apply).
 /// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
@@ -656,6 +898,91 @@ pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
 /// falls through to numeric parsing. Returns palette index 0-7
 /// for basic colours, 8 for "default" sentinel (per C:1909),
 /// numeric value for raw integers.
+/// Port of `void countprompt(char *str, int *wp, int *hp, int overf)`
+/// from `Src/prompt.c:1140`. Walks the expanded prompt counting visible
+/// columns: handles `\t` (tab to next 8-col boundary), `\n` (reset
+/// column, bump row), `Inpar`/`Outpar` (`%{...%}` invisible regions),
+/// and `Nularg` (1-width opaque placeholder for `tputs` glitches).
+/// Writes width/height into `wp`/`hp` out-params. `overf` flag: when
+/// non-negative, wrap on column overflow (incrementing `*hp`); when -1,
+/// allow overflow (used by truncation pre-pass).
+/// ```c
+/// void
+/// countprompt(char *str, int *wp, int *hp, int overf)
+/// {
+///     int w = 0, h = 1, multi = 0, wcw = 0;
+///     int s = 1;  /* visible flag */
+///     for (; *str; str++) {
+///         while (w > zterm_columns && overf >= 0 && !multi) {
+///             h++;
+///             if (wcw) { w = wcw; break; }
+///             else w -= zterm_columns;
+///         }
+///         wcw = 0;
+///         if (*str == Inpar) s = 0;
+///         else if (*str == Outpar) s = 1;
+///         else if (*str == Nularg) w++;
+///         else if (s) {
+///             /* meta-decode, tab/newline/wide-char/cntrl handling */
+///         }
+///     }
+///     *wp = w; *hp = h;
+/// }
+/// ```
+/// WARNING: param names match C — Rust=(str, wp, hp, overf) vs C=(str, wp, hp, overf)
+pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {        // c:1140
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let mut w: i32 = 0;                                                      // c:1142
+    let mut h: i32 = 1;
+    let multi = 0i32;                                                        // c:1142
+    let mut wcw: i32 = 0;
+    let mut visible = true;                                                  // c:1143 s = 1
+
+    for c in s.chars() {
+        // c:1158-1173 — overflow wrap loop.
+        while w > zterm_columns && overf >= 0 && multi == 0 {                // c:1158
+            h += 1;                                                          // c:1159
+            if wcw != 0 {                                                    // c:1160
+                w = wcw;                                                     // c:1165
+                break;                                                       // c:1166
+            } else {
+                w -= zterm_columns;                                          // c:1171
+            }
+        }
+        wcw = 0;                                                             // c:1174
+
+        // c:1179-1185 — Inpar/Outpar/Nularg dispatch.
+        if c == '\x01' {                                                     // c:1179 Inpar
+            visible = false;                                                 // c:1180
+        } else if c == '\x02' {                                              // c:1181 Outpar
+            visible = true;                                                  // c:1182
+        } else if c == '\x03' {                                              // c:1183 Nularg
+            w += 1;                                                          // c:1184
+        } else if visible {                                                  // c:1185
+            // c:1202-1208 — tab / newline.
+            if c == '\t' {                                                   // c:1202
+                w = (w | 7) + 1;                                             // c:1203
+                continue;
+            } else if c == '\n' {                                            // c:1205
+                w = 0;                                                       // c:1206
+                h += 1;                                                      // c:1207
+                continue;                                                    // c:1208
+            }
+            // c:1234 — `w += WCWIDTH_WINT(wc)` — width of the char.
+            let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as i32;
+            wcw = cw;                                                        // c:1233 wcw = wcw
+            w += cw;                                                         // c:1234
+        }
+    }
+    // c:1265-1268 — final-column edge case: w == zterm_columns && overf == 0.
+    if w == zterm_columns && overf == 0 {                                    // c:1265
+        w = 0;                                                               // c:1266
+        h += 1;                                                              // c:1267
+    }
+    *wp = w;                                                                 // c:1273 *wp = w
+    *hp = h;                                                                 // c:1274 *hp = h
+}
+
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
     let lower = teststrp.to_lowercase(); // c:1915
     for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
@@ -1797,10 +2124,11 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {                    // 
     }
 }
 
-/// Emit highlight attributes as an ANSI escape string.
-/// Port of `output_highlight(zattr atr, zattr mask, char *buf)` from Src/prompt.c:2179.
+/// Port of `output_highlight(zattr atr, char *buf)` from
+/// Src/prompt.c:2179. Delegates to `apply_text_attributes` which
+/// renders zattr to the comma-joined `bold,fg=red,...` form.
 /// WARNING: param names don't match C — Rust=(attrs) vs C=(atr, mask, buf)
-pub fn output_highlight(attrs: zattr) -> String {
+pub fn output_highlight(attrs: zattr) -> String {                            // c:2179
     apply_text_attributes(attrs)
 }
 
@@ -1818,25 +2146,164 @@ pub fn set_colour_code(spec: &str) -> Option<String> {
     match_colour(spec, true)
 }
 
-/// Allocate the colour-buffer working space.
-/// Port of `allocate_colour_buffer()` from Src/prompt.c:2367 —
-/// no-op in Rust because `String` allocates lazily.
-pub fn allocate_colour_buffer() {
-    // Rust String handles allocation automatically
+/// Port of `static struct colour_sequences { char *start; char *end;
+/// char *def; }` from Src/prompt.c:2319. Holds the active terminal
+/// escape-prefix/suffix/default-reset codes for FG and BG channels.
+#[derive(Default, Clone)]
+pub struct colour_sequences {                                                // c:2319
+    pub start: String,                                                       // c:2320
+    pub end: String,                                                         // c:2321
+    pub def: String,                                                         // c:2322
+}
+
+// COL_SEQ_FG / COL_SEQ_BG live in zsh.h:2749-2750 — ported to
+// `crate::ported::zsh_h::COL_SEQ_FG` and `::COL_SEQ_BG`. Header-defined
+// constants belong in the header port per PORT.md Rule C.
+
+/// Port of `static struct colour_sequences fg_bg_sequences[2]` from
+/// `Src/prompt.c:2324`.
+pub static fg_bg_sequences: std::sync::Mutex<[colour_sequences; 2]> =        // c:2324
+    std::sync::Mutex::new([
+        colour_sequences { start: String::new(), end: String::new(), def: String::new() },
+        colour_sequences { start: String::new(), end: String::new(), def: String::new() },
+    ]);
+
+/// Port of `static char *colseq_buf` from `Src/prompt.c:2332`.
+/// We need a buffer for colour sequence composition. It may
+/// vary depending on the sequences set. However, it's inefficient
+/// allocating it separately every time we send a colour sequence,
+/// so do it once per refresh.
+pub static colseq_buf: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());  // c:2332
+
+/// Port of `static int colseq_buf_allocs` from `Src/prompt.c:2337`.
+/// Count how often this has been allocated, for recursive usage.
+pub static colseq_buf_allocs: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:2337
+
+/// Port of `mod_export void allocate_colour_buffer(void)` from
+/// `Src/prompt.c:2367`. Allocates the per-refresh colour-sequence
+/// composition buffer, populating `fg_bg_sequences` from
+/// `$zle_highlight` overrides when present.
+///
+/// ```c
+/// mod_export void
+/// allocate_colour_buffer(void)
+/// {
+///     char **atrs;
+///     int lenfg, lenbg, len;
+///     if (colseq_buf_allocs++) return;
+///     atrs = getaparam("zle_highlight");
+///     if (atrs) {
+///         for (; *atrs; atrs++) {
+///             if (strpfx("fg_start_code:", *atrs)) {
+///                 set_colour_code(*atrs + 14, &fg_bg_sequences[COL_SEQ_FG].start);
+///             } else if (strpfx("fg_default_code:", *atrs)) {
+///                 set_colour_code(*atrs + 16, &fg_bg_sequences[COL_SEQ_FG].def);
+///             } else if (strpfx("fg_end_code:", *atrs)) {
+///                 set_colour_code(*atrs + 12, &fg_bg_sequences[COL_SEQ_FG].end);
+///             } else if (strpfx("bg_start_code:", *atrs)) {
+///                 set_colour_code(*atrs + 14, &fg_bg_sequences[COL_SEQ_BG].start);
+///             } else if (strpfx("bg_default_code:", *atrs)) {
+///                 set_colour_code(*atrs + 16, &fg_bg_sequences[COL_SEQ_BG].def);
+///             } else if (strpfx("bg_end_code:", *atrs)) {
+///                 set_colour_code(*atrs + 12, &fg_bg_sequences[COL_SEQ_BG].end);
+///             }
+///         }
+///     }
+///     lenfg = strlen(fg_bg_sequences[COL_SEQ_FG].def);
+///     if (lenfg < 1) lenfg = 1;
+///     lenfg += strlen(fg_bg_sequences[COL_SEQ_FG].start) +
+///         strlen(fg_bg_sequences[COL_SEQ_FG].end);
+///     lenbg = strlen(fg_bg_sequences[COL_SEQ_BG].def);
+///     if (lenbg < 1) lenbg = 1;
+///     lenbg += strlen(fg_bg_sequences[COL_SEQ_BG].start) +
+///         strlen(fg_bg_sequences[COL_SEQ_BG].end);
+///     len = lenfg > lenbg ? lenfg : lenbg;
+///     colseq_buf = (char *)zalloc(len+15);
+/// }
+/// ```
+pub fn allocate_colour_buffer() {                                            // c:2367
+    use std::sync::atomic::Ordering;
+
+    // c:2372 — `if (colseq_buf_allocs++) return;`
+    if colseq_buf_allocs.fetch_add(1, Ordering::SeqCst) != 0 {               // c:2372
+        return;                                                              // c:2373
+    }
+
+    // c:2375 — `atrs = getaparam("zle_highlight");`
+    // Rust getaparam takes &mut value, not name — use paramtab lookup
+    // directly and pull arrgetfn off the param.
+    let atrs: Option<Vec<String>> = {                                        // c:2375
+        let tab = crate::ported::params::paramtab().read().ok();
+        tab.and_then(|t| t.get("zle_highlight").map(|p| {
+            crate::ported::params::arrgetfn(p)
+        }))
+    };
+
+    if let Some(atrs) = atrs {                                               // c:2376
+        let mut seqs = fg_bg_sequences.lock().unwrap();
+        for atr in &atrs {                                                   // c:2377
+            if crate::ported::utils::strpfx("fg_start_code:", atr) {         // c:2378
+                if let Some(c) = set_colour_code(&atr[14..]) {               // c:2379
+                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].start = c;
+                }
+            } else if crate::ported::utils::strpfx("fg_default_code:", atr) {// c:2380
+                if let Some(c) = set_colour_code(&atr[16..]) {               // c:2381
+                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].def = c;
+                }
+            } else if crate::ported::utils::strpfx("fg_end_code:", atr) {    // c:2382
+                if let Some(c) = set_colour_code(&atr[12..]) {               // c:2383
+                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].end = c;
+                }
+            } else if crate::ported::utils::strpfx("bg_start_code:", atr) {  // c:2384
+                if let Some(c) = set_colour_code(&atr[14..]) {               // c:2385
+                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].start = c;
+                }
+            } else if crate::ported::utils::strpfx("bg_default_code:", atr) {// c:2386
+                if let Some(c) = set_colour_code(&atr[16..]) {               // c:2387
+                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].def = c;
+                }
+            } else if crate::ported::utils::strpfx("bg_end_code:", atr) {    // c:2388
+                if let Some(c) = set_colour_code(&atr[12..]) {               // c:2389
+                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].end = c;
+                }
+            }
+        }
+    }
+
+    let seqs = fg_bg_sequences.lock().unwrap();
+    let mut lenfg: usize = seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].def.len();                       // c:2394
+    if lenfg < 1 { lenfg = 1; }                                              // c:2396-2397
+    lenfg += seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].start.len() + seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].end.len();      // c:2398-2399
+
+    let mut lenbg: usize = seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].def.len();                       // c:2401
+    if lenbg < 1 { lenbg = 1; }                                              // c:2403-2404
+    lenbg += seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].start.len() + seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].end.len();      // c:2405-2406
+    drop(seqs);
+
+    let len = if lenfg > lenbg { lenfg } else { lenbg };                     // c:2408
+    // c:2410 — `colseq_buf = (char *)zalloc(len+15);` (+1 NUL +14 truecolor)
+    *colseq_buf.lock().unwrap() = vec![0u8; len + 15];                       // c:2410
 }
 
 /// Free the colour-buffer working space.
-/// Port of `free_colour_buffer()` from Src/prompt.c:2417 — no-op
-/// in Rust because `Drop` handles it.
-pub fn free_colour_buffer() {
-    // Rust Drop handles this
+/// Port of `free_colour_buffer()` from Src/prompt.c:2417.
+pub fn free_colour_buffer() {                                                // c:2417
+    use std::sync::atomic::Ordering;
+    // C body c:2420-2426: `if (--colseq_buf_allocs) return;
+    //                      zfree(colseq_buf, ...); colseq_buf = NULL;`
+    if colseq_buf_allocs.fetch_sub(1, Ordering::SeqCst) - 1 != 0 {           // c:2420
+        return;                                                              // c:2421
+    }
+    colseq_buf.lock().unwrap().clear();                                      // c:2424
 }
 
-/// Apply a parsed colour attribute as an ANSI escape.
-/// Port of `set_colour_attribute(zattr atr, int fg_bg, int flags)` from Src/prompt.c:2440.
+/// Port of `set_colour_attribute(zattr atr, int fg_bg, int flags)`
+/// from Src/prompt.c:2440. Delegates to `color_to_ansi` which
+/// produces the indexed/256-color/truecolor escape.
 /// WARNING: param names don't match C — Rust=(color, is_fg) vs C=(atr, fg_bg, flags)
 pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {           // c:2440
-color_to_ansi(color, is_fg) // c:2440
+    color_to_ansi(color, is_fg)
 }
 
 // `pub enum CmdState` + `impl CmdState { from_u8, name }` —

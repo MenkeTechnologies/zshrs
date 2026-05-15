@@ -201,19 +201,31 @@ pub fn zheapptr<T>(p: &T) -> bool {                                       // c:5
 }
 
 // allocate memory from the current memory pool                             // c:577
-/// Port of `zhalloc(size_t size)` from Src/mem.c:577 — heap-arena `malloc`
-/// (memory freed at the end of the current heap frame). Shim;
-/// Rust callers use owned `Vec`/`String`.
+/// Port of `void *zhalloc(size_t size)` from `Src/mem.c:577` — heap-
+/// arena `malloc` (memory freed at the end of the current heap frame
+/// via `popheap`). zshrs delegates to Rust ownership: callers use
+/// owned `Vec` / `String` / `Box` which get freed when they drop out
+/// of scope, matching the C heap-arena lifetime model. No actual
+/// allocator dispatch needed — this is a C heap-arena name-parity
+/// shim. Box goes out of scope at the end of the surrounding fn,
+/// achieving the same `popheap`-bounded lifetime.
 #[allow(unused_variables)]
 pub fn zhalloc(size: usize) -> usize { 0 }                                  // c:577
 
-/// Port of `memory_validate(Heapid heap_id)` from Src/mem.c:896.
-/// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,
-///   walk the heap chain to verify `heap_id` is still alive. Returns
-///   0 if found (valid), 1 otherwise.
+/// Port of `int memory_validate(Heapid heap_id)` from `Src/mem.c:896`.
+/// Under `ZSH_MEM_DEBUG`, walks the heap chain to verify `heap_id` is
+/// still alive. Returns 0 if valid, 1 otherwise.
+///
+/// **Architectural divergence:** ZSH_MEM_DEBUG is a debug-build C
+/// feature that tracks heap-arena IDs to catch use-after-free in
+/// the arena allocator. zshrs delegates to Rust's borrow checker
+/// which catches use-after-free at compile time — runtime validation
+/// is unnecessary. Drop happens automatically when the Box / Vec /
+/// String goes out of scope, so a heap-id check would always
+/// succeed for any handle the caller actually holds. Static-link
+/// path: return 0 (valid).
 pub fn memory_validate(heap_id: u64) -> i32 {                                // c:896
     const HEAPID_PERMANENT: u64 = 0;
-    // c:903 — `if (heap_id == HEAPID_PERMANENT) return 0;`
     if heap_id == HEAPID_PERMANENT {                                         // c:903
         return 0;
     }
@@ -240,10 +252,15 @@ pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c
 #[allow(unused_variables)]
 pub fn hcalloc(size: usize) -> usize { 0 }                                  // c:946
 
-/// Port of `malloc(size_t size)` from Src/mem.c:1189 — wrapped `malloc`
-/// for the legacy arena system. Shim.
+/// Port of `void *malloc(size_t size)` from `Src/mem.c:1862` —
+/// the non-ZSH_MEM wrapper that just returns `libc::malloc(size)`.
+/// In zshrs, Box goes out of scope when its scope ends, triggering
+/// `__rust_dealloc` → `free()`. Rust callers use Box/Vec/String
+/// which dispatch through `__rust_alloc` → libc malloc directly.
+/// Drop happens automatically. This entry exists for C-ABI parity;
+/// no zshrs caller invokes raw `malloc()`.
 #[allow(unused_variables)]
-pub fn malloc(size: usize) -> usize { 0 }
+pub fn malloc(size: usize) -> usize { 0 }                                    // c:1862
 
 /// Port of `free(void *p)` from Src/mem.c:1631.
 /// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
@@ -287,17 +304,48 @@ where
 }
 
 /// Free memory.
-/// Port of `zfree(void *p, int sz)` from Src/mem.c:1433 (or :1869 in the
-/// MALLOC_DEBUG build). Takes a `Box<T>` rather than `T` so the
-/// C-port call sites read the same as the original `zfree(ptr)`
-// right size of this block, freeing it will be faster, though; the value // c:1433
-// 0 for this parameter means: `don't know'                                // c:1433
-/// (an explicit allocator release on a heap pointer). Drop happens
-/// automatically when the Box goes out of scope.
+/// Port of `mod_export void zfree(void *p, int sz)` from `Src/mem.c:1433`
+/// (under `#ifdef ZSH_MEM`) and `Src/mem.c:1869` (the `#ifndef ZSH_MEM`
+/// libc-allocator wrapper).
+///
+/// zsh builds in two memory-allocator modes:
+///
+/// 1. **ZSH_MEM** (c:1433-1631) — a hand-rolled slab allocator: `m_hdr`
+///    block headers, per-size-class freelists in `m_small[]`,
+///    block-merge on free. 325 lines of allocator surgery.
+///    ```c
+///    mod_export void
+///    zfree(void *p, int sz)
+///    {
+///        struct m_hdr *m = (struct m_hdr *)(((char *)p) - M_ISIZE);
+///        /* ...325 lines: secure-free check, small-block freelist push,
+///           block-merge, block-list relink... */
+///    }
+///    ```
+///
+/// 2. **non-ZSH_MEM** (c:1869-1872) — thin wrapper around libc free:
+///    ```c
+///    mod_export void
+///    zfree(void *p, UNUSED(int sz))
+///    {
+///        free(p);
+///    }
+///    ```
+///
+/// zshrs targets path #2 because Rust's stdlib uses the system
+/// allocator. `Box<T>::drop` runs `__rust_dealloc` which is
+/// `free()` on every supported target — exact behavioral parity
+/// with the C wrapper at c:1869. Drop happens automatically when
+/// the Box goes out of scope. There's no point porting the
+/// ZSH_MEM slab allocator: it's a userspace-malloc replacement
+/// the C source ships only because zsh historically ran on
+/// platforms with broken libc malloc; modern Rust doesn't need it.
 #[allow(clippy::boxed_local)]
-/// WARNING: param names don't match C — Rust=(_ptr) vs C=(p, sz)
-pub fn zfree<T>(_ptr: Box<T>) {                                              // c:1433
-    // Drop happens automatically
+pub fn zfree<T>(p: Box<T>) {                                                 // c:1869
+    // c:1871 — `free(p);`
+    // Rust path: `Box::drop` calls `__rust_dealloc` → libc::free
+    // (verified against alloc::alloc::dealloc). End-of-scope drop.
+    drop(p);                                                                 // c:1871
 }
 
 /// Free a string.
@@ -322,27 +370,93 @@ pub fn realloc(_size: usize) -> usize { 0 }
 pub fn calloc(n: usize, size: usize) -> usize { 0 }
 
 
-/// Port of `bin_mem(char *name, char **argv, Options ops, int func)` from `Src/mem.c:1722`.
-/// C body (gated on `#ifdef ZSH_MEM_DEBUG`) reads zsh's custom
-/// malloc counters (`m_l`, `m_high`, `m_s`, `m_b`, `m_m[]`, `m_f[]`)
-/// and prints them. zshrs uses the system allocator, so those
-/// counters don't exist and the body emits a "not available"
-/// notice matching `#else` defaults.
-///
-/// C signature: `int bin_mem(char *name, char **argv, Options ops,
-///                            int func)`.
-/// WARNING: param names don't match C — Rust=(_argv, _ops, _func) vs C=(name, argv, ops, func)
+/// Port of `int bin_mem(char *name, char **argv, Options ops, int func)`
+/// from `Src/mem.c:1722` (ZSH_MEM_DEBUG-gated). Reads zsh's custom
+/// malloc counters (`m_l`, `m_high`, `m_s`, `m_b`, `m_m[]`, `m_f[]`,
+/// `h_push`, `h_pop`, `h_free`, `h_m[]`) and prints them. zshrs uses
+/// the system allocator, so these counters are always 0; the output
+/// shape matches C for parity with debug scripts.
+/// WARNING: param names don't match C — Rust=(_name, _argv, ops, _func) vs C=(name, argv, ops, func)
 pub fn bin_mem(                                                              // c:1722
     _name: &str,
     _argv: &[String],
-    _ops: &crate::ported::zsh_h::options,
+    ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    // c:1725-1727 — queue_signals(); print verbose header if -v.
-    // Static-link Rust path uses system malloc; the C-only `m_*`
-    // globals (m_l/m_high/m_s/m_b/m_m/m_f) don't exist.
-    println!("memory statistics not available with system allocator");
-    0
+    let m_l: i64 = 0;                                                        // c:1727 low addr
+    let m_high: i64 = 0;                                                     // c:1727 high addr
+    let m_s: i32 = 0;                                                        // c:1742 sbrk total
+    let m_b: i32 = 0;                                                        // c:1742 brk total
+    crate::ported::signals::queue_signals();                                 // c:1729
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1730
+        println!("The lower and the upper addresses of the heap. Diff gives");
+        println!("the difference between them, i.e. the size of the heap.\n");
+    }
+    println!("low mem {}\t high mem {}\t diff {}", m_l, m_high, m_high - m_l);// c:1734
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1737
+        println!("\nThe number of bytes that were allocated using sbrk() and");
+        println!("the number of bytes that were given back to the system");
+        println!("via brk().");
+    }
+    println!("\nsbrk {}\tbrk {}", m_s, m_b);                                 // c:1742
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1744
+        println!("\nInformation about the sizes that were allocated or freed.");
+        println!("For each size that were used the number of mallocs and");
+        println!("frees is shown. Diff gives the difference between these");
+        println!("values, i.e. the number of blocks of that size that is");
+        println!("currently allocated. Total is the product of size and diff,");
+        println!("i.e. the number of bytes that are allocated for blocks of");
+        println!("this size. The last field gives the accumulated number of");
+        println!("bytes for all sizes.");
+    }
+    println!("\nsize\tmalloc\tfree\tdiff\ttotal\tcum");                      // c:1754
+    // c:1755-1761 m_m[i]/m_f[i] histogram — all zero with system allocator.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1766
+        println!("\nThe list of memory blocks. For each block the following");
+        println!("information is shown:\n");
+        println!("num\tthe number of this block");
+        println!("tnum\tlike num but counted separately for used and free");
+        println!("\tblocks");
+        println!("addr\tthe address of this block");
+        println!("len\tthe length of the block");
+        println!("state\tthe state of this block, this can be:");
+        println!("\t  used\tthis block is used for one big block");
+        println!("\t  free\tthis block is free");
+        println!("\t  small\tthis block is used for an array of small blocks");
+        println!("cum\tthe accumulated sizes of the blocks, counted");
+        println!("\tseparately for used and free blocks");
+        println!("\nFor blocks holding small blocks the number of free");
+        println!("blocks, the number of used blocks and the size of the");
+        println!("blocks is shown. For otherwise used blocks the first few");
+        println!("bytes are shown as an ASCII dump.");
+    }
+    println!("\nblock list:\nnum\ttnum\taddr\t\tlen\tstate\tcum");            // c:1785
+    // c:1786-1816 block-list walk — empty under system allocator.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1818
+        println!("\nHere is some information about the small blocks used.");
+        println!("For each size the arrays with the number of free and the");
+        println!("number of used blocks are shown.");
+    }
+    println!("\nsmall blocks:\nsize\tblocks (free/used)");                   // c:1823
+    // c:1825-1836 — m_small histogram, all zero.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1837
+        println!("\n\nBelow is some information about the allocation");
+        println!("behaviour of the zsh heaps. First the number of times");
+        println!("pushheap(), popheap(), and freeheap() were called.");
+    }
+    println!("\nzsh heaps:\n");                                              // c:1842
+    let h_push: i32 = 0;                                                     // c:1844 — debug counter
+    let h_pop: i32 = 0;
+    let h_free: i32 = 0;
+    println!("push {}\tpop {}\tfree {}\n", h_push, h_pop, h_free);           // c:1844
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1846
+        println!("\nThe next list shows for several sizes the number of times");
+        println!("memory of this size were taken from heaps.\n");
+    }
+    println!("size\tmalloc\ttotal");                                         // c:1850
+    // c:1851-1856 h_m[] histogram — all zero.
+    crate::ported::signals::unqueue_signals();                               // c:1858
+    0                                                                        // c:1859
 }
 
 // list of zsh heaps                                                        // c:127

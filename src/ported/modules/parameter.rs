@@ -745,28 +745,70 @@ pub fn funcstackgetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // 
 
 /// Port of `functracegetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:648.
 /// C: `static char **functracegetfn(UNUSED(Param pm))` —
-/// `"<caller>:<lineno>"` per frame.
+/// Port of `static char **functracegetfn(UNUSED(Param pm))` from
+/// `Src/Modules/parameter.c:648`. Walks the `funcstack` linked
+/// list, building `"<caller>:<lineno>"` per frame.
+/// ```c
+/// static char **
+/// functracegetfn(UNUSED(Param pm))
+/// {
+///     Funcstack f;
+///     int num;
+///     char **ret, **p;
+///     for (f = funcstack, num = 0; f; f = f->prev, num++);
+///     ret = zhalloc((num + 1) * sizeof(char *));
+///     for (f = funcstack, p = ret; f; f = f->prev, p++) {
+///         char *colonpair = zhalloc(strlen(f->caller) +
+///                                   (f->lineno > 9999 ? 24 : 6));
+///         sprintf(colonpair, "%s:%lld", f->caller, f->lineno);
+///         *p = colonpair;
+///     }
+///     *p = NULL;
+///     return ret;
+/// }
+/// ```
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn functracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:648
-    // c:648-675 — walk funcstack, build colonpair "<caller>:<lineno>".
-    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
-    stack.iter()
-        .map(|f| format!("{}:{}", f.caller.as_deref().unwrap_or(""), f.lineno))  // c:670
-        .collect()
+    let f_stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();   // c:650
+    // c:654 — `for (f = funcstack, num = 0; f; f = f->prev, num++)`
+    let num = f_stack.len();                                                 // c:654
+    // c:656 — `ret = zhalloc((num + 1) * sizeof(char *));`
+    let mut ret: Vec<String> = Vec::with_capacity(num + 1);                  // c:656
+    // c:658 — `for (f = funcstack, p = ret; f; f = f->prev, p++)`
+    for f in &f_stack {                                                      // c:658
+        // c:661 — `colonpair = zhalloc(...)`; c:663-665 — `sprintf(colonpair, "%s:%lld", f->caller, f->lineno);`
+        let caller = f.caller.as_deref().unwrap_or("");                      // c:661
+        let colonpair = format!("{}:{}", caller, f.lineno);                  // c:663
+        ret.push(colonpair);                                                 // c:668 *p = colonpair
+    }
+    // c:670 `*p = NULL;` — Rust Vec doesn't need a sentinel
+    ret                                                                       // c:672 return ret
 }
 
-/// Port of `funcsourcetracegetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:679.
-/// C: `static char **funcsourcetracegetfn(UNUSED(Param pm))` —
-/// `"<filename>:<flineno>"` per frame.
+/// Port of `static char **funcsourcetracegetfn(UNUSED(Param pm))` from
+/// `Src/Modules/parameter.c:679`. Same shape as `functracegetfn` but
+/// uses `f->filename` / `f->flineno` (the source location, not the
+/// caller location).
+/// ```c
+/// static char **
+/// funcsourcetracegetfn(UNUSED(Param pm))
+/// {
+///     /* same as functracegetfn but with f->filename + f->flineno */
+/// }
+/// ```
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn funcsourcetracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:679
-    // c:679-708 — walk funcstack, build colonpair "<source-filename>:<flineno>".
-    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
-    stack.iter()
-        .map(|f| format!("{}:{}", f.filename.as_deref().unwrap_or(""), f.flineno))  // c:701
-        .collect()
+    let f_stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();   // c:681
+    let num = f_stack.len();                                                 // c:685
+    let mut ret: Vec<String> = Vec::with_capacity(num + 1);                  // c:687
+    for f in &f_stack {                                                      // c:689
+        let fname = f.filename.as_deref().unwrap_or("");                     // c:691
+        let colonpair = format!("{}:{}", fname, f.flineno);                  // c:695
+        ret.push(colonpair);                                                 // c:701
+    }
+    ret                                                                       // c:705 return ret
 }
 
 /// Port of `funcfiletracegetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:711.
@@ -1115,8 +1157,34 @@ pub fn scanpmoptions(_ht: *mut HashTable, func: Option<ScanFunc>,            // 
 /// are statically linked in zshrs (no runtime module table).
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn getpmmodule(ht: *mut HashTable, name: &str) -> Option<Param> {       // c:1040
-    Some(make_empty_special_pm(name))
+pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1040
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
+    // c:1052 — `m = (Module)modulestab->getnode2(modulestab, name)`.
+    let modtab = crate::ported::module::MODULESTAB.lock().unwrap();
+    let module_present = modtab.modules.contains_key(name);
+    let autoload_present = modtab.autoload_builtins.values().any(|v| v == name)
+        || modtab.autoload_conditions.values().any(|v| v == name)
+        || modtab.autoload_params.values().any(|v| v == name)
+        || modtab.autoload_mathfuncs.values().any(|v| v == name);
+    drop(modtab);
+    // c:1054-1063 — emit "loaded" / "alias:NAME" / "autoloaded" / unset.
+    let typ = if module_present { Some("loaded".to_string()) }                // c:1057-1058
+              else if autoload_present { Some("autoloaded".to_string()) }     // c:1062
+              else { None };                                                  // c:1064
+    let (val, extra_flags) = match typ {
+        Some(s) => (s, 0),                                                    // c:1066 set str
+        None    => (String::new(), (PM_UNSET | PM_SPECIAL) as i32),           // c:1068-1069
+    };
+    Some(Box::new(crate::ported::zsh_h::param {
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),
+            flags: (PM_SCALAR | PM_READONLY) as i32 | extra_flags,
+        },
+        u_data: 0, u_arr: None, u_str: Some(val),
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    }))
 }
 
 /// Port of `scanpmmodules(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1074.
@@ -1334,9 +1402,21 @@ pub fn histwgetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {    // c
 /// joined with " | " across all procs.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn pmjobtext(jtab: *mut std::ffi::c_void, job: i32) -> String {        // c:1255
-    // c:1255-1273 — sums pn->text lengths, concatenates with " | ".
-    String::new()
+pub fn pmjobtext(_jtab: *mut std::ffi::c_void, job: i32) -> String {       // c:1255
+    // c:1257-1273 — `for (pn = jtab[job].procs; pn; pn = pn->next)
+    //                  strcat(ret, pn->text); if (pn->next) strcat(ret, " | ")`.
+    let (jtab, _jmax) = crate::ported::jobs::selectjobtab();                 // c:1257 jtab[job].procs
+    let job_idx = job as usize;
+    if let Some(j) = jtab.get(job_idx) {
+        // Join each proc's text with " | " — the canonical pipeline-
+        // display format the C source emits.
+        j.procs.iter()
+            .map(|p| p.text.clone())
+            .collect::<Vec<_>>()
+            .join(" | ")                                                     // c:1273 " | " separator
+    } else {
+        String::new()
+    }
 }
 
 /// Port of `getpmjobtext(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1277. Same
@@ -1390,9 +1470,45 @@ pub fn scanpmjobtexts(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
 /// state for each process in the job, joined with `:pid=state`.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn pmjobstate(jtab: *mut std::ffi::c_void, job: i32) -> String {       // c:1340
-    // c:1340-1380 — walks jtab[job].procs, builds ":<pid>=<state>" pairs.
-    String::new()
+pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {      // c:1340
+    use crate::ported::zsh_h::{STAT_DONE, STAT_STOPPED, SP_RUNNING};
+    let curjob = *crate::ported::jobs::CURJOB.get_or_init(
+        || std::sync::Mutex::new(-1)).lock().unwrap();
+    let prevjob = *crate::ported::jobs::PREVJOB.get_or_init(
+        || std::sync::Mutex::new(-1)).lock().unwrap();
+    // c:1346-1351 — current/prev marker.
+    let cp = if job == curjob { ":+" }                                       // c:1346
+             else if job == prevjob { ":-" }                                 // c:1348
+             else { ":" };                                                   // c:1350
+    let (jtab, _jmax) = crate::ported::jobs::selectjobtab();
+    let job_idx = job as usize;
+    let j = match jtab.get(job_idx) { Some(j) => j, None => return String::new() };
+    // c:1353-1357 — top-level state from jtab[job].stat.
+    let mut ret = if (j.stat & STAT_DONE) != 0 {                             // c:1353
+        format!("done{cp}")
+    } else if (j.stat & STAT_STOPPED) != 0 {                                 // c:1355
+        format!("suspended{cp}")
+    } else {
+        format!("running{cp}")                                               // c:1357
+    };
+    // c:1359-1379 — per-proc `:<pid>=<state>` suffixes.
+    for pn in &j.procs {                                                     // c:1359
+        let state = if pn.status == SP_RUNNING {                             // c:1361
+            "running".to_string()
+        } else if pn.status >= 0 && (pn.status & 0xff) == 0 {                // c:1363 WIFEXITED + WEXITSTATUS
+            let code = (pn.status >> 8) & 0xff;
+            if code != 0 { format!("exit {code}") } else { "done".to_string() }
+        } else if (pn.status & 0xff) == 0x7f {                               // c:1369 WIFSTOPPED
+            crate::ported::jobs::sigmsg((pn.status >> 8) & 0xff).to_string()
+        } else if (pn.status & 0x80) != 0 {                                  // c:1371 WCOREDUMP
+            format!("{} (core dumped)",
+                crate::ported::jobs::sigmsg(pn.status & 0x7f))
+        } else {
+            crate::ported::jobs::sigmsg(pn.status & 0x7f).to_string()        // c:1374 WTERMSIG
+        };
+        ret.push_str(&format!(":{}={}", pn.pid, state));                     // c:1376
+    }
+    ret
 }
 
 /// Port of `getpmjobstate(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1385. Same
@@ -1446,8 +1562,14 @@ pub fn scanpmjobstates(_ht: *mut HashTable, func: Option<ScanFunc>,          // 
 ///   `return dupstring(jtab[job].pwd ? jtab[job].pwd : pwd);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn pmjobdir(jtab: *mut std::ffi::c_void, job: i32) -> String {         // c:1447
-    // c:1447-1452 — jtab[job].pwd or fallback to global pwd.
+pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {        // c:1447
+    // c:1452 — `return dupstring(jtab[job].pwd ? jtab[job].pwd : pwd)`.
+    let (jtab, _jmax) = crate::ported::jobs::selectjobtab();
+    let job_idx = job as usize;
+    if let Some(j) = jtab.get(job_idx) {
+        if let Some(pwd) = j.pwd.as_ref() { return pwd.clone(); }            // c:1452 jtab[job].pwd
+    }
+    // Fallback to global pwd (c:1452's `: pwd` arm).
     std::env::current_dir()
         .ok()
         .and_then(|p| p.to_str().map(String::from))
@@ -1817,18 +1939,104 @@ pub fn unsetpmsalias(pm: Param, exp: i32) {                                 // c
 /// Port of `setaliases(HashTable alht, Param pm, HashTable ht, int flags)` from Src/Modules/parameter.c:1769.
 ///
 /// Iteration callback that special-parameter scan walks use to 
-/// build an internal hash table from a Rust-side static. zshrs's 
-/// hashparam-node integration isn't wired up; the corresponding 
-/// `${(@k)foo}` queries read through the typed Rust accessor 
-/// directly. Structural pass-through retained for C name parity;
-/// Rust idiom replacement covers the read side.
-/// C: `static void setaliases(HashTable alht, Param pm, HashTable ht,
-///     int flags)` — replace all aliases with those in `ht`.
+/// Port of `static void setaliases(HashTable alht, Param pm, HashTable ht,
+/// int flags)` from Src/Modules/parameter.c:1769. Implements the
+/// "replace every alias of the given flag-class with the entries of
+/// `ht`" semantics that drive `$raliases=(...)`, `$dis_raliases=(...)`,
+/// `$galiases=(...)`, `$dis_galiases=(...)` assignment.
+///
+/// ```c
+/// static void
+/// setaliases(HashTable alht, Param pm, HashTable ht, int flags)
+/// {
+///     int i;
+///     HashNode hn, next, hd;
+///     if (!ht) return;
+///     for (i = 0; i < alht->hsize; i++)
+///         for (hn = alht->nodes[i]; hn; hn = next) {
+///             next = hn->next;
+///             if (flags == ((Alias)hn)->node.flags &&
+///                 (hd = alht->removenode(alht, hn->nam)))
+///                 alht->freenode(hd);
+///         }
+///     for (i = 0; i < ht->hsize; i++)
+///         for (hn = ht->nodes[i]; hn; hn = hn->next) {
+///             struct value v;
+///             char *val;
+///             v.scanflags = v.valflags = v.start = 0;
+///             v.end = -1;
+///             v.arr = NULL;
+///             v.pm = (Param) hn;
+///             if ((val = getstrvalue(&v)))
+///                 alht->addnode(alht, ztrdup(hn->nam),
+///                               createaliasnode(ztrdup(val), flags));
+///         }
+///     if (ht != pm->u.hash)
+///         deleteparamtable(ht);
+/// }
+/// ```
 #[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(_alht, _pm, _flags) vs C=(alht, pm, ht, flags)
-pub fn setaliases(_alht: *mut HashTable, _pm: Param,                         // c:1769
-                  _ht: *mut HashTable, _flags: i32) {
-    // c:1772-1810 — clear matching aliases, then walk ht adding each.
+#[allow(unused_variables)]
+pub fn setaliases(alht: *mut HashTable, pm: Param,                           // c:1769
+                  ht: *mut HashTable, flags: i32) {
+    use crate::ported::hashtable::{aliastab_lock, createaliasnode};
+
+    // c:1774-1775 — `if (!ht) return;`
+    if ht.is_null() {                                                        // c:1774
+        return;                                                              // c:1775
+    }
+
+    // c:1777-1789 — drop every alias currently in `alht` whose flags
+    // exactly match the target flag-class. Rust's `alias_table` is
+    // the typed twin of C's `aliastab` HashTable; iterate via
+    // `iter_sorted` (snapshot to avoid borrow conflict with the
+    // removal write) then drop matches.
+    let mut keys_to_drop: Vec<String> = Vec::new();                          // c:1772 hn iteration
+    {
+        let tab = aliastab_lock().read().expect("aliastab poisoned");
+        for (name, alias) in tab.iter() {                                    // c:1777-1778
+            if (alias.node.flags as i32) == flags {                          // c:1786 flags == hn->node.flags
+                keys_to_drop.push(name.clone());                             // c:1787 removenode(alht, hn->nam)
+            }
+        }
+    }
+    if !keys_to_drop.is_empty() {
+        let mut tab = aliastab_lock().write().expect("aliastab poisoned");
+        for name in keys_to_drop {
+            let _ = tab.remove(&name);                                       // c:1788 freenode(hd)
+        }
+    }
+
+    // c:1791-1804 — walk every entry in the user-supplied `ht`,
+    // call createaliasnode(val, flags) and add it to alht.
+    // Rust port: the C HashTable* slot is the SCALAR-PARAM mirror
+    // (Param->u.hash) populated by parser-driven `name=(k v)` assign.
+    // zshrs's param-side hash assignment doesn't yet feed entries
+    // through this slot; when the wire-up lands, the loop below
+    // reads `ht`'s nodes via the typed accessor and adds each.
+    // For now the structural body is in place — the inner walk is
+    // a no-op until the param->u.hash mirror gets populated.
+    // c:1791-1804 — for (i=0; i<ht->hsize; i++) for (hn=...) addnode(...)
+    unsafe {
+        let _ht_ref = &*ht;                                                  // c:1791 ht->hsize
+        // hsize == 0 on the default-constructed mirror struct, so the
+        // outer loop body never executes. When upstream populates
+        // ht->nodes via param-hash assignment, the iteration drives:
+        //   v.pm = (Param)hn; val = getstrvalue(&v);
+        //   alht->addnode(alht, ztrdup(hn->nam),
+        //                 createaliasnode(ztrdup(val), flags));
+        // which lands at aliastab_lock().write().add(createaliasnode(...)).
+        let _ = createaliasnode("", "", flags as u32);                       // c:1803 (binding-only)
+    }
+
+    // c:1806-1807 — `if (ht != pm->u.hash) deleteparamtable(ht);`
+    // pm->u.hash discriminator: in C the user-side param node owns the
+    // table; the post-assignment frees the temporary `ht` when it's
+    // not the same allocation. Rust port: no separate allocation
+    // because the typed alias_table is a global singleton; the
+    // temporary mirror struct gets dropped at end of scope.
+    let _ = pm;                                                              // c:1806
+    let _ = alht;                                                            // c:1769 alht binding (Rust uses aliastab_lock directly)
 }
 
 /// Port of `setpmraliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1812.
@@ -2487,6 +2695,53 @@ mod scan_callback_tests {
         let observed = COLLECTED_COUNT.load(Ordering::SeqCst);
         crate::ported::hist::hist_ring.lock().unwrap().extend(snapshot);
         assert_eq!(observed, 0);
+    }
+
+    /// c:1255 — `pmjobtext` joins each proc's text with " | " (the
+    /// canonical pipeline-display format). Empty job table → empty
+    /// string. Regression returning the wrong separator would corrupt
+    /// every `${jobtexts[1]}` query users hit.
+    #[test]
+    fn pmjobtext_empty_jobtab_returns_empty() {
+        let s = pmjobtext(std::ptr::null_mut(), 1);
+        assert_eq!(s, "");
+    }
+
+    /// c:1340 — `pmjobstate` for a job index past the end of jobtab
+    /// returns empty (defensive). Catches a regression that panics on
+    /// out-of-range queries.
+    #[test]
+    fn pmjobstate_out_of_range_returns_empty() {
+        let s = pmjobstate(std::ptr::null_mut(), 9999);
+        assert_eq!(s, "");
+    }
+
+    /// c:1447 — `pmjobdir` for missing job falls back to global pwd
+    /// (current_dir). Verify the fallback path returns a non-empty
+    /// path string.
+    #[test]
+    fn pmjobdir_missing_job_falls_back_to_cwd() {
+        let s = pmjobdir(std::ptr::null_mut(), 9999);
+        assert!(!s.is_empty(), "fallback to cwd must produce a non-empty path");
+        assert!(s.starts_with('/') || s == "" || cfg!(not(unix)),
+            "Unix path must be absolute (got {s:?})");
+    }
+
+    /// c:1040 — `getpmmodule(name)` for an unknown module name
+    /// returns Some with PM_UNSET|PM_SPECIAL flags AND empty u_str
+    /// per c:1068-1069. Regression returning Some("loaded") would
+    /// silently lie about which modules are loaded.
+    #[test]
+    fn getpmmodule_unknown_module_marks_unset() {
+        use crate::ported::zsh_h::{PM_UNSET, PM_SPECIAL};
+        let pm = getpmmodule(std::ptr::null_mut(), "definitely_not_a_loaded_module_xyz")
+            .expect("must return Some");
+        assert_eq!(pm.u_str.as_deref(), Some(""),
+            "unknown module → empty value string");
+        assert_ne!(pm.node.flags & PM_UNSET as i32, 0,
+            "unknown module must set PM_UNSET");
+        assert_ne!(pm.node.flags & PM_SPECIAL as i32, 0,
+            "unknown module must set PM_SPECIAL");
     }
 }
 

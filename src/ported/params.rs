@@ -4672,7 +4672,7 @@ pub fn intvarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
 pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
     pm.u_val = x;
     if pm.node.nam == "LINES" || pm.node.nam == "COLUMNS" {
-        let _ = crate::ported::utils::adjustwinsize();
+        let _ = crate::ported::utils::adjustwinsize(0);
     }
 }
 
@@ -4717,8 +4717,9 @@ pub fn colonarrgetfn(arr: &[String]) -> String {
 /// splits the colon-string into an array and stores via the
 /// generic arrvarsetfn.
 pub fn colonarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
+    let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0;                          // c:4339
     let arr = match x {
-        Some(s) => colonsplit(&s),
+        Some(s) => crate::ported::utils::colonsplit(&s, uniq),                   // c:4339
         None => Vec::new(),
     };
     arrvarsetfn(pm, arr);
@@ -6825,15 +6826,6 @@ pub fn sync_state_from_paramtab(
     }
 }
 
-/// Colon-separated path to array.
-/// Port of `colonsplit(char *s, int uniq)` from Src/params.c.
-pub fn colonsplit(s: &str) -> Vec<String> {
-    s.split(':')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
-}
-
 /// Format float with underscores
 pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     let s = convfloat(dval, 0, 0);
@@ -7422,7 +7414,7 @@ mod tests {
     // `PM_TYPE(pm->node.flags)` (Src/zsh.h:540).
     #[test]
     fn test_colonarr_conversion() {
-        let arr = colonsplit("/bin:/usr/bin:/usr/local/bin");
+        let arr = crate::ported::utils::colonsplit("/bin:/usr/bin:/usr/local/bin", false);
         assert_eq!(arr, vec!["/bin", "/usr/bin", "/usr/local/bin"]);
         let path = colonarrgetfn(&arr);
         assert_eq!(path, "/bin:/usr/bin:/usr/local/bin");

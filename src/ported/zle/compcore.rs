@@ -2775,6 +2775,11 @@ pub fn freematches(g: Vec<Cmgroup>, cm: i32) {                               // 
 // these become `pub use crate::ported::<canonical>::*` re-exports.
 // =====================================================================
 
+/// Port of `mod_export int lastend` from `Src/Zle/compcore.c:276`.
+/// Byte position in the metafied line where the most-recent
+/// completion insertion ended.
+pub static LASTEND: AtomicI32 = AtomicI32::new(0);                           // compcore.c:276
+
 /// Port of `mod_export int wb` from `Src/lex.c:120`. Word-begin
 /// position in the metafied line for the currently-completing word.
 pub static WB: AtomicI32 = AtomicI32::new(0);                                // lex.c:120
