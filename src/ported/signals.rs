@@ -106,13 +106,10 @@ pub fn intr() {                                                              // 
 // disable ^C interrupts                                                    // c:128
 /// Disables SIGINT delivery in interactive mode (sets the
 /// disposition to SIG_IGN). The `if (interact)` gate matches C.
+/// C body (2 lines): `if (interact) signal_ignore(SIGINT);`
 #[cfg(unix)]
 pub fn nointr() {                                                            // c:128
-    if is_interact() {
-        unsafe {
-            libc::signal(libc::SIGINT, libc::SIG_IGN);
-        }
-    }
+    if is_interact() { unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN); } } // c:130-131
 }
 
 /// Port of `holdintr()` from `Src/signals.c:139`.
