@@ -306,18 +306,14 @@ pub fn killwholeline() -> i32 {                                 // c:195
 }
 
 /// Port of `killbuffer(UNUSED(char **args))` from Src/Zle/zle_misc.c:215.
-pub fn killbuffer() -> i32 {                                    // c:215
-    // c:215-219 — `zlecs = 0; forekill(zlell, CUT_RAW); clearlist=1`.
-    crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-    if !crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty() {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(..).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+/// C body (4 lines):
+///   `zlecs = 0; forekill(zlell, CUT_RAW); clearlist = 1; return 0;`
+pub fn killbuffer() -> i32 {                                                 // c:215
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::zle_main::ZLECS.store(0, Ordering::SeqCst);          // c:217
+    let zlell = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst) as i32;
+    crate::ported::zle::zle_utils::forekill(zlell, crate::ported::zle::zle_h::CUT_RAW); // c:218
+    crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::SeqCst);   // c:219
     0                                                                        // c:220
 }
 

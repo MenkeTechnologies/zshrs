@@ -454,17 +454,16 @@ pub fn zle_free_highlight() {                                                // 
 /// corresponding escape. Rust collapses to a bool `to_end`:
 /// `true` → clear-to-end (CSI J), `false` → clear-entire-screen
 /// (CSI 2J).
+/// C body (3 lines):
+///   `treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);
+///    applytextattributes(0);
+///    tcout(cap);`
 /// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
 pub fn tcoutclear(to_end: bool) {                                            // c:607
     use std::sync::atomic::Ordering;
-    let bytes: &[u8] = if to_end {
-        b"\x1b[J"      // CSI J — clear to end of screen
-    } else {
-        b"\x1b[2J"     // CSI 2J — clear entire screen
-    };
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, bytes);
+    let bytes: &[u8] = if to_end { b"\x1b[J" } else { b"\x1b[2J" };          // c:611 tcout
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);             // c:611 shout
+    let _ = crate::ported::utils::write_loop(if fd >= 0 { fd } else { 1 }, bytes);
 }
 
     /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
