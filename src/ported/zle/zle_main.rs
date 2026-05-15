@@ -377,50 +377,24 @@ pub struct ztmout {                                                          // 
     /// envelope is complete, then `str::from_utf8` produces the char.
     /// Updates `lastchar_wide` so widgets can inspect the triggering
     /// codepoint regardless of byte width.
-    pub fn getfullchar(do_keytmout: bool) -> Option<char> {
+    pub fn getfullchar(do_keytmout: bool) -> Option<char> {                  // c:967
+        use std::sync::atomic::Ordering::SeqCst;
         let b = getbyte(do_keytmout)?;
-
-        // UTF-8 decoding
-        if b < 0x80 {
-            let c = b as char;
-            crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
-            return Some(c);
-        }
-
-        // Multi-byte UTF-8
+        let expected = if b < 0x80 { 1 } else if b < 0xE0 { 2 } else if b < 0xF0 { 3 } else { 4 };
         let mut bytes = vec![b];
-        let expected_len = if b < 0xE0 {
-            2
-        } else if b < 0xF0 {
-            3
-        } else {
-            4
-        };
-
-        while bytes.len() < expected_len {
-            if let Some(next) = getbyte(true) {
-                if (next & 0xC0) != 0x80 {
-                    // Invalid continuation byte, unget and return error
-                    ungetbyte(next);
-                    break;
-                }
-                bytes.push(next);
-            } else {
-                break;
+        while bytes.len() < expected {
+            match getbyte(true) {
+                Some(n) if (n & 0xC0) == 0x80 => bytes.push(n),
+                Some(n) => { ungetbyte(n); break; }                          // c:990 getrestchar — invalid continuation
+                None => break,
             }
         }
-
-        if let Ok(s) = std::str::from_utf8(&bytes) {
-            if let Some(c) = s.chars().next() {
-                crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
-                crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
-                return Some(c);
-            }
+        let c = std::str::from_utf8(&bytes).ok().and_then(|s| s.chars().next());
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(c.is_some() as i32, SeqCst);
+        if let Some(ch) = c {
+            crate::ported::zle::zle_main::LASTCHAR_WIDE.store(ch as i32, SeqCst);
         }
-
-        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
-        None
+        c
     }
 
 /// Port of `getrestchar(int inchar, char *outstr, int *outcount)` from Src/Zle/zle_main.c:990.
