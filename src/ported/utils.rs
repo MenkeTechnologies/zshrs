@@ -257,9 +257,30 @@ pub fn dputs(msg: &str) {
 /// problem; this is preserved as a no-op for symbol-table parity.
 pub fn zz_plural_z_alpha() {}                                                // c:282
 
-/// Check if a character needs nice formatting (from utils.c is_nicechar)
+/// Port of `is_nicechar(int c)` from `Src/utils.c:531-539`.
+/// ```c
+/// c &= 0xff;
+/// if (ZISPRINT(c)) return 0;
+/// if (c & 0x80)    return !isset(PRINTEIGHTBIT);
+/// return (c == 0x7f || c == '\n' || c == '\t' || c < 0x20);
+/// ```
+/// "Nice" means "needs escape-formatting when printed" — so
+/// returns true for control chars + (under PRINTEIGHTBIT off)
+/// high-bit bytes. The previous Rust port treated all `!c.is_ascii()`
+/// as nice unconditionally — divergent for users running with
+/// `setopt printeightbit` (very common for non-ASCII filenames).
 pub fn is_nicechar(c: char) -> bool {
-    c.is_ascii_control() || !c.is_ascii()
+    let cu = (c as u32) & 0xff;
+    // c:534 — `if (ZISPRINT(c)) return 0;` — printable ASCII is not nice.
+    if crate::ported::ztype_h::ZISPRINT(cu as u8) {
+        return false;
+    }
+    // c:536 — high-bit byte path.
+    if (cu & 0x80) != 0 {
+        return !crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT);
+    }
+    // c:538 — ASCII control chars (DEL/\n/\t/<0x20).
+    cu == 0x7f || cu == b'\n' as u32 || cu == b'\t' as u32 || cu < 0x20
 }
 
 /// Port of `zerrmsg(FILE *file, const char *fmt, va_list ap)` from `Src/utils.c:289`.
@@ -331,22 +352,32 @@ pub fn putshout(c: char) -> i32 {                                            // 
 /// `quotable=true` emits `\\C-X` instead of `^X` so the result is
 /// shell-quotable.
 pub fn nicechar_sel(c: char, quotable: bool) -> String {                     // c:462
-    // `ZISPRINT(c)` from ztype.h:87/89 — `isprint_ascii(c)` /
-    // `isprint(c)`; printable iff in 0x20..0x7f (ASCII) or 0xa0..
-    // (Latin-1) for the i18n branch. Match the ASCII branch.
-    let is_print = |b: u32| (0x20..0x7f).contains(&b) || b >= 0xa0;
+    // c:466 — `c &= 0xff;` mask to byte before any classification.
     let mut c = (c as u32) & 0xff;
     let mut out = String::new();
-    if !is_print(c) {                                                        // c:467
+    // c:467 — `if (ZISPRINT(c)) goto done;`. Use the canonical
+    // `ZISPRINT` predicate (port of ztype.h:89 — IPRINT typtab bit
+    // AND != 0x7f). Previously used a custom `is_print` closure that
+    // wrongly accepted 0xa0+ as printable — diverged from C ZISPRINT
+    // for every high-bit byte under PRINTEIGHTBIT-off, breaking
+    // `\M-X` escape generation.
+    if !crate::ported::ztype_h::ZISPRINT(c as u8) {                          // c:467
         if c & 0x80 != 0 {                                                   // c:469
-            if !isset(PRINTEIGHTBIT) {                                       // c:470
+            if isset(PRINTEIGHTBIT) {                                        // c:470
+                // c:471 — goto done (output raw); c unchanged.
+            } else {
                 out.push_str("\\M-");                                        // c:472-474
                 c &= 0x7f;                                                   // c:475
+                if crate::ported::ztype_h::ZISPRINT(c as u8) {               // c:476-477
+                    // c:477 — goto done after writing \M- + ASCII char.
+                    if let Some(ch) = char::from_u32(c) {
+                        out.push(ch);
+                    }
+                    return out;
+                }
             }
         }
-        if is_print(c) {
-            // fall through to "done"
-        } else if c == 0x7f {                                                // c:479
+        if c == 0x7f {                                                       // c:479
             out.push_str(if quotable { "\\C-" } else { "^" });               // c:481-486
             c = b'?' as u32;
         } else if c == b'\n' as u32 {                                        // c:487
@@ -1856,18 +1887,30 @@ pub fn zstrtol_underscore(s: &str, base: i32, underscore: bool) -> (i64, &str) {
 
 /// Parse unsigned integer with underscore support
 /// Port from zsh/Src/utils.c zstrtoul_underscore() lines 2528-2575
-/// Parse an unsigned integer with optional `_` separators.
-/// zshrs convenience over `zstrtol()` — C zsh strips `_` inline
-/// during numeric arg parsing in Src/math.c.
+/// Port of `zstrtoul_underscore(const char *s, zulong *retval)` from
+/// `Src/utils.c:2527-2590`. C body:
+/// ```c
+/// if (*s == '+') s++;
+/// if      (*s != '0')                    base = 10;
+/// else if (*++s == 'x' || *s == 'X')     base = 16, s++;
+/// else if (*s == 'b' || *s == 'B')       base = 2,  s++;
+/// else                                   base = isset(OCTALZEROES) ? 8 : 10;
+/// ```
+/// The leading-zero case is option-gated on OCTALZEROES — without
+/// the option (default), `0777` parses as decimal 777, NOT octal 511.
+/// Previously the Rust port always treated leading-zero as octal —
+/// divergent for the default shell setup.
 pub fn zstrtoul_underscore(s: &str) -> Option<u64> {                         // c:2529
     let s = s.trim();
-    let s = s.strip_prefix('+').unwrap_or(s);
+    let s = s.strip_prefix('+').unwrap_or(s);                                // c:2533-2534
 
-    let (base, rest) = if s.starts_with("0x") || s.starts_with("0X") {
+    let (base, rest) = if s.starts_with("0x") || s.starts_with("0X") {       // c:2538
         (16, &s[2..])
-    } else if s.starts_with("0b") || s.starts_with("0B") {
+    } else if s.starts_with("0b") || s.starts_with("0B") {                   // c:2540
         (2, &s[2..])
-    } else if s.starts_with('0') && s.len() > 1 {
+    } else if s.starts_with('0') && s.len() > 1
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES)    // c:2543
+    {
         (8, &s[1..])
     } else {
         (10, s)
@@ -2874,9 +2917,13 @@ pub fn inittyptab() {                                                    // util
     }
     // c:4190 — `typtab['_'] = IIDENT | IUSER;`
     t[b'_' as usize] = (IIDENT | IUSER) as u32;
-    // c:4191 — `typtab['-'] = typtab['.'] = ... = IUSER;` (skipping Dash).
+    // c:4191 — `typtab['-'] = typtab['.'] = typtab[(unsigned char) Dash] = IUSER;`.
     t[b'-' as usize] = IUSER as u32;
     t[b'.' as usize] = IUSER as u32;
+    // c:4191 — `Dash` token marker (0x9b per zsh.h:182, "Only in patterns").
+    // Marking it IUSER lets pattern-side $-named-character paths
+    // accept it as a user-name byte. Previously omitted in the port.
+    t[crate::ported::zsh_h::Dash as usize] = IUSER as u32;
     // c:4192-4194 — blanks.
     t[b' ' as usize]  |= (IBLANK | INBLANK) as u32;
     t[b'\t' as usize] |= (IBLANK | INBLANK) as u32;
@@ -2913,6 +2960,129 @@ pub fn inittyptab() {                                                    // util
         let hi = Nularg as usize;
         for t0 in lo..=hi {
             t[t0] |= (ITOK | IMETA | INULL) as u32;
+        }
+    }
+
+    // c:4202-4231 — IFS walk. Sets ISEP on every IFS char and IWSEP
+    // on the blank (inblank) subset. Reads the current `ifs` global
+    // (defaulting to DEFAULT_IFS), demetafies `Meta+X` pairs, and
+    // skips a doubled blank (`s[1]==c`) so the IWSEP bit doesn't
+    // mark "blank repeated → no-skip" IFS chars. Mirrors C exactly.
+    {
+        use crate::ported::ztype_h::{ISEP as ZT_ISEP, IWSEP as ZT_IWSEP};
+        use crate::ported::zsh_h::{DEFAULT_IFS, META};
+        // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
+        let ifs = crate::ported::params::ifsgetfn();
+        let src: String = if ifs.is_empty() { DEFAULT_IFS.to_string() } else { ifs };
+        let bytes = src.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // c:4217 — `int c = (unsigned char) (*s == Meta ? *++s ^ 32 : *s)`.
+            let c = if bytes[i] == META as u8 && i + 1 < bytes.len() {
+                i += 1;
+                bytes[i] ^ 32
+            } else {
+                bytes[i]
+            };
+            // c:4218-4223 — MULTIBYTE non-ASCII skip. Bytes >= 0x80
+            // (after demetafy) are not classified by typtab — they
+            // reach wcsitype via WC_ZISTYPE instead.
+            if c >= 0x80 {
+                i += 1;
+                continue;
+            }
+            let cu = c as usize;
+            // c:4224-4229 — `if (inblank(c))` — for default-IFS
+            // chars space/tab/newline, mark IWSEP unless the next
+            // byte repeats the same char.
+            let is_inblank = (t[cu] & (INBLANK as u32)) != 0;
+            if is_inblank {
+                if i + 1 < bytes.len() && bytes[i + 1] == c {
+                    i += 1;                                          // c:4226 — skip the dup
+                } else {
+                    t[cu] |= ZT_IWSEP as u32;                        // c:4228
+                }
+            }
+            // c:4230 — `typtab[c] |= ISEP;`
+            t[cu] |= ZT_ISEP as u32;
+            i += 1;
+        }
+    }
+
+    // c:4232-4252 — wordchars walk. ORs IWORD onto every byte in
+    // `$WORDCHARS` (or DEFAULT_WORDCHARS when unset). Used by every
+    // word-class lookup in pattern matching, `${var:#word}`, etc.
+    // Drops to ASCII-only under MULTIBYTE_SUPPORT (the non-ASCII path
+    // routes through wordchars_wide).
+    {
+        use crate::ported::ztype_h::IWORD as ZT_IWORD;
+        use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
+        use crate::ported::zsh_h::META;
+        let wc = crate::ported::params::wordcharsgetfn();
+        let src: String = if wc.is_empty() { DEFAULT_WORDCHARS.to_string() } else { wc };
+        let bytes = src.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // c:4238 — Meta+X demetafy.
+            let c = if bytes[i] == META as u8 && i + 1 < bytes.len() {
+                i += 1;
+                bytes[i] ^ 32
+            } else {
+                bytes[i]
+            };
+            // c:4239-4249 — MULTIBYTE non-ASCII skip.
+            if c < 0x80 {
+                t[c as usize] |= ZT_IWORD as u32;                        // c:4251
+            }
+            i += 1;
+        }
+    }
+
+    // c:4253-4254 — SPECCHARS walk. ORs ISPECIAL onto every member
+    // of the hardcoded SPECCHARS string. Drives glob-special and
+    // quote-special detection.
+    {
+        use crate::ported::ztype_h::ISPECIAL as ZT_ISPECIAL;
+        use crate::ported::zsh_h::SPECCHARS;
+        for &b in SPECCHARS.as_bytes() {
+            t[b as usize] |= ZT_ISPECIAL as u32;                         // c:4254
+        }
+    }
+
+    // c:4255-4256 — comma special only when ZTF_SP_COMMA was set
+    // via `makecommaspecial(1)`. KSH_GLOB / extended-glob path.
+    {
+        use crate::ported::ztype_h::{ISPECIAL as ZT_ISPECIAL, ZTF_SP_COMMA};
+        let flags = *TYPTAB_FLAGS.lock().unwrap();
+        if (flags & ZTF_SP_COMMA) != 0 {                                 // c:4255
+            t[b',' as usize] |= ZT_ISPECIAL as u32;                      // c:4256
+        }
+    }
+
+    // c:4257-4261 — bangchar special when BANGHIST + interact +
+    // bangchar != 0. Sets ZTF_BANGCHAR flag bit then marks the
+    // bangchar byte ISPECIAL.
+    {
+        use crate::ported::ztype_h::{ISPECIAL as ZT_ISPECIAL, ZTF_BANGCHAR, ZTF_INTERACT};
+        let bangchar = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
+        let flags = *TYPTAB_FLAGS.lock().unwrap();
+        let interact_flag = (flags & ZTF_INTERACT) != 0;
+        let banghist = crate::ported::zsh_h::isset(crate::ported::zsh_h::BANGHIST);
+        if banghist && bangchar != 0 && bangchar < 256 && interact_flag {  // c:4257
+            *TYPTAB_FLAGS.lock().unwrap() |= ZTF_BANGCHAR;               // c:4258
+            t[bangchar] |= ZT_ISPECIAL as u32;                           // c:4259
+        } else {
+            *TYPTAB_FLAGS.lock().unwrap() &= !ZTF_BANGCHAR;              // c:4261
+        }
+    }
+
+    // c:4262-4263 — PATCHARS walk. ORs IPATTERN onto every member.
+    // Used by pattern compilation to detect glob metachars.
+    {
+        use crate::ported::ztype_h::IPATTERN as ZT_IPATTERN;
+        use crate::ported::zsh_h::PATCHARS;
+        for &b in PATCHARS.as_bytes() {
+            t[b as usize] |= ZT_IPATTERN as u32;                         // c:4263
         }
     }
 }
@@ -6158,5 +6328,160 @@ mod tests {
     fn ztrcmp_shorter_prefix_is_less() {
         assert_eq!(ztrcmp("a",   "ab"),  std::cmp::Ordering::Less);
         assert_eq!(ztrcmp("foo", "foob"), std::cmp::Ordering::Less);
+    }
+
+    /// `Src/utils.c:531-539` — `is_nicechar`. Returns true for chars
+    /// needing escape-formatting:
+    ///   - c:534 — printable ASCII (0x20-0x7e) → false.
+    ///   - c:536 — high-bit byte (>= 0x80) → !PRINTEIGHTBIT.
+    ///   - c:538 — DEL/\n/\t/<0x20 → true.
+    /// Pin the three branches.
+    #[test]
+    fn is_nicechar_printable_ascii_is_not_nice() {
+        // c:534 — letters, digits, punctuation in 0x20-0x7e all NOT nice.
+        for c in "abcXYZ012!?@~".chars() {
+            assert!(!is_nicechar(c),
+                "c:534 — '{}' (ASCII printable) must NOT be nice", c);
+        }
+        // c:534 — space (0x20) is printable.
+        assert!(!is_nicechar(' '));
+    }
+
+    /// c:538 — control chars (DEL, newline, tab, <0x20) ARE nice.
+    #[test]
+    fn is_nicechar_control_chars_are_nice() {
+        assert!(is_nicechar('\n'),   "c:538 — newline is nice");
+        assert!(is_nicechar('\t'),   "c:538 — tab is nice");
+        assert!(is_nicechar('\x7f'), "c:538 — DEL is nice");
+        assert!(is_nicechar('\x00'), "c:538 — NUL is nice (<0x20)");
+        assert!(is_nicechar('\x07'), "c:538 — BEL is nice (<0x20)");
+        assert!(is_nicechar('\x1b'), "c:538 — ESC is nice (<0x20)");
+        assert!(is_nicechar('\x1f'), "c:538 — boundary 0x1f is nice");
+    }
+
+    /// `Src/utils.c:2528-2570` — `zstrtoul_underscore(s)`. Pins
+    /// the base-prefix dispatch: `0x` → 16, `0b` → 2, leading `0`
+    /// only when OCTALZEROES is set. Tests the default state.
+    #[test]
+    fn zstrtoul_underscore_recognises_hex_binary_decimal() {
+        // c:2538 — hex.
+        assert_eq!(zstrtoul_underscore("0xff"),  Some(255));
+        assert_eq!(zstrtoul_underscore("0XFF"),  Some(255));
+        // c:2540 — binary.
+        assert_eq!(zstrtoul_underscore("0b1010"), Some(10));
+        assert_eq!(zstrtoul_underscore("0B11"),   Some(3));
+        // c:2537 — pure decimal (no leading zero).
+        assert_eq!(zstrtoul_underscore("12345"),  Some(12345));
+        // c:2543 — leading-zero with OCTALZEROES off (default) → decimal.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES) {
+            assert_eq!(zstrtoul_underscore("0777"), Some(777),
+                "c:2543 — OCTALZEROES off: leading-0 parses as decimal");
+            assert_eq!(zstrtoul_underscore("010"), Some(10));
+        }
+    }
+
+    /// `Src/utils.c:2547-2548` — underscores are stripped before
+    /// parsing. C: `if (*s == '_') continue;`. Used to support
+    /// human-readable big numbers like `1_000_000`.
+    #[test]
+    fn zstrtoul_underscore_strips_underscores() {
+        assert_eq!(zstrtoul_underscore("1_000_000"), Some(1_000_000),
+            "c:2547-2548 — `_` stripped from numeric input");
+        assert_eq!(zstrtoul_underscore("0xff_ff"), Some(0xffff));
+        assert_eq!(zstrtoul_underscore("0b1010_1010"), Some(0xaa));
+    }
+
+    /// `Src/utils.c:2533-2534` — leading `+` sign is consumed.
+    /// `zulong` is unsigned so `-` is not handled here (caller
+    /// handles negation at `zstrtol_underscore`).
+    #[test]
+    fn zstrtoul_underscore_consumes_leading_plus() {
+        assert_eq!(zstrtoul_underscore("+42"), Some(42));
+        assert_eq!(zstrtoul_underscore("+0xff"), Some(255));
+    }
+
+    /// `Src/utils.c:467` — `if (ZISPRINT(c)) goto done;`. Printable
+    /// ASCII passes through nicechar_sel unchanged. Pin a single-char
+    /// printable input → single-char output.
+    #[test]
+    fn nicechar_sel_passes_printable_ascii_unchanged() {
+        for c in "aA0!~".chars() {
+            assert_eq!(nicechar_sel(c, false), c.to_string(),
+                "c:467 — printable ASCII '{}' passes through", c);
+        }
+    }
+
+    /// `Src/utils.c:487-492` — `\n` becomes `\n` (backslash-n) and
+    /// `\t` becomes `\t`. Both two-char outputs. Pin the canonical
+    /// escapes.
+    #[test]
+    fn nicechar_sel_escapes_newline_and_tab() {
+        assert_eq!(nicechar_sel('\n', false), "\\n",
+            "c:487-489 — newline escape");
+        assert_eq!(nicechar_sel('\t', false), "\\t",
+            "c:490-492 — tab escape");
+    }
+
+    /// `Src/utils.c:493-501` — control chars (<0x20 except \n/\t)
+    /// get `^X` prefix in non-quotable mode and `\C-X` in quotable.
+    /// c:500 — `c += 0x40` adds 0x40 to map 0x01 → 0x41 ('A').
+    #[test]
+    fn nicechar_sel_control_chars_use_caret_or_c_prefix() {
+        // Non-quotable: ^A
+        assert_eq!(nicechar_sel('\x01', false), "^A",
+            "c:499-500 — \\x01 → ^A non-quotable");
+        // Quotable: \C-A
+        assert_eq!(nicechar_sel('\x01', true), "\\C-A",
+            "c:495-500 — \\x01 → \\C-A quotable");
+        // ^G (BEL = 0x07 → 0x47 = 'G')
+        assert_eq!(nicechar_sel('\x07', false), "^G");
+        // ^[ (ESC = 0x1b → 0x5b = '[')
+        assert_eq!(nicechar_sel('\x1b', false), "^[");
+    }
+
+    /// `Src/utils.c:479-486` — DEL (0x7f) renders as `^?` or `\C-?`.
+    #[test]
+    fn nicechar_sel_del_renders_as_caret_question() {
+        assert_eq!(nicechar_sel('\x7f', false), "^?",
+            "c:485-486 — DEL is `^?`");
+        assert_eq!(nicechar_sel('\x7f', true), "\\C-?",
+            "c:481-486 — DEL is `\\C-?` quotable");
+    }
+
+    /// `Src/utils.c:469-478` — high-bit bytes (>= 0x80) under default
+    /// PRINTEIGHTBIT-off path: write `\M-` then mask to low ASCII.
+    /// If the masked char is printable, output is `\M-<char>`. Pin
+    /// the canonical 0xc1 → \M-A and 0xe1 → \M-a cases.
+    #[test]
+    fn nicechar_sel_highbit_uses_meta_prefix_when_printeightbit_off() {
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT) {
+            return; // Test only valid when PRINTEIGHTBIT off (default).
+        }
+        // 0xc1 = 'A' + 0x80 → \M-A
+        let c = char::from_u32(0xc1).unwrap();
+        assert_eq!(nicechar_sel(c, false), "\\M-A",
+            "c:472-477 — high-bit 0xc1 → \\M-A under PRINTEIGHTBIT-off");
+        // 0xe1 = 'a' + 0x80 → \M-a
+        let c = char::from_u32(0xe1).unwrap();
+        assert_eq!(nicechar_sel(c, false), "\\M-a");
+    }
+
+    /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is
+    /// OFF (the default). Pin the default case; the alternate
+    /// behavior under PRINTEIGHTBIT-on is harder to exercise from
+    /// a unit test due to opt-state global mutation.
+    #[test]
+    fn is_nicechar_highbit_is_nice_when_printeightbit_off() {
+        // Default state: PRINTEIGHTBIT is off → high-bit bytes are nice.
+        // Use char with high-bit equivalent low byte.
+        // 0xb5 (Meta+5 territory) — masked to 0xff → still 0xb5.
+        let c = char::from_u32(0xb5).unwrap();
+        // ZISPRINT(0xb5) is false (>0x7e). 0xb5 & 0x80 set → check PRINTEIGHTBIT.
+        // Default PRINTEIGHTBIT off → returns true (nice).
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT) {
+            assert!(is_nicechar(c),
+                "c:536 — high-bit byte 0x{:x} must be nice when PRINTEIGHTBIT off",
+                0xb5_u32);
+        }
     }
 }

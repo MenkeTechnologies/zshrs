@@ -2591,6 +2591,47 @@ mod tests {
         assert_eq!(hasher("0"), b'0' as u32);
     }
 
+    /// `Src/hashtable.c:90-91` — `hashval += (hashval << 5) + c`
+    /// simplifies to `hashval = hashval*33 + c` (the Bernstein
+    /// hash variant). Pin the exact two-byte formula so a refactor
+    /// to a different polynomial (e.g. FNV / djb2 / siphash) fails
+    /// loudly. Regression here invalidates every cached fpath/hash
+    /// digest stored on disk.
+    #[test]
+    fn hasher_two_byte_matches_bernstein_polynomial() {
+        // For "ab": h0=0; h1 = 0 + (0<<5) + 'a' = 97; h2 = 97 + (97<<5) + 'b' = 97 + 3104 + 98 = 3299.
+        assert_eq!(hasher("ab"), 97u32.wrapping_add(97u32.wrapping_shl(5)).wrapping_add(b'b' as u32));
+        assert_eq!(hasher("ab"), 3299);
+        // Pin the exact value for "ls" — a name we'll lookup billions of times.
+        let ls_expected = {
+            let mut h: u32 = 0;
+            for &c in b"ls" {
+                h = h.wrapping_add(h.wrapping_shl(5)).wrapping_add(c as u32);
+            }
+            h
+        };
+        assert_eq!(hasher("ls"), ls_expected);
+    }
+
+    /// c:86 — hasher must NOT mix in encoding/locale state — the
+    /// algorithm is byte-by-byte. Multi-byte UTF-8 like 'é' (0xC3 0xA9)
+    /// hashes the two bytes independently. Pin so a regression that
+    /// uses chars instead of bytes (which would aggregate the two
+    /// bytes into one codepoint) fails.
+    #[test]
+    fn hasher_processes_utf8_bytes_not_codepoints() {
+        // 'é' UTF-8 = 0xC3 0xA9 — two bytes.
+        let expected = {
+            let mut h: u32 = 0;
+            for &c in &[0xC3u8, 0xA9u8] {
+                h = h.wrapping_add(h.wrapping_shl(5)).wrapping_add(c as u32);
+            }
+            h
+        };
+        assert_eq!(hasher("é"), expected,
+            "c:90 — `*(unsigned char *) str++` reads BYTES, not codepoints");
+    }
+
     /// c:157 — `addhashnode` inserts; `gethashnode2` reads back.
     /// Round-trip MUST yield the value just inserted. Regression
     /// returning None on a present key would break every command-

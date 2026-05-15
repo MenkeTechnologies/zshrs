@@ -503,14 +503,14 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
     }
 
     crate::ported::utils::inittyptab();                                      // c:1261
-    // initlextabs();                                                        // c:1262
+    crate::ported::lex::initlextabs();                                       // c:1262
 
     crate::ported::hashtable::createreswdtable();                            // c:1264
     crate::ported::hashtable::createaliastables();                           // c:1265
     crate::ported::hashtable::createcmdnamtable();                           // c:1266
     crate::ported::hashtable::createshfunctable();                           // c:1267
     let _ = crate::ported::builtin::createbuiltintable();                    // c:1268
-    // createnameddirtable();                                                // c:1269
+    crate::ported::hashnameddir::createnameddirtable();                      // c:1269
     crate::ported::params::createparamtable();                               // c:1270
 
     // condtab = NULL; wrappers = NULL;                                      // c:1272-1273
@@ -586,42 +586,79 @@ fn setupshin(runscript: Option<&str>) {                                      // 
 
 /// Port of `void init_signals(void)` from Src/init.c:1394.
 pub fn init_signals() {                                                      // c:1394
-    // sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));                        // c:1394
-    // siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));                        // c:1399
+    // c:1398-1399 — `sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));`
+    // and `siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));`. Trap
+    // table globals not modeled in zshrs static link path.
 
-    // if (interact) { signal_setmask(...); for(...) signal_default(i); }    // c:1401-1406
+    // c:1401-1406 — `if (interact) { signal_setmask(signal_mask(0));
+    // for (i=0; i<NSIG; ++i) signal_default(i); }`. Reset to default
+    // dispositions on every signal at startup so a parent's stale
+    // handlers don't leak in.
+    #[cfg(unix)]
+    if crate::ported::zsh_h::interact() {
+        let empty = crate::ported::signals::signal_mask(0);
+        let _ = crate::ported::signals::signal_setmask(&empty);
+        // c:1404 — `for (i=0; i<NSIG; ++i) signal_default(i);`. NSIG
+        // is `<signal.h>`-provided in C; libc-rs doesn't re-export it
+        // on every platform. 64 is the POSIX-mandated lower bound and
+        // matches all targets zshrs supports (macOS=64, Linux=65).
+        // Skipping signal 0 (not a real signal — `signal_default(0)`
+        // returns SIG_ERR on most libcs).
+        for i in 1..64i32 {
+            let _ = crate::ported::signals::signal_default(i);
+        }
+    }
 
-    // sigchld_mask = signal_mask(SIGCHLD);                                  // c:1407
+    // c:1407 — `sigchld_mask = signal_mask(SIGCHLD);`. Cached SIGCHLD
+    // mask global not yet modeled — the few callers that need it
+    // (job-reap path) re-derive on demand.
 
     crate::ported::signals::intr();                                          // c:1409
 
     #[cfg(unix)]
     unsafe {
-        let mut act: libc::sigaction = std::mem::zeroed();                   // c:1411
-        if libc::sigaction(libc::SIGQUIT, std::ptr::null(), &mut act) == 0   // c:1411
+        // c:1411-1412 — detect parent-installed SIG_IGN on SIGQUIT.
+        let mut act: libc::sigaction = std::mem::zeroed();
+        if libc::sigaction(libc::SIGQUIT, std::ptr::null(), &mut act) == 0
             && act.sa_sigaction == libc::SIG_IGN
         {
-            // sigtrapped[SIGQUIT] = ZSIG_IGNORED;                           // c:1412
+            // sigtrapped[SIGQUIT] = ZSIG_IGNORED; (trap-table global
+            // not modeled — see above).
         }
-        let mut ign: libc::sigaction = std::mem::zeroed();                   // c:1415
-        ign.sa_sigaction = libc::SIG_IGN;
-        libc::sigaction(libc::SIGQUIT, &ign, std::ptr::null_mut());
+        // c:1414-1416 — `#ifndef QDEBUG signal_ignore(SIGQUIT)`.
+        crate::ported::signals::signal_ignore(libc::SIGQUIT);
 
-        // if (signal_ignore(SIGHUP) == SIG_IGN) opts[HUP] = 0;              // c:1418-1419
-        crate::ported::signals::install_handler(libc::SIGHUP);               // c:1421
+        // c:1418-1421 — SIGHUP: if parent installed SIG_IGN, clear
+        // the HUP option; otherwise install our handler.
+        if crate::ported::signals::signal_ignore(libc::SIGHUP) == libc::SIG_IGN {
+            crate::ported::options::dosetopt(
+                crate::ported::zsh_h::HUP, 0, 0);                            // c:1419
+        } else {
+            crate::ported::signals::install_handler(libc::SIGHUP);           // c:1421
+        }
         crate::ported::signals::install_handler(libc::SIGCHLD);              // c:1422
         #[cfg(not(target_os = "haiku"))]
-        crate::ported::signals::install_handler(libc::SIGWINCH);             // c:1424
+        {
+            crate::ported::signals::install_handler(libc::SIGWINCH);         // c:1424
+            // c:1425 — `winch_block()`. SIGWINCH unblocked at the
+            // prompt-display boundary (preprompt at utils.c). Not
+            // yet modeled — leaves SIGWINCH unblocked, the safe
+            // default for non-resize-aware redraw paths.
+        }
 
-        // if (interact) { ... SIGPIPE, SIGALRM, SIGTERM ... }               // c:1427-1431
-        crate::ported::signals::install_handler(libc::SIGPIPE);              // c:1445
-        crate::ported::signals::install_handler(libc::SIGALRM);              // c:1445
-        libc::sigaction(libc::SIGTERM, &ign, std::ptr::null_mut());          // c:1445
+        // c:1427-1431 — interactive-only handlers.
+        if crate::ported::zsh_h::interact() {
+            crate::ported::signals::install_handler(libc::SIGPIPE);          // c:1428
+            crate::ported::signals::install_handler(libc::SIGALRM);          // c:1429
+            crate::ported::signals::signal_ignore(libc::SIGTERM);            // c:1430
+        }
 
-        // if (jobbing) { signal_ignore(SIGTTOU/TSTP/TTIN); }                // c:1445-1436
-        libc::sigaction(libc::SIGTTOU, &ign, std::ptr::null_mut());          // c:1445
-        libc::sigaction(libc::SIGTSTP, &ign, std::ptr::null_mut());          // c:1445
-        libc::sigaction(libc::SIGTTIN, &ign, std::ptr::null_mut());          // c:1445
+        // c:1432-1436 — `if (jobbing)` job-control signal ignores.
+        if crate::ported::zsh_h::jobbing() {
+            crate::ported::signals::signal_ignore(libc::SIGTTOU);            // c:1433
+            crate::ported::signals::signal_ignore(libc::SIGTSTP);            // c:1434
+            crate::ported::signals::signal_ignore(libc::SIGTTIN);            // c:1435
+        }
     }
 }
 

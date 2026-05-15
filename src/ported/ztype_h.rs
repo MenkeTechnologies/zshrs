@@ -221,6 +221,7 @@ mod tests {
     /// Verifies `zistype` consults TYPTAB and masks (c:47).
     #[test]
     fn zistype_reads_typtab() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = TYPTAB.lock().unwrap()[b'X' as usize];
         TYPTAB.lock().unwrap()[b'X' as usize] = (IDIGIT | IALNUM) as u32;
         assert!(zistype(b'X', IDIGIT as u32));
@@ -232,6 +233,7 @@ mod tests {
     /// Verifies the predicate fns dispatch through zistype.
     #[test]
     fn idigit_dispatches_through_typtab() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = TYPTAB.lock().unwrap()[b'7' as usize];
         TYPTAB.lock().unwrap()[b'7' as usize] = IDIGIT as u32;
         assert!(idigit(b'7'));
@@ -271,5 +273,275 @@ mod tests {
         assert!(ZISPRINT(b'~'));
         assert!(!ZISPRINT(b'\t'));
         assert!(!ZISPRINT(0x7f));
+    }
+
+    /// `Src/ztype.h:50` — `#define iblank(X) zistype(X, IBLANK)` —
+    /// "blank, not including \\n". `Src/utils.c:4192-4193` ORs IBLANK
+    /// only into `typtab[' ']` and `typtab['\t']`. Pin the canonical
+    /// IBLANK set so a regression that widens it to include `\n` (or
+    /// other iswspace chars) fails immediately.
+    #[test]
+    fn iblank_matches_ascii_typtab_set() {
+        // Ensure typtab is initialised — running another test first
+        // wins the race; if it hasn't run we seed it explicitly.
+        crate::ported::utils::inittyptab();
+        assert!(iblank(b' '),  "c:4192 — space is IBLANK");
+        assert!(iblank(b'\t'), "c:4193 — tab is IBLANK");
+        // c:4194 — newline gets INBLANK only, NOT IBLANK.
+        assert!(!iblank(b'\n'), "c:4194 — newline is INBLANK-only, NOT IBLANK");
+        assert!(!iblank(b'a'));
+        assert!(!iblank(b'\r'), "narrow iblank rejects CR (no typtab entry)");
+        assert!(!iblank(b'\x0c'));
+    }
+
+    /// `Src/ztype.h:51` — `#define inblank(X) zistype(X, INBLANK)` —
+    /// "blank or \\n". `Src/utils.c:4192-4194` ORs INBLANK into space,
+    /// tab, AND newline. Pin all three.
+    #[test]
+    fn inblank_matches_ascii_typtab_set() {
+        crate::ported::utils::inittyptab();
+        assert!(inblank(b' '),  "c:4192 — space");
+        assert!(inblank(b'\t'), "c:4193 — tab");
+        assert!(inblank(b'\n'), "c:4194 — newline IS INBLANK (the differentiator)");
+        // Narrow ASCII inblank does NOT extend to wide whitespace.
+        assert!(!inblank(b'\r'),   "narrow inblank rejects CR");
+        assert!(!inblank(b'\x0c'), "narrow inblank rejects FF");
+        assert!(!inblank(b'a'));
+    }
+
+    /// `Src/ztype.h:48` — `#define idigit(X) zistype(X, IDIGIT)`. The
+    /// typtab init at `Src/utils.c:4178-4180` ORs IDIGIT into
+    /// `typtab['0'..='9']`. Pin every digit + a couple of negative
+    /// cases.
+    #[test]
+    fn idigit_covers_all_decimal_digits() {
+        crate::ported::utils::inittyptab();
+        for d in b'0'..=b'9' {
+            assert!(idigit(d), "'{}' must be IDIGIT", d as char);
+        }
+        assert!(!idigit(b'a'));
+        assert!(!idigit(b'A'));
+        assert!(!idigit(b' '));
+    }
+
+    /// Process-wide lock serialising tests that read or write TYPTAB
+    /// ISEP/IWSEP bits. `ifssetfn` mutates the global IFS + typtab
+    /// and parallel reads race against the rebuild. No C counterpart.
+    static TYPTAB_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `Src/ztype.h:53` — `#define isep(X) zistype(X, ISEP)`.
+    /// `Src/utils.c:4216-4230` walks the IFS string and ORs ISEP on
+    /// every char. The DEFAULT_IFS at `Src/zsh.h:149` is
+    /// `" \\t\\n\\x83 "` — five bytes that demetafy to space, tab,
+    /// newline, and NUL (`Meta+space = 0x00`). Semicolon is NOT in
+    /// default IFS.
+    #[test]
+    fn isep_includes_default_ifs_chars() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        assert!(isep(b' '),  "c:4216 — IFS contains space");
+        assert!(isep(b'\t'), "c:4216 — IFS contains tab");
+        assert!(isep(b'\n'), "c:4216 — IFS contains newline");
+        assert!(!isep(b'a'));
+        assert!(!isep(b';'), "semicolon is NOT in default IFS");
+    }
+
+    /// `Src/ztype.h:61` — `#define iwsep(X) zistype(X, IWSEP)`. ISEP
+    /// is the field-separator superset; IWSEP is the *whitespace*
+    /// subset (drives the "whitespace-runs collapse" rule). Default
+    /// IFS gives IWSEP on space, tab, and newline — every char that
+    /// `inblank()` returns true for at the c:4224 check.
+    #[test]
+    fn iwsep_subset_of_isep_for_inblank_chars() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        assert!(iwsep(b' '),  "c:4228 — space is inblank → IWSEP");
+        assert!(iwsep(b'\t'), "c:4228 — tab is inblank → IWSEP");
+        assert!(iwsep(b'\n'), "c:4228 — newline is inblank → IWSEP");
+        // Default IFS also contains Meta+space (→ NUL byte). NUL is
+        // NOT inblank, so it gets ISEP but not IWSEP.
+        assert!(isep(0x00), "c:4230 — NUL is in default IFS (Meta+space) → ISEP");
+        assert!(!iwsep(0x00), "c:4224 — NUL is NOT inblank → no IWSEP");
+    }
+
+    /// `Src/params.c:4795` — `ifssetfn` calls `inittyptab()` so the
+    /// ISEP/IWSEP bits get rebuilt from the new IFS. Pin the
+    /// rebuild end-to-end: set IFS to `":"`, then verify `isep(':')`
+    /// becomes true and old separator chars are dropped.
+    #[test]
+    fn ifssetfn_rebuilds_isep_typtab_bits() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        let saved = crate::ported::params::ifsgetfn();
+        crate::ported::params::ifssetfn(":".to_string());
+        assert!(isep(b':'),  "c:4795 — new IFS chars must get ISEP after ifssetfn");
+        assert!(!isep(b' '), "c:4795 — old IFS chars dropped after ifssetfn");
+        assert!(!isep(b'\t'));
+        // Restore.
+        crate::ported::params::ifssetfn(saved);
+        assert!(isep(b' '),  "default IFS restored");
+    }
+
+    /// `Src/utils.c:4191` — `typtab['-'] = typtab['.'] = typtab[(unsigned char) Dash] = IUSER`.
+    /// All three bytes get IUSER. The Rust port previously omitted
+    /// `Dash` (0x9b per `Src/zsh.h:182`) — fixed in
+    /// `utils.rs:2880-2883`. Pin all three so a regression reverting
+    /// the fix fails.
+    #[test]
+    fn iuser_includes_dash_dot_and_dash_token() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        assert!(iuser(b'-'), "c:4191 — '-' is IUSER");
+        assert!(iuser(b'.'), "c:4191 — '.' is IUSER");
+        assert!(iuser(0x9b), "c:4191 — Dash token (0x9b) is IUSER");
+        // Negative case: ASCII letters are IUSER (via the 'a'..'z' block at
+        // c:4174-4175) but the punctuation bytes around `-`/`.` are NOT.
+        assert!(!iuser(b','));
+        assert!(!iuser(b';'));
+    }
+
+    /// `Src/utils.c:4237-4252` — wordchars walk. ORs IWORD onto every
+    /// ASCII byte of `$WORDCHARS` (or DEFAULT_WORDCHARS). The default
+    /// is `"*?_-.[]~=/&;!#$%^(){}<>"` (`Src/zsh_system.h:427`).
+    /// Pin a sample of those chars getting IWORD. Was missing before
+    /// this iteration — pre-fix every glob-pattern compilation that
+    /// consults IWORD silently fell through to "non-word".
+    #[test]
+    fn iword_includes_default_wordchars() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        // Default WORDCHARS chars (DEFAULT_WORDCHARS) all → IWORD.
+        for c in b"*?_-./~=&;!" {
+            assert!(iword(*c),
+                "c:4251 — '{}' is in DEFAULT_WORDCHARS and must be IWORD",
+                *c as char);
+        }
+        // Alphanumerics are IWORD via the c:4172-4175 init too.
+        assert!(iword(b'a'));
+        assert!(iword(b'0'));
+        // Non-WORDCHAR punctuation NOT in DEFAULT_WORDCHARS → not IWORD.
+        // (`,` is not in DEFAULT_WORDCHARS).
+        assert!(!iword(b','),
+            "c:4237 — ',' is NOT in DEFAULT_WORDCHARS, must not be IWORD");
+        assert!(!iword(b'\''));
+    }
+
+    /// `Src/utils.c:4253-4254` — SPECCHARS walk. ORs ISPECIAL onto
+    /// every byte of the hardcoded SPECCHARS string at
+    /// `Src/zsh.h:228`. Drives glob-special / quote-special detection
+    /// in pattern compilation.
+    #[test]
+    fn ispecial_includes_specchars_set() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        // Sample of SPECCHARS = "#$^*()=|{}[]`<>?~;&\n\t \\\'\"".
+        for c in b"#$^*()=|{}[]`<>?~;&" {
+            assert!(ispecial(*c),
+                "c:4254 — '{}' is in SPECCHARS and must be ISPECIAL",
+                *c as char);
+        }
+        assert!(ispecial(b'\n'), "newline in SPECCHARS");
+        assert!(ispecial(b'\t'), "tab in SPECCHARS");
+        assert!(ispecial(b' '),  "space in SPECCHARS");
+        // Letters/digits NOT in SPECCHARS.
+        assert!(!ispecial(b'a'));
+        assert!(!ispecial(b'0'));
+    }
+
+    /// `Src/utils.c:4262-4263` — PATCHARS walk. ORs IPATTERN onto
+    /// every byte of `Src/zsh.h:232 PATCHARS = "#^*()|[]<>?~\\"`.
+    /// Used by pattern compilation to detect glob metachars.
+    #[test]
+    fn ipattern_includes_patchars_set() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        // Every char in PATCHARS = "#^*()|[]<>?~\\".
+        for c in b"#^*()|[]<>?~\\" {
+            assert!(ipattern(*c),
+                "c:4263 — '{}' is in PATCHARS and must be IPATTERN",
+                *c as char);
+        }
+        // Non-pattern chars must NOT be IPATTERN.
+        assert!(!ipattern(b'a'));
+        assert!(!ipattern(b'0'));
+        // `$` is in SPECCHARS but NOT PATCHARS — pin the distinction.
+        assert!(!ipattern(b'$'),
+            "c:4263 — '$' is SPECCHARS not PATCHARS");
+    }
+
+    /// `Src/params.c:5143` — `wordcharssetfn` calls `inittyptab()`
+    /// to rebuild IWORD typtab bits from new WORDCHARS. Pin the
+    /// rebuild end-to-end: set WORDCHARS to `":"`, then verify
+    /// `iword(':')` becomes true and old WORDCHAR chars are dropped.
+    #[test]
+    fn wordcharssetfn_rebuilds_iword_typtab_bits() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        let saved = crate::ported::params::wordcharsgetfn();
+        crate::ported::params::wordcharssetfn(":".to_string());
+        assert!(iword(b':'),
+            "c:5143 — new WORDCHARS member must get IWORD");
+        // Old DEFAULT_WORDCHARS chars (e.g. `*`, `?`) lose IWORD when
+        // WORDCHARS becomes ":".
+        assert!(!iword(b'*'),
+            "c:5143 — old WORDCHAR `*` dropped after wordcharssetfn(\":\")");
+        // Alphanumerics retain IWORD via c:4172-4175 init (NOT
+        // dependent on WORDCHARS).
+        assert!(iword(b'a'));
+        assert!(iword(b'0'));
+        // Restore.
+        crate::ported::params::wordcharssetfn(saved);
+        assert!(iword(b'*'), "DEFAULT_WORDCHARS restored");
+    }
+
+    /// `Src/utils.c:4255-4256` — `if (typtab_flags & ZTF_SP_COMMA)
+    /// typtab[','] |= ISPECIAL`. `makecommaspecial(true)` sets the
+    /// flag bit; subsequent `inittyptab()` re-applies the comma bit.
+    /// Pin the round-trip: enable → re-init → comma is ISPECIAL.
+    #[test]
+    fn inittyptab_honours_ztf_sp_comma_flag() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Start clean.
+        crate::ported::utils::inittyptab();
+        assert!(!ispecial(b','), "comma is NOT ISPECIAL by default");
+        // Enable.
+        crate::ported::utils::makecommaspecial(true);
+        // Run a fresh init — the c:4255 conditional must re-OR the bit.
+        crate::ported::utils::inittyptab();
+        assert!(ispecial(b','),
+            "c:4256 — comma must be ISPECIAL after makecommaspecial(true)");
+        // Disable + re-init: comma drops back to non-special.
+        crate::ported::utils::makecommaspecial(false);
+        crate::ported::utils::inittyptab();
+        assert!(!ispecial(b','),
+            "c:4255 — comma reverts when ZTF_SP_COMMA clear");
+    }
+
+    /// `Src/utils.c:4169-4171` — `typtab[t0] = typtab[t0+128] = ICNTRL`
+    /// for `t0` in 0..32, plus `typtab[127] = ICNTRL`. C uses `=`
+    /// (overwrite) so subsequent assignments at c:4190-4197 can
+    /// reclassify specific bytes (e.g. `typtab[(unsigned char) Dash]
+    /// = IUSER` at c:4191 overwrites the prior ICNTRL on byte 0x9b).
+    /// Pin the C0 + DEL ranges; for C1 (128+) skip bytes that get
+    /// reassigned later in the init.
+    #[test]
+    fn icntrl_covers_c0_controls_and_del() {
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        for b in 0u8..32u8 {
+            assert!(icntrl(b),     "c:4169 — byte 0x{:02x} (C0) must be ICNTRL", b);
+        }
+        assert!(icntrl(127), "c:4171 — DEL (0x7f) is ICNTRL");
+        // C1 controls (0x80..0xa0): all ICNTRL EXCEPT bytes the later
+        // `=` lines reclassify (Meta=0x83, Marker, Pound..Nularg
+        // token range, Dash=0x9b).
+        // Spot-check a few definitely-still-control C1 bytes.
+        assert!(icntrl(0x81), "c:4170 — byte 0x81 stays ICNTRL");
+        assert!(icntrl(0x82), "c:4170 — byte 0x82 stays ICNTRL");
+        // 0x9b (Dash) gets overwritten to IUSER per c:4191. NOT ICNTRL.
+        assert!(!icntrl(0x9b), "c:4191 — Dash overwrites ICNTRL → IUSER");
+        // Printable boundary.
+        assert!(!icntrl(b' '));
+        assert!(!icntrl(b'a'));
     }
 }

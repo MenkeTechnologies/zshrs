@@ -581,4 +581,90 @@ mod tests {
         inerrflush();
         assert!(lexstop.with(|c| c.get()) || inbufct.with(|c| c.get()) == 0);
     }
+
+    /// `Src/input.c:159-162` — `shinbufreset` body is
+    /// `shinbufendptr = shinbufptr = shinbuffer;` — reset both
+    /// pointers to the start of the buffer. Rust port clears
+    /// `shinbuffer` (the buffer storage) and zeros `shinbufpos`.
+    /// Pin both: post-condition is empty buffer + pos==0.
+    #[test]
+    fn shinbufreset_clears_buffer_and_zeros_pos() {
+        super::shinbuffer.with(|b| {
+            *b.borrow_mut() = "leftover".to_string();
+        });
+        super::shinbufpos.with(|p| p.set(7));
+        super::shinbufreset();
+        super::shinbuffer.with(|b| {
+            assert!(b.borrow().is_empty(),
+                "c:161 — shinbuffer must be empty after reset");
+        });
+        assert_eq!(super::shinbufpos.with(|p| p.get()), 0,
+            "c:161 — shinbufpos must be 0 after reset");
+    }
+
+    /// `Src/input.c:171-175` — `shinbufalloc` body is
+    /// `shinbuffer = zalloc(SHINBUFSIZE); shinbufreset();`. The
+    /// Rust port replaces the buffer with a fresh `String` of
+    /// `SHIN_BUF_SIZE` capacity, then calls `shinbufreset`.
+    /// Pin the post-condition: empty buffer + pos==0 + capacity
+    /// hint set.
+    #[test]
+    fn shinbufalloc_resets_and_capacity_hints() {
+        super::shinbuffer.with(|b| {
+            *b.borrow_mut() = "stale".to_string();
+        });
+        super::shinbufpos.with(|p| p.set(3));
+        super::shinbufalloc();
+        super::shinbuffer.with(|b| {
+            assert!(b.borrow().is_empty(),
+                "c:173 — fresh shinbuffer must be empty");
+            // Capacity hint is at least 1 (default `String::with_capacity` semantics).
+            // Not pinning exact value — different libstd versions may round.
+            assert!(b.borrow().capacity() >= 1);
+        });
+        assert_eq!(super::shinbufpos.with(|p| p.get()), 0);
+    }
+
+    /// `Src/input.c:181-194` — `shinbufsave` snapshots the current
+    /// buffer onto `shinsavestack` and reinitialises via
+    /// `shinbufalloc`. Pin the round-trip: save with buf="abc",
+    /// pos=2 → buf reset to "" + stack contains ("abc", 2). Then
+    /// `shinbufrestore` restores the saved state.
+    #[test]
+    fn shinbufsave_restore_round_trip() {
+        // Clear stack from any prior test.
+        super::shinsavestack.with(|s| s.borrow_mut().clear());
+        super::shinbuffer.with(|b| *b.borrow_mut() = "abc".to_string());
+        super::shinbufpos.with(|p| p.set(2));
+        super::shinbufsave();
+        super::shinbuffer.with(|b| {
+            assert!(b.borrow().is_empty(),
+                "c:193 — shinbufsave invokes shinbufalloc (resets to empty)");
+        });
+        assert_eq!(super::shinbufpos.with(|p| p.get()), 0,
+            "c:193 — pos must be 0 after save");
+        super::shinbufrestore();
+        super::shinbuffer.with(|b| {
+            assert_eq!(*b.borrow(), "abc",
+                "c:200-209 — shinbufrestore restores saved buffer");
+        });
+        assert_eq!(super::shinbufpos.with(|p| p.get()), 2,
+            "c:200-209 — shinbufrestore restores saved pos");
+    }
+
+    /// `Src/input.c:200` — `shinbufrestore` on an empty save stack
+    /// must NOT panic (C dereferences `shinsavestack` which would be
+    /// NULL — UB in C; the Rust port chose to no-op for safety).
+    /// Pin the no-op so a regression doesn't add a panic.
+    #[test]
+    fn shinbufrestore_on_empty_stack_is_noop() {
+        super::shinsavestack.with(|s| s.borrow_mut().clear());
+        // Pre-seed a non-empty buffer.
+        super::shinbuffer.with(|b| *b.borrow_mut() = "persist".to_string());
+        super::shinbufrestore();
+        super::shinbuffer.with(|b| {
+            assert_eq!(*b.borrow(), "persist",
+                "empty-stack restore must leave buffer untouched");
+        });
+    }
 }

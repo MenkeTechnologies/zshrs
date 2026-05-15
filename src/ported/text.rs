@@ -1375,6 +1375,42 @@ mod tests {
         }
     }
 
+    /// `Src/text.c:48-51` — the `cond_binary_ops` table is order-
+    /// dependent: the comment at c:45-46 states "Their order is tied
+    /// to the order of the definitions COND_STREQ et seq. in zsh.h."
+    /// A regression that reorders this array silently misroutes
+    /// every `[[ $a -eq $b ]]` dispatch in `Src/cond.c` because the
+    /// caller indexes into the array with `(ctype - COND_STREQ)`.
+    /// Pin the exact array contents AND the exact length.
+    #[test]
+    fn cond_binary_ops_table_matches_c_source_exactly() {
+        // c:48-51 — verbatim list. Order is the contract.
+        let expected = [
+            "=", "==", "!=", "<", ">",
+            "-nt", "-ot", "-ef",
+            "-eq", "-ne", "-lt", "-gt", "-le", "-ge",
+            "=~",
+        ];
+        assert_eq!(COND_BINARY_OPS.len(), expected.len(),
+            "c:48-51 — table must have exactly 15 ops (excluding the NULL sentinel)");
+        for (i, &op) in expected.iter().enumerate() {
+            assert_eq!(COND_BINARY_OPS[i], op,
+                "c:48-51 — position {} must be {:?}, got {:?}",
+                i, op, COND_BINARY_OPS[i]);
+        }
+    }
+
+    /// `Src/text.c:58-67` — `is_cond_binary_op` returns 1 for the
+    /// file-test ops `-nt`, `-ot`, `-ef` and the regex match `=~`.
+    /// The existing canonical-ops test misses these four.
+    #[test]
+    fn is_cond_binary_op_accepts_file_test_and_regex_ops() {
+        for op in ["-nt", "-ot", "-ef", "=~"] {
+            assert_eq!(is_cond_binary_op(op), 1,
+                "c:63 — strcmp match must accept {:?}", op);
+        }
+    }
+
     /// `taddchr` + `taddstr` smoke — no panic, sanitises pending buffer.
     #[test]
     fn taddchr_taddstr_smoke_no_panic() {

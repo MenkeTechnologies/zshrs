@@ -820,8 +820,9 @@ pub fn vifirstnonblank() -> i32 {  // c:862
     crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findbol(), std::sync::atomic::Ordering::SeqCst);                 // c:862
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {                                           // c:865
         let ch = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
-        // c:865 — `ZC_iblank` = isblank() = space or tab.
-        if ch != ' ' && ch != '\t' {
+        // c:865 — `ZC_iblank` aliases to `wcsiblank` under MULTIBYTE_SUPPORT
+        // (Src/Zle/zle.h:62 → Src/utils.c:4302-4307): `iswspace && != \n`.
+        if !crate::ported::zle::zle_h::ZC_iblank(ch) {
             break;
         }
         inccs();                                                          // c:866
@@ -1342,5 +1343,44 @@ mod region_tests {
         vifirstnonblank();
         // findbol → 4 (after first '\n'); skip 3 spaces → 7 ('d')
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 7);
+    }
+
+    /// `Src/Zle/zle_move.c:865` — `while (zlecs != zlell && ZC_iblank(...))`.
+    /// After the wcsiblank fix `ZC_iblank` accepts CR/FF/VT/NBSP as
+    /// blanks (Src/Zle/zle.h:62 → Src/utils.c:4302-4307). A buffer
+    /// indented with mixed wide-whitespace (e.g. a Windows-CRLF
+    /// snippet pasted into the shell) must walk past those chars to
+    /// the first non-blank. Pins the wide-char path end-to-end.
+    #[test]
+    fn vifirstnonblank_skips_wide_whitespace_per_wcsiblank() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_main::zle_reset();
+        // VT, FF, CR, NBSP, then 'x' — wcsiblank true for all four.
+        let buf: Vec<char> = vec!['\x0b', '\x0c', '\r', '\u{00A0}', 'x'];
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = buf;
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        vifirstnonblank();
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 4,
+            "c:865 must skip CR/FF/VT/NBSP per wcsiblank");
+    }
+
+    /// c:865 — `\n` is the SOLE iswspace char wcsiblank rejects.
+    /// vifirstnonblank must NOT skip past a newline (a regression
+    /// using `iswspace` directly would silently jump across line
+    /// boundaries).
+    #[test]
+    fn vifirstnonblank_stops_at_newline_per_wcsiblank() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_main::zle_reset();
+        // Buffer: "  \n  x" — leading 2 spaces, newline, then more.
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() =
+            "  \n  x".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        vifirstnonblank();
+        // c:865 — skip the 2 spaces, then stop AT '\n' (idx 2).
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2,
+            "wcsiblank excludes '\\n' — cursor must stop at the newline");
     }
 }

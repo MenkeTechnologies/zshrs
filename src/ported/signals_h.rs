@@ -376,30 +376,40 @@ pub fn winch_unblock() {                                                 // c:57
 // ---------------------------------------------------------------------------
 
 /// Port of `#define signal_ignore(S)` from `Src/signals.h:64`. Set
-/// signal `s` to be ignored. C: `signal(S, SIG_IGN)`.
+/// signal `s` to be ignored. C: `signal(S, SIG_IGN)` — returns the
+/// PREVIOUS handler (the libc `signal(3)` contract). `init_signals`
+/// at `Src/init.c:1418` reads this return value to detect a parent-
+/// installed `SIG_IGN` on SIGHUP. Previously returned `()` — that
+/// silently broke the c:1418 conditional, leaving the HUP option
+/// always installed when the parent already had it set to SIG_IGN.
 #[inline]
 #[allow(non_snake_case)]
-pub fn signal_ignore(s: i32) {                                           // c:64
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(s, libc::SIG_IGN);
-    }
-    #[cfg(not(unix))]
-    { let _ = s; }
+#[cfg(unix)]
+pub fn signal_ignore(s: i32) -> libc::sighandler_t {                     // c:64
+    unsafe { libc::signal(s, libc::SIG_IGN) }
 }
 
-/// Port of `#define signal_default(S)` from `Src/signals.h:67`. Reset
-/// signal `s` to its default action. C: `signal(S, SIG_DFL)`.
+/// Non-unix shim — same signature, no-op.
 #[inline]
 #[allow(non_snake_case)]
-pub fn signal_default(s: i32) {                                          // c:67
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(s, libc::SIG_DFL);
-    }
-    #[cfg(not(unix))]
-    { let _ = s; }
+#[cfg(not(unix))]
+pub fn signal_ignore(_s: i32) -> usize { 0 }
+
+/// Port of `#define signal_default(S)` from `Src/signals.h:67`. Reset
+/// signal `s` to its default action. C: `signal(S, SIG_DFL)` —
+/// returns the PREVIOUS handler.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(unix)]
+pub fn signal_default(s: i32) -> libc::sighandler_t {                    // c:67
+    unsafe { libc::signal(s, libc::SIG_DFL) }
 }
+
+/// Non-unix shim — same signature, no-op.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(not(unix))]
+pub fn signal_default(_s: i32) -> usize { 0 }
 
 #[cfg(test)]
 mod tests {
@@ -466,5 +476,46 @@ mod tests {
         restore_queue_signals(5);
         assert_eq!(queue_signal_level(), 5);
         restore_queue_signals(0);
+    }
+
+    /// `Src/signals.h:64` — `#define signal_ignore(S) signal(S, SIG_IGN)`.
+    /// libc `signal(3)` returns the previous handler. Pin the round-
+    /// trip: set SIG_IGN then SIG_DFL on a benign signal (SIGUSR2)
+    /// and verify the returned previous-handler observation matches
+    /// what we just installed. Previously the Rust port returned
+    /// `()` — silently breaking `init_signals` at `Src/init.c:1418`
+    /// which reads `signal_ignore(SIGHUP) == SIG_IGN` to detect a
+    /// parent-installed-ignored HUP.
+    #[cfg(unix)]
+    #[test]
+    fn signal_ignore_returns_previous_handler() {
+        // Reset SIGUSR2 to default.
+        let _ = signal_default(libc::SIGUSR2);
+        // Install SIG_IGN — returns SIG_DFL (was reset above).
+        let prev = signal_ignore(libc::SIGUSR2);
+        assert_eq!(prev, libc::SIG_DFL,
+            "c:64 — first signal_ignore must return prior SIG_DFL");
+        // Install SIG_IGN again — returns SIG_IGN.
+        let prev2 = signal_ignore(libc::SIGUSR2);
+        assert_eq!(prev2, libc::SIG_IGN,
+            "c:64 — second signal_ignore must return prior SIG_IGN");
+        // Cleanup.
+        let _ = signal_default(libc::SIGUSR2);
+    }
+
+    /// `Src/signals.h:67` — `#define signal_default(S) signal(S, SIG_DFL)`.
+    /// Round-trip: install SIG_IGN, then signal_default — must
+    /// return SIG_IGN (the prior handler).
+    #[cfg(unix)]
+    #[test]
+    fn signal_default_returns_previous_handler() {
+        let _ = signal_default(libc::SIGUSR2);
+        let _ = signal_ignore(libc::SIGUSR2);
+        let prev = signal_default(libc::SIGUSR2);
+        assert_eq!(prev, libc::SIG_IGN,
+            "c:67 — signal_default must return prior SIG_IGN");
+        // Default→default returns SIG_DFL.
+        let prev2 = signal_default(libc::SIGUSR2);
+        assert_eq!(prev2, libc::SIG_DFL);
     }
 }

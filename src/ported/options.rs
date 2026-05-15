@@ -1056,9 +1056,11 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
 // ===========================================================
 
 /// Sentinel returned by `optlookup` when no matching option exists.
-/// Mirrors the `OPT_INVALID` enum value the C source returns at
-/// Src/options.c:714.
-pub const OPT_INVALID: i32 = -10000;
+/// Re-export of the canonical `OPT_INVALID = 0` from `Src/zsh.h:2363`
+/// (the first slot in the option-index enum). C: `OPT_INVALID, ALIASESOPT, ...`.
+/// Re-exported here so call sites that already import from
+/// `options` don't need to change to `zsh_h`.
+pub use crate::ported::zsh_h::OPT_INVALID;
 
 /// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
 /// The target emulation bitmap, written by `installemulation` and
@@ -1738,5 +1740,78 @@ mod tests {
         assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
         assert_eq!(optlookup("AutoList"), optlookup("autolist"));
         assert_eq!(optlookup("auto__list"), optlookup("autolist"));
+    }
+
+    /// `Src/options.c:684-714` — `optlookup(name)` returns
+    /// `OPT_INVALID` for any unknown name (after canonicalisation
+    /// strips `_` and lowercases). Pin every bogus-input case so a
+    /// regression that misroutes unknown lookups to optno=0
+    /// (NULL_OPT) doesn't silently flip global option 0.
+    #[test]
+    fn optlookup_unknown_names_return_opt_invalid() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        assert_eq!(optlookup(""),            OPT_INVALID,
+            "c:714 — empty name");
+        assert_eq!(optlookup("definitely_not_an_option"), OPT_INVALID);
+        assert_eq!(optlookup("no_such_option_either"),    OPT_INVALID);
+        // The "no" prefix on a NON-existent option is also invalid
+        // (c:708 lookup of `s+2` fails, c:711 lookup of full `s` fails too).
+        assert_eq!(optlookup("nodefinitelynot"),          OPT_INVALID);
+    }
+
+    /// `Src/options.c:708-712` — the `no` prefix branch returns the
+    /// NEGATIVE optno only when the suffix matches a real option.
+    /// Pin both halves: `noglob` → -GLOB (valid suffix), `notarealopt`
+    /// → OPT_INVALID (no suffix match), `notify` → notify-optno
+    /// (where "notify" is itself an option, NOT a `no`-prefix).
+    /// The C source resolves these in the order: alias table, `no`
+    /// prefix, plain name.
+    #[test]
+    fn optlookup_no_prefix_only_fires_when_suffix_resolves() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // `noglob` resolves to -GLOB (real option suffix `glob`).
+        let n = optlookup("noglob");
+        assert!(n < 0, "c:710 — `noglob` returns negative optno");
+        assert_eq!(-n, optlookup("glob"));
+        // `notify` is its own option (not a no-prefix), so it must
+        // resolve to a POSITIVE optno, not the negation of `tify`.
+        let n2 = optlookup("notify");
+        assert!(n2 > 0, "c:711 — `notify` is a real option, must be positive");
+    }
+
+    /// `Src/zsh.h:2363` — `OPT_INVALID` is the first slot in the
+    /// option-index enum (= 0). `Src/options.c:714` returns it for
+    /// every unknown name. Previously the Rust port shadowed this
+    /// with `-10000` in `options.rs`, which silently diverged from
+    /// every C call site that does `n == 0` for invalid-check. Pin
+    /// the canonical value so a regression re-introducing the
+    /// sentinel shadow fails.
+    #[test]
+    fn opt_invalid_matches_c_enum_value_zero() {
+        // C zsh.h:2363 declares `OPT_INVALID,` as the first enum
+        // slot, which by default has value 0.
+        assert_eq!(OPT_INVALID, 0,
+            "Src/zsh.h:2363 — OPT_INVALID is enum slot 0");
+        // ALIASESOPT is the next enum slot — must be 1.
+        assert_eq!(crate::ported::zsh_h::ALIASESOPT, 1,
+            "Src/zsh.h:2364 — ALIASESOPT immediately follows OPT_INVALID");
+    }
+
+    /// `Src/options.c:721-733` — `optlookupc(c)` returns 0 for any
+    /// letter outside `[FIRST_OPT..LAST_OPT]`. Pin the boundary check
+    /// so a regression that omits the range guard doesn't index a
+    /// letter table at a negative offset.
+    #[test]
+    fn optlookupc_rejects_letters_outside_range() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // c:723 — `if (c < FIRST_OPT || c > LAST_OPT) return 0`.
+        assert_eq!(optlookupc(' '),  0, "space below FIRST_OPT");
+        assert_eq!(optlookupc('\0'), 0, "NUL is invalid");
+        assert_eq!(optlookupc('~'),  0, "tilde above LAST_OPT");
+        // High Unicode never maps to an option letter.
+        assert_eq!(optlookupc('字'),  0);
     }
 }

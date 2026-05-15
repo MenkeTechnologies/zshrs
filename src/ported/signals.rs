@@ -21,7 +21,8 @@ use nix::unistd::getpid;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT, signal_default, signal_ignore};
+use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
+pub use crate::signals_h::{signal_default, signal_ignore};
 use crate::zsh_h::{
     isset, ERRFLAG_INT, INTERACTIVE, POSIXTRAPS, PRIVILEGED,
     TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL,
@@ -1425,5 +1426,36 @@ mod tests {
         // is valid (no crash, syscall returned).
         let _ = old;
         set_interact(prev);
+    }
+
+    /// `Src/signals.c:158-168` — `signal_mask(sig)` builds a fresh
+    /// sigset containing only `sig`. The `sig == 0` arm at c:163
+    /// returns an empty set (no `sigaddset` call). Pin both arms.
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_includes_only_requested_signal() {
+        let m = signal_mask(libc::SIGUSR1);
+        // c:166 — `sigaddset(&set, sig)` for the requested signal.
+        assert_eq!(unsafe { libc::sigismember(&m, libc::SIGUSR1) }, 1,
+            "c:166 — requested signal must be set");
+        // Other signals not in the set.
+        assert_eq!(unsafe { libc::sigismember(&m, libc::SIGUSR2) }, 0);
+        assert_eq!(unsafe { libc::sigismember(&m, libc::SIGTERM) }, 0);
+    }
+
+    /// `Src/signals.c:163` — `if (sig) sigaddset(&set, sig)`. With
+    /// `sig == 0` no `sigaddset` runs, so the returned set is empty.
+    /// Regression dropping the `if (sig)` guard would `sigaddset(&set, 0)`
+    /// which is implementation-defined (Linux: EINVAL; macOS: may
+    /// "succeed" with a bogus member).
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_with_zero_returns_empty_set() {
+        let m = signal_mask(0);
+        // Every signal must be NOT a member of an empty set.
+        for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1, libc::SIGUSR2] {
+            assert_eq!(unsafe { libc::sigismember(&m, sig) }, 0,
+                "c:163 — sig=0 produces empty set, but {} found", sig);
+        }
     }
 }

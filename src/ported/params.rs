@@ -4951,7 +4951,13 @@ pub fn intsecondsgetfn() -> i64 {
 }
 
 /// Port of `intsecondssetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4575`. C body:
-/// `shtimer.tv_sec = now.tv_sec - x; shtimer.tv_nsec = now.tv_nsec;`
+/// ```c
+/// diff = (zlong)now.tv_sec - x;
+/// shtimer.tv_sec = diff;
+/// if ((zlong)shtimer.tv_sec != diff)
+///     zwarn("SECONDS truncated on assignment");
+/// shtimer.tv_nsec = now.tv_nsec;
+/// ```
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn intsecondssetfn(x: i64) {
     let now = SystemTime::now()
@@ -4959,8 +4965,18 @@ pub fn intsecondssetfn(x: i64) {
         .unwrap_or_default();
     let now_sec = now.as_secs() as i64;
     let new_sec = now_sec - x;
+    // c:4587 — C uses `zwarn` (informational), NOT `zerr` (fatal).
+    // The C body STORES `diff` unconditionally then emits the warning
+    // if truncation lost information. Rust port previously used `zerr`
+    // and early-returned (skipping the store) — divergent from C.
     if new_sec < 0 {
-        zerr("SECONDS truncated on assignment");
+        crate::ported::utils::zwarn("SECONDS truncated on assignment");
+        // c:4585 — C still stores; Rust represents shtimer as Duration
+        // which is non-negative. We clamp to zero to preserve the
+        // "store-anyway" semantic for the time-display path, even
+        // though the negative-time case is unrepresentable.
+        *shtimer_lock().lock().expect("shtimer poisoned") =
+            Duration::new(0, now.subsec_nanos());
         return;
     }
     *shtimer_lock().lock().expect("shtimer poisoned") =
@@ -5217,8 +5233,10 @@ pub fn ifsgetfn() -> String {
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn ifssetfn(x: String) {
     *ifs_lock().lock().expect("ifs poisoned") = x;
-    // `inittyptab()` is a no-op in zshrs — Rust char methods
-    // handle classification natively (utils.rs:1884).
+    // c:4795 — `inittyptab()` rebuilds the typtab[] ISEP/IWSEP bits
+    // from the new IFS. Without this, every word-split path stays
+    // pinned to the old separator set and silently mis-splits.
+    crate::ported::utils::inittyptab();
 }
 
 // -----------------------------------------------------------
@@ -5255,6 +5273,12 @@ pub fn setlang(x: Option<&str>) {
         env::set_var("LANG", s);
     }
     clear_mbstate();
+    // c:4868 — `inittyptab();`. The locale change may shift which
+    // bytes are isalpha/isalnum/etc under the typtab init, so the
+    // table must be rebuilt. Without this, every shell-script that
+    // sets LANG to a non-ASCII locale would silently keep using
+    // the prior locale's char classes.
+    crate::ported::utils::inittyptab();
 }
 
 /// Port of `lc_allsetfn(Param pm, char *x)` from `Src/params.c:4871`. C body
@@ -5389,7 +5413,12 @@ pub fn savehistsizesetfn(v: i64) {
 pub fn errnosetfn(x: i64) {                                                  // c:5004
     let truncated = x as i32;
     unsafe { *errno_ptr() = truncated; }                                     // c:5006 errno = (int)x
-    if truncated as i64 != x { zerr("errno truncated on assignment"); }      // c:5007-5008
+    // c:5009-5010 — C uses `zwarn` (informational), NOT `zerr`. The
+    // store happens unconditionally; the warning fires only on
+    // truncation. Previously used `zerr` — divergent.
+    if truncated as i64 != x {                                               // c:5008
+        crate::ported::utils::zwarn("errno truncated on assignment");        // c:5009
+    }
 }
 
 /// !!! RUST-ONLY HELPER — no direct C counterpart. C accesses
@@ -5405,9 +5434,22 @@ unsafe fn errno_ptr() -> *mut libc::c_int {
 }
 
 /// Port of `errnogetfn(UNUSED(Param pm))` from `Src/params.c:5015`. C body: `return errno;`
+///
+/// Reads the libc errno directly through the per-platform accessor
+/// (matching C's `return errno;` semantics). Previously routed
+/// through `std::io::Error::last_os_error()` which is NOT errno —
+/// it's a snapshot taken at the most recent stdlib syscall. That
+/// silently broke `$ERRNO` round-trip: `ERRNO=42` followed by
+/// `$ERRNO` could return any stale value.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn errnogetfn() -> i64 {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64
+    let p = unsafe { errno_ptr() };                                          // c:5017 return errno
+    if p.is_null() {
+        // Non-Linux/macOS fallback: best-effort via std API.
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64
+    } else {
+        unsafe { *p as i64 }
+    }
 }
 
 /// Port of `keyboardhackgetfn(UNUSED(Param pm))` from `Src/params.c:5024`. C body:
@@ -5424,31 +5466,59 @@ pub fn keyboardhackgetfn() -> String {
     }
 }
 
-/// Port of `keyboardhacksetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5038`. C body:
-/// `unmetafy(x, &len); if (len > 1) zwarn("Only one KEYBOARD_HACK character"); …`
+/// Port of `keyboardhacksetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5040-5060`. C body:
+/// ```c
+/// if (x) {
+///     unmetafy(x, &len);
+///     if (len > 1) { len = 1; zwarn("Only one KEYBOARD_HACK character can be defined"); }
+///     for (i = 0; i < len; i++)
+///         if (!isascii((unsigned char) x[i])) {
+///             zwarn("KEYBOARD_HACK can only contain ASCII characters");
+///             return;
+///         }
+///     keyboardhackchar = len ? (unsigned char) x[0] : '\0';
+/// } else
+///     keyboardhackchar = '\0';
+/// ```
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn keyboardhacksetfn(x: String) {
     let bytes = x.as_bytes();
+    // c:5046-5049 — `zwarn` (informational) when len > 1; C still
+    // proceeds to use only the first char. Previously used `zerr`.
     if bytes.len() > 1 {
-        zerr("Only one KEYBOARD_HACK character can be defined");
+        crate::ported::utils::zwarn("Only one KEYBOARD_HACK character can be defined");
     }
     let c = bytes.first().copied().unwrap_or(0);
+    // c:5050-5054 — `zwarn` + early return for non-ASCII byte.
     if c >= 0x80 {
-        zerr("KEYBOARD_HACK can only contain ASCII characters");
+        crate::ported::utils::zwarn("KEYBOARD_HACK can only contain ASCII characters");
         return;
     }
     *keyboardhack_lock().lock().expect("keyboardhack poisoned") = c;
 }
 
 /// Port of `histcharsgetfn(UNUSED(Param pm))` from `Src/params.c:5064`. C body:
-/// `static char buf[4]; buf[0]=bangchar; buf[1]=hatchar; buf[2]=hashchar;`
+/// ```c
+/// static char buf[4];
+/// buf[0] = bangchar; buf[1] = hatchar; buf[2] = hashchar; buf[3] = '\0';
+/// return buf;
+/// ```
+/// Reads from the three canonical atomic globals
+/// (`crate::ported::hist::{bangchar, hatchar, hashchar}`) to mirror C
+/// which reads from three separate `unsigned char` globals.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn histcharsgetfn() -> String {
-    let chars = *histchars_lock().lock().expect("histchars poisoned");
+    use std::sync::atomic::Ordering;
+    let b = crate::ported::hist::bangchar.load(Ordering::SeqCst) as u8;
+    let h = crate::ported::hist::hatchar.load(Ordering::SeqCst) as u8;
+    let p = crate::ported::hist::hashchar.load(Ordering::SeqCst) as u8;
+    // c:5068-5073 — terminal NUL trims unset chars (default-`!^#` is
+    // 3 non-NUL bytes); explicit NULs are skipped to match C `buf[3]
+    // = '\0'` C-string truncation semantics.
     let mut s = String::new();
-    for &b in chars.iter() {
-        if b != 0 {
-            s.push(b as char);
+    for &byte in &[b, h, p] {
+        if byte != 0 {
+            s.push(byte as char);
         }
     }
     s
@@ -5458,25 +5528,46 @@ pub fn histcharsgetfn() -> String {
 /// validates ASCII, takes up to 3 chars; defaults `!^#` if NULL.
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn histcharssetfn(x: Option<String>) {
-    match x {
+    use std::sync::atomic::Ordering;
+    let new_chars: [u8; 3] = match x {
         None => {
-            *histchars_lock().lock().expect("histchars poisoned") = [b'!', b'^', b'#'];
+            // c:5100-5103 — defaults `!^#` when x is NULL.
+            [b'!', b'^', b'#']
         }
         Some(s) => {
             let bytes = s.as_bytes();
             for &b in bytes.iter().take(3) {
-                if b >= 0x80 {
-                    zerr("HISTCHARS can only contain ASCII characters");
+                if b >= 0x80 {                                          // c:5090-5093
+                    // c:5091 — C uses `zwarn` (informational), NOT
+                    // `zerr` (fatal). Function returns early without
+                    // updating any globals.
+                    crate::ported::utils::zwarn(
+                        "HISTCHARS can only contain ASCII characters");
                     return;
                 }
             }
+            // c:5095-5097 — `bangchar = x[0]; hatchar = x[1]; hashchar = x[2]`.
+            // C uses `len ? x[0] : '\0'` etc — for short strings the
+            // unset bytes are NUL.
             let mut chars = [0u8; 3];
             for (i, &b) in bytes.iter().take(3).enumerate() {
                 chars[i] = b;
             }
-            *histchars_lock().lock().expect("histchars poisoned") = chars;
+            chars
         }
-    }
+    };
+    // c:5079 — set histchars table.
+    *histchars_lock().lock().expect("histchars poisoned") = new_chars;
+    // c:5095-5097 — `bangchar = x[0]; hatchar = x[1]; hashchar = x[2]`.
+    // Sync all three per-char atomic globals so lex/hist callers
+    // see the new HISTCHARS. (Previously hashchar was a `const char`
+    // in lex.rs — promoted to atomic this iteration.)
+    crate::ported::hist::bangchar.store(new_chars[0] as i32, Ordering::SeqCst);
+    crate::ported::hist::hatchar.store(new_chars[1] as i32, Ordering::SeqCst);
+    crate::ported::hist::hashchar.store(new_chars[2] as i32, Ordering::SeqCst);
+    // c:5104 — `inittyptab();`. The bangchar special bit in typtab
+    // depends on the current `bangchar` global; reseed.
+    crate::ported::utils::inittyptab();
 }
 
 /// Port of `homegetfn(UNUSED(Param pm))` from `Src/params.c:5109`. C body: `return home;`
@@ -5486,12 +5577,30 @@ pub fn homegetfn() -> String {
 }
 
 /// Port of `homesetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5118`. C body:
-/// `zsfree(home); home = x ? x : ""; finddir(NULL);`
+/// ```c
+/// zsfree(home);
+/// if (x && isset(CHASELINKS) && (home = xsymlink(x, 0)))
+///     zsfree(x);
+/// else
+///     home = x ? x : ztrdup("");
+/// finddir(NULL);
+/// ```
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn homesetfn(x: String) {
-    *home_lock().lock().expect("home poisoned") = x;
-    // `finddir(NULL)` invalidates zsh's cached named-directory
-    // lookups — those don't exist in zshrs yet.
+    // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
+    // Falls through to the plain `x` store when CHASELINKS is off or
+    // xsymlink fails.
+    let resolved = if !x.is_empty()
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASELINKS)
+    {
+        crate::ported::utils::xsymlink(&x).unwrap_or(x)
+    } else {
+        x
+    };
+    *home_lock().lock().expect("home poisoned") = resolved;
+    // c:5127 — `finddir(NULL)` invalidates zsh's cached named-directory
+    // lookups. zshrs's finddir port has no cache (per hashnameddir.rs
+    // createnameddirtable note); the call is a no-op here.
 }
 
 /// Port of `wordcharsgetfn(UNUSED(Param pm))` from `Src/params.c:5132`. C body:
@@ -5509,6 +5618,10 @@ pub fn wordcharsgetfn() -> String {
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn wordcharssetfn(x: String) {
     *wordchars_lock().lock().expect("wordchars poisoned") = x;
+    // c:5143 — `inittyptab()` rebuilds typtab IWORD bits from the
+    // new WORDCHARS. Without this, every IWORD lookup stays pinned
+    // to the old set and silently mis-classifies word boundaries.
+    crate::ported::utils::inittyptab();
 }
 
 /// Port of `underscoregetfn(UNUSED(Param pm))` from `Src/params.c:5152`. C body:
@@ -7831,5 +7944,107 @@ mod tests {
             "assignaparam stores all three elements");
         drop(tab);
         let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
+    }
+
+    /// Process-wide lock serialising tests that mutate the three
+    /// `histchars` atomic globals. No C counterpart.
+    static HISTCHARS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `Src/params.c:5095-5097` — `histcharssetfn` stores bangchar /
+    /// hatchar / hashchar in the per-char globals. Pin the round-trip
+    /// for ALL THREE: change HISTCHARS to a custom 3-char string,
+    /// verify each atomic global reflects the new value, and verify
+    /// the canonical default `"!^#"` restores on NULL.
+    #[test]
+    fn histcharssetfn_syncs_all_three_histchar_globals() {
+        let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use std::sync::atomic::Ordering;
+        // Default state.
+        crate::ported::params::histcharssetfn(None);
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst),  b'^' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'#' as i32);
+        // Set HISTCHARS to "@:%".
+        crate::ported::params::histcharssetfn(Some("@:%".to_string()));
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'@' as i32,
+            "c:5095 — bangchar = first byte of HISTCHARS");
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst),  b':' as i32,
+            "c:5096 — hatchar = second byte of HISTCHARS");
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'%' as i32,
+            "c:5097 — hashchar = third byte of HISTCHARS");
+        // Restore.
+        crate::ported::params::histcharssetfn(None);
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'#' as i32);
+    }
+
+    /// `Src/params.c:5064-5074` — `histcharsgetfn` reads from the
+    /// three atomic globals and returns a string of non-NUL bytes.
+    /// Pin set→get symmetry: after `histcharssetfn(Some("@&%"))`,
+    /// `histcharsgetfn()` returns `"@&%"`.
+    #[test]
+    fn histcharsgetfn_round_trips_with_histcharssetfn() {
+        let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::params::histcharssetfn(Some("@&%".to_string()));
+        assert_eq!(crate::ported::params::histcharsgetfn(), "@&%",
+            "c:5068-5073 — getfn reads atomic globals setfn wrote");
+        // Restore default and verify round-trip.
+        crate::ported::params::histcharssetfn(None);
+        assert_eq!(crate::ported::params::histcharsgetfn(), "!^#",
+            "default `!^#` round-trips through atomics");
+    }
+
+    /// `Src/params.c:5004-5011` — `errnosetfn(x)` writes errno
+    /// unconditionally, then warns (NOT errors) on truncation. The
+    /// store happens regardless of warning. Pin set→get round-trip.
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn errnosetfn_writes_through_to_libc_errno_getfn() {
+        // Set errno to a small int.
+        crate::ported::params::errnosetfn(42);
+        assert_eq!(crate::ported::params::errnogetfn(), 42,
+            "c:5006 — errno = (int)x; subsequent getfn must read it back");
+        crate::ported::params::errnosetfn(0);
+        assert_eq!(crate::ported::params::errnogetfn(), 0);
+    }
+
+    /// `Src/params.c:5008-5010` — truncation check fires when
+    /// `(zlong)errno != x`. C also resets errno indirectly inside
+    /// `zwarn` (libc calls touch errno) — so after the warning,
+    /// the user's observed `$ERRNO` is the post-warning value, NOT
+    /// the truncated cast. Faithful Rust port has the same behavior.
+    /// Pin only that the function returns normally and doesn't crash;
+    /// any specific post-call errno value is implementation-defined.
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn errnosetfn_does_not_panic_on_truncation() {
+        // i64::MAX → truncates to i32 = -1 → warning fires inside.
+        // The store at c:5008 happens; whether the warning's libc
+        // calls then overwrite errno is implementation-defined.
+        crate::ported::params::errnosetfn(i64::MAX);
+        // Just verify the call returned (no panic) and getfn works.
+        let _ = crate::ported::params::errnogetfn();
+        // Reset.
+        crate::ported::params::errnosetfn(0);
+    }
+
+    /// `Src/params.c:5090-5093` — non-ASCII chars in HISTCHARS
+    /// produce a warning and the function returns WITHOUT updating
+    /// any globals. Pin the rejection: state before == state after
+    /// when a non-ASCII byte is in position 0/1/2.
+    #[test]
+    fn histcharssetfn_rejects_non_ascii_chars() {
+        let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use std::sync::atomic::Ordering;
+        // Reset to defaults.
+        crate::ported::params::histcharssetfn(None);
+        let bang_before = crate::ported::hist::bangchar.load(Ordering::SeqCst);
+        let hat_before  = crate::ported::hist::hatchar.load(Ordering::SeqCst);
+        // Try to set HISTCHARS with non-ASCII char.
+        crate::ported::params::histcharssetfn(Some("é".to_string()));
+        // c:5092 — rejection returns BEFORE any state changes.
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), bang_before,
+            "c:5092 — bangchar unchanged after non-ASCII rejection");
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), hat_before);
     }
 }

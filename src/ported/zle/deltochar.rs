@@ -163,4 +163,28 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(deltochar(), 1);
     }
+
+    /// `Src/Zle/deltochar.c:90-140` — six module-lifecycle shims.
+    /// In C they wire `addzlefunction("delete-to-char", deltochar, …)`
+    /// + `addzlefunction("zap-to-char", deltochar, …)` (c:114/117) and
+    /// the matching `deletezlefunction` calls (c:131/132). In zshrs
+    /// both widgets are registered through `extensions/widget.rs` at
+    /// build time, so all six shims collapse to `return 0`. Pinning
+    /// the returns prevents a future refactor from re-introducing the
+    /// C `addzlefunction(...)` body and double-registering the widget.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        // c:90-93 — `setup_(UNUSED(Module m)) { return 0; }`.
+        assert_eq!(setup_(),    0);
+        // c:96-101 — features_ would call featuresarray; static-link → 0.
+        assert_eq!(features_(), 0);
+        // c:104-108 — enables_ would call handlefeatures; static-link → 0.
+        assert_eq!(enables_(),  0);
+        // c:111-125 — boot_ in C adds two zlefunctions; static-link → 0.
+        assert_eq!(boot_(),     0);
+        // c:128-134 — cleanup_ in C deletes both zlefunctions; → 0.
+        assert_eq!(cleanup_(),  0);
+        // c:137-140 — `finish_(UNUSED(Module m)) { return 0; }`.
+        assert_eq!(finish_(),   0);
+    }
 }
