@@ -22,70 +22,46 @@ use std::ffi::CStr;
 /// Rust port collapses C's pointer return to `Option<libc::nl_item>`
 /// — the C call sites only need the integer value, never write
 /// through the pointer.
+/// Parallel `(nl_names[], nl_vals[])` arrays from
+/// `langinfo.c:65,235` — paired here to keep liitem's body a
+/// faithful loop-over-arrays match for C.
+#[cfg(unix)]
+static NL_TABLE: &[(&str, libc::nl_item)] = &[                           // c:65,235
+    ("CODESET",     libc::CODESET),     ("D_T_FMT",     libc::D_T_FMT),
+    ("D_FMT",       libc::D_FMT),       ("T_FMT",       libc::T_FMT),
+    ("RADIXCHAR",   libc::RADIXCHAR),   ("THOUSEP",     libc::THOUSEP),
+    ("YESEXPR",     libc::YESEXPR),     ("NOEXPR",      libc::NOEXPR),
+    #[cfg(target_os = "linux")]
+    ("CRNCYSTR",    libc::CRNCYSTR),
+    ("ABDAY_1",     libc::ABDAY_1),     ("ABDAY_2",     libc::ABDAY_2),
+    ("ABDAY_3",     libc::ABDAY_3),     ("ABDAY_4",     libc::ABDAY_4),
+    ("ABDAY_5",     libc::ABDAY_5),     ("ABDAY_6",     libc::ABDAY_6),
+    ("ABDAY_7",     libc::ABDAY_7),
+    ("DAY_1",       libc::DAY_1),       ("DAY_2",       libc::DAY_2),
+    ("DAY_3",       libc::DAY_3),       ("DAY_4",       libc::DAY_4),
+    ("DAY_5",       libc::DAY_5),       ("DAY_6",       libc::DAY_6),
+    ("DAY_7",       libc::DAY_7),
+    ("ABMON_1",     libc::ABMON_1),     ("ABMON_2",     libc::ABMON_2),
+    ("ABMON_3",     libc::ABMON_3),     ("ABMON_4",     libc::ABMON_4),
+    ("ABMON_5",     libc::ABMON_5),     ("ABMON_6",     libc::ABMON_6),
+    ("ABMON_7",     libc::ABMON_7),     ("ABMON_8",     libc::ABMON_8),
+    ("ABMON_9",     libc::ABMON_9),     ("ABMON_10",    libc::ABMON_10),
+    ("ABMON_11",    libc::ABMON_11),    ("ABMON_12",    libc::ABMON_12),
+    ("MON_1",       libc::MON_1),       ("MON_2",       libc::MON_2),
+    ("MON_3",       libc::MON_3),       ("MON_4",       libc::MON_4),
+    ("MON_5",       libc::MON_5),       ("MON_6",       libc::MON_6),
+    ("MON_7",       libc::MON_7),       ("MON_8",       libc::MON_8),
+    ("MON_9",       libc::MON_9),       ("MON_10",      libc::MON_10),
+    ("MON_11",      libc::MON_11),      ("MON_12",      libc::MON_12),
+    ("T_FMT_AMPM",  libc::T_FMT_AMPM),  ("AM_STR",      libc::AM_STR),
+    ("PM_STR",      libc::PM_STR),      ("ERA",         libc::ERA),
+    ("ERA_D_FMT",   libc::ERA_D_FMT),   ("ERA_D_T_FMT", libc::ERA_D_T_FMT),
+    ("ERA_T_FMT",   libc::ERA_T_FMT),   ("ALT_DIGITS",  libc::ALT_DIGITS),
+];
+
 #[cfg(unix)]
 pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:379
-    // C: walk the parallel arrays nl_names + nl_vals; nl_vals is
-    // a hardcoded list of nl_item integers in name order. The
-    // Rust port maps the name string directly via match.
-    Some(match name {                                                    // c:386 strcmp
-        "CODESET"     => libc::CODESET,
-        "D_T_FMT"     => libc::D_T_FMT,
-        "D_FMT"       => libc::D_FMT,
-        "T_FMT"       => libc::T_FMT,
-        "RADIXCHAR"   => libc::RADIXCHAR,
-        "THOUSEP"     => libc::THOUSEP,
-        "YESEXPR"     => libc::YESEXPR,
-        "NOEXPR"      => libc::NOEXPR,
-        #[cfg(target_os = "linux")]
-        "CRNCYSTR"    => libc::CRNCYSTR,
-        "ABDAY_1"     => libc::ABDAY_1,
-        "ABDAY_2"     => libc::ABDAY_2,
-        "ABDAY_3"     => libc::ABDAY_3,
-        "ABDAY_4"     => libc::ABDAY_4,
-        "ABDAY_5"     => libc::ABDAY_5,
-        "ABDAY_6"     => libc::ABDAY_6,
-        "ABDAY_7"     => libc::ABDAY_7,
-        "DAY_1"       => libc::DAY_1,
-        "DAY_2"       => libc::DAY_2,
-        "DAY_3"       => libc::DAY_3,
-        "DAY_4"       => libc::DAY_4,
-        "DAY_5"       => libc::DAY_5,
-        "DAY_6"       => libc::DAY_6,
-        "DAY_7"       => libc::DAY_7,
-        "ABMON_1"     => libc::ABMON_1,
-        "ABMON_2"     => libc::ABMON_2,
-        "ABMON_3"     => libc::ABMON_3,
-        "ABMON_4"     => libc::ABMON_4,
-        "ABMON_5"     => libc::ABMON_5,
-        "ABMON_6"     => libc::ABMON_6,
-        "ABMON_7"     => libc::ABMON_7,
-        "ABMON_8"     => libc::ABMON_8,
-        "ABMON_9"     => libc::ABMON_9,
-        "ABMON_10"    => libc::ABMON_10,
-        "ABMON_11"    => libc::ABMON_11,
-        "ABMON_12"    => libc::ABMON_12,
-        "MON_1"       => libc::MON_1,
-        "MON_2"       => libc::MON_2,
-        "MON_3"       => libc::MON_3,
-        "MON_4"       => libc::MON_4,
-        "MON_5"       => libc::MON_5,
-        "MON_6"       => libc::MON_6,
-        "MON_7"       => libc::MON_7,
-        "MON_8"       => libc::MON_8,
-        "MON_9"       => libc::MON_9,
-        "MON_10"      => libc::MON_10,
-        "MON_11"      => libc::MON_11,
-        "MON_12"      => libc::MON_12,
-        "T_FMT_AMPM"  => libc::T_FMT_AMPM,
-        "AM_STR"      => libc::AM_STR,
-        "PM_STR"      => libc::PM_STR,
-        "ERA"         => libc::ERA,
-        "ERA_D_FMT"   => libc::ERA_D_FMT,
-        "ERA_D_T_FMT" => libc::ERA_D_T_FMT,
-        "ERA_T_FMT"   => libc::ERA_T_FMT,
-        "ALT_DIGITS"  => libc::ALT_DIGITS,
-        _ => return None,                                                // c:379 return NULL
-    })
+    NL_TABLE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)           // c:386 strcmp
 }
 
 /// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`.
