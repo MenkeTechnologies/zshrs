@@ -304,16 +304,10 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
 ///
 /// Helper used by every `pp{s,i,f,a,h}_setfn` callback to raise the
 /// "attempt to assign private in nested scope" error.
-pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {               // c:260
-    if pm.is_null() { return; }
-    let name = unsafe {
-        (*pm).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;       // c:262
-        (*pm).node.nam.clone()
-    };
-    crate::ported::utils::zerr(&format!(                                 // c:263
-        "{}: attempt to assign private in nested scope",
-        name,
-    ));
+pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {                   // c:260
+    unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_UNSET as i32; }    // c:262
+    let name = unsafe { (*pm).node.nam.clone() };
+    crate::ported::utils::zerr(&format!("{}: attempt to assign private in nested scope", name)); // c:263
 }
 
 /// Port of `pps_getfn(Param pm)` from `Src/Modules/param_private.c:287`.

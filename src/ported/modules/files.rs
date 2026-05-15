@@ -74,23 +74,13 @@ where
 /// C body (c:43-46): read one char from stdin; consume the rest of
 /// the line; return 1 for `y`/`Y`, 0 otherwise.
 pub fn ask() -> i32 {                                                        // c:41
-    let mut buf = [0u8; 1];
-    let stdin = std::io::stdin();
-    let mut handle = stdin.lock();
-    let a = match handle.read(&mut buf) {                                    // c:43 getchar
-        Ok(0) => return 0,
-        Ok(_) => buf[0],
-        Err(_) => return 0,
-    };
-    while a != b'\n' {                                                       // c:44-45
-        let mut peek = [0u8; 1];
-        match handle.read(&mut peek) {
-            Ok(0) => break,
-            Ok(_) => if peek[0] == b'\n' { break },
-            Err(_) => break,
-        }
+    use std::io::Read;
+    let mut bytes = std::io::stdin().lock().bytes();
+    let a = bytes.next().and_then(|r| r.ok()).unwrap_or(0);                  // c:43 getchar
+    for c in bytes.by_ref() {                                                // c:44-45
+        if matches!(c, Ok(b'\n') | Err(_)) { break; }
     }
-    if a == b'y' || a == b'Y' { 1 } else { 0 }                               // c:53
+    (a == b'y' || a == b'Y') as i32                                          // c:46
 }
 
 // =====================================================================
