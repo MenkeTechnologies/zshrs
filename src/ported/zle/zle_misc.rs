@@ -172,15 +172,18 @@ pub fn doinsert(zstr: &[char]) {                              // c:37
 /// and the ASCII-promotion is the correct fallback for the rare
 /// case where a widget sets `lastchar` directly.
 /// Port of `selfinsert(UNUSED(char **args))` from `Src/Zle/zle_misc.c:113`.
-pub fn selfinsert() -> i32 {                                    // c:113
-    if !(crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.load(std::sync::atomic::Ordering::SeqCst) != 0) {                                            // c:113
-        crate::ported::zle::zle_main::LASTCHAR_WIDE.store((crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)) as i32, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
+/// C body (4 lines under MULTIBYTE):
+///   `if (!lastchar_wide_valid && getrestchar(lastchar,...) == WEOF) return 1;
+///    tmp = LASTFULLCHAR;
+///    doinsert(&tmp, 1);
+///    return 0;`
+pub fn selfinsert() -> i32 {                                                 // c:113
+    use std::sync::atomic::Ordering::SeqCst;
+    if crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.load(SeqCst) == 0 { // c:119 lastchar_wide_valid check
+        crate::ported::zle::zle_main::LASTCHAR_WIDE.store(crate::ported::zle::compcore::LASTCHAR.load(SeqCst), SeqCst);
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, SeqCst);
     }
-    // c:123 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
-    if let Some(c) = char::from_u32(crate::ported::zle::zle_main::LASTCHAR_WIDE.load(std::sync::atomic::Ordering::SeqCst) as u32) {
-        self_insert(c);
-    }
+    if let Some(c) = char::from_u32(crate::ported::zle::zle_main::LASTCHAR_WIDE.load(SeqCst) as u32) { self_insert(c); } // c:123 LASTFULLCHAR + doinsert
     0                                                                        // c:125
 }
 

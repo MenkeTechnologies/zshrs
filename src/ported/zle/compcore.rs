@@ -3190,35 +3190,10 @@ fn metafy_line() {                                                       // zle_
     ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
 }
 
-/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:113`.
-/// Inserts `lastchar` from ZLE state at cursor. Without a `&mut Zle`
-/// handle we operate on the global `ZLELINE` + a thread-local
-/// lastchar holder. Equivalent C body: insert one char at zlecs,
-/// advance zlecs, bump zlell.
-fn selfinsert() -> i32 {                                                 // zle_misc.c:112
-    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:113
-    if ch < 0 { return 1; }                                                  // c:116 EOF
-    let cs = ZLECS.load(Ordering::Relaxed) as usize;
-    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        let mut bytes = g.as_bytes().to_vec();
-        let cs = cs.min(bytes.len());
-        // c:130 — insertion at cs.
-        if (ch as u32) < 128 {
-            bytes.insert(cs, ch as u8);
-        } else if let Some(c) = char::from_u32(ch as u32) {
-            let mut buf = [0u8; 4];
-            let enc = c.encode_utf8(&mut buf).as_bytes();
-            for (i, b) in enc.iter().enumerate() {
-                bytes.insert(cs + i, *b);
-            }
-        }
-        *g = String::from_utf8_lossy(&bytes).into_owned();
-        let new_len = g.len() as i32;
-        ZLELL.store(new_len, Ordering::Relaxed);
-        ZLECS.store((cs + 1) as i32, Ordering::Relaxed);
-    }
-    0                                                                        // c:141
-}
+// `selfinsert` duplicate deleted — was a private 28-line fake inline
+// implementation. Canonical port lives at zle_misc.rs:180 (matching
+// C's `int selfinsert(char **args)` from zle_misc.c:113) and delegates
+// to `self_insert(c)`. Zero callers used this private compcore copy.
 
 // `set_minfo_cur` deleted — Rust-only wrapper for the C inline
 // write `minfo.cur = &m;`. Callers should inline the
