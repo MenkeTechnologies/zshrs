@@ -1571,10 +1571,12 @@ pub fn scanpmuserdirs(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
 ///   → `ht->addnode(ht, ztrdup(pm->node.nam), createaliasnode(value, flags));`
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _pm, _value) vs C=(ht, pm, value, flags)
-pub fn setalias(_ht: *mut HashTable, _pm: Param, _value: String,             // c:1699
-                _flags: i32) {
-    // c:1701-1702 — addnode(ht, name, createaliasnode(value, flags)).
-    // Static-link path: alias.rs ALIAS_TABLE accessor handles this when wired.
+pub fn setalias(_ht: *mut HashTable, pm: Param, value: String,             // c:1699
+                flags: i32) {
+    // c:1701-1702 — `ht->addnode(ht, ztrdup(pm->node.nam), createaliasnode(value, flags));`
+    let name = (*pm).node.nam.clone();
+    let mut tab = crate::ported::hashtable::aliastab_lock().write().expect("aliastab poisoned");
+    tab.add(crate::ported::hashtable::createaliasnode(&name, &value, flags as u32));
 }
 
 /// Port of `setpmralias(Param pm, char *value)` from Src/Modules/parameter.c:1707.
