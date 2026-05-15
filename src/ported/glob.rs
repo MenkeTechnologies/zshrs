@@ -881,97 +881,22 @@ pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
     Some((pattern, flags))
 }
 
-/// Get pattern match with optional replacement (from glob.c getmatch line 2710)
-///
-/// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
-/// ${var/pat/repl}, ${var//pat/repl}
-/// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
+/// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)`
+/// from `Src/glob.c:2710`. C body (4 lines):
+///   `Patprog p;
+///    if (!(p = compgetmatch(pat, &fl, &replstr))) return 1;
+///    return igetmatch(sp, p, fl, n, replstr, NULL);`
+/// Rust returns the resulting string (callers don't take a `**sp`
+/// out-pointer); compgetmatch/igetmatch hold the real prepare +
+/// match-and-replace logic.
 pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
-    const SUB_START: i32 = 0x1000;
-    let anchored_start = (fl & SUB_START) != 0;
-    let anchored_end = (fl & SUB_END) != 0;
-    let shortest = (fl & SUB_LONG) == 0;
-    let chars: Vec<char> = sp.chars().collect();
-    let len = chars.len();
-
-    if len == 0 {
-        return sp.to_string();
-    }
-
-    // Find match
-    let (match_start, match_end) = if anchored_start && anchored_end {
-        // Full match
-        if matchpat(pat, sp, true, true) {
-            (0, len)
-        } else {
-            return sp.to_string();
-        }
-    } else if anchored_start {
-        // Match from start (# or ##)
-        let mut best_end = 0;
-        for end in 1..=len {
-            let substr: String = chars[..end].iter().collect();
-            if matchpat(pat, &substr, true, true) {
-                if shortest {
-                    return match replstr {
-                        Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
-                        None => chars[end..].iter().collect(),
-                    };
-                }
-                best_end = end;
-            }
-        }
-        if best_end > 0 {
-            (0, best_end)
-        } else {
-            return sp.to_string();
-        }
-    } else if anchored_end {
-        // Match from end (% or %%)
-        let mut best_start = len;
-        for start in (0..len).rev() {
-            let substr: String = chars[start..].iter().collect();
-            if matchpat(pat, &substr, true, true) {
-                if shortest {
-                    return match replstr {
-                        Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
-                        None => chars[..start].iter().collect(),
-                    };
-                }
-                best_start = start;
-            }
-        }
-        if best_start < len {
-            (best_start, len)
-        } else {
-            return sp.to_string();
-        }
-    } else {
-        // Floating match (/ or //)
-        for start in 0..len {
-            for end in (start + 1)..=len {
-                let substr: String = chars[start..end].iter().collect();
-                if matchpat(pat, &substr, true, true) {
-                    let prefix: String = chars[..start].iter().collect();
-                    let suffix: String = chars[end..].iter().collect();
-                    return match replstr {
-                        Some(r) => format!("{}{}{}", prefix, r, suffix),
-                        None => format!("{}{}", prefix, suffix),
-                    };
-                }
-            }
-        }
-        return sp.to_string();
+    let (prep_pat, prep_fl) = match compgetmatch(pat) {                      // c:2713
+        Some(t) => t,
+        None => return sp.to_string(),                                       // c:2713 return 1
     };
-
-    // Apply replacement
-    let prefix: String = chars[..match_start].iter().collect();
-    let suffix: String = chars[match_end..].iter().collect();
-
-    match replstr {
-        Some(r) => format!("{}{}{}", prefix, r, suffix),
-        None => format!("{}{}", prefix, suffix),
-    }
+    let mut buf = sp.to_string();
+    igetmatch(&mut buf, &prep_pat, prep_fl | fl, n, replstr);                // c:2715
+    buf
 }
 
 /// Get match for array elements (from glob.c getmatcharr lines 2690-2750)
@@ -1054,15 +979,79 @@ pub fn set_pat_end(p: &str, null_me: usize) -> String {
 ///     char *replstr, LinkList *repllistp)` — pattern-replace inner
 ///     matcher; modifies `*sp` in place, optionally collects match
 ///     positions into `*repllistp`.
-/// WARNING: param names don't match C — Rust=(_sp, _p, _n, _replstr, _repllistp) vs C=(sp, p, fl, n, replstr, repllistp)
-pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // c:2832
-                 _fl: i32, _n: i32,
-                 _replstr: Option<&str>,
-                 _repllistp: Option<&mut Vec<(usize, usize)>>) -> i32 {
-    // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-anchor
-    // replacement loop with multibyte tracking. Static-link path: simpler
-    // pattern_replace lives in src/ported/glob.rs's match path; this stub
-    // satisfies the drift gate's name-parity check.
+/// WARNING: param names don't match C — Rust=(sp, p, fl, n, replstr) vs C=(sp, p, fl, n, replstr, repllistp)
+pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // c:2832
+                 replstr: Option<&str>) -> i32 {
+    // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-
+    // anchor replacement loop with multibyte tracking. Rust port walks
+    // chars + `matchpat`; full Patprog substrate (with chunked DFA
+    // execution) lives in src/ported/pattern.rs.
+    const SUB_START: i32 = 0x1000;
+    let anchored_start = (fl & SUB_START) != 0;
+    let anchored_end = (fl & SUB_END) != 0;
+    let shortest = (fl & SUB_LONG) == 0;
+    let chars: Vec<char> = sp.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return 1;
+    }
+    let (match_start, match_end) = if anchored_start && anchored_end {
+        if matchpat(p, sp, true, true) { (0, len) } else { return 1; }
+    } else if anchored_start {
+        let mut best_end = 0;
+        for end in 1..=len {
+            let substr: String = chars[..end].iter().collect();
+            if matchpat(p, &substr, true, true) {
+                if shortest {
+                    *sp = match replstr {
+                        Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
+                        None => chars[end..].iter().collect(),
+                    };
+                    return 0;
+                }
+                best_end = end;
+            }
+        }
+        if best_end > 0 { (0, best_end) } else { return 1; }
+    } else if anchored_end {
+        let mut best_start = len;
+        for start in (0..len).rev() {
+            let substr: String = chars[start..].iter().collect();
+            if matchpat(p, &substr, true, true) {
+                if shortest {
+                    *sp = match replstr {
+                        Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
+                        None => chars[..start].iter().collect(),
+                    };
+                    return 0;
+                }
+                best_start = start;
+            }
+        }
+        if best_start < len { (best_start, len) } else { return 1; }
+    } else {
+        for start in 0..len {
+            for end in (start + 1)..=len {
+                let substr: String = chars[start..end].iter().collect();
+                if matchpat(p, &substr, true, true) {
+                    let prefix: String = chars[..start].iter().collect();
+                    let suffix: String = chars[end..].iter().collect();
+                    *sp = match replstr {
+                        Some(r) => format!("{}{}{}", prefix, r, suffix),
+                        None => format!("{}{}", prefix, suffix),
+                    };
+                    return 0;
+                }
+            }
+        }
+        return 1;
+    };
+    let prefix: String = chars[..match_start].iter().collect();
+    let suffix: String = chars[match_end..].iter().collect();
+    *sp = match replstr {
+        Some(r) => format!("{}{}{}", prefix, r, suffix),
+        None => format!("{}{}", prefix, suffix),
+    };
     0
 }
 
