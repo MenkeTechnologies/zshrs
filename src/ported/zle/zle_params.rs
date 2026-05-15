@@ -318,13 +318,12 @@ pub fn set_numeric(x: i64) {   // c:477
     /// Port of `get_numeric(UNUSED(Param pm))` from Src/Zle/zle_params.c which
     /// returns `zmod.mult` only when `MOD_MULT` is set, otherwise
     /// the parameter is unset.
+    /// C body (single statement): `return zmult;`
+    /// (C does not gate on MOD_MULT — the previous Rust port did,
+    /// which diverged from upstream semantics.)
     /// WARNING: param names don't match C — Rust=() vs C=(pm)
-    pub fn get_numeric() -> Option<i32> {                              // c:485
-        if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & super::zle_h::MOD_MULT != 0 {
-            Some(crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult)
-        } else {
-            None
-        }
+    pub fn get_numeric() -> i32 {                                      // c:485
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult        // c:487 zmult
     }
 
 /// Direct port of `static void unset_numeric(Param pm, int exp)` from

@@ -1140,13 +1140,12 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           //
 /// Reads the current termios from the global `SHTTY`. Returns
 /// `None` when SHTTY is closed or the call fails (matching C's
 /// silent return when SHTTY == -1).
+/// C body (single statement): `fdgettyinfo(SHTTY, ti);`
+/// Rust returns `Option<termios>` (caller no longer takes an out-ptr);
+/// the SHTTY=-1 case naturally returns Err from fdgettyinfo → None.
 #[cfg(unix)]
 pub fn gettyinfo() -> Option<libc::termios> {                                // c:1746
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    if shtty == -1 {                                                         // c:1755
-        return None;
-    }
-    fdgettyinfo(shtty).ok()                                                  // c:1748
+    fdgettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed)).ok()     // c:1748
 }
 
 /// Emit the `$PS4` xtrace prefix to stderr.
@@ -1176,13 +1175,12 @@ pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
 ///
 /// Restores the termios state on the global `SHTTY` with EINTR
 /// retry; no-op when SHTTY is closed.
+/// C body (single statement): `fdsettyinfo(SHTTY, ti);`
+/// Rust returns bool (caller no longer ignores int retval); SHTTY=-1
+/// naturally yields Err → false from fdsettyinfo.
 #[cfg(unix)]
 pub fn settyinfo(ti: &libc::termios) -> bool {                               // c:1778
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    if shtty == -1 {                                                         // c:1787
-        return false;
-    }
-    fdsettyinfo(shtty, ti).is_ok()                                           // c:1780
+    fdsettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed), ti).is_ok() // c:1780
 }
 
 /// Apply terminal mode to a file descriptor, with EINTR retry.
