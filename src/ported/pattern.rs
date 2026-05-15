@@ -2286,4 +2286,59 @@ mod tests {
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "b"));
     }
+
+    /// c:540 — `*.ext` glob: `*` matches any prefix including empty.
+    /// Regression requiring non-empty match would break `for f in *.txt`
+    /// against directories containing dotfiles like `.txt`.
+    #[test]
+    fn patmatch_star_matches_empty_prefix() {
+        assert!(patmatch("*.txt", "a.txt"));
+        assert!(patmatch("*.txt", ".txt"));
+        assert!(!patmatch("*.txt", "a.rs"));
+    }
+
+    /// c:540 — `?` matches exactly one char. Regression accepting
+    /// empty or multi-char would break filename-mangling patterns.
+    #[test]
+    fn patmatch_question_matches_exactly_one_char() {
+        assert!(patmatch("?.txt", "a.txt"));
+        assert!(!patmatch("?.txt", "ab.txt"));
+        assert!(!patmatch("?.txt", ".txt"));
+    }
+
+    /// c:540 — char-class `[abc]` matches any listed char.
+    #[test]
+    fn patmatch_char_class_matches_listed_chars() {
+        assert!(patmatch("[abc].txt", "a.txt"));
+        assert!(patmatch("[abc].txt", "b.txt"));
+        assert!(patmatch("[abc].txt", "c.txt"));
+        assert!(!patmatch("[abc].txt", "d.txt"));
+    }
+
+    /// c:540 — negated `[!abc]` matches any char NOT in the set.
+    #[test]
+    fn patmatch_negated_char_class_inverts() {
+        assert!(patmatch("[!abc].txt", "d.txt"));
+        assert!(!patmatch("[!abc].txt", "a.txt"));
+    }
+
+    /// c:540 — range `[a-z]` ASCII range; uppercase outside.
+    #[test]
+    fn patmatch_range_matches_ascii_range() {
+        assert!(patmatch("[a-z]bc", "abc"));
+        assert!(patmatch("[a-z]bc", "zbc"));
+        assert!(!patmatch("[a-z]bc", "Abc"));
+        assert!(!patmatch("[a-z]bc", "0bc"));
+    }
+
+    /// c:540 — literal patterns require exact-string equality. A
+    /// substring-match regression would silently break `case foo in
+    /// abc) ;;`.
+    #[test]
+    fn patmatch_literal_requires_exact_string_equality() {
+        assert!(patmatch("abc", "abc"));
+        assert!(!patmatch("abc", "abcd"));
+        assert!(!patmatch("abc", "ab"));
+        assert!(!patmatch("abc", ""));
+    }
 }

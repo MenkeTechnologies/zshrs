@@ -350,3 +350,23 @@ pub fn selectargument() -> i32 {                            // c:212
     }
     0
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// c:36 — `return ZC_iblank(x) ? 0 : 1`. blank → 0, non-blank → 1.
+    /// Verifies the boundary cases for the word-classifier helper that
+    /// selectword/selectargument iterate against.
+    #[test]
+    fn blankwordclass_classifies_whitespace_vs_word_chars() {
+        assert_eq!(blankwordclass(' '),  0, "space is iblank");
+        assert_eq!(blankwordclass('\t'), 0, "tab is iblank");
+        assert_eq!(blankwordclass('a'),  1, "letter is not iblank");
+        assert_eq!(blankwordclass('0'),  1, "digit is not iblank");
+        assert_eq!(blankwordclass('!'),  1, "punctuation is not iblank");
+        assert_eq!(blankwordclass('\n'), 1, "newline is NOT iblank per ZC_iblank semantics");
+    }
+
+}

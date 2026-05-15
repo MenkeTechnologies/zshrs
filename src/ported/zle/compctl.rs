@@ -144,8 +144,28 @@ pub(crate) fn freecompctl(_cc: Arc<Compctl>) {
 /// drop the chain automatically; this is the entry kept for ABI
 /// parity with the C source.
 /// WARNING: param names don't match C — Rust=() vs C=(a)
-pub(crate) fn freecompcond(_cc: Compcond) {
-    // Drop handles the chain — direct equivalent of compctl.c:148-186.
+pub(crate) fn freecompcond(cc: Compcond) {                                   // c:146
+    // c:148-186 — walk `or` chain; for each `or` node, walk its `and`
+    // chain freeing per-type union data, then `zfree(c, sizeof(struct
+    // compcond))`. Rust Box+Vec+String drop subsumes every per-field
+    // `zsfree`/`free` call, but the structural walk is preserved so
+    // the chain is consumed in the same order C frees it (top-down,
+    // or-chain outer / and-chain inner).
+    let mut or_cur: Option<Box<Compcond>> = Some(Box::new(cc));              // c:151 for (c = cc; c; c = or)
+    while let Some(mut or_node) = or_cur {
+        let next_or = or_node.or.take();                                     // c:152 or = c->or
+        let mut and_cur: Option<Box<Compcond>> = Some(or_node);              // c:153 for (; c; c = and)
+        while let Some(mut and_node) = and_cur {
+            let next_and = and_node.and.take();                              // c:154 and = c->and
+            // c:155-184 — per-typ union frees. Box/Vec/String Drop on
+            // and_node going out of scope handles every variant
+            // (CCT_POS / CCT_NUMWORDS / CCT_CURSUF / CCT_CURPRE /
+            // CCT_RANGESTR / CCT_RANGEPAT / default).
+            let _ = and_node.u;                                              // c:155-184 zsfree per-variant
+            and_cur = next_and;                                              // c:185 c = and
+        }
+        or_cur = next_or;                                                    // c:151 c = or
+    }
 }
 
 /// Direct port of `static Cmlist cpcmlist(Cmlist l)` from

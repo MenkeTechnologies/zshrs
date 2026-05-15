@@ -979,3 +979,39 @@ fn module_features() -> &'static Mutex<features_t> {
         n_abstract: 0,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_ops() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+
+    /// c:115 — `domkdir` against a path that already exists must
+    /// surface mkdir(2)'s EEXIST. Silent success would mask
+    /// existing-directory clobbering — a real safety regression.
+    #[test]
+    fn domkdir_fails_when_path_already_exists() {
+        let tmp = std::env::temp_dir();
+        assert_ne!(domkdir("mkdir", tmp.to_str().unwrap(), 0o755, 0), 0);
+    }
+
+    /// c:75-76 — `mkdir -m <invalid-octal>` early-returns 1 BEFORE
+    /// the per-arg mkdir loop. Catches a regression where the bad
+    /// mode silently falls through to the umask-derived default.
+    #[test]
+    fn mkdir_with_invalid_mode_short_circuits_before_filesystem_op() {
+        let mut ops = empty_ops();
+        ops.ind[b'm' as usize] = (1 << 2) | 1;
+        ops.args.push("not-octal".to_string());
+        // Path is bogus on purpose: if the mode-parse early-return
+        // failed, mkdir(2) would still try this path and fail
+        // differently. The assertion catches the right error origin.
+        let r = bin_mkdir("mkdir", &["/tmp/zshrs_test_invalid_mode".to_string()], &ops, 0);
+        assert_eq!(r, 1);
+    }
+}

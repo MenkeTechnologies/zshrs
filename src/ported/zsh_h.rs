@@ -3726,4 +3726,42 @@ mod tests {
     fn zwc_passes_through() {
         assert_eq!(ZWC('a'), 'a');
     }
+
+    /// `IS_DASH` matches both ASCII '-' (0x2D) and the tokenized
+    /// Dash marker (0x9B) the lexer emits inside `[[ ... ]]`. Both
+    /// must be recognised — regression that drops one would break
+    /// either user-typed input OR pre-lexed cond expressions.
+    #[test]
+    fn is_dash_recognises_both_ascii_and_lexed_token() {
+        assert!(IS_DASH('-'),       "ASCII '-' is dash");
+        assert!(IS_DASH('\u{9b}'),  "lexed Dash token is dash");
+        assert!(!IS_DASH('+'),      "non-dash chars must NOT match");
+        assert!(!IS_DASH(' '),      "space is not dash");
+    }
+
+    /// c:1408 — `OPT_ISSET(ops, c)` returns true iff `ops.ind[c] != 0`.
+    /// Catches a regression where the indexing returns NUL-byte
+    /// "false" for a set option, breaking every `-x` flag check.
+    #[test]
+    fn opt_isset_reads_ind_array_directly() {
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        assert!(!OPT_ISSET(&ops, b'x'));
+        ops.ind[b'x' as usize] = 1;
+        assert!(OPT_ISSET(&ops, b'x'),  "after setting ind, OPT_ISSET must be true");
+        ops.ind[b'x' as usize] = 0;
+        assert!(!OPT_ISSET(&ops, b'x'), "clearing ind must make OPT_ISSET false");
+    }
+
+    /// `PM_TYPE` masks just the type-bits of a flag word (PM_SCALAR /
+    /// PM_INTEGER / PM_ARRAY / PM_HASHED / etc.). Modifier flags
+    /// (PM_READONLY, PM_EXPORTED) MUST NOT leak through. A regression
+    /// returning the full flag word would silently mis-dispatch every
+    /// param introspection path.
+    #[test]
+    fn pm_type_strips_modifier_flags() {
+        let with_mods = PM_INTEGER | PM_READONLY | PM_EXPORTED;
+        assert_eq!(PM_TYPE(with_mods), PM_INTEGER);
+        let just_array = PM_TYPE(PM_ARRAY | PM_LEFT | PM_TIED);
+        assert_eq!(just_array, PM_ARRAY);
+    }
 }

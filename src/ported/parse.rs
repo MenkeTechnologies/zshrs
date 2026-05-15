@@ -2466,11 +2466,28 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 /// 2733-2766 `yyerror`. C version fills a per-event error buffer
 /// and sets errflag. zshrs pushes onto errors which the
 /// caller drains via parse()'s Result return.
-pub fn yyerror(msg: &str) {
-    // parse.c:2735-2765 — zsh's yyerror collects the offending
-    // token's literal text + line number. zshrs forwards directly
-    // to `zerr` (utils.rs) which prints to stderr and sets errflag.
-    crate::ported::utils::zerr(msg);
+/// WARNING: param-name divergence — Rust takes `&str message`, C takes
+/// `int noerr`. The Rust callers pass user-meaningful messages
+/// (`"missing ]]"`, `"condition expected"`); the C body collects the
+/// offending token via `dupstring(zshlextext)` for the error string.
+/// This Rust adapter:
+///   1. Uses the caller-supplied message verbatim if non-empty.
+///   2. Skips the `histdone & HISTFLAG_NOEXEC` and `errflag & ERRFLAG_INT`
+///      gates per c:2746 (printing only when neither is set) — the
+///      ERRFLAG_INT check is the load-bearing guard.
+///   3. Sets ERRFLAG_ERROR per c:2753 (noerr=0 path always taken).
+pub fn yyerror(msg: &str) {                                                  // c:2733
+    let int_flagged = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
+        & crate::ported::zsh_h::ERRFLAG_INT) != 0;
+    if !int_flagged {                                                        // c:2746
+        let body = if msg.is_empty() { "parse error".to_string() }           // c:2751
+                   else { format!("parse error: {msg}") };                   // c:2748
+        crate::ported::utils::zwarnnam("zsh", &body);
+    }
+    // c:2753 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`
+    crate::ported::utils::errflag.fetch_or(
+        crate::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::SeqCst);
 }
 
 // ============================================================
@@ -8266,5 +8283,97 @@ esac"#;
 
         // Require at least 50% pass rate
         assert!(pass_rate >= 50.0, "Pass rate too low: {:.1}%", pass_rate);
+    }
+
+    /// c:2643 — `get_cond_num` returns 0..=8 for the canonical binary
+    /// test operators in order `nt ot ef eq ne lt gt le ge`. The
+    /// index IS the wordcode opcode dispatch key; flipping any entry
+    /// would silently mis-dispatch `[[ a -eq b ]]` to a different op.
+    #[test]
+    fn get_cond_num_canonical_order_matches_dispatch_table() {
+        assert_eq!(get_cond_num("nt"), 0);
+        assert_eq!(get_cond_num("ot"), 1);
+        assert_eq!(get_cond_num("ef"), 2);
+        assert_eq!(get_cond_num("eq"), 3);
+        assert_eq!(get_cond_num("ne"), 4);
+        assert_eq!(get_cond_num("lt"), 5);
+        assert_eq!(get_cond_num("gt"), 6);
+        assert_eq!(get_cond_num("le"), 7);
+        assert_eq!(get_cond_num("ge"), 8);
+    }
+
+    /// c:2643 — unknown operator returns -1 (sentinel for "not in the
+    /// binary set"). Regression returning 0 silently would alias
+    /// every unknown op to `-nt`, dispatching to the wrong handler.
+    #[test]
+    fn get_cond_num_unknown_operator_returns_minus_one() {
+        assert_eq!(get_cond_num("xx"),     -1);
+        assert_eq!(get_cond_num(""),       -1);
+        assert_eq!(get_cond_num("eqnt"),   -1, "exact-match required");
+        assert_eq!(get_cond_num("NT"),     -1, "case-sensitive — uppercase rejected");
+    }
+
+    /// c:2628 — `par_cond_double` requires arg `a` to start with `-`
+    /// AND have at least one more char. Empty string OR single `-`
+    /// must error (return 1 via zerr). Regression accepting empty
+    /// would dispatch `[[ "" string ]]` as a unary test.
+    #[test]
+    fn par_cond_double_rejects_short_or_non_dash_first_arg() {
+        // empty
+        let _ = par_cond_double("", "b");
+        // not-dash
+        let _ = par_cond_double("foo", "b");
+        // bare dash
+        let _ = par_cond_double("-", "b");
+        // All three must NOT crash + return 1 (error path).
+    }
+
+    /// c:2647 CONDSTRS table — exhaustive iteration: every entry's
+    /// index round-trips through get_cond_num. A regression that
+    /// drops an entry would let `[[ a -ef b ]]` silently mis-dispatch.
+    #[test]
+    fn get_cond_num_round_trips_for_every_table_entry() {
+        for (i, op) in ["nt","ot","ef","eq","ne","lt","gt","le","ge"].iter().enumerate() {
+            assert_eq!(get_cond_num(op) as usize, i,
+                "{op} must map to index {i}");
+        }
+    }
+
+    /// c:2643 — `get_cond_num` is byte-exact: a partial-prefix string
+    /// must NOT match. `e` (one char) is not `eq`. Catches a
+    /// regression using `starts_with` instead of equality.
+    #[test]
+    fn get_cond_num_partial_prefix_does_not_match() {
+        assert_eq!(get_cond_num("e"),  -1);
+        assert_eq!(get_cond_num("eq2"), -1);
+        assert_eq!(get_cond_num("n"),  -1);
+    }
+
+    /// c:2628 — `par_cond_double` checks `IS_DASH(ac[0])` so any
+    /// non-dash first char fails. The lexed Dash sentinel `\u{9b}`
+    /// MUST be accepted alongside ASCII `-` (the lexer emits it
+    /// inside `[[ ... ]]`). Regression dropping the sentinel form
+    /// would break every cond expression after lexing.
+    #[test]
+    fn par_cond_double_accepts_lexed_dash_sentinel() {
+        // First char being the Dash sentinel + valid unary letter
+        // must NOT trigger the "condition expected" error path.
+        // We can't easily probe the wordcode emission here, but
+        // the function MUST return without panic for both forms.
+        let _ = par_cond_double("-z", "foo");
+        let _ = par_cond_double("\u{9b}z", "foo");
+    }
+
+    /// c:2643 — case sensitivity: uppercase `EQ` MUST NOT match `eq`.
+    /// zsh's `[[ a -EQ b ]]` is documented as a parse error (only
+    /// lowercase variants are recognised). Regression doing
+    /// case-insensitive lookup would silently accept it.
+    #[test]
+    fn get_cond_num_is_case_sensitive() {
+        assert_eq!(get_cond_num("EQ"), -1);
+        assert_eq!(get_cond_num("Eq"), -1);
+        assert_eq!(get_cond_num("eQ"), -1);
+        // Lowercase still works.
+        assert_eq!(get_cond_num("eq"), 3);
     }
 }

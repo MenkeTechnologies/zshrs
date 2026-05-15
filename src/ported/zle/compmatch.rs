@@ -3981,4 +3981,94 @@ mod tests {
         let r = match_str("abc", "xyz", None, 0, None, 0, 0, 0);
         assert_eq!(r, -1, "no matcher can bridge `a` vs `x`");
     }
+
+    // ---------- update_bmatchers real-port tests (this session). ----------
+
+    /// c:121-139 — `update_bmatchers` walks bmatchers; entries whose
+    /// matcher isn't in mstack (via cmatchers_same) get trimmed via the
+    /// `bmatchers = p->next` reset. With mstack empty, every entry
+    /// misses → bmatchers should end up None.
+    #[test]
+    fn update_bmatchers_with_empty_mstack_trims_all_entries() {
+        use crate::ported::zle::comp_h::{Cmlist, Cmatcher};
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Seed bmatchers with one entry.
+        let matcher = Cmatcher {
+            refc: 1,
+            next: None, flags: 0, line: None, llen: 1,
+            word: None, wlen: 1, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        let bm_cell = crate::ported::zle::compcore::bmatchers
+            .get_or_init(|| std::sync::Mutex::new(None));
+        *bm_cell.lock().unwrap() = Some(Box::new(Cmlist {
+            next: None, matcher: Box::new(matcher), str: String::new(),
+        }));
+        // Clear mstack so the entry must be trimmed.
+        let ms_cell = crate::ported::zle::compcore::mstack
+            .get_or_init(|| std::sync::Mutex::new(None));
+        *ms_cell.lock().unwrap() = None;
+
+        update_bmatchers();
+
+        // After update with empty mstack: bmatchers is None — c:135-137.
+        assert!(bm_cell.lock().unwrap().is_none(),
+            "every bmatcher must be trimmed when mstack is empty");
+    }
+
+    /// c:84 — `cmatchers_same` short-circuits to true on POINTER
+    /// IDENTITY (a == b). The Rust port uses `std::ptr::eq`. Without
+    /// this, two large equivalent matchers would scan every field.
+    /// Regression dropping the short-circuit would balloon the
+    /// `update_bmatchers`-triggered O(N*M) scan into O(N*M*F).
+    #[test]
+    fn cmatchers_same_pointer_identity_short_circuits() {
+        use crate::ported::zle::comp_h::Cmatcher;
+        let m = Cmatcher {
+            refc: 1, next: None, flags: 0, line: None, llen: 0,
+            word: None, wlen: 0, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        // Same pointer → equal.
+        assert!(cmatchers_same(&m, &m));
+    }
+
+    /// c:87 — different `flags` bits MUST cause inequality. Catches
+    /// a regression where the flag check is dropped — would let
+    /// CMF_LEFT and CMF_RIGHT matchers compare equal silently.
+    #[test]
+    fn cmatchers_same_different_flags_compare_unequal() {
+        use crate::ported::zle::comp_h::Cmatcher;
+        let a = Cmatcher {
+            refc: 1, next: None, flags: 0, line: None, llen: 0,
+            word: None, wlen: 0, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        let b = Cmatcher {
+            refc: 1, next: None,
+            flags: crate::ported::zle::comp_h::CMF_LEFT,
+            line: None, llen: 0,
+            word: None, wlen: 0, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        assert!(!cmatchers_same(&a, &b));
+    }
+
+    /// c:87 — different `llen`/`wlen` MUST cause inequality. The
+    /// length fields are part of the natural-key comparison; a
+    /// regression dropping them would conflate distinct matchers.
+    #[test]
+    fn cmatchers_same_different_lengths_compare_unequal() {
+        use crate::ported::zle::comp_h::Cmatcher;
+        let a = Cmatcher {
+            refc: 1, next: None, flags: 0, line: None, llen: 1,
+            word: None, wlen: 1, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        let b = Cmatcher {
+            refc: 1, next: None, flags: 0, line: None, llen: 2,
+            word: None, wlen: 1, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        assert!(!cmatchers_same(&a, &b), "differing llen must NOT be equal");
+        let c = Cmatcher {
+            refc: 1, next: None, flags: 0, line: None, llen: 1,
+            word: None, wlen: 5, left: None, lalen: 0, right: None, ralen: 0,
+        };
+        assert!(!cmatchers_same(&a, &c), "differing wlen must NOT be equal");
+    }
 }

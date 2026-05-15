@@ -1224,4 +1224,64 @@ mod tests {
         let hash = tied.to_hash();
         assert_eq!(hash.get("foo"), Some(&"bar".to_string()));
     }
+
+    fn empty_ops() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+
+    /// PM_UPTODATE alias must equal PM_DONTIMPORT_SUID per c:38. Pin
+    /// the alias so a regen of zsh_h doesn't silently shift the bit.
+    #[test]
+    fn pm_uptodate_aliases_pm_dontimport_suid() {
+        assert_eq!(PM_UPTODATE, crate::ported::zsh_h::PM_DONTIMPORT_SUID);
+    }
+
+    /// Module entry points return 0 per C (db_gdbm.c:613-651).
+    #[test]
+    fn module_entry_points_return_zero() {
+        assert_eq!(setup_(std::ptr::null()),   0);
+        assert_eq!(boot_(std::ptr::null()),    0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()),  0);
+    }
+
+    /// c:109 — `ztie` with no args returns 1 (usage error).
+    #[test]
+    fn ztie_with_no_args_returns_one() {
+        let ops = empty_ops();
+        assert_eq!(bin_ztie("ztie", &[], &ops, 0), 1);
+    }
+
+    /// c:207 — `zuntie` with no args: the for-each-arg loop body
+    /// never runs, ret stays 0. Verifies no segfault on the empty path.
+    #[test]
+    fn zuntie_with_no_args_returns_zero() {
+        let ops = empty_ops();
+        assert_eq!(bin_zuntie("zuntie", &[], &ops, 0), 0);
+    }
+
+    /// c:208-212 — `zuntie <name>` on an unknown param emits
+    /// "cannot untie X" via zwarnnam and continues with ret=1.
+    #[test]
+    fn zuntie_unknown_param_returns_one() {
+        let ops = empty_ops();
+        let r = bin_zuntie("zuntie", &["zshrs_test_not_tied".to_string()], &ops, 0);
+        assert_eq!(r, 1);
+    }
+
+    /// c:282 — `gdbmgetfn` on unknown DB returns empty string (no
+    /// segfault, no panic — graceful miss).
+    #[test]
+    fn gdbmgetfn_unknown_db_returns_empty() {
+        assert_eq!(gdbmgetfn("zshrs_test_no_such_db_xyz", "key"), "");
+    }
+
+    /// c:407 — `getgdbmnode` on unknown DB returns false.
+    #[test]
+    fn getgdbmnode_unknown_returns_false() {
+        assert!(!getgdbmnode("zshrs_test_no_such_db_xyz", "key"));
+    }
 }

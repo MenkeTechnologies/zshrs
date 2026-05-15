@@ -1357,4 +1357,44 @@ mod tests {
         assert_eq!(c.into_inner(), b"");
         TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
     }
+
+    /// is_cond_binary_op accepts every documented binary test operator
+    /// from the conditional dispatch table.
+    #[test]
+    fn is_cond_binary_op_recognises_canonical_operators() {
+        for op in ["=", "==", "!=", "<", ">", "-eq", "-ne", "-lt", "-le", "-gt", "-ge"] {
+            assert_eq!(is_cond_binary_op(op), 1, "{op:?} must be recognised");
+        }
+    }
+
+    /// Unknown / unary / nonsense operators return 0.
+    #[test]
+    fn is_cond_binary_op_rejects_unknown_operators() {
+        for op in ["?", "@", "", " ", "==="] {
+            assert_eq!(is_cond_binary_op(op), 0, "{op:?} must NOT be recognised as binary");
+        }
+    }
+
+    /// `taddchr` + `taddstr` smoke — no panic, sanitises pending buffer.
+    #[test]
+    fn taddchr_taddstr_smoke_no_panic() {
+        taddchr(b'x' as i32);
+        taddstr("hello");
+        tdopending();
+    }
+
+    /// `taddpending` queues a deferred pair flushed via `tdopending`.
+    #[test]
+    fn taddpending_then_tdopending_no_panic() {
+        taddpending("foo", "bar");
+        tdopending();
+    }
+
+    /// `taddnl(no_semicolon)` two-mode path: 0 = `; \n`, 1 = `\n` only.
+    #[test]
+    fn taddnl_two_modes_no_panic() {
+        taddnl(0);
+        taddnl(1);
+        tdopending();
+    }
 }

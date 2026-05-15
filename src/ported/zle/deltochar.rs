@@ -150,3 +150,17 @@ pub fn cleanup_() -> i32 {                                               // c:12
 pub fn finish_() -> i32 {                                                // c:138
     0                                                                    // c:138
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Outside a ZLE session getfullchar returns None → c:39 short-
+    /// circuit returns 1. The only observable behaviour testable
+    /// without a live tty + key reader thread.
+    #[test]
+    fn deltochar_returns_one_when_no_input_available() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(deltochar(), 1);
+    }
+}

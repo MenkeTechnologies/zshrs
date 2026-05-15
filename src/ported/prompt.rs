@@ -2164,3 +2164,53 @@ pub fn set_pending_text_attrs(attrs: zattr) {
         .lock()
         .expect("pending_attrs poisoned") = attrs;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// c:134 — when `home` is a prefix of `path` AND tilde=true,
+    /// promptpath MUST substitute. Catches a regression where the
+    /// prefix-match falls back to the unchanged absolute path silently.
+    #[test]
+    fn promptpath_substitutes_home_prefix_with_tilde() {
+        let r = promptpath("/home/user/project", 0, true, "/home/user");
+        assert!(r.starts_with('~'), "home-prefix must collapse to ~ (got {r:?})");
+    }
+
+    /// c:134 — npath>0 truncates from the right, keeping the last N
+    /// path components. Used by `%c` / `%~` for theme depth-limits;
+    /// regressions silently render full paths in cramped prompts.
+    #[test]
+    fn promptpath_npath_one_keeps_only_last_component() {
+        let r = promptpath("/a/b/c/d", 1, false, "");
+        assert!(!r.contains("a/b") && r.ends_with("d"), "got {r:?}");
+    }
+
+    /// c:285 — `parsehighlight("bold")` MUST set the TXTBOLDFACE bit.
+    /// Regression that drops the bit would silently mis-render every
+    /// bold escape in user's `zle_highlight=(...)` array.
+    #[test]
+    fn parsehighlight_bold_sets_bold_bit() {
+        assert_ne!(parsehighlight("bold") & TXTBOLDFACE, 0);
+    }
+
+    /// `match_named_colour` MUST resolve all 8 ANSI base names plus
+    /// "default" — the user-facing color identifiers in `zle_highlight`
+    /// + `bindkey -A`. Skipping any name breaks the by-name color path
+    /// users rely on every keystroke.
+    #[test]
+    fn match_named_colour_covers_full_ansi_palette_and_default() {
+        for &name in &["black", "red", "green", "yellow",
+                       "blue", "magenta", "cyan", "white", "default"] {
+            assert!(match_named_colour(name).is_some(), "{name:?} must resolve");
+        }
+    }
+
+    /// Unknown colour names MUST return None — silent fallback would
+    /// mask theme typos that users would otherwise see immediately.
+    #[test]
+    fn match_named_colour_returns_none_for_unknown() {
+        assert!(match_named_colour("definitely_not_a_color_zshrs").is_none());
+    }
+}

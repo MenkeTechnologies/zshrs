@@ -376,4 +376,28 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    /// c:130 — `features_` advertises EXACTLY one builtin: `b:clone`.
+    /// Regression that adds extra features would let
+    /// `zmodload -F zsh/clone` accept bogus names users could
+    /// `zmodload -F zsh/clone +nonsense` and break.
+    #[test]
+    fn features_emits_exactly_one_b_clone_string() {
+        let mut feats: Vec<String> = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0], "b:clone");
+    }
+
+    /// c:138 — `enables_` must return Some(non-empty) vec since the
+    /// module advertises one builtin. A None return would suggest "no
+    /// features" and the module's builtin would never register.
+    #[test]
+    fn enables_returns_some_with_at_least_one_entry() {
+        let mut enables: Option<Vec<i32>> = None;
+        enables_(std::ptr::null(), &mut enables);
+        let e = enables.expect("must return Some");
+        assert!(!e.is_empty(), "enables vec must contain ≥1 entry for the b:clone feature");
+    }
+
 }

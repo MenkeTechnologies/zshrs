@@ -25,13 +25,14 @@ pub const ZSH_PATCHLEVEL: &str = "zsh-5.9-465-g6b9704e";                     // 
 mod tests {
     use super::*;
 
-    /// Verifies `ZSH_PATCHLEVEL` matches the verbatim C value at
-    /// patchlevel.h:1. If upstream zsh updates this string, the
-    /// snapshot at `src/zsh/Src/patchlevel.h` and this constant
-    /// must move together.
+    /// `$ZSH_PATCHLEVEL` is read at params.rs:1690 — pin both the
+    /// snapshot value and its `zsh-MAJOR.MINOR-N-gHASH` shape. If
+    /// upstream tags drop the `-g<hash>` suffix this fails — that's
+    /// the git-describe contract zsh's version-reporting code relies
+    /// on.
     #[test]
-    fn patchlevel_matches_upstream_snapshot() {
+    fn patchlevel_value_and_git_describe_shape() {
         assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9-465-g6b9704e");
-        assert!(ZSH_PATCHLEVEL.starts_with("zsh-"));
+        assert!(ZSH_PATCHLEVEL.contains("-g"), "git-describe `-g<hash>` suffix is load-bearing");
     }
 }

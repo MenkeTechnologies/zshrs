@@ -354,4 +354,44 @@ mod tests {
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
         assert_eq!(r, 0);
     }
+
+    /// c:54 — `zcond_regex_match` returns 1 when the pattern matches.
+    /// Canonical positive case for `[[ string =~ regex ]]`. Regression
+    /// returning 0 on a real match would break every `=~` use.
+    #[test]
+    fn matching_pattern_returns_one() {
+        let r = zcond_regex_match(&["hello world", "world"], ZREGEX_EXTENDED);
+        assert_eq!(r, 1);
+    }
+
+    /// c:54 — `^` requires match-at-start. Regression dropping anchor
+    /// semantics would silently accept `[[ "barfoo" =~ ^foo ]]`.
+    #[test]
+    fn anchor_caret_requires_match_at_start() {
+        assert_eq!(zcond_regex_match(&["foobar", "^foo"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["barfoo", "^foo"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:54 — `$` requires match-at-end.
+    #[test]
+    fn anchor_dollar_requires_match_at_end() {
+        assert_eq!(zcond_regex_match(&["barfoo", "foo$"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["foobar", "foo$"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:54 — alternation `a|b` matches either branch. Regression
+    /// breaking it crashes every theme using `[[ $term =~ xterm|screen ]]`.
+    #[test]
+    fn alternation_matches_either_branch() {
+        assert_eq!(zcond_regex_match(&["xterm",  "xterm|screen"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["screen", "xterm|screen"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["bash",   "xterm|screen"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:54 — `.` matches any single char (POSIX).
+    #[test]
+    fn dot_matches_any_single_char() {
+        assert_eq!(zcond_regex_match(&["foo", "f.o"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["fXo", "f.o"], ZREGEX_EXTENDED), 1);
+    }
 }

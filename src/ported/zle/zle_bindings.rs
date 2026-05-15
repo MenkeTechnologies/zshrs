@@ -778,4 +778,59 @@ mod tests {
             listed
         );
     }
+
+    /// c:utils.c:6915 — `getkeystring` decodes `\e` / `\t` / `\n` /
+    /// `\C-x` / `\M-x` escape sequences into raw bytes for keymap
+    /// binding. Verify the common shorthand pairs.
+    #[test]
+    fn getkeystring_decodes_canonical_escapes() {
+        assert_eq!(getkeystring("\\e"),  vec![0x1b]);                  // ESC
+        assert_eq!(getkeystring("\\t"),  vec![0x09]);                  // TAB
+        assert_eq!(getkeystring("\\n"),  vec![0x0a]);                  // LF
+        assert_eq!(getkeystring("\\r"),  vec![0x0d]);                  // CR
+    }
+
+    /// `\C-x` shorthand maps to control-byte `x & 0x1f` (the ASCII
+    /// ctrl-char) per the C decoder.
+    #[test]
+    fn getkeystring_decodes_control_prefix() {
+        assert_eq!(getkeystring("\\C-a"), vec![0x01]); // ctrl-a
+        assert_eq!(getkeystring("\\C-c"), vec![0x03]); // ctrl-c
+    }
+
+    /// `\M-x` shorthand (Meta-x) decodes to ESC + the byte (or to the
+    /// 0x80-bit-set byte depending on Meta-mode). Either way: non-empty.
+    #[test]
+    fn getkeystring_decodes_meta_prefix() {
+        let b = getkeystring("\\M-a");
+        assert!(!b.is_empty(), "\\M-a must decode to at least 1 byte");
+    }
+
+    /// Plain ASCII passes through verbatim.
+    #[test]
+    fn getkeystring_passes_plain_ascii_through() {
+        assert_eq!(getkeystring("abc"), b"abc".to_vec());
+    }
+
+    /// `iwidget_lookup` resolves canonical zle widget names → fn ptr.
+    /// `self-insert` is the must-have widget (every printable key is
+    /// bound to it by default).
+    #[test]
+    fn iwidget_lookup_resolves_self_insert() {
+        assert!(iwidget_lookup("self-insert").is_some());
+    }
+
+    /// `iwidget_lookup` for unknown widget names returns None.
+    #[test]
+    fn iwidget_lookup_returns_none_for_unknown_name() {
+        assert!(iwidget_lookup("definitely-not-a-real-widget-zshrs").is_none());
+    }
+
+    /// `bindlistout` for an unknown keymap returns an empty vec —
+    /// safer than panicking when bindkey is queried before init.
+    #[test]
+    fn bindlistout_empty_for_unknown_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(bindlistout("does-not-exist").is_empty());
+    }
 }

@@ -2572,4 +2572,122 @@ mod tests {
         assert_eq!(tab[0].stat & stat::STOPPED, 0);
         assert_eq!(tab[0].procs[0].status, SP_RUNNING);
     }
+
+    // ===== Tests for sigmsg (this session's table-ified port).
+
+    #[test]
+    fn sigmsg_known_signals_render_canonical_text() {
+        // Verifies the SIG_MSG lookup table matches C's sig_msg[] for
+        // the signals that exist on every Unix. These strings are part
+        // of the user-visible output of `jobs -l` / signal-death
+        // reports — regressions would change observable behavior.
+        assert_eq!(sigmsg(libc::SIGHUP),  "hangup");
+        assert_eq!(sigmsg(libc::SIGINT),  "interrupt");
+        assert_eq!(sigmsg(libc::SIGQUIT), "quit");
+        assert_eq!(sigmsg(libc::SIGKILL), "killed");
+        assert_eq!(sigmsg(libc::SIGSEGV), "segmentation fault");
+        assert_eq!(sigmsg(libc::SIGPIPE), "broken pipe");
+        assert_eq!(sigmsg(libc::SIGTERM), "terminated");
+        assert_eq!(sigmsg(libc::SIGCHLD), "child exited");
+        assert_eq!(sigmsg(libc::SIGCONT), "continued");
+    }
+
+    #[test]
+    fn sigmsg_unknown_signal_returns_default() {
+        // c:1118 — `sig <= SIGCOUNT ? sig_msg[sig] : unknown`. Pick a
+        // signal number outside the standard set (libc gives no
+        // SIGCOUNT abstraction, so use a deliberately-high number).
+        assert_eq!(sigmsg(9999), "unknown signal");
+        assert_eq!(sigmsg(-1),   "unknown signal");
+        assert_eq!(sigmsg(0),    "unknown signal");
+    }
+
+    // ===== Test for get_usage (collapsed this session).
+
+    #[cfg(unix)]
+    #[test]
+    fn get_usage_returns_non_negative_times() {
+        // C: getrusage(RUSAGE_CHILDREN, &child_usage). Even without
+        // children, both fields must be >= 0 — the closure that maps
+        // (tv_sec, tv_usec) → microseconds shouldn't underflow.
+        let ti = get_usage();
+        assert!(ti.ut >= 0);
+        assert!(ti.st >= 0);
+    }
+
+    /// c:752 — `printhhmmss` formats `HH:MM:SS.MS` for `time` builtin.
+    /// Verifies the colon + dot separators are present. Regression
+    /// dropping them breaks every time-output parser in user scripts.
+    #[test]
+    fn printhhmmss_formats_with_colons_and_dot() {
+        let s = printhhmmss(3661.5);
+        assert!(s.contains(':'));
+        assert!(s.contains('.'), "millis must be present after dot (got {s:?})");
+    }
+
+    /// c:752 — zero seconds renders cleanly (no `-0` artifact).
+    #[test]
+    fn printhhmmss_zero_seconds_well_formed() {
+        let s = printhhmmss(0.0);
+        assert!(!s.starts_with('-'),
+            "zero must not render with leading minus (got {s:?})");
+    }
+
+    /// c:721 — `get_clktck` returns sysconf(_SC_CLK_TCK). MUST be > 0
+    /// on every POSIX (typically 100 or 1000). A zero/negative would
+    /// divide by zero in every CPU-time computation.
+    #[cfg(unix)]
+    #[test]
+    fn get_clktck_returns_positive_value() {
+        assert!(get_clktck() > 0, "_SC_CLK_TCK must be positive");
+    }
+
+    /// c:1422 — `deletefilelist(disowning=true)` MUST clear all
+    /// entries (since the disowned job no longer owns its open fds).
+    /// Regression that retains entries on disown would leak them.
+    #[test]
+    fn deletefilelist_disown_clears_all_entries() {
+        let mut j = Job::new();
+        addfilelist(&mut j, Some("/tmp/a"), -1);
+        addfilelist(&mut j, None, 7);
+        assert_eq!(j.filelist.len(), 2);
+        deletefilelist(&mut j, true);
+        assert!(j.filelist.is_empty(),
+            "disowning=true must clear all filelist entries");
+    }
+
+    /// c:260 — `super_job` returns None for top-level jobs (no super).
+    /// Regression treating "no super" as a valid index would crash
+    /// SIGCHLD reaping with phantom job lookups.
+    #[test]
+    fn super_job_returns_none_for_top_level_job() {
+        let tab = vec![Job::new()];
+        assert!(super_job(&tab, 0).is_none());
+    }
+
+    /// c:findproc — looking up a non-existent pid returns None. A
+    /// regression returning Some(0,0,false) would let SIGCHLD reap
+    /// a phantom job.
+    #[test]
+    fn findproc_unknown_pid_returns_none() {
+        let tab: Vec<Job> = vec![Job::new(), Job::new()];
+        assert!(findproc(&tab, 99999).is_none());
+    }
+
+    /// c:findproc — finding the actual pid returns the (job_idx,
+    /// proc_idx, is_aux) triple. Catches a regression where the
+    /// search doesn't traverse a job's procs vec.
+    #[test]
+    fn findproc_known_pid_returns_correct_indices() {
+        let mut tab: Vec<Job> = vec![Job::new(), Job::new()];
+        let mut p = Process::new(12345);
+        p.status = SP_RUNNING;
+        tab[1].procs.push(p);
+        let r = findproc(&tab, 12345);
+        assert!(r.is_some(), "must find the seeded pid");
+        let (job_idx, proc_idx, is_aux) = r.unwrap();
+        assert_eq!(job_idx, 1);
+        assert_eq!(proc_idx, 0);
+        assert!(!is_aux, "primary procs vec, not auxprocs");
+    }
 }

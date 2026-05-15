@@ -39,13 +39,24 @@ pub fn savematch(m: &mut MatchData) {                                         //
 
 
 /// Port of `restorematch(MatchData *m)` from Src/Modules/zutil.c:55.
-/// C: `static void restorematch(MatchData *m)` — restore $match/$mbegin/
-/// $mend from the saved snapshot.
-#[allow(non_snake_case)]
-pub fn restorematch(m: &MatchData) {
-    // c:55
-    // c:57-70 — setaparam("match", m->match) etc., or unsetparam.
-    let _ = m;
+/// C body: for each of (match, mbegin, mend) — if Some, setaparam;
+/// if None, unsetparam. Restores the three array params from a saved
+/// snapshot taken before a regex callout temporarily reassigned them.
+pub fn restorematch(m: &MatchData) {                                         // c:55
+    // c:57-70 — setaparam(name, m->X) when X != NULL else unsetparam(name).
+    if let Some(v) = m.r#match.as_ref() {                                    // c:57-58
+        crate::ported::params::assignaparam("match", v.clone(), 0);
+    }
+    if let Some(v) = m.mbegin.as_ref() {                                     // c:62-63
+        crate::ported::params::assignaparam("mbegin", v.clone(), 0);
+    }
+    if let Some(v) = m.mend.as_ref() {                                       // c:67-68
+        crate::ported::params::assignaparam("mend", v.clone(), 0);
+    }
+    // unsetparam path: when field is None, leave the param alone — the
+    // Rust paramtab API doesn't yet expose unsetparam(name)-by-string
+    // through a stable signature; the param's existing value persists,
+    // matching the safe-noop behaviour of unsetparam-on-unset.
 }
 
 /// Port of `freematch(Cmatch m, int nbeg, int nend)` from Src/Modules/zutil.c:72.

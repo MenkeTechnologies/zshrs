@@ -20,3 +20,19 @@
 //!
 //! This file is intentionally empty. Do not add prototypes — Rust
 //! pulls them via `libc::*` in the call sites that need them.
+
+#[cfg(test)]
+mod tests {
+    /// `Src/prototypes.h` is a stack of `#ifndef HAVE_*` legacy externs.
+    /// This file MUST remain empty — every legacy fallback maps to libc.
+    /// If a future commit adds an extern here, it's drift: zshrs's libc
+    /// crate already provides POSIX bindings on every supported target.
+    /// Test pins the contract by asserting libc::getppid + libc::strerror
+    /// are wired (the two most commonly-cited externs in the C header).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_every_legacy_fallback() {
+        let _: unsafe extern "C" fn() -> libc::pid_t = libc::getppid;
+        let _: unsafe extern "C" fn(libc::c_int) -> *mut libc::c_char = libc::strerror;
+    }
+}

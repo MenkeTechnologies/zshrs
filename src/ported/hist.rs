@@ -1200,6 +1200,66 @@ pub fn hdynread(_stop: i32) -> Option<String> {
     None
 }
 
+/// Direct port of `static void ihungetc(int c)` from `Src/hist.c:989`.
+/// Push back `c` into the lexer input stream while history-rewriting
+/// is in progress: also rewinds chline (`hptr--`), undoes the
+/// `expanding`-driven `zlemetacs`/`zlemetall` advance, and tracks the
+/// `qbang` state for `\!` re-escape on the next pass. Loops while
+/// `qbang` keeps firing (which can re-trigger via the `c='\\'` step
+/// at the bottom).
+pub fn ihungetc(c: i32) {                                                    // c:989
+    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut c = c as u8 as char;                                             // c:991 int c
+    let mut doit = 1;                                                        // c:991 doit = 1
+    while !crate::ported::hist::lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
+        && crate::ported::utils::errflag.load(SeqCst) == 0
+    {
+        let hp = crate::ported::hist::hptr.load(SeqCst);
+        let line = crate::ported::hist::chline.lock().unwrap().clone();
+        let line_b = line.as_bytes();
+        let stop = crate::ported::hist::stophist.load(SeqCst);
+        let inflags = crate::ported::input::inbufflags.with(|f| f.get());
+        let active = crate::ported::hist::histactive.load(SeqCst);
+        if hp >= 2 && hp <= line_b.len()                                     // c:994-997
+            && line_b[hp - 1] != c as u8 && stop < 4
+            && line_b[hp - 1] == b'\n' && line_b[hp - 2] == b'\\'
+            && (active & crate::ported::hist::HA_UNGET) == 0
+            && (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS
+        {
+            crate::ported::hist::histactive.fetch_or(crate::ported::hist::HA_UNGET, SeqCst);  // c:998
+            crate::ported::input::inungetc('\n');                            // c:999 hungetc('\n') — default = inungetc (c:1140)
+            crate::ported::input::inungetc('\\');                            // c:1000
+            crate::ported::hist::histactive.fetch_and(!crate::ported::hist::HA_UNGET, SeqCst); // c:1001
+        }
+        if crate::ported::hist::expanding.load(SeqCst) != 0 {                // c:1004 if (expanding)
+            crate::ported::zle::compcore::ZLEMETACS.fetch_sub(1, SeqCst);    // c:1005 zlemetacs--
+            crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst);    // c:1006 zlemetall--
+            crate::ported::hist::exlast.fetch_add(1, SeqCst);                // c:1007 exlast++
+        }
+        if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {                 // c:1009
+            // c:1010-1013 — DPUTS asserts; hptr-- + qbang derive.
+            let new_hp = hp.saturating_sub(1);
+            crate::ported::hist::hptr.store(new_hp, SeqCst);                 // c:1011 hptr--
+            let bangchar_v = crate::ported::hist::bangchar.load(SeqCst) as u8;
+            let qb = c as u8 == bangchar_v && stop < 2                       // c:1014-1015
+                && new_hp > 0 && line_b.get(new_hp - 1).copied() == Some(b'\\');
+            crate::ported::hist::qbang.store(qb, SeqCst);
+        } else {
+            crate::ported::hist::qbang.store(false, SeqCst);                 // c:1018 No active bangs in aliases
+        }
+        if doit != 0 {                                                        // c:1020
+            crate::ported::input::inungetc(c);                               // c:1021
+        }
+        if !crate::ported::hist::qbang.load(SeqCst) { return; }              // c:1022
+        let inflags2 = crate::ported::input::inbufflags.with(|f| f.get());
+        doit = if crate::ported::hist::stophist.load(SeqCst) == 0            // c:1023-1024
+            && ((inflags2 & INP_HIST) != 0 || (inflags2 & INP_ALIAS) == 0)
+        { 1 } else { 0 };
+        c = '\\';                                                            // c:1025
+    }
+}
+
 /// Direct port of `int getsubsargs(char *subline, int *gbalp, int *cflagp)`
 /// from `Src/hist.c:518`. Parses the substitution arguments of a
 /// `!:s/old/new/`-style history modifier: reads the delimiter via
@@ -1732,6 +1792,19 @@ pub static qbang: AtomicBool = AtomicBool::new(false);                       // 
 
 /// Port of `int hlinesz` from Src/hist.c:206.
 pub static hlinesz: AtomicI32 = AtomicI32::new(0);                           // c:206
+
+/// Port of `mod_export int expanding;` from Src/hist.c:65.
+/// Non-zero while history-expansion is rewriting the current line.
+pub static expanding: AtomicI32 = AtomicI32::new(0);                         // c:65
+
+/// Port of `mod_export int excs;` from Src/hist.c:70.
+/// Cursor position offset accumulator used while history-expanding.
+pub static excs: AtomicI32 = AtomicI32::new(0);                              // c:70
+
+/// Port of `mod_export int exlast;` from Src/hist.c:70.
+/// Last `inbufct` snapshot taken at expansion start; the difference
+/// drives the `excs` cursor advance through the rewritten line.
+pub static exlast: AtomicI32 = AtomicI32::new(0);                            // c:70
 
 /// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
 #[allow(non_camel_case_types)]
@@ -2268,5 +2341,146 @@ mod subst_modifier_tests {
     fn s_escaped_delimiter_in_pattern() {
         // c:3768 — `\/` inside the pattern emits a literal `/`.
         assert_eq!(apply_history_modifiers("a/b", r":s/\//#/"), "a#b");
+    }
+
+    /// c:1304/1311 — `up_histent` walks the hist_ring toward newer
+    /// entries; on an empty ring there's no walk possible. None is
+    /// the well-defined empty state. Regression where it returns
+    /// Some(0) would make the up-history widget enter a phantom entry.
+    #[test]
+    fn up_histent_on_empty_ring_is_none() {
+        let snapshot: Vec<_> = hist_ring.lock().unwrap().drain(..).collect();
+        assert!(up_histent(1).is_none());
+        assert!(down_histent(1).is_none());
+        hist_ring.lock().unwrap().extend(snapshot);
+    }
+
+    /// c:518 (getsubsargs port) — the substitution-argument parser
+    /// returns 1 when the input stream produces no delimiter char.
+    /// Without any input buffered, the very first ingetc() call yields
+    /// None → return 1 BEFORE we try to read ptr1/ptr2.
+    #[test]
+    fn getsubsargs_returns_one_when_no_delimiter_available() {
+        let mut gbal = 0i32;
+        let mut cflag = 0i32;
+        // No input pre-seeded; ingetc returns None on the very first
+        // call → ptr1 is None → return 1.
+        let r = getsubsargs("", &mut gbal, &mut cflag);
+        assert_eq!(r, 1, "no delimiter byte → fail-fast 1");
+        assert_eq!(gbal,  0, "no :G suffix observed");
+        assert_eq!(cflag, 0, "no cflag set");
+    }
+
+    /// `histreduceblanks` collapses runs of spaces+tabs to single
+    /// spaces. Used by HIST_REDUCE_BLANKS option. A regression that
+    /// fails to collapse would bloat the history file with redundant
+    /// whitespace.
+    #[test]
+    fn histreduceblanks_collapses_internal_runs() {
+        assert_eq!(histreduceblanks("a    b"), "a b");
+        assert_eq!(histreduceblanks("foo\t\tbar"), "foo bar");
+        // Leading/trailing whitespace is left intact per the C body.
+        assert_eq!(histreduceblanks("a b"), "a b");
+    }
+
+    /// `digitcount` returns the run-length of leading ASCII digits.
+    /// Used by hist-event parsing (`!42` etc.). Regression that misses
+    /// the trailing-digit run (e.g. stops too early) would mis-parse
+    /// large event numbers as smaller ones.
+    #[test]
+    fn digitcount_counts_leading_run() {
+        assert_eq!(digitcount("12345"),    5);
+        assert_eq!(digitcount("42abc"),    2);
+        assert_eq!(digitcount("abc"),      0);
+        assert_eq!(digitcount(""),         0);
+        assert_eq!(digitcount("0"),        1);
+    }
+
+    /// `hist_in_word` / `hist_is_in_word` round-trip — the state flag
+    /// the lexer flips while accumulating a word for history. C uses
+    /// a single int; the Rust port preserves the bit-perfect contract.
+    #[test]
+    fn hist_in_word_round_trips() {
+        hist_in_word(1);
+        assert_eq!(hist_is_in_word(), 1);
+        hist_in_word(0);
+        assert_eq!(hist_is_in_word(), 0);
+    }
+
+    /// c:2122 — `remtext("path/file.ext")` returns `"path/file"` —
+    /// strips the file extension. Used by `${var:r}`. Regression
+    /// dropping the dirname or keeping the dot would silently corrupt
+    /// every filename-manipulation script.
+    #[test]
+    fn remtext_strips_extension_keeping_dirname() {
+        assert_eq!(remtext("path/file.ext"), "path/file");
+        assert_eq!(remtext("file.ext"),      "file");
+        assert_eq!(remtext("file"),          "file");
+    }
+
+    /// c:2122 — leading dot is NOT an extension separator; `.bashrc`
+    /// has no extension to strip. Regression treating it as one would
+    /// turn every dotfile into an empty string.
+    #[test]
+    fn remtext_treats_leading_dot_as_part_of_name() {
+        assert_eq!(remtext(".bashrc"),      ".bashrc");
+        assert_eq!(remtext("path/.bashrc"), "path/.bashrc");
+    }
+
+    /// c:2136 — `rembutext("path/file.ext")` returns `"ext"` (the
+    /// extension, dropping the body). Counterpart to `remtext`.
+    /// Regression returning the wrong slice would break `${file:e}`.
+    #[test]
+    fn rembutext_returns_extension_only() {
+        assert_eq!(rembutext("path/file.ext"), "ext");
+        assert_eq!(rembutext("file.tar.gz"),   "gz",
+            "last `.` wins (extension-only is post-LAST-dot)");
+        assert_eq!(rembutext("file"),          "");
+    }
+
+    /// c:2056 — `remtpath(path, 0)` (the `${PWD:h}` no-count case)
+    /// removes the LAST component. `remtpath("/a/b/c", 0)` → `"/a/b"`.
+    /// This is the canonical `:h` modifier path used by every theme
+    /// that displays `${PWD:h}`.
+    #[test]
+    fn remtpath_count_zero_strips_last_component() {
+        assert_eq!(remtpath("/a/b/c", 0),  "/a/b");
+        assert_eq!(remtpath("/a",     0),  "/");
+        assert_eq!(remtpath("foo",    0),  ".",
+            "no slash → returns '.'");
+    }
+
+    /// c:2152 — `remlpaths(path, count)` keeps the LAST `count`
+    /// components — counterpart to remtpath. `remlpaths("/a/b/c", 2)`
+    /// → `"b/c"`. Drives `${PWD:t}` family.
+    #[test]
+    fn remlpaths_keeps_last_n_components() {
+        assert_eq!(remlpaths("/a/b/c", 1), "c");
+        assert_eq!(remlpaths("/a/b/c", 2), "b/c");
+        assert_eq!(remlpaths("/a/b/c", 3), "a/b/c");
+    }
+
+    /// c:2196 — `casemodify(s, CASMOD_LOWER)` lowercases every char.
+    /// Regression that flips the case direction would break every
+    /// `${(L)var}` user has.
+    #[test]
+    fn casemodify_lower_lowercases() {
+        assert_eq!(casemodify("HELLO World", CASMOD_LOWER), "hello world");
+    }
+
+    /// c:2196 — `casemodify(s, CASMOD_UPPER)` uppercases.
+    #[test]
+    fn casemodify_upper_uppercases() {
+        assert_eq!(casemodify("hello world", CASMOD_UPPER), "HELLO WORLD");
+    }
+
+    /// c:2196 — `CASMOD_CAPS` capitalises FIRST letter of each word
+    /// (word-boundary determined by `nextupper` flag flips on
+    /// non-alpha chars). `"hello world"` → `"Hello World"`.
+    #[test]
+    fn casemodify_caps_capitalises_word_starts() {
+        assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
+        assert_eq!(casemodify("FOO BAR",     CASMOD_CAPS), "Foo Bar",
+            "non-first letters lowercased");
     }
 }

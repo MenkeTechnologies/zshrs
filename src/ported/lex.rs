@@ -4296,4 +4296,99 @@ mod tests {
         }
         assert_eq!(tok(), SEMIBAR);
     }
+
+    /// c:3952 — `untokenize` removes Marker/Bnull/Snull tokens left
+    /// by the param-substitution pipeline. A plain string passes
+    /// through unchanged; tokenised input gets its sentinels stripped.
+    /// Regression that fails to strip would leak Marker bytes (0x84)
+    /// into user-visible output.
+    #[test]
+    fn untokenize_passes_plain_string_through() {
+        assert_eq!(untokenize("hello"),      "hello");
+        assert_eq!(untokenize(""),           "");
+        assert_eq!(untokenize("a/b/c"),      "a/b/c");
+    }
+
+    /// c:3952 — Marker / Bnull / Snull are the C tokenisation
+    /// sentinels (Src/zsh.h). They must be removed by untokenize.
+    /// Regression that leaves them in would visibly mangle output.
+    #[test]
+    fn untokenize_strips_marker_sentinels() {
+        // Marker = 0x84 per zsh.h Marker constant.
+        let with_marker = format!("a{}b", '\u{84}');
+        let cleaned = untokenize(&with_marker);
+        assert!(!cleaned.contains('\u{84}'),
+            "Marker sentinel must be stripped (got {cleaned:?})");
+    }
+
+    /// `untokenize_preserve_quotes` keeps quote sentinels (Bnull/Snull)
+    /// in place for the param-subst-internal flow. Plain input still
+    /// round-trips unchanged.
+    #[test]
+    fn untokenize_preserve_quotes_plain_input_unchanged() {
+        assert_eq!(untokenize_preserve_quotes("foo"),  "foo");
+        assert_eq!(untokenize_preserve_quotes(""),     "");
+    }
+
+    /// `set_toklineno` + `toklineno` round-trip. The token-line
+    /// counter drives every "line N: parse error" message; a regression
+    /// where set doesn't stick would silently zero out line numbers.
+    #[test]
+    fn toklineno_set_then_get_round_trips() {
+        let saved = toklineno();
+        set_toklineno(12345);
+        assert_eq!(toklineno(), 12345);
+        set_toklineno(saved);
+    }
+
+    /// `tokfd` set/get round-trip. Catches a regression where set
+    /// stores into a different slot than read.
+    #[test]
+    fn tokfd_set_then_get_round_trips() {
+        let saved = tokfd();
+        set_tokfd(7);
+        assert_eq!(tokfd(), 7);
+        set_tokfd(saved);
+    }
+
+    /// `lexact1_get` is a const-table accessor for the per-char
+    /// type/action byte. Out-of-table chars must return safely without
+    /// panic — the high unicode + nul edge cases.
+    #[test]
+    fn lexact1_get_handles_high_chars_without_panic() {
+        let _ = lexact1_get('a');
+        let _ = lexact1_get('\0');
+        let _ = lexact1_get('\u{ffff}');
+    }
+
+    /// `isnumglob` recognises `<N-N>` numeric range glob syntax.
+    /// `<1-10>` matches numbers 1..=10. Regression dropping detection
+    /// would break every script using zsh's documented numeric-glob.
+    #[test]
+    fn isnumglob_recognises_numeric_range_pattern() {
+        assert!(isnumglob("1-10>",  0), "<1-10> shape recognised");
+        assert!(isnumglob("0-100>", 0));
+        assert!(isnumglob("9-9>",   0), "single-value range");
+    }
+
+    /// `isnumglob` rejects malformed shapes: missing closing `>`,
+    /// missing dash, or non-digit content. Regression accepting
+    /// these would let `<abc-def>` parse as a numglob.
+    #[test]
+    fn isnumglob_rejects_malformed_shapes() {
+        assert!(!isnumglob("1-10",   0), "missing closing > → not numglob");
+        assert!(!isnumglob("1-",     0), "no closing");
+        assert!(!isnumglob("abc>",   0), "non-digit content");
+        assert!(!isnumglob(">",      0), "bare close");
+        assert!(!isnumglob("",       0), "empty input");
+    }
+
+    /// `isnumglob` honours the `pos` offset — it scans from `pos`,
+    /// not always from 0. Regression ignoring `pos` would scan from
+    /// the wrong starting char on every embedded numglob.
+    #[test]
+    fn isnumglob_respects_position_offset() {
+        assert!(isnumglob("xxx1-10>",  3), "scan from offset 3");
+        assert!(!isnumglob("xxx1-10>", 0), "scan from offset 0 sees 'x'");
+    }
 }

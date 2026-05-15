@@ -5846,4 +5846,149 @@ mod tests {
         // Bell character.
         assert!(is_mb_niceformat("a\x07b"));
     }
+
+    /// c:4856/4954 — `metafy` + `unmetafy` MUST round-trip for ASCII.
+    /// A regression in the round-trip corrupts every metafied buffer
+    /// the lexer/param-subst pipeline produces.
+    #[test]
+    fn metafy_unmetafy_round_trips_for_ascii() {
+        let s = "hello world";
+        let m = metafy(s);
+        let mut buf = m.into_bytes();
+        unmetafy(&mut buf);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), s);
+    }
+
+    /// `ztrlen` counts metafied characters (Meta-pairs as 1).
+    /// Regression that double-counts Meta-pair bytes would break
+    /// every fixed-width column path (printf %s).
+    #[test]
+    fn ztrlen_counts_ascii_one_per_byte() {
+        assert_eq!(ztrlen(""),     0);
+        assert_eq!(ztrlen("a"),    1);
+        assert_eq!(ztrlen("hello"), 5);
+    }
+
+    /// c:params.c:1288 — `isident` rejects digit-leading names.
+    /// A regression accepting them lets `typeset 1foo=bar` install
+    /// a poisoned param that no later expansion can address.
+    #[test]
+    fn isident_rejects_digit_leading_names() {
+        assert!(!isident("1foo"));
+        assert!(!isident("99"));
+        assert!(!isident(""));
+    }
+
+    /// `isident` MUST accept underscore-leading + alpha-leading names —
+    /// `_foo`, `Foo_BAR_42` are valid POSIX shell idents.
+    #[test]
+    fn isident_accepts_underscore_and_alpha_leading() {
+        assert!(isident("foo"));
+        assert!(isident("_foo"));
+        assert!(isident("Foo_BAR_42"));
+        assert!(isident("a"));
+    }
+
+    /// `isident` rejects whitespace/punctuation/$. A regression
+    /// accepting them would let assignments install names no
+    /// subsequent lookup can address (`typeset 'foo bar'=baz`).
+    #[test]
+    fn isident_rejects_special_chars() {
+        assert!(!isident("foo bar"));
+        assert!(!isident("foo-bar"));
+        assert!(!isident("foo."));
+        assert!(!isident("a$b"));
+    }
+
+    /// `convbase(0, 10)` MUST produce `"0"`, not `""`. The literal-zero
+    /// edge case is a real C divergence point — regression here would
+    /// make `$(( 0 ))` print nothing.
+    #[test]
+    fn convbase_zero_renders_as_zero_literal() {
+        assert_eq!(convbase(0, 10), "0");
+    }
+
+    /// `convbase` uses zsh's canonical `BASE#NUMBER` syntax for
+    /// non-decimal output (matches `$(( [#16] 255 ))` → `16#FF`).
+    /// This is the format `printf "%X"` and `$(( ... ))` both produce.
+    #[test]
+    fn convbase_uses_base_prefix_syntax_for_non_decimal() {
+        assert_eq!(convbase(255, 16),  "16#FF");
+        assert_eq!(convbase(8,   8),   "8#10");
+        assert_eq!(convbase(5,   2),   "2#101");
+        // Base 10 has no prefix.
+        assert_eq!(convbase(42,  10),  "42");
+    }
+
+    /// Negative number renders with leading `-`. Regression that drops
+    /// the sign would silently flip arithmetic semantics in `$((...))`.
+    #[test]
+    fn convbase_preserves_negative_sign() {
+        assert_eq!(convbase(-42, 10), "-42");
+    }
+
+    /// c:837 — `slashsplit("/usr/local/bin")` → `["usr","local","bin"]`.
+    /// Empty segments (consecutive slashes) MUST be filtered. A
+    /// regression keeping them would yield `["", "usr", ...]` which
+    /// breaks every PATH-walking lookup.
+    #[test]
+    fn slashsplit_filters_empty_segments() {
+        assert_eq!(slashsplit("/usr/local/bin"),
+                   vec!["usr".to_string(), "local".to_string(), "bin".to_string()]);
+        assert_eq!(slashsplit("//foo"),
+                   vec!["foo".to_string()],
+                   "consecutive slashes filtered");
+        assert_eq!(slashsplit(""), Vec::<String>::new());
+        assert_eq!(slashsplit("/"), Vec::<String>::new());
+    }
+
+    /// c:837 — relative paths (no leading `/`) split same way.
+    /// Trailing `/` produces no extra empty segment.
+    #[test]
+    fn slashsplit_relative_path_no_trailing_empty() {
+        assert_eq!(slashsplit("a/b/"),
+                   vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// `equalsplit("foo=bar")` returns Some(("foo","bar")). Used by
+    /// `typeset NAME=val` parsing. Regression returning None on a
+    /// well-formed assignment would silently break every export/typeset.
+    #[test]
+    fn equalsplit_returns_first_equals_split() {
+        assert_eq!(equalsplit("foo=bar"),
+                   Some(("foo".to_string(), "bar".to_string())));
+        assert_eq!(equalsplit("a=b=c"),
+                   Some(("a".to_string(), "b=c".to_string())),
+                   "splits on FIRST `=` only");
+    }
+
+    /// `equalsplit("foo")` returns None — no `=` to split on. Catches
+    /// a regression returning Some(("foo","")) which would let bare
+    /// names install with empty values silently.
+    #[test]
+    fn equalsplit_no_equals_returns_none() {
+        assert_eq!(equalsplit("foo"), None);
+        assert_eq!(equalsplit(""),    None);
+    }
+
+    /// c:5106 — `ztrcmp` is the canonical zsh string compare. Same
+    /// inputs MUST produce same Ordering (deterministic). Regression
+    /// to a randomised hash-order would mis-sort `${(o)array}` output.
+    #[test]
+    fn ztrcmp_deterministic_and_lexicographic() {
+        assert_eq!(ztrcmp("abc", "abc"), std::cmp::Ordering::Equal);
+        assert_eq!(ztrcmp("abc", "abd"), std::cmp::Ordering::Less);
+        assert_eq!(ztrcmp("abd", "abc"), std::cmp::Ordering::Greater);
+        // Empty strings.
+        assert_eq!(ztrcmp("",    ""),    std::cmp::Ordering::Equal);
+        assert_eq!(ztrcmp("",    "a"),   std::cmp::Ordering::Less);
+    }
+
+    /// c:5106 — shorter-as-prefix sorts before longer (like strcmp).
+    /// Catches a regression where length-then-content would mis-sort.
+    #[test]
+    fn ztrcmp_shorter_prefix_is_less() {
+        assert_eq!(ztrcmp("a",   "ab"),  std::cmp::Ordering::Less);
+        assert_eq!(ztrcmp("foo", "foob"), std::cmp::Ordering::Less);
+    }
 }
