@@ -5041,17 +5041,15 @@ pub fn gethostname() -> String {
         .unwrap_or_else(|| "localhost".to_string())
 }
 
-/// Get current working directory
-pub fn zgetcwd() -> Option<String> {
-    std::env::current_dir()
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
+/// Get current working directory.
+/// C body (compat.c:559, 1 line): `return getcwd(NULL, 0);`
+pub fn zgetcwd() -> Option<String> {                                         // c:compat.c:559
+    crate::ported::compat::zgetcwd()
 }
 
-/// Set current working directory
-pub fn zchdir(path: &str) -> bool {
-    std::env::set_current_dir(path).is_ok()
-}
+// `zchdir` duplicate deleted — canonical port at compat.rs:253
+// matches C's `int zchdir(char *dir)` signature (returns i32, not
+// bool). Zero callers used the utils.rs bool variant.
 
 /// Rust wrapper around libc `realpath(3)` — no zsh C counterpart
 /// (zsh uses libc directly via the `realpath` symbol). Provided
