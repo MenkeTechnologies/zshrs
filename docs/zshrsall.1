@@ -1,0 +1,455 @@
+.\" zshrsall.1 — comprehensive reference for zshrs (like zshall(1)).
+.\" Combines the per-topic content that, in upstream zsh, is split
+.\" across zshbuiltins, zshoptions, zshparam, zshzle, zshcompsys etc.
+.\" The zshrs-specific layers (daemon, fusevm, AOT, AOP, caches,
+.\" parity modes, recorder) are documented inline because they have
+.\" no upstream counterpart.
+.TH ZSHRSALL 1 "2026-05-14" "zshrs 0.11.4" "User Commands"
+.SH NAME
+zshrsall \- the Z shell, Rust compiled implementation (full reference)
+.SH SYNOPSIS
+.B zshrs
+.RI [ options ]
+.RI [ argument
+\&...]
+.SH DESCRIPTION
+This is the comprehensive reference for
+.BR zshrs (1).
+For the short option summary, see
+.BR zshrs (1).
+For the singleton coordinator daemon, see
+.BR zd (1).
+.PP
+.B zshrs
+is a strict 1:1 port of the Z shell
+.RB ( zsh (1))
+into Rust, with an additional non-port extensions layer that adds
+features zsh does not have. The runtime is a four-crate workspace:
+.IP "" 4
+.B zshrs
+\(em the runtime binary
+.IP "" 4
+.B compsys
+\(em completion-system subcrate
+.IP "" 4
+.B zshrs-daemon
+\(em the singleton coordinator
+.IP "" 4
+.B zshrs-recorder
+\(em the optional shell-session recorder
+.PP
+.B src/ported/
+holds the strict 1:1 ports (89 files, every function maps to a real
+.IB Src/ x .c
+zsh function, enforced by
+.BR tests/port_purity.rs ).
+.B src/extensions/
+holds zshrs-only code (31 files: AOT, daemon coordination, plugin and
+script and autoload caches, fish-style autosuggestions / abbreviations /
+syntax highlighting, the persistent worker pool, ZWC bytecode helpers).
+.SH "THE COMPILED PIPELINE"
+Every command zshrs runs traverses this pipeline:
+.IP "" 4
+.B lex
+\(em
+.IR src/ported/lex.rs ,
+matches
+.IR Src/lex.c .
+.IP "" 4
+.B parse
+\(em
+.IR src/ported/parse.rs ,
+matches
+.IR Src/parse.c .
+.IP "" 4
+.B emit
+\(em wordcode emission, then
+.B fusevm
+opcode lowering.
+.IP "" 4
+.B compile
+\(em
+.B fusevm
+JIT compiles hot units to native machine code on the second invocation.
+.IP "" 4
+.B run
+\(em the bytecode runs in
+.B fusevm
+with a persistent worker pool servicing builtins and most external
+calls without
+.BR fork (2).
+.PP
+The pipeline outputs can be inspected directly via
+.BR \-\-dump\-tokens ,
+.BR \-\-dump\-ast ,
+.BR \-\-dump\-wordcode ,
+and
+.BR \-\-disasm
+(see
+.BR zshrs (1)).
+The resulting bytecode is cached as rkyv shards under
+.IR ~/.cache/zshrs/ .
+.SH "INVOCATION"
+.B zshrs
+accepts the same argument grammar as
+.BR zsh (1).
+A login shell sources login files, an interactive shell sources
+.IR .zshrc ,
+.BR \-c
+takes a command literal,
+.B \-s
+forces stdin reading, and bare-script invocation
+.RB ( "zshrs " script )
+runs the script with
+.B $0
+set to its path. See
+.BR zshrs (1)
+for the full flag table.
+.SH "PARITY MODES"
+.TP
+.B \-\-zsh
+Identical behaviour to
+.BR /bin/zsh .
+All caches disabled, daemon disabled. Used by the parity test corpus
+.RB ( tests/zsh_compat_parity_gaps.rs )
+to verify byte-for-byte equivalence.
+.TP
+.B \-\-bash
+Identical behaviour to
+.BR /bin/bash .
+.TP
+.B \-\-ksh
+Identical behaviour to
+.BR /bin/ksh
+(ksh-93 dialect).
+.TP
+.B \-\-posix
+Identical behaviour to
+.BR /bin/sh
+(Bourne, dash).
+.PP
+Parity modes never write to the cache and never connect to the daemon;
+they exist for compatibility testing and for environments where
+caching must be off.
+.SH "STARTUP FILES"
+Same set, order, and gating as
+.BR zsh (1):
+.PP
+.IR /etc/zshenv " \(em " $ZDOTDIR/.zshenv " \(em " /etc/zprofile " \(em " $ZDOTDIR/.zprofile
+(login)
+.B \(em
+.IR /etc/zshrc " \(em " $ZDOTDIR/.zshrc
+(interactive)
+.B \(em
+.IR /etc/zlogin " \(em " $ZDOTDIR/.zlogin
+(login)
+.B \(em
+.IR $ZDOTDIR/.zlogout " \(em " /etc/zlogout
+(login shutdown).
+.PP
+When
+.B $ZDOTDIR
+is unset,
+.B $HOME
+is used. The
+.B RCS
+and
+.B PRIVILEGED
+options gate sourcing identically to upstream zsh.
+.SH "FILES, LANGUAGE & SYNTAX"
+zshrs accepts the full zsh language: parameter expansion (including
+.BR ${(z)var} ", " ${(s/X/)var} ", " ${(q)var} ", " ${(P)var} ", " (V) ", " (kv) ", " (ZX) " ..."),
+process substitution
+.RB ( <(...) ", " >(...) "),"
+brace expansion, glob qualifiers
+.RB ( "*(.D)" ", " "*(om[1,5])" ", " ...),
+extended-glob patterns
+.RB ( **/* ", " "(foo|bar)" ", " "<NUM-NUM>" "),"
+arithmetic
+.RB ( "(( ... ))" ", " $((...)) "),"
+math functions, and conditional expressions
+.RB ( "[[ ... ]]" "),"
+all matching upstream zsh. Compatibility surface for plugins
+.RB ( "oh-my-zsh, " "prezto, " "zinit, " "p10k, " "zsh-autosuggestions"
+etc.) is sacred; the
+.B 96-test
+invariants
+.RB ( tree_walker_absent ,
+.B no_tree_walker_dispatch )
+plus the parity corpus pin observable behaviour.
+.SH "ZLE \(em ZSH LINE EDITOR"
+All 193 widgets from upstream
+.B Src/Zle/iwidgets.list
+are ported: history navigation, vi find/repeat/marks, undo/redo,
+isearch, yank-pop, shell-aware word motion, region/visual mode, text
+objects, completion menu, and
+.B $zle_highlight
+parsing. The lexer-driven shell-word splitter is the same code path
+.BR zsh-syntax-highlighting
+expects; tokenisation matches
+.BR Src/glob.c::zshtokenize
+exactly.
+.SH "COMPLETION"
+The completion system (compsys) ships as its own crate
+.RI ( compsys/ )
+with the per-shell-state caches mmap'd from
+.IR ~/.cache/zshrs/ .
+.BR _approximate ,
+.BR _expand_alias ,
+.BR _list ,
+.BR _menu ,
+.BR _oldlist ,
+and the
+.B *.zwc
+autoload-bundle path are honoured. The
+.B zsh-more-completions
+corpus (16,806 files) loads unchanged.
+.SH "BUILTINS"
+Every builtin from upstream zsh is implemented: the full
+.BR alias " " bg " " bindkey " " break " " builtin " " bye " " cap " " cd " " chdir " " clone " " command " " compadd " " compcall " " compctl " " compdescribe " " compfiles " " compgroups " " compquote " " compset " " comptags " " comptry " " compvalues " " continue " " declare " " dirs " " disable " " disown " " echo " " echotc " " echoti " " emulate " " enable " " eval " " exec " " exit " " export " " false " " fc " " fg " " float " " function " " functions " " getln " " getopts " " hash " " history " " integer " " jobs " " kill " " let " " limit " " local " " log " " logout " " noglob " " popd " " print " " printf " " private " " pushd " " pushln " " pwd " " r " " read " " readonly " " rehash " " return " " sched " " set " " setopt " " shift " " source " " stat " " suspend " " test " " times " " trap " " true " " ttyctl " " type " " typeset " " ulimit " " umask " " unalias " " unfunction " " unhash " " unlimit " " unset " " unsetopt " " vared " " wait " " whence " " where " " which " " zcompile " " zformat " " zftp " " zle " " zmodload " " zparseopts " " zpty " " zregexparse " " zsocket " " zstat " " zstyle " " zsystem
+set, plus 48 fish-ported builtins surfaced under the same dispatch.
+See
+.BR zshbuiltins (1)
+for option-by-option detail; all options listed there are honoured.
+.SH "OPTIONS"
+zshrs honours every option defined in upstream zsh:
+.BR setopt / unsetopt
+manipulate the same on/off table, the same default emulation matrix
+.RB ( ksh ,
+.BR sh ,
+.BR zsh )
+applies, and the
+.BR emulate (1)
+builtin switches between them at runtime. See
+.BR zshoptions (1)
+for the full list.
+.SH "DAEMON COORDINATION"
+When run in full mode (no parity flag), zshrs cooperates with a
+singleton coordinator process,
+.BR zshrs-daemon ,
+addressed via
+.IR ~/.cache/zshrs/daemon.sock .
+The daemon owns ALL mutation:
+.IP "" 4
+.B fsnotify
+\(em watches
+.IR ~/.zshrc ,
+.BR $fpath ,
+plugin trees, and invalidates the affected cache shards.
+.IP "" 4
+.B compile
+\(em rkyv image writes for script_cache, plugin_cache, autoload_cache,
+catalog.db rebuilds, log rotation, integrity scans.
+.IP "" 4
+.B IPC routing
+\(em cross-shell pub/sub
+.RB ( zsubscribe ,
+.BR znotify ,
+.BR zsend ,
+.BR ztag ),
+shell registry
+.RB ( zls ,
+.BR zid ,
+.BR zping ),
+and the session-persistent job supervisor
+.RB ( zjob ,
+planned).
+.PP
+100+ thin
+.B zshrs
+clients (e.g. one per tmux pane) mmap the daemon's outputs directly
+for hot lookups (zero IPC), and use the socket only for control-plane
+events (rebuild, fpath_changed, stats_flush, cross-shell dispatch).
+Clients spawn zero background threads, polling timers, or SQLite
+handles. See
+.BR zd (1)
+for daemon administration.
+.PP
+.B POSIX mode never spawns the daemon.
+.SH "AHEAD-OF-TIME COMPILATION"
+.B \-\-aot
+.RI ( script.zsh )
+emits a single self-contained executable that bundles
+.BR fusevm
+with the script's compiled bytecode. The result has zero runtime
+dependency on the
+.B zshrs
+binary and can be distributed as a standalone artifact. AOT and the
+daily-driver cache are two separate tracks: AOT for deploy binaries;
+the rkyv cache for the interactive shell.
+.SH "ASPECT-ORIENTED INTERCEPTS"
+.B zshrs
+supports
+.BR before ,
+.BR after ,
+and
+.B around
+advice on every command, builtin, and user function. Registered via
+the
+.B intercepts
+crate (see
+.IR src/intercepts/ ),
+the advice runs in-process inside fusevm \(em no
+.BR fork (2)
+\(em which makes it cheap enough for production tracing, profiling,
+auditing, or per-command behaviour overlays. This is the foundation
+for
+.BR zpwrTrace ,
+.BR zpwrFlame ,
+.B zpwrTop
+and the rest of the
+.B zpwr
+introspection stack.
+.SH "ENVIRONMENT"
+Standard zsh-recognised variables and the zshrs additions
+.RB ( ZSHRS_CACHE ,
+.BR ZSHRS_LOG ,
+.BR ZSHRS_LONG_CMD_PRE_THRESHOLD )
+are documented in
+.BR zshrs (1).
+.SH "FILES"
+.TP
+.I ~/.cache/zshrs/
+Cache root. Sharded as
+.IB {hash8} - {slug} .rkyv
+per source root, plus
+.BR catalog.db ,
+.BR daemon.sock ,
+.BR zshrs.log .
+.TP
+.I ~/.config/zshrs/zshrs-daemon.toml
+Optional daemon config; see
+.BR zd (1).
+.TP
+.I ~/.zshenv,\ ~/.zprofile,\ ~/.zshrc,\ ~/.zlogin,\ ~/.zlogout
+Standard zsh startup files.
+.SH "EXIT STATUS"
+Identical to
+.BR zsh (1).
+The shell exits with the status of the last command, or with
+.B $?
+at the time of an
+.B exit
+call. 127 indicates command-not-found; 126 indicates a permission
+error.
+.SH "COMPATIBILITY GUARANTEES"
+.B zshrs
+treats the zsh upstream
+.B C
+source under
+.IR src/zsh/Src/
+as the spec floor. Bytecode and SQLite formats are versioned and
+migration-safe; old caches either upgrade cleanly or rebuild
+silently. A
+.IR .zshrc " " "that worked yesterday"
+must work today. Compat-floor regressions against
+.BR zpwr ,
+.BR zsh-more-completions ,
+.BR oh-my-zsh ,
+.BR zinit ,
+.BR p10k ,
+and the standard plugin set are catastrophic; the parity test corpus
+.RB ( tests/zsh_compat_parity_gaps.rs ,
+20,000+ cases) is gating.
+.SH "DIAGNOSTICS"
+Errors take the form
+.BI "zshrs: " command ": " reason
+on stderr. Informational chatter (init, indexing, autoload pre-warm,
+plugin compile) goes to
+.IR ~/.cache/zshrs/zshrs.log
+via
+.BR tracing ;
+it is never printed to the terminal. No startup banner. No deprecation
+nags. No spell-correction prompts. No "did you mean" hints.
+.SH "DEBUGGING & INTROSPECTION"
+.TP
+.B \-\-disasm
+Print fusevm opcodes before VM execution.
+.TP
+.B \-\-dump\-tokens, \-\-dump\-ast, \-\-dump\-wordcode, \-\-dump\-zwc
+Inspect each pipeline stage; see
+.BR zshrs (1).
+.TP
+.B ZSHRS_LOG
+.BR tracing -style filter on the structured log. Examples:
+.B ZSHRS_LOG=debug
+or
+.BR "ZSHRS_LOG=zshrs::ported::lex=trace" .
+.TP
+.B \-\-doctor
+Full diagnostic report; useful when filing issues.
+.SH "RECORDER"
+.B zshrs-recorder
+.RI ( bins/zshrs-recorder.rs )
+captures shell sessions as a structured event stream. Feature-gated;
+see
+.BR docs/RECORDER.md " and " docs/RECORDER_PROTOCOL.md
+for the on-disk schema.
+.SH "WORKERS & NO-FORK ARCHITECTURE"
+zshrs ships a persistent worker pool: long-lived processes that
+service builtins, common externals
+.RB ( ls ", " cat ", " grep ", "
+etc., on the user's allowlist), and pipeline stages without invoking
+.BR fork (2)
+on every command.
+.B "No fork, no problems."
+This is invisible to scripts: pipelines compose, redirections work,
+job control behaves identically. Workers can be disabled via
+.BR setopt " " no_workers
+or by the parity flags.
+.SH "SEE ALSO"
+.BR zshrs (1),
+.BR zd (1),
+.BR zsh (1),
+.BR zshall (1),
+.BR zshbuiltins (1),
+.BR zshoptions (1),
+.BR zshparam (1),
+.BR zshzle (1),
+.BR zshcompsys (1),
+.BR zshcompctl (1),
+.BR zshmisc (1),
+.BR zshmodules (1),
+.BR zshroadmap (1),
+.BR zshcalsys (1),
+.BR zshtcpsys (1),
+.BR zshcontrib (1),
+.BR zshexpn (1)
+.PP
+Online: docs at
+.UR https://menketechnologies.github.io/zshrs/
+https://menketechnologies.github.io/zshrs/
+.UE ,
+reference at
+.UR https://menketechnologies.github.io/zshrs/reference.html
+https://menketechnologies.github.io/zshrs/reference.html
+.UE ,
+live coverage report at
+.UR https://menketechnologies.github.io/zshrs/report.html
+https://menketechnologies.github.io/zshrs/report.html
+.UE ,
+sources at
+.UR https://github.com/MenkeTechnologies/zshrs
+https://github.com/MenkeTechnologies/zshrs
+.UE .
+.SH "AUTHORS"
+.B zshrs
+is developed by MenkeTechnologies. Built on the zsh upstream
+.RB ( https://www.zsh.org )
+which remains the source-of-truth spec; zshrs's port purity test
+.RB ( tests/port_purity.rs )
+fails the build if any
+.IR src/ported/
+function diverges from its
+.IR Src/<file>.c
+counterpart.
+.SH "BUGS"
+Report at
+.UR https://github.com/MenkeTechnologies/zshrs/issues
+https://github.com/MenkeTechnologies/zshrs/issues
+.UE .
+Include
+.B \-\-doctor
+output and
+.B ZSHRS_LOG=debug
+log excerpts.

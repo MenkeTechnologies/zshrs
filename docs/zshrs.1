@@ -1,0 +1,331 @@
+.\" zshrs.1 — man page for zshrs(1)
+.\" Companion: zshrsall(1) — comprehensive reference covering the
+.\" daemon, AOT compiler, fusevm bytecode runtime, AOP intercepts,
+.\" parity modes, caches, and recorder.
+.TH ZSHRS 1 "2026-05-14" "zshrs 0.11.4" "User Commands"
+.SH NAME
+zshrs \- the first compiled Unix shell (drop-in zsh replacement)
+.SH SYNOPSIS
+.B zshrs
+.RI [ options ]
+.RI [ argument
+\&...]
+.PP
+.B zshrs
+.B \-c
+.I command
+.RI [ argument
+\&...]
+.PP
+.B zshrs
+.B \-s
+.RI [ argument
+\&...]
+.SH DESCRIPTION
+.B zshrs
+is a drop-in replacement for the Z shell
+.RB ( zsh (1)),
+rewritten in Rust. It is the first Unix shell to compile to bytecode
+and execute on a purpose-built virtual machine
+.RB ( fusevm )
+rather than walk an AST at run time. Source compatibility with zsh is
+maintained at the lexer, parser, builtin, parameter, glob, and ZLE
+layers; existing
+.IR .zshrc ,
+.IR .zprofile ,
+zinit/oh-my-zsh plugins, and the
+.B zsh-more-completions
+corpus run unchanged.
+.PP
+Beyond compatibility,
+.B zshrs
+adds: a persistent worker pool that eliminates most
+.BR fork (2)
+overhead for builtins; aspect-oriented programming
+.RB ( AOP )
+intercepts on every command; rkyv-backed bytecode image caches for
+scripts, plugins, and autoload functions; an optional
+singleton coordinator daemon
+.RB ( zshrs-daemon ,
+see
+.BR zd (1));
+and ahead-of-time compilation
+.RB ( AOT )
+that bundles
+.B fusevm
+with bytecode into a single executable.
+.SH OPTIONS
+.SS Special options
+.TP
+.B \-\-help
+Print the option summary and exit.
+.TP
+.B \-\-version
+Print the zshrs version and exit.
+.TP
+.B \-\-doctor
+Full diagnostic report of shell health, cache state, daemon presence,
+worker pool, and integrity scan results.
+.SS Parser-pipeline dumpers
+Each dumper writes to stdout and accepts
+.B \-
+for stdin.
+.TP
+.BI \-\-dump\-tokens " FILE"
+Emit one
+.IB TOKNAME \\t TOKSTR
+line per lexer token.
+.TP
+.BI \-\-dump\-ast " FILE"
+Parser AST in canonical S-expression form.
+.TP
+.BI \-\-dump\-wordcode " FILE"
+Wordcode emitter output
+.RB ( EPROG ,
+.BR WORDS ,
+.BR WC[i] ,
+.BR STRS ).
+.TP
+.BI \-\-dump\-zwc " ZWCFILE " [ FN ]
+Inspect a compiled
+.B .zwc
+cache: list its function index, or, with
+.IR FN ,
+disassemble a single entry.
+.SS VM debugging
+.TP
+.B \-\-disasm
+Print
+.B fusevm
+opcodes for each compiled unit before VM execution. Does not suppress
+execution.
+.SS Parity modes
+Each parity mode disables all caches and the daemon and matches the
+named reference shell byte-for-byte; every
+.B source
+re-runs the file fresh, every
+.B echo
+re-fires.
+.TP
+.B \-\-zsh
+Drop-in for
+.BR /bin/zsh .
+Entry point for compatibility tests.
+.TP
+.B \-\-bash
+Drop-in for
+.BR /bin/bash .
+.TP
+.B \-\-ksh
+Drop-in for
+.BR /bin/ksh
+(ksh-93 semantics).
+.TP
+.B \-\-posix
+Drop-in for
+.BR /bin/sh
+(Bourne / dash).
+.TP
+.B \-\-zsh\-compat
+Legacy alias for
+.BR \-\-zsh .
+.PP
+With no parity flag, zshrs runs in full mode: rkyv
+.IR script_cache " + " plugin_cache " + " daemon
+enabled.
+.SS Standard zsh single-letter options
+The following match
+.BR zsh (1)
+exactly. Long-option names follow each.
+.TP
+.B \-b
+End option processing
+.RB ( -- ).
+.TP
+.B \-c
+Take the first argument as a command and execute it.
+.TP
+.B \-f
+Equivalent to
+.BR \-\-no\-rcs
+(skip startup files).
+.TP
+.B \-i
+Force interactive mode.
+.TP
+.B \-l
+Force login shell.
+.TP
+.B \-s
+Read commands from stdin.
+.TP
+.BI \-o " option"
+Set
+.I option
+by name; see
+.BR zshoptions (1).
+.TP
+.B \-v
+.RB ( \-\-verbose )
+echo each command line after history substitution.
+.TP
+.B \-x
+.RB ( \-\-xtrace )
+echo each command and its arguments as they are executed.
+.PP
+A complete table is printed by
+.BR "zshrs \-\-help" .
+The single-letter set tracks
+.BR zsh (1)
+literally:
+.BR \-a ,
+.BR \-d ,
+.BR \-e ,
+.BR \-g ,
+.BR \-h ,
+.BR \-k ,
+.BR \-m ,
+.BR \-n ,
+.BR \-p ,
+.BR \-r ,
+.BR \-t ,
+.BR \-u ,
+.BR \-w ,
+.BR \-y
+and the upper-case
+.BR \-H " " \-I " " \-J " " \-K " " \-L " " \-M " " \-N " " \-O " " \-P " " \-Q " " \-R " " \-S " " \-T " " \-U " " \-V " " \-W " " \-X " " \-Y " " \-Z
+family.
+.SH STARTUP FILES
+zshrs reads the same startup files as
+.BR zsh (1)
+in the same order:
+.IP "" 4
+.I /etc/zshenv
+.IP "" 4
+.IB $ZDOTDIR /.zshenv
+.RB ( $HOME
+when
+.B $ZDOTDIR
+is unset)
+.IP "" 4
+.I /etc/zprofile
+,
+.IB $ZDOTDIR /.zprofile
+(login)
+.IP "" 4
+.I /etc/zshrc
+,
+.IB $ZDOTDIR /.zshrc
+(interactive)
+.IP "" 4
+.I /etc/zlogin
+,
+.IB $ZDOTDIR /.zlogin
+(login)
+.IP "" 4
+.IB $ZDOTDIR /.zlogout
+,
+.I /etc/zlogout
+(login shutdown)
+.PP
+.B \-\-no\-rcs
+.RB ( \-f )
+and the
+.B PRIVILEGED
+option modulate which files are sourced, identically to zsh.
+.SH ENVIRONMENT
+In addition to the standard zsh-recognised variables
+.RB ( PATH ,
+.BR FPATH ,
+.BR HOME ,
+.BR USER ,
+.BR LOGNAME ,
+.BR UID ,
+.BR EUID ,
+.BR SHELL ,
+.BR TERM ,
+.BR COLUMNS ,
+.BR LINES ,
+.BR ZDOTDIR ,
+.BR TMPDIR ,
+.BR MANPATH ,
+.BR PS1 ,
+.BR PROMPT ,
+.BR RPROMPT ),
+zshrs reads:
+.TP
+.B ZSHRS_CACHE
+Directory for rkyv bytecode images (default
+.IR $HOME/.cache/zshrs ).
+.TP
+.B ZSHRS_LOG
+.BR tracing -style
+filter for the structured log written to
+.IR $HOME/.cache/zshrs/zshrs.log
+.RB "(default " info ).
+.TP
+.B ZSHRS_LONG_CMD_PRE_THRESHOLD
+Seconds before a long-running command warning fires.
+.SH FILES
+.TP
+.I ~/.cache/zshrs/
+Cache root. Contains
+.BR script_cache.rkyv ,
+.BR plugin_cache.rkyv ,
+.BR autoloads.rkyv ,
+.BR catalog.db ,
+.B daemon.sock
+(when the daemon is running), and
+.BR zshrs.log .
+.TP
+.I ~/.config/zshrs/zshrs-daemon.toml
+Optional daemon configuration. See
+.BR zd (1).
+.TP
+.I /etc/zshenv
+,
+.I ~/.zshenv
+,
+.I ~/.zprofile
+,
+.I ~/.zshrc
+,
+.I ~/.zlogin
+,
+.I ~/.zlogout
+Standard zsh startup files (see
+.BR "STARTUP FILES" ).
+.SH EXIT STATUS
+.B zshrs
+exits with the status of the last command executed, or with the value
+of
+.B $?
+at the time of an
+.B exit
+builtin call. Non-existent commands exit with status 127; permission
+errors with 126.
+.SH SEE ALSO
+.BR zshrsall (1),
+.BR zd (1),
+.BR zsh (1),
+.BR zshbuiltins (1),
+.BR zshoptions (1),
+.BR zshcompsys (1),
+.BR zshzle (1)
+.SH AUTHORS
+.B zshrs
+is developed by MenkeTechnologies. Source, issues, and the live
+coverage report:
+.UR https://github.com/MenkeTechnologies/zshrs
+https://github.com/MenkeTechnologies/zshrs
+.UE
+.PP
+Online docs:
+.UR https://menketechnologies.github.io/zshrs/
+https://menketechnologies.github.io/zshrs/
+.UE
+.SH BUGS
+Report at
+.UR https://github.com/MenkeTechnologies/zshrs/issues
+https://github.com/MenkeTechnologies/zshrs/issues
+.UE
