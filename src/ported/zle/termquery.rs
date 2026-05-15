@@ -239,6 +239,46 @@ pub fn handle_color(_seq: &str) -> i32 {                                     // 
     0
 }
 
+/// File-static feature names from `Src/Zle/termquery.c:469-470`. Index
+/// matches the C `features[]` array — `handle_query` indexes [3] for
+/// kitty-keyboard, [4] for truecolor.
+static FEATURES: &[&str] = &["bg", "fg", "cursorcolor", "modkeys-kitty", "truecolor", "id"];  // c:469
+static EXTVAR: &str = ".term.extensions";                                    // c:132
+static IDVAR:  &str = ".term.id";                                            // c:133
+static VERVAR: &str = ".term.version";                                       // c:134
+
+/// Direct port of `static void handle_query(int sequence, int *numbers,
+/// int len, char *capture, int clen, void *output)` from
+/// `Src/Zle/termquery.c:474`. Per-query dispatcher invoked by the
+/// state-machine matcher with the parsed response payload.
+/// WARNING: param names don't match C — Rust=(sequence, numbers, capture) vs C=(sequence, numbers, len, capture, clen, output)
+pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {        // c:474
+    use crate::ported::zsh_h::ASSPM_AUGMENT;
+    match sequence {                                                         // c:482
+        1 => {                                                                // c:484 default colour
+            if numbers.len() == 4 {                                          // c:485
+                handle_color(&format!("{};{};{};{}",                         // c:486 handle_color(...)
+                    numbers[0], numbers[1], numbers[2], numbers[3]));
+            }
+        }
+        2 => {                                                                // c:488 kitty keyboard
+            crate::ported::params::assignaparam(EXTVAR,                      // c:489-491 assignaparam(EXTVAR, feat, ASSPM_AUGMENT)
+                vec![FEATURES[3].to_string()], ASSPM_AUGMENT);
+        }
+        3 => {                                                                // c:492 truecolor
+            crate::ported::params::assignaparam(EXTVAR,                      // c:493-495
+                vec![FEATURES[4].to_string()], ASSPM_AUGMENT);
+        }
+        4 => {                                                                // c:496 id
+            crate::ported::params::assignsparam(IDVAR, capture, 0);          // c:497 assignsparam(IDVAR, ...)
+        }
+        5 => {                                                                // c:498 version
+            crate::ported::params::assignsparam(VERVAR, capture, 0);         // c:499 assignsparam(VERVAR, ...)
+        }
+        _ => {}
+    }
+}
+
 /// Probe the connected terminal for advertised capabilities.
 /// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
 /// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,

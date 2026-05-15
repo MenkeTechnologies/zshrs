@@ -1200,6 +1200,58 @@ pub fn hdynread(_stop: i32) -> Option<String> {
     None
 }
 
+/// Direct port of `int getsubsargs(char *subline, int *gbalp, int *cflagp)`
+/// from `Src/hist.c:518`. Parses the substitution arguments of a
+/// `!:s/old/new/`-style history modifier: reads the delimiter via
+/// ingetc, slurps `old` and `new` chunks, stores them in `hsubl`/`hsubr`
+/// globals, then peeks the trailing `:G` (global) or fall-through char.
+/// Returns 0 on success, 1 on a bad-expansion (empty old chunk).
+/// WARNING: param names don't match C — Rust=(_subline, gbalp, cflagp) vs C=(subline, gbalp, cflagp)
+pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {  // c:518
+    let del = match crate::ported::input::ingetc() {                         // c:524 del = ingetc()
+        Some(c) => c, None => return 1,
+    };
+    // c:525-528 — `ptr1 = hdynread2(del); if (!ptr1) return 1;`
+    // Inline hdynread2: read until del or '\n', honoring backslash escapes.
+    let read_until = |stop: char| -> Option<String> {                        // c:hdynread2 inline
+        let mut out = String::new();
+        loop {
+            match crate::ported::input::ingetc() {
+                None => return None,
+                Some('\n') => return Some(out),
+                Some(c) if c == stop => return Some(out),
+                Some('\\') => {
+                    if let Some(n) = crate::ported::input::ingetc() {
+                        if n != stop { out.push('\\'); }
+                        out.push(n);
+                    }
+                }
+                Some(c) => out.push(c),
+            }
+        }
+    };
+    let ptr1 = match read_until(del) { Some(p) => p, None => return 1 };     // c:525
+    let ptr2 = read_until(del).unwrap_or_default();                          // c:529
+    if !ptr1.is_empty() {                                                    // c:530
+        *hsubl.lock().unwrap() = Some(ptr1);                                 // c:531-532 zsfree(hsubl); hsubl = ptr1
+    } else if hsubl.lock().unwrap().is_none() {                              // c:533 fail silently
+        return 0;                                                            // c:536
+    }
+    *hsubr.lock().unwrap() = Some(ptr2);                                     // c:539-540 zsfree(hsubr); hsubr = ptr2
+    let follow = crate::ported::input::ingetc();                             // c:541 follow = ingetc()
+    if follow == Some(':') {                                                 // c:542
+        let next = crate::ported::input::ingetc();                           // c:543
+        if next == Some('G') { *gbalp = 1; }                                 // c:544-545
+        else {
+            if let Some(c) = next { crate::ported::input::inungetc(c); }     // c:547 inungetc
+            *cflagp = 1;                                                     // c:548
+        }
+    } else if let Some(c) = follow {
+        crate::ported::input::inungetc(c);                                   // c:551 inungetc(follow)
+    }
+    0                                                                        // c:553
+}
+
 /// Port of `char *hdynread2(int stop)` from Src/hist.c.
 pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
     let mut out = String::new();

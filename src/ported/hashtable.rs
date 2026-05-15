@@ -1592,11 +1592,32 @@ pub fn freehistnode(nodeptr: &str) {
 
 /// Port of `freehistdata(Histent he, int unlink)` from `Src/hashtable.c:1458`.
 ///
-/// C body frees the command + word-array fields of a Histent.
-/// Rust port: no-op since the Rust history-engine port owns
-/// these via String/Vec, freed by Drop.
-/// WARNING: param names don't match C — Rust=(_unlink) vs C=(he, unlink)
-pub fn freehistdata(_unlink: i32) {}
+/// C body: removes the named entry from `histtab` (unless flagged
+/// HIST_DUP/HIST_TMPSTORE), frees the command + word-array fields,
+/// and if `unlink` re-links the ring around `he` and decrements
+/// `histlinect`. Rust port indexes into `hist_ring` (Vec replaces C's
+/// doubly-linked list); the up/down relink collapses to `Vec::remove`.
+/// WARNING: param names don't match C — Rust=(idx, unlink) vs C=(he, unlink)
+pub fn freehistdata(idx: usize, unlink: i32) {                              // c:1458
+    use crate::ported::zsh_h::{HIST_DUP, HIST_TMPSTORE};
+    let mut ring = crate::ported::hist::hist_ring.lock().unwrap();
+    let he = match ring.get(idx) { Some(h) => h, None => return };           // c:1461 if (!he) return
+    let nam = he.node.nam.clone();
+    let flags = he.node.flags as u32;
+    if (flags & (HIST_DUP | HIST_TMPSTORE)) == 0 {                           // c:1467
+        let mut tab = histtab_lock().write().expect("histtab poisoned");     // c:1468 removehashnode(histtab, ...)
+        tab.remove(&nam);
+    }
+    // c:1471-1473 — `zsfree(name); if (nwords) zfree(words, ...)`. Rust
+    // String/Vec drop handles both; only the unlink step needs explicit
+    // ring mutation.
+    if unlink != 0 {                                                         // c:1475
+        ring.remove(idx);                                                    // c:1477-1483 unlink up/down
+        let new_ct = ring.len() as i64;
+        drop(ring);
+        crate::ported::hist::histlinect.store(new_ct, std::sync::atomic::Ordering::SeqCst); // c:1477 --histlinect
+    }
+}
 
 /// Port of `dircache_set(char **name, char *value)` from `Src/hashtable.c:1537`.
 ///

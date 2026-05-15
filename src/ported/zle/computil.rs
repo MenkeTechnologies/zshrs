@@ -360,11 +360,7 @@ pub fn cd_groups_want_sorting() -> i32 {                                     // 
 /// pointers — compares the `sortstr` fields via `zstrcmp` (case-
 /// sensitive by default).
 pub fn cd_sort(a: &cdstr, b: &cdstr) -> std::cmp::Ordering {                  // c:233
-    crate::ported::sort::zstrcmp(
-        a.sortstr.as_deref().unwrap_or(""),
-        b.sortstr.as_deref().unwrap_or(""),
-        0,
-    )
+    crate::ported::sort::zstrcmp(a.sortstr.as_deref().unwrap_or(""), b.sortstr.as_deref().unwrap_or(""), 0) // c:235
 }
 
 /// Direct port of `static int cd_prep(void)` from

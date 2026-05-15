@@ -608,7 +608,27 @@ pub fn unset_register(name: char, _exp: i32) {  // c:777
 /// a no-op port; trait dispatch via the typed `vibuf()` accessor
 /// covers the read/write side. Rust idiom replacement.
 /// WARNING: param names don't match C — Rust=(_t, _flags) vs C=(ht, func, flags)
-pub fn scan_registers(_t: i32, _flags: i32) {                                // c:784
+pub fn scan_registers(_ht: i32, func: Option<crate::ported::zsh_h::ScanFunc>, flags: i32) {  // c:784
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY};
+    let func = match func { Some(f) => f, None => return };
+    let buf = crate::ported::zle::zle_main::vibuf().lock().unwrap().clone(); // c:794 vibuf walk
+    let mut ch: u8 = b'a';                                                   // c:798 ch = 'a'
+    for i in 0..36usize {                                                    // c:798 for (i = 0; i < 36; i++)
+        let val: String = buf.get(i).map(|v| v.iter().collect()).unwrap_or_default();  // c:801 zlelineasstring(vibuf[i].buf, ...)
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {                           // c:794 memset(&pm, 0)
+                next: None,
+                nam: format!("{}", ch as char),                              // c:799 *pm.node.nam = ch
+                flags: (PM_SCALAR | PM_READONLY) as i32,                     // c:795
+            },
+            u_data: 0, u_arr: None, u_str: Some(val),                        // c:801 pm.u.str
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        func(&Box::new(pm.node), flags);                                     // c:802
+        ch = if ch == b'z' { b'0' } else { ch + 1 };                         // c:804-805 if (ch++ == 'z') ch = '0'
+    }
 }
 
 /// Port of `get_registers(UNUSED(HashTable ht), const char *name)` from Src/Zle/zle_params.c:807.
@@ -686,11 +706,9 @@ pub fn get_prepost(text: &str, len: usize) -> String {                       // 
 ///     `set_prepost(&predisplay, &predisplaylen, x);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_predisplay(x: Option<&str>) {                                     // c:886
-    let mut buf = crate::ported::zle::zle_misc::PREDISPLAY                   // c:888 &predisplay
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock().unwrap();
-    let mut len = buf.chars().count();                                       // c:888 &predisplaylen
-    set_prepost(&mut buf, &mut len, x);                                      // c:888
+    let mut buf = crate::ported::zle::zle_misc::PREDISPLAY.get_or_init(|| std::sync::Mutex::new(String::new())).lock().unwrap();  // c:888 &predisplay
+    let mut len = buf.chars().count();
+    set_prepost(&mut buf, &mut len, x);                                      // c:888 set_prepost(&predisplay, &predisplaylen, x)
 }
 
 /// Port of `get_predisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:893.
@@ -707,11 +725,9 @@ pub fn get_predisplay() -> String {                                          // 
 ///     `set_prepost(&postdisplay, &postdisplaylen, x);`
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_postdisplay(x: Option<&str>) {                                    // c:900
-    let mut buf = crate::ported::zle::zle_misc::POSTDISPLAY                  // c:902 &postdisplay
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock().unwrap();
-    let mut len = buf.chars().count();                                       // c:902 &postdisplaylen
-    set_prepost(&mut buf, &mut len, x);                                      // c:902
+    let mut buf = crate::ported::zle::zle_misc::POSTDISPLAY.get_or_init(|| std::sync::Mutex::new(String::new())).lock().unwrap();  // c:902 &postdisplay
+    let mut len = buf.chars().count();
+    set_prepost(&mut buf, &mut len, x);                                      // c:902 set_prepost(&postdisplay, &postdisplaylen, x)
 }
 
 /// Port of `get_postdisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:907.

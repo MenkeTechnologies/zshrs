@@ -939,6 +939,79 @@ pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
     matches
 }
 
+/// File-static `static int in_expandredir = 0;` from `Src/glob.c:1206`
+/// — set during the `globlist` call inside `xpandredir` so the glob
+/// pipeline knows the result feeds a redirection (suppresses the
+/// "no matches" warning in the caller's normal flow).
+pub static IN_EXPANDREDIR: std::sync::atomic::AtomicI32 =                    // c:1206
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Direct port of `int xpandredir(struct redir *fn, LinkList redirtab)`
+/// from `Src/glob.c:2150`. Expands `>>*.c`-style redirections by
+/// running `prefork` + (when MULTIOS is set) `globlist` over the redir
+/// name. Single match: rewrite `fn->name` in place and decode the
+/// MERGEIN/MERGEOUT special syntax (`-` close, `p` pipe-fd, digits =
+/// fd number). Multi match: clone the redir for each name and append
+/// to `redirtab`. Returns 1 if multios produced multiple entries, 0
+/// otherwise.
+/// WARNING: param names don't match C — Rust=(fn_, redirtab) vs C=(fn, redirtab)
+pub fn xpandredir(fn_: &mut crate::ported::zsh_h::redir,                    // c:2150
+                  redirtab: &mut Vec<crate::ported::zsh_h::redir>) -> i32 {
+    use crate::ported::zsh_h::{REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_CLOSE, REDIR_ERRWRITE, IS_DASH, isset, MULTIOS, PREFORK_SINGLE};
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut ret = 0;                                                         // c:2156
+    let name = match fn_.name.as_deref() {                                   // c:2160 init_list1(fake, fn->name)
+        Some(n) => n.to_string(),
+        None => return 0,
+    };
+    let mut fake: crate::ported::subst::LinkList = crate::ported::linklist::LinkList::new();
+    fake.push_back(name);                                                    // c:2160
+    let mut rf = 0i32;
+    crate::ported::subst::prefork(&mut fake,                                 // c:2162 prefork
+        if isset(MULTIOS) { 0 } else { PREFORK_SINGLE },
+        &mut rf);
+    if !crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 && isset(MULTIOS) {              // c:2164
+        IN_EXPANDREDIR.store(1, SeqCst);                                     // c:2165
+        crate::ported::subst::globlist(&mut fake, 0);                        // c:2166
+        IN_EXPANDREDIR.store(0, SeqCst);                                     // c:2167
+    }
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 { return 0; }                     // c:2169
+    let names: Vec<String> = fake.iter().cloned().collect();
+    if names.len() == 1 {                                                    // c:2171 nonempty(&fake) && !nextnode(firstnode)
+        let s = crate::lex::untokenize(&names[0]);                           // c:2174 untokenize(s)
+        fn_.name = Some(s.clone());                                          // c:2173 fn->name = s
+        if fn_.typ == REDIR_MERGEIN || fn_.typ == REDIR_MERGEOUT {           // c:2175
+            let bytes = s.as_bytes();
+            if bytes.len() == 1 && IS_DASH(bytes[0] as char) {               // c:2176-2177 IS_DASH(s[0]) && !s[1]
+                fn_.typ = REDIR_CLOSE;
+            } else if bytes.len() == 1 && bytes[0] == b'p' {                 // c:2178 s[0]=='p' && !s[1]
+                fn_.fd2 = -2;
+            } else {
+                let mut i = 0;
+                while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }  // c:2181 idigit
+                if i == bytes.len() && i > 0 {                               // c:2183 !*s && s > fn->name
+                    fn_.fd2 = crate::ported::utils::zstrtol(&s, 10).0 as i32; // c:2184 zstrtol(.., 10)
+                } else if fn_.typ == REDIR_MERGEIN {                         // c:2185
+                    crate::ported::utils::zerr("file number expected");      // c:2186
+                } else {
+                    fn_.typ = REDIR_ERRWRITE;                                // c:2188
+                }
+            }
+        }
+    } else if fn_.typ == REDIR_MERGEIN {                                     // c:2192
+        crate::ported::utils::zerr("file number expected");                  // c:2193
+    } else {
+        if fn_.typ == REDIR_MERGEOUT { fn_.typ = REDIR_ERRWRITE; }           // c:2195
+        for nam in names {                                                   // c:2196 while ((nam = ugetnode(&fake)))
+            let mut ff = fn_.clone();                                        // c:2199-2200 zhalloc + *ff = *fn
+            ff.name = Some(nam);                                             // c:2201 ff->name = nam
+            redirtab.push(ff);                                               // c:2202 addlinknode(redirtab, ff)
+            ret = 1;                                                         // c:2203
+        }
+    }
+    ret                                                                      // c:2206
+}
+
 /// Port of `freerepldata(void *ptr)` from Src/glob.c:2766.
 /// C: `static void freerepldata(void *ptr)` →
 ///   `zfree(ptr, sizeof(struct repldata));`

@@ -168,11 +168,43 @@ pub fn register_module(table: &mut modulestab, name: &str) -> bool {       // c:
 /// module-table addbuiltin if not already registered. `binl` is taken
 /// by `&mut [Builtin]` so the BINF_ADDED flag-set after success
 /// matches C's in-place mutation.
-// `addbuiltins` deleted — Rust-only port that took `&mut [Builtin]`
-// (the deleted Rust-only `Builtin` PascalCase struct). C
-// `addbuiltins(char *nam, Builtin binl, int size, char *modname)` at
-// module.c:545 walks the module's bintab pointer; a re-port will
-// land alongside the wider modulestab-as-global refactor.
+/// Port of `addbuiltin(Builtin b)` from `Src/module.c:524`. C body:
+/// look up `b->node.nam` in builtintab; if BINF_ADDED clash → return 1;
+/// otherwise replace any pre-existing entry and add `b`. Returns 0 on
+/// add, 1 on clash.
+///
+/// The Rust canonical builtintab is `OnceLock<HashMap<String,
+/// &'static builtin>>` — immutable after first access. Runtime `addbuiltin`
+/// calls check the immutable table for the clash gate; the BINF_ADDED
+/// flag-set on the input record is what callers observe (matching the
+/// C in-place mutation that `addbuiltins` then propagates).
+pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {           // c:524
+    use crate::ported::zsh_h::BINF_ADDED;
+    let tab = crate::ported::builtin::createbuiltintable();
+    if let Some(existing) = tab.get(&b.node.nam) {                           // c:526 getnode2
+        if (existing.node.flags & BINF_ADDED as i32) != 0 { return 1; }      // c:527 clash
+    }
+    b.node.flags |= BINF_ADDED as i32;                                       // c:531 b->node.flags |= BINF_ADDED
+    0
+}
+
+/// Port of `addbuiltins(char const *nam, Builtin binl, int size)` from
+/// `Src/module.c:544`. Walks the slice; for each entry not already
+/// flagged BINF_ADDED, calls `addbuiltin`. Returns 0 if all succeeded,
+/// 1 if any clashed. zwarnnam emitted on each clash matches C.
+pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32 { // c:544
+    use crate::ported::zsh_h::BINF_ADDED;
+    let mut ret = 0;                                                         // c:548
+    for b in binl.iter_mut() {                                               // c:550 for(n = 0; n < size; n++)
+        if (b.node.flags & BINF_ADDED as i32) != 0 { continue; }             // c:553
+        if addbuiltin(b) != 0 {                                              // c:555
+            crate::ported::utils::zwarnnam(nam,                              // c:556 zwarnnam(nam, "name clash...")
+                &format!("name clash when adding builtin `{}'", b.node.nam));
+            ret = 1;
+        }
+    }
+    ret                                                                      // c:563
+}
 
 /// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
 ///
@@ -2195,6 +2227,217 @@ pub fn autofeatures(table: &mut modulestab, _cmdnam: &str, module: Option<&str>,
 pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> =                       // c:1258
     Lazy::new(|| Mutex::new(Vec::new()));
 
+/// Port of `int setconddefs(char const *nam, Conddef c, int size, int *e)`
+/// from `Src/module.c:754`. Bulk add/delete of condition definitions:
+/// the parallel `e[]` array selects per-entry add (e[i]!=0) vs delete
+/// (e[i]==0). Returns 1 if any individual op clashed, 0 if all clean.
+pub fn setconddefs(nam: &str,                                                // c:754
+                   c: &mut [crate::ported::zsh_h::conddef],
+                   e: Option<&[i32]>) -> i32 {
+    use crate::ported::zsh_h::CONDF_ADDED;
+    let mut ret = 0;                                                         // c:758
+    for (i, entry) in c.iter_mut().enumerate() {                             // c:760 while (size--)
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(true);               // c:761 if (e && *e++)
+        if want_add {
+            if (entry.flags & CONDF_ADDED) != 0 { continue; }                // c:763 already added
+            let dup = crate::ported::zsh_h::conddef {
+                next: None, name: entry.name.clone(), flags: entry.flags,
+                handler: entry.handler, min: entry.min, max: entry.max,
+                condid: entry.condid, module: entry.module.clone(),
+            };
+            if addconddef(dup) != 0 {                                        // c:768 addconddef
+                crate::ported::utils::zwarnnam(nam,                          // c:769 zwarnnam
+                    &format!("name clash when adding condition `{}'", entry.name));
+                ret = 1;
+            } else {
+                entry.flags |= CONDF_ADDED;                                  // c:773
+            }
+        } else {
+            if (entry.flags & CONDF_ADDED) == 0 { continue; }                // c:776
+            if deleteconddef(entry) != 0 {                                   // c:780 deleteconddef
+                crate::ported::utils::zwarnnam(nam,                          // c:781
+                    &format!("condition `{}' already deleted", entry.name));
+                ret = 1;
+            } else {
+                entry.flags &= !CONDF_ADDED;                                 // c:785
+            }
+        }
+    }
+    ret                                                                      // c:790
+}
+
+/// Port of `int setmathfuncs(char const *nam, MathFunc f, int size, int *e)`
+/// from `Src/module.c:1374`. Bulk add/delete of math-function definitions
+/// via the parallel `e[]` selector array (same shape as setconddefs).
+pub fn setmathfuncs(nam: &str,                                               // c:1374
+                    f: &mut [crate::ported::zsh_h::mathfunc],
+                    e: Option<&[i32]>) -> i32 {
+    use crate::ported::zsh_h::MFF_ADDED;
+    let mut ret = 0;                                                         // c:1378
+    for (i, entry) in f.iter_mut().enumerate() {                             // c:1380 while (size--)
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(true);               // c:1381
+        if want_add {
+            if (entry.flags & MFF_ADDED) != 0 { continue; }                  // c:1383
+            let dup = crate::ported::zsh_h::mathfunc {
+                next: None, name: entry.name.clone(), flags: entry.flags,
+                nfunc: entry.nfunc, sfunc: entry.sfunc,
+                module: entry.module.clone(), minargs: entry.minargs,
+                maxargs: entry.maxargs, funcid: entry.funcid,
+            };
+            if addmathfunc(dup) != 0 {                                       // c:1388 addmathfunc
+                crate::ported::utils::zwarnnam(nam,                          // c:1389
+                    &format!("name clash when adding math function `{}'", entry.name));
+                ret = 1;
+            } else {
+                entry.flags |= MFF_ADDED;                                    // c:1393
+            }
+        } else {
+            if (entry.flags & MFF_ADDED) == 0 { continue; }                  // c:1396
+            if deletemathfunc(entry) != 0 {                                  // c:1400 deletemathfunc
+                crate::ported::utils::zwarnnam(nam,                          // c:1401
+                    &format!("math function `{}' already deleted", entry.name));
+                ret = 1;
+            }
+        }
+    }
+    ret                                                                      // c:1407
+}
+
+/// Port of file-static `Conddef condtab;` from `Src/cond.c:21` — the
+/// global condition-definition linked-list head consulted by `[[ ... ]]`
+/// dispatch. Modules register custom conditions via `addconddef`; the
+/// runtime walks `condtab` looking for the matching name+infix flag at
+/// each `[[` evaluation. Rust port stores entries in a `Vec` (linear
+/// add/remove + walk; same observable behaviour as C linked list).
+pub static CONDTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> =        // c:cond.c:21
+    Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Port of `int deleteconddef(Conddef c)` from `Src/module.c:724`.
+/// Removes condition definition `c` from `condtab`. Returns 0 on
+/// success, -1 on miss. C also frees the autoloaded entry's name +
+/// module; Rust drop subsumes that.
+pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {            // c:724
+    let mut tab = CONDTAB.lock().unwrap();
+    match tab.iter().position(|p| p.name == c.name && p.flags == c.flags) {  // c:728 walk
+        Some(i) => { tab.remove(i); 0 }                                      // c:733-738 unlink + free
+        None => -1,                                                          // c:743 not found
+    }
+}
+
+/// Port of `int addconddef(Conddef c)` from `Src/module.c:703`. Walks
+/// CONDTAB for a clash on (name, infix-flag); replaces autoloadable
+/// entries via deleteconddef; otherwise prepends. Returns 0 on add,
+/// 1 on clash (existing entry already added).
+pub fn addconddef(c: crate::ported::zsh_h::conddef) -> i32 {                 // c:703
+    use crate::ported::zsh_h::{CONDF_INFIX, CONDF_ADDED};
+    let infix = c.flags & CONDF_INFIX;
+    let clash_idx = {
+        let tab = CONDTAB.lock().unwrap();
+        tab.iter().position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix) // c:705 getconddef
+    };
+    if let Some(i) = clash_idx {
+        let (autoload, added) = {
+            let tab = CONDTAB.lock().unwrap();
+            (tab[i].module.is_some(), (tab[i].flags & CONDF_ADDED) != 0)
+        };
+        if !autoload || added { return 1; }                                  // c:708 already added
+        CONDTAB.lock().unwrap().remove(i);                                   // c:711 deleteconddef
+    }
+    CONDTAB.lock().unwrap().insert(0, c);                                    // c:713-714 c->next = condtab; condtab = c
+    0
+}
+
+/// Port of file-static `FuncWrap wrappers;` from `Src/module.c:567`
+/// — the global wrapper-function linked-list head. Modules register
+/// wrapper callbacks via `addwrapper(FuncWrap)` and the runtime fires
+/// them around `runshfunc()`. The Rust port stores entries in a `Vec`
+/// (linear add/remove + iterate; same observable behaviour).
+pub static WRAPPERS: Lazy<Mutex<Vec<crate::ported::zsh_h::funcwrap>>> =      // c:567
+    Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Port of `addmathfunc(MathFunc f)` from `Src/module.c:1313`.
+/// Returns 0 on add, 1 on clash (existing entry not autoloadable).
+/// Replaces autoloadable entries via `removemathfunc`.
+pub fn addmathfunc(f: crate::ported::zsh_h::mathfunc) -> i32 {              // c:1313
+    use crate::ported::zsh_h::{MFF_ADDED, MFF_USERFUNC};
+    if (f.flags & MFF_ADDED) != 0 { return 1; }                              // c:1318
+    let mut tab = MATHFUNCS.lock().unwrap();
+    let mut found_idx: Option<usize> = None;
+    for (i, p) in tab.iter().enumerate() {                                   // c:1321
+        if p.name == f.name {                                                // c:1322
+            if p.module.is_some() && (p.flags & MFF_USERFUNC) == 0 {         // c:1323
+                found_idx = Some(i);                                         // c:1327 removemathfunc + replace
+                break;
+            }
+            return 1;                                                        // c:1330
+        }
+    }
+    if let Some(i) = found_idx { tab.remove(i); }                            // c:1327
+    tab.insert(0, f);                                                        // c:1334-1335 f->next = mathfuncs; mathfuncs = f
+    0
+}
+
+/// Port of `removemathfunc(MathFunc previous, MathFunc current)` from
+/// `Src/module.c:1267`. Removes the named entry from MATHFUNCS and
+/// drops it (Rust drop subsumes C's zsfree/zfree ladder).
+/// WARNING: param names don't match C — Rust=(name) vs C=(previous, current)
+pub fn removemathfunc(name: &str) {                                          // c:1267
+    let mut tab = MATHFUNCS.lock().unwrap();
+    if let Some(i) = tab.iter().position(|m| m.name == name) {               // c:1270 walk
+        tab.remove(i);                                                       // c:1273-1274 unlink + zfree
+    }
+}
+
+/// Port of `deletemathfunc(MathFunc f)` from `Src/module.c:1342`.
+/// Removes f from MATHFUNCS; for unloaded/user-defined entries clears
+/// the MFF_ADDED flag instead of dropping the node (C: `f->flags &=
+/// ~MFF_ADDED` when f->module is null).
+pub fn deletemathfunc(f: &crate::ported::zsh_h::mathfunc) -> i32 {          // c:1342
+    let mut tab = MATHFUNCS.lock().unwrap();
+    match tab.iter().position(|m| m.name == f.name) {                        // c:1346
+        Some(i) => {
+            if tab[i].module.is_some() { tab.remove(i); }                    // c:1352-1354 zsfree+zfree
+            else { tab[i].flags &= !crate::ported::zsh_h::MFF_ADDED; }       // c:1357 ~MFF_ADDED
+            0
+        }
+        None => -1,                                                          // c:1361
+    }
+}
+
+/// Port of `addwrapper(Module m, FuncWrap w)` from `Src/module.c:577`.
+/// Returns 0 on add, 1 on clash. Walks WRAPPERS for an existing entry
+/// with the same handler; appends if absent and sets WRAPF_ADDED on
+/// the input record.
+pub fn addwrapper(_m: &str, w: crate::ported::zsh_h::funcwrap) -> i32 {     // c:577
+    let mut tab = WRAPPERS.lock().unwrap();
+    if tab.iter().any(|x| match (x.handler, w.handler) {                     // c:585 walk
+        (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }) {
+        return 1;                                                            // c:587 clash
+    }
+    let mut entry = w;                                                       // c:589 w->flags |= WRAPF_ADDED
+    entry.flags |= 1; // WRAPF_ADDED — c:zsh.h:1369
+    tab.push(entry);                                                         // c:592 *p = w
+    0
+}
+
+/// Port of `deletewrapper(Module m, FuncWrap w)` from `Src/module.c:609`.
+/// Removes entry with the same handler from WRAPPERS. Returns 0 on
+/// success, 1 on miss.
+pub fn deletewrapper(_m: &str, w: &crate::ported::zsh_h::funcwrap) -> i32 { // c:609
+    let mut tab = WRAPPERS.lock().unwrap();
+    match tab.iter().position(|x| match (x.handler, w.handler) {             // c:617 walk
+        (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }) {
+        Some(i) => { tab.remove(i); 0 }                                      // c:622 unlink
+        None => 1,                                                           // c:624 not found
+    }
+}
+
 /// Port of `Hookdef hooktab;` from `Src/module.c:843` — the global
 /// hook-definition table. Modules register hook callbacks via
 /// `addhookfunc(name, fn)` and the runtime fires them via
@@ -2248,17 +2491,17 @@ pub const FEATURE_TYPE_HOOK: i32      = 4;
 /// (line 359) inserts entries, `printmodulenode()` (line 154)
 /// renders for `zmodload`.
 pub struct modulestab {
-    modules: HashMap<String, module>,
+    pub modules: HashMap<String, module>,
     /// Builtin name → module name mapping for autoload
-    autoload_builtins: HashMap<String, String>,
+    pub autoload_builtins: HashMap<String, String>,
     /// Condition name → module name mapping for autoload
-    autoload_conditions: HashMap<String, String>,
+    pub autoload_conditions: HashMap<String, String>,
     /// Parameter name → module name mapping for autoload
-    autoload_params: HashMap<String, String>,
+    pub autoload_params: HashMap<String, String>,
     /// Math function name → module name mapping for autoload
-    autoload_mathfuncs: HashMap<String, String>,
+    pub autoload_mathfuncs: HashMap<String, String>,
     /// Hook functions
-    hooks: HashMap<String, Vec<String>>,
+    pub hooks: HashMap<String, Vec<String>>,
 }
 
 // `pub struct Wrapper` deleted — Rust-only PascalCase mirror of

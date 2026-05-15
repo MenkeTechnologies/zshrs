@@ -328,6 +328,76 @@ pub fn isprint_ascii(c: char) -> bool {                                      // 
     (0x20..=0x7e).contains(&b)
 }
 
+/// Port of `char *strstr(const char *s, const char *t)` from `Src/compat.c:41`.
+/// C source is wrapped in `#ifndef HAVE_STRSTR` — a fallback for systems
+/// missing libc strstr. zshrs relies on libc; this shim delegates to
+/// `str::find` for substring location, returning the byte offset on hit
+/// or None on miss (Rust idiom for the C `char *` / `NULL` return).
+pub fn strstr(s: &str, t: &str) -> Option<usize> {                           // c:41
+    s.find(t)                                                                // c:46-51 byte-by-byte loop
+}
+
+/// Port of `int gettimeofday(struct timeval *tv, struct timezone *tz)`
+/// from `Src/compat.c:86`. C source under `#ifndef HAVE_GETTIMEOFDAY`
+/// — fallback that fills tv_sec from `time(NULL)` and zeroes tv_usec.
+/// Rust shim returns (sec, usec) from libc gettimeofday; mirrors the
+/// C contract of always returning 0.
+pub fn gettimeofday() -> (i64, i64) {                                        // c:86
+    #[cfg(unix)] {
+        let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
+        unsafe { libc::gettimeofday(&mut tv, std::ptr::null_mut()); }        // c:88-89
+        (tv.tv_sec as i64, tv.tv_usec as i64)
+    }
+    #[cfg(not(unix))] { (0, 0) }
+}
+
+/// Port of `unsigned long strtoul(nptr, endptr, base)` from `Src/compat.c:688`.
+/// C source under `#ifndef HAVE_STRTOUL` — fallback for systems missing
+/// libc strtoul. Returns (parsed-value, bytes-consumed) so callers can
+/// compute the equivalent of the C `*endptr = ...` out-param.
+pub fn strtoul(nptr: &str, base: u32) -> (u64, usize) {                      // c:688
+    let bytes = nptr.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }      // c:704 isspace
+    let neg = i < bytes.len() && bytes[i] == b'-';                           // c:707
+    if neg || (i < bytes.len() && bytes[i] == b'+') { i += 1; }              // c:709-712
+    let (radix, start) = if (base == 0 || base == 16) && bytes.get(i).copied() == Some(b'0')
+        && bytes.get(i+1).map(|b| b.eq_ignore_ascii_case(&b'x')).unwrap_or(false) {
+        (16u32, i + 2)                                                       // c:714-718 0x prefix
+    } else if base == 0 {
+        (if bytes.get(i).copied() == Some(b'0') { 8 } else { 10 }, i)        // c:719-720
+    } else {
+        (base, i)
+    };
+    let mut acc: u64 = 0;
+    let mut consumed = start;
+    for &b in &bytes[start..] {
+        let digit = if b.is_ascii_digit() { (b - b'0') as u32 }
+            else if b.is_ascii_uppercase() { (b - b'A' + 10) as u32 }
+            else if b.is_ascii_lowercase() { (b - b'a' + 10) as u32 }
+            else { break };
+        if digit >= radix { break; }
+        acc = acc.saturating_mul(radix as u64).saturating_add(digit as u64);
+        consumed += 1;
+    }
+    (if neg { acc.wrapping_neg() } else { acc }, consumed)
+}
+
+/// Port of `long zpathmax(char *dir)` from `Src/compat.c:236`.
+/// C source is wrapped in `#if 0` (compat.c:203-282) — entirely
+/// disabled in upstream zsh. Provides a `pathconf(_PC_PATH_MAX)`-based
+/// per-directory limit; the disabled state means real callers always
+/// fall back to PATH_MAX. Shim returns the libc PATH_MAX equivalent.
+pub fn zpathmax(dir: &str) -> i64 {                                          // c:236
+    #[cfg(unix)] {
+        // c:241 pathconf(dir, _PC_PATH_MAX) — disabled in C, use libc shim.
+        let cs = match std::ffi::CString::new(dir) { Ok(c) => c, Err(_) => return -1 };
+        let r = unsafe { libc::pathconf(cs.as_ptr(), libc::_PC_PATH_MAX) };
+        if r >= 0 { r as i64 } else { libc::PATH_MAX as i64 }                // c:283 PATH_MAX fallback
+    }
+    #[cfg(not(unix))] { 4096 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
