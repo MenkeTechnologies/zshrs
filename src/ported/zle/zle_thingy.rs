@@ -250,19 +250,9 @@ pub fn refthingy(name: &str) {                                               // 
 /// ```
 /// Drop a reference; remove from table when rc hits 0.
 pub fn unrefthingy(th: &str) {                                             // c:147
-    let should_remove = {
-        let mut tab = thingytab().lock().unwrap();
-        if let Some(t) = tab.get_mut(th) {                                 // c:149 if(th && ...)
-            t.rc -= 1;                                                       // c:149 --th->rc
-            t.rc == 0
-        } else {
-            false
-        }
-    };
-    if should_remove {
-        // c:150 — `thingytab->freenode(thingytab->removenode(...))`.
-        freethingynode(th);
-    }
+    let drop = thingytab().lock().unwrap().get_mut(th)                    // c:149 if(th && !--th->rc)
+        .map(|t| { t.rc -= 1; t.rc == 0 }).unwrap_or(false);
+    if drop { freethingynode(th); }                                        // c:150 freenode(removenode(...))
 }
 
 /// Port of `rthingy(char *nam)` from `Src/Zle/zle_thingy.c:158`.

@@ -296,14 +296,10 @@ pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
 pub fn get_usage() -> timeinfo {
     #[cfg(unix)]
     {
-        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut usage) } == 0 {
-            return timeinfo {
-                ut: usage.ru_utime.tv_sec as i64 * 1_000_000
-                    + usage.ru_utime.tv_usec as i64,
-                st: usage.ru_stime.tv_sec as i64 * 1_000_000
-                    + usage.ru_stime.tv_usec as i64,
-            };
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut u) } == 0 {
+            let usec = |tv: libc::timeval| tv.tv_sec as i64 * 1_000_000 + tv.tv_usec as i64;
+            return timeinfo { ut: usec(u.ru_utime), st: usec(u.ru_stime) };
         }
     }
     timeinfo::default()
