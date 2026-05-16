@@ -425,14 +425,27 @@ pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // 
     args.get(num).cloned().unwrap_or_default()
 }
 
-/// Port of `cond_val(char **args, int num)` from Src/cond.c:539 — like `cond_str()` but
-/// then runs `mathevali()` to coerce the result to an integer. The
-/// Rust port handles math evaluation through `crate::math::eval`;
-/// here we parse the trimmed argument as a base-10 integer.
+/// Port of `cond_val(char **args, int num)` from Src/cond.c:539 — `[[ N -eq M ]]`
+/// integer-comparison side. Returns the integer value of the
+/// numth argument, **routing through `mathevali`** per c:548. This
+/// is how `[[ 1+2 -eq 3 ]]` evaluates the LHS string `1+2` as the
+/// arithmetic expression yielding `3` rather than failing to parse
+/// `"1+2"` as a base-10 integer.
+///
+/// Previously the Rust port called `s.trim().parse::<i64>()` which
+/// silently returned 0 for any non-trivial arithmetic on either
+/// side of a `-eq` / `-ne` / `-lt` / `-gt` / `-le` / `-ge` test, a
+/// divergence that breaks `[[ $((LINENO)) -eq 1+0 ]]`-style asserts
+/// in user scripts.
 pub fn cond_val(args: &[String], num: usize) -> i64 {                        // c:539
-    args.get(num)
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .unwrap_or(0)
+    let s = match args.get(num) {
+        Some(v) => v,
+        None => return 0,
+    };
+    // c:548 — `mathevali(s)`. Already-expanded arg (the Rust cond
+    // evaluator pre-runs singsub/untokenize), so we skip the
+    // has_token gate and go straight to mathevali.
+    crate::ported::math::mathevali(s).unwrap_or(0)                            // c:548
 }
 
 /// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
@@ -838,5 +851,49 @@ mod tests {
         // Out-of-bounds index → false (no panic, args.get returns None).
         assert!(!cond_match(&args, 99, "hello"),
             "out-of-bounds num returns false");
+    }
+
+    /// Pin: `cond_val` routes through `mathevali` per `Src/cond.c:548`.
+    /// A `[[ -eq ]]` operand of `"1+2"` must evaluate to 3, not 0.
+    /// The previous Rust port called `s.trim().parse::<i64>()` which
+    /// silently returned 0 for any non-trivial arithmetic, defeating
+    /// `[[ N -eq M+0 ]]`-style asserts in user scripts.
+    #[test]
+    fn cond_val_routes_through_mathevali() {
+        let args = vec![
+            "1+2".to_string(),
+            "10/2".to_string(),
+            "0x10".to_string(),
+            "2**8".to_string(),
+        ];
+        // c:548 — `1+2` → 3 (addition)
+        assert_eq!(cond_val(&args, 0), 3,
+            "c:548 — `mathevali(\"1+2\")` evaluates the expression");
+        // c:548 — `10/2` → 5 (integer division)
+        assert_eq!(cond_val(&args, 1), 5,
+            "c:548 — `mathevali(\"10/2\")` evaluates the expression");
+        // c:548 — `0x10` → 16 (hex literal via mathevali)
+        assert_eq!(cond_val(&args, 2), 16,
+            "c:548 — `mathevali(\"0x10\")` parses hex");
+        // c:548 — `2**8` → 256 (exponent operator)
+        assert_eq!(cond_val(&args, 3), 256,
+            "c:548 — `mathevali(\"2**8\")` evaluates the expression");
+    }
+
+    /// Pin: `cond_val` with plain integer string returns that integer.
+    /// Boundary cases — empty string, negative numbers, plain digits.
+    #[test]
+    fn cond_val_plain_integers() {
+        let args = vec![
+            "0".to_string(),
+            "-42".to_string(),
+            "123456789".to_string(),
+        ];
+        assert_eq!(cond_val(&args, 0), 0);
+        assert_eq!(cond_val(&args, 1), -42);
+        assert_eq!(cond_val(&args, 2), 123456789);
+        // Out-of-bounds index → 0 (args.get returns None).
+        assert_eq!(cond_val(&args, 99), 0,
+            "out-of-bounds num returns 0");
     }
 }
