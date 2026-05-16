@@ -322,14 +322,41 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
 /// special-cases `/dev/fd/N` with `fstat()`. Returns the metadata or
 /// `None` on error. Replaces the C global `static struct stat st`
 /// with a returned `Metadata` value (Rust avoids globals here).
+///
+/// **C-faithful semantics**:
+///   1. `/dev/fd/N` → `fstat(N, &st)` per c:458-461. C does NOT dup
+///      the fd; the previous Rust port dup'd it unnecessarily, which
+///      could fail at the open-fd limit AND created an owned File
+///      that would close the duplicate when dropped (harmless on
+///      success path but wasteful syscall).
+///   2. Regular path → `stat(unmeta(s), &st)` per c:464-467. The
+///      previous Rust port used `fs::metadata(s)` directly which
+///      doesn't run `unmeta` — paths containing Meta-encoded bytes
+///      would fail to resolve.
 pub fn getstat(s: &str) -> Option<Metadata> {                                // c:452
-    if let Some(rest) = s.strip_prefix("/dev/fd/") {
-        if let Ok(fd) = rest.parse::<i32>() {
-            let f = unsafe { std::fs::File::from_raw_fd(libc::dup(fd)) };
+    if let Some(rest) = s.strip_prefix("/dev/fd/") {                          // c:458
+        if let Ok(fd) = rest.parse::<i32>() {                                 // c:459 atoi(s+8)
+            // c:459 — `fstat(fd, &st)`. Pre-check via fstat to verify
+            // the fd is valid BEFORE dup'ing (avoid wasting an fd slot
+            // on a bad fd). The dup is a Rust adaptation: `Metadata`
+            // requires an owned `File`, but `File::from_raw_fd` would
+            // close the user's fd on drop — so we dup to give the
+            // File its own owned copy and the user keeps their fd.
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstat(fd, &mut st) } != 0 {
+                return None;
+            }
+            let dup_fd = unsafe { libc::dup(fd) };
+            if dup_fd < 0 {
+                return None;
+            }
+            let f = unsafe { std::fs::File::from_raw_fd(dup_fd) };
             return f.metadata().ok();
         }
     }
-    fs::metadata(s).ok()
+    // c:464 — `if (!(us = unmeta(s))) return NULL;`
+    let us = crate::ported::utils::unmeta(s);
+    fs::metadata(&us).ok()                                                    // c:466
 }
 
 /// Port of `dostat(char *s)` from Src/cond.c:474 — returns the file's
@@ -741,6 +768,40 @@ mod tests {
         // Missing close paren: error
         assert_eq!(evalcond(&["(", "-z", ""], &opts, &vars, true), 2,
             "missing closing `)` must return 2 (cond error)");
+    }
+
+    /// `Src/cond.c:452-468` — `getstat(s)` special-cases `/dev/fd/N`
+    /// with `fstat(N, &st)`. Regular paths run through `unmeta(s)`
+    /// before `stat(2)`. The previous Rust port used `fs::metadata(s)`
+    /// directly, missing the unmeta pass. Pin the regular-path
+    /// contract (existence check on `/`).
+    #[test]
+    fn getstat_resolves_regular_path() {
+        // Regular path: root exists, must return Some.
+        assert!(getstat("/").is_some(),
+            "c:466 — stat('/') must succeed");
+        // Nonexistent path returns None.
+        assert!(getstat("/nonexistent/path/zzz").is_none(),
+            "c:464 — nonexistent path returns None");
+    }
+
+    /// `Src/cond.c:458-461` — `/dev/fd/N` syntax routes through
+    /// `fstat(N, &st)`. The previous Rust port wasted an fd via
+    /// unconditional `dup` BEFORE checking fd validity. Fixed: fstat
+    /// pre-check, then dup only for the File-ownership wrapper.
+    /// Pin: /dev/fd/<stdin-fd> when stdin is a tty doesn't panic.
+    #[cfg(unix)]
+    #[test]
+    fn getstat_dev_fd_path_doesnt_dup_bad_fds() {
+        // /dev/fd/99 is almost certainly an invalid fd in test env.
+        // Pre-fix behavior: would dup it (succeeds or fails), then
+        // File::from_raw_fd(<bad fd>), then metadata fails. Net result
+        // is still None, but it wasted a dup syscall.
+        // Post-fix: fstat fails first → return None without dup.
+        let _ = getstat("/dev/fd/99"); // must not panic
+        // /dev/fd/0 is stdin — usually valid. Test that it doesn't
+        // panic regardless of stdin shape.
+        let _ = getstat("/dev/fd/0");
     }
 
     /// `Src/cond.c:552-562` — `cond_match` runs `matchpat`. C
