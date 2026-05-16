@@ -360,10 +360,14 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 if !interact {
                     unsafe { libc::_exit(libc::SIGPIPE); }                   // c:437
                 } else {
-                    // SHTTY isn't a single global in zshrs; treat
-                    // !isatty(stdin) as "no controlling tty" which
-                    // matches the common path.
-                    let on_tty = unsafe { libc::isatty(0) } != 0;
+                    // c:438 — `else if (!isatty(SHTTY))`. The previous
+                    // Rust port hardcoded fd 0 (stdin) with a comment
+                    // claiming "SHTTY isn't a single global in zshrs"
+                    // — but SHTTY IS a global at `init::SHTTY`. Use it.
+                    let shtty = crate::ported::init::SHTTY
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                    let on_tty = shtty >= 0
+                        && unsafe { libc::isatty(shtty) } != 0;
                     if !on_tty {
                         crate::ported::builtin::STOPMSG                     // c:439
                             .store(1, std::sync::atomic::Ordering::Relaxed);
