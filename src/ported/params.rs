@@ -3777,32 +3777,64 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {                        // 
     None                                                                      // c:3110
 }
 
-/// Port of `gethparam(char *s)` from `Src/params.c:3115`. C body
-/// (analogous to getaparam): fetchvalue + return
-/// `paramvalarr(v->pm->gsu.h->getfn(v->pm), SCANPM_WANTVALS)`
-/// when PM_TYPE == PM_HASHED.
-pub fn gethparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let s = s?;
-    let pm = s.pm.as_mut()?;
-    if PM_TYPE(pm.node.flags as u32) != PM_HASHED {
+/// Port of `char **gethparam(char *s)` from `Src/params.c:3117-3126`.
+///
+/// C body:
+/// ```c
+/// struct value vbuf;
+/// Value v;
+/// if (!idigit(*s) && (v = getvalue(&vbuf, &s, 0)) &&
+///     PM_TYPE(v->pm->node.flags) == PM_HASHED)
+///     return paramvalarr(v->pm->gsu.h->getfn(v->pm), SCANPM_WANTVALS);
+/// return NULL;
+/// ```
+///
+/// Same fabricated-port family as the prior `getaparam`/`getsparam_u`
+/// fixes: previous Rust sig took `Option<&mut value>` instead of the
+/// canonical name string, with no real callers. Fixed sig + body
+/// that resolves the name through paramtab and returns the values
+/// vector when PM_HASHED.
+///
+/// NOTE: zshrs's paramtab stores hash-params via `pm->u_hash` (a
+/// `HashTable` struct that's a generic bucket-array container). The
+/// canonical C path threads through `gsu.h->getfn(pm)` → `paramvalarr`
+/// which extracts the value side of each key-value pair. Until that
+/// extraction backend lands, we return an empty Vec for PM_HASHED
+/// (which matches C's "no entries" return shape, not the broken
+/// "wrong-signature" stub).
+pub fn gethparam(name: &str) -> Option<Vec<String>> {                        // c:3117
+    if name.starts_with(|c: char| c.is_ascii_digit()) {                      // c:3122
         return None;
     }
-    // hashgetfn(pm) returns the HashTable; flattening to values
-    // requires scanhashtable backend — return empty for now.
-    let _ = hashgetfn(pm);
-    Some(Vec::new())
+    if let Ok(tab) = paramtab().read() {
+        if let Some(pm) = tab.get(name) {
+            if PM_TYPE(pm.node.flags as u32) == PM_HASHED {                  // c:3123
+                // c:3124 — `paramvalarr(hashgetfn(pm), SCANPM_WANTVALS)`.
+                // Backend not yet ported; return empty vec to mirror the
+                // "param exists but has no entries" shape.
+                return Some(Vec::new());                                     // c:3124
+            }
+        }
+    }
+    None                                                                      // c:3125
 }
 
-/// Port of `gethkparam(char *s)` from `Src/params.c:3130`. Same as
-/// `gethparam` but returns keys via `paramvalarr(..., SCANPM_WANTKEYS)`.
-pub fn gethkparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let s = s?;
-    let pm = s.pm.as_mut()?;
-    if PM_TYPE(pm.node.flags as u32) != PM_HASHED {
+/// Port of `char **gethkparam(char *s)` from `Src/params.c:3131-3140`.
+/// Same as `gethparam` but `paramvalarr(..., SCANPM_WANTKEYS)`.
+pub fn gethkparam(name: &str) -> Option<Vec<String>> {                       // c:3131
+    if name.starts_with(|c: char| c.is_ascii_digit()) {                      // c:3136
         return None;
     }
-    let _ = hashgetfn(pm);
-    Some(Vec::new())
+    if let Ok(tab) = paramtab().read() {
+        if let Some(pm) = tab.get(name) {
+            if PM_TYPE(pm.node.flags as u32) == PM_HASHED {                  // c:3137
+                // c:3138 — `paramvalarr(hashgetfn(pm), SCANPM_WANTKEYS)`.
+                // Same backend gap as gethparam; return empty Vec.
+                return Some(Vec::new());                                     // c:3138
+            }
+        }
+    }
+    None                                                                      // c:3139
 }
 
 /// Port of `check_warn_pm(Param pm, const char *pmtype, int created, int may_warn_about_nested_vars)` from `Src/params.c:3160`.
@@ -9112,6 +9144,79 @@ mod tests {
         match saved {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
+        }
+    }
+
+    /// Pin `gethparam` / `gethkparam` to their canonical C bodies at
+    /// `Src/params.c:3117-3140`. Same signature-fix family as `getaparam`:
+    /// the `name: &str` path with digit-first reject + PM_HASHED check.
+    #[test]
+    fn gethparam_and_gethkparam_signature_matches_c() {
+        // c:3122 / c:3136 — digit-first name reject.
+        assert_eq!(gethparam("123abc"), None,
+            "c:3122 — digit-first name rejected");
+        assert_eq!(gethkparam("123abc"), None,
+            "c:3136 — digit-first name rejected");
+
+        // Missing param → None.
+        assert_eq!(gethparam("zshrs_test_hashparam_xyz"), None,
+            "missing param returns None");
+        assert_eq!(gethkparam("zshrs_test_hashparam_xyz"), None,
+            "missing param returns None");
+
+        // PM_SCALAR param (not hashed) → None.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.insert("zshrs_test_gethp_scalar".to_string(),
+                Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "zshrs_test_gethp_scalar".to_string(),
+                    flags: crate::ported::zsh_h::PM_SCALAR as i32,
+                },
+                u_data: 0, u_arr: None,
+                u_str: Some("scalar value".to_string()),
+                u_val: 0, u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None,
+                gsu_a: None, gsu_h: None,
+                base: 0, width: 0,
+                env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        assert_eq!(gethparam("zshrs_test_gethp_scalar"), None,
+            "c:3123 — non-PM_HASHED returns None");
+        assert_eq!(gethkparam("zshrs_test_gethp_scalar"), None,
+            "c:3137 — non-PM_HASHED returns None");
+
+        // PM_HASHED param → Some(Vec::new()) (backend not yet wired,
+        // but signature should at least classify the type correctly).
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.insert("zshrs_test_gethp_hash".to_string(),
+                Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "zshrs_test_gethp_hash".to_string(),
+                    flags: crate::ported::zsh_h::PM_HASHED as i32,
+                },
+                u_data: 0, u_arr: None, u_str: None,
+                u_val: 0, u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None,
+                gsu_a: None, gsu_h: None,
+                base: 0, width: 0,
+                env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        assert_eq!(gethparam("zshrs_test_gethp_hash"), Some(Vec::new()),
+            "c:3123-3124 — PM_HASHED returns Some(vec) (empty until backend wired)");
+        assert_eq!(gethkparam("zshrs_test_gethp_hash"), Some(Vec::new()),
+            "c:3137-3138 — PM_HASHED returns Some(vec) for keys");
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove("zshrs_test_gethp_scalar");
+            tab.remove("zshrs_test_gethp_hash");
         }
     }
 
