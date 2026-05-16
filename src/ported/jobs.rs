@@ -2171,7 +2171,25 @@ pub fn getsigname(sig: i32) -> String {
         libc::SIGWINCH => "WINCH".to_string(),
         libc::SIGIO => "IO".to_string(),
         libc::SIGSYS => "SYS".to_string(),
-        _ => format!("SIG{}", sig),
+        _ => {
+            // c:3099-3101 — `if (sig >= VSIGCOUNT) return rtsigname(SIGNUM(sig), 0);`
+            // RT-signal range (Linux SIGRTMIN..SIGRTMAX) maps to
+            // "RTMIN+N"/"RTMAX-N" via the canonical rtsigname helper.
+            // The previous Rust port emitted `SIG{sig}` for every
+            // unknown signal — losing the RT-signal naming entirely.
+            #[cfg(target_os = "linux")]
+            {
+                let sigrtmin = unsafe { libc::SIGRTMIN() };
+                let sigrtmax = unsafe { libc::SIGRTMAX() };
+                if sig >= sigrtmin && sig <= sigrtmax {                       // c:3100
+                    let nm = crate::ported::signals::rtsigname(sig);          // c:3101 rtsigname(SIGNUM(sig), 0)
+                    if !nm.is_empty() {
+                        return nm;
+                    }
+                }
+            }
+            format!("SIG{}", sig)
+        }
     }
 }
 
@@ -2959,5 +2977,38 @@ mod tests {
         assert!(!kill_msg.is_empty());
         // They must be distinct (no single "unknown" sentinel for all).
         assert_ne!(int_msg, term_msg);
+    }
+
+    /// `Src/jobs.c:3087-3107` — `getsigname(sig)` falls back to
+    /// `rtsigname(SIGNUM(sig), 0)` for signals in `[SIGRTMIN..SIGRTMAX]`
+    /// (Linux only). Previously the Rust port emitted `SIG{n}` for
+    /// every unknown signal, losing the RT-signal naming entirely.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn getsigname_emits_rt_form_for_rt_signal_range() {
+        let sigrtmin = unsafe { libc::SIGRTMIN() };
+        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        // SIGRTMIN → "RTMIN".
+        assert_eq!(getsigname(sigrtmin), "RTMIN",
+            "c:3101 — RTMIN sig → bare RTMIN");
+        // SIGRTMAX → "RTMAX".
+        assert_eq!(getsigname(sigrtmax), "RTMAX",
+            "c:3101 — RTMAX sig → bare RTMAX");
+        // SIGRTMIN+1 → "RTMIN+1" (shorter form per rtsigname c:1322).
+        assert_eq!(getsigname(sigrtmin + 1), "RTMIN+1");
+        // SIGRTMAX-1 → "RTMAX-1".
+        assert_eq!(getsigname(sigrtmax - 1), "RTMAX-1");
+    }
+
+    /// Pre-condition: standard signal names still resolve. Make sure
+    /// the new RT-signal branch didn't break the canonical table.
+    #[test]
+    fn getsigname_standard_signals_unchanged() {
+        assert_eq!(getsigname(libc::SIGINT),  "INT");
+        assert_eq!(getsigname(libc::SIGHUP),  "HUP");
+        assert_eq!(getsigname(libc::SIGCHLD), "CHLD");
+        assert_eq!(getsigname(libc::SIGKILL), "KILL");
+        // EXIT pseudo-signal at index 0.
+        assert_eq!(getsigname(0), "EXIT");
     }
 }
