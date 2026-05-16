@@ -569,13 +569,55 @@ pub fn optlookupc(c: char) -> i32 {                                          // 
 /// `opts[optno] = value`. Static-link path: optno is the FNV hash
 /// produced by `optlookup`; we look up by name in a reverse pass
 /// against the canonical option set, then write OPTS_LIVE.
-/// WARNING: param names don't match C — Rust=(optno, value, _force) vs C=(optno, value, force, new_opts)
-pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // c:735
+///
+/// **c:743-755 locked-option gates** (previously omitted from the
+/// Rust port, defeating multiple safety checks):
+///   * c:743 — `force=0 && optno==EXECOPT && !value && interact` →
+///     refuse `setopt noexec` in an interactive shell.
+///   * c:746 — `force=0 && optno in {INTERACTIVE, SHINSTDIN,
+///     SINGLECOMMAND}` → these options can only be set at startup,
+///     not via `setopt`; either no-op if already correct, or reject.
+///   * c:752 — `force=0 && optno==USEZLE && value` → require a
+///     terminal (interactive + valid SHTTY); reject otherwise.
+pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // c:735
     if optno == 0 { return -1; }
     let mut idx = optno;
     if idx < 0 {                                                             // c:739
         idx = -idx;
         value = if value != 0 { 0 } else { 1 };                              // c:741
+    }
+    // c:743-755 — locked-option enforcement (force=0 path).
+    if force == 0 {
+        use crate::ported::zsh_h::{
+            EXECOPT, INTERACTIVE, SHINSTDIN, SINGLECOMMAND, USEZLE,
+        };
+        // c:743 — interactive + EXECOPT off is forbidden.
+        if idx == EXECOPT && value == 0 && crate::ported::zsh_h::interact() {
+            return -1;
+        }
+        // c:746-749 — INTERACTIVE / SHINSTDIN / SINGLECOMMAND lock.
+        // C compares against `new_opts[optno]`, the in-progress opts
+        // array; the Rust port reads the live state via opt_state_get
+        // mapped from the optno's name. If the requested value equals
+        // the current value, the call is a no-op success (return 0);
+        // otherwise reject (return -1).
+        if idx == INTERACTIVE || idx == SHINSTDIN || idx == SINGLECOMMAND {
+            let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
+            if let Some(name) = cur_name {
+                let cur = opt_state_get(name).unwrap_or(false);
+                if cur as i32 == value {
+                    return 0;                                                // c:749 already matches
+                }
+            }
+            return -1;                                                       // c:750
+        }
+        // c:752 — USEZLE on requires interactive AND a real tty.
+        // We don't yet track SHTTY/shout here; approximate by requiring
+        // `interact()` to be true. A non-interactive `setopt usezle`
+        // is rejected (matches the most common C failure case).
+        if idx == USEZLE && value != 0 && !crate::ported::zsh_h::interact() {
+            return -1;
+        }
     }
     // c:744 — locate the option name whose FNV hash matches idx.
     let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
@@ -1813,5 +1855,82 @@ mod tests {
         assert_eq!(optlookupc('~'),  0, "tilde above LAST_OPT");
         // High Unicode never maps to an option letter.
         assert_eq!(optlookupc('字'),  0);
+    }
+
+    /// `Src/options.c:735-760` — `dosetopt` rejects user-level changes
+    /// to INTERACTIVE/SHINSTDIN/SINGLECOMMAND without `force=1`. These
+    /// are init-only options (set by command-line flags or startup
+    /// state); `setopt interactive` from a running shell must fail
+    /// with return code -1 unless the value already matches.
+    ///
+    /// Previously the Rust port dropped the `force` arg entirely,
+    /// silently permitting any caller to flip these options post-init.
+    #[test]
+    fn dosetopt_rejects_locked_options_without_force() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        use crate::ported::zsh_h::{INTERACTIVE, SHINSTDIN, SINGLECOMMAND};
+
+        // Save current state to restore at end of test.
+        let saved_interactive = opt_state_get("interactive").unwrap_or(false);
+        let saved_shinstdin = opt_state_get("shinstdin").unwrap_or(false);
+        let saved_single = opt_state_get("singlecommand").unwrap_or(false);
+
+        // Set baseline = false for all three locked options.
+        opt_state_set("interactive", false);
+        opt_state_set("shinstdin", false);
+        opt_state_set("singlecommand", false);
+
+        // c:746 — force=0 + changing value → reject (-1).
+        assert_eq!(dosetopt(INTERACTIVE, 1, 0), -1,
+            "c:746 — dosetopt INTERACTIVE on without force must reject");
+        assert_eq!(dosetopt(SHINSTDIN, 1, 0), -1,
+            "c:746 — dosetopt SHINSTDIN on without force must reject");
+        assert_eq!(dosetopt(SINGLECOMMAND, 1, 0), -1,
+            "c:746 — dosetopt SINGLECOMMAND on without force must reject");
+
+        // c:749 — force=0 + same value → no-op success (0).
+        assert_eq!(dosetopt(INTERACTIVE, 0, 0), 0,
+            "c:749 — same value is a no-op success");
+
+        // force=1 → allowed even if changing locked option.
+        assert_eq!(dosetopt(INTERACTIVE, 1, 1), 0,
+            "c:743 — force=1 bypasses the lock");
+        // Verify state flipped this time.
+        assert!(opt_state_get("interactive").unwrap_or(false),
+            "force=1 must actually flip the option");
+
+        // Restore prior state.
+        opt_state_set("interactive", saved_interactive);
+        opt_state_set("shinstdin", saved_shinstdin);
+        opt_state_set("singlecommand", saved_single);
+    }
+
+    /// `Src/options.c:735-744` — `dosetopt(optno < 0, value, _)` flips
+    /// the value sign (`optno < 0` is the "no" prefix marker). The
+    /// negation runs BEFORE the locked-option checks, so a negated
+    /// optno still gets gated by the locked-option logic. Pin the
+    /// sign-flip semantics through a non-locked option.
+    #[test]
+    fn dosetopt_negative_optno_flips_value() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // Use AUTOMENU — a regular option (not locked).
+        let auto_menu = optlookup("automenu");
+        assert!(auto_menu > 0, "automenu must look up to a valid optno");
+        let saved = opt_state_get("automenu").unwrap_or(false);
+
+        // dosetopt(+optno, 0, 0) → unset.
+        let _ = dosetopt(auto_menu, 0, 0);
+        assert!(!opt_state_get("automenu").unwrap_or(true),
+            "automenu = 0 → unset");
+
+        // dosetopt(-optno, 0, 0) → value flipped to 1 → set.
+        let _ = dosetopt(-auto_menu, 0, 0);
+        assert!(opt_state_get("automenu").unwrap_or(false),
+            "c:741 — negative optno flips value (0 → 1)");
+
+        // Restore.
+        opt_state_set("automenu", saved);
     }
 }
