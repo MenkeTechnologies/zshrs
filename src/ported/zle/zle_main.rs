@@ -776,7 +776,12 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     use crate::ported::utils::zwarnnam;
     let mut type_: u32 = PM_SCALAR;                                          // c:1685
     // c:1691 — `if ((interact && unset(USEZLE)) || !strcmp(term, "emacs"))`.
-    let term = std::env::var("TERM").unwrap_or_default();
+    // C reads the `term` global (Src/init.c:777) which is the shell's
+    // \$TERM param. The previous Rust port read \`std::env::var(\"TERM\")\`
+    // — same env-vs-paramtab divergence family as the prior
+    // termcap / datetime / newuser fixes.
+    let term = crate::ported::params::getsparam("TERM")
+        .unwrap_or_default();
     if term == "emacs" {                                                     // c:1691
         zwarnnam(name, "ZLE not enabled");                                   // c:1692
         return 1;                                                            // c:1693
