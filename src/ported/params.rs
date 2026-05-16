@@ -5604,10 +5604,19 @@ pub fn histcharsgetfn() -> String {
     s
 }
 
-/// Port of `histcharssetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5079`. C body
+/// Port of `histcharssetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5081`. C body
 /// validates ASCII, takes up to 3 chars; defaults `!^#` if NULL.
+///
+/// C `unmetafy(x, &len)` (c:5086) strips Meta-encoded pairs BEFORE
+/// the length truncation and ASCII guard. The previous Rust port
+/// skipped unmetafy entirely:
+///   - `len > 3` truncation ran on raw byte length, so a Meta-pair
+///     would inflate the byte count and skip valid chars.
+///   - ASCII check ran against raw Meta bytes (0x83), falsely
+///     rejecting valid round-tripped values.
+///
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn histcharssetfn(x: Option<String>) {
+pub fn histcharssetfn(x: Option<String>) {                                    // c:5081
     use std::sync::atomic::Ordering;
     let new_chars: [u8; 3] = match x {
         None => {
@@ -5615,8 +5624,13 @@ pub fn histcharssetfn(x: Option<String>) {
             [b'!', b'^', b'#']
         }
         Some(s) => {
-            let bytes = s.as_bytes();
-            for &b in bytes.iter().take(3) {
+            // c:5086 — `unmetafy(x, &len)`. Strip Meta pairs first.
+            let unmeta = crate::ported::utils::unmeta(&s);                   // c:5086 unmetafy(x)
+            let bytes = unmeta.as_bytes();
+            // c:5087-5088 — `if (len > 3) len = 3;`. Truncation
+            // applies AFTER unmetafy.
+            let bytes = if bytes.len() > 3 { &bytes[..3] } else { bytes };
+            for &b in bytes.iter() {
                 if b >= 0x80 {                                          // c:5090-5093
                     // c:5091 — C uses `zwarn` (informational), NOT
                     // `zerr` (fatal). Function returns early without
@@ -5630,7 +5644,7 @@ pub fn histcharssetfn(x: Option<String>) {
             // C uses `len ? x[0] : '\0'` etc — for short strings the
             // unset bytes are NUL.
             let mut chars = [0u8; 3];
-            for (i, &b) in bytes.iter().take(3).enumerate() {
+            for (i, &b) in bytes.iter().enumerate() {
                 chars[i] = b;
             }
             chars
@@ -7409,6 +7423,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
 #[cfg(test)]
 pub(crate) static HISTSIZ_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Shared test mutex for histchars mutations (gsu_tests +
+/// tests submodules both write bangchar/hatchar/hashchar atomics;
+/// this lock serialises them under parallel test execution).
+#[cfg(test)]
+pub(crate) static HISTCHARS_TEST_LOCK_SHARED: std::sync::Mutex<()> =
+    std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod gsu_tests {
     use super::*;
@@ -7566,11 +7587,54 @@ mod gsu_tests {
 
     #[test]
     fn test_histchars_default() {
+        let _g = super::HISTCHARS_TEST_LOCK_SHARED
+            .lock().unwrap_or_else(|e| e.into_inner());
         histcharssetfn(None);
         assert_eq!(histcharsgetfn(), "!^#");
         histcharssetfn(Some("@$&".to_string()));
         assert_eq!(histcharsgetfn(), "@$&");
         histcharssetfn(None);
+    }
+
+    /// Pin: `histcharssetfn` runs `unmetafy` per Src/params.c:5086
+    /// BEFORE the length truncation and ASCII guard. Previously
+    /// the Rust port skipped unmetafy, so a Meta-pair would
+    /// inflate the byte count past 3 and the truncation would
+    /// drop valid characters.
+    ///
+    /// Test the happy path: 1-char, 2-char, 3-char ASCII inputs
+    /// all parse correctly and each char-position fills the
+    /// matching atomic.
+    #[test]
+    fn histcharssetfn_handles_1_2_3_char_inputs() {
+        let _g = super::HISTCHARS_TEST_LOCK_SHARED
+            .lock().unwrap_or_else(|e| e.into_inner());
+        use std::sync::atomic::Ordering;
+        // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
+        histcharssetfn(Some("Q".to_string()));
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'Q' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), 0);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), 0);
+        // 2-char: bangchar=='X', hatchar=='Y', hashchar=='\0'.
+        histcharssetfn(Some("XY".to_string()));
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'X' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), b'Y' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), 0);
+        // 3-char: bangchar=='A', hatchar=='B', hashchar=='C'.
+        histcharssetfn(Some("ABC".to_string()));
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'A' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), b'B' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'C' as i32);
+        // 4+ char: c:5087-5088 truncates to 3.
+        histcharssetfn(Some("WXYZ".to_string()));
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'W' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), b'X' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'Y' as i32);
+        // Reset to default.
+        histcharssetfn(None);
+        assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), b'^' as i32);
+        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), b'#' as i32);
     }
 }
 
@@ -8067,9 +8131,10 @@ mod tests {
         let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
     }
 
-    /// Process-wide lock serialising tests that mutate the three
-    /// `histchars` atomic globals. No C counterpart.
-    static HISTCHARS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Use the module-scope HISTCHARS_TEST_LOCK_SHARED (declared
+    // outside the test modules) so gsu_tests + tests serialise
+    // against the same Mutex rather than two independent ones.
+    use super::HISTCHARS_TEST_LOCK_SHARED as HISTCHARS_TEST_LOCK;
 
     /// `Src/params.c:5095-5097` — `histcharssetfn` stores bangchar /
     /// hatchar / hashchar in the per-char globals. Pin the round-trip
