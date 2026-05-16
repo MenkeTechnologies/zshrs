@@ -952,11 +952,24 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {        // 
         wcw = 0;                                                             // c:1174
 
         // c:1179-1185 — Inpar/Outpar/Nularg dispatch.
-        if c == '\x01' {                                                     // c:1179 Inpar
-            visible = false;                                                 // c:1180
-        } else if c == '\x02' {                                              // c:1181 Outpar
-            visible = true;                                                  // c:1182
-        } else if c == '\x03' {                                              // c:1183 Nularg
+        //
+        // The previous Rust port used '\x01' / '\x02' / '\x03' for
+        // these three tokens, which are the WRONG values. The
+        // canonical token bytes are:
+        //   Inpar  = 0x88 (Src/zsh.h:163)
+        //   Outpar = 0x8a (Src/zsh.h:165)
+        //   Nularg = 0xa1 (Src/zsh.h:206)
+        //
+        // Effect of the previous bug: every prompt with `%{...%}`
+        // (non-printing escapes — which lex as Inpar..Outpar after
+        // promptexpand) skipped the `s = 0` flag flip and counted
+        // the escape bytes as visible width. Multi-line prompts
+        // with `%{...%}` wrap at wrong columns.
+        if c == crate::ported::zsh_h::Inpar {                                // c:1179 Inpar
+            visible = false;                                                 // c:1180 s = 0
+        } else if c == crate::ported::zsh_h::Outpar {                        // c:1181 Outpar
+            visible = true;                                                  // c:1182 s = 1
+        } else if c == crate::ported::zsh_h::Nularg {                        // c:1183 Nularg
             w += 1;                                                          // c:1184
         } else if visible {                                                  // c:1185
             // c:1202-1208 — tab / newline.
@@ -2679,5 +2692,35 @@ mod tests {
     #[test]
     fn match_named_colour_returns_none_for_unknown() {
         assert!(match_named_colour("definitely_not_a_color_zshrs").is_none());
+    }
+
+    /// Pin: `countprompt` recognises `Inpar` (0x88) / `Outpar` (0x8a)
+    /// / `Nularg` (0xa1) as the THREE special tokens per
+    /// `Src/prompt.c:1179-1185`. The previous Rust port used
+    /// '\x01' / '\x02' / '\x03' — the WRONG byte values.
+    ///
+    /// `Inpar..Outpar` regions are `%{...%}` non-printing escapes
+    /// (zero visible width); `Nularg` is a glitch-space placeholder
+    /// (1 visible column).
+    #[test]
+    fn countprompt_recognises_canonical_inpar_outpar_nularg_bytes() {
+        use crate::ported::zsh_h::{Inpar, Outpar, Nularg};
+        let mut w = 0i32;
+        let mut h = 0i32;
+        // `abc%{...%}def` shape: `abc` (3 cols), Inpar+escape+Outpar
+        // (zero cols since non-printing), `def` (3 cols).
+        let probe = format!("abc{}ESC{}def", Inpar, Outpar);
+        countprompt(&probe, &mut w, &mut h, 0);
+        assert_eq!(w, 6,
+            "c:1179-1182 — Inpar..Outpar region must be zero-width; \
+             got w={w} for 3+0+3-col prompt");
+
+        // Nularg alone is 1 visible column.
+        let mut w = 0i32;
+        let mut h = 0i32;
+        let probe = format!("{}", Nularg);
+        countprompt(&probe, &mut w, &mut h, 0);
+        assert_eq!(w, 1,
+            "c:1183-1184 — Nularg counts as 1 visible column; got w={w}");
     }
 }
