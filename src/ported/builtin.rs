@@ -1540,11 +1540,20 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         // c:1473 — pushhiststack(hf, hs, shs, level); failure → return 1.
         crate::ported::hist::pushhiststack(Some(&hf), hs, shs, level);       // c:1473
         if !hf.is_empty() {                                                  // c:1475
-            // c:1476-1480 — stat then readhistfile(hf, 1, HFILE_USE_OPTIONS).
-            let exists = std::fs::metadata(&hf).is_ok();
-            let enoent = std::io::Error::last_os_error().raw_os_error()
-                == Some(libc::ENOENT);
-            if exists || !enoent {                                           // c:1477
+            // c:1476-1480 — `if (stat(hf, &st) >= 0 || errno != ENOENT)
+            //                  readhistfile(hf, 1, HFILE_USE_OPTIONS);`
+            // Previous Rust port read `Error::last_os_error()` AFTER
+            // checking `metadata().is_ok()` — racey: any intervening
+            // syscall between the metadata call and last_os_error()
+            // can stomp errno on some platforms. Capture the per-Err
+            // raw_os_error directly so we read the SAME errno value
+            // the stat call produced.
+            let stat_result = std::fs::metadata(&hf);
+            let should_read = match &stat_result {
+                Ok(_)  => true,                                              // c:1477 stat >= 0
+                Err(e) => e.raw_os_error() != Some(libc::ENOENT),            // c:1477 errno != ENOENT
+            };
+            if should_read {                                                 // c:1477
                 crate::ported::hist::readhistfile(                           // c:1478
                     Some(&hf), 1, HFILE_USE_OPTIONS as i32);
             }
