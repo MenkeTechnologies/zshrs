@@ -5204,18 +5204,24 @@ pub fn egidsetfn(x: i64) {                                                   // 
 /// not a tty.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn ttyidlegetfn() -> i64 {
-    if unsafe { libc::isatty(0) } == 0 {
+    // c:4776 — `if (SHTTY == -1 || fstat(SHTTY, &ttystat)) return -1;`
+    // The previous Rust port hardcoded fd 0 (stdin) which is wrong
+    // when SHTTY was opened on a non-stdin file descriptor (e.g.
+    // `zsh < script` where stdin is a file but the controlling tty
+    // was opened separately). C tracks the actual SHTTY fd.
+    let shtty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::SeqCst);
+    if shtty == -1 {                                                          // c:4776
         return -1;
     }
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(0, &mut st) } != 0 {
+    if unsafe { libc::fstat(shtty, &mut st) } != 0 {                          // c:4776
         return -1;
     }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    now - st.st_atime as i64
+    now - st.st_atime as i64                                                  // c:4779
 }
 
 // -----------------------------------------------------------
