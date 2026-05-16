@@ -1060,20 +1060,42 @@ pub fn hbegin(dohist: i32) {                                                 // 
     }
 }
 
-/// Port of `char *histreduceblanks(void)` from Src/hist.c.
-/// Rust idiom replacement: `chars()` + `is_whitespace` covers the C
-/// per-byte run-collapse loop without the manual buffer growth.
+/// Port of `void histreduceblanks(void)` from `Src/hist.c:1199-1248`.
+///
+/// **Signature divergence from C**: C operates on global `chline`
+/// + `chwords` state and returns void. Rust port takes a `&str`
+/// input and returns the collapsed result — the in-tree caller
+/// (hist.rs:1388) threads text through this Rust shape. A future
+/// refactor that wires the global-state path would deprecate this
+/// signature.
+///
+/// **Whitespace class fix**: C uses `inblank(*ptr)` at c:1240 — the
+/// NARROW typtab class (space + tab only per Src/ztype.h:50). The
+/// previous Rust port used `c.is_whitespace()` (broad Unicode)
+/// which also catches CR/FF/VT/NBSP — silently collapsing those
+/// chars that C would preserve. Now matches C's narrow inblank.
 pub fn histreduceblanks(text: &str) -> String {
+    // c:50 — `inblank` is space/tab only.
+    #[inline]
+    fn is_inblank_narrow(c: char) -> bool {
+        c == ' ' || c == '\t'
+    }
+
     let mut result = String::with_capacity(text.len());
     let mut prev_space = false;
     for c in text.chars() {
-        if c.is_whitespace() {
+        if is_inblank_narrow(c) {
             if !prev_space { result.push(' '); prev_space = true; }
         } else {
             result.push(c); prev_space = false;
         }
     }
-    result.trim().to_string()
+    // c:1240 — trim trailing inblank only; preserve embedded non-
+    // inblank chars (newline, CR, etc).
+    let mut s = result;
+    while s.ends_with(' ') { s.pop(); }
+    while s.starts_with(' ') { s.remove(0); }
+    s
 }
 
 /// Port of `void histremovedups(void)` from Src/hist.c.
@@ -3184,6 +3206,34 @@ mod subst_modifier_tests {
         assert_eq!(histreduceblanks("foo\t\tbar"), "foo bar");
         // Leading/trailing whitespace is left intact per the C body.
         assert_eq!(histreduceblanks("a b"), "a b");
+    }
+
+    /// `Src/hist.c:1240` — `histreduceblanks` uses `inblank(*ptr)`
+    /// which is space+tab ONLY per `Src/ztype.h:50`. The previous
+    /// Rust port used `c.is_whitespace()` (broad Unicode) which
+    /// also matched CR/FF/VT/NBSP — silently mangling history lines
+    /// that legitimately contain those chars.
+    #[test]
+    fn histreduceblanks_uses_narrow_inblank_only() {
+        // Space and tab — collapsed.
+        assert_eq!(histreduceblanks("a  b"), "a b");
+        assert_eq!(histreduceblanks("a\t\tb"), "a b");
+        assert_eq!(histreduceblanks("a \tb"), "a b",
+            "c:1240 — mixed space/tab run collapses to single space");
+        // Newline is NOT inblank per c:50 — must be preserved.
+        assert_eq!(histreduceblanks("a\nb"), "a\nb",
+            "c:50 — newline not in inblank; passes through unchanged");
+        // CR is NOT inblank.
+        assert_eq!(histreduceblanks("a\rb"), "a\rb",
+            "CR not in inblank class; must NOT be collapsed");
+        // NBSP (\u{A0}) is NOT inblank either.
+        assert_eq!(histreduceblanks("a\u{A0}b"), "a\u{A0}b",
+            "NBSP not in inblank; must NOT be collapsed");
+        // Leading/trailing spaces stripped (c:1241).
+        assert_eq!(histreduceblanks("   x"), "x");
+        assert_eq!(histreduceblanks("x   "), "x");
+        // But leading newline is NOT stripped (newline not inblank).
+        assert_eq!(histreduceblanks("\nx"), "\nx");
     }
 
     /// `digitcount` returns the run-length of leading ASCII digits.
