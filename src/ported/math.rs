@@ -1853,12 +1853,63 @@ pub(crate) fn bop(tk: i32) {
         }
     }
 
-/// Convenience function to evaluate a math expression
-/// Top-level math-expression evaluator.
-/// Port of `matheval(char *s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
-pub fn matheval(s: &str) -> Result<mnumber, String> {                     // c:1480
+/// Port of `mnumber matheval(char *s)` from `Src/math.c:1480`.
+///
+/// C body (c:1481-1500):
+/// ```c
+/// char *junk;
+/// mnumber x;
+/// int xmtok = mtok;
+/// /* maintain outputradix and outputunderscore across levels of evaluation */
+/// if (!mlevel)
+///     outputradix = outputunderscore = 0;
+///
+/// if (*s == Nularg)
+///     s++;
+/// if (!*s) {
+///     x.type = MN_INTEGER;
+///     x.u.l = 0;
+///     return x;
+/// }
+/// x = mathevall(s, MPREC_TOP, &junk);
+/// mtok = xmtok;
+/// if (*junk)
+///     zerr("bad math expression: illegal character: %c", *junk);
+/// return x;
+/// ```
+///
+/// Three divergences in the previous Rust port:
+///   1. Missing Nularg-byte skip at c:1489-1490 — `$(())` lexes
+///      with a leading Nularg sentinel; without the skip, the math
+///      evaluator chokes on the 0xa1 byte instead of evaluating
+///      the empty expression as 0.
+///   2. Missing empty-input fast path at c:1491-1495 — empty
+///      string returned MN_INTEGER 0 in C; Rust port tried to
+///      evaluate via mathevall and produced a parse error.
+///   3. Missing mtok save/restore around mathevall (c:1483, c:1496) —
+///      recursive math calls (e.g. `$((f($((g)))))`) overwrote the
+///      outer call's mtok mid-parse.
+pub fn matheval(s: &str) -> Result<mnumber, String> {                       // c:1480
+    use crate::ported::zsh_h::Nularg;
+    // c:1483 — `int xmtok = mtok;` save.
+    let xmtok = M_MTOK.with(|c| c.get());                                    // c:1483
+
+    // c:1489-1490 — `if (*s == Nularg) s++;`. The 0xa1 sentinel byte
+    // can prefix expressions emerging from the parser; skip it.
+    let s = if let Some(rest) = s.strip_prefix(Nularg) {                     // c:1489
+        rest
+    } else {
+        s
+    };
+    // c:1491-1495 — empty expression returns MN_INTEGER 0.
+    if s.is_empty() {                                                        // c:1491
+        return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });               // c:1493-1494
+    }
     new(s);
-    mathevall()
+    let result = mathevall();
+    // c:1496 — `mtok = xmtok;` restore. Done even on error path.
+    M_MTOK.with(|c| c.set(xmtok));                                           // c:1496
+    result
 }
 
 /// Evaluate and return integer
@@ -2634,6 +2685,37 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pin `matheval` empty + Nularg fast paths per c:1489-1495.
+    /// Empty input MUST return MN_INTEGER 0 without invoking the
+    /// parser; the Nularg sentinel (0xa1) byte at the start of the
+    /// input MUST be skipped before the empty check.
+    #[test]
+    fn matheval_empty_input_returns_zero_int() {
+        // Empty string → MN_INTEGER 0 (c:1491-1494).
+        let r = matheval("").expect("empty string must return 0, not error");
+        assert_eq!(r.type_, MN_INTEGER,
+            "c:1493 — empty input returns MN_INTEGER");
+        assert_eq!(r.l, 0,
+            "c:1494 — empty input value is 0");
+
+        // Nularg-only string → also returns 0 (c:1489-1494).
+        let nularg_only: String = "\u{a1}".to_string();
+        let r = matheval(&nularg_only)
+            .expect("Nularg-only must return 0 (treated as empty after skip)");
+        assert_eq!(r.type_, MN_INTEGER,
+            "c:1489-1493 — Nularg-only input treated as empty → MN_INTEGER");
+        assert_eq!(r.l, 0,
+            "c:1494 — Nularg-only input value is 0");
+
+        // Nularg + expression → evaluates the expression (c:1490 skip).
+        let nularg_plus: String = "\u{a1}1 + 2".to_string();
+        let r = matheval(&nularg_plus)
+            .expect("Nularg prefix must be skipped and expression evaluated");
+        let v = if r.type_ == MN_FLOAT { r.d as i64 } else { r.l };
+        assert_eq!(v, 3,
+            "c:1490 — Nularg skipped, then `1 + 2` evaluates to 3");
+    }
 
     #[test]
     fn test_basic_arithmetic() {
