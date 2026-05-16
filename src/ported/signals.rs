@@ -778,16 +778,29 @@ pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 /// Remove a trap completely and reset to default disposition.
 /// Port of `removetrap(int sig)` from Src/signals.c:772.
-/// Rust idiom replacement: delegates to `unsettrap` then issues
-/// libc::signal(SIG_DFL); the C body's siglist-walk + savestate
-/// teardown lives on `unsettrap` already.
-pub fn removetrap(sig: i32) {
+///
+/// **Inverted call chain vs C**: in C, `unsettrap` (c:759) is a
+/// thin queue_signals + removetrap wrapper; the full save+clear+
+/// signal-disposition logic lives in `removetrap`. The Rust port
+/// inverts the relationship — `unsettrap` carries the full body
+/// (matching C lines 781-820), and `removetrap` is the thin
+/// wrapper.
+///
+/// The previous Rust `removetrap` body added `libc::signal(sig,
+/// SIG_DFL)` AFTER calling `unsettrap`. That was wrong: `unsettrap`
+/// already runs the per-signal disposition (c:802-820) which has
+/// special cases for SIGINT (intr() not SIG_DFL), SIGHUP (re-
+/// install_handler), and SIGPIPE under interactive non-fork
+/// (also re-install_handler). The extra SIG_DFL clobbered those
+/// special branches — `trap - INT` would default-reset SIGINT
+/// AFTER unsettrap had called intr(), losing the interactive
+/// interrupt path. Same for HUP/PIPE in interactive mode.
+pub fn removetrap(sig: i32) {                                                 // c:772
+    // c:759-768 (Src/signals.c) — `unsettrap` runs the full
+    // body: save-trap, clear slot, per-signal disposition reset.
+    // No extra SIG_DFL — `unsettrap` already chose the right
+    // disposition per signal.
     unsettrap(sig);
-    // Also restore default handler
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(sig, libc::SIG_DFL);
-    }
 }
 
 /// Direct port of `void starttrapscope(void)` from
