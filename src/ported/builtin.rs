@@ -3648,20 +3648,33 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
         return bin_unhash(name, argv, ops, func);                            // c:3827
     }
 
-    // c:3830-3859 — `-m` glob.
-    if OPT_ISSET(ops, b'm') {                                                // c:3830
-        for s in argv {                                                      // c:3831
-            crate::ported::mem::queue_signals();                             // c:3832
-            let pprog = crate::ported::pattern::patcompile(s,                // c:3835
+    // c:3830-3862 — `-m` glob.
+    if OPT_ISSET(ops, b'm') {                                                // c:3831
+        for s in argv {                                                      // c:3832
+            crate::ported::mem::queue_signals();                             // c:3833
+            let pprog = crate::ported::pattern::patcompile(s,                // c:3836
                 crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
-                // c:3837-3850 — walk paramtab, unset matches via unsetparam.
-                let names: Vec<String> = std::env::vars()
-                    .map(|(k,_)| k).collect();
+                // c:3838-3851 — walk paramtab (NOT env::vars), unset via
+                // unsetparam (which respects PM_NAMEREF + readonly guards).
+                //
+                // The previous Rust port walked `std::env::vars()` — the
+                // OS environment. This is a different name set:
+                //   - Shell-internal vars (not exported) would survive
+                //     `unset -m 'PATTERN'` even though they match.
+                //   - Env vars not in paramtab would be removed without
+                //     the PM_READONLY guard in unsetparam_pm.
+                //
+                // Same family of bug as the env::var vs paramtab fixes
+                // earlier in the series.
+                let names: Vec<String> = {
+                    let tab = crate::ported::params::paramtab().read().unwrap();
+                    tab.keys().cloned().collect()
+                };
                 for nm in &names {
                     if crate::ported::pattern::pattry(&prog, nm) {           // c:3842
-                        std::env::remove_var(nm);                            // c:3849 (effective)
-                        match_count += 1;                                    // c:3850
+                        crate::ported::params::unsetparam(nm);               // c:3847 (with guards)
+                        match_count += 1;                                    // c:3848
                     }
                 }
             } else {
@@ -5871,15 +5884,19 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
 /// C: `int bin_times(UNUSED args)` — `times(&buf)`; print user/system
 ///   for self then for children, separated by spaces and newlines.
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
-pub fn bin_times(_name: &str, _argv: &[String],                              // c:7324
+pub fn bin_times(_name: &str, _argv: &[String],                              // c:7328
                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    let mut buf: libc::tms = unsafe { std::mem::zeroed() };                  // c:7326
-    // c:7330 — `if (times(&buf) == -1) return 1;`
-    if unsafe { libc::times(&mut buf) } == (-1i64) as libc::clock_t {        // c:7330
-        return 1;                                                            // c:7331
-    }
-    let clktck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    let mut buf: libc::tms = unsafe { std::mem::zeroed() };                  // c:7331
+    // c:7332 — `long clktck = get_clktck();`. The previous Rust port
+    // inlined a `sysconf(_SC_CLK_TCK)` call here. Route through the
+    // canonical `get_clktck()` port at jobs.rs:567 so any future
+    // hardening (caching, error fallback) propagates to every caller.
+    let clktck = crate::ported::jobs::get_clktck() as f64;                   // c:7332
     let clktck = if clktck <= 0.0 { 100.0 } else { clktck };
+    // c:7335 — `if (times(&buf) == -1) return 1;`
+    if unsafe { libc::times(&mut buf) } == (-1i64) as libc::clock_t {        // c:7335
+        return 1;                                                            // c:7336
+    }
     let pttime = |t: libc::clock_t| {
         // C `pttime` formats clock ticks as Mm S.SSSs; static-link path
         // prints seconds with three decimals matching the expected shape.
