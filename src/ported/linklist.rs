@@ -266,12 +266,26 @@ pub fn uinsertlinknode(list: &mut LinkList<String>, node: usize, new: String) ->
 }
 
 // Insert a list in another list                                           // c:210
-/// Port of `insertlinklist(LinkList l, LinkNode where, LinkList x)` (`Src/linklist.c:190`).
-/// WARNING: param names don't match C — Rust=(l, after_idx, x) vs C=(l, where, x)
-pub fn insertlinklist<T: Clone>(l: &mut LinkList<T>, after_idx: usize, x: &LinkList<T>) { // c:190
-    let mut idx = after_idx;
-    for v in x.iter() {
-        idx = l.insertlinknode(idx, v.clone());
+/// Port of `insertlinklist(LinkList l, LinkNode where, LinkList x)` from
+/// `Src/linklist.c:190`. **C semantics: `l` is the SOURCE list, `where`
+/// is the position in DEST list `x`, and `x` is the DESTINATION**. All
+/// nodes of `l` get spliced into `x` right after node `where` —
+/// equivalent to inserting the contents of `l` between `where` and
+/// `where->next` in `x`. Empty `l` is a no-op (c:194 `if (!firstnode(l))
+/// return;`). Param names + positions match C exactly so callers
+/// reading `insertlinklist(sub.in, lastnode(result->in), result->in)`
+/// (the canonical zutil.c:1324 pattern) translate 1:1.
+pub fn insertlinklist<T: Clone>(                                              // c:190
+    l: &LinkList<T>,
+    where_idx: usize,
+    x: &mut LinkList<T>,
+) {
+    if l.is_empty() {                                                         // c:194
+        return;
+    }
+    let mut idx = where_idx;
+    for v in l.iter() {                                                       // c:196 walk l, splice into x
+        idx = x.insertlinknode(idx, v.clone());
     }
 }
 
@@ -565,5 +579,55 @@ mod tests {
         // index 4 mod 3 == 1 → rotate by 1.
         rolllist(&mut list, 4);
         assert_eq!(list.to_vec(), vec![2, 3, 1]);
+    }
+
+    /// `Src/linklist.c:188-206` — `insertlinklist(l, where, x)` splices
+    /// the contents of SOURCE list `l` into DESTINATION list `x` right
+    /// after node `where`. Canonical caller pattern (per
+    /// `Src/Modules/zutil.c:1324`):
+    ///     `insertlinklist(sub.in, lastnode(result->in), result->in);`
+    /// which appends every node from `sub.in` to the end of `result->in`.
+    /// The Rust port previously had the param roles inverted (l mutated
+    /// = treated as DEST), silently inserting in the wrong direction.
+    /// Pin C semantics: source unchanged, dest grows by source's length,
+    /// inserted in the right span and in source order.
+    #[test]
+    fn insertlinklist_splices_source_into_dest_after_position() {
+        // dest: [10, 20, 30], source: [A, B, C], where=0 (after first).
+        // Expected: [10, A, B, C, 20, 30] — source appears AFTER 10.
+        let source: LinkList<i32> = vec![100, 200, 300].into_iter().collect();
+        let mut dest: LinkList<i32> = vec![10, 20, 30].into_iter().collect();
+        insertlinklist(&source, 0, &mut dest);
+        assert_eq!(dest.to_vec(), vec![10, 100, 200, 300, 20, 30],
+            "c:194-202 — source spliced into dest after node 0");
+        assert_eq!(source.to_vec(), vec![100, 200, 300],
+            "c:188-206 — source list is NOT modified (read-only)");
+    }
+
+    /// `Src/linklist.c:193-194` — `if (!firstnode(l)) return;` — empty
+    /// source is a no-op. Pins so a regression doesn't accidentally
+    /// insert a phantom sentinel.
+    #[test]
+    fn insertlinklist_empty_source_is_noop() {
+        let source: LinkList<i32> = LinkList::new();
+        let mut dest: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
+        insertlinklist(&source, 1, &mut dest);
+        assert_eq!(dest.to_vec(), vec![1, 2, 3],
+            "c:193-194 — empty l returns early; dest unchanged");
+    }
+
+    /// `Src/linklist.c:188-206` — canonical zutil.c:1324 pattern:
+    /// `insertlinklist(sub.in, lastnode(result->in), result->in)` —
+    /// append entire source list at end of dest. The Rust port's
+    /// `lastnode_index()` is `len()-1`; passing that as `where_idx`
+    /// inserts after the last node, producing dest++source.
+    #[test]
+    fn insertlinklist_lastnode_append_pattern() {
+        let source: LinkList<&str> = vec!["x", "y"].into_iter().collect();
+        let mut dest: LinkList<&str> = vec!["a", "b", "c"].into_iter().collect();
+        let last = dest.len() - 1;
+        insertlinklist(&source, last, &mut dest);
+        assert_eq!(dest.to_vec(), vec!["a", "b", "c", "x", "y"],
+            "c:188-206 zutil.c:1324 — lastnode anchor → tail-append");
     }
 }
