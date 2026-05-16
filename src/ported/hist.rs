@@ -528,13 +528,18 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
             }
             // c:685 *ptr = '\0' — Rust String is already terminated.
             *hsubl.lock().unwrap() = Some(buf.clone());                      // c:686 hsubl = ztrdup(buf)
-            let mut margbox: i32 = -1;
-            ev = match hconsearch(&buf, None) {                              // c:686 hconsearch(buf, &marg)
-                Some(e) => { margbox = 0; e }
-                None => -1,
+            // c:686 — `mev = ev = hconsearch(hsubl = ztrdup(buf), &marg);`
+            // hconsearch now returns Option<(histnum, marg)> per C
+            // out-pointer pair — previously dropped the marg side,
+            // forcing the caller to hardcode margbox=0 which lost
+            // the matched word index.
+            let (ev_val, marg_val) = match hconsearch(&buf) {                // c:686
+                Some((e, m)) => (e, m),
+                None => (-1, -1),
             };
+            ev = ev_val;
             mev.store(ev, Ordering::SeqCst);                                 // c:686 mev = ev
-            marg.store(margbox, Ordering::SeqCst);
+            marg.store(marg_val, Ordering::SeqCst);                          // c:686 marg out-arg
             evset = 0;                                                       // c:687
             if ev == -1 {                                                    // c:688
                 herrflush();                                                 // c:689
@@ -1948,21 +1953,62 @@ pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {             // 
     ret                                                                      // c:1829
 }
 
-/// Port of `int hconsearch(char *str, int *back)` from Src/hist.c.
-pub fn hconsearch(needle: &str, start: Option<i64>) -> Option<i64> {
-    let mut cur = start.unwrap_or_else(|| curhist.load(Ordering::SeqCst));
-    while let Some(prev) = up_histent(cur) {
-        cur = prev;
-        if let Some(entry) = ring_get(cur) {
-            if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
-                continue;
+/// Port of `static zlong hconsearch(char *str, int *marg)` from
+/// `Src/hist.c:1834-1854`.
+///
+/// C body (c:1836-1853):
+/// ```c
+/// for (he = up_histent(hist_ring); he; he = up_histent(he)) {
+///     if (he->node.flags & HIST_FOREIGN) continue;
+///     if ((s = strstr(he->node.nam, str))) {
+///         int pos = s - he->node.nam;
+///         while (t1 < he->nwords && he->words[2*t1] <= pos)
+///             t1++;
+///         *marg = t1 - 1;
+///         return he->histnum;
+///     }
+/// }
+/// return -1;
+/// ```
+///
+/// Two divergences in the previous Rust port:
+///   1. Took an extra `start: Option<i64>` parameter that has no
+///      C counterpart — C always starts from `up_histent(hist_ring)`.
+///   2. Dropped the `*marg` output — caller code at c:686 needs
+///      the matching word index to update `marg`/`hsubl` state.
+///      Without it, the caller hardcoded `margbox=0` losing the
+///      actual word position.
+///
+/// Rust adaptation: returns `Option<(histnum, marg)>` instead of
+/// the C in/out pair; None mirrors the C `return -1` miss path.
+/// WARNING: Rust returns a tuple — C uses an out-pointer for marg.
+pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {                      // c:1836
+    // c:1842 — `for (he = up_histent(hist_ring); he; he = up_histent(he))`.
+    // The C `hist_ring` is the doubly-linked-list sentinel; iterating
+    // `up_histent(hist_ring)` walks from the newest real entry toward
+    // older ones. Rust storage is a Vec with newest at position 0;
+    // walk positions 0..ring_len for the same effect.
+    let ring = hist_ring.lock().expect("hist_ring poisoned");
+    for entry in ring.iter() {
+        if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {                   // c:1843
+            continue;                                                        // c:1844
+        }
+        if let Some(pos) = entry.node.nam.find(needle) {                     // c:1845 strstr
+            // c:1846 — `int pos = s - he->node.nam;`
+            let mut t1: i32 = 0;                                             // c:1838
+            while t1 < entry.nwords {                                         // c:1847
+                let slot_pos = entry.words.get((2 * t1) as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                if slot_pos > pos {                                           // c:1847 he->words[2*t1] <= pos
+                    break;
+                }
+                t1 += 1;                                                      // c:1848
             }
-            if entry.node.nam.contains(needle) {
-                return Some(cur);
-            }
+            return Some((entry.histnum, t1 - 1));                             // c:1849-1850
         }
     }
-    None
+    None                                                                      // c:1853
 }
 
 /// Port of `int hcomsearch(char *str)` from Src/hist.c.
@@ -3978,6 +4024,110 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `hconsearch` to its canonical C body at
+    /// `Src/hist.c:1834-1854`. Searches up from the ring for the
+    /// most recent entry whose text contains `needle` as a substring,
+    /// returning `(histnum, marg)` where marg is the word index of
+    /// the match. The previous Rust port dropped marg entirely.
+    #[test]
+    fn hconsearch_returns_histnum_and_word_index() {
+        // Save ring state.
+        let saved_ring = {
+            let r = hist_ring.lock().unwrap();
+            r.iter().map(|h| (
+                h.node.nam.clone(),
+                h.histnum,
+                h.words.clone(),
+                h.nwords,
+                h.node.flags,
+            )).collect::<Vec<_>>()
+        };
+        let saved_curhist = curhist.load(Ordering::SeqCst);
+
+        // Build a single-entry ring with "echo hello world" — 3 words.
+        // words = [start1,end1, start2,end2, start3,end3]
+        //          0    4       5    10      11   16
+        {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.clear();
+            ring.push(histent {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "echo hello world".to_string(),
+                    flags: 0,
+                },
+                up: None,
+                down: None,
+                zle_text: None,
+                stim: 0,
+                ftim: 0,
+                words: vec![0, 4, 5, 10, 11, 16],
+                nwords: 3,
+                histnum: 7,
+            });
+        }
+        curhist.store(8, Ordering::SeqCst);   // up_histent will walk back to 7
+
+        // "hello" found at pos 5 → word index 1 (0-based).
+        let got = hconsearch("hello");
+        assert_eq!(got, Some((7, 1)),
+            "c:1846-1850 — strstr at pos 5 lands in word[1] (start=5)");
+
+        // "world" found at pos 11 → word index 2.
+        let got = hconsearch("world");
+        assert_eq!(got, Some((7, 2)),
+            "c:1846-1850 — strstr at pos 11 lands in word[2] (start=11)");
+
+        // "echo" found at pos 0 → word index 0.
+        let got = hconsearch("echo");
+        assert_eq!(got, Some((7, 0)),
+            "c:1846-1850 — strstr at pos 0 lands in word[0]");
+
+        // Miss → None (c:1853 return -1).
+        let got = hconsearch("notthere");
+        assert_eq!(got, None, "c:1853 — miss returns -1 / None");
+
+        // HIST_FOREIGN entries are skipped (c:1843).
+        {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.clear();
+            ring.push(histent {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "skip me".to_string(),
+                    flags: HIST_FOREIGN as i32,
+                },
+                up: None,
+                down: None,
+                zle_text: None,
+                stim: 0,
+                ftim: 0,
+                words: vec![0, 4, 5, 7],
+                nwords: 2,
+                histnum: 3,
+            });
+        }
+        let got = hconsearch("skip");
+        assert_eq!(got, None,
+            "c:1843-1844 — HIST_FOREIGN entries continue past, miss → None");
+
+        // Restore ring.
+        {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.clear();
+            for (nam, histnum, words, nwords, flags) in saved_ring {
+                ring.push(histent {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None, nam, flags,
+                    },
+                    up: None, down: None, zle_text: None,
+                    stim: 0, ftim: 0, words, nwords, histnum,
+                });
+            }
+        }
+        curhist.store(saved_curhist, Ordering::SeqCst);
     }
 
     /// Pin `checkcurline` to the canonical C body at
