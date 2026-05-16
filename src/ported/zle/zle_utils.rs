@@ -207,17 +207,37 @@ pub fn spaceinline(ct: i32) {   // c:777
 /// Port of `shiftchars(int to, int cnt)` from Src/Zle/zle_utils.c:846.
 /// WARNING: param names don't match C — Rust=(zle, to, cnt) vs C=(to, cnt)
 pub fn shiftchars(to: i32, cnt: i32) { // c:846
-    // C body c:848-865 — `if (to + cnt < zlell) memmove(line+to,
-    //                     line+to+cnt, (zlell-(to+cnt)) * char_t);
-    //                     zlell -= cnt`. Pure shift-left of `cnt`
-    //                     chars at offset `to`.
+    // C body c:911-915 (the load-bearing tail of shiftchars):
+    //     while (to + cnt < zlell) {
+    //         zleline[to] = zleline[to + cnt];
+    //         to++;
+    //     }
+    //     zleline[zlell = to] = ZWC('\0');
+    // The loop shifts chars left by `cnt`; when `to + cnt >= zlell`
+    // (no chars after the gap to copy) the loop body skips and zlell
+    // is set to `to`, TRUNCATING the buffer to offset `to`. The
+    // previous Rust port had `if to + cnt > zleline.len() { return }`
+    // which mishandled the out-of-range case — C truncates, Rust
+    // silently no-op'd. Concrete failure: `shiftchars(3, 100)` on a
+    // 5-char line should leave zlell=3; old port left zlell=5.
     let to = to as usize;
     let cnt = cnt as usize;
-    if to + cnt >  ZLELINE.lock().unwrap().len() {
+    let mut line = ZLELINE.lock().unwrap();
+    let len = line.len();
+    if to >= len {
+        // c:915 `zleline[zlell = to]` — caller passed `to` past end-of-line.
+        // C still sets zlell=to (which would corrupt the buffer); Rust
+        // clamps to `len` so we don't grow zlell past the actual storage.
+        ZLELL.store(len, std::sync::atomic::Ordering::SeqCst);
         return;
     }
-     ZLELINE.lock().unwrap().drain(to..to + cnt);
-     ZLELL.store( ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+    if to + cnt >= len {
+        // c:912 — no chars after the gap; just truncate to `to`.
+        line.truncate(to);                                                   // c:915 zlell = to
+    } else {
+        line.drain(to..to + cnt);                                            // c:912-914 memmove
+    }
+    ZLELL.store(line.len(), std::sync::atomic::Ordering::SeqCst);            // c:915
 }
 
 /// Port of `cut(int i, int ct, int flags)` from Src/Zle/zle_utils.c:935.
@@ -1476,5 +1496,133 @@ mod findbol_findeol_tests {
         let (bol, eol) = findline();
         assert_eq!(bol, 4);
         assert_eq!(eol, 7);
+    }
+
+    /// `Src/Zle/zle_utils.c:911-915` — `shiftchars` core memmove +
+    /// zlell update. Common case: shift `cnt` chars at `to` and trim
+    /// zlell by `cnt`.
+    #[test]
+    fn shiftchars_common_case_removes_cnt_chars_at_to() {
+        let _g = zle_test_setup();
+        zle_with("abcdef", 0);
+        // shiftchars(2, 2) over "abcdef" → "abef" (removes 'cd').
+        shiftchars(2, 2);
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "abef");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    /// `Src/Zle/zle_utils.c:911-915` — boundary case: `to + cnt ==
+    /// zlell`. The shift loop iterates 0 times; zlell is truncated to
+    /// `to`. Pin the truncation: `shiftchars(3, 3)` on a 6-char line
+    /// yields a 3-char line.
+    #[test]
+    fn shiftchars_to_plus_cnt_equals_zlell_truncates_to_offset() {
+        let _g = zle_test_setup();
+        zle_with("abcdef", 0);
+        shiftchars(3, 3);
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "abc",
+            "c:915 — to+cnt==zlell → zlell=to (truncate to offset 3)");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    /// `Src/Zle/zle_utils.c:911-915` — out-of-range case: `to + cnt >
+    /// zlell`. C still truncates to `to`. The previous Rust port had
+    /// `if to+cnt > len { return }` which silently no-op'd; the fix
+    /// truncates to match C's `zlell = to` write at c:915.
+    /// Regression that would re-introduce the early-return: any
+    /// `shiftchars(N, M)` with M huge would leave the buffer intact
+    /// and zlell unchanged, breaking `foredel(huge_ct)` semantics
+    /// (which relies on shiftchars truncating).
+    #[test]
+    fn shiftchars_to_plus_cnt_past_zlell_truncates_to_to() {
+        let _g = zle_test_setup();
+        zle_with("abcdef", 0);
+        shiftchars(3, 100);
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "abc",
+            "c:915 — to+cnt>zlell → zlell=to (the previous port silently no-op'd here)");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    /// `Src/Zle/zle_utils.c:911-915` — degenerate case: `to >= zlell`.
+    /// Caller is asking to shift starting past end-of-line. C sets
+    /// zlell=to (which would corrupt the buffer in C since the storage
+    /// past zlell is uninitialized); the Rust port clamps zlell to
+    /// the actual line length so we don't grow zlell past the
+    /// Vec storage and surface a panic on next read.
+    #[test]
+    fn shiftchars_to_past_zlell_clamps_to_len() {
+        let _g = zle_test_setup();
+        zle_with("abc", 0);
+        shiftchars(100, 5);
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        // Buffer storage unchanged
+        assert_eq!(line, "abc");
+        // zlell clamped to actual storage length
+        let zlell = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(zlell <= 3,
+            "c:915 — Rust clamps zlell to storage len ({zlell})");
+    }
+
+    /// `Src/Zle/zle_utils.c:911-915` — `cnt == 0` is a no-op shift
+    /// (memmove of 0 bytes). Pin so a regression with `> 0` instead of
+    /// `>= 0` doesn't drift.
+    #[test]
+    fn shiftchars_zero_count_is_noop() {
+        let _g = zle_test_setup();
+        zle_with("abcdef", 0);
+        shiftchars(3, 0);
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "abcdef", "cnt=0 → no chars removed");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 6);
+    }
+
+    /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(ct)` opens `ct`
+    /// chars of space at zlecs; zlell += ct. Negative or zero `ct`
+    /// is a no-op. Pin the cursor + zlell invariants.
+    #[test]
+    fn spaceinline_inserts_at_cursor_and_grows_zlell() {
+        let _g = zle_test_setup();
+        zle_with("abc", 1);
+        spaceinline(2);
+        // Buffer length grew by 2; zlell follows.
+        let zlell = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(zlell, 5,
+            "c:842 — zlell += ct (was 3, ct=2 → 5)");
+        assert_eq!(ZLELINE.lock().unwrap().len(), 5);
+        // The first 'a' and tail 'bc' are still present; the gap is in the middle.
+        assert_eq!(ZLELINE.lock().unwrap()[0], 'a');
+        // Tail chars survive at the END
+        assert_eq!(ZLELINE.lock().unwrap()[3], 'b');
+        assert_eq!(ZLELINE.lock().unwrap()[4], 'c');
+    }
+
+    /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(0)` is a no-op
+    /// (no chars opened, zlell unchanged). Catches a regression that
+    /// silently inserts a sentinel char on ct=0.
+    #[test]
+    fn spaceinline_zero_or_negative_is_noop() {
+        let _g = zle_test_setup();
+        zle_with("xyz", 1);
+        spaceinline(0);
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3,
+            "ct=0 → zlell unchanged");
+        spaceinline(-5);
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3,
+            "ct<0 → zlell unchanged");
+    }
+
+    /// `Src/Zle/zle_utils.c:1158-1164` — `findbol()` lands on the byte
+    /// just AFTER a newline (zsh's "beginning of line" is the first
+    /// content char). Pin the offset so cursor-at-newline cases work.
+    #[test]
+    fn findbol_lands_after_previous_newline_mid_buffer() {
+        let _g = zle_test_setup();
+        // "abc\ndef" cursor at 6 (the 'f'); bol should be 4 (after '\n').
+        zle_with("abc\ndef", 6);
+        assert_eq!(findbol(), 4,
+            "c:1162 — bol is at offset AFTER the previous newline");
     }
 }

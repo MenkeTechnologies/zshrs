@@ -899,4 +899,95 @@ mod tests {
         assert_eq!(dup, "original",
             "c:38-40 — dup must survive source-side mutation");
     }
+
+    /// `Src/utils.c:4532` — `zarrdup(s)` duplicates a NULL-terminated
+    /// `char**` array. In Rust the slice is owned and the dup is a
+    /// `Vec<String>` clone. Pin the contract: same length, same
+    /// strings, independent storage.
+    #[test]
+    fn zarrdup_clones_array_independent() {
+        let src = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let dup = zarrdup(&src);
+        assert_eq!(dup, src);
+        // Modifying dup must NOT affect src — verifies clone semantics.
+        let mut dup_mut = dup;
+        dup_mut.push("d".to_string());
+        assert_eq!(src.len(), 3);
+        assert_eq!(dup_mut.len(), 4);
+    }
+
+    /// `zarrdup` of an empty array returns an empty Vec.
+    #[test]
+    fn zarrdup_empty_returns_empty() {
+        let src: Vec<String> = Vec::new();
+        let dup = zarrdup(&src);
+        assert!(dup.is_empty());
+    }
+
+    /// `arrdup_max(arr, max)` clones up to `max` entries; longer slices
+    /// truncate. Pin both the truncation and the no-grow path.
+    #[test]
+    fn arrdup_max_truncates_at_bound() {
+        let src = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        // Truncate.
+        let r = arrdup_max(&src, 2);
+        assert_eq!(r, vec!["a".to_string(), "b".to_string()]);
+        // max == len → full copy.
+        let r = arrdup_max(&src, 4);
+        assert_eq!(r, src);
+        // max > len → full copy (no extension).
+        let r = arrdup_max(&src, 99);
+        assert_eq!(r.len(), 4);
+        // max == 0 → empty.
+        let r = arrdup_max(&src, 0);
+        assert!(r.is_empty());
+    }
+
+    /// `Src/utils.c:2357` — `arrlen(arr)` walks the NULL-terminated
+    /// `char**` array. Rust collapses to `.len()` on the slice. Pin
+    /// the equivalence so a regression that adds off-by-one logic
+    /// (e.g. counting NULL terminator) gets caught.
+    #[test]
+    fn arrlen_matches_slice_len() {
+        let arr: Vec<String> = vec!["one".into(), "two".into(), "three".into()];
+        assert_eq!(arrlen(&arr), 3);
+        let empty: Vec<String> = vec![];
+        assert_eq!(arrlen(&empty), 0);
+    }
+
+    /// `Src/utils.c:2400` — `arrlen_lt(arr, n)` short-circuits at `n`
+    /// elements walked; semantically `arrlen(arr) < n`. Pin both
+    /// boundaries (equal, less, greater).
+    #[test]
+    fn arrlen_lt_boundary_semantics() {
+        let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        assert!(arrlen_lt(&arr, 4),   "3 < 4");
+        assert!(!arrlen_lt(&arr, 3),  "3 < 3 is false (strict)");
+        assert!(!arrlen_lt(&arr, 2),  "3 < 2 is false");
+        assert!(!arrlen_lt(&arr, 0),  "3 < 0 is false");
+    }
+
+    /// `Src/utils.c:2391` — `arrlen_le(arr, n)` is `arrlen(arr) <= n`.
+    /// Strict-vs-non-strict distinction from arrlen_lt; both boundaries
+    /// matter for callers that pre-check max capacity.
+    #[test]
+    fn arrlen_le_boundary_semantics() {
+        let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        assert!(arrlen_le(&arr, 4),   "3 <= 4");
+        assert!(arrlen_le(&arr, 3),   "3 <= 3 is TRUE (non-strict)");
+        assert!(!arrlen_le(&arr, 2),  "3 <= 2 is false");
+        assert!(!arrlen_le(&arr, 0),  "3 <= 0 is false");
+    }
+
+    /// `Src/string.c:33` + `Src/string.c:48` — `dupstring` and
+    /// `dupstring_wlen("hello", 5)` produce identical output for a
+    /// non-multibyte string. Catches a regression where one path
+    /// adds/strips a trailing byte.
+    #[test]
+    fn dupstring_and_dupstring_wlen_agree_on_ascii() {
+        let a = dupstring("hello");
+        let b = dupstring_wlen("hello", 5);
+        assert_eq!(a, b);
+        assert_eq!(a, "hello");
+    }
 }
