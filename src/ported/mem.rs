@@ -497,8 +497,19 @@ pub fn dupstring(s: &str) -> String {                                       // c
 /// Duplicate a string with explicit length.
 /// Port of `dupstring_wlen(const char *s, unsigned len)` from Src/string.c:48 — used when the
 /// source isn't NUL-terminated (e.g. a slice of a larger buffer).
+///
+/// C body (c:54-57): `t = zhalloc(len + 1); memcpy(t, s, len); t[len] = '\0';`.
+/// `memcpy` is byte-based, NOT char-based. Previous Rust port used
+/// `s.chars().take(len)` which counts codepoints, not bytes — so for
+/// `dupstring_wlen("café", 5)` C copies 5 bytes (`c-a-f-é` with é=2
+/// bytes), Rust returned 5 chars (`café` + 1 phantom — same string
+/// length BUT off-by-one on multibyte boundaries). Byte-based slicing
+/// matches C exactly; `from_utf8_lossy` keeps the no-panic guarantee
+/// at mid-codepoint cuts.
 pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c:48
-    s.chars().take(len).collect()
+    let bytes = s.as_bytes();
+    let n = len.min(bytes.len());
+    String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
 /// Duplicate an array of strings.
@@ -605,12 +616,19 @@ pub fn ztrdup(s: &str) -> String {                                          // c
     s.to_string()
 }
 
-/// Duplicate the first `n` characters of a string.
+/// Duplicate the first `len` bytes of a string.
 /// Port of `ztrduppfx(const char *s, int len)` from Src/string.c:172 — same role as
-/// `dupstring_wlen` (Src/string.c:145) but allocated as permanent
-/// rather than heap-arena. Rust collapses both to `String::clone`.
+/// `dupstring_wlen` (Src/string.c:48 / dupstrpfx at c:161) but
+/// allocated as permanent rather than heap-arena. Both lanes collapse
+/// to `String` in Rust.
+///
+/// C body (c:175-177): `r = zalloc(len+1); memcpy(r, s, len); r[len]='\0';`.
+/// Byte-counted copy — the previous Rust port used `chars().take(len)`
+/// which counts codepoints, diverging from C on any multibyte input.
 pub fn ztrduppfx(s: &str, len: usize) -> String {                           // c:172
-    s.chars().take(len).collect()
+    let bytes = s.as_bytes();
+    let n = len.min(bytes.len());
+    String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
 /// Concatenate two strings into a new permanent string.
@@ -829,5 +847,56 @@ mod tests {
     fn popheap_without_push_does_not_panic() {
         popheap();
         // No assertion — survival is the contract.
+    }
+
+    /// `Src/string.c:48-58` — `dupstring_wlen(s, len)` is BYTE-counted
+    /// (`memcpy(t, s, len)`). Previous Rust port used `chars().take(len)`
+    /// which is CODEPOINT-counted — diverges on multibyte input.
+    /// Pin: `dupstring_wlen("café", 5)` must copy 5 bytes, NOT 5 chars.
+    #[test]
+    fn dupstring_wlen_is_byte_counted_not_char_counted() {
+        // "café" = `c-a-f-é` where é is 2 bytes (0xC3 0xA9) → 5 bytes total.
+        // Byte-count 5 → exactly "café" (whole string).
+        assert_eq!(dupstring_wlen("café", 5), "café",
+            "c:55 — memcpy is byte-counted; 5 bytes of 'café' is the whole string");
+        // Char-count 5 would walk past the end, but byte-count clamps
+        // at the actual byte length.
+        assert_eq!(dupstring_wlen("café", 100), "café",
+            "c:55 — len > strlen clamps (Rust safety) instead of UB");
+        // Byte-count 4 → "caf" + replacement char (mid-codepoint cut).
+        let r = dupstring_wlen("café", 4);
+        assert!(r.starts_with("caf"),
+            "c:55 — byte cut at codepoint boundary uses from_utf8_lossy");
+        // Empty input → empty output.
+        assert_eq!(dupstring_wlen("", 0), "");
+        assert_eq!(dupstring_wlen("hello", 0), "",
+            "c:55 — len 0 → empty result");
+    }
+
+    /// `Src/string.c:172-178` — `ztrduppfx` is the permanent-storage
+    /// twin of `dupstrpfx` / `dupstring_wlen`. Same byte-counted
+    /// `memcpy(r, s, len)` semantics — previous port used
+    /// `chars().take(len)` diverging on multibyte input.
+    #[test]
+    fn ztrduppfx_is_byte_counted_not_char_counted() {
+        assert_eq!(ztrduppfx("café", 5), "café",
+            "c:175 — 5 bytes copies whole 'café' (é=2 bytes)");
+        assert_eq!(ztrduppfx("hello", 3), "hel");
+        // Multibyte 字 = 3 bytes (0xE5 0xAD 0x97). len=3 copies whole.
+        assert_eq!(ztrduppfx("字", 3), "字");
+        assert_eq!(ztrduppfx("",  5), "");
+        assert_eq!(ztrduppfx("ab", 100), "ab",
+            "c:175 — len > strlen clamps");
+    }
+
+    /// `Src/string.c:33-42` — `dupstring(s)` returns an independent
+    /// owned copy. Source modifications must not affect the dup.
+    #[test]
+    fn dupstring_yields_independent_copy() {
+        let mut src = String::from("original");
+        let dup = dupstring(&src);
+        src.clear();
+        assert_eq!(dup, "original",
+            "c:38-40 — dup must survive source-side mutation");
     }
 }
