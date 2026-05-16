@@ -2298,14 +2298,32 @@ pub fn rembutext(s: &str) -> String {                                        // 
 /// Rust idiom replacement: `split('/')` + `iter().rev().take(n)`
 /// covers the C reverse-scan-and-skip-leading-paths loop without
 /// strchr/strncpy bookkeeping.
+///
+/// C behavior (c:2172-2179): when `--count > 0` and the cursor has
+/// already reached the start of the string (`str > *junkptr` fails),
+/// the function returns 1 ("whole string needed") WITHOUT modifying
+/// `*junkptr` — preserving the original input verbatim (including
+/// the leading slash for absolute paths). The Rust port previously
+/// stripped the leading slash unconditionally, so `:t4` on
+/// `/a/b/c` returned `"a/b/c"` instead of C's `"/a/b/c"`.
 pub fn remlpaths(s: &str, count: i32) -> String {                            // c:2152
-    let s = s.trim_end_matches('/');
-    if s.is_empty() { return String::new(); }
-    let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+    // c:2156-2161 — `if (IS_DIRSEP(*str))` block trims trailing slashes
+    // off the input. Apply lexically before splitting.
+    let trimmed = s.trim_end_matches('/');
+    if trimmed.is_empty() { return String::new(); }
+    let parts: Vec<&str> = trimmed.split('/').filter(|p| !p.is_empty()).collect();
     let n = if count == 0 { 1 } else { count as usize };
-    let take_n = n.min(parts.len());
-    if take_n == 0 { return String::new(); }
-    parts.iter().rev().take(take_n).rev().copied().collect::<Vec<&str>>().join("/")
+    if n > parts.len() {
+        // c:2172-2175 — `str > *junkptr` fails → `return 1` early-exit
+        // without writing to junkptr. The caller `apply_history_modifiers`
+        // observes the input string UNCHANGED (including leading slashes).
+        return s.to_string();
+    }
+    // c:2178-2179 — `*str = '\0'; *junkptr = dupstring(str + 1);` — the
+    // leading slash (and prefix path) gets overwritten by NUL and the
+    // returned slice starts AFTER it, dropping it. So when n <= count of
+    // components, the leading slash is stripped (matches C).
+    parts.iter().rev().take(n).rev().copied().collect::<Vec<&str>>().join("/")
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
@@ -4986,5 +5004,48 @@ mod subst_modifier_tests {
         chwordpos.store(saved_chwordpos, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_chwords;
         *curline.lock().unwrap() = saved_curline;
+    }
+
+    /// `Src/hist.c:2172-2175` — `remlpaths` when count exceeds the
+    /// number of path components returns the input UNMODIFIED
+    /// (preserving the leading slash for absolute paths). The previous
+    /// Rust port silently stripped the leading slash via the
+    /// `parts.iter().rev().take(min(n, parts.len()))` clamp, so `:t4`
+    /// on `/a/b/c` returned `"a/b/c"` instead of `"/a/b/c"`. Catches
+    /// this divergence — the C `return 1` early-exit at the leftmost
+    /// `/` does NOT modify `*junkptr`.
+    #[test]
+    fn remlpaths_count_exceeds_components_preserves_leading_slash() {
+        // 4 > 3 components in "/a/b/c" → return whole string verbatim.
+        assert_eq!(remlpaths("/a/b/c", 4),  "/a/b/c",
+            "c:2172-2175 — count > components → preserve original (leading slash)");
+        assert_eq!(remlpaths("/a/b/c", 10), "/a/b/c");
+        // Relative path: no leading slash, but still preserved.
+        assert_eq!(remlpaths("a/b/c", 99),  "a/b/c");
+    }
+
+    /// `Src/hist.c:2156-2161` — `remlpaths` trims trailing slashes off
+    /// the input before walking. Pin so `:t1` on `/a/b/c/` (trailing
+    /// slash) still returns `"c"`, not `""`.
+    #[test]
+    fn remlpaths_trims_trailing_slashes() {
+        assert_eq!(remlpaths("/a/b/c/",   1),  "c",
+            "c:2156-2161 — trailing slash trimmed before scan");
+        assert_eq!(remlpaths("/a/b/c///", 1),  "c");
+        assert_eq!(remlpaths("/",         1),  "",
+            "all-slashes input → empty after trim → empty result");
+        assert_eq!(remlpaths("",          1),  "");
+    }
+
+    /// `Src/hist.c:2152` — `remlpaths` with `count == 0` is a special
+    /// case: per `digitcount()` at c:574, bare `:t` (no number) passes
+    /// 0 which means "default to 1". The Rust port preserves that
+    /// alias so `${PWD:t}` keeps the last component.
+    #[test]
+    fn remlpaths_count_zero_defaults_to_one() {
+        assert_eq!(remlpaths("/a/b/c", 0), "c",
+            "c:574 — count=0 from digitcount aliases to default 1");
+        // Same as explicit count=1.
+        assert_eq!(remlpaths("/a/b/c", 0), remlpaths("/a/b/c", 1));
     }
 }

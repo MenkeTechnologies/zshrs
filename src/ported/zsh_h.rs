@@ -3913,4 +3913,145 @@ mod tests {
                 modifier, type_mask);
         }
     }
+
+    /// `Src/zsh.h` IS_WRITE_FILE — `X >= REDIR_WRITE && X <= REDIR_READWRITE`
+    /// (0..=8). Comprehensive sweep: every redir-type ID 0..=17 plus
+    /// boundaries. A regression that flips the comparison would break
+    /// every `>file` / `>>file` / `1>file` redirection emit.
+    #[test]
+    fn is_write_file_sweep_all_redir_types() {
+        // c:298-299 — write-file family: 0..=8 inclusive.
+        for x in REDIR_WRITE..=REDIR_READWRITE {
+            assert!(IS_WRITE_FILE(x),
+                "redir-type {} ({}) must be IS_WRITE_FILE", x, x);
+        }
+        // Outside the range — NOT write-file.
+        for x in [REDIR_READ, REDIR_HEREDOC, REDIR_HEREDOCDASH,
+                  REDIR_HERESTR, REDIR_MERGEIN, REDIR_MERGEOUT,
+                  REDIR_CLOSE, REDIR_INPIPE, REDIR_OUTPIPE] {
+            assert!(!IS_WRITE_FILE(x),
+                "redir-type {} must NOT be IS_WRITE_FILE", x);
+        }
+    }
+
+    /// `Src/zsh.h` IS_APPEND_REDIR — `IS_WRITE_FILE && (X & 2)`. Bit 1
+    /// distinguishes write (0/1/4/5) from append (2/3/6/7). Pin every
+    /// boundary so a regression that masks the wrong bit silently
+    /// dispatches `>file` as `>>file`.
+    #[test]
+    fn is_append_redir_pins_bit_1() {
+        // c:303-304 — true ONLY for 2/3/6/7 in the write-file family.
+        assert!(IS_APPEND_REDIR(REDIR_APP),         "REDIR_APP=2 is append");
+        assert!(IS_APPEND_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is append");
+        assert!(IS_APPEND_REDIR(REDIR_ERRAPP),      "REDIR_ERRAPP=6 is append");
+        assert!(IS_APPEND_REDIR(REDIR_ERRAPPNOW),   "REDIR_ERRAPPNOW=7 is append");
+        // NOT append.
+        assert!(!IS_APPEND_REDIR(REDIR_WRITE),      "REDIR_WRITE=0 is not append");
+        assert!(!IS_APPEND_REDIR(REDIR_WRITENOW),   "REDIR_WRITENOW=1 is not append");
+        assert!(!IS_APPEND_REDIR(REDIR_ERRWRITE),   "REDIR_ERRWRITE=4 is not append");
+        assert!(!IS_APPEND_REDIR(REDIR_ERRWRITENOW), "REDIR_ERRWRITENOW=5 is not append");
+        // Outside the write-file family — never append.
+        assert!(!IS_APPEND_REDIR(REDIR_READ),       "REDIR_READ=9 is not write-file");
+    }
+
+    /// `Src/zsh.h` IS_CLOBBER_REDIR — `IS_WRITE_FILE && (X & 1)`. Bit 0
+    /// is the `NOW` suffix (>! / >>!) that bypasses NO_CLOBBER. Pin
+    /// boundary so a regression mis-flagging clobber would break user
+    /// scripts that rely on NO_CLOBBER semantics.
+    #[test]
+    fn is_clobber_redir_pins_bit_0() {
+        // c:308-309 — true ONLY for 1/3/5/7 in the write-file family.
+        assert!(IS_CLOBBER_REDIR(REDIR_WRITENOW),    "REDIR_WRITENOW=1 is clobber");
+        assert!(IS_CLOBBER_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is clobber");
+        assert!(IS_CLOBBER_REDIR(REDIR_ERRWRITENOW), "REDIR_ERRWRITENOW=5 is clobber");
+        assert!(IS_CLOBBER_REDIR(REDIR_ERRAPPNOW),   "REDIR_ERRAPPNOW=7 is clobber");
+        // NOT clobber.
+        assert!(!IS_CLOBBER_REDIR(REDIR_WRITE));
+        assert!(!IS_CLOBBER_REDIR(REDIR_APP));
+        assert!(!IS_CLOBBER_REDIR(REDIR_ERRWRITE));
+        assert!(!IS_CLOBBER_REDIR(REDIR_ERRAPP));
+    }
+
+    /// `Src/zsh.h` IS_ERROR_REDIR — `X >= REDIR_ERRWRITE && X <=
+    /// REDIR_ERRAPPNOW` (4..=7). Pin both boundaries — a regression
+    /// flipping `<=` to `<` would silently exclude REDIR_ERRAPPNOW.
+    #[test]
+    fn is_error_redir_inclusive_range() {
+        // c:313-314 — true ONLY for 4..=7.
+        for x in REDIR_ERRWRITE..=REDIR_ERRAPPNOW {
+            assert!(IS_ERROR_REDIR(x),
+                "redir-type {} must be IS_ERROR_REDIR", x);
+        }
+        // Outside — never error.
+        for x in [REDIR_WRITE, REDIR_WRITENOW, REDIR_APP, REDIR_APPNOW,
+                  REDIR_READWRITE, REDIR_READ, REDIR_HEREDOC, REDIR_INPIPE] {
+            assert!(!IS_ERROR_REDIR(x),
+                "redir-type {} must NOT be IS_ERROR_REDIR", x);
+        }
+    }
+
+    /// `Src/zsh.h` IS_READFD — `(X >= REDIR_READWRITE && X <= REDIR_MERGEIN)
+    /// || X == REDIR_INPIPE`. Read-fd family: 8..=13 OR 16. Pin so a
+    /// regression that drops the OR INPIPE arm breaks process
+    /// substitution `<(cmd)` redirections.
+    #[test]
+    fn is_readfd_range_plus_inpipe() {
+        // c:318-319 — true for 8..=13 INCLUSIVE plus INPIPE=16.
+        for x in REDIR_READWRITE..=REDIR_MERGEIN {
+            assert!(IS_READFD(x),
+                "redir-type {} must be IS_READFD", x);
+        }
+        assert!(IS_READFD(REDIR_INPIPE),
+            "REDIR_INPIPE=16 must be IS_READFD (special-case OR arm)");
+        // Outside — not readfd.
+        assert!(!IS_READFD(REDIR_WRITE));
+        assert!(!IS_READFD(REDIR_MERGEOUT));
+        assert!(!IS_READFD(REDIR_CLOSE));
+        assert!(!IS_READFD(REDIR_OUTPIPE));
+    }
+
+    /// `Src/zsh.h:273-290` — REDIR_* numeric values are load-bearing
+    /// because IS_APPEND/IS_CLOBBER use bit-arithmetic on the values.
+    /// Pin EVERY entry's exact value so a reorder silently flips the
+    /// append-vs-write classification across the parser + executor.
+    #[test]
+    fn redir_constants_have_exact_canonical_values() {
+        assert_eq!(REDIR_WRITE,        0);
+        assert_eq!(REDIR_WRITENOW,     1);
+        assert_eq!(REDIR_APP,          2);
+        assert_eq!(REDIR_APPNOW,       3);
+        assert_eq!(REDIR_ERRWRITE,     4);
+        assert_eq!(REDIR_ERRWRITENOW,  5);
+        assert_eq!(REDIR_ERRAPP,       6);
+        assert_eq!(REDIR_ERRAPPNOW,    7);
+        assert_eq!(REDIR_READWRITE,    8);
+        assert_eq!(REDIR_READ,         9);
+        assert_eq!(REDIR_HEREDOC,     10);
+        assert_eq!(REDIR_HEREDOCDASH, 11);
+        assert_eq!(REDIR_HERESTR,     12);
+        assert_eq!(REDIR_MERGEIN,     13);
+        assert_eq!(REDIR_MERGEOUT,    14);
+        assert_eq!(REDIR_CLOSE,       15);
+        assert_eq!(REDIR_INPIPE,      16);
+        assert_eq!(REDIR_OUTPIPE,     17);
+    }
+
+    /// `Src/zsh.h` REDIR_TYPE_MASK / REDIR_VARID_MASK /
+    /// REDIR_FROM_HEREDOC_MASK — these encode redir flags in the
+    /// wordcode redir entry. The type-mask MUST be 0x1f (5 bits) so
+    /// it covers REDIR_OUTPIPE=17 (0x11) without overlapping the
+    /// 0x20/0x40 flag bits.
+    #[test]
+    fn redir_masks_have_no_overlap() {
+        assert_eq!(REDIR_TYPE_MASK,         0x1f);
+        assert_eq!(REDIR_VARID_MASK,        0x20);
+        assert_eq!(REDIR_FROM_HEREDOC_MASK, 0x40);
+        // Masks must be pairwise disjoint.
+        assert_eq!(REDIR_TYPE_MASK  & REDIR_VARID_MASK,         0);
+        assert_eq!(REDIR_TYPE_MASK  & REDIR_FROM_HEREDOC_MASK,  0);
+        assert_eq!(REDIR_VARID_MASK & REDIR_FROM_HEREDOC_MASK,  0);
+        // Type-mask must cover the largest REDIR_* value (17 = 0x11).
+        assert_eq!(REDIR_OUTPIPE & REDIR_TYPE_MASK, REDIR_OUTPIPE,
+            "type-mask must include every REDIR_* up to OUTPIPE=17");
+    }
 }
