@@ -6307,7 +6307,16 @@ pub static LOOPS:        std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 pub static BREAKS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static CONTFLAG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static LOCALLEVEL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// `LOCALLEVEL` was previously a SEPARATE AtomicI32 here, but C
+// zsh has only ONE `int locallevel;` global (Src/params.c:54).
+// The canonical Rust port is `crate::ported::params::locallevel`
+// (lowercase, matches C name). Re-export that single storage so
+// every reader and writer addresses the same atomic — without
+// this, `LOCALLEVEL.store(0)` in zle/computil.rs would zero one
+// global while `params::locallevel.fetch_add(1)` in exec.rs
+// incremented a DIFFERENT global, leaving the two views out of
+// sync indefinitely.
+pub use crate::ported::params::locallevel as LOCALLEVEL;
 pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
