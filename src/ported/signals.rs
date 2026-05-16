@@ -261,14 +261,23 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c
     unsafe {
         libc::sigemptyset(&mut set);
     }
-    // c:228 — `(sigtrapped[SIGINT] & ~ZSIG_IGNORED)`. Trapped but
-    // not ignored leaves SIGINT unblocked so the user's trap fires.
+    // c:228 — `if (!(wait_cmd || isset(TRAPSASYNC) ||
+    //           (sigtrapped[SIGINT] & ~ZSIG_IGNORED))) sigaddset(...)`.
+    // Three escape hatches let SIGINT stay UNblocked during suspend:
+    //   1. `wait_cmd` — the `wait` builtin wants SIGINT to break it.
+    //   2. `isset(TRAPSASYNC)` — async-trap mode means traps fire even
+    //      while blocked, so SIGINT must arrive in real time. Previously
+    //      missing in the Rust port — silently dropped the option gate.
+    //   3. SIGINT is trapped but not ignored — user trap must fire.
     let int_state = sigtrapped.lock()
         .ok()
         .and_then(|g| g.get(libc::SIGINT as usize).copied())
         .unwrap_or(0);
     let int_trapped = (int_state & !ZSIG_IGNORED) != 0;
-    if !(wait_cmd || int_trapped) {
+    let trapsasync_set = crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::TRAPSASYNC                                     // c:228 isset(TRAPSASYNC)
+    );
+    if !(wait_cmd || trapsasync_set || int_trapped) {
         unsafe {
             libc::sigaddset(&mut set, libc::SIGINT);
         }
@@ -531,11 +540,14 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     if sig == -1 {                                                            // c:693
         return 1;
     }
-    // c:2563 (zsh.h) — `jobbing` is `isset(MONITOR)`. Options layer
-    // resolves through `opts.rs`; substituting the negative path
-    // here keeps settrap's interactive-shell restriction in place
-    // without requiring options resolution at this site yet.
-    let jobbing = false;                                                      // c:696 (zsh.h:2563)
+    // c:696 (zsh.h:2563) — `if (jobbing && (sig == SIGTTOU ||
+    // sig == SIGTSTP || sig == SIGTTIN)) return 1;`. `jobbing` is the
+    // macro `isset(MONITOR)` per `Src/zsh.h:2563`. The previous Rust
+    // port hardcoded `jobbing = false`, defeating the C rejection of
+    // trapping job-control signals when MONITOR is on — a real
+    // divergence that let users break their own job control silently
+    // by trapping SIGTSTP from inside an interactive shell.
+    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR); // c:696
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         return 1;                                                             // c:699
     }
@@ -1457,5 +1469,39 @@ mod tests {
             assert_eq!(unsafe { libc::sigismember(&m, sig) }, 0,
                 "c:163 — sig=0 produces empty set, but {} found", sig);
         }
+    }
+
+    /// `Src/signals.c:696-699` — `settrap` rejects trapping
+    /// SIGTTOU/SIGTSTP/SIGTTIN when `jobbing` (= `isset(MONITOR)`).
+    /// The Rust port previously hardcoded `let jobbing = false;`,
+    /// silently letting users trap job-control signals from an
+    /// interactive shell (breaking their own job control). Pin:
+    ///   * MONITOR unset → settrap on SIGTSTP succeeds (returns 0).
+    ///   * MONITOR set   → settrap on SIGTSTP rejected (returns 1).
+    #[cfg(unix)]
+    #[test]
+    fn settrap_rejects_job_control_signals_when_monitor_set() {
+        use crate::ported::zsh_h::MONITOR;
+        use crate::ported::options::dosetopt;
+        // Save current MONITOR state; restore at end.
+        let saved = crate::ported::zsh_h::isset(MONITOR);
+        // MONITOR off → trapping SIGTSTP is allowed.
+        dosetopt(MONITOR, 0, 0);
+        assert_eq!(settrap(libc::SIGTSTP, None, 0), 0,
+            "c:696 — MONITOR off → settrap on SIGTSTP succeeds");
+        // Cleanup our successful set.
+        unsettrap(libc::SIGTSTP);
+
+        // MONITOR on → trapping SIGTSTP is rejected.
+        dosetopt(MONITOR, 1, 0);
+        assert_eq!(settrap(libc::SIGTSTP, None, 0), 1,
+            "c:696-699 — MONITOR on → settrap on SIGTSTP rejected");
+        assert_eq!(settrap(libc::SIGTTOU, None, 0), 1,
+            "c:696-699 — SIGTTOU also rejected under MONITOR");
+        assert_eq!(settrap(libc::SIGTTIN, None, 0), 1,
+            "c:696-699 — SIGTTIN also rejected under MONITOR");
+
+        // Restore prior MONITOR state.
+        dosetopt(MONITOR, if saved { 1 } else { 0 }, 0);
     }
 }
