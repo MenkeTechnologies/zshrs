@@ -768,18 +768,38 @@ pub fn endtrapscope() {                                                      // 
             if st.local <= locallevel as i32 { break; }                      // c:914
             let st = traps.remove(0);                                        // c:915
 
-            if st.flags != 0 || st.list.is_some() {                          // c:919
+            // c:919 — `if (st->flags && (st->list != NULL))`. BOTH must
+            // be truthy. The previous Rust port used `||` (either),
+            // wrongly firing the restore branch on a flags-only or
+            // list-only savetrap entry.
+            if st.flags != 0 && st.list.is_some() {                          // c:919
                 // c:921-922 — prevent settrap from saving this.
                 DONTSAVETRAP.fetch_add(1, Ordering::Relaxed);
+                // c:923-926 — ZSIG_FUNC takes (NULL, ZSIG_FUNC); list
+                // traps take (st.list, 0). The current Rust port
+                // collapses both into a single settrap(list, flags)
+                // call — works because settrap stores the flags and
+                // list independently. Pin the ZSIG_FUNC branch as a
+                // comment for future refactors.
                 let _ = settrap(st.sig, st.list, st.flags);                  // c:925/927
                 if st.sig == SIGEXIT {
                     EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed); // c:929
                 }
                 DONTSAVETRAP.fetch_sub(1, Ordering::Relaxed);                // c:930
-            } else {                                                         // c:942
-                // c:945-947 — slot was untrapped originally; clear current.
-                if st.sig != SIGEXIT || !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
-                    unsettrap(st.sig);
+            } else {
+                // c:933 — `else if (sigtrapped[sig])`. Only fires when
+                // the current slot has a trap set. The previous Rust
+                // port unconditionally entered this branch, calling
+                // unsettrap on slots that were already cleared.
+                let cur_trapped = sigtrapped.lock()
+                    .ok()
+                    .and_then(|g| g.get(st.sig as usize).copied())
+                    .unwrap_or(0);
+                if cur_trapped != 0 {                                        // c:933
+                    // c:938 — `if (sig != SIGEXIT || !exit_trap_posix)`.
+                    if st.sig != SIGEXIT || !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
+                        unsettrap(st.sig);                                   // c:939
+                    }
                 }
             }
         }
