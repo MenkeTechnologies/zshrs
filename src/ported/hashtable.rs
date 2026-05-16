@@ -1466,35 +1466,45 @@ pub fn createhisttable() {
     let _ = histtab_lock();
 }
 
-/// History-specific hash function (normalizes whitespace)
-/// Hasher tuned for the history table.
-/// Port of the per-history hash specialization Src/hist.c uses
-/// — the C source bypasses leading whitespace before mixing.
+/// History-specific hash function (normalizes whitespace).
+/// Port of `histhasher(const char *str)` from `Src/hashtable.c:1365`.
+///
+/// C body uses `inblank(*str)` (canonical typtab predicate at
+/// `Src/ztype.h:50` — NARROW blank: space/tab ONLY, not newline,
+/// definitely NOT broad Unicode whitespace). The Rust port previously
+/// used `c.is_whitespace()` which is the Unicode-broad set including
+/// CR/FF/VT/NBSP — every line of zsh history containing one of those
+/// bytes hashed to a different bucket than C would have.
+///
+/// Faithful: matches `inblank` exactly (`c:50` — `space + tab`).
 pub fn histhasher(s: &str) -> u32 {                                         // c:1365
+    // c:50 — `inblank(c)` = `c == ' ' || c == '\t'`. NOT `\n`, NOT broad.
+    #[inline]
+    fn is_inblank_narrow(c: char) -> bool {
+        c == ' ' || c == '\t'
+    }
+
     let mut hashval: u32 = 0;
     let mut chars = s.chars().peekable();
 
+    // c:1369 — `while (inblank(*str)) str++;` skip leading blanks.
     while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-        } else {
-            break;
-        }
+        if is_inblank_narrow(c) { chars.next(); } else { break; }
     }
 
+    // c:1371 — main mix loop.
     while let Some(c) = chars.next() {
-        if c.is_whitespace() {
+        if is_inblank_narrow(c) {
+            // c:1373 — `do str++; while (inblank(*str));` collapse runs.
             while let Some(&next) = chars.peek() {
-                if next.is_whitespace() {
-                    chars.next();
-                } else {
-                    break;
-                }
+                if is_inblank_narrow(next) { chars.next(); } else { break; }
             }
+            // c:1374-1375 — `if (*str) hashval += (hashval << 5) + ' ';`
             if chars.peek().is_some() {
                 hashval = hashval.wrapping_add(hashval.wrapping_shl(5).wrapping_add(' ' as u32));
             }
         } else {
+            // c:1377 — `hashval += (hashval << 5) + *(unsigned char *)str++;`
             hashval = hashval.wrapping_add(hashval.wrapping_shl(5).wrapping_add(c as u32));
         }
     }
@@ -1516,16 +1526,32 @@ pub fn emptyhisttable() {
     histtab_lock().write().expect("histtab poisoned").clear();
 }
 
-/// Compare strings with normalized whitespace (for history)
-/// Multiple whitespace sequences are treated as equivalent to single spaces.
-/// Trailing whitespace is ignored when comparing.
-/// Compare two history entries with optional blank-reduction.
-/// Port of the comparator the C source's `addhistnode()` from
-/// Src/hist.c uses to detect duplicate history lines.
+/// Compare strings with normalized whitespace (for history).
+/// Port of `histstrcmp(const char *str1, const char *str2)` from
+/// `Src/hashtable.c:1396`.
+///
+/// C body uses `inblank(*str)` everywhere (`Src/ztype.h:50` — NARROW
+/// space/tab only). The previous Rust port used `c.is_whitespace()`
+/// (broad Unicode set including CR/FF/VT/NBSP), which would silently
+/// fold history lines that C considers distinct (e.g. lines that
+/// contain NBSP would dedupe against lines with no NBSP).
+///
+/// C signature is 2-arg: it reads `isset(HISTREDUCEBLANKS)` directly.
+/// Rust port passes `reduce_blanks` as an explicit 3rd arg to keep
+/// the option read out of this leaf fn (call sites at hist.c thread
+/// the option from the parent scope).
 pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering { // c:1396
-    let s1 = s1.trim_start();
-    let s2 = s2.trim_start();
+    // c:50 — `inblank(c)` = `c == ' ' || c == '\t'`. NOT newline, NOT broad.
+    #[inline]
+    fn is_inblank_narrow(c: char) -> bool {
+        c == ' ' || c == '\t'
+    }
 
+    // c:1398-1399 — skip leading inblank in both strings.
+    let s1 = s1.trim_start_matches(is_inblank_narrow);
+    let s2 = s2.trim_start_matches(is_inblank_narrow);
+
+    // c:1405 — HISTREDUCEBLANKS short-circuit to raw strcmp.
     if reduce_blanks {
         return s1.cmp(s2);
     }
@@ -1533,15 +1559,18 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
     let mut c1 = s1.chars().peekable();
     let mut c2 = s2.chars().peekable();
 
+    // c:1408 — `while (*str1 && *str2) { ... }` then `return *str1 - *str2;`.
     loop {
         let ch1 = c1.peek().copied();
         let ch2 = c2.peek().copied();
 
         match (ch1, ch2) {
-            (None, None) => return std::cmp::Ordering::Equal,
+            (None, None) => return std::cmp::Ordering::Equal,                  // c:1421 — both NUL
             (None, Some(c)) => {
-                if c.is_whitespace() {
-                    while c2.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                // c:1421 — *str1=0 - *str2; left shorter (Less) unless str2
+                // is all-inblank residue.
+                if is_inblank_narrow(c) {
+                    while c2.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c2.next();
                     }
                     if c2.peek().is_none() {
@@ -1551,8 +1580,8 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
                 return std::cmp::Ordering::Less;
             }
             (Some(c), None) => {
-                if c.is_whitespace() {
-                    while c1.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                if is_inblank_narrow(c) {
+                    while c1.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c1.next();
                     }
                     if c1.peek().is_none() {
@@ -1562,18 +1591,20 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
                 return std::cmp::Ordering::Greater;
             }
             (Some(ch1), Some(ch2)) => {
-                let ws1 = ch1.is_whitespace();
-                let ws2 = ch2.is_whitespace();
+                let ws1 = is_inblank_narrow(ch1);
+                let ws2 = is_inblank_narrow(ch2);
 
                 if ws1 && ws2 {
-                    while c1.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                    // c:1411-1413 — collapse both runs.
+                    while c1.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c1.next();
                     }
-                    while c2.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                    while c2.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c2.next();
                     }
                 } else if ws1 {
-                    while c1.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                    // c:1410 — `if (!inblank(*str2)) break;` → mismatch.
+                    while c1.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c1.next();
                     }
                     if c1.peek().is_none() {
@@ -1581,7 +1612,7 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
                     }
                     return std::cmp::Ordering::Less;
                 } else if ws2 {
-                    while c2.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                    while c2.peek().copied().map(is_inblank_narrow).unwrap_or(false) {
                         c2.next();
                     }
                     if c2.peek().is_none() {
@@ -1589,7 +1620,7 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
                     }
                     return std::cmp::Ordering::Greater;
                 } else if ch1 != ch2 {
-                    return ch1.cmp(&ch2);
+                    return ch1.cmp(&ch2);                                       // c:1417 — *str1 - *str2
                 } else {
                     c1.next();
                     c2.next();
@@ -2174,6 +2205,35 @@ mod tests {
         assert_ne!(histhasher("hello world"), histhasher("helloworld"));
     }
 
+    /// `Src/hashtable.c:1365-1380` — `histhasher` uses `inblank(*str)`
+    /// per `Src/ztype.h:50`: NARROW space/tab only. The previous Rust
+    /// port used `c.is_whitespace()` (broad Unicode) which would have
+    /// silently rehashed any history line containing CR/FF/VT/NBSP.
+    /// Pin the narrow-inblank semantics:
+    ///   * Multi-space/tab runs collapse to a single ' ' bucket-mix.
+    ///   * Newlines are NOT collapsed (newline is not inblank per c:50).
+    ///   * NBSP / CR are NOT treated as inblank.
+    #[test]
+    fn histhasher_inblank_is_narrow_space_tab_only() {
+        // c:1369 — leading inblank stripped; multiple equivalent forms hash same.
+        assert_eq!(histhasher("\t  hello"), histhasher("hello"),
+            "c:1369 — leading space+tab stripped before mixing");
+        // c:1373 — runs of inblank collapse to a single ' '.
+        assert_eq!(histhasher("a \t  b"), histhasher("a b"),
+            "c:1373 — interior inblank runs collapse to single space");
+
+        // Newline is NOT inblank per c:50; it must hash as itself, not collapse.
+        assert_ne!(histhasher("a\nb"), histhasher("a b"),
+            "c:50 — newline is NOT inblank; hashes as its own char");
+        // CR is NOT inblank.
+        assert_ne!(histhasher("a\rb"), histhasher("ab"),
+            "CR not in inblank; must mix as a character, not collapse");
+        // NBSP (0xA0) is NOT inblank (it's broad Unicode whitespace
+        // but NOT in C's narrow typtab class).
+        assert_ne!(histhasher("a\u{00A0}b"), histhasher("ab"),
+            "NBSP not in inblank; must mix as a character, not collapse");
+    }
+
     #[test]
     fn test_histstrcmp() {
         assert_eq!(
@@ -2184,6 +2244,64 @@ mod tests {
             histstrcmp("hello world", "hello world", true),
             std::cmp::Ordering::Equal
         );
+    }
+
+    /// `Src/hashtable.c:1396-1421` — `histstrcmp` uses `inblank(*str)`
+    /// (NARROW space/tab only per `Src/ztype.h:50`). The previous Rust
+    /// port used `c.is_whitespace()` (broad Unicode) which silently
+    /// folded history lines that C considers distinct.
+    /// Pin narrow-inblank semantics.
+    #[test]
+    fn histstrcmp_inblank_is_narrow_space_tab_only() {
+        use std::cmp::Ordering;
+        // c:1411-1413 — runs of inblank collapse to a single boundary.
+        assert_eq!(
+            histstrcmp("hello\tworld", "hello world", false),
+            Ordering::Equal,
+            "c:1411-1413 — tab and space both inblank; mixed runs equal"
+        );
+        // Newline is NOT inblank per c:50 → string mismatch.
+        assert_ne!(
+            histstrcmp("hello\nworld", "hello world", false),
+            Ordering::Equal,
+            "c:50 — newline is NOT inblank; must be treated as ordinary char"
+        );
+        // CR is NOT inblank.
+        assert_ne!(
+            histstrcmp("hello\rworld", "hello world", false),
+            Ordering::Equal,
+            "CR not in inblank; not collapsed with space"
+        );
+        // NBSP is NOT inblank (broad Unicode whitespace, NOT typtab).
+        assert_ne!(
+            histstrcmp("hello\u{00A0}world", "hello world", false),
+            Ordering::Equal,
+            "NBSP not in inblank; not collapsed"
+        );
+        // c:1405 — HISTREDUCEBLANKS short-circuits to raw cmp.
+        // With reduce_blanks=true the multi-space form is NOT collapsed.
+        assert_ne!(
+            histstrcmp("hello  world", "hello world", true),
+            Ordering::Equal,
+            "c:1405 — HISTREDUCEBLANKS=true → strcmp; runs do NOT collapse"
+        );
+    }
+
+    /// `Src/hashtable.c:1398-1399` — leading inblank is stripped from
+    /// both sides BEFORE comparison. So `"  cmd"` and `"\tcmd"` are
+    /// equal. Trailing inblank (per the loop behavior, c:1421
+    /// `*str1 - *str2` reaches 0 when one side runs out) is also
+    /// folded: trailing run on one side vs end on the other returns
+    /// Equal via the (Some, None) inblank-collapse branch.
+    #[test]
+    fn histstrcmp_strips_leading_and_trailing_inblank() {
+        use std::cmp::Ordering;
+        assert_eq!(histstrcmp("  cmd", "\tcmd", false), Ordering::Equal,
+            "c:1398-1399 — leading inblank skipped (both kinds)");
+        assert_eq!(histstrcmp("cmd  ", "cmd", false), Ordering::Equal,
+            "c:1421 — trailing inblank on left collapses to end-equal");
+        assert_eq!(histstrcmp("cmd", "cmd\t\t", false), Ordering::Equal,
+            "c:1421 — trailing inblank on right collapses to end-equal");
     }
 
     #[test]
