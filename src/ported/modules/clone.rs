@@ -400,4 +400,47 @@ mod tests {
         assert!(!e.is_empty(), "enables vec must contain ≥1 entry for the b:clone feature");
     }
 
+    /// c:44-50 — `bin_clone` with >1 positional argument must reject
+    /// per the builtin spec `"a:1:1"` (1 mandatory positional, 1 max).
+    /// `clone /dev/tty /dev/null` should never both clones — the
+    /// extra arg is a usage error.
+    #[test]
+    #[cfg(unix)]
+    fn bin_clone_with_extra_arg_returns_one() {
+        let ops = empty_ops();
+        let rc = bin_clone(
+            "clone",
+            &["/nonexistent1".to_string(), "/nonexistent2".to_string()],
+            &ops, 0,
+        );
+        assert_eq!(rc, 1, "more than 1 arg must be rejected");
+    }
+
+    /// c:130 — `featuresarray` returns exactly `["b:clone"]`. Pin the
+    /// string format ("b:" prefix per zsh's module-feature naming
+    /// convention) so a regen that swaps in "p:" or omits the prefix
+    /// breaks `zmodload -F zsh/clone +clone`.
+    #[test]
+    fn features_string_uses_b_prefix() {
+        let mut feats: Vec<String> = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        let f = &feats[0];
+        assert!(f.starts_with("b:"),
+            "feature {} must use 'b:' prefix per zsh module spec", f);
+        assert_eq!(&f[2..], "clone",
+            "feature 'b:<name>' suffix must be 'clone'");
+    }
+
+    /// c:123-159 — module-lifecycle stubs accept a null `*const
+    /// module` without dereferencing. Pin the safety contract: the C
+    /// source's `m` parameter is unused (UNUSED(Module m)).
+    #[test]
+    fn module_lifecycle_stubs_accept_null_module() {
+        let m: *const module = std::ptr::null();
+        // Each stub must NOT segfault on null input.
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

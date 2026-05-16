@@ -1354,6 +1354,15 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_sysopen_writes_fd_to_var() {
+        // `assignnparam` (params.rs:4464) short-circuits with
+        // `if unset(EXECOPT) { return None; }`. The Rust options table
+        // doesn't pre-populate EXECOPT=true the way C's
+        // createoptiontable does at shell start, so the test must do
+        // it manually — same pattern as the existing tests in
+        // params.rs (8212/8547/9392/9442).
+        let saved_exec = crate::ported::options::opt_state_get("exec").unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("a.txt");
         let ops = ops_with(&[(b'u', "MYFD"), (b'o', "creat")]);
@@ -1364,12 +1373,16 @@ mod tests {
             &[p.to_str().unwrap().to_string()], &ops, 0);
         assert_eq!(r, 0);
         // Side-effect param flows through params::setiparam → paramtab().
-        let fd_str = crate::ported::params::paramtab().read().ok()
-            .and_then(|t| t.get("MYFD").and_then(|p| p.u_str.clone()))
-            .unwrap_or_default();
-        let fd: i32 = fd_str.parse().expect("MYFD should be integer");
-        assert!(fd >= 10);   // movefd lifts to 10+
+        // `setiparam` (params.rs:4649) builds an `mnumber{ MN_INTEGER, .l = fd }`
+        // and routes via `assignnparam` — the value lands in `u_val` (i64),
+        // NOT `u_str`. The original test read `u_str`, got `""`, and
+        // `parse::<i32>()` returned ParseIntError::Empty. Read u_val.
+        let fd: i32 = crate::ported::params::paramtab().read().ok()
+            .and_then(|t| t.get("MYFD").map(|p| p.u_val as i32))
+            .expect("MYFD not set by sysopen");
+        assert!(fd >= 10, "movefd should lift fd to 10+, got {}", fd);
         unsafe { libc::close(fd); }
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
@@ -1390,6 +1403,24 @@ mod tests {
         let r = bin_sysseek("sysseek", &["5".to_string()], &ops, 0);
         assert_eq!(r, 0);
         unsafe { libc::close(fd); }
+    }
+
+    /// Direct test of `setiparam` writeback into `paramtab()` — pins
+    /// the exact contract `bin_sysopen` relies on at c:413-414. The
+    /// `assignnparam` short-circuits with `unset(EXECOPT) → return
+    /// None`, so the test must set "exec" true first (same pattern as
+    /// the params.rs internal tests at 8212/8547/9392).
+    #[test]
+    fn setiparam_writes_integer_to_paramtab() {
+        let saved_exec = crate::ported::options::opt_state_get("exec").unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+        let name = "ZSHRS_TEST_SETIPARAM_FD_INT";
+        let _ = crate::ported::params::setiparam(name, 12345);
+        let val = crate::ported::params::paramtab().read().ok()
+            .and_then(|t| t.get(name).map(|p| p.u_val));
+        crate::ported::options::opt_state_set("exec", saved_exec);
+        assert_eq!(val, Some(12345),
+            "setiparam should put the integer in paramtab().get(name).u_val");
     }
 
     /// Verifies `math_systell` returns lseek(SEEK_CUR) (c:478).

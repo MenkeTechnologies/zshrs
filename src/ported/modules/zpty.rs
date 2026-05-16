@@ -876,4 +876,101 @@ mod tests {
         let status = bin_zpty("zpty", &[], &ops_with_flag(b't'), 0);
         assert_eq!(status, 1);
     }
+
+    /// c:153 — `getptycmd` returns None for an unknown name. Pin
+    /// the negative case so a regen that always returns Some (with
+    /// a stale entry) gets caught.
+    #[test]
+    fn getptycmd_unknown_name_returns_none() {
+        let cmds: HashMap<String, ptycmd> = HashMap::new();
+        assert!(getptycmd(&cmds, "never-created").is_none());
+    }
+
+    /// c:153 — `getptycmd` returns Some for a name in the map.
+    #[test]
+    fn getptycmd_returns_inserted_entry() {
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        let cmd = ptycmd::new("foo", vec!["x".to_string()], 3, 4, true, false);
+        cmds.insert("foo".to_string(), cmd);
+        let r = getptycmd(&cmds, "foo");
+        assert!(r.is_some());
+        assert_eq!(r.unwrap().name, "foo");
+    }
+
+    /// c:490 — `deleteptycmd` on a missing name is a safe no-op.
+    #[test]
+    fn deleteptycmd_missing_name_is_safe() {
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        deleteptycmd(&mut cmds, "absent");
+        assert!(cmds.is_empty());
+    }
+
+    /// c:490 — `deleteptycmd` on a present name removes exactly
+    /// that entry, leaving siblings intact.
+    ///
+    /// IMPORTANT: deleteptycmd calls `libc::kill(-cmd.pid, SIGHUP)`
+    /// at c:517 (kills the process group). Small pids would target
+    /// real pgids (`kill(-1, ...)` = "all processes you can signal"
+    /// — catastrophic in tests). Use pids well beyond any real
+    /// pgid so the kill becomes ESRCH/EPERM no-op.
+    #[test]
+    fn deleteptycmd_removes_only_named_entry() {
+        const SAFE_PID: i32 = i32::MAX - 1; // pgid that cannot exist
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        cmds.insert("a".into(), ptycmd::new("a", vec![], -1, SAFE_PID, true, false));
+        cmds.insert("b".into(), ptycmd::new("b", vec![], -1, SAFE_PID, true, false));
+        cmds.insert("c".into(), ptycmd::new("c", vec![], -1, SAFE_PID, true, false));
+        deleteptycmd(&mut cmds, "b");
+        assert!(cmds.contains_key("a"));
+        assert!(!cmds.contains_key("b"));
+        assert!(cmds.contains_key("c"));
+    }
+
+    /// c:517 — `deleteallptycmds` empties the map regardless of
+    /// prior content. Pin the unconditional-clear contract.
+    ///
+    /// Uses SAFE_PID = i32::MAX-1 for the same `kill(-pid, SIGHUP)`
+    /// safety reason as `deleteptycmd_removes_only_named_entry`.
+    #[test]
+    fn deleteallptycmds_clears_all() {
+        const SAFE_PID: i32 = i32::MAX - 1;
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        for n in ["a", "b", "c", "d"] {
+            cmds.insert(n.into(), ptycmd::new(n, vec![], -1, SAFE_PID, true, false));
+        }
+        assert_eq!(cmds.len(), 4);
+        deleteallptycmds(&mut cmds);
+        assert!(cmds.is_empty());
+    }
+
+    /// c:65 — `ptynonblock` on a closed/invalid fd must surface an
+    /// error (not panic) because fcntl(F_GETFL) returns -1 on EBADF.
+    #[test]
+    fn ptynonblock_on_bad_fd_returns_error() {
+        let r = ptynonblock(99999);
+        assert!(r.is_err(), "ptynonblock on bad fd should be Err");
+    }
+
+    /// c:97 — `ptygettyinfo` on a bad fd returns 1 (error sentinel,
+    /// per the c:103 `return 1` arm when `tcgetattr` fails). Pin the
+    /// non-zero return so a regression that returns 0 (success
+    /// sentinel) silently passes garbage termios up the call chain.
+    #[test]
+    fn ptygettyinfo_on_bad_fd_returns_error_sentinel() {
+        let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+        let r = ptygettyinfo(99999, &mut ti);
+        assert_ne!(r, 0, "ptygettyinfo on bad fd must NOT report success");
+        assert_eq!(r, 1, "c:103 error path returns 1");
+    }
+
+    /// c:773 — `bin_zpty -r missing-name` (read from unknown
+    /// session) returns nonzero. Pin missing-session lookup.
+    #[test]
+    fn bin_zpty_r_unknown_session_returns_nonzero() {
+        *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
+        let r = bin_zpty("zpty",
+            &["unknown-pty".to_string()],
+            &ops_with_flag(b'r'), 0);
+        assert_ne!(r, 0, "read from unknown pty must fail");
+    }
 }

@@ -876,4 +876,103 @@ mod tests {
         assert_eq!(arr[0], "1700000000::echo test");
         assert_eq!(arr[1], "1700001000:-o:echo zle");
     }
+
+    /// c:40 — `SCHEDFLAG_TRASH_ZLE` is bit 0 (value 1). Pin the
+    /// exact bit because every `flags & SCHEDFLAG_TRASH_ZLE` check
+    /// downstream is a bool gate.
+    #[test]
+    fn schedflag_trash_zle_is_bit_zero() {
+        assert_eq!(SCHEDFLAG_TRASH_ZLE, 1,
+            "SCHEDFLAG_TRASH_ZLE must be bit 0 per c:40 enum");
+    }
+
+    /// c:148 — `bin_sched` with no args lists the schedule.
+    /// Empty schedule → 0 return.
+    #[test]
+    fn bin_sched_no_args_with_empty_schedule_returns_zero() {
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[], &ops, 0);
+        assert_eq!(r, 0, "list on empty schedule must succeed");
+    }
+
+    /// c:148 — `bin_sched +N` (no command) returns 1 (usage).
+    #[test]
+    fn bin_sched_time_only_no_command_returns_one() {
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[s("+60")], &ops, 0);
+        assert_eq!(r, 1, "scheduling without a command must error");
+    }
+
+    /// c:148 — `+0` offset: schedule for "now". No panic, finite
+    /// return.
+    #[test]
+    fn bin_sched_zero_offset_does_not_panic() {
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let _r = bin_sched("sched", &[s("+0"), s("echo now")], &ops, 0);
+    }
+
+    /// c:178 — `bin_sched -<N>` removes the N'th entry. On empty
+    /// schedule, must surface an error.
+    #[test]
+    fn bin_sched_minus_removal_on_empty_schedule_returns_nonzero() {
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[s("-1")], &ops, 0);
+        assert_ne!(r, 0, "remove from empty schedule must error");
+    }
+
+    /// c:323 — Insertion walk is `while sch2->next && sch2->next->time < sch->time`
+    /// (strict <), so a new entry with the same time as an existing
+    /// node lands immediately after that node — NOT at the end of
+    /// the equal-time run. Three equal-time inserts of "first",
+    /// "second", "third" produce: first → third → second (newest
+    /// after first, pushing prior equal-time entries further down).
+    /// Pin this C-faithful order so a regen that switches to `<=`
+    /// (which would produce FIFO ordering) gets caught.
+    #[test]
+    fn insert_with_equal_times_lands_after_first_equal_entry() {
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+100"), s("first")], &ops, 0);
+        bin_sched("sched", &[s("+100"), s("second")], &ops, 0);
+        bin_sched("sched", &[s("+100"), s("third")], &ops, 0);
+        let head = schedcmds_lock().lock().unwrap();
+        let n0 = head.as_ref().unwrap();
+        let n1 = n0.next.as_ref().unwrap();
+        let n2 = n1.next.as_ref().unwrap();
+        // C behavior at c:323: new entry inserts AFTER the first
+        // equal-time node, so the list ends up:
+        //   first → third → second
+        assert_eq!(n0.cmd, "first",
+            "head is the first-inserted equal-time entry");
+        assert_eq!(n1.cmd, "third",
+            "newest insert lands right after head, pushing prior down");
+        assert_eq!(n2.cmd, "second",
+            "second-inserted ends up at tail per c:323 strict-less walk");
+    }
+
+    /// c:396-450 — module-lifecycle stubs all return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const crate::ported::zsh_h::module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:215 — `schedgetfn` on an empty schedule returns empty Vec.
+    /// Pin no-entries case so a regen that returns `vec![""]`
+    /// (single empty-string entry) gets caught.
+    #[test]
+    fn schedgetfn_empty_schedule_returns_empty_vec() {
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let arr = schedgetfn(std::ptr::null());
+        assert!(arr.is_empty(),
+            "empty schedule must serialize to empty Vec, got {:?}", arr);
+    }
 }

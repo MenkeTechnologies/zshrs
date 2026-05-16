@@ -439,4 +439,60 @@ mod tests {
             1
         );
     }
+
+    /// c:146 — every feature in the list uses the canonical `b:`
+    /// (builtin) prefix per zsh's module-feature naming spec. A regen
+    /// that swaps in `p:` (param) would silently make `zmodload -F
+    /// zsh/cap +cap` fail.
+    #[test]
+    fn features_all_use_b_prefix() {
+        let m: *const module = std::ptr::null();
+        let mut features: Vec<String> = Vec::new();
+        features_(m, &mut features);
+        for f in &features {
+            assert!(f.starts_with("b:"),
+                "feature {} must use 'b:' (builtin) prefix", f);
+        }
+    }
+
+    /// c:154 — `enables_` returns a vec of length matching the
+    /// feature count exactly. Mismatch means the bintab dispatcher
+    /// would either OOB-read or never reach the last builtin's enable
+    /// bit.
+    #[test]
+    fn enables_vec_length_matches_features_count() {
+        let m: *const module = std::ptr::null();
+        let mut features: Vec<String> = Vec::new();
+        features_(m, &mut features);
+        let mut enables: Option<Vec<i32>> = None;
+        enables_(m, &mut enables);
+        let e = enables.expect("enables_ must return Some");
+        assert_eq!(e.len(), features.len(),
+            "enables vec length must match features count");
+    }
+
+    /// c:139-175 — module-lifecycle stubs all return 0 in C.
+    /// Catches a regression where one of setup/boot/cleanup/finish
+    /// stops being a thin pass-through and starts returning a non-zero
+    /// status that would prevent module load.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:200 — `bin_setcap` requires 2 positional args. With < 2 on
+    /// a non-libcap host, the notavail stub still surfaces 1, NOT 2
+    /// (the "bad usage" code) — platform-availability check fires
+    /// before usage check.
+    #[test]
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn bin_setcap_unavailable_check_fires_before_usage_check() {
+        let ops = empty_ops();
+        let r = bin_setcap("setcap", &["cap_net_admin+ep".into()], &ops, 0);
+        assert_eq!(r, 1, "notavail stub must return 1 regardless of arg count");
+    }
 }

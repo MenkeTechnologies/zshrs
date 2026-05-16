@@ -1284,4 +1284,64 @@ mod tests {
     fn getgdbmnode_unknown_returns_false() {
         assert!(!getgdbmnode("zshrs_test_no_such_db_xyz", "key"));
     }
+
+    /// c:347 — `gdbmsetfn` on an unknown DB must NOT panic.
+    /// Defensive safety contract.
+    #[test]
+    fn gdbmsetfn_unknown_db_is_safe() {
+        gdbmsetfn("zshrs_test_no_such_db_setfn", "key", Some("value"));
+    }
+
+    /// c:399 — `gdbmunsetfn` on an unknown DB must NOT panic.
+    #[test]
+    fn gdbmunsetfn_unknown_db_is_safe() {
+        gdbmunsetfn("zshrs_test_no_such_db_unsetfn", "key", 0);
+    }
+
+    /// c:555 — `gdbmuntie` on an unknown param name is a safe no-op.
+    #[test]
+    fn gdbmuntie_unknown_param_is_safe() {
+        gdbmuntie("zshrs_test_no_such_param_untie");
+    }
+
+    /// c:581 — `gdbmhashunsetfn` on unknown param is a safe no-op.
+    #[test]
+    fn gdbmhashunsetfn_unknown_param_is_safe() {
+        gdbmhashunsetfn("zshrs_test_no_such_param_hash_unset");
+    }
+
+    /// c:442 — `scangdbmkeys` on an unknown DB invokes the callback
+    /// ZERO times.
+    #[test]
+    fn scangdbmkeys_unknown_db_yields_no_entries() {
+        let mut count = 0;
+        scangdbmkeys("zshrs_test_no_such_db_scan",
+            |_k, _v, _f| count += 1, 0);
+        assert_eq!(count, 0, "unknown DB must yield no entries");
+    }
+
+    /// c:476 — `gdbmhashsetfn` on unknown param + empty entries
+    /// is a safe no-op.
+    #[test]
+    fn gdbmhashsetfn_unknown_param_empty_entries_is_safe() {
+        gdbmhashsetfn("zshrs_test_no_such_param_hashset", &[]);
+    }
+
+    /// c:236 — `bin_zgdbmpath` with no args returns nonzero (usage).
+    #[test]
+    fn bin_zgdbmpath_with_no_args_returns_nonzero() {
+        let ops = empty_ops();
+        let r = bin_zgdbmpath("zgdbmpath", &[], &ops, 0);
+        assert_ne!(r, 0, "zgdbmpath with no args must error");
+    }
+
+    /// c:236 — `bin_zgdbmpath <unknown>` returns nonzero (param not
+    /// tied).
+    #[test]
+    fn bin_zgdbmpath_unknown_param_returns_nonzero() {
+        let ops = empty_ops();
+        let r = bin_zgdbmpath("zgdbmpath",
+            &["zshrs_test_not_a_tied_param".to_string()], &ops, 0);
+        assert_ne!(r, 0, "zgdbmpath on untied param must error");
+    }
 }

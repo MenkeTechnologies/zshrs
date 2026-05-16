@@ -330,7 +330,10 @@ static STRCODES: &[&str] = &[
     "do", "ds", "ec", "ed", "ei", "fs", "ho", "hd", "hu", "i1",
     "i3", "i2", "ic", "IC", "if", "im", "ip", "is", "kA", "kb",
     "kB", "kC", "kd", "kD", "kE", "kF", "ke", "kh", "kH", "kI",
-    "kL", "kl", "kM", "km", "kN", "kP", "kr", "kR", "kS", "ks",
+    // `km` is a BOOLEAN cap ("Has Meta Key") per termcap(5); it lives
+    // in BOOLCODES (line 316) and must NOT also appear here. Removed
+    // 2026-05 to fix scantermcap duplicate-key emission.
+    "kL", "kl", "kM",       "kN", "kP", "kr", "kR", "kS", "ks",
     "kT", "kt", "ku", "l0", "l1", "l2", "l3", "l4", "l5", "l6",
     "l7", "l8", "l9", "le", "ll", "ma", "mb", "MC", "md", "me",
     "mh", "mk", "mm", "mo", "mp", "mr", "nd", "nl", "nw", "pc",
@@ -497,5 +500,88 @@ mod tests {
     fn scantermcap_emits_bool_caps() {
         let v = scantermcap();
         assert!(v.iter().any(|(k, _)| k == "am"));
+    }
+
+    /// c:80-85 — `bin_echotc` with no args writes "missing argument"
+    /// to stderr and returns 1. Catches a regression that
+    /// dereferences argv[0] on empty input.
+    #[test]
+    fn echotc_with_no_args_returns_one() {
+        let r = bin_echotc("echotc", &[], &[false; 256]);
+        assert_eq!(r, 1, "echotc must report missing-arg error");
+    }
+
+    /// c:97 — `echotc <unknown>` falls through tgetnum / tgetstr /
+    /// ztgetflag, all return -1 / null, so the function exits
+    /// nonzero. Verifies the unknown-cap default path doesn't write
+    /// garbage to stdout.
+    #[test]
+    fn echotc_unknown_cap_returns_nonzero() {
+        let r = bin_echotc("echotc", &["zz_definitely_not_a_cap"], &[false; 256]);
+        assert_ne!(r, 0, "unknown cap must error");
+    }
+
+    /// c:54-72 — `ztgetflag` on a NUL-byte-containing string must
+    /// not panic. CString::new fails for embedded NULs; the port
+    /// must catch that and return -1.
+    #[test]
+    fn ztgetflag_rejects_embedded_nul() {
+        assert_eq!(ztgetflag("a\0m"), -1,
+            "embedded NUL must surface as -1, not panic or false-match");
+    }
+
+    /// c:54 — `ztgetflag("")` must be -1 (the empty string is in
+    /// neither the live termcap nor the boolcodes table).
+    #[test]
+    fn ztgetflag_empty_string_returns_neg_one() {
+        assert_eq!(ztgetflag(""), -1);
+    }
+
+    /// c:200 — `scantermcap` results must have unique keys (the
+    /// boolcodes / numcodes / strcodes tables are disjoint by C
+    /// design). Catches a regression that double-emits a cap when
+    /// two tables claim it.
+    #[test]
+    fn scantermcap_keys_are_unique() {
+        let v = scantermcap();
+        let mut seen = std::collections::HashSet::new();
+        for (k, _) in &v {
+            assert!(seen.insert(k.clone()),
+                "duplicate termcap key emitted: {}", k);
+        }
+    }
+
+    /// c:200 — `scantermcap` must never produce empty key strings
+    /// (every entry's key comes from the *codes tables, all of
+    /// which have non-empty names per the termcap spec).
+    #[test]
+    fn scantermcap_keys_are_nonempty() {
+        for (k, _) in scantermcap() {
+            assert!(!k.is_empty(),
+                "scantermcap emitted empty key — null entry leak?");
+        }
+    }
+
+    /// c:144 — `gettermcap` is case-sensitive (termcap names are
+    /// always 2 lowercase letters). Pinning the case-sensitive
+    /// behavior protects scripts that grep for specific cap names.
+    #[test]
+    fn gettermcap_is_case_sensitive() {
+        // "co" is the columns cap; "CO" is unknown.
+        let r1 = gettermcap("co");
+        let r2 = gettermcap("CO");
+        assert!(r1.is_some());
+        assert!(r2.is_none(),
+            "termcap names must be case-sensitive; uppercase resolved unexpectedly");
+    }
+
+    /// c:323-365 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
     }
 }

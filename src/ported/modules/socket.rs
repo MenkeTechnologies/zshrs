@@ -386,4 +386,58 @@ mod tests {
             args: Vec::new(), argscount: 0, argsalloc: 0,
         }
     }
+
+    /// c:225-229 — `zsocket` (default, connect-mode) with NO args must
+    /// fail-fast with "zsocket requires an argument". Catches a
+    /// regression where the missing-arg path leaks an unconnected
+    /// socket fd.
+    #[test]
+    fn zsocket_connect_mode_without_args_returns_one() {
+        let ops = empty_ops();
+        assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
+    }
+
+    /// c:144-149 — `zsocket -a` with NO args must fail-fast with
+    /// "-a requires an argument". Symmetrical to the `-l` check at
+    /// c:88-90 (already pinned) but for the accept-mode path.
+    #[test]
+    fn zsocket_a_without_arg_fails_before_accept() {
+        let mut ops = empty_ops();
+        ops.ind[b'a' as usize] = 1;
+        assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
+    }
+
+    /// c:152-156 — `zsocket -a 0` (or any non-numeric → atoi → 0) must
+    /// fail with "invalid numerical argument". `0` is never a valid
+    /// listening fd because the user can't have just created one and
+    /// taken stdin away.
+    #[test]
+    fn zsocket_a_zero_listen_fd_fails() {
+        let mut ops = empty_ops();
+        ops.ind[b'a' as usize] = 1;
+        assert_eq!(bin_zsocket("zsocket", &["0".to_string()], &ops, 0), 1);
+        // non-numeric also flows through atoi → 0
+        assert_eq!(bin_zsocket("zsocket", &["not-numeric".to_string()], &ops, 0), 1);
+    }
+
+    /// c:291-327 — module-lifecycle stubs (`setup_`, `boot_`,
+    /// `cleanup_`, `finish_`) all return 0 in the C source. The Rust
+    /// port must match.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:298 — `features_` populates the feature list and returns 0.
+    /// Specific contents aren't pinned by C; just verify the function
+    /// is callable without panicking and returns the success sentinel.
+    #[test]
+    fn features_returns_success() {
+        let mut features = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut features), 0);
+    }
 }

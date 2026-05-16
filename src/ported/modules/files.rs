@@ -1014,4 +1014,198 @@ mod tests {
         let r = bin_mkdir("mkdir", &["/tmp/zshrs_test_invalid_mode".to_string()], &ops, 0);
         assert_eq!(r, 1);
     }
+
+    /// c:115-150 — `domkdir` with `p=1` against a path that already
+    /// exists AS A DIRECTORY must return 0 (success). This is the
+    /// `mkdir -p` idempotence rule: re-running `mkdir -p /existing`
+    /// must NOT error.
+    #[test]
+    fn domkdir_with_p_flag_on_existing_dir_returns_zero() {
+        let tmp = std::env::temp_dir();
+        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/1);
+        assert_eq!(r, 0, "mkdir -p /tmp must succeed when /tmp already exists");
+    }
+
+    /// c:115-150 — same path with `p=0` (`mkdir` without -p) must
+    /// FAIL when the path already exists. Symmetrical to the above:
+    /// behavior pivots entirely on the `p` flag.
+    #[test]
+    fn domkdir_without_p_on_existing_dir_fails() {
+        let tmp = std::env::temp_dir();
+        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/0);
+        assert_ne!(r, 0, "mkdir (no -p) on existing dir must fail per POSIX");
+    }
+
+    /// c:80-115 — `bin_mkdir` with no arguments. C just returns 0
+    /// because the per-arg loop has no iterations. Verifies the
+    /// loop guard, not an early-error branch.
+    #[test]
+    fn bin_mkdir_with_no_args_returns_zero() {
+        let ops = empty_ops();
+        let r = bin_mkdir("mkdir", &[], &ops, 0);
+        assert_eq!(r, 0, "bin_mkdir on empty argv falls through the for loop");
+    }
+
+    /// c:80-115 — `bin_mkdir -p` should successfully create a deeply
+    /// nested path. Catches a regression where the nested-walk logic
+    /// (c:88-101) leaves a parent half-created and reports failure.
+    #[test]
+    fn bin_mkdir_p_creates_nested_path() {
+        let mut ops = empty_ops();
+        ops.ind[b'p' as usize] = (1 << 2) | 1;
+        // Unique under /tmp to keep tests independent of one another
+        let pid = std::process::id();
+        let base = format!("/tmp/zshrs_test_mkdir_p_{}", pid);
+        let nested = format!("{}/a/b/c", base);
+        let _ = std::fs::remove_dir_all(&base);
+        let r = bin_mkdir("mkdir", &[nested.clone()], &ops, 0);
+        assert_eq!(r, 0, "mkdir -p should create the whole chain");
+        assert!(std::path::Path::new(&nested).is_dir(),
+            "leaf dir {} should exist after mkdir -p", nested);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// c:81-83 — bin_mkdir's trailing-slash trim. `bin_mkdir /tmp/foo/`
+    /// must call domkdir with the trailing slash stripped. Verified
+    /// through the happy-path: the directory ends up at the trimmed
+    /// path, even though the user supplied the trailing slash.
+    #[test]
+    fn bin_mkdir_strips_trailing_slashes() {
+        let pid = std::process::id();
+        let target = format!("/tmp/zshrs_test_mkdir_trailing_{}/", pid);
+        let _ = std::fs::remove_dir_all(target.trim_end_matches('/'));
+        let ops = empty_ops();
+        let r = bin_mkdir("mkdir", &[target.clone()], &ops, 0);
+        assert_eq!(r, 0, "trailing slash should not break mkdir");
+        assert!(std::path::Path::new(target.trim_end_matches('/')).is_dir());
+        let _ = std::fs::remove_dir_all(target.trim_end_matches('/'));
+    }
+
+    /// c:150-200 — `bin_rmdir` on a path that does not exist returns
+    /// non-zero, matching rmdir(2)'s ENOENT contract. Regression
+    /// suppressing the per-arg error accumulator would mask this.
+    #[test]
+    fn bin_rmdir_on_nonexistent_path_returns_nonzero() {
+        let ops = empty_ops();
+        let r = bin_rmdir(
+            "rmdir",
+            &["/__definitely_not_a_dir_xyzzy_zshrs_test__".to_string()],
+            &ops, 0,
+        );
+        assert_ne!(r, 0, "rmdir of nonexistent path must report failure");
+    }
+
+    /// c:150-200 — `bin_rmdir` with no args returns 0 (empty loop).
+    #[test]
+    fn bin_rmdir_with_no_args_returns_zero() {
+        let ops = empty_ops();
+        let r = bin_rmdir("rmdir", &[], &ops, 0);
+        assert_eq!(r, 0);
+    }
+
+    /// c:150-200 — `bin_rmdir` happy path: create then remove. Proves
+    /// the rmdir(2) call is actually wired through.
+    #[test]
+    fn bin_rmdir_removes_an_empty_directory() {
+        let pid = std::process::id();
+        let target = format!("/tmp/zshrs_test_rmdir_{}", pid);
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir(&target).expect("setup mkdir");
+        let ops = empty_ops();
+        let r = bin_rmdir("rmdir", &[target.clone()], &ops, 0);
+        assert_eq!(r, 0, "rmdir on existing empty dir should succeed");
+        assert!(!std::path::Path::new(&target).exists(),
+            "directory should be gone after rmdir");
+    }
+
+    /// c:838-879 — `setup_` / `boot_` / `cleanup_` / `finish_` module
+    /// lifecycle stubs. C versions are empty (`return 0`). The Rust
+    /// port must match.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let null_module = std::ptr::null();
+        assert_eq!(setup_(null_module), 0);
+        assert_eq!(boot_(null_module), 0);
+        assert_eq!(cleanup_(null_module), 0);
+        assert_eq!(finish_(null_module), 0);
+    }
+
+    /// c:616 — `bin_rm` with no args returns 0 (per-arg loop never
+    /// runs; ret stays at default).
+    #[test]
+    fn bin_rm_no_args_returns_zero() {
+        let ops = empty_ops();
+        let r = bin_rm("rm", &[], &ops, 0);
+        assert_eq!(r, 0);
+    }
+
+    /// c:616 — `bin_rm` on a nonexistent path returns nonzero.
+    #[test]
+    fn bin_rm_nonexistent_path_returns_one() {
+        let ops = empty_ops();
+        let r = bin_rm("rm", &["/__zshrs_test_no_such_path__".to_string()], &ops, 0);
+        assert_ne!(r, 0, "rm on nonexistent path must error");
+    }
+
+    /// c:546 — `rm_leaf` on a real file removes it. Uses rmmagic
+    /// struct (c:475-480) matching the port signature.
+    #[test]
+    fn rm_leaf_removes_existing_file() {
+        let pid = std::process::id();
+        let f = format!("/tmp/zshrs_test_rm_leaf_{}.txt", pid);
+        let _ = std::fs::write(&f, "x");
+        assert!(std::path::Path::new(&f).exists());
+        let rmm = rmmagic { nam: "rm", opt_force: 1, opt_interact: 0, opt_unlinkdir: 0 };
+        let r = rm_leaf(&f, &f, None, &rmm);
+        assert_eq!(r, 0, "rm_leaf on existing file must succeed");
+        assert!(!std::path::Path::new(&f).exists(),
+            "file must be gone after rm_leaf");
+    }
+
+    /// c:546 — `rm_leaf` on a nonexistent path with opt_force=1
+    /// returns 0 silently (matches POSIX `rm -f`). Pin so a regen
+    /// that ignores force flag silently errors on `rm -f /missing`.
+    #[test]
+    fn rm_leaf_force_silently_succeeds_on_missing() {
+        let rmm = rmmagic { nam: "rm", opt_force: 1, opt_interact: 0, opt_unlinkdir: 0 };
+        let r = rm_leaf("/__never__", "/__never__", None, &rmm);
+        assert_eq!(r, 0, "rm -f on missing path must succeed silently");
+    }
+
+    /// c:655 — `bin_chmod` with no args returns 1 (the port has a
+    /// "missing mode" arity guard at line 607). Pin the explicit
+    /// error so a regen removing the guard silently mis-routes.
+    #[test]
+    fn bin_chmod_no_args_returns_one() {
+        let ops = empty_ops();
+        let r = bin_chmod("chmod", &[], &ops, 0);
+        assert_eq!(r, 1, "missing mode must surface as error");
+    }
+
+    /// c:725 — `bin_chown` with no args returns 1 (port arity guard).
+    #[test]
+    fn bin_chown_no_args_returns_one() {
+        let ops = empty_ops();
+        let r = bin_chown("chown", &[], &ops, 0);
+        assert_eq!(r, 1, "missing owner must surface as error");
+    }
+
+    /// c:200 — `bin_ln` with FEWER than 2 args is a usage error.
+    #[test]
+    fn bin_ln_one_arg_returns_nonzero() {
+        let ops = empty_ops();
+        let r = bin_ln("ln", &["/tmp".to_string()], &ops, 0);
+        assert_ne!(r, 0, "ln with <2 args must error");
+    }
+
+    /// c:53 — `bin_sync` ignores all args, returns 0 (fire-and-
+    /// forget sync(2)).
+    #[test]
+    fn bin_sync_returns_zero_regardless_of_args() {
+        let ops = empty_ops();
+        assert_eq!(bin_sync("sync", &[], &ops, 0), 0);
+        assert_eq!(bin_sync("sync", &["ignored".to_string()], &ops, 0), 0);
+        assert_eq!(bin_sync("sync",
+            &["a".to_string(), "b".to_string()], &ops, 0), 0);
+    }
 }

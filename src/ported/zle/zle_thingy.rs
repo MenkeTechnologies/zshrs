@@ -1352,4 +1352,134 @@ mod tests {
         assert_eq!(thingytab().lock().unwrap().get("present").unwrap().rc, 2);
     }
 
+    /// c:60 — `createthingytab` must be idempotent: calling it twice
+    /// must not double-populate or clear existing entries. Pinning
+    /// catches a regression that resets the global on every call.
+    #[test]
+    fn createthingytab_is_idempotent() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+
+        createthingytab();
+        let after_first = thingytab().lock().unwrap().len();
+        createthingytab();
+        let after_second = thingytab().lock().unwrap().len();
+        assert_eq!(after_first, after_second,
+            "createthingytab must not re-populate; was {} now {}",
+            after_first, after_second);
+    }
+
+    /// c:80 — `emptythingytab` only unbinds entries WITHOUT the
+    /// DISABLED flag (it leaves the fixed `thingies[]` entries
+    /// alone per the C source comment). `rthingy`-created entries
+    /// inherit DISABLED from `makethingynode`, so `emptythingytab`
+    /// is a no-op for them. Pin this so a regen that removes the
+    /// DISABLED filter and starts purging the rthingy entries
+    /// destroys widget bindings unexpectedly.
+    #[test]
+    fn emptythingytab_skips_disabled_rthingy_entries() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+
+        rthingy("a");
+        rthingy("b");
+        rthingy("c");
+        let before = thingytab().lock().unwrap().len();
+        assert!(before >= 3);
+        emptythingytab();
+        let after = thingytab().lock().unwrap().len();
+        assert_eq!(after, before,
+            "emptythingytab must NOT purge DISABLED rthingy entries");
+    }
+
+    /// c:118 — `freethingynode` on a non-existent name must be a
+    /// no-op (not panic). Pin the defensive case; a regression that
+    /// unwrap()s the table.get would crash the shell on widget unbind.
+    #[test]
+    fn freethingynode_on_missing_name_is_safe() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        freethingynode("never-existed");
+    }
+
+    /// c:147 — `unrefthingy` on rc=1 frees the entry. After unref-
+    /// to-zero, the entry must be absent. Catches a regression that
+    /// leaves a dangling rc=0 entry in the table.
+    #[test]
+    fn unrefthingy_at_rc_one_frees_entry() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+
+        rthingy("solo");
+        assert_eq!(thingytab().lock().unwrap().get("solo").unwrap().rc, 1);
+        unrefthingy("solo");
+        assert!(!thingytab().lock().unwrap().contains_key("solo"),
+            "rc=0 entry must be removed from thingytab");
+    }
+
+    /// c:147 — `unrefthingy` on a missing name must be a safe no-op.
+    /// Without this, widget cleanup during shell teardown could
+    /// panic on already-freed entries.
+    #[test]
+    fn unrefthingy_on_missing_is_safe() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        unrefthingy("never-bound");
+    }
+
+    /// c:108 — `makethingynode` produces a fresh node with rc=0 and
+    /// the DISABLED flag set per c:114. Pin both invariants so a
+    /// regen that defaults rc=1 (corrupting refcount math) gets
+    /// caught immediately.
+    #[test]
+    fn makethingynode_starts_at_rc_zero_with_disabled_flag() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let n = makethingynode();
+        assert_eq!(n.rc, 0, "fresh node must have rc=0");
+        assert!((n.flags & DISABLED) != 0,
+            "fresh node must have DISABLED flag set");
+    }
+
+    /// c:158 — `rthingy` on the same name twice bumps the refcount,
+    /// does NOT create a second entry. Pin the dedup-by-name property.
+    #[test]
+    fn rthingy_same_name_twice_only_increments_refcount() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+
+        rthingy("dup");
+        rthingy("dup");
+        let tab = thingytab().lock().unwrap();
+        assert_eq!(tab.len(), 1);
+        assert!(tab.get("dup").unwrap().rc >= 2,
+            "second rthingy must bump rc, not create a sibling");
+    }
+
+    /// c:147 — Unref-to-zero pattern across many entries. Stresses
+    /// the table mutator path to catch a HashMap-mutation bug that
+    /// only shows under multiple inserts/removes.
+    #[test]
+    fn many_rthingy_unref_cycles_leave_no_residue() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+
+        for i in 0..20 {
+            rthingy(&format!("entry-{}", i));
+        }
+        assert!(thingytab().lock().unwrap().len() >= 20);
+        for i in 0..20 {
+            unrefthingy(&format!("entry-{}", i));
+        }
+        for i in 0..20 {
+            assert!(!thingytab().lock().unwrap().contains_key(&format!("entry-{}", i)),
+                "entry-{} should be gone after final unref", i);
+        }
+    }
 }

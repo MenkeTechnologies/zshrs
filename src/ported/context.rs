@@ -204,4 +204,64 @@ mod tests {
         zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
         assert!(cstack.lock().unwrap().is_none());
     }
+
+    /// `Src/context.c:52` — Deep LIFO check. 5 saves pushed; 5
+    /// restores must drain to empty. Pin the depth-handling so a
+    /// regression that uses a fixed-size buffer instead of the
+    /// linked stack would surface on the third+ push.
+    #[test]
+    fn deep_save_restore_lifo_drains_to_empty() {
+        reset_cstack();
+        crate::ported::lex::lex_init("");
+        for _ in 0..5 { zcontext_save(); }
+        // Stack now has 5 frames
+        for i in (0..5).rev() {
+            assert!(cstack.lock().unwrap().is_some(),
+                "stack must still have entries before restore #{}", 5 - i);
+            zcontext_restore();
+        }
+        assert!(cstack.lock().unwrap().is_none(),
+            "5 restores must drain the 5 saves to empty");
+    }
+
+    /// `Src/context.c:80` — `zcontext_save()` is a convenience
+    /// wrapper for `zcontext_save_partial(ALL)`. Pin the alias
+    /// contract: a full-mask partial-save followed by any restore
+    /// yields the same final state as save→restore.
+    #[test]
+    fn zcontext_save_equals_save_partial_full_mask() {
+        use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
+        let full = ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE;
+
+        reset_cstack();
+        crate::ported::lex::lex_init("");
+        zcontext_save();
+        zcontext_restore();
+        let after_full = cstack.lock().unwrap().is_none();
+
+        reset_cstack();
+        crate::ported::lex::lex_init("");
+        zcontext_save_partial(full);
+        zcontext_restore_partial(full);
+        let after_partial = cstack.lock().unwrap().is_none();
+
+        assert_eq!(after_full, after_partial,
+            "save/restore must equal save_partial(ALL)/restore_partial(ALL)");
+    }
+
+    /// `Src/context.c:52` — Many save calls with NO matching restores
+    /// must not corrupt or panic, just grow the stack. Pin defensive
+    /// behavior for shell-script abort paths where partial state
+    /// rewinds may skip restores.
+    #[test]
+    fn many_saves_without_restore_grow_stack_safely() {
+        reset_cstack();
+        crate::ported::lex::lex_init("");
+        for _ in 0..20 { zcontext_save(); }
+        // Stack should still be intact, top frame accessible
+        assert!(cstack.lock().unwrap().is_some());
+        // Now drain — must not panic
+        for _ in 0..20 { zcontext_restore(); }
+        assert!(cstack.lock().unwrap().is_none());
+    }
 }

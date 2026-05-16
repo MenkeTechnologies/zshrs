@@ -839,4 +839,81 @@ mod tests {
         assert_eq!(CMF_MORDER,   1 << 15, "c:142");
         assert_eq!(CMF_DELETE,   1 << 16, "c:143");
     }
+
+    /// c:85-95 — CGF_* group flags are distinct single bits.
+    /// Pin the bit-packing because the c:85 mask is OR'd into a
+    /// shared `cgflags` field.
+    #[test]
+    fn cgf_group_flags_are_distinct_single_bits() {
+        let flags = [
+            CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL, CGF_UNIQCON,
+            CGF_PACKED, CGF_ROWS, CGF_FILES, CGF_MATSORT, CGF_NUMSORT,
+            CGF_REVSORT,
+        ];
+        for &f in &flags {
+            assert_eq!((f as u32).count_ones(), 1,
+                "CGF flag {} = {:#x} must be a single bit", f, f);
+        }
+        let mut all: u32 = 0;
+        for &f in &flags {
+            let bit = f as u32;
+            assert_eq!(all & bit, 0,
+                "CGF flag {:#x} overlaps with existing bits", bit);
+            all |= bit;
+        }
+    }
+
+    /// c:127-143 — CMF_* flags are likewise distinct single bits.
+    /// Pin no overlap across the 17 entries.
+    #[test]
+    fn cmf_match_flags_are_distinct_single_bits() {
+        let flags = [
+            CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+            CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
+            CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL, CMF_DUMMY, CMF_MORDER,
+            CMF_DELETE,
+        ];
+        for &f in &flags {
+            assert_eq!((f as u32).count_ones(), 1,
+                "CMF flag {} = {:#x} must be a single bit", f, f);
+        }
+        let mut all: u32 = 0;
+        for &f in &flags {
+            let bit = f as u32;
+            assert_eq!(all & bit, 0,
+                "CMF flag {:#x} overlaps", bit);
+            all |= bit;
+        }
+    }
+
+    /// c:85 — CGF_NOSORT must be bit 0 (the lowest). The C source
+    /// uses `cgflags & CGF_NOSORT` in many places; the bit order
+    /// being load-bearing on bit 0 is the convention for the
+    /// `nosort` early-exit branch.
+    #[test]
+    fn cgf_nosort_is_bit_zero() {
+        assert_eq!(CGF_NOSORT, 1,
+            "CGF_NOSORT must be bit 0 — the early-exit `!sort` test");
+    }
+
+    /// c:127 — CMF_FILE must be bit 0. Pin the convention because
+    /// file-matches are the most-common dispatch case and the
+    /// fast-path bit-test relies on bit 0.
+    #[test]
+    fn cmf_file_is_bit_zero() {
+        assert_eq!(CMF_FILE, 1,
+            "CMF_FILE must be bit 0 — the file-match fast-path");
+    }
+
+    /// c:85-95 — Sanity: CGF flag values match what the C source
+    /// declares. Spot-check the high end of the table.
+    #[test]
+    fn cgf_top_flags_match_canonical_high_bits() {
+        assert_eq!(CGF_PACKED,  32);
+        assert_eq!(CGF_ROWS,    64);
+        assert_eq!(CGF_FILES,   128);
+        assert_eq!(CGF_MATSORT, 256);
+        assert_eq!(CGF_NUMSORT, 512);
+        assert_eq!(CGF_REVSORT, 1024);
+    }
 }

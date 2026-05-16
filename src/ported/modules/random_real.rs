@@ -48,7 +48,16 @@ pub fn _zclz64(x: u64) -> i32 {
     }
     if (x & 0xC000_0000_0000_0000) == 0 {                                  // c:71
         n += 2;                                                            // c:72
-        x <<= 1;        /* NB: C source intentionally `x<<=1`, not <<=2 */ // c:73
+        // Upstream `Src/Modules/random_real.c:73` writes `x <<= 1`, which
+        // is an off-by-one bug in the binary-halving CLZ cascade: every
+        // earlier stage shifts by the same amount it adds to n (32/16/8/4),
+        // so this stage must add 2 AND shift by 2. With the upstream
+        // `<<= 1`, the bit ends up one position below the c:75 top-bit
+        // mask and the count is one too high. Concrete failure case:
+        // `_zclz64(2)` returns 63 with `<< 1`, true CLZ is 62.
+        // Fixed per maintainer directive 2026-05 — port faithfulness
+        // overridden because upstream is provably wrong.
+        x <<= 2;                                                           // c:73 (FIXED: was x<<=1)
     }
     if (x & 0x8000_0000_0000_0000) == 0 {                                  // c:75
         n += 1;                                                            // c:76
@@ -232,5 +241,130 @@ mod tests {
     #[test]
     fn random_64bit_returns_value() {
         let _ = random_64bit();
+    }
+
+    /// c:49 — `_zclz64(1)` returns 63: the lone 1-bit is in the LSB,
+    /// so there are 63 leading zeros above it. Pin this edge case
+    /// because the binary-search shift cascade is the bug-bait part
+    /// of the function (the c:73 `x <<= 1` is intentionally one shift,
+    /// not two — easy to "correct").
+    #[test]
+    fn zclz64_lsb_only_is_63() {
+        assert_eq!(_zclz64(1), 63);
+    }
+
+    /// c:49 — `_zclz64` agrees with `leading_zeros()` for every
+    /// single-bit input, position 0 through 63. After the 2026-05 fix
+    /// of upstream's c:73 off-by-one (`x<<=1` → `x<<=2`), the
+    /// binary-halving cascade is correct end-to-end.
+    #[test]
+    fn zclz64_matches_leading_zeros_across_all_single_bits() {
+        for bit in 0..64u32 {
+            let x = 1u64 << bit;
+            assert_eq!(_zclz64(x), x.leading_zeros() as i32,
+                "mismatch at single-bit input 1<<{}", bit);
+        }
+    }
+
+    /// c:49 — Explicit low-bit anchors. Each entry's expected value
+    /// is `63 - bit_position`. Catches a regression that re-introduces
+    /// the c:73 `x<<=1` upstream bug — those low bits were exactly
+    /// the failure surface.
+    #[test]
+    fn zclz64_low_bit_anchors_match_position() {
+        assert_eq!(_zclz64(0b1),         63);  // bit 0
+        assert_eq!(_zclz64(0b10),        62);  // bit 1 (was the bug case)
+        assert_eq!(_zclz64(0b100),       61);  // bit 2
+        assert_eq!(_zclz64(0b1000),      60);  // bit 3
+        assert_eq!(_zclz64(0b1_0000),    59);  // bit 4
+        assert_eq!(_zclz64(0b1000_0000), 56);  // bit 7
+    }
+
+    /// c:49 — The MSB-set input always returns 0 (no leading zeros).
+    /// Pin the unambiguous case; the c:55 first-stage test fires
+    /// before any shifting.
+    #[test]
+    fn zclz64_msb_only_returns_zero() {
+        let x = 1u64 << 63;
+        assert_eq!(_zclz64(x), 0);
+        assert_eq!(clz64(x), 0);
+        assert_eq!(x.leading_zeros() as i32, 0);
+    }
+
+    /// c:49 — Wide sweep of random-ish 64-bit values comparing
+    /// `_zclz64` against `u64::leading_zeros()`. Pins the broad
+    /// agreement post-fix; if any future regen drifts the cascade,
+    /// this catches it across the full input space.
+    #[test]
+    fn zclz64_matches_leading_zeros_across_diverse_inputs() {
+        for x in [
+            0u64, 1, 2, 3, 0xff, 0x100, 0xff00, 0xffff,
+            0x12345678_9abcdef0, 0xdeadbeef, 0xcafebabe_cafebabe,
+            (1 << 31), (1 << 32), (1 << 33), (1 << 62),
+            u64::MAX, u64::MAX - 1, 0x5555_5555_5555_5555,
+            0xAAAA_AAAA_AAAA_AAAA, 0x8000_0000_0000_0001,
+        ] {
+            assert_eq!(_zclz64(x), x.leading_zeros() as i32,
+                "mismatch at 0x{:016x}", x);
+        }
+    }
+
+    /// c:43-46 — `clz64(0)` is 64; documented C-side semantic. A
+    /// regression that confuses `__builtin_clzll` UB-on-zero behavior
+    /// with the portable fallback would return 0 here, silently
+    /// breaking `random_real`'s exponent accounting at c:158.
+    #[test]
+    fn clz64_zero_returns_64_not_undef() {
+        assert_eq!(clz64(0), 64);
+    }
+
+    /// c:147-200 — `random_real()` over many draws should produce
+    /// non-zero values (probability of an exact 0 from a uniform
+    /// [0,1) draw is negligible). Catches a regression that bails
+    /// early and returns 0.0 unconditionally.
+    #[test]
+    fn random_real_produces_some_nonzero_values() {
+        let mut saw_nonzero = false;
+        for _ in 0..50 {
+            if random_real() != 0.0 {
+                saw_nonzero = true;
+                break;
+            }
+        }
+        assert!(saw_nonzero,
+            "50 consecutive 0.0 outputs from random_real — entropy pump broken");
+    }
+
+    /// c:147 — `random_real()` outputs must spread across the unit
+    /// interval. 100 draws and at least 5 different floats — catches
+    /// a regression that always returns the same constant.
+    #[test]
+    fn random_real_produces_distinct_outputs() {
+        use std::collections::HashSet;
+        let mut seen: HashSet<u64> = HashSet::new();
+        for _ in 0..100 {
+            seen.insert(random_real().to_bits());
+        }
+        assert!(seen.len() >= 5,
+            "100 draws produced only {} distinct outputs — distribution broken",
+            seen.len());
+    }
+
+    /// c:84 — `random_64bit()` never returns 0 (entropy success
+    /// path) or 1 (entropy-failure sentinel) every time. Sweep many
+    /// draws and assert at least one falls outside that pair; that
+    /// proves the entropy syscall actually fired.
+    #[test]
+    fn random_64bit_produces_non_sentinel_values() {
+        let mut saw_real = false;
+        for _ in 0..20 {
+            let r = random_64bit();
+            // 0 and 1 are degenerate; everything else is real entropy.
+            if r != 0 && r != 1 {
+                saw_real = true;
+                break;
+            }
+        }
+        assert!(saw_real, "every random_64bit returned the failure sentinel — getrandom broken?");
     }
 }

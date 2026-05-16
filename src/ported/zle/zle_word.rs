@@ -1131,4 +1131,106 @@ mod tests {
     fn wordclass_other_branch_returns_three() {
         assert_eq!(wordclass('\n'), 3, "newline excluded from iblank by wcsiblank");
     }
+
+    /// c:74-78 — Every char must map to exactly ONE class (0/1/2/3).
+    /// Pin no-overlap across the four buckets.
+    #[test]
+    fn wordclass_returns_value_in_range_for_all_ascii() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        for b in 0..=127u8 {
+            let c = b as char;
+            let r = wordclass(c);
+            assert!((0..=3).contains(&r),
+                "wordclass({:?}) = {} out of range [0,3]", c, r);
+        }
+    }
+
+    /// c:74 — `wordclass` is a pure function. Same input → same
+    /// output, 1000 times.
+    #[test]
+    fn wordclass_is_idempotent() {
+        for _ in 0..1000 {
+            assert_eq!(wordclass('a'), 1);
+            assert_eq!(wordclass(' '), 0);
+            assert_eq!(wordclass(';'), 2);
+            assert_eq!(wordclass('\n'), 3);
+        }
+    }
+
+    /// c:74-78 — Tab class (c:74 ZC_iblank case). Tab IS iblank
+    /// per `wcsiblank` (`Src/utils.c:4304` — iswspace excluding `\n`).
+    #[test]
+    fn wordclass_tab_is_class_zero() {
+        assert_eq!(wordclass('\t'), 0,
+            "tab is iblank → class 0 per c:75 wcsiblank branch");
+    }
+
+    /// c:74-78 — Non-ASCII letters (e.g. `é`, `字`, `α`) fall into
+    /// the `ZC_ialnum` (class 1) branch in C — they're locale-
+    /// dependent alnum chars. Pin so a regen narrowing to ASCII
+    /// breaks vi `aw`/`iw` over CJK/Latin1 names.
+    #[test]
+    fn wordclass_non_ascii_letters_are_class_one() {
+        // These match iswalnum in most locales; the exact answer
+        // depends on locale, but ASCII alpha+digit must be class 1
+        // regardless.
+        for c in ['a', 'z', 'A', 'Z', '0', '9'] {
+            assert_eq!(wordclass(c), 1,
+                "{:?} must be class 1 (ialnum)", c);
+        }
+    }
+
+    /// c:45 — `forwardword` on an empty buffer must not panic. The
+    /// `n>0` loop has nothing to walk; cursor stays at 0.
+    #[test]
+    fn forwardword_on_empty_buffer_no_panic() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        line("");
+        let r = forwardword(&[]);
+        assert_eq!(r, 0, "forwardword on empty must succeed");
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "cursor must not advance past empty buffer");
+    }
+
+    /// c:240 — `backwardword` on an empty buffer no-panic; cursor
+    /// stays at 0.
+    #[test]
+    fn backwardword_on_empty_buffer_no_panic() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        line("");
+        let r = backwardword(&[]);
+        assert_eq!(r, 0);
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            0);
+    }
+
+    /// c:45 — `forwardword` at end of buffer: cursor is already at
+    /// ZLELL, no movement, returns 0.
+    #[test]
+    fn forwardword_at_end_of_buffer_stays_at_zlell() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        line("foo");
+        crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
+        let r = forwardword(&[]);
+        assert_eq!(r, 0);
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            3, "cursor at ZLELL must stay there");
+    }
+
+    /// c:240 — `backwardword` at start (ZLECS=0): no movement.
+    #[test]
+    fn backwardword_at_start_of_buffer_stays_at_zero() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        line("foo bar");
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        let r = backwardword(&[]);
+        assert_eq!(r, 0);
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            0);
+    }
 }

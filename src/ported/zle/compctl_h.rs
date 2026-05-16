@@ -354,4 +354,186 @@ mod tests {
         let l = CompcondData::L { a: vec!["lo".into()], b: vec!["hi".into()] };
         assert!(matches!(l, CompcondData::L { .. }));
     }
+
+    /// c:76-89 — Every CCT_* constant is a unique non-negative
+    /// integer. Pin uniqueness so a copy-paste regen doesn't double
+    /// up a tag (which would silently route two different
+    /// completion-condition kinds through the same dispatch arm).
+    #[test]
+    fn cct_constants_are_unique() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let all = [
+            CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT,
+            CCT_WORDSTR, CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE,
+            CCT_CURSUB, CCT_CURSUBC, CCT_NUMWORDS,
+            CCT_RANGESTR, CCT_RANGEPAT, CCT_QUOTE,
+        ];
+        let unique: std::collections::HashSet<_> = all.iter().copied().collect();
+        assert_eq!(unique.len(), all.len(),
+            "duplicate CCT_* constant detected");
+        for &v in &all {
+            assert!(v >= 0, "CCT_* constants must be non-negative");
+        }
+    }
+
+    /// c:76 — CCT_UNUSED MUST be 0. The C source uses zero-init as
+    /// the implicit "no condition" sentinel; a regression that sets
+    /// CCT_UNUSED = 1 would mark every just-allocated condition as
+    /// CCT_POS by accident.
+    #[test]
+    fn cct_unused_is_zero() {
+        assert_eq!(CCT_UNUSED, 0, "CCT_UNUSED must be the zero-init sentinel");
+    }
+
+    /// c:118-127 — CC_* primary-mask bits are distinct singletons.
+    /// Pin the bit-packing because the c:152 "primary mask" vs
+    /// c:154-158 "secondary mask" distinction relies on the primary
+    /// bits all being non-overlapping.
+    #[test]
+    fn cc_primary_mask_bits_are_distinct_singletons() {
+        let primary = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS,
+            CC_VARS, CC_BINDINGS, CC_ARRAYS, CC_INTVARS,
+            CC_SHFUNCS, CC_PARAMS, CC_ENVVARS,
+        ];
+        for &m in &primary {
+            assert_eq!(m.count_ones(), 1, "primary CC_ mask {} has {} bits set",
+                m, m.count_ones());
+        }
+        let mut all: u64 = 0;
+        for &m in &primary {
+            assert_eq!(all & m, 0, "primary CC_ mask {} overlaps", m);
+            all |= m;
+        }
+    }
+
+    /// c:108 — `Compctl::default()` Default impl produces an empty
+    /// struct ready for population. After a default + manual field
+    /// write, the other fields must remain at their zero-init values.
+    #[test]
+    fn compctl_default_partial_population_doesnt_clobber_other_fields() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut cc = Compctl::default();
+        cc.mask = CC_FILES;
+        assert_eq!(cc.mask, CC_FILES);
+        // Every OTHER field must still be at default
+        assert_eq!(cc.refc, 0);
+        assert!(cc.next.is_none());
+        assert_eq!(cc.mask2, 0);
+        assert!(cc.keyvar.is_none());
+        assert!(cc.cond.is_none());
+        assert_eq!(cc.hnum, 0);
+    }
+
+    /// `Compcond::default()` produces a CCT_UNUSED node with the
+    /// `Unused` data variant. Pin the simultaneous shape so a
+    /// regression that picks one but not the other (e.g. CCT_POS
+    /// with Unused data) gets caught.
+    #[test]
+    fn compcond_default_typ_and_data_are_consistent() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let c = Compcond::default();
+        assert_eq!(c.typ, CCT_UNUSED, "tag must be UNUSED");
+        assert!(matches!(c.u, CompcondData::Unused),
+            "data must be CompcondData::Unused");
+    }
+
+    /// c:118-149 — Full sweep of CC_* primary-mask bits 0..31. Each
+    /// must occupy a distinct bit position. Catches a regen that
+    /// renumbers two flags to the same shift.
+    #[test]
+    fn cc_primary_mask_full_sweep_no_overlap() {
+        let primary = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+            CC_ENVVARS, CC_STOPPED, CC_BUILTINS, CC_ALREG, CC_ALGLOB,
+            CC_USERS, CC_DISCMDS, CC_EXCMDS, CC_SCALARS, CC_READONLYS,
+            CC_SPECIALS, CC_DELETE, CC_NAMED, CC_QUOTEFLAG, CC_EXTCMDS,
+            CC_RESWDS, CC_DIRS, CC_EXPANDEXPL, CC_RESERVED,
+        ];
+        for &m in &primary {
+            assert_eq!(m.count_ones(), 1,
+                "primary CC_ mask {:#x} must be single bit", m);
+        }
+        let mut all: u64 = 0;
+        for &m in &primary {
+            assert_eq!(all & m, 0,
+                "CC_ mask {:#x} overlaps with previous flags", m);
+            all |= m;
+        }
+    }
+
+    /// c:148 — CC_EXPANDEXPL lives at bit 30 (NOT 29). Pin the
+    /// gap-at-bit-29 because the C source documents the bit-29
+    /// hole at c:147. A regen that "fills the gap" would shift
+    /// every subsequent flag.
+    #[test]
+    fn cc_expandexpl_at_bit_30_skips_bit_29() {
+        assert_eq!(CC_EXPANDEXPL, 1 << 30,
+            "c:148 — CC_EXPANDEXPL must be at bit 30 (bit 29 is the gap)");
+        // Verify nothing else IS bit 29
+        let all_primary = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+            CC_ENVVARS, CC_STOPPED, CC_BUILTINS, CC_ALREG, CC_ALGLOB,
+            CC_USERS, CC_DISCMDS, CC_EXCMDS, CC_SCALARS, CC_READONLYS,
+            CC_SPECIALS, CC_DELETE, CC_NAMED, CC_QUOTEFLAG, CC_EXTCMDS,
+            CC_RESWDS, CC_DIRS, CC_EXPANDEXPL, CC_RESERVED,
+        ];
+        let bit_29: u64 = 1 << 29;
+        for &m in &all_primary {
+            assert_ne!(m, bit_29,
+                "no primary mask should occupy bit 29 (the documented gap)");
+        }
+    }
+
+    /// c:149 — CC_RESERVED is bit 31 (the high bit). Pin the
+    /// boundary so a regen that extends into bit 32 (u64 vs i32
+    /// confusion) gets caught.
+    #[test]
+    fn cc_reserved_is_bit_31() {
+        assert_eq!(CC_RESERVED, 1u64 << 31);
+    }
+
+    /// c:152-158 — Secondary-mask (mask2) flags occupy bits 0-6 of
+    /// their OWN namespace. They DELIBERATELY collide with primary
+    /// mask values (CC_NOSORT = 1 = CC_FILES) — the dispatcher
+    /// routes via the mask vs mask2 field.
+    #[test]
+    fn secondary_mask_collides_with_primary_by_design() {
+        // CC_NOSORT (mask2 bit 0) and CC_FILES (mask bit 0) both = 1
+        assert_eq!(CC_NOSORT, CC_FILES,
+            "collision is intentional — different mask fields");
+        // CC_XORCONT (mask2 bit 1) and CC_COMMPATH (mask bit 1) both = 2
+        assert_eq!(CC_XORCONT, CC_COMMPATH);
+        // ... but mask2 has its own no-overlap structure
+        let secondary = [
+            CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+            CC_DEFCONT, CC_UNIQCON, CC_UNIQALL,
+        ];
+        let mut all: u64 = 0;
+        for &m in &secondary {
+            assert_eq!(m.count_ones(), 1,
+                "secondary CC_ mask {:#x} must be single bit", m);
+            assert_eq!(all & m, 0,
+                "secondary {:#x} overlaps within mask2 namespace", m);
+            all |= m;
+        }
+    }
+
+    /// c:76-89 — CCT_* values are sequential (0..13). Pin the
+    /// dense layout so a regen that introduces a gap silently
+    /// breaks the dispatcher's `(type - CCT_POS)` subtraction.
+    #[test]
+    fn cct_values_are_sequential_zero_through_thirteen() {
+        let in_order = [
+            CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT, CCT_WORDSTR,
+            CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE, CCT_CURSUB, CCT_CURSUBC,
+            CCT_NUMWORDS, CCT_RANGESTR, CCT_RANGEPAT, CCT_QUOTE,
+        ];
+        for (i, &v) in in_order.iter().enumerate() {
+            assert_eq!(v, i as i32,
+                "CCT_ at position {} must be {}, got {}", i, i, v);
+        }
+    }
 }

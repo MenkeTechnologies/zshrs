@@ -496,4 +496,75 @@ mod tests {
         assert!(scangroup(false).is_empty());
         assert!(scangroup(true).is_empty());
     }
+
+    /// c:40 — `convertattr("")` (empty input). Defensive edge.
+    #[test]
+    fn convertattr_empty_input_is_safe() {
+        let _ = convertattr("", false);
+        let _ = convertattr("", true);
+    }
+
+    /// c:40 — `convertattr("bold")` adds bold SGR (1).
+    #[test]
+    fn convertattr_bold_emits_sgr_bold() {
+        let s = convertattr("bold", false);
+        assert!(s.contains("\x1b[1m") || s.contains("\x1b[1;"),
+            "bold attr must emit SGR 1, got {:?}", s);
+    }
+
+    /// c:40 — Unknown attr keyword does NOT panic.
+    #[test]
+    fn convertattr_unknown_attr_is_safe() {
+        let _ = convertattr("definitely_not_a_real_attr", false);
+    }
+
+    /// c:40 — Truecolor upper boundary (255,255,255). Pin so a
+    /// regen using i8 instead of u8 doesn't wrap to negative.
+    #[test]
+    fn convertattr_truecolor_max_rgb() {
+        let s = convertattr("fg=#ffffff", false);
+        assert!(s.contains("38;2;255;255;255"),
+            "white truecolor must encode as 255;255;255, got {:?}", s);
+    }
+
+    /// c:40 — 256-color upper boundary `fg=255`.
+    #[test]
+    fn convertattr_256_color_upper_boundary() {
+        let s = convertattr("fg=255", false);
+        assert!(s.contains("38;5;255"),
+            "256-color upper boundary 255 must encode correctly, got {:?}", s);
+    }
+
+    /// c:141 — `getpmesc` for empty/unknown name returns None.
+    #[test]
+    fn getpmesc_empty_or_unknown_returns_none() {
+        assert!(getpmesc("").is_none());
+        assert!(getpmesc("definitely_not_in_table_xyzzy").is_none());
+    }
+
+    /// c:155 — `getpmsgr` symmetric with getpmesc; empty + unknown → None.
+    #[test]
+    fn getpmsgr_empty_or_unknown_returns_none() {
+        assert!(getpmsgr("").is_none());
+        assert!(getpmsgr("definitely_not_in_table_xyzzy").is_none());
+    }
+
+    /// c:148/162 — `scanpmesc` and `scanpmsgr` always return empty
+    /// vec until paramtable wiring lands.
+    #[test]
+    fn scanpmesc_and_scanpmsgr_are_empty_until_wired() {
+        assert!(scanpmesc().is_empty());
+        assert!(scanpmsgr().is_empty());
+    }
+
+    /// c:182-210 — module-lifecycle stubs return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        let mut features = Vec::new();
+        assert_eq!(features_(m, &mut features), 0);
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(enables_(m, &mut enables), 0);
+    }
 }

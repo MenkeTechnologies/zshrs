@@ -549,4 +549,61 @@ mod tests {
         };
         assert_eq!(bin_echoti("echoti", &[], &ops, 0), 1);
     }
+
+    /// c:64 — `echoti` with an unknown capability name must error
+    /// rather than emit garbage. zsh's terminfo.c rejects via
+    /// `tigetstr(cap) == 0 / (char *)-1`.
+    #[test]
+    fn echoti_unknown_capability_returns_one() {
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_echoti("echoti",
+            &["__not_a_terminfo_cap__".to_string()], &ops, 0);
+        assert_eq!(r, 1, "echoti must reject unknown caps, not emit garbage");
+    }
+
+    /// c:177 — `scanterminfo` iterates the table and returns a
+    /// (name, value) list. Must not panic with `TERM=dumb` (a
+    /// terminal with effectively zero capabilities). Empty result is
+    /// acceptable; panic is not.
+    #[test]
+    fn scanterminfo_does_not_panic_for_dumb_term() {
+        // SAFETY: env mutation is process-global. Snapshot + restore.
+        let old = std::env::var_os("TERM");
+        unsafe { std::env::set_var("TERM", "dumb"); }
+        let _ = scanterminfo();
+        match old {
+            Some(v) => unsafe { std::env::set_var("TERM", v); },
+            None    => unsafe { std::env::remove_var("TERM"); },
+        }
+    }
+
+    /// c:316-360 — module-lifecycle stubs return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:323 — `features_` writes the advertised feature names and
+    /// returns 0. Must be callable without panicking.
+    #[test]
+    fn features_returns_success() {
+        let mut features = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut features), 0);
+    }
+
+    /// c:331 — `enables_` toggles the per-feature enable bitmap and
+    /// returns 0. Pass None to avoid mutating state; just verify the
+    /// success contract.
+    #[test]
+    fn enables_returns_success_with_none_arg() {
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(enables_(std::ptr::null(), &mut enables), 0);
+    }
 }

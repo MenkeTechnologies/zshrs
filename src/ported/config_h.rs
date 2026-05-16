@@ -1328,4 +1328,193 @@ mod tests {
         assert_eq!(DEFAULT_TMPPREFIX, "/tmp/zsh",
             "configure.ac:2984 / config.h:19 — DEFAULT_TMPPREFIX = \"/tmp/zsh\"");
     }
+
+    /// `config.h.in` — every `GLOBAL_*` rc path drives a `source` at
+    /// shell startup (init.c::source_zshenv/profile/login/etc.). The
+    /// `/etc/zsh*` prefix is the canonical zsh placement; an absolute
+    /// path with the wrong stem or a relative form would silently
+    /// disable system-wide configuration.
+    #[test]
+    fn global_rc_paths_have_canonical_etc_zsh_prefix() {
+        for (name, path) in [
+            ("GLOBAL_ZSHENV", GLOBAL_ZSHENV),
+            ("GLOBAL_ZPROFILE", GLOBAL_ZPROFILE),
+            ("GLOBAL_ZSHRC", GLOBAL_ZSHRC),
+            ("GLOBAL_ZLOGIN", GLOBAL_ZLOGIN),
+            ("GLOBAL_ZLOGOUT", GLOBAL_ZLOGOUT),
+        ] {
+            assert!(path.starts_with("/etc/z"),
+                "{} = {:?} — must live under /etc/z* per zsh init convention", name, path);
+            assert!(!path.contains(".."),
+                "{} = {:?} — path traversal in a startup-file path is a security risk",
+                name, path);
+        }
+    }
+
+    /// `Src/init.c::source_global_rcs` opens them in a fixed sequence:
+    /// zshenv → zprofile → zshrc → zlogin → zlogout. Each path is a
+    /// distinct file. A regen that collapsed two into one (typo /
+    /// copy-paste) would re-source the same file twice and silently
+    /// drop one of the startup phases.
+    #[test]
+    fn global_rc_paths_are_all_distinct() {
+        let all = [
+            GLOBAL_ZSHENV, GLOBAL_ZPROFILE, GLOBAL_ZSHRC,
+            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT,
+        ];
+        let unique: std::collections::HashSet<_> = all.iter().copied().collect();
+        assert_eq!(unique.len(), all.len(),
+            "duplicate startup-file path detected: {:?}", all);
+    }
+
+    /// `Src/exec.c::execcmd_exec` ultimately falls back to DEFAULT_PATH
+    /// when the user clears $PATH. The list must (a) include /bin and
+    /// /usr/bin or every shell command breaks, and (b) be
+    /// colon-separated with no trailing colon (zsh treats trailing
+    /// empty as cwd-on-PATH, which is a 30-year security footgun).
+    #[test]
+    fn default_path_is_colon_separated_and_includes_bin_dirs() {
+        assert!(DEFAULT_PATH.contains("/bin"));
+        assert!(DEFAULT_PATH.contains("/usr/bin"));
+        assert!(!DEFAULT_PATH.ends_with(':'),
+            "trailing colon in DEFAULT_PATH = {:?} means cwd-on-PATH — security regression",
+            DEFAULT_PATH);
+        for seg in DEFAULT_PATH.split(':') {
+            assert!(seg.starts_with('/'),
+                "DEFAULT_PATH segment {:?} is not absolute — relative paths in PATH are a security risk",
+                seg);
+        }
+    }
+
+    /// `DL_EXT` selects the dlopen() suffix when loading dynamic
+    /// modules (`zmodload`). Unix-only build: must be a non-empty
+    /// extension stub (without leading dot) so the module resolver
+    /// can synthesize `<name>.<DL_EXT>` correctly.
+    #[test]
+    fn dl_ext_is_nonempty_extension_stem() {
+        assert!(!DL_EXT.is_empty(), "DL_EXT must be set so zmodload can find .so files");
+        assert!(!DL_EXT.starts_with('.'),
+            "DL_EXT = {:?} starts with `.` — concatenation would produce `..so`",
+            DL_EXT);
+        // On Linux/macOS one of these matches; on neither it's a misconfig.
+        assert!(matches!(DL_EXT, "so" | "dylib" | "bundle"),
+            "DL_EXT = {:?} — unexpected dynamic-library extension", DL_EXT);
+    }
+
+    /// `Src/jobs.c` consults DYNAMIC + DYNAMIC_NAME_CLASH_OK at compile
+    /// time to decide whether to even compile the module loader. Both
+    /// gated to `1` enables the full zmodload path. A regen flipping
+    /// either to `0` would silently disable every loadable module
+    /// (datetime, mathfunc, pcre, regex, stat, etc.).
+    #[test]
+    fn dynamic_module_loading_is_enabled() {
+        assert_eq!(DYNAMIC, 1, "DYNAMIC=0 disables zmodload entirely");
+        assert_eq!(DYNAMIC_NAME_CLASH_OK, 1,
+            "DYNAMIC_NAME_CLASH_OK=0 forbids the same fn name across modules");
+    }
+
+    /// HAVE_* sentinels gate `#ifdef`'d code paths in the C source.
+    /// Pinning the most load-bearing ones — clock_gettime drives
+    /// $EPOCHREALTIME (zsh/datetime), brk underpins memory allocator
+    /// fallbacks, arc4random_buf seeds $RANDOM in random_real.
+    #[test]
+    fn core_have_sentinels_match_runtime_capabilities() {
+        // clock_gettime is required for $EPOCHSECONDS / $EPOCHREALTIME
+        // (Src/Modules/datetime.c). Disabled = the param is empty.
+        assert_eq!(HAVE_CLOCK_GETTIME, 1,
+            "$EPOCHREALTIME relies on clock_gettime");
+        // alloca() is on every platform zshrs targets (macOS aarch64 +
+        // Linux x86_64/aarch64); disabled would break parser stack
+        // expansion in Src/parse.c.
+        assert_eq!(HAVE_ALLOCA, 1);
+        assert_eq!(HAVE_ALLOCA_H, 1);
+        // brk(2) — getrlimit fallback paths.
+        assert_eq!(HAVE_BRK, 1);
+        assert_eq!(HAVE_BRK_PROTO, 1);
+    }
+
+    /// Cache flags wired by initialization code: CACHE_USERNAMES feeds
+    /// the `nis_username` ~ $username lookup table; without it `~user`
+    /// expansion is a fork-per-lookup. Pinning at 1 protects that
+    /// optimisation against a regen flip.
+    #[test]
+    fn cache_usernames_is_enabled_for_tilde_expansion_perf() {
+        assert_eq!(CACHE_USERNAMES, 1,
+            "CACHE_USERNAMES drives ~user lookup table; 0 means fork-per-lookup");
+    }
+
+    /// `config.h:54 BROKEN_ISPRINT` is the historic workaround for
+    /// systems whose libc `isprint()` returns true for `0x80..0xFF`.
+    /// zsh defines its own `iblank`/`isprint` macros via this gate.
+    /// Must be set so zshrs's character classifiers behave like zsh's.
+    #[test]
+    fn broken_isprint_workaround_is_active() {
+        assert_eq!(BROKEN_ISPRINT, 1);
+    }
+
+    /// `config.h:42 DEFAULT_FCEDIT = "vi"` is the editor `fc` invokes.
+    /// "vi" is the POSIX-mandated default. A regen swapping to "ed" or
+    /// "" would silently break `fc -e ?` invocations.
+    #[test]
+    fn default_fcedit_resolves_to_a_present_editor_command() {
+        // We do NOT shell out to verify executability; just sanity-check
+        // the name is a known editor stem (not "", "vim", or a path).
+        assert!(matches!(DEFAULT_FCEDIT, "vi" | "ed"),
+            "DEFAULT_FCEDIT = {:?} — must be a POSIX-installed editor",
+            DEFAULT_FCEDIT);
+        assert!(!DEFAULT_FCEDIT.contains('/'),
+            "DEFAULT_FCEDIT must be PATH-resolved, not a fixed path");
+    }
+
+    /// `config.h:45 DEFAULT_TMPPREFIX = "/tmp/zsh"`. Used by
+    /// `Src/exec.c::gettmpfile` to derive the basename for `<(cmd)` /
+    /// `>(cmd)` FIFO process substitution and `=()` here-strings. Must
+    /// be (a) absolute, (b) under a sticky-bit world-writable dir.
+    #[test]
+    fn default_tmpprefix_is_absolute_under_tmp() {
+        assert!(DEFAULT_TMPPREFIX.starts_with("/tmp/"),
+            "DEFAULT_TMPPREFIX = {:?} must live under /tmp so it inherits sticky-bit",
+            DEFAULT_TMPPREFIX);
+    }
+
+    /// `config.h:85 DEFAULT_READNULLCMD` is what `< file` (read with no
+    /// command) defaults to. zsh ships "more"; "cat" would also be
+    /// safe, but pin the upstream choice.
+    #[test]
+    fn default_readnullcmd_matches_upstream() {
+        assert_eq!(DEFAULT_READNULLCMD, "more",
+            "config.h:85 — DEFAULT_READNULLCMD must remain `more` to match zsh");
+    }
+
+    /// `config.h:27 PASSWD_MAP` is the NIS map name when looking up
+    /// users via YP. zsh uses "passwd.byname" (the universal NIS map
+    /// name); a typo here silently breaks `~user` expansion on NIS
+    /// hosts.
+    #[test]
+    fn passwd_map_is_canonical_nis_name() {
+        assert_eq!(PASSWD_MAP, "passwd.byname");
+    }
+
+    /// `CONFIG_LOCALE` gates the `setlocale(LC_ALL, "")` call at shell
+    /// start. Pinned at 1 — disabling it would make non-ASCII
+    /// completion lists and wide-char widget handling silently revert
+    /// to the C locale (every CJK / European user breaks).
+    #[test]
+    fn config_locale_is_enabled() {
+        assert_eq!(CONFIG_LOCALE, 1,
+            "CONFIG_LOCALE=0 silently disables every locale-aware code path");
+    }
+
+    /// `GETCWD_CALLS_MALLOC` + `GETPGRP_VOID` are two
+    /// platform-detected sentinels. Both must be `1` on macOS/Linux
+    /// (zshrs's supported platforms); the C source's `#ifdef`
+    /// branches assume `getcwd(NULL, 0)` returns a malloc'd buffer
+    /// and `getpgrp()` takes no arguments.
+    #[test]
+    fn getcwd_and_getpgrp_use_modern_signatures() {
+        assert_eq!(GETCWD_CALLS_MALLOC, 1,
+            "GETCWD_CALLS_MALLOC=0 means we'd pass a buffer — POSIX requires the NULL-arg form");
+        assert_eq!(GETPGRP_VOID, 1,
+            "GETPGRP_VOID=0 means getpgrp(pid) — only ancient SysV uses that form");
+    }
 }

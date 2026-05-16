@@ -408,6 +408,24 @@
             can&rsquo;t solve the problem in userspace; zshrs accepts the
             architecture cost to solve it for real.</p>
           </div>
+          <div class="cat-card">
+            <h4>First shell with native LSP server + DAP debug adapter</h4>
+            <p><strong>World&rsquo;s first shell to ship Language Server
+            Protocol and Debug Adapter Protocol as first-class subsystems
+            of the shell binary itself.</strong> <code>zshrs --lsp</code>
+            starts an LSP server on stdio (completion, hover,
+            documentSymbol, foldingRange, semanticTokens, formatting,
+            rename, diagnostics) consumed by any editor &mdash; JetBrains,
+            VS Code, Helix, Neovim. <code>zshrs --dap HOST:PORT</code>
+            speaks the full Debug Adapter Protocol over TCP (breakpoints,
+            stepping, frames, scopes, variables, evaluate) so any DAP
+            client can debug zsh scripts. No other shell (bash, zsh,
+            fish, nu, elvish, oil, xonsh, murex) ships either &mdash;
+            bash-language-server is a Node-based third-party project,
+            not part of bash; no zsh equivalent exists at all. The
+            JetBrains plugin at <code>editors/intellij/</code> drives
+            both. Hand-rolled JSON-RPC framing, zero new dependencies.</p>
+          </div>
         </div>
 
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">

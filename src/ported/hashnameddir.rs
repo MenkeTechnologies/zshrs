@@ -354,4 +354,94 @@ mod tests {
         assert_eq!(nd.diff, "/new/longer/path".len() as i32 - 1);
         assert_eq!(t.len(), 1, "must not accumulate duplicate keys");
     }
+
+    /// c:125 — `nd->diff = strlen(nd->dir) - strlen(nam)`. When
+    /// dir and name have equal length, diff is exactly 0. Pin the
+    /// zero-edge so a regen that adds a +1/-1 fudge factor breaks
+    /// `~name` prefix matching for this case.
+    #[test]
+    fn addnameddirnode_diff_zero_when_lengths_equal() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("abcde", make_nd("abcde", "/etc/", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("abcde").expect("entry inserted");
+        assert_eq!(nd.diff, 0,
+            "len(\"/etc/\") == len(\"abcde\") == 5 → diff = 0");
+    }
+
+    /// c:84 — `emptynameddirtable` empties the table and resets
+    /// `allusersadded`. Pin the full reset because callers depend
+    /// on the flag returning to 0 so `fillnameddirtable` will
+    /// re-scan on next access.
+    #[test]
+    fn emptynameddirtable_resets_table_and_flag() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("a", make_nd("a", "/x", 0));
+        addnameddirnode("b", make_nd("b", "/y", 0));
+        allusersadded.store(1, Ordering::Relaxed);
+        emptynameddirtable();
+        assert!(nameddirtab().lock().unwrap().is_empty(),
+            "emptynameddirtable must clear the table");
+        assert_eq!(allusersadded.load(Ordering::Relaxed), 0,
+            "emptynameddirtable must reset allusersadded to 0");
+    }
+
+    /// c:135 — `removenameddirnode` returns the removed entry's data
+    /// (Some), or None for an absent name. Pin both branches.
+    #[test]
+    fn removenameddirnode_returns_some_for_present_and_none_for_absent() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("here", make_nd("here", "/tmp/here", 0));
+        let removed = removenameddirnode("here");
+        assert!(removed.is_some(), "present entry must return Some");
+        assert_eq!(removed.unwrap().dir, "/tmp/here");
+        // Now it's gone
+        assert!(removenameddirnode("here").is_none(),
+            "second remove must return None");
+        // Unknown name is also None
+        assert!(removenameddirnode("never_was").is_none());
+    }
+
+    /// c:135 — `removenameddirnode` of a present entry removes it
+    /// from the table (followup state check).
+    #[test]
+    fn removenameddirnode_actually_removes_from_table() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("a", make_nd("a", "/a", 0));
+        addnameddirnode("b", make_nd("b", "/b", 0));
+        assert_eq!(nameddirtab().lock().unwrap().len(), 2);
+        removenameddirnode("a");
+        let t = nameddirtab().lock().unwrap();
+        assert_eq!(t.len(), 1);
+        assert!(!t.contains_key("a"));
+        assert!(t.contains_key("b"), "removing 'a' must NOT touch 'b'");
+    }
+
+    /// c:59 — `createnameddirtable` is idempotent: calling it twice
+    /// must not double-init or wipe existing entries. Pin re-entry
+    /// safety since `init_misc` and `fillnameddirtable` both call it.
+    #[test]
+    fn createnameddirtable_is_idempotent() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        createnameddirtable();
+        addnameddirnode("preserved", make_nd("preserved", "/x", 0));
+        createnameddirtable();  // second call
+        let t = nameddirtab().lock().unwrap();
+        assert!(t.contains_key("preserved"),
+            "second createnameddirtable must NOT wipe existing entries");
+    }
+
+    /// c:148 — `freenameddirnode` accepts any nameddir and consumes
+    /// it (drops the String fields). Smoke test for the destructor.
+    #[test]
+    fn freenameddirnode_consumes_node() {
+        let nd = make_nd("doomed", "/tmp", 0);
+        freenameddirnode(nd);
+        // No panic = pass. Caller's `nd` is moved.
+    }
 }

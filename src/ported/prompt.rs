@@ -1006,13 +1006,23 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {        // 
 }
 
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
-    let lower = teststrp.to_lowercase(); // c:1915
-    for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
-        if n == lower {
-            return Some(i as u8); // c:1929
+    // c:1925-1928 uses `strncmp` (case-SENSITIVE) against the
+    // ansi_colours table. The previous Rust port `to_lowercase`-ed
+    // the input first which made the function case-INsensitive,
+    // accepting `"RED"` where C rejects it. Fixed 2026-05 to match
+    // the C strncmp contract: input must already be lowercase.
+    for (i, &n) in COLOUR_NAMES.iter().enumerate() {                             // c:1925
+        if n == teststrp {                                                       // c:1926 strncmp(teststr, *cptr, len)
+            return Some(i as u8);                                                // c:1927
         }
     }
-    teststrp.parse::<u8>().ok() // c:1933 (fall-through to numeric)
+    // Rust-port extension: fall through to numeric parse so callers
+    // can spell `color 38` etc. (C returns -1 here; the numeric path
+    // is wired further up the dispatch chain in upstream zsh, but
+    // the Rust port colocates it because there's no shared call site
+    // yet). Pin via the regression test if this lands a divergent
+    // behavior in practice.
+    teststrp.parse::<u8>().ok()
 }
 
 /// Port of `static int truecolor_terminal(void)` from Src/prompt.c:1935.
@@ -2783,5 +2793,133 @@ mod tests {
         countprompt(&probe, &mut w, &mut h, 0);
         assert_eq!(w, 1,
             "c:1183-1184 — Nularg counts as 1 visible column; got w={w}");
+    }
+
+    /// c:134 — `promptpath` with `tilde=false` MUST NOT substitute ~
+    /// even when `home` is a prefix. Pin the inverse branch so a
+    /// regen that hardcodes tilde-substitution silently breaks
+    /// `%/` literal-path renders.
+    #[test]
+    fn promptpath_without_tilde_keeps_absolute_path() {
+        let r = promptpath("/home/user/project", 0, /*tilde=*/false, "/home/user");
+        assert!(r.starts_with("/home/user"),
+            "tilde=false must NOT collapse to ~; got {r:?}");
+        assert!(!r.starts_with('~'),
+            "tilde=false output must not start with ~");
+    }
+
+    /// c:134 — Path equal to home (no remainder). `tilde=true` →
+    /// just `~`. Edge case the prefix-collapse logic must handle.
+    #[test]
+    fn promptpath_path_exactly_home_renders_as_tilde_only() {
+        let r = promptpath("/home/user", 0, true, "/home/user");
+        assert_eq!(r, "~",
+            "path == home must render as plain '~'; got {r:?}");
+    }
+
+    /// c:134 — Home not a prefix of path: leave path unchanged
+    /// regardless of tilde flag.
+    #[test]
+    fn promptpath_unrelated_path_unchanged() {
+        let r = promptpath("/etc/zshrc", 0, true, "/home/user");
+        assert_eq!(r, "/etc/zshrc",
+            "non-home path must pass through unchanged");
+    }
+
+    /// c:134 — npath=0 means "no truncation": the full path renders.
+    #[test]
+    fn promptpath_npath_zero_means_no_truncation() {
+        let r = promptpath("/a/b/c/d/e", 0, false, "");
+        assert_eq!(r, "/a/b/c/d/e", "npath=0 must keep full path");
+    }
+
+    /// c:134 — npath=2 keeps the LAST two components only. Pin
+    /// the off-by-one because the C source does `for (i = npath; i > 0; --i)`
+    /// — a regen that does `>= 0` would keep one extra.
+    #[test]
+    fn promptpath_npath_two_keeps_last_two_components() {
+        let r = promptpath("/a/b/c/d", 2, false, "");
+        assert!(r.contains("c") && r.contains("d"),
+            "npath=2 must include last 2 components; got {r:?}");
+        assert!(!r.contains("/a/"),
+            "npath=2 must NOT include first 2 components");
+    }
+
+    /// c:285 — `parsehighlight` for `none` returns 0 (no attrs set).
+    /// Pin the keyword that explicitly clears all attribute bits.
+    #[test]
+    fn parsehighlight_none_returns_zero() {
+        let r = parsehighlight("none");
+        assert_eq!(r, 0, "'none' must yield zero attrs; got {:#x}", r);
+    }
+
+    /// c:285 — `parsehighlight("underline")` sets the UNDERLINE bit.
+    /// Test the other attribute keywords separately from `bold`.
+    #[test]
+    fn parsehighlight_underline_sets_underline_bit() {
+        let r = parsehighlight("underline");
+        assert_ne!(r, 0, "underline must set at least one bit");
+    }
+
+    /// c:285 — Unknown highlight keyword returns 0 (silent ignore).
+    /// Pin the failure mode because zle_highlight users add custom
+    /// keywords; the C source skips unknowns rather than erroring.
+    #[test]
+    fn parsehighlight_unknown_keyword_returns_zero() {
+        let r = parsehighlight("definitely_not_a_real_attr");
+        assert_eq!(r, 0, "unknown attr must be silently ignored");
+    }
+
+    /// c:1915 — `match_named_colour` is case-sensitive: "RED" must
+    /// NOT match "red". Pin lower-case enforcement; a regen that
+    /// adds `.to_lowercase()` would silently accept uppercase color
+    /// names that the C source rejects.
+    #[test]
+    fn match_named_colour_is_case_sensitive() {
+        assert!(match_named_colour("red").is_some());
+        assert!(match_named_colour("RED").is_none(),
+            "uppercase color must NOT resolve per C source's strcmp");
+        assert!(match_named_colour("Red").is_none());
+    }
+
+    /// c:1915 — Empty string returns None. Defensive boundary.
+    #[test]
+    fn match_named_colour_empty_returns_none() {
+        assert!(match_named_colour("").is_none());
+    }
+
+    /// c:1276 — `cmdpush`/`cmdpop` round-trip. Pin the LIFO balance.
+    #[test]
+    fn cmdpush_cmdpop_round_trip_does_not_panic() {
+        // Just verifies safe push/pop balance for several tokens.
+        cmdpush(0);
+        cmdpush(1);
+        cmdpush(2);
+        cmdpop();
+        cmdpop();
+        cmdpop();
+        // Extra pops must be safe (no underflow panic)
+        cmdpop();
+    }
+
+    /// c:976 — `pputc` appends a single ASCII char to the buffer.
+    /// Pin the no-buffering / immediate-append contract.
+    #[test]
+    fn pputc_appends_char_to_buffer() {
+        let mut buf = String::new();
+        pputc(&mut buf, 'X');
+        assert_eq!(buf, "X");
+        pputc(&mut buf, 'Y');
+        assert_eq!(buf, "XY");
+    }
+
+    /// c:1016 — `stradd` appends a string slice to the buffer.
+    #[test]
+    fn stradd_appends_string_to_buffer() {
+        let mut buf = String::from("pre/");
+        stradd(&mut buf, "post");
+        assert_eq!(buf, "pre/post");
+        stradd(&mut buf, "");
+        assert_eq!(buf, "pre/post", "empty append leaves buffer unchanged");
     }
 }

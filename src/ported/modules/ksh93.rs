@@ -722,4 +722,63 @@ mod tests {
     fn local_nameref_matches_c_define() {
         assert_eq!(LOCAL_NAMEREF, PM_LOCAL | PM_UNSET | PM_NAMEREF);
     }
+
+    /// c:60 — `matchgetfn` on a non-null `Param` that has no array
+    /// data must still return an empty Vec. Builds a valid `param`
+    /// with `u_arr = None` to exercise the "has Param but no array"
+    /// branch — a regression that adds `.unwrap()` would SIGSEGV.
+    #[test]
+    fn matchgetfn_with_param_no_array_returns_empty() {
+        use crate::ported::zsh_h::{param, hashnode};
+        let mut pm = param {
+            node: hashnode { next: None, nam: "match".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        let v = matchgetfn(&mut pm as *mut _);
+        assert!(v.is_empty(),
+            "param without array data must produce empty result");
+    }
+
+    /// c:158 — `LOCAL_NAMEREF` must include the three component flags
+    /// AND no others. Pin the exact bit set so a regen that adds
+    /// PM_READONLY silently changes the unset semantics.
+    #[test]
+    fn local_nameref_has_exactly_three_component_flags() {
+        let expected = PM_LOCAL | PM_UNSET | PM_NAMEREF;
+        assert_eq!(LOCAL_NAMEREF, expected);
+        // Subtracting each in turn yields the other two
+        assert_eq!(LOCAL_NAMEREF & !PM_LOCAL,   PM_UNSET | PM_NAMEREF);
+        assert_eq!(LOCAL_NAMEREF & !PM_UNSET,   PM_LOCAL | PM_NAMEREF);
+        assert_eq!(LOCAL_NAMEREF & !PM_NAMEREF, PM_LOCAL | PM_UNSET);
+    }
+
+    /// c:50 — `sh_unsetval` is the byte sentinel for "unset" string
+    /// params (`{ 0, 0 }`). Pin the exact value so a regen flipping
+    /// it to `[b'\0']` or `[1, 0]` silently breaks unset detection
+    /// at every shXgetfn call site.
+    #[test]
+    fn sh_unsetval_is_two_zero_bytes() {
+        assert_eq!(sh_unsetval, [0u8, 0u8],
+            "sh_unsetval must be the C-canonical [0,0] sentinel");
+    }
+
+    /// c:60 — `matchgetfn` with a null pointer must NOT dereference.
+    /// Pinning null-safety so a regen that adds `*pm` outside a
+    /// guard SIGSEGVs the test instead of shipping.
+    #[test]
+    fn matchgetfn_null_pointer_is_safe() {
+        let _ = matchgetfn(std::ptr::null_mut());
+    }
+
+    /// c:47 — `edcharsetfn` accepts null param + null arg pointer
+    /// without dereferencing. The C body is `;` (empty) so the Rust
+    /// stub must mirror that no-op + re-entry safety.
+    #[test]
+    fn edcharsetfn_double_null_is_safe() {
+        edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+        edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+    }
 }

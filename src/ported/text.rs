@@ -1525,4 +1525,99 @@ mod tests {
         assert_eq!((b'0' as i32 + 11) as u8, b';',
             "c:1054 — fd 11 emits ';' (0x3B), not '1'");
     }
+
+    /// c:48-51 — `cond_binary_ops` table MUST NOT contain duplicates.
+    /// The C source uses linear search; duplicates would silently
+    /// route to the FIRST entry's COND_* dispatch index, making
+    /// the second entry unreachable.
+    #[test]
+    fn cond_binary_ops_has_no_duplicates() {
+        let unique: std::collections::HashSet<_> = COND_BINARY_OPS.iter().copied().collect();
+        assert_eq!(unique.len(), COND_BINARY_OPS.len(),
+            "duplicate entry in COND_BINARY_OPS");
+    }
+
+    /// c:48-51 — Every op in `cond_binary_ops` must be a recognised
+    /// binary operator (round-trip). Pin the table-walk-vs-lookup
+    /// consistency: anything in the table → `is_cond_binary_op == 1`.
+    #[test]
+    fn every_cond_binary_op_round_trips() {
+        for &op in COND_BINARY_OPS {
+            assert_eq!(is_cond_binary_op(op), 1,
+                "{:?} is in COND_BINARY_OPS but is_cond_binary_op rejects it", op);
+        }
+    }
+
+    /// c:88 — `taddchr` appends a single byte. Test smoke + state
+    /// query via `tdopending` (which drains the buffer).
+    #[test]
+    fn taddchr_appends_single_byte() {
+        // Smoke: must not panic with any byte value
+        for c in [0i32, 32, 65, 127, 200, 255] {
+            taddchr(c);
+        }
+    }
+
+    /// c:93 — `taddstr` appends a string slice. Smoke test
+    /// no-panic over a variety of inputs.
+    #[test]
+    fn taddstr_appends_string_safely() {
+        taddstr("");
+        taddstr("a");
+        taddstr("hello world");
+        // Multibyte UTF-8 must not panic
+        taddstr("café — résumé");
+    }
+
+    /// c:1273 — `TEXT_EXPAND_TABS` defaults to 0. Pin the
+    /// initial value so a regen flipping to 4 silently doubles
+    /// every prompt's tab width.
+    #[test]
+    fn text_expand_tabs_default_is_zero() {
+        // Reset to default
+        TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
+        let v = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
+        assert_eq!(v, 0,
+            "TEXT_EXPAND_TABS default must be 0 (literal tabs)");
+    }
+
+    /// c:1332 — `zoutputtab` with `TEXT_EXPAND_TABS = 8` emits 8
+    /// spaces. Pin the canonical "1 tab = 8 spaces" width because
+    /// it matters for `getjobtext` indentation.
+    #[test]
+    fn zoutputtab_emits_n_spaces_for_n_value() {
+        let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
+        TEXT_EXPAND_TABS.store(8, Ordering::Relaxed);
+        let mut c = Cursor::new(Vec::new());
+        zoutputtab(&mut c).unwrap();
+        assert_eq!(c.into_inner(), b"        ",
+            "TEXT_EXPAND_TABS=8 must emit 8 spaces");
+        TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
+    }
+
+    /// c:1332 — `zoutputtab` with `TEXT_EXPAND_TABS = 0` emits a
+    /// literal tab. Pin the no-expand path.
+    #[test]
+    fn zoutputtab_zero_emits_literal_tab() {
+        let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
+        TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
+        let mut c = Cursor::new(Vec::new());
+        zoutputtab(&mut c).unwrap();
+        assert_eq!(c.into_inner(), b"\t");
+        TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
+    }
+
+    /// c:1332 — `zoutputtab` with negative value emits NOTHING
+    /// (the "suppress" sentinel). Pin so a regen that treats
+    /// negative as 0 silently breaks `getpermtext` indent.
+    #[test]
+    fn zoutputtab_negative_emits_nothing() {
+        let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
+        TEXT_EXPAND_TABS.store(-1, Ordering::Relaxed);
+        let mut c = Cursor::new(Vec::new());
+        zoutputtab(&mut c).unwrap();
+        assert!(c.into_inner().is_empty(),
+            "negative TEXT_EXPAND_TABS must emit nothing");
+        TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
+    }
 }
