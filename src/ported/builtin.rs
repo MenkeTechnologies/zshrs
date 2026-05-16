@@ -1409,22 +1409,28 @@ pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // 
 /// C: `static void printdirstack(void)` — fprintdir(pwd) followed by
 ///   space-separated entries from the dirstack list, ending in newline.
 pub fn printdirstack() {                                                     // c:1277
-    // c:1277 — `fprintdir(pwd, stdout);`. C uses the shell-side
+    // c:1281 — `fprintdir(pwd, stdout);`. C uses the shell-side
     //          `pwd` global (in-shell logical cwd), not getcwd. Read
     //          $PWD from paramtab so the logical path (including
-    //          any unresolved symlinks) shows correctly.
+    //          any unresolved symlinks) shows correctly. Route
+    //          through `utils::fprintdir` for the same `~` /
+    //          `~named` abbreviation real zsh emits.
+    // Previous Rust port emitted raw paths, missing the
+    // $HOME / nameddirtab abbreviation that makes pushd/popd output
+    // legible. Same fix family as bin_dirs.
     let pwd = crate::ported::params::getsparam("PWD")
         .or_else(|| std::env::current_dir().ok()
             .and_then(|p| p.to_str().map(String::from)))
         .unwrap_or_default();
-    print!("{}", pwd);
-    // c:1283-1287 — `for (node = firstnode(dirstack); ...)`
+    print!("{}", crate::ported::utils::fprintdir(&pwd));                     // c:1281
+    // c:1282-1286 — `for (node = firstnode(dirstack); ...)`
     if let Ok(d) = DIRSTACK.lock() {
-        for entry in d.iter() {
-            print!(" {}", entry);                                            // c:1297
+        for entry in d.iter() {                                              // c:1282
+            print!(" {}",
+                crate::ported::utils::fprintdir(entry));                     // c:1284
         }
     }
-    println!();                                                              // c:1297
+    println!();                                                              // c:1287
 }
 
 /// Direct port of `int fixdir(char *src)` from
