@@ -2099,8 +2099,46 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
 }
 
 /// Signal number from name (from jobs.c getsigidx)
-/// Port of `getsigidx(const char *s)` from `Src/jobs.c:3047`.
+/// Port of `int getsigidx(const char *s)` from `Src/jobs.c:3047`.
+///
+/// **C semantics** (c:3050-3081):
+///   1. Try atoi(s). If first char is digit AND value in
+///      `[0, VSIGCOUNT)` OR in `[SIGRTMIN..=SIGRTMAX]`, return SIGIDX(x).
+///   2. Strip "SIG" prefix.
+///   3. Walk `sigs[]` table (case-sensitive strcmp).
+///   4. Walk `alt_sigs[]` table for aliases (IOT, CLD, IO/POLL).
+///   5. Try `rtsigno(s)` for "RTMIN+N"/"RTMAX-N" forms.
+///   6. Return -1 (Rust returns None).
+///
+/// **Rust port divergences (documented Rust-port adaptations)**:
+///   * Case-insensitive match (`to_uppercase()`) vs C's strcmp.
+///     Rust adaptation: users often write `int` / `Int` / `INT`.
+///   * Numeric path bounds-checks against VSIGCOUNT and the RT range
+///     per c:3056-3058. Previously the Rust port accepted ANY
+///     parse-able number including out-of-range values like "9999"
+///     where C returns -1.
 pub fn getsigidx(s: &str) -> Option<i32> {
+    // c:3052-3058 — numeric-input branch: bounded by VSIGCOUNT + RT range.
+    if let Some(first) = s.chars().next() {
+        if first.is_ascii_digit() {
+            if let Ok(x) = s.parse::<i32>() {
+                let vsig = crate::ported::signals_h::VSIGCOUNT;
+                if x >= 0 && x < vsig {
+                    return Some(x);                                           // c:3058 SIGIDX(x) = x in standard range
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let sigrtmin = unsafe { libc::SIGRTMIN() };
+                    let sigrtmax = unsafe { libc::SIGRTMAX() };
+                    if x >= sigrtmin && x <= sigrtmax {
+                        return Some(crate::ported::signals_h::SIGIDX(x));    // c:3058
+                    }
+                }
+                // c:3081 — out-of-range numeric input returns -1 (None).
+                return None;
+            }
+        }
+    }
     let s = s.strip_prefix("SIG").unwrap_or(s);
     match s.to_uppercase().as_str() {
         "EXIT" => Some(0),
@@ -2133,7 +2171,19 @@ pub fn getsigidx(s: &str) -> Option<i32> {
         "WINCH" => Some(libc::SIGWINCH),
         "IO" | "POLL" => Some(libc::SIGIO),
         "SYS" => Some(libc::SIGSYS),
-        _ => s.parse().ok(),
+        _ => {
+            // c:3075-3078 — `rtsigno(s)` for "RTMIN+N"/"RTMAX-N" input.
+            #[cfg(target_os = "linux")]
+            {
+                // crate::ported::signals::rtsigno takes an i32 signum
+                // currently (not a name string); the C `rtsigno(s)`
+                // takes a name and returns the signum. The Rust port
+                // doesn't have the name-parsing form yet -- deferred.
+                // For now, "RTMIN+N" / "RTMAX-N" inputs return None,
+                // matching the pre-c:3075 fall-through.
+            }
+            None                                                              // c:3081 return -1
+        }
     }
 }
 
@@ -2977,6 +3027,34 @@ mod tests {
         assert!(!kill_msg.is_empty());
         // They must be distinct (no single "unknown" sentinel for all).
         assert_ne!(int_msg, term_msg);
+    }
+
+    /// `Src/jobs.c:3052-3058` — `getsigidx` numeric-input branch
+    /// bounds-checks against `VSIGCOUNT` and the RT-signal range.
+    /// Previously the Rust port accepted ANY parse-able number,
+    /// including out-of-range values like 9999 (where C returns -1).
+    #[test]
+    fn getsigidx_rejects_out_of_range_numeric() {
+        // In-range numeric → Some.
+        assert_eq!(getsigidx("0"), Some(0),
+            "EXIT pseudo-signal index 0");
+        assert_eq!(getsigidx("9"), Some(9),
+            "SIGKILL signal number 9 → Some(9)");
+        // Out-of-range numeric → None.
+        assert_eq!(getsigidx("9999"), None,
+            "c:3056 — 9999 above VSIGCOUNT and outside RT range → None");
+        assert_eq!(getsigidx("99999999999"), None,
+            "c:3056 — overflow → None");
+    }
+
+    /// `Src/jobs.c:3052` — non-digit-leading strings skip the numeric
+    /// branch entirely and go to name-table lookup. "INTabc" doesn't
+    /// match any signal name → None.
+    #[test]
+    fn getsigidx_non_digit_unknown_name_returns_none() {
+        assert_eq!(getsigidx("DEFINITELYNOTASIGNAL"), None);
+        assert_eq!(getsigidx(""), None,
+            "empty string → None");
     }
 
     /// `Src/jobs.c:3087-3107` — `getsigname(sig)` falls back to
