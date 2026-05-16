@@ -40,6 +40,7 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 - [\[0x09\] Shell Language Features](#0x09-shell-language-features)
 - [\[0x0A\] Compatibility](#0x0a-compatibility)
 - [\[0x0B\] Architecture](#0x0b-architecture)
+- [\[0x0C\] Editor Integration](#0x0c-editor-integration)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -486,6 +487,140 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 | `src/extensions/` | **Non-port only.** Features zsh C demonstrably does *not* have. Must not duplicate or shadow any port. | `port_purity` exempts the 1:1 file rule for this directory only |
 | `src/recorder/` | **Feature-gated.** Every symbol `#[cfg(feature = "recorder")]`; deleted by rustc when off. | `Cargo.toml` `required-features = ["recorder"]` on the `zshrs-recorder` bin |
 | `src/zsh/` | **Read-only reference.** Vendored upstream zsh C source. The spec; never modified. | n/a |
+
+---
+
+## [0x0C] EDITOR INTEGRATION
+
+zshrs ships an **LSP server** and **DAP debug adapter** built into the
+binary, plus a **JetBrains IDE plugin** that drives both.
+
+### CLI flags
+
+```sh
+zshrs --lsp                  # LSP server over stdio
+zshrs --dap HOST:PORT        # DAP debugger; connect-back to IDE listener
+zshrs --dump-reflection      # JSON dump of builtins / keywords / options
+zshrs --docs <name>          # render the LSP hover card for <name>
+```
+
+All four flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`
+and `src/extensions/dap.rs`. Both modules are dependency-free additions
+(no `lsp-server` / `lsp-types` / `dap-types` crates) — Content-Length
+framing + JSON-RPC are hand-rolled on top of `serde_json` to keep the
+default build lean.
+
+### LSP capabilities (`zshrs --lsp`)
+
+| Capability                          | Trigger                                  |
+|-------------------------------------|------------------------------------------|
+| `completion`                        | builtins, keywords, options, special vars, in-file functions |
+| `hover`                             | markdown cards for builtins / keywords / options / special vars |
+| `definition` / `references`         | function names declared in the open document |
+| `documentHighlight`                 | same scan as references                  |
+| `documentSymbol`                    | `function foo`, `foo()`, `alias`, `local`/`typeset`/`export` |
+| `foldingRange`                      | `{ … }` / `do … done` / `case … esac` blocks + ≥3 `#` comment runs |
+| `rename` (with `prepareRename`)     | word-boundary aware replace across document |
+| `semanticTokens/full`               | comment / string / number / keyword / variable / function classes |
+| `formatting`                        | trailing-whitespace strip, leading-indent normalize, final newline |
+| `publishDiagnostics`                | brace + block matching, unclosed strings, lights up on `didOpen` / `didChange` / `didSave` |
+
+Trigger characters for completion: `$`, `{`, `-`, `:`. Optional
+`ZSHRS_LSP_LOG=<path>` env var dumps every request/response for debugging.
+
+### DAP capabilities (`zshrs --dap HOST:PORT`)
+
+| Request                               | Behaviour (v1)                          |
+|---------------------------------------|-----------------------------------------|
+| `initialize` / `configurationDone`    | full capability advertisement, emits `initialized` event |
+| `setBreakpoints`                      | stored per-file, ack with `verified: true` |
+| `launch`                              | spawn `zshrs <program> <args>` as a child process |
+| `threads` / `stackTrace` / `scopes`   | single-thread model, one synthetic frame |
+| `variables`                           | environment snapshot (scope ref 1)      |
+| `evaluate`                            | runs `zshrs -c <expr>` against current `cwd`, returns stdout |
+| `continue` / `next` / `stepIn` / `stepOut` | acked (no per-statement pause in v1) |
+| `pause`                               | emits `stopped { reason: "pause" }`     |
+| `disconnect` / `terminate`            | kills the child process                 |
+| program stdout / stderr               | streamed as DAP `output` events         |
+| child exit                            | fires `terminated` event                |
+
+Deeper integration (per-statement pause, breakpoint honouring against the
+live interpreter, scope walk-back into the `Param` table) is scaffolded
+via `dap::install_hooks(DapHooks { … })` and lands incrementally.
+
+### JetBrains plugin (`editors/intellij/`)
+
+```sh
+cd editors/intellij
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew buildPlugin
+# → build/distributions/zshrs-intellij-<version>.zip
+```
+
+Install via *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
+
+Plugin features:
+
+- **File types**: `.zsh` + every dot-rc (`.zshrc`, `.zshenv`, `.zlogin`,
+  `.zlogout`, `.zprofile`, `.zpreztorc`).
+- **Hand-rolled lexer** with 42 independently-themeable color slots
+  (*Settings → Editor → Color Scheme → zshrs*).
+- **LSP client** auto-starts `zshrs --lsp` on first file open. Hover,
+  completion, goto-definition, references, rename, document symbols,
+  semantic tokens, folding, formatting, diagnostics — all wired.
+- **Run configurations** with toggles for `-f`/`-x`/`-v`/`--disasm`/
+  `--dump-ast` and a compat-mode picker (`zsh` / `bash` / `ksh` /
+  `posix` / default `zshrs`).
+- **Debugger** over DAP TCP socket: line breakpoints from the gutter,
+  step over/into/out/pause, frames panel with source navigation,
+  variables panel (scalars + arrays + assoc arrays), Evaluate dialog,
+  Console streaming program stdout in real time.
+- **Reflection tool window** (right edge) — left-click any name to open
+  the ANSI-rendered `zshrs --docs <name>` card.
+- **Settings → Tools → zshrs** — point at a non-PATH `zshrs` binary, set
+  LSP extra args + env, configure file extensions, control auto-restart.
+
+Requires a paid JetBrains IDE on 2024.2+ (RustRover, IDEA Ultimate,
+GoLand, PyCharm Pro, WebStorm, RubyMine, PhpStorm, CLion, Rider,
+DataGrip, Aqua) because the platform LSP API is not in Community
+editions.
+
+### Other LSP / DAP clients
+
+The stdio LSP and TCP DAP servers are protocol-conformant — any
+LSP/DAP client works:
+
+```toml
+# Helix — ~/.config/helix/languages.toml
+[language-server.zshrs]
+command = "zshrs"
+args = ["--lsp"]
+
+[[language]]
+name = "bash"
+language-servers = ["zshrs"]
+file-types = ["zsh", "zshrc", "zshenv", "zlogin", "zlogout", "zprofile"]
+```
+
+```lua
+-- Neovim (nvim-lspconfig style)
+require("lspconfig").configs.zshrs = {
+  default_config = {
+    cmd = { "zshrs", "--lsp" },
+    filetypes = { "zsh", "sh" },
+    root_dir = function() return vim.fn.getcwd() end,
+  },
+}
+require("lspconfig").zshrs.setup({})
+```
+
+```jsonc
+// VS Code — keybindings.json + a small extension that spawns `zshrs --lsp`
+// over stdio works the same as any LSP-backed extension.
+```
+
+See [`editors/intellij/README.md`](editors/intellij/README.md) for the
+JetBrains plugin's full architecture, debugger internals, and limitation
+list.
 
 ---
 

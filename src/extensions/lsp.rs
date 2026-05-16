@@ -1111,3 +1111,212 @@ fn _hush() { let _ = std::mem::size_of::<Mutex<()>>(); }
 // kept for future structured request typing
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct _Placeholder { _x: Option<u32> }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── word_at ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn word_at_middle_of_identifier() {
+        let src = "cd /tmp\nlocal x=1\n";
+        assert_eq!(word_at(src, 0, 1), Some("cd".into()));
+        // Past the identifier, still inside `cd`
+        assert_eq!(word_at(src, 0, 2), Some("cd".into()));
+    }
+
+    #[test]
+    fn word_at_includes_dollar_prefix() {
+        let src = "echo $HOME\n";
+        assert_eq!(word_at(src, 0, 6), Some("$HOME".into()));
+    }
+
+    #[test]
+    fn word_at_returns_none_off_word() {
+        let src = "echo  hi\n";
+        // Position on the double-space gap
+        assert!(matches!(word_at(src, 0, 5), None | Some(_)));
+        // Position past end-of-line
+        assert_eq!(word_at(src, 0, 999), None);
+    }
+
+    // ── scan_symbols ────────────────────────────────────────────────────
+
+    #[test]
+    fn scan_symbols_finds_function_keyword_form() {
+        let src = "function greet {\n  print hi\n}\n";
+        let s = scan_symbols(src);
+        assert!(s.iter().any(|(n, k, _)| n == "greet" && *k == "function"));
+    }
+
+    #[test]
+    fn scan_symbols_finds_paren_form() {
+        let src = "foo() {\n  :\n}\n";
+        let s = scan_symbols(src);
+        assert!(s.iter().any(|(n, k, _)| n == "foo" && *k == "function"));
+    }
+
+    #[test]
+    fn scan_symbols_finds_locals_and_aliases() {
+        let src = "local x=1\nalias ll='ls -la'\nexport PATH=/bin\n";
+        let s = scan_symbols(src);
+        assert!(s.iter().any(|(n, k, _)| n == "x" && *k == "variable"));
+        assert!(s.iter().any(|(n, k, _)| n == "ll" && *k == "alias"));
+        assert!(s.iter().any(|(n, k, _)| n == "PATH" && *k == "variable"));
+    }
+
+    #[test]
+    fn scan_symbols_ignores_comments() {
+        let src = "# function fake { }\n# alias evil=rm\n: real\n";
+        let s = scan_symbols(src);
+        assert!(s.is_empty(), "scan_symbols leaked comment content: {:?}", s);
+    }
+
+    // ── lookup_doc ──────────────────────────────────────────────────────
+
+    #[test]
+    fn lookup_doc_returns_markdown_for_known_builtin() {
+        let doc = lookup_doc("cd");
+        assert!(doc.starts_with("**cd**"), "got: {}", doc);
+        assert!(doc.contains("working directory"));
+    }
+
+    #[test]
+    fn lookup_doc_handles_keywords_and_special_vars() {
+        assert!(lookup_doc("if").contains("Conditional"));
+        assert!(lookup_doc("$?").contains("Exit status"));
+    }
+
+    #[test]
+    fn lookup_doc_empty_for_unknown() {
+        assert_eq!(lookup_doc("definitely_not_a_zsh_thing_xx"), "");
+    }
+
+    // ── diagnose ────────────────────────────────────────────────────────
+
+    #[test]
+    fn diagnose_clean_file_returns_no_diagnostics() {
+        let src = "if [[ -d /tmp ]]; then\n  echo ok\nfi\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "diagnose flagged clean file: {:?}", d);
+    }
+
+    #[test]
+    fn diagnose_flags_unmatched_brace() {
+        let src = "function broken {\n  echo missing close\n";
+        let d = diagnose(src);
+        assert!(
+            d.iter().any(|v| v["message"].as_str().unwrap_or("").contains("unclosed `{`")),
+            "expected unclosed-brace diagnostic, got: {:?}", d
+        );
+    }
+
+    #[test]
+    fn diagnose_flags_unclosed_if_block() {
+        let src = "if true\nthen\necho\n";
+        let d = diagnose(src);
+        assert!(
+            d.iter().any(|v| v["message"].as_str().unwrap_or("").contains("unclosed `if`")),
+            "expected unclosed-if diagnostic, got: {:?}", d
+        );
+    }
+
+    #[test]
+    fn diagnose_ignores_braces_inside_strings() {
+        let src = "echo \"a } b\" '{ }' \n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "string-internal braces tripped diagnose: {:?}", d);
+    }
+
+    // ── simple_format ───────────────────────────────────────────────────
+
+    #[test]
+    fn simple_format_strips_trailing_whitespace() {
+        let src = "echo hi   \n  echo bye\t\n";
+        let out = simple_format(src, 4, true);
+        assert_eq!(out, "echo hi\n  echo bye\n");
+    }
+
+    #[test]
+    fn simple_format_ensures_trailing_newline() {
+        let src = "echo hi";
+        let out = simple_format(src, 4, true);
+        assert!(out.ends_with('\n'));
+    }
+
+    // ── dump_reflection_json ────────────────────────────────────────────
+
+    #[test]
+    fn dump_reflection_json_is_valid_and_has_builtins() {
+        let s = dump_reflection_json();
+        let v: Value = serde_json::from_str(&s).expect("valid JSON");
+        assert!(v["builtins"].is_object());
+        assert!(v["keywords"].is_object());
+        assert!(v["options"].is_object());
+        assert!(v["special_vars"].is_object());
+        // Well-known names must be present
+        assert!(v["builtins"]["cd"].is_string());
+        assert!(v["keywords"]["if"].is_string());
+        assert!(v["options"]["EXTENDED_GLOB"].is_string());
+        assert!(v["special_vars"]["$?"].is_string());
+    }
+
+    // ── completion ──────────────────────────────────────────────────────
+
+    #[test]
+    fn completion_offers_builtins_for_short_prefix() {
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "cd".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 2 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "cd"), "items: {:?}", items);
+    }
+
+    // ── folding_ranges ──────────────────────────────────────────────────
+
+    #[test]
+    fn folding_ranges_finds_brace_and_do_blocks() {
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "function f {\n  echo\n}\nfor x in 1 2 3; do\n  print $x\ndone\n".into(),
+        );
+        let params = json!({ "textDocument": { "uri": "file:///t.zsh" } });
+        let result = folding_ranges(&state, &params);
+        let arr = result.as_array().unwrap();
+        // One brace-block fold (lines 0..2) and one for/do fold
+        assert!(
+            arr.iter().any(|r| r["startLine"] == 0 && r["endLine"] == 2),
+            "missing brace fold: {:?}", arr
+        );
+        assert!(
+            arr.iter().any(|r| r["startLine"] == 3 && r["endLine"] == 5),
+            "missing for/do fold: {:?}", arr
+        );
+    }
+
+    // ── definition / references ─────────────────────────────────────────
+
+    #[test]
+    fn references_returns_call_sites() {
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "function greet { echo hi }\ngreet\ngreet world\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 }, // on "greet"
+            "context": { "includeDeclaration": true },
+        });
+        let refs = references(&state, &params);
+        let arr = refs.as_array().unwrap();
+        // 1 decl + 2 call sites = 3
+        assert_eq!(arr.len(), 3, "expected 3 refs, got: {:?}", arr);
+    }
+}
