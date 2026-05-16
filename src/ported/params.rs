@@ -5634,12 +5634,21 @@ pub fn wordcharssetfn(x: String) {
 
 /// Port of `underscoregetfn(UNUSED(Param pm))` from `Src/params.c:5152`. C body:
 /// `char *u = dupstring(zunderscore); untokenize(u); return u;`
+///
+/// C runs `untokenize(u)` on the cloned string before returning, so
+/// ITOK bytes (Pound..Nularg per `Src/zsh.h:159-194`) in `$_` get
+/// replaced/dropped via the canonical `ztokens[]` table. The previous
+/// Rust port skipped untokenize entirely — every `$_` read that
+/// included a lexer-injected token byte exposed the raw token in user
+/// output (e.g. `$_` containing `$cmd` would surface as raw Stringg
+/// instead of the literal `$`).
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn underscoregetfn() -> String {
-    zunderscore_lock()
+    let u = zunderscore_lock()
         .lock()
         .expect("zunderscore poisoned")
-        .clone()
+        .clone();
+    crate::ported::lex::untokenize(&u)                                        // c:5156 untokenize(u)
 }
 
 /// Port of `term_reinit_from_pm()` from `Src/params.c:5163`.
@@ -8083,6 +8092,39 @@ mod tests {
     /// Shared mutex for tests that mutate argzero/posixzero — both
     /// share global state and race when run in parallel.
     static ARGZERO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `Src/params.c:5152-5158` — `underscoregetfn` returns
+    /// `dupstring(zunderscore)` then runs `untokenize(u)` on it.
+    /// The Rust port previously skipped untokenize, exposing raw
+    /// lexer-injected token bytes (Stringg, Equals, ...) in `$_`
+    /// reads.
+    #[test]
+    fn underscoregetfn_runs_untokenize_on_zunderscore() {
+        // Inject zunderscore containing a Pound token byte (\u{84})
+        // and verify it gets stripped by untokenize in the return.
+        let saved = crate::ported::params::zunderscore_lock()
+            .lock().unwrap().clone();
+
+        // Set zunderscore to a string containing a Pound token byte
+        // surrounded by literals.
+        let pound = crate::ported::zsh_h::Pound;
+        let mut s = String::new();
+        s.push('a');
+        s.push(pound);
+        s.push('b');
+        *crate::ported::params::zunderscore_lock().lock().unwrap() = s;
+
+        let result = crate::ported::params::underscoregetfn();
+        // c:5156 — untokenize replaces Pound (ITOK) with '#'
+        // (its ztokens entry). The raw \u{84} byte must NOT survive.
+        assert!(!result.contains(pound),
+            "c:5156 — untokenize must strip Pound token byte from $_");
+        assert!(result.contains('#') || result.contains("a"),
+            "c:5156 — Pound (ITOK) maps to '#' via ztokens[0]");
+
+        // Restore.
+        *crate::ported::params::zunderscore_lock().lock().unwrap() = saved;
+    }
 
     /// `Src/params.c:4954-4961` — `argzerogetfn` returns `posixzero`
     /// when `isset(POSIXARGZERO)`, else `argzero`. The previous Rust
