@@ -3080,9 +3080,15 @@ pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
     if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         return floatgetfn(pm) as i64;
     }
-    // mathevali(getstrvalue(v)) — best-effort decimal parse.
+    // c:2618 — `return mathevali(getstrvalue(v));`. The previous
+    // Rust port used `s.parse::<i64>().unwrap_or(0)` which silently
+    // returned 0 for any non-trivial arithmetic on the scalar
+    // value side (e.g. `typeset x="1+2"; ((y = x))` would yield
+    // y=0 instead of 3). Route through `math::mathevali` to
+    // match C's arithmetic-expression evaluation.
     let pm = v.pm.as_mut().unwrap();
-    strgetfn(pm).parse::<i64>().unwrap_or(0)
+    let s = strgetfn(pm);
+    crate::ported::math::mathevali(&s).unwrap_or(0)                           // c:2618 mathevali(...)
 }
 
 /// Port of `getnumvalue(Value v)` from `Src/params.c:2624`. Returns an
@@ -3107,10 +3113,15 @@ pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported
     if t == PM_EFLOAT || t == PM_FFLOAT {
         return mnumber { l: 0, d: floatgetfn(pm), type_: MN_FLOAT };
     }
+    // c:2640 — `return matheval(getstrvalue(v));`. The previous
+    // Rust port used `parse::<i64>()` / `parse::<f64>()` directly
+    // on the scalar string, which silently failed for any non-
+    // trivial arithmetic. Route through `math::matheval` to match
+    // C's arithmetic-expression evaluation; matheval returns an
+    // mnumber tag matching the C output type.
     let s = strgetfn(pm);
-    if let Ok(i) = s.parse::<i64>() { return mnumber { l: i, d: 0.0, type_: MN_INTEGER }; }
-    if let Ok(f) = s.parse::<f64>() { return mnumber { l: 0, d: f, type_: MN_FLOAT }; }
-    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    crate::ported::math::matheval(&s)                                         // c:2640 matheval(...)
+        .unwrap_or(mnumber { l: 0, d: 0.0, type_: MN_INTEGER })
 }
 
 /// Port of `export_param(Param pm)` from `Src/params.c:2653`. C body
@@ -4411,25 +4422,37 @@ pub fn unsetparam(                                                          // c
 /// in-memory mutation of `pm` that doesn't touch the table.
 #[allow(unused_variables)]
 pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, altflag: i32, exp: i32) -> i32 {
-    // Readonly check (locallevel global not yet ported — assume 0).
-    if (pm.node.flags as u32 & PM_READONLY) != 0 && pm.level <= 0 {
-        // zerr("read-only %s: %s", ref?"reference":"variable", nam);
-        let _kind = if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
+    // c:3850 — `if ((pm->node.flags & PM_READONLY) && pm->level <= locallevel)`.
+    // The previous Rust port hardcoded `pm.level <= 0` with a
+    // "locallevel global not yet ported — assume 0" comment, but
+    // `crate::ported::params::locallevel` IS the canonical port of
+    // the C global (declared above in this file). Reading it live
+    // matters: a function-scope readonly assignment (`typeset -r x`)
+    // gets pm.level == current locallevel; without the live check,
+    // unsetting from a NESTED scope (locallevel > pm.level) would
+    // succeed when C rejects, AND unsetting from a deeper scope
+    // (locallevel < pm.level) would reject when C succeeds.
+    let cur_ll = locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32; // c:3850 locallevel
+    if (pm.node.flags as u32 & PM_READONLY) != 0 && pm.level <= cur_ll {       // c:3850
+        // c:3852 — `zerr("read-only %s: %s", ...)`. Emit diagnostic
+        // so users see why the unset failed.
+        let kind = if (pm.node.flags as u32 & PM_NAMEREF) != 0 {              // c:3852
             "reference"
         } else {
             "variable"
         };
-        return 1;
+        zerr(&format!("read-only {}: {}", kind, pm.node.nam));
+        return 1;                                                              // c:3854
     }
-    pm.node.flags &= !(PM_DECLARED as i32);
+    pm.node.flags &= !(PM_DECLARED as i32);                                    // c:3868
     if (pm.node.flags as u32 & PM_UNSET) == 0
         || (pm.node.flags as u32 & PM_REMOVABLE) != 0
     {
-        // pm->gsu.s->unsetfn(pm, exp) — open-coded to stdunsetfn.
+        // c:3870 — `pm->gsu.s->unsetfn(pm, exp)` — open-coded to stdunsetfn.
         stdunsetfn(pm, exp);
     }
     if pm.env.is_some() {
-        delenv(&pm.node.nam);
+        delenv(&pm.node.nam);                                                  // c:3872 delenv(pm)
         pm.env = None;
     }
     // Tied alt-name removal + paramtab restore-from-old not yet
