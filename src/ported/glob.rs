@@ -4469,6 +4469,41 @@ mod tests {
         assert_eq!(file_type(libc::S_IFLNK as u32), '@');
     }
 
+    /// `Src/glob.c:2018-2036` — `file_type(mode_t filemode)` returns a
+    /// single-char marker keyed off S_ISBLK/CHR/DIR/FIFO/LNK/REG/SOCK,
+    /// with `S_IXUGO` (== 0o111 = S_IXUSR|S_IXGRP|S_IXOTH) distinguishing
+    /// executable regular files (`*`) from non-executable (` `). The
+    /// catch-all (e.g. door, port, unknown types) returns `?`.
+    /// Pin every branch by position.
+    #[test]
+    fn file_type_every_branch_matches_c_dispatch() {
+        assert_eq!(file_type(libc::S_IFBLK as u32),  '#',
+            "c:2020 — S_ISBLK → '#'");
+        assert_eq!(file_type(libc::S_IFCHR as u32),  '%',
+            "c:2022 — S_ISCHR → '%'");
+        assert_eq!(file_type(libc::S_IFDIR as u32),  '/',
+            "c:2024 — S_ISDIR → '/'");
+        assert_eq!(file_type(libc::S_IFIFO as u32),  '|',
+            "c:2026 — S_ISFIFO → '|'");
+        assert_eq!(file_type(libc::S_IFLNK as u32),  '@',
+            "c:2028 — S_ISLNK → '@'");
+        // Regular file: ' ' if not executable, '*' if executable (any bit in S_IXUGO).
+        assert_eq!(file_type(libc::S_IFREG as u32),  ' ',
+            "c:2030 — non-executable regular file → ' '");
+        // Each individual exec bit triggers '*'.
+        assert_eq!(file_type(libc::S_IFREG as u32 | 0o100), '*',
+            "c:2030 — S_IXUSR alone is enough");
+        assert_eq!(file_type(libc::S_IFREG as u32 | 0o010), '*',
+            "c:2030 — S_IXGRP alone is enough");
+        assert_eq!(file_type(libc::S_IFREG as u32 | 0o001), '*',
+            "c:2030 — S_IXOTH alone is enough");
+        assert_eq!(file_type(libc::S_IFSOCK as u32), '=',
+            "c:2033 — S_ISSOCK → '='");
+        // Catch-all for unknown S_IFMT — bare 0 returns '?'.
+        assert_eq!(file_type(0), '?',
+            "c:2035 — unknown st_mode → '?'");
+    }
+
     #[test]
     fn test_zstrcmp_numeric() {
         use crate::ported::sort::zstrcmp;
@@ -4744,5 +4779,60 @@ mod tests {
         let mut v = vec![(0, 5), (10, 15)];
         freematchlist(Some(&mut v));
         assert!(v.is_empty(), "freematchlist must clear the input vec");
+    }
+
+    /// `Src/glob.c:2042-2142` — `hasbraces(str)` returns true when
+    /// `str` contains a brace-expansion candidate. A bare lbrace/rbrace
+    /// is NOT a brace expansion (it's a literal). Detection requires a
+    /// matched pair containing either a comma or a dotdot range. Pin
+    /// the canonical contract.
+    #[test]
+    fn hasbraces_matched_pair_with_comma_or_dotdot() {
+        // Matched + comma → true.
+        assert!(hasbraces("a{b,c}d", false),
+            "c:2127 — lbrace + comma + rbrace is a brace expansion");
+        // Matched + dotdot → true.
+        assert!(hasbraces("file{1..3}.txt", false),
+            "c:2082 — N..M range is a brace expansion");
+        // Matched WITHOUT comma/dotdot → false (it's a literal).
+        assert!(!hasbraces("{abc}", false),
+            "literal braces are NOT a brace expansion without comma or dotdot");
+        // Unmatched → false.
+        assert!(!hasbraces("{abc", false),
+            "lone lbrace without matching rbrace is not brace expansion");
+        assert!(!hasbraces("abc}", false),
+            "lone rbrace is not brace expansion");
+        // No braces → false.
+        assert!(!hasbraces("plain", false));
+        assert!(!hasbraces("", false));
+    }
+
+    /// `Src/glob.c:2049-2063` — BRACECCL branch: when `isset(BRACECCL)`
+    /// (the `brace_ccl` parameter), any non-empty matched braces
+    /// become a character-class set, regardless of whether the body
+    /// contains a comma. Empty pair is still not.
+    #[test]
+    fn hasbraces_brace_ccl_makes_any_pair_match() {
+        // c:2049 — BRACECCL: non-empty pair is enough.
+        assert!(hasbraces("{abc}", true),
+            "c:2049 — BRACECCL: non-empty pair is char-class set");
+        assert!(hasbraces("x{q}y", true),
+            "c:2049 — single-char pair counts under BRACECCL");
+        // Empty pair shouldn't trigger.
+        assert!(!hasbraces("{}", true),
+            "empty pair still not a brace expansion even under BRACECCL");
+        // Without BRACECCL, plain literal-letter pair is NOT a brace expansion.
+        assert!(!hasbraces("{abc}", false),
+            "c:2049 — BRACECCL off → plain literal pair stays literal");
+    }
+
+    /// `Src/glob.c:2042-2142` — depth tracking: comma/dotdot count
+    /// only at depth==1 in our port. So nested inner comma doesn't
+    /// qualify the outer pair, but TWO independent top-level pairs
+    /// (each with comma) DO trigger detection.
+    #[test]
+    fn hasbraces_depth_1_check_for_comma_dotdot() {
+        assert!(hasbraces("a{1,2}b{3,4}c", false),
+            "two independent top-level pairs, first one matches at depth 1");
     }
 }
