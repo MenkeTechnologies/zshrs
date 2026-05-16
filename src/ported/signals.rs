@@ -863,8 +863,17 @@ pub fn handletrap(sig: i32) -> i32 {                                         // 
 
     if sig == libc::SIGALRM {                                                // c:992
         // c:996 — `if ((tmout = getiparam("TMOUT"))) alarm(tmout);`
-        // params layer not wired through this call site yet; reset
-        // staged when params resolver lands.
+        // Re-arm the TMOUT timer after the trap dispatched. C reads
+        // TMOUT via getiparam (params resolver). Previously commented
+        // as "not wired" — getiparam IS available via params.rs, so
+        // the alarm-reset can now mirror C exactly.
+        #[cfg(unix)]
+        unsafe {
+            let tmout = crate::ported::params::getiparam("TMOUT");
+            if tmout > 0 {
+                libc::alarm(tmout as u32);                                    // c:996
+            }
+        }
     }
     1
 }
