@@ -627,24 +627,43 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                //
 
     while i < bytes.len() && bytes[i] != b')' {
         match bytes[i] {                                                      // c:1051
-            b'i' => { bits |= GF_IGNCASE;   bits &= !GF_LCMATCHUC; i += 1; } // c:1075
-            b'I' => { bits &= !GF_IGNCASE;  i += 1; }                         // c:1080
-            b'l' => { bits |= GF_LCMATCHUC; bits &= !GF_IGNCASE;   i += 1; } // c:1070
-            b'L' => { bits &= !GF_LCMATCHUC; i += 1; }
+            // c:1075 — `'i'`: full case-insensitive, clears LCMATCHUC.
+            b'i' => { bits |= GF_IGNCASE;   bits &= !GF_LCMATCHUC; i += 1; }
+            // c:1080-1081 — `'I'` clears BOTH GF_LCMATCHUC AND
+            // GF_IGNCASE: `patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE)`.
+            // The previous Rust port only cleared GF_IGNCASE,
+            // leaving GF_LCMATCHUC stuck on under `(#l)(#I)`.
+            b'I' => { bits &= !(GF_LCMATCHUC | GF_IGNCASE); i += 1; }         // c:1080-1081
+            // c:1070 — `'l'`: lowercase-in-pattern matches upper-too,
+            // clears GF_IGNCASE.
+            b'l' => { bits |= GF_LCMATCHUC; bits &= !GF_IGNCASE;   i += 1; }
+            // c: `'L'` is NOT a documented C flag — C returns 0 from
+            // the default arm. The previous Rust port accepted `'L'`
+            // and silently cleared GF_LCMATCHUC, diverging from C's
+            // reject behavior. Remove the spurious arm so unknown
+            // flags fall through to the default `_ => return None`.
             b'b' => { bits |= GF_BACKREF;   i += 1; }                         // c:1085
             b'B' => { bits &= !GF_BACKREF;  i += 1; }                         // c:1090
             b'm' => { bits |= GF_MATCHREF;  i += 1; }                         // c:1095
             b'M' => { bits &= !GF_MATCHREF; i += 1; }                         // c:1100
             b's' => { assertp = P_ISSTART as i64; i += 1; }                   // c:1105
             b'e' => { assertp = P_ISEND   as i64; i += 1; }                   // c:1110
-            b'u' => { bits |= GF_MULTIBYTE;  i += 1; }
-            b'U' => { bits &= !GF_MULTIBYTE; i += 1; }
+            b'u' => { bits |= GF_MULTIBYTE;  i += 1; }                        // c:1113
+            b'U' => { bits &= !GF_MULTIBYTE; i += 1; }                        // c:1116
             b'a' => {                                                         // c:1056 approximate
                 i += 1;
+                // c:1057 — `ret = zstrtol(++ptr, &nptr, 10);` — C
+                // explicitly checks `ptr == nptr` (no digits
+                // consumed) as an error per c:1063 (`ptr == nptr`
+                // condition). Pin this so empty `(#a)` is rejected.
+                let digit_start = i;
                 let mut errs: i32 = 0;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
                     errs = errs * 10 + (bytes[i] - b'0') as i32;
                     i += 1;
+                }
+                if i == digit_start {                                         // c:1063 ptr == nptr
+                    return None;
                 }
                 if errs < 0 || errs > 254 { return None; }                    // c:1064
                 bits = (bits & !0xff) | (errs & 0xff);                        // c:1066
@@ -2366,6 +2385,49 @@ mod tests {
     fn patgetglobflags_approx() {
         let (bits, _, _) = patgetglobflags("(#a2)").unwrap();
         assert_eq!(bits & 0xff, 2);
+    }
+
+    /// Pin: `(#I)` per `Src/pattern.c:1080-1081` clears BOTH
+    /// `GF_LCMATCHUC` AND `GF_IGNCASE`: `patglobflags &=
+    /// ~(GF_LCMATCHUC|GF_IGNCASE)`. The previous Rust port only
+    /// cleared GF_IGNCASE, so `(#l)(#I)` would keep GF_LCMATCHUC
+    /// stuck on, defeating the "restore case sensitivity" intent.
+    #[test]
+    fn patgetglobflags_capital_i_clears_both_case_flags() {
+        // Two-flag chain: `(#l)` sets LCMATCHUC; `(#I)` should
+        // clear it. C clears via `~(GF_LCMATCHUC|GF_IGNCASE)`.
+        let (bits, _, _) = patgetglobflags("(#lI)").unwrap();
+        assert_eq!(bits & GF_LCMATCHUC, 0,
+            "c:1081 — (#I) must clear GF_LCMATCHUC");
+        assert_eq!(bits & GF_IGNCASE, 0,
+            "c:1081 — (#I) must clear GF_IGNCASE too");
+    }
+
+    /// Pin: `(#L)` is NOT a documented flag per C pattern.c (no
+    /// 'L' case in the switch). C's default arm returns 0, so
+    /// patgetglobflags must reject `(#L)`. The previous Rust port
+    /// accepted it and silently cleared GF_LCMATCHUC, diverging.
+    #[test]
+    fn patgetglobflags_rejects_undocumented_flag_letters() {
+        // 'L' (capital L) — not a documented C flag.
+        assert_eq!(patgetglobflags("(#L)"), None,
+            "c:1120 default — unknown flag 'L' must be rejected");
+        // Other lower-rule letters that aren't documented either.
+        assert_eq!(patgetglobflags("(#x)"), None,
+            "c:1120 default — unknown flag 'x' must be rejected");
+        assert_eq!(patgetglobflags("(#9)"), None,
+            "c:1120 default — bare digit (not after 'a') must be rejected");
+    }
+
+    /// Pin: `(#a)` without digits — C `zstrtol` returns 0 with
+    /// `ptr == nptr` per c:1063. The previous Rust port silently
+    /// accepted empty-digit form and set errs=0.
+    #[test]
+    fn patgetglobflags_rejects_empty_approx_digit_run() {
+        // `(#a)` with no digits after 'a' — C rejects (c:1063
+        // `ptr == nptr` check).
+        assert_eq!(patgetglobflags("(#a)"), None,
+            "c:1063 — `(#a)` without digits must be rejected");
     }
 
     #[test]
