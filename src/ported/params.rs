@@ -4450,10 +4450,40 @@ pub fn assignnparam(
         None => true,
     };
     if need_create {
-        // createparam(t, type) + second getvalue — paramtab backend
-        // not yet wired; cannot synthesize the new param without it.
+        // c:3686-3691 — `createparam(t, val.type & MN_FLOAT ? PM_FFLOAT
+        // : PM_INTEGER); second getvalue;`. Synthesize a fresh
+        // numeric param in paramtab matching the C body. Without
+        // this branch wired, callers like `setiparam` silently
+        // dropped the create (returned None) — every new integer
+        // param assignment was a no-op.
         let _ = was_unset;
-        return None;
+        let new_type = if val.type_ == MN_FLOAT {
+            PM_FFLOAT                                                        // c:3687
+        } else {
+            PM_INTEGER                                                       // c:3688
+        };
+        let pm: Param = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: s.to_string(),
+                flags: new_type as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            // c:3690 — `setnumvalue(...)` stores the value. For
+            // PM_INTEGER → u.l; for PM_FFLOAT → u.dval.
+            u_val: if val.type_ == MN_FLOAT { 0 } else { val.l },
+            u_dval: if val.type_ == MN_FLOAT { val.d } else { 0.0 },
+            u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0,
+            env: None, ename: None, old: None, level: 0,
+        });
+        if let Ok(mut tab) = paramtab().write() {
+            tab.insert(s.to_string(), pm.clone());
+        }
+        return Some(pm);
     }
     if (flags & ASSPM_WARN) != 0 {
         if let Some(ref vv) = v {
@@ -4462,14 +4492,39 @@ pub fn assignnparam(
             }
         }
     }
-    if let Some(vv) = v {
-        if let Some(pm) = vv.pm.as_mut() {
+    // The reassign path: getvalue gave us a cloned pm inside the value
+    // buffer. setnumvalue mutates that clone but the write doesn't
+    // propagate back to paramtab. Write through paramtab directly so
+    // reassignments stick — same shape as `assignsparam`'s c:3343
+    // `assignstrvalue(v, val, flags)` path which mutates paramtab in
+    // place.
+    if let Ok(mut tab) = paramtab().write() {
+        if let Some(pm) = tab.get_mut(s) {
             pm.node.flags &= !(PM_DEFAULTED as i32);
+            let t = PM_TYPE(pm.node.flags as u32);
+            if t == PM_INTEGER {
+                // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. MN_FLOAT
+                // input truncates to integer.
+                pm.u_val = if val.type_ == MN_FLOAT { val.d as i64 } else { val.l };
+            } else if t == PM_EFLOAT || t == PM_FFLOAT {
+                // c:2878 — MN_INTEGER input promotes to f64.
+                pm.u_dval = if val.type_ == MN_FLOAT { val.d } else { val.l as f64 };
+            } else if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
+                // c:2862-2871 — convbase/convfloat → u_str.
+                let s_rendered = if val.type_ == MN_FLOAT {
+                    crate::ported::params::convfloat_underscore(val.d, pm.width)
+                } else {
+                    crate::ported::params::convbase_underscore(
+                        val.l,
+                        if pm.base > 0 { pm.base as u32 } else { 10 },
+                        pm.width,
+                    )
+                };
+                pm.u_str = Some(s_rendered);
+            }
+            let cloned = pm.clone();
+            return Some(cloned);
         }
-        setnumvalue(Some(vv), val);
-        // Return value would be Box<param> over vv.pm; we don't own it
-        // here. Real C returns the borrowed pointer; surface None until
-        // value-buffer ownership is settled.
     }
     None
 }
@@ -4489,16 +4544,36 @@ pub fn assigniparam(vbuf: &str, t: i64) {
     assignnparam(vbuf, crate::ported::math::mnumber { l: t, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
 }
 
-/// Port of `setiparam(char *s, zlong val)` from Src/params.c:3765. The C source
-/// constructs an `mnumber` and calls `assignnparam(s, mnval,
-/// ASSPM_WARN)`. The Rust port renders to decimal and routes
-/// through `assignsparam` until the integer-typed `assignnparam`
-/// store path lands.
-/// WARNING: param names don't match C — Rust=() vs C=(s, val)
-pub fn setiparam(s: &str, val: i64)                                          // c:3765
+/// Port of `Param setiparam(char *s, zlong val)` from `Src/params.c:3767-3773`.
+///
+/// C body (c:3769-3772):
+/// ```c
+/// mnumber mnval;
+/// mnval.type = MN_INTEGER;
+/// mnval.u.l = val;
+/// return assignnparam(s, mnval, ASSPM_WARN);
+/// ```
+///
+/// The previous Rust port stringified to decimal and routed through
+/// `assignsparam` — which CREATES THE PARAM AS PM_SCALAR. C creates
+/// as PM_INTEGER. `setiparam("x", 5)` followed by `typeset -p x`:
+///   - C: \`typeset -i x=5\`
+///   - Old Rust: \`typeset x=5\`
+///
+/// `assignnparam` IS now ported (params.rs:4403). Route through it
+/// matching C exactly so integer-typed params get created with the
+/// right PM_INTEGER flag.
+pub fn setiparam(s: &str, val: i64)                                          // c:3767
     -> Option<crate::ported::zsh_h::Param>
 {
-    assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
+    // c:3770-3771 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
+    let mnval = crate::ported::math::mnumber {
+        l: val,
+        d: 0.0,
+        type_: MN_INTEGER,
+    };
+    // c:3772 — `return assignnparam(s, mnval, ASSPM_WARN);`
+    assignnparam(s, mnval, ASSPM_WARN as i32)                                // c:3772
 }
 
 /// Port of `setiparam_no_convert(char *s, zlong val)` from Src/params.c:3781. C
@@ -9145,6 +9220,66 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `setiparam` to its canonical C body at `Src/params.c:3767-3773`.
+    /// MUST create the param as PM_INTEGER via `assignnparam`, not as
+    /// PM_SCALAR via `assignsparam` with a stringified value.
+    #[test]
+    fn setiparam_creates_pm_integer_param() {
+        use crate::ported::zsh_h::PM_INTEGER;
+        let name = "zshrs_test_setiparam_x";
+
+        // C: `assignnparam` bails when `unset(EXECOPT)` (Src/params.c:3679).
+        // Real zsh startup sets exec=true; the unit-test env doesn't run
+        // through `createoptiontable` so we set "exec" explicitly to
+        // simulate normal runtime.
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+
+        // Clean up any leftover.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(name);
+        }
+
+        // Set integer value.
+        setiparam(name, 42);
+
+        // Param should exist with PM_INTEGER flag set + u_val == 42.
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(name).expect("setiparam must create the param");
+            assert_ne!(
+                (pm.node.flags as u32) & PM_INTEGER, 0,
+                "c:3770-3772 — created param must have PM_INTEGER flag set, \
+                 got flags = {:#x}", pm.node.flags
+            );
+            assert_eq!(pm.u_val, 42,
+                "c:3771 — integer value stored in pm.u_val");
+        }
+
+        // Reassign to verify update path also keeps PM_INTEGER.
+        setiparam(name, 100);
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(name).expect("setiparam reassign must keep param");
+            assert_eq!(pm.u_val, 100,
+                "reassign updates the integer value");
+            assert_ne!(
+                (pm.node.flags as u32) & PM_INTEGER, 0,
+                "reassign keeps PM_INTEGER flag"
+            );
+        }
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(name);
+        }
+        // Restore EXECOPT.
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `gethparam` / `gethkparam` to their canonical C bodies at
