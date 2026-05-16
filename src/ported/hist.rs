@@ -1157,7 +1157,19 @@ pub fn hbegin(dohist: i32) {                                                 // 
         && strin.load(Ordering::SeqCst) == 0
     {
         histactive.store(HA_ACTIVE, Ordering::SeqCst);                       // c:1164
-        // attachtty(mypgrp);                                                // c:1165 — TTY infra not ported here
+        // c:1165 — `attachtty(mypgrp);` reclaims the controlling
+        // terminal for the shell's pgrp at the start of a fresh
+        // history-recording line. The previous Rust port left this
+        // as a comment-only stub claiming "TTY infra not ported"
+        // — but `utils::attachtty` AND the `MYPGRP` global ARE
+        // both ported (utils.rs:3593, jobs.rs:2585). Wire the
+        // call so the shell actually grabs the tty during
+        // interactive history sessions, matching C behavior.
+        let mypgrp = *crate::ported::jobs::MYPGRP
+            .get_or_init(|| std::sync::Mutex::new(0))
+            .lock()
+            .expect("mypgrp poisoned");
+        crate::ported::utils::attachtty(mypgrp);                             // c:1165
         linkcurline();                                                       // c:1166
         defev.store(addhistnum(curhist.load(Ordering::SeqCst),               // c:1167
                                -1, HIST_FOREIGN as i32),
