@@ -2987,17 +2987,15 @@ pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
     INCOMPFUNC.store(0, Ordering::Relaxed);                                  // c:4028
 
     let rc = callhookfunc(func_name, Some(&args), false);                    // c:4030
-    // C: getaparam("reply"). The Rust paramtab is not yet a global —
-    // params::getaparam() takes a `&ParamTable` arg. Until the
-    // global `paramtab` is wired here, fall back to splitting the
-    // env var "reply" on IFS, matching the convention modules use
-    // to round-trip through `setaparam`.
+    // c:4033 — `ret = getaparam("reply")`. The previous Rust port read
+    // `env::var("reply")` and split on NUL — but the `reply` array is
+    // a shell-local PM_ARRAY paramtab entry, never exported to env.
+    // The C body calls `getaparam("reply")` against the canonical
+    // paramtab which is now wired.
     let ret: Option<Vec<String>> = if rc != 0 {
         None                                                                 // c:4031
     } else {
-        std::env::var("reply").ok().map(|s|                                  // c:4033
-            s.split('\x00').map(|p| p.to_string()).collect::<Vec<_>>()
-        )
+        crate::ported::params::getaparam("reply")                            // c:4033
     };
 
     crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed);         // c:4035
@@ -3022,12 +3020,11 @@ pub fn subst_string_by_hook(name: &str, arg1: Option<&str>, orig: &str)
     }
     if ret.is_none() {                                                       // c:4058
         let arrnam = format!("{}_hook", name);                               // c:4061-4063
-        // C: getaparam(arrnam). Mirror the env-var fallback used in
-        // subst_string_by_func — the hook array is shipped as
-        // NUL-separated entries when the param subsystem isn't yet
-        // wired here.
-        if let Ok(text) = std::env::var(&arrnam) {                           // c:4065
-            for f in text.split('\x00') {                                    // c:4068
+        // c:4065 — `arr = getaparam(arrnam)`. The previous Rust port
+        // read `env::var(arrnam)` and NUL-split — wrong: the hook
+        // array is a shell-local PM_ARRAY in paramtab, not env.
+        if let Some(arr) = crate::ported::params::getaparam(&arrnam) {       // c:4065
+            for f in arr.iter() {                                            // c:4068
                 if f.is_empty() { continue; }
                 if getshfunc(f).is_some() {                                  // c:4069
                     ret = subst_string_by_func(f, arg1, orig);               // c:4070
@@ -6288,6 +6285,39 @@ fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:4033 — `subst_string_by_func` returns `getaparam("reply")`
+    /// after the hook function finishes. The previous Rust port read
+    /// `env::var("reply")` and split on NUL — wrong because `reply`
+    /// is a shell-local PM_ARRAY in paramtab, never exported. This
+    /// pin sets `reply` via `setaparam` (the paramtab write path)
+    /// and exercises `subst_string_by_hook` end-to-end isn't viable
+    /// in unit tests without a function-name hook, so we exercise
+    /// just the getaparam plumbing.
+    #[test]
+    fn getaparam_reads_reply_from_paramtab_not_env() {
+        // Stash any prior `reply` value.
+        let saved = crate::ported::params::getaparam("reply");
+
+        // Write a known reply array via the canonical setaparam path.
+        let payload = vec![
+            "abbreviated".to_string(),
+            "11".to_string(),
+        ];
+        let _ = crate::ported::params::setaparam("reply", payload.clone());
+
+        // The reply array must be reachable via getaparam — not env.
+        // (env::var would return Err because setaparam never exports
+        //  an un-flagged array to env.)
+        assert_eq!(
+            crate::ported::params::getaparam("reply"),
+            Some(payload),
+            "getaparam(\"reply\") must return paramtab array");
+
+        // Restore.
+        let _ = crate::ported::params::setaparam(
+            "reply", saved.unwrap_or_default());
+    }
 
     /// c:1133-1134 — `finddir` reads the global `home` variable (the
     /// canonical `$HOME` storage, not `getenv("HOME")`). The global
