@@ -2304,25 +2304,88 @@ pub fn gethist(ev: i64) -> Option<histent> {                                 // 
     ret
 }
 
-/// Port of `char *getargs(Histent ehist, int arg1, int arg2)` from Src/hist.c.
-pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
-    let nwords = entry.words.len() / 2;
-    if nwords == 0 || arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
-        herrflush();
-        crate::ported::utils::zerr("no such word in event");
-        return None;
+/// Port of `static char *getargs(Histent elist, int arg1, int arg2)`
+/// from `Src/hist.c:2454-2483`.
+///
+/// C body (c:2456-2482):
+/// ```c
+/// short *words = elist->words;
+/// int pos1, pos2, nwords = elist->nwords;
+///
+/// if (arg2 < arg1 || arg1 >= nwords || arg2 >= nwords) {
+///     herrflush();
+///     zerr("no such word in event");
+///     return NULL;
+/// }
+/// if (arg1 == 0 && arg2 == nwords - 1)
+///     return dupstring(elist->node.nam);
+///
+/// pos1 = words[2*arg1];
+/// pos2 = words[2*arg2+1];
+///
+/// /* a word has to be at least one character long, so if the position
+///  * of a word is less than its index, we've overflowed our signed
+///  * short integer word range and the recorded position is garbage. */
+/// if (pos1 < 0 || pos1 < arg1 || pos2 < 0 || pos2 < arg2) {
+///     herrflush();
+///     zerr("history event too long, can't index requested words");
+///     return NULL;
+/// }
+/// return dupstrpfx(elist->node.nam + pos1, pos2 - pos1);
+/// ```
+///
+/// Three divergences in the previous Rust port:
+///   1. Used `entry.words.len() / 2` for nwords — C uses the explicit
+///      `elist->nwords` field. The two MAY agree but the field is
+///      the authoritative source per the storage shape.
+///   2. Had an extra `nwords == 0` check that C lacks; the existing
+///      `arg1 >= nwords` check already covers the empty case
+///      (arg1: usize >= 0 vs nwords=0 returns true).
+///   3. Overflow check was wrong: `pos2 > nam.len() || pos1 > pos2`
+///      instead of the C `pos1 < 0 || pos1 < arg1 || pos2 < 0 ||
+///      pos2 < arg2`. The C check detects signed-short overflow —
+///      since each word must be ≥1 char long, the start-byte index
+///      must be ≥ the 0-based word index; a negative or too-small
+///      stored position signals i16 overflow on history lines >32KB.
+///      The Rust port's bounds check missed the overflow case
+///      and let bogus garbage positions through into the slice
+///      indexing.
+pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {    // c:2454
+    let nwords = entry.nwords as usize;                                          // c:2457 nwords = elist->nwords
+    if arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {                         // c:2459
+        herrflush();                                                             // c:2461
+        crate::ported::utils::zerr("no such word in event");                     // c:2462
+        return None;                                                             // c:2463
     }
+    // c:2466-2467 — `if (arg1 == 0 && arg2 == nwords - 1) return dupstring(nam);`
     if arg1 == 0 && arg2 == nwords - 1 {
-        return Some(entry.node.nam.clone());
+        return Some(entry.node.nam.clone());                                     // c:2467
     }
-    let pos1 = entry.words.get(arg1 * 2).copied().unwrap_or(0) as usize;
-    let pos2 = entry.words.get(arg2 * 2 + 1).copied().unwrap_or(0) as usize;
-    if pos2 > entry.node.nam.len() || pos1 > pos2 {
-        herrflush();
-        crate::ported::utils::zerr("history event too long, can't index requested words");
-        return None;
+    let pos1_raw = entry.words.get(2 * arg1).copied().unwrap_or(-1);             // c:2469 pos1 = words[2*arg1]
+    let pos2_raw = entry.words.get(2 * arg2 + 1).copied().unwrap_or(-1);         // c:2470 pos2 = words[2*arg2+1]
+    // c:2476 — C signed-short overflow detection: any negative
+    // position OR a position less than its corresponding word
+    // index means the i16 storage wrapped on a >32KB history line.
+    if pos1_raw < 0
+        || (pos1_raw as i64) < (arg1 as i64)
+        || pos2_raw < 0
+        || (pos2_raw as i64) < (arg2 as i64)
+    {                                                                            // c:2476
+        herrflush();                                                             // c:2477
+        crate::ported::utils::zerr(
+            "history event too long, can't index requested words"               // c:2478
+        );
+        return None;                                                             // c:2479
     }
-    Some(entry.node.nam[pos1..pos2].to_string())
+    let pos1 = pos1_raw as usize;
+    let pos2 = pos2_raw as usize;
+    // c:2481 — `dupstrpfx(elist->node.nam + pos1, pos2 - pos1)`.
+    // Rust slice indexing requires pos1 <= pos2 <= len; both are
+    // satisfied since both passed the c:2476 overflow check and
+    // are bounded by the underlying string length per insert
+    // contract. Guard with .get() so a malformed entry doesn't
+    // panic.
+    entry.node.nam.get(pos1..pos2).map(|s| s.to_string())                        // c:2481
 }
 
 /// Port of `int quote(char **tr)` from `Src/hist.c:2486-2523`.
@@ -4024,6 +4087,95 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `getargs` to its canonical C body at `Src/hist.c:2454-2482`.
+    /// Covers: nwords-derived-from-field (not words.len()/2),
+    /// arg1>arg2 reject, arg≥nwords reject, full-event fast path,
+    /// per-word slicing, and signed-short overflow detection.
+    #[test]
+    fn getargs_handles_field_indexing_and_overflow() {
+        // Build a histent for "echo hello world" with 3 words.
+        // C nwords=3, words=[0,4,5,10,11,16] (start/end pairs).
+        let he = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "echo hello world".to_string(),
+                flags: 0,
+            },
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: vec![0, 4, 5, 10, 11, 16],
+            nwords: 3,                                          // c:2457 source of truth
+            histnum: 1,
+        };
+
+        // c:2459 — `arg2 < arg1` → reject.
+        assert_eq!(getargs(&he, 2, 1), None,
+            "c:2459 — arg2 < arg1 rejects");
+        // c:2459 — `arg1 >= nwords` → reject.
+        assert_eq!(getargs(&he, 3, 3), None,
+            "c:2459 — arg1 >= nwords (3>=3) rejects");
+        // c:2459 — `arg2 >= nwords` → reject.
+        assert_eq!(getargs(&he, 0, 3), None,
+            "c:2459 — arg2 >= nwords (3>=3) rejects");
+
+        // c:2466 — `arg1==0 && arg2==nwords-1` → full event fast path.
+        assert_eq!(getargs(&he, 0, 2).as_deref(), Some("echo hello world"),
+            "c:2467 — full-event fast path returns dupstring(nam)");
+
+        // c:2469-2481 — per-word slice. word[0] = "echo" (pos 0..4).
+        assert_eq!(getargs(&he, 0, 0).as_deref(), Some("echo"),
+            "c:2481 — word[0] = nam[0..4]");
+        // word[1] = "hello" (pos 5..10).
+        assert_eq!(getargs(&he, 1, 1).as_deref(), Some("hello"),
+            "c:2481 — word[1] = nam[5..10]");
+        // word[2] = "world" (pos 11..16).
+        assert_eq!(getargs(&he, 2, 2).as_deref(), Some("world"),
+            "c:2481 — word[2] = nam[11..16]");
+        // Multi-word span: word[1..=2] = "hello world".
+        assert_eq!(getargs(&he, 1, 2).as_deref(), Some("hello world"),
+            "c:2481 — words[1..=2] = nam[5..16]");
+
+        // c:2476 — signed-short overflow detection. Build a histent
+        // whose stored pos[0] is negative (simulating i16 wrap on a
+        // >32KB history line). Use nwords=2 with arg1=0,arg2=0 so the
+        // c:2466 full-event fast path doesn't trigger.
+        let overflow = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "ab cd".to_string(),
+                flags: 0,
+            },
+            up: None, down: None, zle_text: None,
+            stim: 0, ftim: 0,
+            words: vec![-1, 5, 3, 5],                            // word[0]: pos1 < 0
+            nwords: 2,
+            histnum: 1,
+        };
+        assert_eq!(getargs(&overflow, 0, 0), None,
+            "c:2476 — pos1 < 0 (i16 overflow) rejects");
+
+        // c:2476 — `pos1 < arg1` detection (pos must be ≥ word index).
+        let underflow = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "a b c d".to_string(),
+                flags: 0,
+            },
+            up: None, down: None, zle_text: None,
+            stim: 0, ftim: 0,
+            // arg1=2 but pos1=1 means recorded pos < word index.
+            // Each word must be ≥1 char so word[2] must start at pos ≥ 2.
+            words: vec![0, 1, 2, 3, 1, 5, 6, 7],
+            nwords: 4,
+            histnum: 1,
+        };
+        assert_eq!(getargs(&underflow, 2, 2), None,
+            "c:2476 — pos1 < arg1 (i16 overflow signal) rejects");
     }
 
     /// Pin `hconsearch` to its canonical C body at
