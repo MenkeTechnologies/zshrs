@@ -399,17 +399,41 @@ pub fn zpcre_get_substrings(                                                 // 
 /// Port of `getposint(char *instr, char *nam)` from Src/Modules/pcre.c:312.
 /// C: `static int getposint(char *instr, char *nam)` — parse positive
 /// decimal integer; emit "integer expected" warning + return -1 on bad input.
+///
+/// C body (c:312-326):
+/// ```c
+/// int ret;
+/// char *eptr;
+/// ret = (int)zstrtol(instr, &eptr, 10);
+/// if (*eptr || ret < 0) {
+///     zwarnnam(nam, "integer expected: %s", instr);
+///     return -1;
+/// }
+/// return ret;
+/// ```
+///
+/// The previous Rust port used `instr.trim().parse::<i32>()` which:
+///   1. Skipped TRAILING whitespace via `trim()` — C `zstrtol` skips
+///      leading whitespace but NOT trailing; trailing ws lands in
+///      `*eptr` and triggers the error.
+///   2. Used `parse` which rejects trailing junk implicitly, BUT
+///      after trim, so `"42abc"` and C both reject (Rust via parse
+///      error, C via `*eptr`).
+/// Route through the canonical `zstrtol` so the
+/// trailing-whitespace and partial-parse edge cases match C exactly
+/// — same behavior as the sister `getposint` in system.rs.
 #[allow(non_snake_case)]
 pub fn getposint(instr: &str, nam: &str) -> i32 {                            // c:312
     // c:312 — `ret = (int)zstrtol(instr, &eptr, 10);`
-    match instr.trim().parse::<i32>() {                                      // c:317
-        Ok(n) if n >= 0 => n,                                                // c:323
-        _ => {
-            // c:319-321 — zwarnnam(nam, "integer expected: %s", instr);
-            crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr)); // c:320
-            -1                                                               // c:321
-        }
+    let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
+    let ret = ret as i32;
+    // c:317 — `if (*eptr || ret < 0)` — trailing chars OR negative.
+    if !eptr.is_empty() || ret < 0 {
+        crate::ported::utils::zwarnnam(nam,
+            &format!("integer expected: {}", instr));                        // c:319
+        return -1;                                                           // c:321
     }
+    ret                                                                      // c:325
 }
 
 /// Port of `bin_pcre_match(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/pcre.c:328`. Runs
@@ -886,5 +910,62 @@ mod tests {
         assert_eq!(boot_(m), 0);
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
+    }
+
+    /// `Src/Modules/pcre.c:317` — `if (*eptr || ret < 0)` — trailing
+    /// non-digit chars trigger the error path. The previous Rust port
+    /// used `instr.trim().parse::<i32>()` which silently stripped
+    /// TRAILING whitespace before parsing — C zstrtol skips leading
+    /// only. Pin so `"42abc"` now rejects (matching C) where the old
+    /// port already did (via parse error) AND `"42 "` now also rejects
+    /// (where the old port silently accepted via trim).
+    #[test]
+    fn getposint_rejects_trailing_garbage() {
+        assert_eq!(getposint("42abc", "test"), -1,
+            "c:317 — *eptr='a' truthy → error");
+        assert_eq!(getposint("100x", "test"), -1,
+            "c:317 — trailing non-digit must reject");
+    }
+
+    /// `Src/Modules/pcre.c:317` — trailing whitespace also lands in
+    /// `*eptr` so C rejects. Pin the canonical behavior (matches the
+    /// sister `system.rs::getposint`).
+    #[test]
+    fn getposint_rejects_trailing_whitespace() {
+        assert_eq!(getposint("42 ", "test"), -1,
+            "c:317 — trailing space → *eptr=' ' → error");
+        assert_eq!(getposint("42\t", "test"), -1,
+            "c:317 — trailing tab → *eptr='\\t' → error");
+    }
+
+    /// `Src/Modules/pcre.c:312` — `zstrtol` skips LEADING whitespace,
+    /// then parses digits. Pin so a regression that drops the leading-
+    /// ws skip wouldn't break `pcre_match -n 42` style invocations.
+    #[test]
+    fn getposint_skips_leading_whitespace() {
+        // C zstrtol skips spaces/tabs at the front per Src/utils.c:2444-2445.
+        assert_eq!(getposint("  42", "test"), 42,
+            "c:312 — zstrtol skips leading whitespace");
+    }
+
+    /// `Src/Modules/pcre.c:317` — negative parsed value → error.
+    /// `zstrtol("-1", &eptr, 10)` returns -1 (signed); `ret < 0` fires.
+    #[test]
+    fn getposint_rejects_negative() {
+        assert_eq!(getposint("-1", "test"), -1,
+            "c:317 — `ret < 0` branch fires for negative input");
+        assert_eq!(getposint("-100", "test"), -1);
+    }
+
+    /// `Src/Modules/pcre.c:312` — empty input parses to 0 with empty
+    /// eptr. The C check at c:317 has `ret < 0` false (0 is not <0)
+    /// and `*eptr` checks the NUL terminator (falsy) → no error,
+    /// returns 0. Pin the empty-input contract.
+    #[test]
+    fn getposint_empty_input_returns_zero() {
+        // C: zstrtol("") returns 0, eptr is the same empty pointer.
+        // *eptr is '\0' (falsy), ret=0 (not <0) → no error.
+        assert_eq!(getposint("", "test"), 0,
+            "c:312-325 — empty input → 0 (no error)");
     }
 }
