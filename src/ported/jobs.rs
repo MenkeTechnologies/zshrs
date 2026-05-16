@@ -1220,13 +1220,43 @@ pub fn initjob(jobtab: &mut Vec<Job>) -> usize {                             // 
     idx
 }
 
-/// Set the pwd for a job (from jobs.c setjobpwd)
-/// Port of `setjobpwd` from `Src/jobs.c:1881`.
-pub fn setjobpwd(job: &mut Job) {
-    // Store current directory in job for display purposes
-    if let Ok(cwd) = std::env::current_dir() {
-        // Job text sometimes includes the directory
-        let _ = cwd;
+/// Port of `void setjobpwd(void)` from `Src/jobs.c:1881`.
+///
+/// C body:
+/// ```c
+/// int i;
+/// for (i = 1; i <= maxjob; i++)
+///     if (jobtab[i].stat && !jobtab[i].pwd)
+///         jobtab[i].pwd = ztrdup(pwd);
+/// ```
+///
+/// Walks every IN-USE job and stamps its `pwd` with the current
+/// shell `pwd` (from `Src/builtin.c:1240` after `bin_cd`). The
+/// previous Rust port took a `&mut Job` ref and was a no-op (just
+/// captured cwd then dropped it) — every `cd` left the in-flight
+/// job's pwd unset, and `jobs` output showed empty `(pwd: )` for
+/// jobs that started before the cd.
+///
+/// The fix walks `JOBTAB` and writes `pwd` to every job whose stat
+/// is non-zero (INUSE) and whose pwd is still None. The shell
+/// pwd is read from the canonical `params::pwdgetfn` accessor —
+/// matches C's read of the `pwd` global at c:1888.
+pub fn setjobpwd() {                                                          // c:1881
+    // c:1888 — `pwd` is the canonical shell-state global from
+    // `Src/params.c:108`. Rust reads it via the paramtab-backed
+    // `getsparam("PWD")` which is the canonical accessor mirrored
+    // throughout the codebase (prompt.rs, subst.rs, builtin.rs).
+    let pwd = crate::ported::params::getsparam("PWD")
+        .unwrap_or_default();                                                  // c:1888 pwd
+    let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    let mut tab = tab.lock().expect("jobtab poisoned");
+    // c:1886 — `for (i = 1; i <= maxjob; i++)`. Skip index 0 (the
+    // shell itself).
+    for job in tab.iter_mut().skip(1) {
+        // c:1887 — `if (jobtab[i].stat && !jobtab[i].pwd)`.
+        if job.stat != 0 && job.pwd.is_none() {
+            job.pwd = Some(pwd.clone());                                      // c:1888
+        }
     }
 }
 
@@ -3173,5 +3203,56 @@ mod tests {
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let job = Job::new(); // no procs, no STAT_TIMED
         assert!(!should_report_time(&job, 0.0));
+    }
+
+    /// Serialise tests that mutate JOBTAB + PWD param.
+    static JOBPWD_TEST_LOCK: std::sync::Mutex<()> =
+        std::sync::Mutex::new(());
+
+    /// Pin: `setjobpwd()` writes `pwd` to every IN-USE job that
+    /// doesn't already have one, per `Src/jobs.c:1886-1888`. The
+    /// previous Rust port took a `&mut Job` and was a no-op — every
+    /// `cd` left in-flight jobs with no pwd.
+    #[test]
+    fn setjobpwd_stamps_pwd_on_inuse_jobs_without_one() {
+        let _g = JOBPWD_TEST_LOCK.lock().unwrap();
+        // Set PWD via the canonical paramtab path.
+        crate::ported::params::assignsparam("PWD", "/tmp/test_setjobpwd", 0);
+        // Reset JOBTAB: index 0 (shell itself) + 3 jobs.
+        let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+        {
+            let mut tab = tab.lock().unwrap();
+            tab.clear();
+            tab.push(Job::new());                // index 0 — skipped
+            // Job 1: INUSE, no pwd — should get stamped.
+            let mut j1 = Job::new();
+            j1.stat = stat::INUSE;
+            j1.pwd = None;
+            tab.push(j1);
+            // Job 2: INUSE, already has pwd — should be PRESERVED.
+            let mut j2 = Job::new();
+            j2.stat = stat::INUSE;
+            j2.pwd = Some("/preserved".to_string());
+            tab.push(j2);
+            // Job 3: NOT in use (stat=0) — should NOT get stamped.
+            let mut j3 = Job::new();
+            j3.stat = 0;
+            j3.pwd = None;
+            tab.push(j3);
+        }
+        setjobpwd();
+        let tab = tab.lock().unwrap();
+        // c:1887-1888 — IN-USE + no pwd → stamped with current pwd.
+        assert_eq!(tab[1].pwd.as_deref(), Some("/tmp/test_setjobpwd"),
+            "c:1888 — INUSE+no-pwd job must be stamped with PWD");
+        // c:1887 — IN-USE + already has pwd → preserved (the `!pwd` gate).
+        assert_eq!(tab[2].pwd.as_deref(), Some("/preserved"),
+            "c:1887 — existing pwd must NOT be overwritten");
+        // c:1887 — stat==0 (not in use) → not stamped.
+        assert_eq!(tab[3].pwd, None,
+            "c:1887 — non-INUSE job (stat==0) must NOT be stamped");
+        // Index 0 (shell itself) is skipped (c:1886 starts at i=1).
+        assert_eq!(tab[0].pwd, None,
+            "c:1886 — index 0 (shell) must NOT be stamped");
     }
 }

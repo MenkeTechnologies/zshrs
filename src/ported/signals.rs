@@ -1017,6 +1017,14 @@ pub fn unqueue_traps() {                                                     // 
 /// observers (the `exit` builtin, the `zexit` driver) can branch on
 /// whether we're inside an EXIT-trap callback.
 pub fn dotrap(sig: i32) -> i32 {                                             // c:1245
+    // c:1248 — `int q = queue_signal_level();` capture at entry.
+    // Required for the c:1280 `restore_queue_signals(q)` tail. The
+    // previous Rust port omitted the capture and tail-restored to 0
+    // unconditionally — that zeroed the queue level even when the
+    // caller had set it to a non-zero value (e.g. nested dotrap
+    // from inside a queue_signals/unqueue_signals block).
+    let q = crate::ported::signals_h::queue_signal_level();                   // c:1248
+
     let trapped = sigtrapped.lock()
         .ok()
         .and_then(|g| g.get(sig as usize).copied())
@@ -1072,12 +1080,10 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
     if sig == SIGEXIT {
         in_exit_trap.fetch_sub(1, Ordering::SeqCst);                          // c:1277
     }
-    // c:1280 — `restore_queue_signals(q)`. Restore to the level
-    // captured at entry (the `int q = queue_signal_level()` at c:1248).
-    // We didn't capture q because the Rust port routes through
-    // dont_queue_signals which zeros the counter; restoring to 0 is
-    // the only safe state without the entry capture. A subsequent
-    // refactor that captures q at entry would mirror C exactly.
+    // c:1280 — `restore_queue_signals(q)` — restore to the level
+    // captured at entry (c:1248). Now properly captured above; the
+    // previous tail was a hardcoded `intrap.store(0)` only.
+    crate::ported::signals_h::restore_queue_signals(q);                       // c:1280
     intrap.store(0, Ordering::SeqCst);
     0
 }
