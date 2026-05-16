@@ -4385,4 +4385,35 @@ mod tests {
         assert!(isnumglob("xxx1-10>",  3), "scan from offset 3");
         assert!(!isnumglob("xxx1-10>", 0), "scan from offset 0 sees 'x'");
     }
+
+    /// `Src/lex.c:580-610` — the C comment says `/<[0-9]*-[0-9]*\>/`.
+    /// Note BOTH digit runs are `*` (zero or more), not `+`. So:
+    /// `<->` (no digits at all) is valid numeric glob syntax.
+    /// `<-10>` (left run empty) is valid.
+    /// `<1->` (right run empty) is valid.
+    /// Pin these zero-length digit-run edge cases.
+    #[test]
+    fn isnumglob_accepts_empty_digit_runs_per_c_pattern() {
+        // c:577 — `[0-9]*-[0-9]*>` allows ZERO digits on either side.
+        assert!(isnumglob("->",   0),
+            "c:577 — `<->` is the minimum valid numglob (both runs empty)");
+        assert!(isnumglob("-10>", 0),
+            "c:577 — left run can be empty");
+        assert!(isnumglob("1->",  0),
+            "c:577 — right run can be empty");
+    }
+
+    /// `Src/lex.c:594-602` — C state machine: once `ec` flips from
+    /// `-` to `>`, a SECOND `-` causes the `if(c != ec) break;` exit
+    /// (since now ec is `>`, not `-`). Regression that accepted a
+    /// second dash would mis-recognise `<1-2-3>` as a numglob.
+    #[test]
+    fn isnumglob_rejects_second_dash_after_first() {
+        // c:597-602 — after seeing the first `-`, ec becomes `>`.
+        // Next non-digit must be `>` or the loop breaks.
+        assert!(!isnumglob("1-2-3>", 0),
+            "c:597-602 — second `-` breaks the state machine");
+        assert!(!isnumglob("1--2>",  0),
+            "c:597-602 — `--` not valid in numglob");
+    }
 }
