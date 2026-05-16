@@ -5324,11 +5324,27 @@ pub fn lc_allsetfn(x: Option<String>) {
     }
 }
 
-/// Port of `langsetfn(Param pm, char *x)` from `Src/params.c:4896`. C body:
+/// Port of `langsetfn(Param pm, char *x)` from `Src/params.c:4898`. C body:
 /// `strsetfn(pm, x); setlang(unmeta(x));`
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn langsetfn(x: String) {
-    setlang(Some(&x));
+///
+/// `unmeta(x)` strips Meta-encoding before passing to libc
+/// `setlocale` — locale names are normally ASCII but Meta bytes
+/// in the assigned value (from a `LANG="$value"` round-trip
+/// through metafied param storage) would otherwise reach
+/// setlocale literally. The previous Rust port passed raw `x`
+/// without unmeta'ing — divergent.
+///
+/// `strsetfn(pm, x)` stores the value in the param slot. The Rust
+/// adaptation doesn't have a `pm` in scope; the assign path that
+/// reaches langsetfn already stored the value in the paramtab,
+/// so this body only runs the post-store side effect (locale).
+///
+/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x).
+pub fn langsetfn(x: String) {                                                 // c:4898
+    // c:4901 — `setlang(unmeta(x));`. Strip Meta bytes before
+    // passing to libc setlocale.
+    let unmeta_x = crate::ported::utils::unmeta(&x);                          // c:4901 unmeta(x)
+    setlang(Some(&unmeta_x));
 }
 
 /// Port of `lcsetfn(Param pm, char *x)` from `Src/params.c:4904`. C body:

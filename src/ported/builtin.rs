@@ -929,10 +929,21 @@ pub fn bin_pwd(_name: &str, _argv: &[String],                                // 
         // c:732 — `printf("%s\n", zgetcwd());`
         println!("{}", crate::ported::utils::zgetcwd().unwrap_or_default()); // c:732
     } else {
-        // c:734 — `zputs(pwd, stdout); putchar('\n');`
-        println!("{}", std::env::var("PWD")                                  // c:734
-                       .unwrap_or_else(|_|
-                           crate::ported::utils::zgetcwd().unwrap_or_default()));
+        // c:734 — `zputs(pwd, stdout); putchar('\n');`. C reads the
+        // shell-internal `pwd` global (Src/params.c:108). The
+        // canonical Rust accessor is `getsparam("PWD")` which reads
+        // from the paramtab (the source-of-truth backing for PWD).
+        //
+        // Previously this used `std::env::var("PWD")` which reads
+        // the OS environment — divergent. The OS env var is only
+        // sync'd to the paramtab on export; the paramtab can hold
+        // a more recent value, and `unset PWD; cd /foo; pwd` would
+        // print the wrong thing under the env-var path (env was
+        // already unset, so the read fell through to zgetcwd
+        // bypassing the just-set paramtab PWD).
+        let pwd = crate::ported::params::getsparam("PWD")
+            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
+        println!("{}", pwd);                                                 // c:734
     }
     0                                                                        // c:737
 }
