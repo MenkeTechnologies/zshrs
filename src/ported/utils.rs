@@ -5645,42 +5645,36 @@ pub fn qflag_quotetype(count: u32) -> i32 {
     }
 }
 
-/// Port of `ispecial()` macro from `Src/ztype.h:59` (macro).
+/// Port of `ispecial()` macro from `Src/ztype.h:59` — `zistype(X,
+/// ISPECIAL)`. C populates the ISPECIAL typtab bit at
+/// `Src/utils.c:4253-4262`:
+///   - Every byte in `SPECCHARS` (`Src/zsh.h:228` =
+///     `"#$^*()=|{}[]\`<>?~;&\\n\\t \\\\\\'\\""`)
+///   - `,` when `typtab_flags & ZTF_SP_COMMA` (set by
+///     `makecommaspecial(1)` per c:4271)
+///   - `bangchar` (default `!`) when `BANGHIST` is set AND
+///     `ZTF_INTERACT` is set (interactive shell)
 ///
-/// `ispecial(X)` expands to `zistype(X, ISPECIAL)` and tests
-/// whether the char is in the SPECCHARS table — the literal set
-/// `"#$^*()=|{}[]`<>?~;&\\n\\t \\\\\\'\\""` from `Src/zsh.h:228`,
-/// optionally augmented with `,` (ZTF_SP_COMMA) and `bangchar`
-/// (BANGHIST). zshrs hard-codes the static set; the `,`/`!`
-/// augmentation flags aren't yet wired through.
-fn ispecial(c: char) -> bool {
+/// The Rust port enumerates `SPECCHARS` directly because the
+/// typtab is not lazily initialised — production `ispecial` calls
+/// happen after `init_typtab` runs at shell startup, but
+/// `quotestring` is unit-tested in isolation where the typtab is
+/// all-zero. Match the C SPECCHARS set byte-for-byte; the option-
+/// driven augments (`,` and bangchar) are still NOT wired through
+/// (a known gap — see the typtab-routing TODO at the param level).
+fn ispecial(c: char) -> bool {                                              // c:59 (Src/ztype.h)
+    // c:228 (Src/zsh.h) `SPECCHARS` — exact byte set from the C
+    // string literal. `^` and `{`/`}` were already present; `!`
+    // is INTENTIONALLY OMITTED here because C only ISPECIAL-tags
+    // bangchar under BANGHIST + interactive. Including `!`
+    // unconditionally diverges from C for non-interactive scripts
+    // and unbang'd input.
     matches!(
         c,
-        '|' | '&'
-            | ';'
-            | '<'
-            | '>'
-            | '('
-            | ')'
-            | '$'
-            | '`'
-            | '"'
-            | '\''
-            | '\\'
-            | ' '
-            | '\t'
-            | '\n'
-            | '='
-            | '['
-            | ']'
-            | '*'
-            | '?'
-            | '#'
-            | '~'
-            | '{'
-            | '}'
-            | '!'
-            | '^'
+        '#' | '$' | '^' | '*' | '(' | ')' | '='  // c:228 first half
+            | '|' | '{' | '}' | '[' | ']' | '`'   // c:228 mid
+            | '<' | '>' | '?' | '~' | ';' | '&'   // c:228 specials
+            | '\n' | '\t' | ' ' | '\\' | '\'' | '"' // c:228 whitespace/backslash/quotes
     )
 }
 
@@ -6565,6 +6559,54 @@ mod tests {
             "has\\ space"
         );
         assert_eq!(quotestring("$var", crate::ported::zsh_h::QT_BACKSLASH), "\\$var");
+    }
+
+    /// Pin: `ispecial(c)` matches the canonical SPECCHARS set at
+    /// `Src/zsh.h:228` exactly: `"#$^*()=|{}[]\`<>?~;&\n\t \\'\""`.
+    /// Previously the Rust local `ispecial` included `!` unconditionally
+    /// which diverged from C — C only ISPECIAL-tags bangchar (default
+    /// `!`) under BANGHIST + interactive (per `Src/utils.c:4257-4261`).
+    ///
+    /// This test exercises the path indirectly via `quotestring` with
+    /// `QT_BACKSLASH` (which prepends `\` before every ispecial char).
+    #[test]
+    fn quotestring_backslash_only_specchars_no_bang_in_default() {
+        use crate::ported::zsh_h::QT_BACKSLASH;
+        // `!` is NOT in canonical SPECCHARS — should NOT be backslashed
+        // in default non-interactive mode (matches C).
+        assert_eq!(
+            quotestring("a!b", QT_BACKSLASH), "a!b",
+            "c:228 — `!` is not in SPECCHARS; only bangchar+BANGHIST adds it"
+        );
+        // `,` is NOT in canonical SPECCHARS until makecommaspecial(1).
+        assert_eq!(
+            quotestring("a,b", QT_BACKSLASH), "a,b",
+            "c:228 — `,` not in SPECCHARS until makecommaspecial(1)"
+        );
+        // `^` IS in canonical SPECCHARS (per c:228 `"#$^..."`).
+        assert_eq!(
+            quotestring("a^b", QT_BACKSLASH), "a\\^b",
+            "c:228 — `^` is in SPECCHARS"
+        );
+        // Open and close braces are in canonical SPECCHARS.
+        assert_eq!(
+            quotestring("a{b", QT_BACKSLASH), "a\\{b",
+            "c:228 — open-brace is in SPECCHARS"
+        );
+        assert_eq!(
+            quotestring("a}b", QT_BACKSLASH), "a\\}b",
+            "c:228 — close-brace is in SPECCHARS"
+        );
+        // `#` is in canonical SPECCHARS (first char of c:228).
+        assert_eq!(
+            quotestring("a#b", QT_BACKSLASH), "a\\#b",
+            "c:228 — `#` is the first char of SPECCHARS"
+        );
+        // `\\` (literal backslash) is in canonical SPECCHARS.
+        assert_eq!(
+            quotestring("a\\b", QT_BACKSLASH), "a\\\\b",
+            "c:228 — `\\\\` in SPECCHARS"
+        );
     }
 
     #[test]
