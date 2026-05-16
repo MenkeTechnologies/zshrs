@@ -4516,11 +4516,14 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
             Tab::Shfunc => shfunctab_table().lock()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
-            // c:4405 — `cmdnamtab->removenode(cmdnamtab, asg->name)`.
-            Tab::CmdNam => {
-                crate::ported::hashtable::freecmdnamnode(nm);
-                true
-            }
+            // c:4405 — `if ((hn = ht->removenode(ht, *argv)))`.
+            // Removal returns truthy only when the entry actually
+            // existed. Previous Rust port hardcoded `true` after a
+            // void-return `freecmdnamnode` call, so `unhash badname`
+            // silently succeeded instead of emitting the canonical
+            // "no such hash table element" error.
+            Tab::CmdNam => crate::ported::hashtable::cmdnamtab_lock().write()
+                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
         }
     };
 
