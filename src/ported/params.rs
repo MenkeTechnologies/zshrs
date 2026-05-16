@@ -3715,11 +3715,12 @@ pub fn check_warn_pm(
     if may_warn_about_nested_vars == 0 && created == 0 {
         return;
     }
-    // forklevel global pending its own port — treat as 0 until exec.rs
-    // lands the fork-depth tracker. `locallevel` is the canonical
-    // `pub static` above (port of params.c:54).
+    // `locallevel` is the canonical `pub static` above (port of
+    // params.c:54). `forklevel` is the ported global at exec.rs
+    // (port of exec.c:1052) set to locallevel at every entersubsh().
     let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    let forklevel: i32 = 0;
+    let forklevel: i32 =
+        crate::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
     if created != 0 && isset(WARNCREATEGLOBAL) {
         if cur_local <= forklevel || pm.level != 0 {
             return;

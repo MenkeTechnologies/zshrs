@@ -123,6 +123,20 @@ pub static TRAP_STATE: std::sync::atomic::AtomicI32 =                       // c
 pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c:155 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `int forklevel;` from `Src/exec.c:1052`. Records the
+/// `locallevel` at the most recent fork point (set at c:1221:
+/// `forklevel = locallevel;` inside `entersubsh()`). Used by:
+///   - `signals.c:808` SIGPIPE handler — `!forklevel` distinguishes
+///     the top-level shell from a forked subshell.
+///   - `exec.c:6146` — `if (locallevel > forklevel)` decides whether
+///     a function-defined trap should fire on this subshell exit.
+///   - `params.c:3724` — WARNCREATEGLOBAL nest-depth check.
+///
+/// Initialised to 0 (no fork has occurred yet). Set to `locallevel`
+/// at every `entersubsh()` entry per c:1221.
+pub static FORKLEVEL: std::sync::atomic::AtomicI32 =                        // c:1052 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
 // ───────────────────────────────────────────────────────────────────────────
 // fusevm VM bridge (extension; not a port of Src/exec.c) lives in
 // src/fusevm_bridge.rs. The bridge re-exports the symbols that the
@@ -2649,6 +2663,27 @@ mod tests {
         let status = exec.execute_script("false || true").unwrap();
         assert_eq!(status, 0);
     }
+
+    /// Pin: `forklevel` matches the C global declared at
+    /// `Src/exec.c:1052` (`int forklevel;`). Like `int` in C, the
+    /// Rust port is an AtomicI32 starting at 0 (no fork has occurred
+    /// at process start). Per `Src/exec.c:1221` (`forklevel =
+    /// locallevel;`), every subshell entry copies `locallevel` into
+    /// the global; the SIGPIPE handler at `Src/signals.c:808` reads
+    /// it back to distinguish the top-level shell from a subshell.
+    #[test]
+    fn test_forklevel_default_zero_and_roundtrip() {
+        use std::sync::atomic::Ordering;
+        let prev = FORKLEVEL.load(Ordering::Relaxed);
+        // Default state at process start: zero (matches C's BSS init
+        // of `int forklevel;` to 0).
+        FORKLEVEL.store(0, Ordering::Relaxed);
+        assert_eq!(FORKLEVEL.load(Ordering::Relaxed), 0);
+        // Simulate the c:1221 store: `forklevel = locallevel;`.
+        FORKLEVEL.store(3, Ordering::Relaxed);
+        assert_eq!(FORKLEVEL.load(Ordering::Relaxed), 3);
+        FORKLEVEL.store(prev, Ordering::Relaxed);
+    }
 }
 
 // Plugin-Framework-Agnostic State-Modification Recorder hook helpers.
@@ -2910,6 +2945,15 @@ impl ShellExecutor {
         if !flags.contains(SubshellFlags::KEEPTRAPS) {
             self.reset_traps();
         }
+
+        // c:1221 — `forklevel = locallevel;` at the tail of entersubsh.
+        // Records the locallevel depth at this subshell entry so the
+        // SIGPIPE handler (signals.c:808) and the WARNCREATEGLOBAL
+        // nest-depth check (params.c:3724) can distinguish parent vs
+        // child shell contexts.
+        let cur_local = crate::ported::params::locallevel
+            .load(std::sync::atomic::Ordering::Relaxed);
+        FORKLEVEL.store(cur_local, std::sync::atomic::Ordering::Relaxed);     // c:1221 (Src/exec.c)
     }
 
     /// Close extra file descriptors
