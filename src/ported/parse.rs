@@ -2605,14 +2605,22 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         return String::new();
     }
     let r: String = if (c & 2) != 0 {
-        // c:2862 `else if (c & 2)`
-        // c:2863-2866 — 3-byte inline string packed into the wordcode word.
-        let b0 = ((c >> 3) & 0xff) as u8;
+        // c:2862 — `else if (c & 2)`
+        // c:2863-2868 — 3-byte inline string packed into the wordcode
+        // word; followed by `buf[3] = '\0'; r = dupstring(buf);`.
+        // C's `dupstring` uses `strlen(buf)` which TRUNCATES at the
+        // first NUL byte — short strings of 1 or 2 chars get padded
+        // with NULs and truncated cleanly. The previous Rust port
+        // used `retain(|&x| x != 0)` which would silently SPLICE OUT
+        // an interior NUL (e.g. `[a, 0, b]` → "ab"), diverging from
+        // C's strlen-truncate (`[a, 0, b]` → "a"). Fix: truncate at
+        // first NUL to match C exactly.
+        let b0 = ((c >> 3)  & 0xff) as u8;
         let b1 = ((c >> 11) & 0xff) as u8;
         let b2 = ((c >> 19) & 0xff) as u8;
-        let mut v = vec![b0, b1, b2];
-        v.retain(|&x| x != 0);
-        String::from_utf8_lossy(&v).into_owned()
+        let v  = [b0, b1, b2];
+        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len());        // c:2869 strlen(buf)
+        String::from_utf8_lossy(&v[..end]).into_owned()
     } else {
         // c:2877 `else r = s->strs + (c >> 2);`
         let off = (c >> 2) as usize + s.strs_offset;
@@ -2657,13 +2665,15 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         return String::new();
     }
     if (c & 2) != 0 {
-        // c:2902
-        let b0 = ((c >> 3) & 0xff) as u8;
+        // c:2902-2906 — same 3-byte inline string as ecgetstr, then
+        // `buf[3] = '\0'; return dupstring(buf);` — truncate at first
+        // NUL via strlen (NOT splice out interior NULs).
+        let b0 = ((c >> 3)  & 0xff) as u8;
         let b1 = ((c >> 11) & 0xff) as u8;
         let b2 = ((c >> 19) & 0xff) as u8;
-        let mut v = vec![b0, b1, b2];
-        v.retain(|&x| x != 0);
-        String::from_utf8_lossy(&v).into_owned()
+        let v  = [b0, b1, b2];
+        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len());        // c:2906 strlen(buf)
+        String::from_utf8_lossy(&v[..end]).into_owned()
     } else {
         // c:2911
         let off = (c >> 2) as usize;
@@ -8471,5 +8481,69 @@ esac"#;
         assert_eq!(get_cond_num("eQ"), -1);
         // Lowercase still works.
         assert_eq!(get_cond_num("eq"), 3);
+    }
+
+    /// `Src/parse.c:2862-2868` — `ecgetstr` inline-3-byte case packs
+    /// up to 3 chars into bits 3-26 of the wordcode word, then C emits
+    /// `buf[3] = '\0'; r = dupstring(buf);`. `dupstring` uses `strlen`
+    /// so the resulting string TRUNCATES at the first NUL byte —
+    /// short strings of 1 or 2 chars get their tail NUL-padded and
+    /// silently dropped by strlen.
+    ///
+    /// The previous Rust port used `retain(|&x| x != 0)` which SPLICES
+    /// OUT interior NULs (so `[a, 0, b]` would yield "ab" instead of
+    /// C's "a"). Verify both endpoints work correctly:
+    ///   * 1-char string ("a", 0, 0)        → "a"   (strlen-truncate)
+    ///   * 2-char string ("ab", 0)          → "ab"  (strlen-truncate)
+    ///   * 3-char string ("abc")            → "abc" (full)
+    ///   * pathological ("a", 0, "b")       → "a"   (NOT "ab")
+    #[test]
+    fn ecgetstr_inline_string_truncates_at_first_nul_like_c_strlen() {
+        // Build a wordcode word with `c & 2 != 0` (inline-string flag)
+        // and the 3 bytes packed at offsets 3, 11, 19. `c & 1` is the
+        // tokflag; clear it for this test.
+        fn pack_inline(b0: u8, b1: u8, b2: u8) -> u32 {
+            // c:2862 layout — bit0 = tokflag (0 here), bit1 = inline (1),
+            // bits 3-10 = b0, bits 11-18 = b1, bits 19-26 = b2.
+            (2u32)
+                | ((b0 as u32) << 3)
+                | ((b1 as u32) << 11)
+                | ((b2 as u32) << 19)
+        }
+        use crate::ported::zsh_h::{eprog, estate};
+        let mk_state = |word: u32| -> estate {
+            let p = eprog {
+                flags: 0,
+                len: 1,
+                npats: 0,
+                nref: 0,
+                pats: Vec::new(),
+                prog: vec![word],
+                strs: None,
+                shf: None,
+                dump: None,
+            };
+            estate { prog: Box::new(p), pc: 0, strs: None, strs_offset: 0 }
+        };
+
+        // 1-char: ('a', 0, 0) → "a"
+        let mut st = mk_state(pack_inline(b'a', 0, 0));
+        assert_eq!(ecgetstr(&mut st, 0, None), "a",
+            "c:2869 strlen truncates 1-char inline at the NUL tail");
+
+        // 2-char: ('a', 'b', 0) → "ab"
+        let mut st = mk_state(pack_inline(b'a', b'b', 0));
+        assert_eq!(ecgetstr(&mut st, 0, None), "ab",
+            "c:2869 strlen truncates 2-char inline at the NUL tail");
+
+        // 3-char: ('a', 'b', 'c') → "abc"
+        let mut st = mk_state(pack_inline(b'a', b'b', b'c'));
+        assert_eq!(ecgetstr(&mut st, 0, None), "abc",
+            "c:2869 full 3-byte inline preserved");
+
+        // Pathological: ('a', 0, 'b') → "a" (NOT "ab" from retain-splice)
+        let mut st = mk_state(pack_inline(b'a', 0, b'b'));
+        assert_eq!(ecgetstr(&mut st, 0, None), "a",
+            "c:2869 strlen STOPS at first NUL; must not splice 'b' through");
     }
 }
