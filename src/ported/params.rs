@@ -6745,13 +6745,16 @@ pub fn printparamnode(hn: &mut crate::ported::zsh_h::param, mut printflags: i32)
         if (f & PM_AUTOLOAD) != 0 {
             return;
         }
-        // c:6157-6163 — PM_RO_BY_DESIGN with level check.
+        // c:6157-6163 — PM_RO_BY_DESIGN with level check. C uses
+        // `if (hn->level != locallevel) return;` — only show the
+        // entry when its level matches the current scope. The
+        // previous Rust port hardcoded `locallevel = 0` with a
+        // "global not yet wired" comment, but the canonical
+        // global IS at params.rs (declared above). Read it live.
         if (f & PM_RO_BY_DESIGN) != 0 {
-            // C uses `locallevel` global; the Rust port treats it as 0
-            // until that global is wired. With locallevel==0, suppress
-            // unless hn.level == 0 (matches the C "show anyway in scope
-            // of declaration" path).
-            if hn.level != 0 {
+            let cur_ll = locallevel
+                .load(std::sync::atomic::Ordering::Relaxed) as i32;
+            if hn.level != cur_ll {                                          // c:6157
                 return;
             }
         }
