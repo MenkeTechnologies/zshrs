@@ -2583,10 +2583,39 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 printflags |= PRINT_NAMEONLY;                                // c:2786
             }
         }
-        // c:2792 — scanhashtable(paramtab, ...) listing path. Defer
-        // to env walk for static-link path (real paramtab walk lives
-        // in src/ported/params.rs).
-        for (k, v) in std::env::vars() {                                     // c:2792
+        // c:2792 — `scanhashtable(paramtab, 1, on|roff, 0, paramtab->printnode,
+        //               printflags|(roff ? PRINT_NAMEONLY : 0));`
+        //
+        // Walks the paramtab (sorted=1, alphabetical) filtering by
+        // the typeset flags. The previous Rust port walked
+        // `std::env::vars()` — OS env — same divergence as the
+        // prior bin_set + bin_unset -m fixes. Shell-internal vars
+        // (not exported) never appeared in `typeset` listings; the
+        // \`on\`/\`roff\` flag filter was also ignored, so `typeset
+        // -p +g` showed ALL env vars regardless of which typeset
+        // flags the user requested.
+        let mut entries: Vec<(String, String)> = {
+            let tab = crate::ported::params::paramtab().read().unwrap();
+            tab.iter()
+                .filter(|(_, pm)| {
+                    let f = pm.node.flags as u32;
+                    if (f & crate::ported::zsh_h::PM_UNSET) != 0 {
+                        return false;
+                    }
+                    // c:2792 scanmatchtable flags1=on|roff, flags2=0.
+                    let on_roff = (on as u32) | (roff as u32);
+                    on_roff == 0 || (f & on_roff) != 0
+                })
+                .map(|(k, pm)| {
+                    let v = pm.u_str.clone().unwrap_or_default();
+                    (k.clone(), v)
+                })
+                .collect()
+        };
+        entries.sort_by(|a, b| {
+            crate::ported::hashtable::hnamcmp(&a.0, &b.0)
+        });
+        for (k, v) in entries {
             if (printflags & PRINT_NAMEONLY) != 0 {
                 println!("{}", k);
             } else {
