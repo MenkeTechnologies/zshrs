@@ -693,6 +693,43 @@ pub fn zshrs_main() {
         }
     }
 
+    // --lsp: start the Language Server Protocol server on stdio.
+    // Used by the IntelliJ plugin (editors/intellij) and any other LSP
+    // client (Helix, Neovim, VS Code, etc.). Implementation lives in
+    // src/extensions/lsp.rs.
+    if args.iter().any(|a| a == "--lsp") {
+        std::process::exit(zsh::lsp::run_lsp());
+    }
+
+    // --dap HOST:PORT: connect back to the IntelliJ DAP client at the
+    // given address and serve the Debug Adapter Protocol. Implementation
+    // in src/extensions/dap.rs.
+    if let Some(i) = args.iter().position(|a| a == "--dap") {
+        let addr = args.get(i + 1).map(|s| s.as_str()).unwrap_or("127.0.0.1:0");
+        std::process::exit(zsh::dap::run_dap(addr));
+    }
+
+    // --dump-reflection: emit the JSON consumed by the IntelliJ "zshrs"
+    // reflection tool window. One top-level key per category.
+    if args.iter().any(|a| a == "--dump-reflection") {
+        println!("{}", zsh::lsp::dump_reflection_json());
+        return;
+    }
+
+    // --docs NAME: render the same hover card the LSP would return for
+    // NAME. Used by the IntelliJ tool window's docs popup.
+    if let Some(i) = args.iter().position(|a| a == "--docs") {
+        if let Some(name) = args.get(i + 1) {
+            let card = zsh::lsp::lookup_doc(name);
+            if card.is_empty() {
+                eprintln!("zshrs: no docs for {}", name);
+                std::process::exit(1);
+            }
+            println!("{}", card);
+            return;
+        }
+    }
+
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
     let enable_xtrace = args.iter().any(|a| a == "-x");
     let enable_verbose = args.iter().any(|a| a == "-v");
