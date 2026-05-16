@@ -5467,6 +5467,32 @@ pub fn clear_mbstate() {
     // (Src/utils.c, Src/pattern.c) wire the calls here.
 }
 
+/// Port of `static struct localename lc_names[]` from `Src/params.c:4805-4825`.
+/// C body:
+/// ```c
+/// static struct localename {
+///     char *name;
+///     int category;
+/// } lc_names[] = {
+///     {"LC_COLLATE", LC_COLLATE},
+///     {"LC_CTYPE", LC_CTYPE},
+///     {"LC_MESSAGES", LC_MESSAGES},
+///     {"LC_NUMERIC", LC_NUMERIC},
+///     {"LC_TIME", LC_TIME},
+///     {NULL, 0}
+/// };
+/// ```
+///
+/// The C source guards each entry under `#ifdef LC_*`; libc on
+/// macOS/Linux defines all five so the Rust port simply lists them.
+const LC_NAMES: &[(&str, libc::c_int)] = &[
+    ("LC_COLLATE", libc::LC_COLLATE),     // c:4810
+    ("LC_CTYPE", libc::LC_CTYPE),         // c:4813
+    ("LC_MESSAGES", libc::LC_MESSAGES),   // c:4816
+    ("LC_NUMERIC", libc::LC_NUMERIC),     // c:4819
+    ("LC_TIME", libc::LC_TIME),           // c:4822
+];
+
 /// Port of `setlang(char *x)` from `Src/params.c:4842`.
 ///
 /// C body (c:4842-4869):
@@ -5518,6 +5544,23 @@ pub fn setlang(x: Option<&str>) {                                            // 
         env::set_var("LANG", s);
     }
     clear_mbstate();                                                          // c:4861
+    // c:4863-4867 — `for (ln = lc_names; ln->name; ln++) if ((x =
+    // getsparam_u(ln->name)) && *x) setlocale(ln->category, x);`
+    // After the global LC_ALL setlocale, any explicitly-set LC_*
+    // category overrides its slot. The previous Rust port skipped
+    // this loop, so `LC_NUMERIC=tr_TR.UTF-8 LANG=C` would leave
+    // numeric formatting on C rather than tr_TR.
+    for (name, category) in LC_NAMES {                                      // c:4863
+        if let Ok(val) = env::var(name) {
+            if !val.is_empty() {
+                let cat_cstr = std::ffi::CString::new(val.as_bytes())
+                    .unwrap_or_default();
+                unsafe {
+                    libc::setlocale(*category, cat_cstr.as_ptr());            // c:4867
+                }
+            }
+        }
+    }
     // c:4868 — `inittyptab();`. The locale change may shift which
     // bytes are isalpha/isalnum/etc under the typtab init, so the
     // table must be rebuilt.
@@ -5637,13 +5680,23 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {                                 //
         .filter(|s| !s.is_empty())
         .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()));
     // c:4924-4928 — apply `setlocale(category, unmeta(x))` for the
-    // matching LC_* category. The Rust port writes the env var as
-    // a stand-in (zshrs uses Rust UTF-8 natively rather than libc
-    // locale tables for most paths). The unmeta step matches
-    // c:4928 `unmeta(x)` semantics.
+    // matching LC_* category. The previous Rust port skipped the
+    // actual libc setlocale call and only wrote the env var, so
+    // assigning `LC_NUMERIC=tr_TR.UTF-8` never flipped libc's
+    // numeric-formatting category.
     if let Some(v) = val {
         let unmeta = crate::ported::utils::unmeta(&v);                        // c:4928 unmeta(x)
         env::set_var(pm, &unmeta);
+        for (name, category) in LC_NAMES {                                  // c:4925
+            if *name == pm {                                                  // c:4926 strcmp
+                let cstr = std::ffi::CString::new(unmeta.as_bytes())
+                    .unwrap_or_default();
+                unsafe {
+                    libc::setlocale(*category, cstr.as_ptr());                // c:4927
+                }
+                break;
+            }
+        }
     }
     // c:4930 — `clear_mbstate();` — LC_CTYPE may have changed.
     clear_mbstate();
@@ -8858,5 +8911,132 @@ mod tests {
         // Restore.
         set_posixzero(saved_posixzero);
         set_argzero(saved_argzero);
+    }
+
+    /// Pin `LC_NAMES` to the canonical zsh `lc_names[]` table at
+    /// `Src/params.c:4805-4825`. The five categories in entry order
+    /// (LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_NUMERIC, LC_TIME) MUST
+    /// match — `lcsetfn` walks this table by `strcmp(ln->name, pm->node.nam)`
+    /// per c:4926 and dispatches to `setlocale(ln->category, ...)`.
+    #[test]
+    fn lc_names_match_zsh_canonical_table() {
+        let names: Vec<&str> = LC_NAMES.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            vec!["LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME"],
+            "Src/params.c:4805-4825 — lc_names entry order must be preserved"
+        );
+        // Verify each name maps to a distinct libc category — proves
+        // we aren't aliasing LC_NUMERIC to LC_TIME etc.
+        let cats: Vec<libc::c_int> = LC_NAMES.iter().map(|(_, c)| *c).collect();
+        let mut sorted = cats.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 5, "all five LC_* categories must be distinct");
+        assert!(cats.contains(&libc::LC_COLLATE));
+        assert!(cats.contains(&libc::LC_CTYPE));
+        assert!(cats.contains(&libc::LC_MESSAGES));
+        assert!(cats.contains(&libc::LC_NUMERIC));
+        assert!(cats.contains(&libc::LC_TIME));
+    }
+
+    /// Pin `lcsetfn` to the canonical `setlocale` invocation at
+    /// `Src/params.c:4925-4927`. When LC_ALL is empty and pm matches
+    /// an entry in `lc_names`, libc setlocale MUST be called with
+    /// the corresponding category. Verified by reading libc state
+    /// back via `setlocale(cat, NULL)` after the assignment.
+    #[test]
+    fn lcsetfn_invokes_libc_setlocale_for_matching_category() {
+        // Save LC_ALL/LC_CTYPE state.
+        let saved_lc_all = env::var("LC_ALL").ok();
+        let saved_lc_ctype = env::var("LC_CTYPE").ok();
+        env::remove_var("LC_ALL");                  // c:4912 LC_ALL must be empty for body to run
+
+        // Read libc's current LC_CTYPE setting.
+        let before = unsafe {
+            let p = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+
+        // Call lcsetfn with LC_CTYPE → "C" (universally available POSIX locale).
+        lcsetfn("LC_CTYPE", Some("C".to_string()));
+
+        // Read it back — must report "C" since C invokes setlocale(LC_CTYPE, "C").
+        let after = unsafe {
+            let p = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        assert_eq!(after, "C",
+            "Src/params.c:4927 — lcsetfn must call setlocale(LC_CTYPE, \"C\")");
+
+        // Env mirror also set.
+        assert_eq!(env::var("LC_CTYPE").unwrap_or_default(), "C");
+
+        // Restore libc + env state.
+        let _ = unsafe {
+            let c = std::ffi::CString::new(before.as_bytes()).unwrap_or_default();
+            libc::setlocale(libc::LC_CTYPE, c.as_ptr())
+        };
+        match saved_lc_all {
+            Some(v) => env::set_var("LC_ALL", v),
+            None => env::remove_var("LC_ALL"),
+        }
+        match saved_lc_ctype {
+            Some(v) => env::set_var("LC_CTYPE", v),
+            None => env::remove_var("LC_CTYPE"),
+        }
+    }
+
+    /// Pin `lcsetfn`'s LC_ALL early-return per c:4912-4913: when
+    /// LC_ALL is non-empty, lcsetfn must short-circuit BEFORE
+    /// touching libc setlocale for the per-category override.
+    #[test]
+    fn lcsetfn_short_circuits_when_lc_all_set() {
+        let saved_lc_all = env::var("LC_ALL").ok();
+        let saved_lc_ctype = env::var("LC_CTYPE").ok();
+        env::set_var("LC_ALL", "C");                // c:4912 non-empty LC_ALL
+
+        // Capture libc state before.
+        let before = unsafe {
+            let p = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+
+        // Try to set LC_CTYPE; should NOT touch libc state.
+        lcsetfn("LC_CTYPE", Some("POSIX".to_string()));
+
+        // libc state must be unchanged.
+        let after = unsafe {
+            let p = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        assert_eq!(before, after,
+            "c:4912-4913 — lcsetfn must early-return when LC_ALL is non-empty");
+
+        // Restore.
+        match saved_lc_all {
+            Some(v) => env::set_var("LC_ALL", v),
+            None => env::remove_var("LC_ALL"),
+        }
+        match saved_lc_ctype {
+            Some(v) => env::set_var("LC_CTYPE", v),
+            None => env::remove_var("LC_CTYPE"),
+        }
     }
 }
