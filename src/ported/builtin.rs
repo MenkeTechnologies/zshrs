@@ -5161,14 +5161,53 @@ pub fn _realexit() -> ! {                                                    // 
 ///   value, fire EXIT trap unless already exiting, then realexit.
 #[allow(unused_variables)]
 pub fn zexit(val: i32, from_where: i32) {                                   // c:5977
-    // c:5985 — `exit_val = val;`
-    EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5985
-    // c:5987 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
-    if SHELL_EXITING.load(Ordering::Relaxed) == -1 {                         // c:5987
+    use crate::ported::zsh_h::{MONITOR, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED};
+    // c:5989 — `exit_val = val;`
+    EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5989
+    // c:5990 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
+    if SHELL_EXITING.load(Ordering::Relaxed) == -1 {                         // c:5990
+        RETFLAG.store(1, Ordering::Relaxed);                                 // c:5991
+        BREAKS.store(LOOPS.load(Ordering::Relaxed), Ordering::Relaxed);      // c:5992
+        return;                                                              // c:5993
+    }
+
+    // c:5996-6004 — `if (isset(MONITOR) && !stopmsg && from_where != ZEXIT_SIGNAL)`:
+    // run scanjobs + checkjobs; if stopmsg got set (running jobs warned),
+    // mark stopmsg=2 and DEFER the exit. The previous Rust port skipped
+    // this entire block, so `exit` with running jobs would terminate
+    // immediately rather than emitting the standard
+    // \"zsh: you have running jobs\" + waiting for a confirmation exit.
+    if crate::ported::zsh_h::isset(MONITOR)                                  // c:5996
+        && STOPMSG.load(Ordering::Relaxed) == 0
+        && from_where != ZEXIT_SIGNAL
+    {
+        checkjobs();                                                         // c:5999
+        if STOPMSG.load(Ordering::Relaxed) != 0 {                            // c:6000
+            STOPMSG.store(2, Ordering::Relaxed);                             // c:6001
+            return;                                                          // c:6002 defer
+        }
+    }
+    // c:6006-6008 — `if (from_where == ZEXIT_DEFERRED || (shell_exiting++
+    //                 && from_where != ZEXIT_NORMAL)) return;`. Probe path:
+    // ZEXIT_DEFERRED callers only want the checkjobs gate to fire; if
+    // it didn't trip, return without actually exiting.
+    if from_where == ZEXIT_DEFERRED {                                        // c:6006
         return;
     }
-    // c:6020+ — fire trap, then realexit. Static-link path: skip trap.
-    SHELL_EXITING.store(1, Ordering::Relaxed);
+    let prev_exiting = SHELL_EXITING.fetch_add(1, Ordering::Relaxed);
+    if prev_exiting != 0 && from_where != ZEXIT_NORMAL {                     // c:6007
+        return;
+    }
+    // c:6014 — `shell_exiting = -1;`
+    SHELL_EXITING.store(-1, Ordering::Relaxed);                              // c:6014
+    // c:6019 — `errflag = 0;`
+    crate::ported::utils::errflag.store(0, Ordering::Relaxed);               // c:6019
+    // c:6021-6024 — MONITOR → killrunjobs.
+    if crate::ported::zsh_h::isset(MONITOR) {                                // c:6021
+        crate::ported::signals::killrunjobs(
+            if from_where == ZEXIT_SIGNAL { 1 } else { 0 }
+        );                                                                   // c:6023
+    }
     realexit();                                                              // c:6082
 }
 
