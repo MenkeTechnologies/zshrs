@@ -1080,6 +1080,15 @@ pub fn nohwe() { /* do nothing */ }                                          // 
 /// shouldn't show up as user-typed words in `!:N` etc.
 pub fn ihwbegin(offset: i32) {                                               // c:1656
     use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+    // c:1658 — `int pos = hptr - chline + offset;`. The C `hptr` is
+    // the current write position into the chline buffer; `pos` is
+    // the byte offset from buffer start + caller-supplied offset.
+    // The previous Rust port used `chline.lock().unwrap().len()`
+    // which is only equal to `hptr - chline` when hptr is at end —
+    // any lexer rewind (e.g. backquote, comment-resume) shifts hptr
+    // earlier and the chline.len() reading would record the WRONG
+    // word start, producing off-by-many history word offsets.
+    let hptr_val = hptr.load(Ordering::SeqCst);                              // c:1658
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
@@ -1092,17 +1101,18 @@ pub fn ihwbegin(offset: i32) {                                               // 
         return;
     }
     let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 != 0 {                                                        // c:1664
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
+    if pos % 2 != 0 {                                                        // c:1662 chwordpos%2
+        chwordpos.fetch_sub(1, Ordering::SeqCst);                            // c:1663
     }
-    let start = (chline.lock().unwrap().len() as i32 + offset).max(0) as i16;
+    // c:1666 — `if (pos < 0) pos = 0;`. The .max(0) clamp.
+    let start = ((hptr_val as i32) + offset).max(0) as i16;                  // c:1658
     let mut words = chwords.lock().unwrap();
     let idx = chwordpos.load(Ordering::SeqCst) as usize;
     if words.len() <= idx {
         words.resize(idx + 1, 0);
     }
     words[idx] = start;                                                      // c:1668
-    chwordpos.fetch_add(1, Ordering::SeqCst);
+    chwordpos.fetch_add(1, Ordering::SeqCst);                                // c:1668 chwordpos++
 }
 
 /// Port of `static void linkcurline(void)` from Src/hist.c:1079.
@@ -4087,6 +4097,92 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `ihwbegin` to its canonical C body at `Src/hist.c:1656-1670`.
+    /// The C computes `pos = hptr - chline + offset` — the byte
+    /// offset of the current write head in chline plus a caller-
+    /// supplied offset. The previous Rust port used chline.len()
+    /// which is only equal when hptr is at end-of-buffer; any
+    /// lexer rewind (backquote, comment, here-doc) would record
+    /// wrong word offsets.
+    #[test]
+    fn ihwbegin_records_hptr_not_chline_len() {
+        use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+        // Save state.
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_chwords = chwords.lock().unwrap().clone();
+        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
+        let saved_hptr = hptr.load(Ordering::SeqCst);
+        let saved_stop = stophist.load(Ordering::SeqCst);
+        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
+
+        // Set up: chline is "ABCDEFGHIJ" (10 bytes), but hptr was
+        // rewound to position 4 — simulating a lexer that backtracked.
+        // C would record pos=4 (hptr-chline=4 + offset=0); the buggy
+        // Rust port would record pos=10 (chline.len()).
+        *chline.lock().unwrap() = "ABCDEFGHIJ".to_string();
+        chwords.lock().unwrap().clear();
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(4, Ordering::SeqCst);
+        stophist.store(0, Ordering::SeqCst);
+        histactive.store(0, Ordering::SeqCst);                     // !HA_INWORD
+        crate::ported::input::inbufflags.with(|f| f.set(0));        // not alias-only
+
+        ihwbegin(0);
+
+        let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
+        assert_eq!(recorded, 4,
+            "c:1658 — pos = hptr - chline + offset = 4 + 0 = 4 \
+             (NOT chline.len()=10)");
+
+        // Negative offset clamps to 0 (c:1666).
+        chwords.lock().unwrap().clear();
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(3, Ordering::SeqCst);
+        ihwbegin(-10);                                              // pos = 3-10 = -7 → clamp to 0
+        let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
+        assert_eq!(recorded, 0,
+            "c:1666 — pos<0 clamps to 0");
+
+        // Stop guard (c:1659) — `stophist == 2` short-circuits.
+        chwords.lock().unwrap().clear();
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(5, Ordering::SeqCst);
+        stophist.store(2, Ordering::SeqCst);
+        ihwbegin(0);
+        assert!(chwords.lock().unwrap().is_empty(),
+            "c:1659 — stophist==2 short-circuits, no record");
+        stophist.store(0, Ordering::SeqCst);
+
+        // Alias-only guard (c:1659).
+        chwords.lock().unwrap().clear();
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(5, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS));
+        ihwbegin(0);
+        assert!(chwords.lock().unwrap().is_empty(),
+            "c:1659 — alias-only (INP_ALIAS without INP_HIST) short-circuits");
+
+        // INP_ALIAS|INP_HIST does NOT short-circuit (mixed input).
+        chwords.lock().unwrap().clear();
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(7, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS | INP_HIST));
+        ihwbegin(0);
+        let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
+        assert_eq!(recorded, 7,
+            "c:1659 — alias+hist mixed still records");
+
+        // Restore.
+        *chline.lock().unwrap() = saved_chline;
+        *chwords.lock().unwrap() = saved_chwords;
+        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        stophist.store(saved_stop, Ordering::SeqCst);
+        histactive.store(saved_active, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
     }
 
     /// Pin `getargs` to its canonical C body at `Src/hist.c:2454-2482`.
