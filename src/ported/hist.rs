@@ -3453,14 +3453,17 @@ pub use crate::ported::zsh_h::{
 // HISTFLAG_* (port of zsh.h)
 // =========================================================================
 
-/// Port of `HISTFLAG_DONE` from Src/zsh.h.
-pub const HISTFLAG_DONE: i32 = 1;
-/// Port of `HISTFLAG_NOEXEC` from Src/zsh.h.
-pub const HISTFLAG_NOEXEC: i32 = 2;
-/// Port of `HISTFLAG_RECALL` from Src/zsh.h.
-pub const HISTFLAG_RECALL: i32 = 4;
-/// Port of `HISTFLAG_SETTY` from Src/zsh.h.
-pub const HISTFLAG_SETTY: i32 = 8;
+// HISTFLAG_* moved to canonical home at zsh_h.rs:2598-2601 (port of
+// `Src/zsh.h:2270-2273`). Re-export here so existing callers using
+// `crate::ported::hist::HISTFLAG_*` keep compiling, and the values
+// can never diverge from zsh_h.rs.
+//
+// This is the same consolidation pattern applied to the prior HIST_*
+// flag-value drift fix and the BINF/CONDF/MFF duplicates in
+// module.rs — single source of truth for C-pinned bit values.
+pub use crate::ported::zsh_h::{
+    HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY,
+};
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
