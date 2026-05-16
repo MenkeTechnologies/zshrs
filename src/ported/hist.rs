@@ -1703,14 +1703,44 @@ pub fn ihwend() {                                                            // 
     }
 }
 
-/// Port of `int histbackword(void)` from Src/hist.c.
-pub fn histbackword(line: &str, pos: usize) -> usize {
-    if pos == 0 { return 0; }
-    let bytes = line.as_bytes();
-    let mut p = pos.min(bytes.len());
-    while p > 0 && bytes[p - 1].is_ascii_whitespace() { p -= 1; }
-    while p > 0 && !bytes[p - 1].is_ascii_whitespace() { p -= 1; }
-    p
+/// Port of `void histbackword(void)` from `Src/hist.c:1711`.
+///
+/// C body:
+/// ```c
+/// if (!(chwordpos%2) && chwordpos)
+///     hptr = chline + chwords[chwordpos-1];
+/// ```
+///
+/// Go back to immediately after the last word, skipping space.
+/// Operates on the globals `chwordpos`, `chwords`, `chline`, `hptr`.
+///
+/// The previous Rust port had a completely different signature
+/// (`(line: &str, pos: usize) -> usize`) and walked back through
+/// ASCII whitespace — a stand-alone scan helper unrelated to the
+/// C function. C operates on the GLOBAL history-line cursor via
+/// `chwords[chwordpos-1]`, not an arbitrary text scan.
+///
+/// No call sites in src/ used the Rust signature, so renaming is
+/// safe. Pin the C semantic: rewind `hptr` to the start of the
+/// previous word when we're at a word-boundary.
+pub fn histbackword() {                                                       // c:1711
+    let pos = chwordpos.load(Ordering::SeqCst);
+    // c:1714 — `if (!(chwordpos%2) && chwordpos)`. Both conditions
+    // — even (word boundary) AND non-zero.
+    if pos % 2 == 0 && pos != 0 {                                            // c:1714
+        let words = chwords.lock().unwrap();
+        let idx = (pos - 1) as usize;
+        if idx < words.len() {
+            // c:1715 — `hptr = chline + chwords[chwordpos-1]`. Rust's
+            // hptr is an offset into chline; assign the cached
+            // word-start offset (clamp negative to 0 since hptr
+            // is AtomicUsize, matching C's pointer-arithmetic
+            // semantic where chline + negative-offset is UB and
+            // would have been clamped by the parser earlier).
+            let off = (words[idx] as i32).max(0) as usize;
+            hptr.store(off, Ordering::SeqCst);                                // c:1715
+        }
+    }
 }
 
 /// Port of `int hwget(char **startptr)` from Src/hist.c.
@@ -3657,5 +3687,55 @@ mod subst_modifier_tests {
             "c:2932 — !interact must skip write; original content preserved");
         // Restore.
         dosetopt(INTERACTIVE, if saved { 1 } else { 0 }, 0);
+    }
+
+    /// Pin: `histbackword` per `Src/hist.c:1711-1715` rewinds `hptr`
+    /// to the start of the previous word ONLY when:
+    ///   1. `chwordpos % 2 == 0` (even position — at a word
+    ///      boundary, not mid-word), AND
+    ///   2. `chwordpos != 0` (at least one full word recorded).
+    /// Otherwise no-op.
+    #[test]
+    fn histbackword_rewinds_hptr_on_even_boundary() {
+        use std::sync::atomic::Ordering;
+        // Capture and reset state.
+        let saved_pos = chwordpos.swap(0, Ordering::SeqCst);
+        let saved_hptr = hptr.swap(0, Ordering::SeqCst);
+        let saved_words = {
+            let mut w = chwords.lock().unwrap();
+            std::mem::take(&mut *w)
+        };
+        // Seed: two words at offsets [0..3] "abc" and [4..7] "def".
+        // chwords layout: [start1, end1, start2, end2].
+        {
+            let mut w = chwords.lock().unwrap();
+            *w = vec![0i16, 3, 4, 7];
+        }
+        // chwordpos at 4 = even = word boundary. histbackword
+        // should set hptr = chwords[chwordpos-1] = chwords[3] = 7.
+        chwordpos.store(4, Ordering::SeqCst);
+        hptr.store(999, Ordering::SeqCst);
+        histbackword();
+        assert_eq!(hptr.load(Ordering::SeqCst), 7,
+            "c:1715 — even chwordpos must rewind hptr to chwords[pos-1]");
+
+        // chwordpos at 0 (no words recorded) — no-op.
+        chwordpos.store(0, Ordering::SeqCst);
+        hptr.store(123, Ordering::SeqCst);
+        histbackword();
+        assert_eq!(hptr.load(Ordering::SeqCst), 123,
+            "c:1714 — chwordpos == 0 means no-op (hptr untouched)");
+
+        // chwordpos at 3 (odd, mid-word) — no-op.
+        chwordpos.store(3, Ordering::SeqCst);
+        hptr.store(456, Ordering::SeqCst);
+        histbackword();
+        assert_eq!(hptr.load(Ordering::SeqCst), 456,
+            "c:1714 — odd chwordpos means mid-word, no-op");
+
+        // Restore state.
+        chwordpos.store(saved_pos, Ordering::SeqCst);
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        *chwords.lock().unwrap() = saved_words;
     }
 }
