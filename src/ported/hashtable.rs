@@ -588,7 +588,12 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
 ) -> i32 {
     let mut entries: Vec<(&String, &T)> = ht.iter().collect();
     if sorted {
-        entries.sort_by(|a, b| a.0.cmp(b.0));
+        // c:400 — `qsort(hnsorttab, ct, sizeof(HashNode), hnamcmp);`
+        // hnamcmp routes through Meta-aware ztrcmp. The previous Rust
+        // port used `str::cmp` (naive byte-wise) which sorts Meta-
+        // encoded hash keys incorrectly. Use the canonical hnamcmp
+        // to match C's qsort comparator exactly.
+        entries.sort_by(|a, b| hnamcmp(a.0, b.0));                           // c:400
     }
     let mut match_count = 0;
     for (name, node) in entries {
