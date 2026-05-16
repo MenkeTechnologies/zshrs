@@ -4475,16 +4475,34 @@ pub fn strgetfn(pm: &crate::ported::zsh_h::param) -> String {
     pm.u_str.clone().unwrap_or_default()
 }
 
-/// Port of `strsetfn(Param pm, char *x)` from `Src/params.c:4038`. C body:
-/// `zsfree(pm->u.str); pm->u.str = x;` plus AUTONAMEDIRS handling.
-/// The `adduserdir()` call is gated on PM_NAMEDDIR/AUTONAMEDIRS.
-pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {
-    pm.u_str = Some(x.clone());
-    if (pm.node.flags as u32 & PM_HASHELEM) == 0 {
-        if (pm.node.flags as u32 & PM_NAMEDDIR) != 0 {
-            pm.node.flags |= PM_NAMEDDIR as i32;
-            crate::ported::utils::adduserdir(&pm.node.nam, &x, 0, false);
-        }
+/// Port of `strsetfn(Param pm, char *x)` from `Src/params.c:4040`.
+///
+/// C body (c:4043-4051):
+/// ```c
+/// zsfree(pm->u.str); pm->u.str = x;
+/// if (!(pm->node.flags & PM_HASHELEM) &&
+///     ((pm->node.flags & PM_NAMEDDIR) || isset(AUTONAMEDIRS))) {
+///     pm->node.flags |= PM_NAMEDDIR;
+///     adduserdir(pm->node.nam, x, 0, 0);
+/// }
+/// ```
+///
+/// The C body fires the `adduserdir` path when EITHER `PM_NAMEDDIR`
+/// is already set OR the `AUTONAMEDIRS` option is on. The previous
+/// Rust port only fired when PM_NAMEDDIR was already set, missing
+/// the AUTONAMEDIRS auto-create branch entirely. With `setopt
+/// AUTONAMEDIRS`, every scalar assignment to a path-shaped value
+/// should register a named-directory entry for `~name` expansion;
+/// the Rust port silently dropped that behavior.
+pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {            // c:4040
+    pm.u_str = Some(x.clone());                                               // c:4044 pm->u.str = x
+    // c:4045-4046 — `if (!(PM_HASHELEM) && (PM_NAMEDDIR || isset(AUTONAMEDIRS)))`.
+    if (pm.node.flags as u32 & PM_HASHELEM) == 0
+        && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0
+            || isset(crate::ported::zsh_h::AUTONAMEDIRS))                    // c:4046 isset(AUTONAMEDIRS)
+    {
+        pm.node.flags |= PM_NAMEDDIR as i32;                                  // c:4047
+        crate::ported::utils::adduserdir(&pm.node.nam, &x, 0, false);         // c:4048
     }
 }
 
