@@ -850,8 +850,36 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
     // c:678-694 — display path when no array/no args.
     if arrayname.is_none() {                                                 // c:678
         if !hadopt && remaining.is_empty() {                                 // c:679
-            // c:680 — `scanhashtable(paramtab, 1, 0, 0, paramtab->printnode, ...);`
-            for (k, v) in std::env::vars() {
+            // c:680-681 — `scanhashtable(paramtab, 1, 0, 0,
+            //              paramtab->printnode, hadplus ? PRINT_NAMEONLY : 0);`
+            //
+            // C walks the paramtab (sorted=1 → alphabetical). The previous
+            // Rust port walked `std::env::vars()` — the OS environment.
+            // Shell-internal vars (not exported to env) would never appear
+            // in the `set` listing, diverging from C where ALL paramtab
+            // entries are emitted.
+            //
+            // Same family of bug as the prior bin_unset -m fix.
+            let mut entries: Vec<(String, String)> = {
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                tab.iter()
+                    .filter(|(_, pm)| {
+                        // c:scanhashtable filter: skip PM_UNSET. C also
+                        // skips entries with flags2=0 (none extra filtered).
+                        (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0
+                    })
+                    .map(|(k, pm)| {
+                        let v = pm.u_str.clone().unwrap_or_default();
+                        (k.clone(), v)
+                    })
+                    .collect()
+            };
+            // c:680 sorted=1 → meta-aware sort via hnamcmp (already fixed
+            // to use ztrcmp earlier in the series).
+            entries.sort_by(|a, b| {
+                crate::ported::hashtable::hnamcmp(&a.0, &b.0)
+            });
+            for (k, v) in entries {
                 if hadplus {                                                 // c:681 PRINT_NAMEONLY
                     println!("{}", k);
                 } else {
