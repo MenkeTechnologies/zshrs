@@ -5090,9 +5090,21 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
 ///   running (when CHECKRUNNINGJOBS is set) or STAT_STOPPED, emit
 ///   "you have running/stopped jobs" + set `stopmsg = 1`.
 pub fn checkjobs() {                                                         // c:5899
+    use std::sync::Mutex;
     let checkrunning = crate::ported::zsh_h::isset(crate::ported::options::optlookup("checkrunningjobs"));
-    let thisjob = THISJOB.load(Ordering::Relaxed);
-    let maxjob  = MAXJOB.load(Ordering::Relaxed);
+    // c:5901 — read the canonical jobs.rs THISJOB/MAXJOB globals.
+    // The previous builtin.rs duplicate AtomicI32s for both never
+    // synced with the jobs.rs Mutex<i32> values that the spawn /
+    // wait paths actually update — checkjobs would see stale 0s
+    // regardless of how many jobs were active.
+    let thisjob: i32 = *crate::ported::jobs::THISJOB
+        .get_or_init(|| Mutex::new(-1_i32))
+        .lock().expect("THISJOB poisoned");
+    // jobs::MAXJOB is stored as `Mutex<usize>` (Rust adaptation for
+    // Vec-index semantics); cast to i32 for comparison with `thisjob`.
+    let maxjob: i32 = *crate::ported::jobs::MAXJOB
+        .get_or_init(|| Mutex::new(0_usize))
+        .lock().expect("MAXJOB poisoned") as i32;
 
     // c:5903 — `for (i = 1; i <= maxjob; i++)`
     let mut found: Option<i32> = None;
@@ -6227,9 +6239,13 @@ pub static STOPMSG: std::sync::atomic::AtomicI32 =
 // dispatch context (SFC_NONE / SFC_BUILTIN / SFC_FUNC / SFC_SUBST...).
 pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:exec.c:239
-// `maxjob` / `thisjob` globals from Src/jobs.c:62/63.
-pub static MAXJOB:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static THISJOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// `maxjob` / `thisjob` globals from Src/jobs.c:62/63 — canonical
+// storage lives in jobs.rs (`OnceLock<Mutex<i32>>`). The previous
+// builtin.rs duplicate `AtomicI32` stores NEVER synced with the
+// jobs.rs Mutex<i32> values that the spawn/wait paths actually
+// update; `checkjobs` (line 5092) read stale 0s no matter how many
+// jobs were active. Callers route through jobs::MAXJOB / jobs::THISJOB
+// directly now.
 // `jobstats` mirror — flat per-slot stat bits (STAT_*). Real jobtab
 // lives in src/ported/jobs.rs's JobTable; this mirror is updated by
 // the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
