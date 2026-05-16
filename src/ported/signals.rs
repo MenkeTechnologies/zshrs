@@ -1726,13 +1726,31 @@ fn interact_lock() -> &'static std::sync::atomic::AtomicBool {
 /// Setter for the `interact` flag. Called by init.rs once the
 /// shell-mode dispatch determines whether stdin is a tty / `-i`
 /// was passed.
+///
+/// Writes to the canonical INTERACTIVE option flag so the read
+/// side (`is_interact` → `isset(INTERACTIVE)`) sees it.
 pub fn set_interact(v: bool) {
-    interact_lock().store(v, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::options::opt_state_set("interactive", v);
 }
 
 /// Read the `interact` flag.
+///
+/// C: `#define interact (isset(INTERACTIVE))` (Src/zsh.h:2562) —
+/// the canonical interact predicate reads the INTERACTIVE option
+/// flag from the options table.
+///
+/// The previous Rust port read `interact_lock()` (a private
+/// AtomicBool) whose only writer was `set_interact()` — and
+/// `set_interact` was called ONLY from this file's tests. In
+/// production, `interact_lock` stayed at the default `false`, so
+/// every `if is_interact()` gate in `intr`/`nointr`/`holdintr`/
+/// `noholdintr` short-circuited regardless of whether the shell
+/// was actually interactive. `setopt INTERACTIVE` had no effect
+/// on signal handling.
+///
+/// Route through canonical isset() so the option drives the predicate.
 pub fn is_interact() -> bool {
-    interact_lock().load(std::sync::atomic::Ordering::SeqCst)
+    crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
 }
 
 // ===========================================================
