@@ -618,12 +618,38 @@ pub fn unsettrap(sig: i32) {                                                 // 
         .ok()
         .and_then(|g| g.get(sig as usize).copied())
         .unwrap_or(0);
-    if trapped == 0 { return; }                                              // c:765 untrapped
+    // c:765 — `if (sig == -1 || (jobbing && (SIGTTOU || SIGTSTP || SIGTTIN))) return NULL`.
+    // The Rust call sites already use sig in [0, SIGCOUNT]; sig == -1 is rare,
+    // but jobbing+job-control reject mirrors C exactly.
+    if sig == -1 { return; }
+    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+    if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
+        return;
+    }
     let locallevel = crate::ported::utils::locallevel() as i32;
+    // c:769-774 — `if (!dontsavetrap && (sig == SIGEXIT ? !isset(POSIXTRAPS)
+    // : isset(LOCALTRAPS)) && locallevel && (!trapped || locallevel >
+    // (sigtrapped[sig] >> ZSIG_SHIFT))) dosavetrap(sig, locallevel);`.
+    //
+    // The previous Rust port was buggy in three ways:
+    //   (a) early-returned on `trapped == 0`, defeating the C path
+    //       that wants to save-trap for clean unset of an untrapped slot;
+    //   (b) used `!trapped` as BITWISE NOT (Rust `!i32` is bitwise) instead
+    //       of LOGICAL NOT (`trapped == 0`);
+    //   (c) omitted the SIGEXIT/POSIXTRAPS-LOCALTRAPS option gates and the
+    //       locallevel-non-zero requirement entirely.
+    let cond_local_or_exit = if sig == SIGEXIT {
+        !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS)        // c:771 sig==SIGEXIT branch
+    } else {
+        crate::ported::zsh_h::isset(crate::ported::zsh_h::LOCALTRAPS)         // c:771 else branch
+    };
     if DONTSAVETRAP.load(Ordering::Relaxed) == 0                             // c:769
-        && (!trapped != 0 || locallevel > (trapped >> ZSIG_SHIFT))
+        && cond_local_or_exit
+        && locallevel != 0                                                   // c:772 `locallevel &&`
+        && (trapped == 0                                                     // c:773 `!trapped` (logical NOT)
+            || locallevel > (trapped >> ZSIG_SHIFT))
     {
-        dosavetrap(sig, locallevel);                                         // c:771
+        dosavetrap(sig, locallevel);                                         // c:774
     }
     if trapped & ZSIG_TRAPPED != 0 {
         nsigtrapped.fetch_sub(1, Ordering::Relaxed);                         // c:799
@@ -634,6 +660,9 @@ pub fn unsettrap(sig: i32) {                                                 // 
     if let Ok(mut g) = siglists.lock() {
         if let Some(slot) = g.get_mut(sig as usize) { *slot = None; }
     }
+    // c:803-845 — special re-install paths per signal. Approximate
+    // here with the c:846 default fallback; the SIGINT/SIGHUP/SIGPIPE
+    // re-install paths are not yet ported.
     if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
         signal_default(sig);                                                 // c:846
     }
