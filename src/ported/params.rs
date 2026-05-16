@@ -5385,12 +5385,20 @@ pub fn histsizegetfn() -> i64 {
 
 /// Port of `histsizesetfn(UNUSED(Param pm), zlong v)` from `Src/params.c:4974`. C body:
 /// `if ((histsiz = v) < 1) histsiz = 1; resizehistents();`
+///
+/// The previous Rust port noted `resizehistents()` as "pending the
+/// history-table port", but `crate::ported::hist::resizehistents`
+/// IS available — was a stale comment. Without the resize call,
+/// setting HISTSIZE to a smaller value left the in-memory ring
+/// over-sized until the next implicit prune (next entry added).
+/// Wired the call now per c:4977.
 /// WARNING: param names don't match C — Rust=(v) vs C=(pm, v)
 pub fn histsizesetfn(v: i64) {
     *histsiz_lock().lock().expect("histsiz poisoned") = v.max(1);
-    // `resizehistents()` is a hist.c entry point — pending the
-    // history-table port, the size change is recorded in the
-    // static and picked up the next time the history layer reads.
+    // c:4977 — mirror into the hist.rs atomic so resizehistents()
+    // sees the new size, then trigger the prune.
+    crate::ported::hist::histsiz.store(v.max(1), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::hist::resizehistents();                                   // c:4977
 }
 
 /// Port of `savehistsizegetfn(UNUSED(Param pm))` from `Src/params.c:4985`. C body:
@@ -7331,6 +7339,12 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     }
 }
 
+/// Shared test mutex for histsiz mutations (gsu_tests +
+/// tests submodules both write the same global; this lock
+/// serialises them under parallel test execution).
+#[cfg(test)]
+pub(crate) static HISTSIZ_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod gsu_tests {
     use super::*;
@@ -7370,6 +7384,7 @@ mod gsu_tests {
 
     #[test]
     fn test_histsiz_clamps_to_1() {
+        let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let original = histsizegetfn();
         histsizesetfn(0);
         assert_eq!(histsizegetfn(), 1);
@@ -8092,6 +8107,44 @@ mod tests {
     /// Shared mutex for tests that mutate argzero/posixzero — both
     /// share global state and race when run in parallel.
     static ARGZERO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // HISTSIZ_TEST_LOCK is defined at module scope to share between
+    // gsu_tests and tests submodules — both mutate histsiz.
+
+    /// `Src/params.c:4974-4977` — `histsizesetfn` floors at 1 then
+    /// calls `resizehistents()` to prune the in-memory ring to the
+    /// new cap. The previous Rust port skipped the resize call (and
+    /// also failed to mirror the value into `hist::histsiz`), so
+    /// HISTSIZE shrinks didn't take effect until the next implicit
+    /// prune. Pin: setting HISTSIZE to N caps both the param store
+    /// AND the hist::histsiz atomic used by resizehistents.
+    #[test]
+    fn histsizesetfn_floors_at_one_and_mirrors_to_hist_module() {
+        let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use std::sync::atomic::Ordering;
+        let saved_param = histsizegetfn();
+        let saved_hist = crate::ported::hist::histsiz.load(Ordering::SeqCst);
+
+        // c:4976 — value < 1 floors at 1.
+        crate::ported::params::histsizesetfn(0);
+        assert_eq!(histsizegetfn(), 1,
+            "c:4976 — HISTSIZE 0 must floor at 1");
+        assert_eq!(crate::ported::hist::histsiz.load(Ordering::SeqCst), 1,
+            "c:4977 — mirror into hist::histsiz so resizehistents sees it");
+
+        // Negative floors too.
+        crate::ported::params::histsizesetfn(-5);
+        assert_eq!(histsizegetfn(), 1, "c:4976 — negative floors at 1");
+
+        // Positive passes through.
+        crate::ported::params::histsizesetfn(500);
+        assert_eq!(histsizegetfn(), 500);
+        assert_eq!(crate::ported::hist::histsiz.load(Ordering::SeqCst), 500);
+
+        // Restore.
+        *crate::ported::params::histsiz_lock().lock().unwrap() = saved_param;
+        crate::ported::hist::histsiz.store(saved_hist, Ordering::SeqCst);
+    }
 
     /// `Src/params.c:5152-5158` — `underscoregetfn` returns
     /// `dupstring(zunderscore)` then runs `untokenize(u)` on it.
