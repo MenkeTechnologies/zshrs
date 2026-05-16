@@ -79,4 +79,72 @@ mod tests {
         sorted.dedup();
         assert_eq!(sorted.len(), ids.len());
     }
+
+    /// `Src/hashtable.h:34-66` — every BIN_* slot has a specific
+    /// numeric value the dispatch code uses to switch behavior inside
+    /// the shared bodies (`bin_break` switches on `func` between
+    /// BIN_BREAK=6 / BIN_CONTINUE=7 / BIN_EXIT=8 / BIN_RETURN=9 /
+    /// BIN_LOGOUT=19). Pin every value so a reorder fails loudly.
+    #[test]
+    fn bin_constants_match_c_source_position_for_position() {
+        let table = [
+            ("BIN_TYPESET",    BIN_TYPESET,    0),  // c:34
+            ("BIN_BG",         BIN_BG,         1),  // c:35
+            ("BIN_FG",         BIN_FG,         2),  // c:36
+            ("BIN_JOBS",       BIN_JOBS,       3),  // c:37
+            ("BIN_WAIT",       BIN_WAIT,       4),  // c:38
+            ("BIN_DISOWN",     BIN_DISOWN,     5),  // c:39
+            ("BIN_BREAK",      BIN_BREAK,      6),  // c:40
+            ("BIN_CONTINUE",   BIN_CONTINUE,   7),  // c:41
+            ("BIN_EXIT",       BIN_EXIT,       8),  // c:42
+            ("BIN_RETURN",     BIN_RETURN,     9),  // c:43
+            ("BIN_CD",         BIN_CD,         10), // c:44
+            ("BIN_POPD",       BIN_POPD,       11), // c:45
+            ("BIN_PUSHD",      BIN_PUSHD,      12), // c:46
+            ("BIN_PRINT",      BIN_PRINT,      13), // c:47
+            ("BIN_EVAL",       BIN_EVAL,       14), // c:48
+            ("BIN_SCHED",      BIN_SCHED,      15), // c:49
+            ("BIN_FC",         BIN_FC,         16), // c:50
+            ("BIN_R",          BIN_R,          17), // c:51
+            ("BIN_PUSHLINE",   BIN_PUSHLINE,   18), // c:52
+            ("BIN_LOGOUT",     BIN_LOGOUT,     19), // c:53
+            ("BIN_TEST",       BIN_TEST,       20), // c:54
+            ("BIN_BRACKET",    BIN_BRACKET,    21), // c:55
+            ("BIN_READONLY",   BIN_READONLY,   22), // c:56
+            ("BIN_ECHO",       BIN_ECHO,       23), // c:57
+            ("BIN_DISABLE",    BIN_DISABLE,    24), // c:58
+            ("BIN_ENABLE",     BIN_ENABLE,     25), // c:59
+            ("BIN_PRINTF",     BIN_PRINTF,     26), // c:60
+            ("BIN_COMMAND",    BIN_COMMAND,    27), // c:61
+            ("BIN_UNHASH",     BIN_UNHASH,     28), // c:62
+            ("BIN_UNALIAS",    BIN_UNALIAS,    29), // c:63
+            ("BIN_UNFUNCTION", BIN_UNFUNCTION, 30), // c:64
+            ("BIN_UNSET",      BIN_UNSET,      31), // c:65
+            ("BIN_EXPORT",     BIN_EXPORT,     32), // c:66
+        ];
+        for (name, got, want) in table {
+            assert_eq!(got, want,
+                "c:34-66 — {} must be {} (C source value)", name, want);
+        }
+    }
+
+    /// `Src/hashtable.h:69-70` — `BIN_SETOPT=0`, `BIN_UNSETOPT=1`.
+    /// The "// These currently depend on being 0 and 1" comment in
+    /// the C source is load-bearing: `bin_setopt` switches on
+    /// `func==BIN_SETOPT` to choose set vs unset. Pin the values
+    /// AND the intentional overlap with BIN_TYPESET / BIN_BG so a
+    /// future "let's renumber" refactor surfaces the dependency.
+    #[test]
+    fn setopt_unsetopt_pin_to_zero_and_one() {
+        assert_eq!(BIN_SETOPT, 0,
+            "c:69 — BIN_SETOPT must be 0 (load-bearing per c:68 comment)");
+        assert_eq!(BIN_UNSETOPT, 1,
+            "c:70 — BIN_UNSETOPT must be 1 (load-bearing per c:68 comment)");
+        // The c:68 comment "These currently depend on being 0 and 1"
+        // implies the overlap with BIN_TYPESET / BIN_BG is intentional
+        // because setopt/unsetopt dispatch is in a different switch.
+        assert_eq!(BIN_SETOPT, BIN_TYPESET,
+            "c:68 — intentional overlap: setopt/unsetopt vs typeset/bg use disjoint dispatch");
+        assert_eq!(BIN_UNSETOPT, BIN_BG);
+    }
 }
