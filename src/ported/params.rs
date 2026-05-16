@@ -2884,11 +2884,19 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
         }
     } else if t == PM_INTEGER {                                              // c:2371
         // c:2373 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
-        // Without the base-aware convbase port, default to base-10.
-        intgetfn(pm).to_string()
+        // The previous Rust port used `intgetfn(pm).to_string()` (naked
+        // base-10). With `convbase` now ported (params.rs:6577), honor
+        // `pm.base` so `typeset -i 16 x=255` renders as `0xff` rather
+        // than `255` per zsh's `$x`-expansion + `typeset -p`.
+        crate::ported::params::convbase_underscore(
+            intgetfn(pm),
+            if pm.base > 0 { pm.base as u32 } else { 10 },                   // c:2373 pm->base
+            pm.width,                                                         // c:2373 pm->width for underscore grouping
+        )
     } else if t == PM_EFLOAT || t == PM_FFLOAT {                             // c:2375
         // c:2377 — `convfloat(getfn(pm), pm->base, pm->flags, NULL)`.
-        floatgetfn(pm).to_string()
+        // Route through convfloat_underscore which honors pm.width.
+        crate::ported::params::convfloat_underscore(floatgetfn(pm), pm.width)
     } else if t == PM_SCALAR || t == PM_NAMEREF {                            // c:2380
         strgetfn(pm)
     } else {
@@ -9274,6 +9282,73 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `getstrvalue` PM_INTEGER branch to canonical C convbase
+    /// dispatch at `Src/params.c:2373`. The previous Rust port used
+    /// naked `.to_string()` (base-10) regardless of `pm.base`; C
+    /// honors the param's stored base so `typeset -i 16 x=255` renders
+    /// as `0xff` not `255`.
+    #[test]
+    fn getstrvalue_pm_integer_honors_pm_base() {
+        use crate::ported::zsh_h::{value, param, hashnode, PM_INTEGER};
+
+        let saved_cbases_top = crate::ported::options::opt_state_get("cbases")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("cbases", true);
+
+        // Build a PM_INTEGER param with u_val=255 and base=16.
+        let mut pm = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: "test_hex_var".to_string(),
+                flags: PM_INTEGER as i32,
+            },
+            u_data: 0, u_arr: None, u_str: None,
+            u_val: 255, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None,
+            gsu_a: None, gsu_h: None,
+            base: 16, width: 0,
+            env: None, ename: None, old: None, level: 0,
+        });
+        let mut v = value {
+            pm: Some(pm.clone()),
+            arr: Vec::new(),
+            scanflags: 0, valflags: 0,
+            start: 0, end: -1,
+        };
+        let rendered = getstrvalue(Some(&mut v));
+        assert_eq!(rendered, "0xFF",
+            "c:2373 / c:5621 — PM_INTEGER base=16 + u_val=255 with CBASES \
+             renders as `0xFF` (uppercase per C `dig - 10 + 'A'`), got {:?}",
+            rendered);
+
+        // Base-8 (octal) with OCTALZEROES.
+        let saved_oct = crate::ported::options::opt_state_get("octalzeroes")
+            .unwrap_or(false);
+        let saved_cbases = crate::ported::options::opt_state_get("cbases")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("cbases", true);
+        crate::ported::options::opt_state_set("octalzeroes", true);
+        pm.base = 8;
+        pm.u_val = 8;
+        v.pm = Some(pm.clone());
+        let rendered = getstrvalue(Some(&mut v));
+        assert_eq!(rendered, "010",
+            "c:2373 — PM_INTEGER base=8 with OCTALZEROES renders as `010`, got {:?}",
+            rendered);
+        crate::ported::options::opt_state_set("cbases", saved_cbases);
+        crate::ported::options::opt_state_set("octalzeroes", saved_oct);
+
+        // Base=0 (default) → base-10.
+        pm.base = 0;
+        pm.u_val = 42;
+        v.pm = Some(pm.clone());
+        let rendered = getstrvalue(Some(&mut v));
+        assert_eq!(rendered, "42",
+            "c:2373 — PM_INTEGER base=0 defaults to base-10");
+
+        crate::ported::options::opt_state_set("cbases", saved_cbases_top);
     }
 
     /// Pin `unsetparam` to its canonical C body at `Src/params.c:3819-3833`.
