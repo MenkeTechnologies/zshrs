@@ -633,16 +633,21 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
 /// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn dashgetfn() -> String {
-    // C reads `opts[optno]` for each single-letter option (c:890-895).
-    // The Rust port's authoritative store is OPTS_LIVE (the same map
-    // `opt_state_get` reads), so route each lookup through it.
+    // c:289-290 — `#define FIRST_OPT '0'` / `#define LAST_OPT 'y'`.
+    // The previous Rust port iterated `(b'A'..=b'z')` (A=0x41..z=0x7a),
+    // skipping the 17 char positions C walks BEFORE 'A' (digits + most
+    // ASCII punctuation between '0' and '@'). Option letters in this
+    // range — e.g. `-?` could be valid — were silently dropped from
+    // the `$-` string. Match C exactly with FIRST_OPT..=LAST_OPT.
+    const FIRST_OPT: u8 = b'0';                                              // c:289
+    const LAST_OPT:  u8 = b'y';                                              // c:290
     let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
     };
     let mut out = String::new();
-    for c in (b'A'..=b'z').map(|b| b as char) {
+    for c in (FIRST_OPT..=LAST_OPT).map(|b| b as char) {                     // c:896
         for (ch, name, negated) in letters {
             if *ch == c {
                 let value = opt_state_get(name).unwrap_or(false);            // c:891 `opts[optno]`
@@ -1904,6 +1909,46 @@ mod tests {
         opt_state_set("interactive", saved_interactive);
         opt_state_set("shinstdin", saved_shinstdin);
         opt_state_set("singlecommand", saved_single);
+    }
+
+    /// `Src/options.c:289-290 + 896` — `dashgetfn` iterates the option
+    /// letter table over `FIRST_OPT..=LAST_OPT` = `'0'..='y'`. The
+    /// previous Rust port iterated `b'A'..=b'z'`, skipping the 17
+    /// char positions C walks BEFORE 'A'. Pin the C-faithful range
+    /// AND verify a known interactive flag (`-i`) appears when the
+    /// corresponding option is set.
+    #[test]
+    fn dashgetfn_iterates_c_canonical_range_first_opt_to_last_opt() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // Save state.
+        let saved_i = opt_state_get("interactive").unwrap_or(false);
+        let saved_m = opt_state_get("monitor").unwrap_or(false);
+
+        // Enable interactive (i) and monitor (m); both have ASCII
+        // letter entries in zshletters within [A-z] range.
+        opt_state_set("interactive", true);
+        opt_state_set("monitor", true);
+        let dash = dashgetfn();
+        assert!(dash.contains('i'),
+            "c:891 — interactive set → 'i' appears in $-");
+        assert!(dash.contains('m'),
+            "c:891 — monitor set → 'm' appears in $-");
+
+        // Pin the range endpoints: any letter ≥ '0' (0x30) and ≤ 'y'
+        // (0x79) must be considered by the loop. C uses FIRST_OPT='0'
+        // = 0x30 and LAST_OPT='y' = 0x79 per c:289-290.
+        // The returned string contains only valid letters that were
+        // both in the table AND set; verify NONE of the chars are
+        // outside [0..=y].
+        for b in dash.bytes() {
+            assert!((b'0'..=b'y').contains(&b),
+                "c:289-290 — every emitted char must be in [FIRST_OPT..=LAST_OPT] = '0'..='y', got {}", b as char);
+        }
+
+        // Restore.
+        opt_state_set("interactive", saved_i);
+        opt_state_set("monitor", saved_m);
     }
 
     /// `Src/options.c:735-744` — `dosetopt(optno < 0, value, _)` flips
