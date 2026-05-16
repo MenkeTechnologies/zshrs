@@ -1537,8 +1537,9 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
             return 1;                                                        // c:1488
         }
         // c:1490 — `return !saveandpophiststack(-1, HFILE_USE_OPTIONS);`.
-        crate::ported::hist::saveandpophiststack(HFILE_USE_OPTIONS as i32);  // c:1490
-        return 0;
+        let popped = crate::ported::hist::saveandpophiststack(
+            -1, HFILE_USE_OPTIONS as i32);                                   // c:1490
+        return if popped != 0 { 0 } else { 1 };                              // c:1490 `!` flip
     }
 
     // c:1494-1500 — `-m` pattern filter (compile first arg).
