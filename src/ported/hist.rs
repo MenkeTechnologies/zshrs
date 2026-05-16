@@ -173,8 +173,73 @@ pub fn ihwaddc(c: i32) {                                                     // 
 }
 
 /// Port of `void iaddtoline(int c)` from Src/hist.c:397.
+///
+/// C body (c:397-414):
+/// ```c
+/// if (!expanding || lexstop) return;
+/// if (qbang && c == bangchar && stophist < 2) {
+///     exlast--;
+///     zleentry(ZLE_CMD_ADD_TO_LINE, '\\');
+/// }
+/// if (excs > zlemetacs) {
+///     excs += 1 + inbufct - exlast;
+///     if (excs < zlemetacs) excs = zlemetacs;
+/// }
+/// exlast = inbufct;
+/// zleentry(ZLE_CMD_ADD_TO_LINE, itok(c) ? ztokens[c - Pound] : c);
+/// ```
+///
+/// The previous Rust port collapsed the body to a single
+/// `chline.push(c as u8 as char)` and dropped:
+///   - The `!expanding || lexstop` guard (c:399) — pushed
+///     unconditionally even when not in history expansion.
+///   - The bang-escape `qbang` path (c:401-404).
+///   - The `excs`/`exlast` cursor tracking (c:405-410).
+///   - The crucial `itok(c) ? ztokens[c - Pound] : c` mapping at
+///     c:413 — without it, token bytes (`Pound`..`Nularg` =
+///     0x84..0xa1) get pushed RAW into the history line buffer
+///     instead of being decoded to their visible chars (`#`,
+///     `$`, `^`, `*`, `(`, ...).
+///
+/// Port the guard, bangchar escape, and the itok→ztokens
+/// mapping. The cursor tracking + zleentry hook are doc-pinned
+/// for future ZLE wireup but otherwise no-op since chline is
+/// the backing store for both code paths in zshrs.
 pub fn iaddtoline(c: i32) {                                                  // c:397
-    chline.lock().unwrap().push(c as u8 as char);
+    use crate::ported::ztype_h::itok;
+    // c:399 — `if (!expanding || lexstop) return;`.
+    if expanding.load(Ordering::SeqCst) == 0
+        || lexstop.load(Ordering::SeqCst)
+    {
+        return;
+    }
+    // c:401-404 — bang-escape under qbang.
+    let bc = bangchar.load(Ordering::SeqCst);
+    if qbang.load(Ordering::SeqCst)
+        && c == bc
+        && stophist.load(Ordering::SeqCst) < 2
+    {
+        exlast.fetch_sub(1, Ordering::SeqCst);                                // c:402
+        chline.lock().unwrap().push('\\');                                    // c:403 zleentry ADD '\\'
+    }
+    // c:410 — `exlast = inbufct;`
+    let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
+    exlast.store(inbufct_v, Ordering::SeqCst);                                // c:410
+    // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
+    let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
+        let idx = (c as u8).wrapping_sub(crate::ported::zsh_h::Pound as u8) as usize;
+        // ztokens is the literal-char back-mapping for ITOK bytes.
+        // Defensively guard against an out-of-range token byte
+        // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
+        // entries; ztokens covers them).
+        crate::ported::lex::ztokens
+            .bytes()
+            .nth(idx)
+            .unwrap_or(c as u8)
+    } else {
+        c as u8
+    };
+    chline.lock().unwrap().push(push_byte as char);                           // c:413
 }
 
 /// Port of `void safeinungetc(int c)` from Src/hist.c:466.
