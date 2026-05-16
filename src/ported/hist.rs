@@ -864,6 +864,17 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
 }
 
 /// Port of `void herrflush(void)` from Src/hist.c:477.
+///
+/// C body drains the input buffer after a history-expansion error,
+/// feeding the consumed chars into the history-build cursor
+/// (`hwaddc` + `addtoline`) so the history line still records the
+/// raw input that failed. Without this drain, the history entry
+/// for a failed `!ev` would be truncated at the failure point.
+///
+/// The previous Rust port left the drain loop as a no-op comment,
+/// claiming the deps weren't ported. They ARE: `ihwaddc` /
+/// `iaddtoline` live at hist.rs above; `strin` / `LEX_LEX_ADD_RAW`
+/// are file-statics on this module + lex.rs.
 pub fn herrflush() {                                                         // c:477
     // c:479 — `inpopalias();`
     crate::ported::input::inpopalias();
@@ -874,20 +885,34 @@ pub fn herrflush() {                                                         // 
     }
 
     // c:494-500 — drain the input buffer when expanding history for
-    // ZLE (`strin` set + `lex_add_raw`) by reading + re-feeding chars
-    // into the history line via `hwaddc`+`addtoline`. Skipped:
-    // `hwaddc` (hist.c:357 ihwaddc) and `addtoline` depend on the
-    // history-build cursor globals (`chline`, `hptr`, `hlinesz`,
-    // `qbang`, `bangchar`, `stophist`, `inbufflags`) that haven't
-    // been ported. The drain is a no-op outside ZLE-history-
-    // expansion paths; static-link CLI scripts hit the early
-    // `lexstop` return above.
+    // ZLE (the `!strin || lex_add_raw` arm covers the two cases where
+    // the input must be flushed into the history line:
+    //   - non-ZLE non-string input (`!strin` true);
+    //   - ZLE with raw-recording (`lex_add_raw != 0`).
     //
     // C:
     //   while (inbufct && (!strin || lex_add_raw)) {
     //       int c = ingetc();
     //       if (!lexstop) { hwaddc(c); addtoline(c); }
     //   }
+    loop {
+        let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+        if inbufct <= 0 {
+            break;
+        }
+        let strin_v = strin.load(Ordering::SeqCst);
+        let lex_add_raw = crate::ported::lex::LEX_LEX_ADD_RAW.get();
+        if !(strin_v == 0 || lex_add_raw != 0) {                             // c:494 (!strin || lex_add_raw)
+            break;
+        }
+        let c = crate::ported::input::ingetc()                               // c:495 ingetc()
+            .map(|ch| ch as i32)
+            .unwrap_or(-1);
+        if !crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {              // c:496 if (!lexstop)
+            ihwaddc(c);                                                       // c:497 hwaddc(c)
+            iaddtoline(c);                                                    // c:498 addtoline(c)
+        }
+    }
 }
 
 /// Port of `int getargc(Histent ehist)` from Src/hist.c.
