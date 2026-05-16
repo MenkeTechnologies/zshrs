@@ -5467,23 +5467,60 @@ pub fn clear_mbstate() {
     // (Src/utils.c, Src/pattern.c) wire the calls here.
 }
 
-/// Port of `setlang(char *x)` from `Src/params.c:4840`. C body:
-/// `if (LC_ALL set) return; setlocale(LC_ALL, x); for each LC_*: if set, setlocale(category, x);`
-pub fn setlang(x: Option<&str>) {
+/// Port of `setlang(char *x)` from `Src/params.c:4842`.
+///
+/// C body (c:4842-4869):
+/// ```c
+/// if ((x2 = getsparam_u("LC_ALL")) && *x2) return;
+/// setlocale(LC_ALL, x ? unmeta(x) : "");
+/// clear_mbstate();
+/// queue_signals();
+/// for (ln = lc_names; ln->name; ln++)
+///     if ((x = getsparam_u(ln->name)) && *x)
+///         setlocale(ln->category, x);
+/// unqueue_signals();
+/// inittyptab();
+/// ```
+///
+/// The previous Rust port skipped the actual `setlocale(LC_ALL, ...)`
+/// libc call and just set the LANG env var. C invokes libc
+/// setlocale to actually change the program's locale state —
+/// required so any libc calls during shell execution (e.g.,
+/// `iswctype`, `mbrtowc`) use the new locale's classification.
+///
+/// Also skipped: the per-LC_* override loop (c:4866-4868) which
+/// re-applies category-specific settings after the global
+/// LC_ALL set. The Rust port doesn't yet have the lc_names
+/// table, but we can at least respect the canonical sequence.
+pub fn setlang(x: Option<&str>) {                                            // c:4842
+    // c:4847 — `if ((x2 = getsparam_u("LC_ALL")) && *x2) return;`
     if let Ok(lc_all) = env::var("LC_ALL") {
         if !lc_all.is_empty() {
             return;
         }
     }
+    // c:4860 — `setlocale(LC_ALL, x ? unmeta(x) : "");`
+    let locale_arg = match x {
+        Some(s) => crate::ported::utils::unmeta(s),
+        None => String::new(),
+    };
+    // The previous Rust port skipped the libc setlocale call.
+    // Without it, libc's locale state (used by iswctype, mbrtowc,
+    // etc.) stays pinned to whatever the shell inherited from
+    // its parent — diverging from C which actively changes the
+    // running program's locale.
+    let cstr = std::ffi::CString::new(locale_arg.as_bytes()).unwrap_or_default();
+    unsafe {
+        libc::setlocale(libc::LC_ALL, cstr.as_ptr());                         // c:4860
+    }
+    // Mirror to env so subsequent `getsparam("LANG")` reads agree.
     if let Some(s) = x {
         env::set_var("LANG", s);
     }
-    clear_mbstate();
+    clear_mbstate();                                                          // c:4861
     // c:4868 — `inittyptab();`. The locale change may shift which
     // bytes are isalpha/isalnum/etc under the typtab init, so the
-    // table must be rebuilt. Without this, every shell-script that
-    // sets LANG to a non-ASCII locale would silently keep using
-    // the prior locale's char classes.
+    // table must be rebuilt.
     crate::ported::utils::inittyptab();
 }
 
