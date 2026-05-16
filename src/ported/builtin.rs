@@ -5065,15 +5065,47 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
             // c:5858 — fallthrough: treat as logout/exit.
             zexit(num, ZEXIT_NORMAL);                                        // c:5858
         }
-        // c:5860-5867 — BIN_LOGOUT: refuse if not LOGINSHELL.
+        // c:5864-5869 — BIN_LOGOUT: refuse if not LOGINSHELL, then
+        // FALLTHROUGH into the BIN_EXIT body. The previous Rust port
+        // called \`zexit(num, ZEXIT_NORMAL)\` directly instead of
+        // entering the BIN_EXIT defer-guard, so \`logout\` from inside
+        // a function would skip EXIT traps + function unwind +
+        // \"you have running jobs\" warning — same gap as the prior
+        // BIN_EXIT fix.
         x if x == BIN_LOGOUT => {
             let loginshell = crate::ported::zsh_h::isset(crate::ported::options::optlookup("login"));
-            if !loginshell {                                                 // c:5861
-                crate::ported::utils::zwarnnam(name, "not login shell");     // c:5862
-                return 1;                                                    // c:5863
+            if !loginshell {                                                 // c:5865
+                crate::ported::utils::zwarnnam(name, "not login shell");     // c:5866
+                return 1;                                                    // c:5867
             }
-            // FALLTHROUGH to BIN_EXIT
-            zexit(num, ZEXIT_NORMAL);
+            // c:5869 — `/*FALLTHROUGH*/` into BIN_EXIT body.
+            // Reusing the BIN_EXIT branch below by setting `func` to
+            // BIN_EXIT isn't possible mid-match; inline the same
+            // guard logic here.
+            let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
+            if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
+                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                    zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
+                }
+                if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884
+                    let trap_state = crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    if trap_state != 0 {                                     // c:5885
+                        crate::exec::TRAP_STATE.store(                       // c:5886
+                            crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                            Ordering::Relaxed,
+                        );
+                    }
+                    RETFLAG.store(1, Ordering::Relaxed);                     // c:5887
+                    BREAKS.store(LOOPS.load(Ordering::Relaxed),              // c:5888
+                                 Ordering::Relaxed);
+                    EXIT_PENDING.store(1, Ordering::Relaxed);                // c:5889
+                    EXIT_VAL.store(num, Ordering::Relaxed);                  // c:5891
+                }
+            } else {
+                zexit(num, ZEXIT_NORMAL);                                    // c:5894
+            }
         }
         // c:5870-5894 — BIN_EXIT: function-context guard. C body:
         //   if (locallevel > forklevel && shell_exiting != -1) {
