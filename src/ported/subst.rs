@@ -445,10 +445,12 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     // returns the Nularg sentinel string so the empty bslashquote doesn't
     // get elided by stringsubst's word-walk.
     let strret = if strsub.is_empty() && prefix.is_empty() && suffix.is_empty() {
-        // c:226
-        // Nularg = '\u{8b}' per zsh.h. Emit as a single-char string
-        // so downstream code recognises the empty-bslashquote sentinel.
-        "\u{8b}".to_string() // c:227
+        // c:226-227 — `nulstring` sentinel, defined at subst.c:36 as
+        // `{Nularg, '\0'}`. Nularg is 0xa1 per `Src/zsh.h:206`, NOT
+        // 0x8b as the previous comment claimed (drift bug pattern).
+        // Emit the single Nularg char so downstream code recognises
+        // the empty-bslashquote sentinel.
+        crate::ported::zsh_h::Nularg.to_string() // c:227
     } else {
         format!("{}{}{}", prefix, strsub, suffix) // c:215-220
     };
@@ -7057,8 +7059,16 @@ const OUTANGPROC: char = OutangProc; // c:zsh.h:177
 //   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
 // Every fn signature has dropped the `state: &mut SubstState` arg.
 
-/// Null string constant (from subst.c line 36)
-pub const NULSTRING: &str = "\u{8F}"; // c:100
+/// Null string constant from `Src/subst.c:36`: `char nulstring[] = {Nularg, '\0'};`
+///
+/// C value: `{0xa1, 0x00}` — the Nularg sentinel byte followed by
+/// terminator. The previous Rust port had `"\u{8F}"` which is NOT
+/// the canonical value (Nularg = 0xa1, not 0x8F = 0x8f). Same
+/// drift-bug family as the TERM_UNKNOWN / HIST_* fixes.
+///
+/// Routes through the canonical `Nularg` const at zsh_h.rs:163.
+/// Constructed as a const &str via the UTF-8 encoding of U+00A1.
+pub const NULSTRING: &str = "\u{a1}"; // c:36 (Nularg sentinel)
 
 /// Returns true if the global `errflag` (Src/utils.c) is set.
 /// Matches the C idiom `if (errflag) …` that subst.c sprinkles
@@ -7469,6 +7479,24 @@ mod tests {
     // utils.c:6915
     use super::*;
     // utils.c:6915
+
+    /// Pin `NULSTRING` to the canonical Nularg sentinel value.
+    /// C: `char nulstring[] = {Nularg, '\\0'};` at Src/subst.c:36
+    /// where Nularg = 0xa1 (Src/zsh.h:206). The previous Rust port
+    /// had `"\\u{8F}"` which is NOT the Nularg byte — same drift-bug
+    /// family as TERM_UNKNOWN / HIST_* fixes.
+    #[test]
+    fn nulstring_matches_canonical_nularg_byte() {
+        use crate::ported::zsh_h::Nularg;
+        assert_eq!(Nularg as u32, 0xa1,
+            "Src/zsh.h:206 — Nularg must be 0xa1");
+        // NULSTRING is the str form of just the Nularg char.
+        assert_eq!(NULSTRING, "\u{a1}",
+            "Src/subst.c:36 — NULSTRING must be the single Nularg sentinel char");
+        let chars: Vec<char> = NULSTRING.chars().collect();
+        assert_eq!(chars.len(), 1, "NULSTRING is a single char");
+        assert_eq!(chars[0], Nularg, "NULSTRING's single char IS Nularg");
+    }
 
     #[test] // utils.c:6915
     fn test_getkeystring() {
