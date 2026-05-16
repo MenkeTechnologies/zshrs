@@ -4035,21 +4035,23 @@ pub fn untokenize(s: &str) -> String {
     result
 }
 
-/// Check if a string contains any token characters
-/// Mirrors C `itok(c)` (zsh.h). zsh's token markers live in the
-/// META range 0x83..=0x9f (Pound..Bnull at zsh.h:160-188). Earlier
-/// implementation checked `< 32` (control chars) which is wrong for
-/// zsh — none of its tokens land there. The bad check made
-/// `exalias` skip the `untokenize(tokstr)` path for any token
-/// containing markers (e.g. `[[` lexes as `Inbrack Inbrack` =
-/// `\u{91}\u{91}`), so the reswdtab lookup compared raw marker
-/// bytes against the literal `"[["` key and never promoted to
-/// DINBRACK. Same hit `{`/`}`, `$`, `*`, `?`, etc.
-pub fn has_token(s: &str) -> bool {
-    s.chars().any(|c| {
-        let cu = c as u32;
-        (0x83..=0x9f).contains(&cu)
-    })
+/// Check if a string contains any token characters.
+/// Port of `int has_token(const char *s)` from `Src/utils.c:2282` —
+/// `while (*s) if (itok(*s++)) return 1; return 0;`.
+///
+/// `itok(c)` per `Src/ztype.h:52` is `STOUC(c) >= Pound && STOUC(c)
+/// <= Nularg`, i.e. the closed range `Pound..=Nularg` =
+/// `0x84..=0xa1` (per `zsh.h:159-205`). The previous Rust port used
+/// `(0x83..=0x9f)` which was BOTH:
+///   * too inclusive (0x83 = Meta, IMETA-only, NOT ITOK per
+///     ztype_init's typtab population at `utils.c:4197`); and
+///   * too narrow (excluded 0xa0 Bnullkeep and 0xa1 Nularg, both
+///     legitimate ITOK bytes — so a string containing Nularg from
+///     `$''` lexing would falsely report "no token").
+/// Route through the canonical `ztype_h::itok` so future ITOK
+/// changes propagate automatically (typtab is a runtime table).
+pub fn has_token(s: &str) -> bool {                                           // c:2282 (Src/utils.c)
+    s.bytes().any(crate::ported::ztype_h::itok)
 }
 
 
