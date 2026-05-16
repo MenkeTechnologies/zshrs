@@ -3734,18 +3734,35 @@ pub fn gethkparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Str
     Some(Vec::new())
 }
 
-/// Port of `check_warn_pm(Param pm, const char *pmtype, int created, int may_warn_about_nested_vars)` from `Src/params.c:3158`. C body
-/// emits the WARN_CREATE_GLOBAL / WARN_NESTED_VAR diagnostics
-/// when a function-local creates/passes a non-local param with
-/// the matching shell options set. Stub: needs option globals.
-#[allow(unused_variables)]
+/// Port of `check_warn_pm(Param pm, const char *pmtype, int created, int may_warn_about_nested_vars)` from `Src/params.c:3160`.
+///
+/// C body emits the WARN_CREATE_GLOBAL / WARN_NESTED_VAR
+/// diagnostic when a function-local creates/passes a non-local
+/// param with the matching shell options set.
+///
+/// The previous Rust port handled the GATE logic correctly but
+/// SKIPPED the diagnostic emit, claiming the `funcstack` global
+/// wasn't ported. But `crate::ported::modules::parameter::FUNCSTACK`
+/// IS ported (Mutex<Vec<funcstack>>). Wire the walk:
+///   for (i = funcstack; i; i = i->prev)
+///       if (i->tp == FS_FUNC) {
+///           msg = created ?
+///               "%s parameter %s created globally in function %s" :
+///               "%s parameter %s set in enclosing scope in function %s";
+///           zwarn(msg, pmtype, pm->node.nam, i->name);
+///           break;
+///       }
+///
+/// Without the diagnostic, `setopt WARN_CREATE_GLOBAL` had no
+/// observable effect — the whole point of the option is the
+/// user-visible warning.
 pub fn check_warn_pm(
     pm: &crate::ported::zsh_h::param,
     pmtype: &str,
     created: i32,
     may_warn_about_nested_vars: i32,
-) {
-    if may_warn_about_nested_vars == 0 && created == 0 {
+) {                                                                            // c:3160
+    if may_warn_about_nested_vars == 0 && created == 0 {                       // c:3165
         return;
     }
     // `locallevel` is the canonical `pub static` above (port of
@@ -3754,23 +3771,38 @@ pub fn check_warn_pm(
     let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let forklevel: i32 =
         crate::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
-    if created != 0 && isset(WARNCREATEGLOBAL) {
-        if cur_local <= forklevel || pm.level != 0 {
+    if created != 0 && isset(WARNCREATEGLOBAL) {                              // c:3168
+        if cur_local <= forklevel || pm.level != 0 {                           // c:3169
             return;
         }
-    } else if created == 0 && isset(WARNNESTEDVAR) {
-        if pm.level >= cur_local {
+    } else if created == 0 && isset(WARNNESTEDVAR) {                           // c:3171
+        if pm.level >= cur_local {                                             // c:3172
             return;
         }
     } else {
         return;
     }
-    if (pm.node.flags as u32 & (PM_SPECIAL | PM_NAMEREF)) != 0 {
+    if (pm.node.flags as u32 & (PM_SPECIAL | PM_NAMEREF)) != 0 {              // c:3177
         return;
     }
-    // funcstack walk + zwarn — funcstack global pending; the C body
-    // simply emits a single zwarn into the most-recent FS_FUNC frame
-    // and exits.
+    // c:3180-3190 — walk funcstack, emit zwarn at first FS_FUNC.
+    let stack = match crate::ported::modules::parameter::FUNCSTACK.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    for frame in stack.iter().rev() {                                          // c:3180 walk most-recent-first
+        if frame.tp == crate::ported::zsh_h::FS_FUNC {                         // c:3181 FS_FUNC
+            let msg = if created != 0 {                                        // c:3185
+                format!("{} parameter {} created globally in function {}",
+                        pmtype, pm.node.nam, frame.name)
+            } else {                                                           // c:3187
+                format!("{} parameter {} set in enclosing scope in function {}",
+                        pmtype, pm.node.nam, frame.name)
+            };
+            crate::ported::utils::zwarn(&msg);                                 // c:3189
+            break;                                                             // c:3190
+        }
+    }
 }
 
 // intgetfn / strgetfn drift wrappers removed — replaced below with
