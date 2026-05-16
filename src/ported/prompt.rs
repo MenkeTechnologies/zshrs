@@ -465,13 +465,22 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {                             // 
         x if x == TSC_PROMPT => {                                            // c:1094
             // c:1095-1113 — TSC_PROMPT: emit into the prompt buffer
             // wrapped in Inpar/Outpar markers so the screen-width
-            // counter knows to skip the escape.
-            out.push('\x01');                                                // c:1097 Inpar marker
+            // counter (countprompt) knows to skip the escape.
+            //
+            // The previous Rust port used '\x01' / '\x02' as the
+            // markers, but the canonical token bytes are
+            // Inpar=0x88 (zsh.h:163) and Outpar=0x8a (zsh.h:165).
+            // countprompt was looking for the canonical values, so
+            // tsetcap-emitted escapes were ALSO counted as visible
+            // width — a tcap-based prompt would wrap a column early.
+            // Pair the wrapping with countprompt's recognition; both
+            // sides now use the canonical bytes.
+            out.push(crate::ported::zsh_h::Inpar);                           // c:1097 Inpar marker
             out.push_str(&cap_str);                                          // c:1099
             // c:1101-1106 — glitch detection (sg / ug termcap nums).
             // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
             // which matches modern terminals.
-            out.push('\x02');                                                // c:1112 Outpar marker
+            out.push(crate::ported::zsh_h::Outpar);                          // c:1112 Outpar marker
         }
         _ => {                                                               // c:1090 default
             // c:1092 — `tputs(tcstr[cap], 1, putshout);`

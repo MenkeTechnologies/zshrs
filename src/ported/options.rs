@@ -636,6 +636,42 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
         if idx == USEZLE && value != 0 && !crate::ported::zsh_h::interact() {
             return -1;
         }
+        // c:851-861 — `setopt MONITOR` (force=0, value=1) must:
+        //   - No-op if already on (`new_opts[optno] == value`).
+        //   - Fail if SHTTY == -1 (can't enable job control without tty).
+        //   - Capture origpgrp + acquire_pgrp on first transition.
+        // The previous Rust port lacked all three checks: `setopt
+        // monitor` in a non-tty context would succeed and flip the
+        // option flag without actually acquiring the process group,
+        // leaving job control half-broken.
+        use crate::ported::zsh_h::MONITOR;
+        if idx == MONITOR && value != 0 {                                    // c:851
+            let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
+            if let Some(name) = cur_name {
+                let cur = opt_state_get(name).unwrap_or(false);
+                if cur as i32 == value {                                     // c:852 no-op
+                    return 0;
+                }
+            }
+            // c:854 — `if (SHTTY == -1) return -1;`
+            let shtty = crate::ported::init::SHTTY
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if shtty == -1 {                                                 // c:854
+                return -1;
+            }
+            // c:855-859 — `if (!origpgrp) { origpgrp = GETPGRP();
+            //               acquire_pgrp(); }`. Capture the parent's
+            // pgrp once so SIGTSTP-restore (bin_suspend) can later
+            // killpg back to it.
+            let origpgrp = crate::ported::jobs::ORIGPGRP
+                .get_or_init(|| std::sync::Mutex::new(0));
+            let mut og = origpgrp.lock().expect("origpgrp poisoned");
+            if *og == 0 {                                                    // c:855
+                *og = unsafe { libc::getpgrp() };                            // c:856 GETPGRP()
+                drop(og);
+                let _ = crate::ported::jobs::acquire_pgrp();                 // c:857
+            }
+        }
     }
     // c:744 — locate the option name whose FNV hash matches idx.
     let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
