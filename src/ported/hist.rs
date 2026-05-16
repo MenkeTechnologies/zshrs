@@ -1760,13 +1760,57 @@ pub fn hwget() -> Option<(i32, String)> {
     Some((start as i32, line[s..e].to_string()))
 }
 
-/// Port of `int hwrep(char *cmdstr, char *matchstr, char *prevcmd)` from Src/hist.c.
-pub fn hwrep(entry: &histent, replacement: &str, word_idx: usize) -> String {
-    let words: Vec<&str> = entry.node.nam.split_whitespace().collect();
-    if word_idx >= words.len() { return entry.node.nam.clone(); }
-    let mut new_words: Vec<String> = words.iter().map(|s| s.to_string()).collect();
-    new_words[word_idx] = replacement.to_string();
-    new_words.join(" ")
+/// Port of `void hwrep(char *rep)` from `Src/hist.c:1748`.
+///
+/// C body:
+/// ```c
+/// char *start;
+/// hwget(&start);
+/// if (!strcmp(rep, start)) return;
+/// hptr = start;
+/// chwordpos = chwordpos - 2;
+/// hwbegin(0);
+/// qbang = 1;
+/// while (*rep) hwaddc(*rep++);
+/// hwend();
+/// ```
+///
+/// Replace the current history word with `rep` (the LAST recorded
+/// word — `chwordpos - 2` indexes its start). The previous Rust
+/// port had a completely different signature `(entry, replacement,
+/// word_idx)` operating on a completed `histent` struct with
+/// whitespace-split replacement. C operates on the IN-FLIGHT
+/// `chline` / `chwordpos` / `hptr` globals — a fundamentally
+/// different abstraction.
+///
+/// No call sites in src/ used the Rust signature, so renaming is
+/// safe. Port faithfully to operate on the globals.
+pub fn hwrep(rep: &str) {                                                     // c:1748
+    // c:1752 — `hwget(&start)` — get the current word's start offset.
+    let (start_off, start_text) = match hwget() {
+        Some(v) => v,
+        None => return,
+    };
+    // c:1754 — `if (!strcmp(rep, start)) return;` — no change, skip.
+    if rep == start_text {
+        return;
+    }
+    // c:1756 — `hptr = start; chwordpos -= 2;`. Rewind to the start
+    // of the word we're rewriting; the open word slot is conceptually
+    // re-opened by the chwordpos decrement.
+    hptr.store(start_off.max(0) as usize, Ordering::SeqCst);                  // c:1756
+    chwordpos.fetch_sub(2, Ordering::SeqCst);                                 // c:1757
+    // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
+    ihwbegin(0);
+    // c:1759 — `qbang = 1;` mark word as bang-bearing so subsequent
+    // ihwaddc bang-escapes correctly.
+    qbang.store(true, Ordering::SeqCst);                                      // c:1759
+    // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
+    for b in rep.bytes() {
+        ihwaddc(b as i32);
+    }
+    // c:1761 — `hwend();` close the word slot.
+    ihwend();
 }
 
 /// Port of `char *hgetline(void)` from Src/hist.c.
