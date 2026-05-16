@@ -1290,26 +1290,38 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // 
     }
 }
 
-/// Port of `Histent movehistent(Histent he, int n, int xflags)` from Src/hist.c.
-pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
+/// Port of `Histent movehistent(Histent he, int n, int xflags)` from `Src/hist.c:1284`.
+///
+/// The previous Rust port omitted the `checkcurline(he)` call at
+/// c:1298 — when the walk lands on the in-flight history entry,
+/// C flushes the current chline/chwordpos/chwords build state into
+/// `curline` so the caller sees fresh word data. Without it, code
+/// that walks back to the current entry and then reads `curline`
+/// got stale word data.
+pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {         // c:1284
     let mut cur = start;
-    while n < 0 {
-        cur = up_histent(cur)?;
+    while n < 0 {                                                                // c:1286
+        cur = up_histent(cur)?;                                                  // c:1287
         if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {
-                n += 1;
+            if (e.node.flags as u32 & xflags) == 0 {                             // c:1289
+                n += 1;                                                          // c:1290
             }
         }
     }
-    while n > 0 {
-        cur = down_histent(cur)?;
+    while n > 0 {                                                                // c:1292
+        cur = down_histent(cur)?;                                                // c:1293
         if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {
-                n -= 1;
+            if (e.node.flags as u32 & xflags) == 0 {                             // c:1295
+                n -= 1;                                                          // c:1296
             }
         }
     }
-    Some(cur)
+    // c:1298 — `checkcurline(he);` flushes in-flight build state
+    // into `curline` if the walk landed on the active history entry.
+    if let Some(e) = ring_get(cur) {
+        checkcurline(&e);                                                        // c:1298
+    }
+    Some(cur)                                                                    // c:1299
 }
 
 /// Port of `Histent up_histent(Histent he)` from Src/hist.c.
@@ -2171,12 +2183,63 @@ fn convamps(out: &str, in_pattern: &str) -> String {
     result
 }
 
-/// Port of `int checkcurline(void)` from Src/hist.c.
-pub fn checkcurline(line: &str) -> i32 {
-    if let Some(latest) = ring_latest() {
-        if latest.node.nam == line { 1 } else { 0 }
-    } else {
-        0
+/// Port of `static void checkcurline(Histent he)` from
+/// `Src/hist.c:2421`.
+///
+/// C body (c:2421-2429):
+/// ```c
+/// static void checkcurline(Histent he)
+/// {
+///     if (he->histnum == curhist && (histactive & HA_ACTIVE)) {
+///         curline.node.nam = chline;
+///         curline.nwords = chwordpos/2;
+///         curline.words = chwords;
+///     }
+/// }
+/// ```
+///
+/// The previous Rust port was a complete fabrication: signature was
+/// `(line: &str) -> i32` returning whether the head of the ring's
+/// name matched the argument — none of which appears in the C body.
+/// No caller existed because the bogus signature fit nothing.
+///
+/// Real C behaviour: when `he` is the current in-flight history
+/// entry (matches `curhist` AND the history machinery is active),
+/// flush the in-progress chline/chwordpos/chwords build state into
+/// the `curline` placeholder so the caller sees the latest words.
+/// Called from `movehistent` per c:1298 before returning.
+///
+/// WARNING: Rust adaptation diverges in storage shape — C uses
+/// pointer-aliasing (curline.node.nam = chline) whereas Rust
+/// stores cloned values into the `curline` Mutex. The observable
+/// effect is the same after the function returns: a caller reading
+/// `curline` sees the latest chline/chwords snapshot.
+pub fn checkcurline(he: &histent) {                                              // c:2421
+    let curhist_val = curhist.load(Ordering::SeqCst);                            // c:2424
+    let active = histactive.load(Ordering::SeqCst);                              // c:2424
+    if he.histnum == curhist_val && (active & HA_ACTIVE) != 0 {                  // c:2424
+        let chline_val = chline.lock().expect("chline poisoned").clone();        // c:2425
+        let chwordpos_val = chwordpos.load(Ordering::SeqCst);                    // c:2426
+        let chwords_val = chwords.lock().expect("chwords poisoned").clone();     // c:2427
+        let mut cl = curline.lock().expect("curline poisoned");
+        // Build a fresh histent snapshot mirroring the C field
+        // aliasing — name = chline, nwords = chwordpos/2,
+        // words = chwords.
+        *cl = Some(histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: chline_val,                                                 // c:2425
+                flags: 0,
+            },
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: chwords_val,                                                  // c:2427
+            nwords: chwordpos_val / 2,                                           // c:2426
+            histnum: he.histnum,
+        });
     }
 }
 
@@ -3915,5 +3978,86 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `checkcurline` to the canonical C body at
+    /// `Src/hist.c:2421-2429`: when `he.histnum == curhist` AND
+    /// `histactive & HA_ACTIVE`, flush chline/chwordpos/chwords
+    /// into `curline`. Both gates MUST be true; otherwise leave
+    /// `curline` untouched.
+    #[test]
+    fn checkcurline_flushes_to_curline_only_when_active_and_matching() {
+        let saved_curhist = curhist.load(Ordering::SeqCst);
+        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
+        let saved_chwords = chwords.lock().unwrap().clone();
+        let saved_curline = curline.lock().unwrap().take();
+
+        // Set up in-flight build state.
+        curhist.store(42, Ordering::SeqCst);
+        histactive.store(HA_ACTIVE, Ordering::SeqCst);
+        *chline.lock().unwrap() = "echo hello".to_string();
+        chwordpos.store(4, Ordering::SeqCst);                 // 2 words
+        *chwords.lock().unwrap() = vec![0, 4, 5, 10];
+        *curline.lock().unwrap() = None;
+
+        // Case 1: matching histnum + active → flushes.
+        let he = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "ignored-by-checkcurline".to_string(),
+                flags: 0,
+            },
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: vec![],
+            nwords: 0,
+            histnum: 42,
+        };
+        checkcurline(&he);
+        {
+            let cl = curline.lock().unwrap();
+            let snap = cl.as_ref().expect(
+                "c:2425-2427 — matching+active must flush a snapshot"
+            );
+            assert_eq!(snap.node.nam, "echo hello",
+                "c:2425 — curline.node.nam = chline");
+            assert_eq!(snap.nwords, 2,
+                "c:2426 — curline.nwords = chwordpos/2 (4/2=2)");
+            assert_eq!(snap.words, vec![0, 4, 5, 10],
+                "c:2427 — curline.words = chwords");
+        }
+
+        // Case 2: matching histnum but NOT active → no flush.
+        histactive.store(0, Ordering::SeqCst);                // c:2424 HA_ACTIVE off
+        *curline.lock().unwrap() = None;
+        checkcurline(&he);
+        assert!(curline.lock().unwrap().is_none(),
+            "c:2424 — HA_ACTIVE cleared, no flush");
+
+        // Case 3: active but mismatched histnum → no flush.
+        histactive.store(HA_ACTIVE, Ordering::SeqCst);
+        let he2 = histent { histnum: 99, ..histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None, nam: String::new(), flags: 0,
+            },
+            up: None, down: None, zle_text: None,
+            stim: 0, ftim: 0, words: vec![], nwords: 0, histnum: 0,
+        }};
+        checkcurline(&he2);
+        assert!(curline.lock().unwrap().is_none(),
+            "c:2424 — histnum mismatch, no flush");
+
+        // Restore.
+        curhist.store(saved_curhist, Ordering::SeqCst);
+        histactive.store(saved_active, Ordering::SeqCst);
+        *chline.lock().unwrap() = saved_chline;
+        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
+        *chwords.lock().unwrap() = saved_chwords;
+        *curline.lock().unwrap() = saved_curline;
     }
 }
