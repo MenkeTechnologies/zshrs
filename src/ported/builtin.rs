@@ -5152,7 +5152,19 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
         // \"you have running jobs\" warning — same gap as the prior
         // BIN_EXIT fix.
         x if x == BIN_LOGOUT => {
-            let loginshell = crate::ported::zsh_h::isset(crate::ported::options::optlookup("login"));
+            // c:5865 — `if (unset(LOGINSHELL))`. The previous Rust port
+            // called `optlookup("login")` — but "login" is the
+            // SHELL-LETTER-FLAG name (zshletters table letter 'l'),
+            // not an option name. Option name canonicalization maps
+            // LOGINSHELL → "loginshell" (Src/options.c index_to_name
+            // at line 1682 in Rust port).
+            //
+            // \`optlookup(\"login\")\` returns OPT_INVALID (0), so
+            // \`isset(0)\` always returns false — bin_logout always
+            // saw \"not login shell\" and rejected with that error
+            // regardless of whether the shell was actually started
+            // with \`-l\`.
+            let loginshell = crate::ported::zsh_h::isset(crate::ported::options::optlookup("loginshell"));
             if !loginshell {                                                 // c:5865
                 crate::ported::utils::zwarnnam(name, "not login shell");     // c:5866
                 return 1;                                                    // c:5867
