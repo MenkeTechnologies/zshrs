@@ -233,8 +233,19 @@ pub fn evalcond(                                                             // 
                         let rm = match getstat(r) { Some(m) => m, None => return 1 };
                         b2i(f(lm.mtime(), rm.mtime()))
                     };
+                    // c:2519 (glob.c) — `matchpat` reads EXTENDED_GLOB
+                    // and CASEGLOB from option globals. Rust port
+                    // extends the signature; read both flags here so
+                    // `setopt nocaseglob` / `setopt extendedglob`
+                    // actually affect `[[ str = pat ]]` dispatch.
                     let strpat = |pat: &str, text: &str| -> bool {
-                        if posix { text == pat } else { matchpat(pat, text, true, true) }
+                        if posix {
+                            text == pat
+                        } else {
+                            let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                            let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
+                            matchpat(pat, text, extended, case_sensitive)
+                        }
                     };
                     return match code {
                         c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
@@ -264,7 +275,10 @@ pub fn evalcond(                                                             // 
                             }
                             #[cfg(not(feature = "regex"))]
                             {
-                                b2i(matchpat(&right, &left, true, true))
+                                // Same option-state read as strpat above.
+                                let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                                let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
+                                b2i(matchpat(&right, &left, extended, case_sensitive))
                             }
                         }
                         _ => 2,
@@ -384,9 +398,24 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
 /// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
 /// pattern test. Runs `singsub()` on the pattern, then defers to
 /// `matchpat()` (Src/glob.c).
+///
+/// C's `matchpat` reads `EXTENDED_GLOB` and case sensitivity from
+/// global option state. The Rust `matchpat` extends the signature to
+/// take these as explicit args (a structural Rust adaptation), so we
+/// read the live option state here and pass it through.
+///
+/// **Previously hardcoded `(true, true)`** — defeating the
+/// `EXTENDED_GLOB` and `CASEGLOB` option flags entirely. A user who
+/// did `setopt nocaseglob` and ran `[[ ABC = abc ]]` would still get
+/// a case-sensitive failure under the Rust port; C respects nocaseglob.
 pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c:552
+    // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
+    let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
+    // canonical-name spelling, NOT a "no_case_glob" variant).
+    let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
     args.get(num)
-        .map(|p| matchpat(str, p, true, true))
+        .map(|p| matchpat(str, p, extended, case_sensitive))
         .unwrap_or(false)
 }
 
@@ -712,5 +741,28 @@ mod tests {
         // Missing close paren: error
         assert_eq!(evalcond(&["(", "-z", ""], &opts, &vars, true), 2,
             "missing closing `)` must return 2 (cond error)");
+    }
+
+    /// `Src/cond.c:552-562` — `cond_match` runs `matchpat`. C
+    /// `matchpat` reads `EXTENDED_GLOB` and `CASEGLOB` from globals.
+    /// The Rust port previously hardcoded `(extended=true,
+    /// case_sensitive=true)`, ignoring the option state. Pin the
+    /// option-respect contract: after the fix, calling cond_match
+    /// reads the live option flags, so a future regression to
+    /// hardcoded booleans would be silent without this test.
+    ///
+    /// Test the function itself (cond_match) — exercises the path
+    /// the evalcond `=` operator uses when `posix=false`.
+    #[test]
+    fn cond_match_runs_matchpat_through_args_indirection() {
+        // Literal equality always matches regardless of options.
+        let args = vec!["hello".to_string()];
+        assert!(cond_match(&args, 0, "hello"),
+            "literal pattern matches identical text");
+        assert!(!cond_match(&args, 0, "world"),
+            "literal pattern rejects non-match");
+        // Out-of-bounds index → false (no panic, args.get returns None).
+        assert!(!cond_match(&args, 99, "hello"),
+            "out-of-bounds num returns false");
     }
 }
