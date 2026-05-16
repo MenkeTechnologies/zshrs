@@ -594,6 +594,19 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
             signal_ignore(sig);                                               // c:719
         }
+        // c:720-723 — RT-signal trap-table branch:
+        //   `else if (sig >= VSIGCOUNT && sig < TRAPCOUNT)
+        //                signal_ignore(SIGNUM(sig));`
+        // Previously omitted from the Rust port; trapping `RTMIN+1` to
+        // ignore did NOT actually call signal_ignore on the real
+        // SIGRTMIN+1 signal — the signal would still fire and the
+        // default action would kick in instead of being suppressed.
+        #[cfg(target_os = "linux")]
+        if sig >= crate::ported::signals_h::VSIGCOUNT
+            && sig < crate::ported::signals_h::TRAPCOUNT
+        {
+            signal_ignore(crate::ported::signals_h::SIGNUM(sig));             // c:722
+        }
     } else {
         nsigtrapped.fetch_add(1, Ordering::Relaxed);                          // c:725
         if let Ok(mut g) = sigtrapped.lock() {
@@ -601,6 +614,18 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         }
         if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
             install_handler(sig);                                             // c:732
+        }
+        // c:733-736 — RT-signal install_handler branch:
+        //   `if (sig >= VSIGCOUNT && sig < TRAPCOUNT)
+        //              install_handler(SIGNUM(sig));`
+        // Trapping `RTMIN+1` to a function without this branch would
+        // store the trap but NEVER install the libc handler, so the
+        // signal would fire with default action (terminate the shell).
+        #[cfg(target_os = "linux")]
+        if sig >= crate::ported::signals_h::VSIGCOUNT
+            && sig < crate::ported::signals_h::TRAPCOUNT
+        {
+            install_handler(crate::ported::signals_h::SIGNUM(sig));           // c:735
         }
     }
     // c:738 — `sigtrapped[sig] |= flags`.
@@ -682,11 +707,45 @@ pub fn unsettrap(sig: i32) {                                                 // 
     if let Ok(mut g) = siglists.lock() {
         if let Some(slot) = g.get_mut(sig as usize) { *slot = None; }
     }
-    // c:803-845 — special re-install paths per signal. Approximate
-    // here with the c:846 default fallback; the SIGINT/SIGHUP/SIGPIPE
-    // re-install paths are not yet ported.
-    if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
-        signal_default(sig);                                                 // c:846
+    // c:803-845 — per-signal disposition reset after clearing the
+    // trap. The previous Rust port collapsed everything to a single
+    // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
+    // special branches AND the RT-signal branch entirely.
+    let interact = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
+    // c:808 `forklevel` — depth of subshell forks. C global at exec.c
+    // tracks fork nesting. Rust port doesn't model this yet; assume 0
+    // (top-level shell, not inside a subshell). This makes the SIGPIPE
+    // branch fire when interact is true, matching the most common
+    // user-facing case. A future forklevel global wires here directly.
+    let forklevel: i32 = 0;
+    if sig == libc::SIGINT && interact {                                     // c:802
+        // c:803-805 — `intr(); noholdintr();`. Re-enable SIGINT
+        // delivery (subshells ignoring SIGINT need the unblock).
+        intr();
+        noholdintr();
+    } else if sig == libc::SIGHUP {                                          // c:806
+        // c:807 — HUP gets RE-INSTALLED (not defaulted), so the
+        // shell keeps catching it.
+        install_handler(sig);
+    } else if sig == libc::SIGPIPE && interact && forklevel == 0 {           // c:808
+        // c:809 — same install-not-default semantics.
+        install_handler(sig);
+    } else if sig != 0 && sig <= SIGCOUNT
+        && sig != libc::SIGWINCH && sig != libc::SIGCHLD
+    {                                                                         // c:810
+        signal_default(sig);                                                 // c:815
+    }
+    // c:816-819 — RT-signal branch (Linux). Previously omitted;
+    // un-trapping `RTMIN+1` left the libc handler installed, so
+    // subsequent SIGRTMIN+1 deliveries would still run the
+    // (no-longer-trapped) shell handler.
+    #[cfg(target_os = "linux")]
+    {
+        if sig >= crate::ported::signals_h::VSIGCOUNT
+            && sig < crate::ported::signals_h::TRAPCOUNT
+        {
+            signal_default(crate::ported::signals_h::SIGNUM(sig));           // c:818
+        }
     }
 }
 
