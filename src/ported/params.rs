@@ -5355,14 +5355,21 @@ pub fn argzerosetfn(x: String) {                                             // 
 // -----------------------------------------------------------
 
 /// Port of `argzerogetfn(UNUSED(Param pm))` from `Src/params.c:4954`. C body:
-/// `return isset(POSIXARGZERO) ? posixzero : argzero;`
+///     `return isset(POSIXARGZERO) ? posixzero : argzero;`
 ///
-/// Reads through `crate::ported::utils::argzero()` (the canonical
-/// OnceLock storage in utils.rs). C's `posixzero` branch is not
-/// yet ported (POSIXARGZERO option needs the option table).
+/// Both `argzero` and `posixzero` live in `utils.rs` (OnceLock storage).
+/// The previous Rust port ALWAYS returned `argzero`, defeating the
+/// POSIXARGZERO option entirely. After `exec -a foo` or function-call
+/// argv-rewrite, `$0` under POSIXARGZERO should report the ORIGINAL
+/// startup argv[0], not the rewritten name. Now wired via
+/// `isset(POSIXARGZERO)` + the canonical posixzero accessor.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn argzerogetfn() -> String {
-    crate::ported::utils::argzero().unwrap_or_default()
+    if isset(crate::ported::zsh_h::POSIXARGZERO) {                            // c:4958
+        crate::ported::utils::posixzero().unwrap_or_default()                 // c:4959
+    } else {
+        crate::ported::utils::argzero().unwrap_or_default()                   // c:4960
+    }
 }
 
 // -----------------------------------------------------------
@@ -8070,5 +8077,81 @@ mod tests {
         assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), bang_before,
             "c:5092 — bangchar unchanged after non-ASCII rejection");
         assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), hat_before);
+    }
+
+    /// Shared mutex for tests that mutate argzero/posixzero — both
+    /// share global state and race when run in parallel.
+    static ARGZERO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `Src/params.c:4954-4961` — `argzerogetfn` returns `posixzero`
+    /// when `isset(POSIXARGZERO)`, else `argzero`. The previous Rust
+    /// port always returned `argzero`, defeating the POSIXARGZERO
+    /// option entirely. After mutating argzero (e.g. `exec -a foo`),
+    /// `$0` under POSIXARGZERO must report the ORIGINAL startup
+    /// argv[0], not the rewritten name.
+    #[test]
+    fn argzerogetfn_respects_posixargzero_option() {
+        let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::ported::options::{opt_state_get, opt_state_set};
+        use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
+
+        // Save state.
+        let saved_argzero    = argzero();
+        let saved_posixzero  = posixzero();
+        let saved_pos_option = opt_state_get("posixargzero").unwrap_or(false);
+
+        // Set up: posixzero (original) ≠ argzero (rewritten).
+        set_posixzero(Some("/bin/zsh".to_string()));
+        set_argzero(Some("rewritten-name".to_string()));
+        // The set_argzero call mirrors to posixzero only if unset,
+        // and we set posixzero first → mirror skipped. Confirm separation.
+
+        // POSIXARGZERO off → returns argzero.
+        opt_state_set("posixargzero", false);
+        assert_eq!(crate::ported::params::argzerogetfn(), "rewritten-name",
+            "c:4960 — !POSIXARGZERO returns argzero (current display name)");
+
+        // POSIXARGZERO on → returns posixzero (the preserved startup argv[0]).
+        opt_state_set("posixargzero", true);
+        assert_eq!(crate::ported::params::argzerogetfn(), "/bin/zsh",
+            "c:4959 — POSIXARGZERO on returns posixzero (original startup argv[0])");
+
+        // Restore.
+        set_argzero(saved_argzero);
+        set_posixzero(saved_posixzero);
+        opt_state_set("posixargzero", saved_pos_option);
+    }
+
+    /// `Src/init.c:271` — `argv0 = argzero = posixzero = *argv++`.
+    /// At shell init both share the same source. The Rust port
+    /// preserves this contract by having `set_argzero` mirror to
+    /// `posixzero` ONLY on first call (when posixzero is None).
+    /// Subsequent argzero changes (function frames, exec -a) must
+    /// NOT clobber posixzero.
+    #[test]
+    fn set_argzero_mirrors_to_posixzero_only_on_first_call() {
+        let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
+
+        let saved_argzero   = argzero();
+        let saved_posixzero = posixzero();
+
+        // Reset both to None.
+        set_argzero(None);
+        set_posixzero(None);
+        // First call: posixzero is None, so it should mirror.
+        set_argzero(Some("/usr/local/bin/zsh".to_string()));
+        assert_eq!(posixzero().as_deref(), Some("/usr/local/bin/zsh"),
+            "c:271 — first set_argzero mirrors to posixzero (was None)");
+        // Second call: posixzero now Some, so mirror is skipped.
+        set_argzero(Some("function-name".to_string()));
+        assert_eq!(posixzero().as_deref(), Some("/usr/local/bin/zsh"),
+            "c:271 — second set_argzero does NOT clobber posixzero");
+        assert_eq!(argzero().as_deref(), Some("function-name"),
+            "argzero updated as normal");
+
+        // Restore.
+        set_posixzero(saved_posixzero);
+        set_argzero(saved_argzero);
     }
 }

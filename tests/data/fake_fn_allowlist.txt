@@ -485,6 +485,16 @@ set_shinstdin
 zwarning
 argzero
 
+# utils.rs — accessors for `char *posixzero` (Src/params.c:76 global).
+# C dereferences the global directly; Rust wraps an
+# OnceLock<Mutex<Option<String>>> for safe concurrent access. Same
+# pattern as argzero_lock / set_argzero / argzero. Used by
+# argzerogetfn at params.c:4954 to return the original startup argv[0]
+# when isset(POSIXARGZERO).
+set_posixzero
+posixzero
+posixzero_lock
+
 # hashnameddir.rs — accessor for the C global `mod_export HashTable
 # nameddirtab` (Src/hashnameddir.c:48). C dereferences the global via
 # `nameddirtab->...`; Rust wraps a `Mutex<HashMap<String,nameddir>>`

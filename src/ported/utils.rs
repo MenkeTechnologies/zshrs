@@ -5356,6 +5356,12 @@ static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
 static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 
+/// Port of `char *posixzero` from `Src/params.c:76`. The original
+/// argv[0] preserved unchanged by later mutations. Used by
+/// `argzerogetfn` for `$0` under `isset(POSIXARGZERO)`.
+static POSIXZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
 // error flag: bits from enum errflag_bits                                 // c:124
 /// Port of `int errflag` from `Src/init.c`. Tracks whether an
 /// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
@@ -5525,12 +5531,42 @@ pub fn dec_locallevel() {
 
 /// Setter for `argzero`. Called once at shell init from `parseargs`.
 pub fn set_argzero(name: Option<String>) {
+    // c:271 (init.c) — `argv0 = argzero = posixzero = *argv++;`. At
+    // shell init both argzero and posixzero share the same source.
+    // posixzero is preserved unchanged after later mutations (exec -a,
+    // function frames) — argzero is what gets rewritten. If posixzero
+    // hasn't been independently set yet, mirror argzero so the
+    // POSIXARGZERO branch in `argzerogetfn` returns something useful.
+    let mut posix_lock = posixzero_lock().lock().unwrap();
+    if posix_lock.is_none() {
+        *posix_lock = name.clone();
+    }
+    drop(posix_lock);
     *argzero_lock().lock().unwrap() = name;
 }
 
 /// Read `argzero`. Used by `argzerogetfn` for `$0`.
 pub fn argzero() -> Option<String> {
     argzero_lock().lock().unwrap().clone()
+}
+
+/// Port of `char *posixzero` from `Src/params.c:76`. The original
+/// argv[0] preserved from shell startup, unchanged by later `exec -a`
+/// or function-call rewrites. C's `argzerogetfn` (params.c:4958)
+/// returns this instead of `argzero` when `isset(POSIXARGZERO)`.
+///
+/// Set once at init via `set_posixzero` (called from the init path
+/// in C at init.c:271/297/321). `set_argzero` mirrors the value here
+/// on first call so the POSIXARGZERO branch has something to read
+/// even if the init path hasn't run yet.
+pub fn set_posixzero(name: Option<String>) {
+    *posixzero_lock().lock().unwrap() = name;
+}
+
+/// Read `posixzero`. C: `posixzero` (params.c:76 global). Used by
+/// `argzerogetfn` when `isset(POSIXARGZERO)`.
+pub fn posixzero() -> Option<String> {
+    posixzero_lock().lock().unwrap().clone()
 }
 
 /// Setter for `noerrs`. Increment to suppress error output;
@@ -6165,6 +6201,13 @@ fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
 fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
     ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+// WARNING: NOT IN UTILS.C — Rust-only OnceLock accessor for `posixzero`.
+// C's `posixzero` lives in params.c:76; the canonical storage lives
+// here for OnceLock initialisation parity with `argzero`.
+fn posixzero_lock() -> &'static std::sync::Mutex<Option<String>> {
+    POSIXZERO.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
