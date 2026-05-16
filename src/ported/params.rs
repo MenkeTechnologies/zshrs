@@ -3712,23 +3712,27 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
     std::env::var(name).ok()
 }
 
-/// Port of `getsparam_u(char *s)` from `Src/params.c:3088`. C body:
+/// Port of `getsparam_u(char *s)` from `Src/params.c:3089`. C body
+/// (c:3091-3094):
 /// ```c
-/// struct value vbuf;
-/// Value v;
-/// if (!(v = getvalue(&vbuf, &s, 0))) return NULL;
-/// if (PM_TYPE(v->pm->node.flags) != PM_SCALAR) return NULL;
-/// return getstrvalue(v);
+/// /* getsparam() returns pointer into global params table, so ... */
+/// if ((s = getsparam(s)))
+///     return unmeta(s);    /* returns static pointer to copy */
+/// return s;
 /// ```
-/// Returns the string value only when the param is PM_SCALAR.
-/// WARNING: param names don't match C — Rust=(v) vs C=()
-pub fn getsparam_u(v: Option<&mut crate::ported::zsh_h::value>) -> Option<String> {
-    let v = v?;
-    let pm = v.pm.as_ref()?;
-    if PM_TYPE(pm.node.flags as u32) != PM_SCALAR {
-        return None;
-    }
-    Some(getstrvalue(Some(v)))
+///
+/// The previous Rust "port" was an entirely fabricated impl — it
+/// took `Option<&mut value>` and gated on `PM_TYPE == PM_SCALAR`,
+/// which matches no part of the C body. C just calls getsparam(s)
+/// and unmeta's the resulting string. No callers existed because
+/// no caller's type fit the bogus signature.
+///
+/// Real use case: locale setters (c:4847, c:4867, c:4882, c:4917)
+/// call `getsparam_u("LC_ALL")` / `getsparam_u("LANG")` to read the
+/// param as a Meta-stripped C string suitable for `setlocale`.
+pub fn getsparam_u(s: &str) -> Option<String> {                              // c:3089
+    // c:3092 — `if ((s = getsparam(s))) return unmeta(s);`
+    getsparam(s).map(|v| crate::ported::utils::unmeta(&v))
 }
 
 /// Port of `getaparam(char *s)` from `Src/params.c:3100`. C body:
@@ -5520,7 +5524,7 @@ const LC_NAMES: &[(&str, libc::c_int)] = &[
 /// table, but we can at least respect the canonical sequence.
 pub fn setlang(x: Option<&str>) {                                            // c:4842
     // c:4847 — `if ((x2 = getsparam_u("LC_ALL")) && *x2) return;`
-    if let Ok(lc_all) = env::var("LC_ALL") {
+    if let Some(lc_all) = getsparam_u("LC_ALL") {                            // c:4847
         if !lc_all.is_empty() {
             return;
         }
@@ -5551,7 +5555,7 @@ pub fn setlang(x: Option<&str>) {                                            // 
     // this loop, so `LC_NUMERIC=tr_TR.UTF-8 LANG=C` would leave
     // numeric formatting on C rather than tr_TR.
     for (name, category) in LC_NAMES {                                      // c:4863
-        if let Ok(val) = env::var(name) {
+        if let Some(val) = getsparam_u(name) {                              // c:4866 getsparam_u
             if !val.is_empty() {
                 let cat_cstr = std::ffi::CString::new(val.as_bytes())
                     .unwrap_or_default();
@@ -5599,10 +5603,10 @@ pub fn setlang(x: Option<&str>) {                                            // 
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn lc_allsetfn(x: Option<String>) {                                       // c:4873
     match x {
-        None => setlang(env::var("LANG").as_deref().ok()),                    // c:4881-4884
+        None => setlang(getsparam_u("LANG").as_deref()),                      // c:4882 getsparam_u
         Some(s) if s.is_empty() => {                                          // c:4881
-            // c:4881 — empty x falls back to setlang(LANG).
-            setlang(env::var("LANG").as_deref().ok());
+            // c:4881-4884 — empty x falls back to setlang(getsparam_u("LANG")).
+            setlang(getsparam_u("LANG").as_deref());                          // c:4882
         }
         Some(s) => {
             // c:4889 — `setlocale(LC_ALL, unmeta(x));`
@@ -5669,16 +5673,16 @@ pub fn langsetfn(x: String) {                                                 //
 ///   2. The Meta-unmeta'ing on the value passed to setlocale
 ///      wasn't applied. C uses `setlocale(cat, unmeta(x))`.
 pub fn lcsetfn(pm: &str, x: Option<String>) {                                 // c:4906
-    // c:4913-4914 — `if ((x2 = getsparam("LC_ALL")) && *x2) return;`.
-    if let Ok(lc_all) = env::var("LC_ALL") {
+    // c:4912-4913 — `if ((x2 = getsparam("LC_ALL")) && *x2) return;`.
+    if let Some(lc_all) = getsparam("LC_ALL") {                              // c:4912
         if !lc_all.is_empty() {
             return;
         }
     }
-    // c:4917-4918 — `if (!x || !*x) x = getsparam("LANG");`.
+    // c:4916-4917 — `if (!x || !*x) x = getsparam("LANG");`.
     let val = x
         .filter(|s| !s.is_empty())
-        .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()));
+        .or_else(|| getsparam("LANG").filter(|s| !s.is_empty()));            // c:4917
     // c:4924-4928 — apply `setlocale(category, unmeta(x))` for the
     // matching LC_* category. The previous Rust port skipped the
     // actual libc setlocale call and only wrote the env var, so
@@ -8913,6 +8917,16 @@ mod tests {
         set_argzero(saved_argzero);
     }
 
+    /// Locale-touching tests share process-wide env + libc state.
+    /// Cargo runs tests in parallel by default, so without
+    /// serialization a concurrent `env::set_var("LC_ALL")` can race
+    /// a `env::remove_var("LC_ALL")` and corrupt assertions. Pin
+    /// every locale test through this Mutex.
+    fn locale_test_lock() -> &'static std::sync::Mutex<()> {
+        static L: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        L.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     /// Pin `LC_NAMES` to the canonical zsh `lc_names[]` table at
     /// `Src/params.c:4805-4825`. The five categories in entry order
     /// (LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_NUMERIC, LC_TIME) MUST
@@ -8947,6 +8961,7 @@ mod tests {
     /// back via `setlocale(cat, NULL)` after the assignment.
     #[test]
     fn lcsetfn_invokes_libc_setlocale_for_matching_category() {
+        let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save LC_ALL/LC_CTYPE state.
         let saved_lc_all = env::var("LC_ALL").ok();
         let saved_lc_ctype = env::var("LC_CTYPE").ok();
@@ -9000,6 +9015,7 @@ mod tests {
     /// touching libc setlocale for the per-category override.
     #[test]
     fn lcsetfn_short_circuits_when_lc_all_set() {
+        let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_lc_all = env::var("LC_ALL").ok();
         let saved_lc_ctype = env::var("LC_CTYPE").ok();
         env::set_var("LC_ALL", "C");                // c:4912 non-empty LC_ALL
@@ -9037,6 +9053,42 @@ mod tests {
         match saved_lc_ctype {
             Some(v) => env::set_var("LC_CTYPE", v),
             None => env::remove_var("LC_CTYPE"),
+        }
+    }
+
+    /// Pin `getsparam_u` to its canonical C body at
+    /// `Src/params.c:3089-3094`: returns `unmeta(getsparam(s))`,
+    /// NOT a PM_SCALAR-checked `getstrvalue` wrapper.
+    ///
+    /// Before this fix, the Rust port took `Option<&mut value>`
+    /// and gated on `PM_TYPE == PM_SCALAR` — a complete fabrication
+    /// with no caller because no caller's type fit the bogus sig.
+    #[test]
+    fn getsparam_u_unmetas_getsparam_result() {
+        let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        // Plain ASCII: getsparam_u returns the same content as
+        // getsparam (no Meta bytes to strip).
+        let saved = env::var("ZSHRS_TEST_LOCALE_GSU").ok();
+        env::set_var("ZSHRS_TEST_LOCALE_GSU", "en_US.UTF-8");
+        assert_eq!(
+            getsparam_u("ZSHRS_TEST_LOCALE_GSU"),
+            Some("en_US.UTF-8".to_string()),
+            "Src/params.c:3092 — getsparam_u returns unmeta(getsparam(s)) for ASCII"
+        );
+
+        // Missing param: returns None (matches C `if ((s = getsparam(s)))` false branch).
+        env::remove_var("ZSHRS_TEST_LOCALE_GSU_MISSING");
+        assert_eq!(
+            getsparam_u("ZSHRS_TEST_LOCALE_GSU_MISSING"),
+            None,
+            "Src/params.c:3094 — getsparam_u returns NULL when getsparam returns NULL"
+        );
+
+        // Restore.
+        match saved {
+            Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
+            None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
     }
 }
