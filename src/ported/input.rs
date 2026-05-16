@@ -479,10 +479,32 @@ const SHIN_BUF_SIZE: usize = 8192;
 /// Meta character marker
 pub const META: char = '\u{83}';
 
-/// Check if a character needs meta encoding
-fn imeta(c: char) -> bool {
+/// Check if a character needs Meta-encoding in the SHIN buffer.
+///
+/// Port of `imeta(c)` from `Src/ztype.h:60` — `zistype(c, IMETA)`.
+/// Per `Src/utils.c:4195-4201`, the IMETA typtab bits are set for:
+///   - `'\0'` (0x00)
+///   - `Meta` (0x83)
+///   - `Pound..=LAST_NORMAL_TOK` (`Bang`) (0x84..=0x9c, ITOK+IMETA)
+///   - `Snull..=Nularg` (0x9d..=0xa1, ITOK+IMETA+INULL)
+///   - `Marker` (0xa2)
+///
+/// The previous Rust port used `b < 32 || (0x83..=0x9b).contains(&b)`
+/// which was BOTH:
+///   - too inclusive (0x01..=0x1f are NOT IMETA per the typtab —
+///     only 0x00 is); reading control chars from stdin would have
+///     been spuriously Meta-encoded, corrupting the input buffer
+///     for SHIN clients that pass them through literally; and
+///   - too narrow (0x9c, 0x9d..=0xa1, 0xa2 all needed Meta-encoding
+///     but escaped untouched, then later token-byte readers would
+///     mis-interpret them as live tokens rather than literal user
+///     bytes).
+/// Route through the canonical `ztype_h::imeta` typtab predicate so
+/// every IMETA test in the codebase agrees.
+fn imeta(c: char) -> bool {                                                  // c:60 (Src/ztype.h)
     let b = c as u32;
-    b < 32 || (0x83..=0x9b).contains(&b)
+    if b > 0xff { return false; }
+    crate::ported::ztype_h::imeta(b as u8)
 }
 
 // `InputBuffer` aggregate + thread_local INPUT singleton deleted.
@@ -562,12 +584,55 @@ mod tests {
         assert_eq!(lineno.with(|l| l.get()), 3);
     }
 
+    /// Pin: `imeta(c)` matches the canonical IMETA typtab population
+    /// at `Src/utils.c:4195-4201`. IMETA is set for:
+    ///   - `'\0'` (c:4195)
+    ///   - `Meta` (0x83) (c:4196)
+    ///   - `Marker` (0xa2) (c:4197)
+    ///   - `Pound..=LAST_NORMAL_TOK` = `0x84..=0x9c` (c:4198, Bang)
+    ///   - `Snull..=Nularg` = `0x9d..=0xa1` (c:4200)
+    ///
+    /// Non-IMETA: every ASCII letter, every ASCII digit, AND every
+    /// control char EXCEPT NUL (0x01..=0x1f are NOT IMETA — the
+    /// previous Rust port spuriously Meta-encoded them).
     #[test]
     fn test_meta_encoding() {
+        // Tests must initialise the typtab — without `inittyptab()`
+        // every byte's IMETA bit reads as 0. Serialise against other
+        // typtab-mutating tests via the canonical lock.
+        let _g = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+
+        // c:4195 — '\0' is IMETA.
         assert!(imeta('\x00'));
-        assert!(imeta('\x1f'));
+        // c:4196 — Meta (0x83) is IMETA.
+        assert!(imeta('\u{83}'));
+        // c:4197 — Marker (0xa2) is IMETA.
+        assert!(imeta('\u{a2}'));
+        // c:4198 — Pound (0x84) is IMETA via the NORMAL_TOK loop.
+        assert!(imeta('\u{84}'));
+        // c:4198 — LAST_NORMAL_TOK = Bang (0x9c) is IMETA.
+        assert!(imeta('\u{9c}'));
+        // c:4200 — Snull (0x9d) is IMETA via the NULL_TOK loop.
+        assert!(imeta('\u{9d}'));
+        // c:4200 — Nularg (0xa1) is IMETA at the top of the range.
+        assert!(imeta('\u{a1}'));
+
+        // Non-IMETA: ASCII letters / digits.
         assert!(!imeta('a'));
         assert!(!imeta('Z'));
+        assert!(!imeta('0'));
+
+        // Non-IMETA: control chars OTHER than NUL. The previous
+        // Rust port hardcoded `b < 32` which erroneously included
+        // these; canonical C IMETA covers only NUL among control
+        // chars (c:4195 has `typtab['\0'] |= IMETA;` and nothing
+        // else in the 0x01..=0x1f range).
+        assert!(!imeta('\x01'));
+        assert!(!imeta('\x1f'));
+        // Above 0xa2 (e.g. 0xa3 onward) is NOT IMETA either.
+        assert!(!imeta('\u{a3}'));
 
         // Verify the inlined metafy XOR (Src/utils.c:4856 c ^ 32) is
         // self-inverting — encode then decode round-trips to the input.

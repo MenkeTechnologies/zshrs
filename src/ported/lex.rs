@@ -3746,11 +3746,17 @@ fn is_valid_assignment_target(s: &str) -> bool {
 /// Like `untokenize`, but maps Snull → `'` and Dnull → `"` instead of
 /// stripping them. Used by callers that need the source form including
 /// quoting (e.g. arithmetic-substitution detection in compile_zsh).
+///
+/// Token-byte detection routes through the canonical ITOK range
+/// `Pound..=Nularg` = `0x84..=0xa1` (per `Src/zsh.h:159-205` +
+/// `Src/ztype.h:52`). The previous Rust port used `(0x83..=0x9f)`
+/// which was BOTH too inclusive (0x83 = Meta, IMETA-only, NOT ITOK)
+/// and too narrow (missing 0xa0 Bnullkeep and 0xa1 Nularg).
 pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         let cu = c as u32;
-        if (0x83..=0x9f).contains(&cu) {
+        if (0x84..=0xa1).contains(&cu) {                                       // c:52 (Src/ztype.h) ITOK range
             match c {
                 c if c == Pound => result.push('#'),
                 c if c == Stringg => result.push('$'),
