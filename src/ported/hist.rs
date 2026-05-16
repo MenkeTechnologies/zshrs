@@ -1366,10 +1366,28 @@ pub fn histreduceblanks(text: &str) -> String {
 }
 
 /// Port of `void histremovedups(void)` from Src/hist.c.
-pub fn histremovedups() {
+/// Port of `void histremovedups(void)` from `Src/hist.c:1252-1262`.
+///
+/// C body:
+/// ```c
+/// Histent he, next;
+/// for (he = hist_ring; he; he = next) {
+///     next = up_histent(he);
+///     if (he->node.flags & HIST_DUP)
+///         freehistnode(&he->node);
+/// }
+/// ```
+///
+/// The previous Rust port did NAME-based deduplication using a
+/// HashSet — totally different semantic. C removes entries that
+/// have the HIST_DUP flag set (which the history-add path sets
+/// only when HIST_IGNORE_ALL_DUPS / HIST_IGNORE_DUPS marked the
+/// entry as a duplicate). With HIST_IGNORE_ALL_DUPS off, identical
+/// commands stay in the ring intentionally; the Rust port would
+/// have aggressively pruned them anyway.
+pub fn histremovedups() {                                                    // c:1254
     let mut ring = hist_ring.lock().unwrap();
-    let mut seen = std::collections::HashSet::new();
-    ring.retain(|h| seen.insert(h.node.nam.clone()));
+    ring.retain(|h| (h.node.flags as u32 & HIST_DUP) == 0);                  // c:1259-1260
     let new_ct = ring.len() as i64;
     drop(ring);
     histlinect.store(new_ct, Ordering::SeqCst);
@@ -3405,16 +3423,25 @@ static strin: AtomicI32 = AtomicI32::new(0);
 // HIST_* flags (from zsh.h)
 // =========================================================================
 
-/// Port of `HIST_OLD` from Src/zsh.h. Entry came from the history file.
-pub const HIST_OLD: u32 = 1 << 0;
-/// Port of `HIST_DUP` from Src/zsh.h.
-pub const HIST_DUP: u32 = 1 << 1;
-/// Port of `HIST_FOREIGN` from Src/zsh.h.
-pub const HIST_FOREIGN: u32 = 1 << 2;
-/// Port of `HIST_TMPSTORE` from Src/zsh.h.
-pub const HIST_TMPSTORE: u32 = 1 << 3;
-/// Port of `HIST_NOWRITE` from Src/zsh.h.
-pub const HIST_NOWRITE: u32 = 1 << 4;
+// Re-export the canonical HIST_* flag bits from zsh_h.rs (which has
+// the C-faithful values per `Src/zsh.h:2252-2258`).
+//
+// The previous hist.rs duplicates declared:
+//   HIST_OLD     = 1 << 0  // = 0x01 (C: 0x02)
+//   HIST_DUP     = 1 << 1  // = 0x02 (C: 0x08)
+//   HIST_FOREIGN = 1 << 2  // = 0x04 (C: 0x10)
+//   HIST_TMPSTORE= 1 << 3  // = 0x08 (C: 0x20 — overlapped with Rust HIST_DUP!)
+//   HIST_NOWRITE = 1 << 4  // = 0x10 (C: 0x40 — overlapped with Rust HIST_FOREIGN!)
+//
+// Every flag was off-by-bit-shift AND the values overlapped each
+// other in confusing ways (Rust HIST_TMPSTORE = C HIST_DUP). Any
+// caller importing from `crate::ported::hist::HIST_DUP` was reading
+// or writing the wrong bit; history-file write paths would skip
+// entries the user wanted preserved, and HIST_FOREIGN/HIST_NOWRITE
+// gates fired against unrelated bit patterns.
+pub use crate::ported::zsh_h::{
+    HIST_OLD, HIST_DUP, HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE,
+};
 
 // =========================================================================
 // CASMOD_ enum (port of zsh.h:3122-3127)
@@ -4418,6 +4445,80 @@ mod subst_modifier_tests {
         stophist.store(saved_stop, Ordering::SeqCst);
         histactive.store(saved_active, Ordering::SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
+    }
+
+    /// Pin `histremovedups` to its canonical C body at
+    /// `Src/hist.c:1252-1262`: removes entries with HIST_DUP flag
+    /// SET, not name-based dedup. Also pins the HIST_DUP bit value
+    /// to the canonical C value (0x08 per `Src/zsh.h:2255`) — the
+    /// hist.rs duplicate had `1 << 1 = 0x02` which both overlapped
+    /// HIST_OLD and missed real HIST_DUP entries.
+    #[test]
+    fn histremovedups_removes_flagged_entries_only() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let saved_ring = {
+            let r = hist_ring.lock().unwrap();
+            r.iter().map(|h| (h.node.nam.clone(), h.histnum, h.node.flags))
+                .collect::<Vec<_>>()
+        };
+        let saved_histlinect = histlinect.load(Ordering::SeqCst);
+
+        // HIST_DUP must equal C value 0x08 (Src/zsh.h:2255).
+        assert_eq!(HIST_DUP, 0x08,
+            "HIST_DUP bit value must match C (0x08), got {:#x}", HIST_DUP);
+
+        // Build a ring with three entries, only the middle one flagged HIST_DUP.
+        {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.clear();
+            for (nam, num, flags) in [
+                ("entry1", 1i64, 0i32),
+                ("entry2", 2i64, HIST_DUP as i32),                   // flagged
+                ("entry3", 3i64, 0i32),
+            ] {
+                ring.push(histent {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None, nam: nam.to_string(), flags,
+                    },
+                    up: None, down: None, zle_text: None,
+                    stim: 0, ftim: 0,
+                    words: vec![], nwords: 0,
+                    histnum: num,
+                });
+            }
+        }
+        histlinect.store(3, Ordering::SeqCst);
+
+        histremovedups();
+
+        {
+            let ring = hist_ring.lock().unwrap();
+            assert_eq!(ring.len(), 2,
+                "c:1259-1260 — only the HIST_DUP-flagged entry is removed");
+            assert!(ring.iter().any(|h| h.node.nam == "entry1"));
+            assert!(ring.iter().any(|h| h.node.nam == "entry3"));
+            assert!(!ring.iter().any(|h| h.node.nam == "entry2"));
+        }
+        assert_eq!(histlinect.load(Ordering::SeqCst), 2,
+            "histlinect updated after removal");
+
+        // Restore ring.
+        {
+            let mut ring = hist_ring.lock().unwrap();
+            ring.clear();
+            for (nam, num, flags) in saved_ring {
+                ring.push(histent {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None, nam, flags,
+                    },
+                    up: None, down: None, zle_text: None,
+                    stim: 0, ftim: 0,
+                    words: vec![], nwords: 0,
+                    histnum: num,
+                });
+            }
+        }
+        histlinect.store(saved_histlinect, Ordering::SeqCst);
     }
 
     /// Pin `iaddtoline` to its canonical C body at
