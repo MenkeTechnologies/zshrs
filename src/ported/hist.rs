@@ -916,16 +916,46 @@ pub fn digitcount(s: &str) -> usize {                                        // 
     s.chars().take_while(|c| c.is_ascii_digit()).count()
 }
 
-/// Port of `void strinbeg(int dohist)` from Src/hist.c.
-pub fn strinbeg(dohist: i32) {
-    strin.fetch_add(1, Ordering::SeqCst);
-    hbegin(dohist);
+/// Port of `void strinbeg(int dohist)` from `Src/hist.c:1033-1044`.
+///
+/// C body:
+///     strin++;
+///     hbegin(dohist);
+///     lexinit();
+///     init_parse_status();
+///
+/// The previous Rust port called only `strin++` and `hbegin` —
+/// missing the `lexinit()` and `init_parse_status()` calls. Effect:
+/// a fresh string-input scope inherited stale lexer state (token
+/// classification tables, current-token buffers) AND stale parser
+/// status (incomplete-expression flags), so subsequent strinbeg-
+/// driven parses could misbehave with state from a prior parse.
+pub fn strinbeg(dohist: i32) {                                                // c:1033
+    strin.fetch_add(1, Ordering::SeqCst);                                     // c:1035
+    hbegin(dohist);                                                           // c:1036
+    crate::ported::lex::lexinit();                                            // c:1037
+    crate::ported::parse::init_parse_status();                                // c:1042
 }
 
-/// Port of `void strinend(void)` from Src/hist.c.
-pub fn strinend() {
-    hend(None);
-    strin.fetch_sub(1, Ordering::SeqCst);
+/// Port of `void strinend(void)` from `Src/hist.c:1049-1056`.
+///
+/// C body:
+///     hend(NULL);
+///     DPUTS(!strin, "BUG: strinend() called without strinbeg()");
+///     strin--;
+///     isfirstch = 1;
+///     histdone = 0;
+///
+/// The previous Rust port called only `hend` and decremented `strin`,
+/// missing the `isfirstch = 1` and `histdone = 0` resets. Effect: the
+/// next strinbeg-driven parse inherited stale "we're past the first
+/// char" state from the prior scope, defeating `^foo^bar`-style
+/// histsubchar shortcuts that key on `isfirstch`.
+pub fn strinend() {                                                           // c:1049
+    hend(None);                                                               // c:1051
+    strin.fetch_sub(1, Ordering::SeqCst);                                     // c:1053
+    crate::ported::lex::LEX_ISFIRSTCH.with(|f| f.set(true));                  // c:1054 isfirstch = 1
+    histdone.store(0, Ordering::SeqCst);                                      // c:1055 histdone = 0
 }
 
 /// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
