@@ -5083,18 +5083,20 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
 
     let loops = LOOPS.load(Ordering::Relaxed);
     match func {
-        // c:5825-5832 — BIN_CONTINUE: must be in a loop, set contflag.
-        x if x == BIN_CONTINUE => {                                          // c:5826
-            if loops == 0 {                                                  // c:5827
-                crate::ported::utils::zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5828
-                return 1;                                                    // c:5829
+        // c:5831-5842 — BIN_CONTINUE: must be in a loop, set contflag,
+        // then fall through to BIN_BREAK's break-count assign.
+        x if x == BIN_CONTINUE => {                                          // c:5831
+            if loops == 0 {                                                  // c:5832
+                crate::ported::utils::zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5833
+                return 1;                                                    // c:5834
             }
-            CONTFLAG.store(1, Ordering::Relaxed);                            // c:5831
-            // FALLTHROUGH to BIN_BREAK
-            if loops == 0 {
-                return 1;
-            }
-            BREAKS.store(if nump != 0 { num.min(loops) } else { 1 },         // c:5837
+            CONTFLAG.store(1, Ordering::Relaxed);                            // c:5836 FALLTHROUGH
+            // c:5837 — fallthrough to BIN_BREAK's loops==0 guard
+            // (impossible here since we already returned above) +
+            // break-count assign. Inlined directly. The previous
+            // Rust port had a redundant `if loops == 0 { return 1 }`
+            // dead-coded after the first guard.
+            BREAKS.store(if nump != 0 { num.min(loops) } else { 1 },         // c:5842
                          Ordering::Relaxed);
         }
         // c:5832-5838 — BIN_BREAK.
