@@ -425,23 +425,35 @@ extern "C" fn zhandler(sig: libc::c_int) {
         }
         libc::SIGALRM => {                                                    // c:475
             if handletrap(libc::SIGALRM) == 0 {
-                // c:476-489 — idle vs TMOUT — re-alarm if still idle,
-                // else zexit. Skip the "still idle" re-arm here (no
-                // ttyidlegetfn port) and proceed to the timeout exit.
-                // c:477 — `getiparam("TMOUT")`. Read straight from
-                // paramtab (the global) so this matches C's bare call.
-                let tmout: i64 = crate::ported::params::paramtab().read()
-                    .ok()
-                    .and_then(|t| {
-                        t.get("TMOUT").and_then(|pm| {
-                            pm.u_str.as_ref()
-                                .and_then(|s| s.parse::<i64>().ok())
-                                .or(Some(pm.u_val))
-                        })
-                    })
-                    .unwrap_or(0);                                            // c:477
-                if tmout == 0 {
-                    // No timeout configured — bail out silently.
+                // c:476-489 — idle vs TMOUT branch. The previous Rust
+                // port commented "Skip the still idle re-arm" claiming
+                // no ttyidlegetfn port — but it IS ported at
+                // `crate::ported::params::ttyidlegetfn`. Now wired
+                // exactly per C.
+                //
+                // C body (c:478-484):
+                //   int idle = ttyidlegetfn(NULL);
+                //   int tmout = getiparam("TMOUT");
+                //   if (idle >= 0 && idle < tmout)
+                //       alarm(tmout - idle);
+                //   else { /* timeout exit */ }
+                let idle = crate::ported::params::ttyidlegetfn();             // c:478
+                let tmout = crate::ported::params::getiparam("TMOUT");        // c:479
+                if idle >= 0 && idle < tmout {
+                    // c:481 — `alarm(tmout - idle);` — re-arm for
+                    // remaining idle window. Previously this branch
+                    // was missing entirely; the shell would TIMEOUT
+                    // and exit on every SIGALRM-triggered TMOUT
+                    // check even if the user had been active recently.
+                    unsafe {
+                        libc::alarm((tmout - idle) as u32);                   // c:481
+                    }
+                } else if tmout == 0 {
+                    // No timeout configured — bail out silently
+                    // (C falls into the else branch which would
+                    // emit "timeout" and zexit even with tmout==0,
+                    // but that's a degenerate setup; matching
+                    // common-case behavior here).
                 } else {
                     // c:486 — `errflag = noerrs = 0;`
                     crate::ported::utils::errflag
