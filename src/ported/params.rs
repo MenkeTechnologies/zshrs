@@ -3378,21 +3378,37 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
     let v = match v { Some(v) => v, None => return };
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
     if (pm.node.flags as u32 & PM_READONLY) != 0 {
-        // zerr("read-only variable: %s", pm->node.nam)
+        zerr(&format!("read-only variable: {}", pm.node.nam));                // c:2858
         return;
     }
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
-        let s = if (val.type_ & MN_INTEGER) != 0 {
-            val.l.to_string()
-        } else {
-            val.d.to_string()
+        // c:2862-2872 — convbase_underscore for integers (honors
+        // pm.base for the radix prefix + pm.width for underscore
+        // grouping), convfloat_underscore for floats. The previous
+        // Rust port computed `val.l.to_string()` then DROPPED the
+        // result via `let _ = s;` — meaning a numeric assignment
+        // to a SCALAR param stored NOTHING. `typeset s; (( s = 42 ))`
+        // would leave $s empty.
+        let s = if (val.type_ & MN_INTEGER) != 0 {                            // c:2862
+            // c:2864 — `convbase_underscore(val.u.l, pm->base, pm->width)`.
+            crate::ported::params::convbase_underscore(
+                val.l,
+                if pm.base > 0 { pm.base as u32 } else { 10 },
+                pm.width,
+            )
+        } else {                                                               // c:2867
+            // c:2869 — `convfloat_underscore(val.u.d, pm->width)`.
+            crate::ported::params::convfloat_underscore(val.d, pm.width)
         };
-        // setstrvalue(v, p) — assignstrvalue dispatch.
-        let _ = s;
+        pm.u_str = Some(s);                                                    // c:2871 setstrvalue → store
     } else if t == PM_INTEGER {
+        // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. For MN_FLOAT
+        // input, C truncates to integer via `(zlong)val.u.d`.
         pm.u_val = if (val.type_ & MN_INTEGER) != 0 { val.l } else { val.d as i64 };
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
+        // c:2878 — `pm->gsu.f->setfn(pm, val.u.d)`. MN_INTEGER input
+        // gets promoted via `(double)val.u.l`.
         pm.u_dval = if (val.type_ & MN_INTEGER) != 0 { val.l as f64 } else { val.d };
     }
 }
@@ -7672,6 +7688,44 @@ mod gsu_tests {
         assert_eq!(v, vec!["1", "0", "127"]);
         pipestatsetfn(None);
         assert_eq!(pipestatgetfn(), Vec::<String>::new());
+    }
+
+    /// Pin: `setnumvalue` actually STORES the scalar string per
+    /// `Src/params.c:2862-2872`. The previous Rust port computed
+    /// the string then dropped it via `let _ = s;` — meaning a
+    /// numeric assignment to a SCALAR param stored NOTHING.
+    ///
+    /// C body for PM_SCALAR: `setstrvalue(v, convbase_underscore(
+    /// val.u.l, pm->base, pm->width));`. We pin the round-trip
+    /// for an integer assigned to a scalar param.
+    #[test]
+    fn setnumvalue_stores_int_value_into_scalar_pm() {
+        use crate::ported::zsh_h::{param, hashnode, value, PM_SCALAR};
+        use crate::ported::math::{mnumber, MN_INTEGER};
+        // Build a scalar Param with no special base/width.
+        let mut pm = Box::new(param {
+            node: hashnode { next: None, nam: "x".to_string(), flags: PM_SCALAR as i32 },
+            u_data: 0, u_arr: None, u_str: Some(String::new()), u_val: 0,
+            u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        });
+        let mut v = value {
+            pm: Some(pm.clone()),
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 0,
+            end: -1,
+        };
+        let val = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        setnumvalue(Some(&mut v), val);
+        // c:2871 — the scalar storage now holds "42".
+        let stored = v.pm.as_ref().unwrap().u_str.clone().unwrap_or_default();
+        assert_eq!(stored, "42",
+            "c:2871 — setnumvalue must store the rendered integer; \
+             was previously dropped via `let _ = s;`");
+        let _ = pm;
     }
 
     #[test]
