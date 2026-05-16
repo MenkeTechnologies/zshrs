@@ -466,14 +466,44 @@ pub fn optison(name: &str, s: &str) -> i32 {                                 // 
 // (the latter returns defaults and would be wrong).
 use crate::ported::zsh_h::{isset, unset};
 
-/// Port of `cond_str(char **args, int num, int raw)` from Src/cond.c:525 — return `arg[num]` after
-/// running it through `singsub()` if it contains shell tokens, then
-/// optionally `untokenize()`. The Rust port stores already-expanded
-/// argument strings in the cond evaluator, so this collapses to an
-/// indexed read.
-#[allow(unused_variables)]
+/// Port of `cond_str(char **args, int num, int raw)` from `Src/cond.c:525-535`.
+///
+/// C body (c:527-534):
+/// ```c
+/// char *s = args[num];
+/// if (has_token(s)) {
+///     singsub(&s);
+///     if (!raw)
+///         untokenize(s);
+/// }
+/// return s;
+/// ```
+///
+/// The previous Rust port stubbed this to a plain indexed read,
+/// claiming "stores already-expanded argument strings" — but the
+/// in-tree evalcond walker at cond.rs:62 passes raw `&str` slices
+/// from the argv; no upstream expansion happens. Any cond op that
+/// calls cond_str (e.g. module-defined ops like `Src/Modules/files.c`'s
+/// `[[ -X file ]]`) would see un-singsub'd argument strings.
+///
+/// Port the full C body: if the arg contains tokens, route through
+/// `singsub` (for $var / $(cmd) / arithmetic expansion), then
+/// `untokenize` unless raw mode was requested.
 pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // c:525
-    args.get(num).cloned().unwrap_or_default()
+    let s = match args.get(num) {                                            // c:527
+        Some(v) => v.clone(),
+        None => return String::new(),
+    };
+    if crate::ported::utils::has_token(&s) {                                 // c:529
+        let expanded = crate::ported::subst::singsub(&s);                    // c:530
+        if !raw {
+            crate::ported::lex::untokenize(&expanded)                        // c:532
+        } else {
+            expanded
+        }
+    } else {
+        s                                                                    // c:534
+    }
 }
 
 /// Port of `cond_val(char **args, int num)` from Src/cond.c:539 — `[[ N -eq M ]]`
@@ -489,14 +519,24 @@ pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // 
 /// divergence that breaks `[[ $((LINENO)) -eq 1+0 ]]`-style asserts
 /// in user scripts.
 pub fn cond_val(args: &[String], num: usize) -> i64 {                        // c:539
-    let s = match args.get(num) {
-        Some(v) => v,
+    let raw = match args.get(num) {
+        Some(v) => v.clone(),
         None => return 0,
     };
-    // c:548 — `mathevali(s)`. Already-expanded arg (the Rust cond
-    // evaluator pre-runs singsub/untokenize), so we skip the
-    // has_token gate and go straight to mathevali.
-    crate::ported::math::mathevali(s).unwrap_or(0)                            // c:548
+    // c:543-547 — `if (has_token(s)) { singsub(&s); untokenize(s); }`.
+    // The previous Rust port claimed "args are pre-expanded" and
+    // jumped straight to mathevali. The evalcond walker passes raw
+    // slices; module-defined ops calling cond_val would see un-
+    // singsub'd tokens (Inpar/Outpar/Dnull/etc) reach mathevali and
+    // fail to parse \`$((x))\`-containing operands.
+    let s = if crate::ported::utils::has_token(&raw) {                       // c:543
+        let expanded = crate::ported::subst::singsub(&raw);                  // c:544
+        crate::ported::lex::untokenize(&expanded)                            // c:545
+    } else {
+        raw
+    };
+    // c:548 — `mathevali(s)`.
+    crate::ported::math::mathevali(&s).unwrap_or(0)                          // c:548
 }
 
 /// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
@@ -908,6 +948,23 @@ mod tests {
     ///
     /// Test the function itself (cond_match) — exercises the path
     /// the evalcond `=` operator uses when `posix=false`.
+    /// Pin `cond_str` to its canonical C body at `Src/cond.c:525-535`.
+    /// Token-free strings pass through unchanged; token-bearing
+    /// strings go through singsub + (unless raw) untokenize.
+    #[test]
+    fn cond_str_passes_through_when_no_tokens() {
+        let args = vec!["hello".to_string()];
+        // c:529 — has_token false → return as-is.
+        assert_eq!(cond_str(&args, 0, false), "hello",
+            "c:534 — token-free string returned as-is");
+        // raw=true also returns same when no tokens.
+        assert_eq!(cond_str(&args, 0, true), "hello",
+            "c:534 — token-free string returned as-is regardless of raw");
+        // Out-of-bounds → "".
+        assert_eq!(cond_str(&args, 99, false), "",
+            "out-of-bounds num returns empty string");
+    }
+
     #[test]
     fn cond_match_runs_matchpat_through_args_indirection() {
         // Literal equality always matches regardless of options.
