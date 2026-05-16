@@ -2106,33 +2106,63 @@ pub fn zstrtoul_underscore(s: &str) -> Option<u64> {                         // 
     u64::from_str_radix(&rest, base).ok()
 }
 
-/// Set blocking/nonblocking on a file descriptor
-/// Port from zsh/Src/utils.c setblock_fd() lines 2578-2618
-/// Toggle non-blocking mode on an fd.
-/// Port of the `fcntl(F_SETFL, O_NONBLOCK)` toggle Src/utils.c
-/// uses around `read -t` and select-based polling.
-pub fn setblock_fd(fd: i32, blocking: bool) -> bool {                        // c:2579
+/// Port of `int setblock_fd(int turnonblocking, int fd, long *modep)`
+/// from `Src/utils.c:2579`. Toggles O_NONBLOCK on `fd`.
+///
+/// **Signature matches C exactly** (param order `turnonblocking, fd`):
+/// - `turnonblocking=1` → clear O_NONBLOCK (enable blocking).
+/// - `turnonblocking=0` → set O_NONBLOCK (disable blocking).
+///
+/// Returns:
+/// - `(true, mode)` if the fd's state was changed.
+/// - `(false, -1)` if the fd is a regular file (C skips regular
+///   files entirely — only operates on pipes/sockets/ttys per
+///   `c:2599 if (!fstat(fd, &st) && !S_ISREG(st.st_mode))`).
+/// - `(false, mode)` if state was already correct.
+///
+/// Rust returns `(state_changed, modep_value)` as a tuple to mirror
+/// C's `int` return + `long *modep` out-param.
+pub fn setblock_fd(turnonblocking: bool, fd: i32) -> (bool, libc::c_long) {  // c:2579
     #[cfg(unix)]
-    {
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
-        if flags < 0 {
-            return false;
+    unsafe {
+        // c:2598-2600 — `if (!fstat(fd, &st) && !S_ISREG(st.st_mode))`.
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(fd, &mut st) != 0 {
+            return (false, -1);
         }
-        let new_flags = if blocking {
-            flags & !libc::O_NONBLOCK
-        } else {
-            flags | libc::O_NONBLOCK
-        };
-        if new_flags != flags {
-            unsafe { libc::fcntl(fd, libc::F_SETFL, new_flags) >= 0 }
-        } else {
-            true
+        // c:2599 — skip regular files (no nonblock concept).
+        let mode_bits = st.st_mode as u32;
+        if (mode_bits & libc::S_IFMT as u32) == libc::S_IFREG as u32 {
+            return (false, -1);                                              // c:2614 *modep = -1; return 0
         }
+        // c:2601 — `*modep = fcntl(fd, F_GETFL, 0);`
+        let modep = libc::fcntl(fd, libc::F_GETFL, 0) as libc::c_long;
+        if modep < 0 {
+            return (false, -1);                                              // c:2602 if (*modep != -1)
+        }
+        const NONBLOCK: libc::c_long = libc::O_NONBLOCK as libc::c_long;
+        if !turnonblocking {
+            // c:2603-2606 — want to KNOW if blocking was off; set it on.
+            if (modep & NONBLOCK) != 0 {
+                return (true, modep);                                        // already nonblock — no-op, but "off"
+            }
+            if libc::fcntl(fd, libc::F_SETFL, modep | NONBLOCK) == 0 {
+                return (true, modep);                                        // c:2606
+            }
+        } else {
+            // c:2607-2611 — want to clear NONBLOCK if currently set.
+            if (modep & NONBLOCK) != 0
+                && libc::fcntl(fd, libc::F_SETFL, modep & !NONBLOCK) == 0
+            {
+                return (true, modep);                                        // c:2611 state changed
+            }
+        }
+        (false, modep)
     }
     #[cfg(not(unix))]
     {
-        let _ = (fd, blocking);
-        false
+        let _ = (turnonblocking, fd);
+        (false, -1)
     }
 }
 
@@ -2141,20 +2171,13 @@ pub fn setblock_fd(fd: i32, blocking: bool) -> bool {                        // 
 /// long mode;
 /// return setblock_fd(1, 0, &mode);
 /// ```
-/// C `setblock_fd(turnonblocking=1, fd=0)` means "turn ON blocking
-/// on fd 0 (stdin)". Rust `setblock_fd(fd, blocking=true)` clears
-/// O_NONBLOCK (enables blocking) — so the correct mirror is
-/// `setblock_fd(0, true)`.
-///
-/// **Critical fix this iteration**: previous Rust port called
-/// `setblock_fd(0, false)` — opposite of C. That would set stdin
-/// NONBLOCKING on every `setblock_stdin()` call (used by readline,
-/// `read` builtin, completion menu) — exact opposite of intent.
+/// `turnonblocking=1, fd=0` — turn ON blocking on stdin (clear
+/// O_NONBLOCK). The Rust signature now matches C exactly so this
+/// is a direct 1:1 port.
 pub fn setblock_stdin() -> i32 {
-    // c:2624 — `return setblock_fd(1, 0, &mode);`. turnonblocking=1
-    // → enable blocking on fd=0. Rust `blocking=true` is the
-    // equivalent (clears O_NONBLOCK).
-    setblock_fd(0, true) as i32                                              // c:2624
+    // c:2624 — `return setblock_fd(1, 0, &mode);`.
+    let (changed, _mode) = setblock_fd(true, 0);                             // c:2624
+    changed as i32
 }
 
 /// Read poll - check for pending input
@@ -6616,6 +6639,62 @@ mod tests {
         let mixed: String = ['a', meta, '\x20', 'b'].iter().collect();
         assert_eq!(ztrlen(&mixed), 3,
             "c:5141 — three unmetafied chars from 'a' + Meta+X + 'b'");
+    }
+
+    /// `Src/utils.c:2579-2618` — `setblock_fd(turnonblocking, fd, modep)`.
+    /// Signature pin: previously the Rust port had a 2-arg
+    /// `(fd, blocking: bool) -> bool` signature, swapping the
+    /// turnonblocking/fd argument order vs C AND collapsing the
+    /// 3rd `*modep` out-param entirely. The fix restored canonical
+    /// C order `(turnonblocking, fd)` with a `(bool, c_long)` tuple
+    /// return mirroring `int return + long *modep`.
+    ///
+    /// Also pin the c:2599 regular-file short-circuit: C only
+    /// operates on non-regular fds (pipes, sockets, ttys). A regular
+    /// file returns `(false, -1)` immediately.
+    #[cfg(unix)]
+    #[test]
+    fn setblock_fd_skips_regular_files_per_c_2599() {
+        use std::os::unix::io::AsRawFd;
+        // Open a regular tempfile.
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = std::fs::File::create(dir.path().join("regular")).unwrap();
+        let fd = f.as_raw_fd();
+        let (changed, mode) = crate::ported::utils::setblock_fd(true, fd);
+        assert!(!changed,
+            "c:2599 — regular files short-circuit; setblock_fd must NOT report a change");
+        assert_eq!(mode, -1,
+            "c:2614 — `*modep = -1` for regular files");
+    }
+
+    /// `Src/utils.c:2606-2611` — `setblock_fd(turnonblocking=true, fd)`
+    /// clears O_NONBLOCK on a pipe (non-regular fd). Returns
+    /// `(true, prior_flags)` if the state was changed.
+    #[cfg(unix)]
+    #[test]
+    fn setblock_fd_clears_o_nonblock_on_pipe() {
+        // Create a pipe — non-regular fd.
+        let mut pipefd: [libc::c_int; 2] = [0; 2];
+        let r = unsafe { libc::pipe(pipefd.as_mut_ptr()) };
+        assert_eq!(r, 0, "pipe(2) must succeed");
+        let read_fd = pipefd[0];
+        let write_fd = pipefd[1];
+        // Force NONBLOCK on the read end.
+        let cur = unsafe { libc::fcntl(read_fd, libc::F_GETFL, 0) };
+        unsafe { libc::fcntl(read_fd, libc::F_SETFL, cur | libc::O_NONBLOCK); }
+        // Verify NONBLOCK is set.
+        let now = unsafe { libc::fcntl(read_fd, libc::F_GETFL, 0) };
+        assert_ne!(now & libc::O_NONBLOCK, 0, "test setup: NONBLOCK should be set");
+        // Call setblock_fd to ENABLE blocking (clear NONBLOCK).
+        let (changed, _mode) = crate::ported::utils::setblock_fd(true, read_fd);
+        assert!(changed,
+            "c:2611 — turnonblocking=true on a NONBLOCK pipe must report state change");
+        // Verify NONBLOCK is now cleared.
+        let after = unsafe { libc::fcntl(read_fd, libc::F_GETFL, 0) };
+        assert_eq!(after & libc::O_NONBLOCK, 0,
+            "c:2611 — O_NONBLOCK must be cleared after turnonblocking=true");
+        // Cleanup.
+        unsafe { libc::close(read_fd); libc::close(write_fd); }
     }
 
     /// `Src/utils.c:2620-2625` — `setblock_stdin()`. C body
