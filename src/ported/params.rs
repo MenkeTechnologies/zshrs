@@ -3124,22 +3124,39 @@ pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported
         .unwrap_or(mnumber { l: 0, d: 0.0, type_: MN_INTEGER })
 }
 
-/// Port of `export_param(Param pm)` from `Src/params.c:2653`. C body
-/// converts `pm`'s value to its scalar form per `PM_TYPE`
-/// (`convbase`/`convfloat`/`gsu.s->getfn`) then calls
-/// `addenv(pm, val)`. PM_ARRAY/PM_HASHED early-returns (export
-/// not supported for them outside KSH emulation).
-pub fn export_param(pm: &mut crate::ported::zsh_h::param) {
+/// Port of `export_param(Param pm)` from `Src/params.c:2653`.
+///
+/// C body converts `pm`'s value to its scalar form per `PM_TYPE`:
+///   PM_INTEGER:        convbase(buf, getfn, pm->base)
+///   PM_EFLOAT/FFLOAT:  convfloat(getfn, pm->base, pm->node.flags, NULL)
+///   PM_SCALAR/etc.:    gsu.s->getfn(pm)
+/// Then calls `addenv(pm, val)`. PM_ARRAY/PM_HASHED early-return.
+///
+/// The previous Rust port used `format!("{}", intgetfn(pm))` for
+/// integers and `format!("{}", floatgetfn(pm))` for floats — Rust's
+/// DEFAULT formatting. C uses convbase/convfloat which respect
+/// `pm.base` and `pm.flags`:
+///   - `typeset -i16 x=255; export x` should put "16#FF" in the
+///     env (per pm.base==16). The previous Rust port wrote "255".
+///   - `typeset -F3 y=3.14; export y` should put "3.140" (per
+///     pm.base==3 precision + PM_FFLOAT flag). Rust wrote "3.14".
+///
+/// Both formatter ports exist (`params::convbase`, `utils::convfloat`).
+/// Wire them so the env-side representation matches C.
+pub fn export_param(pm: &mut crate::ported::zsh_h::param) {                  // c:2653
     let t = PM_TYPE(pm.node.flags as u32);
-    if (t & (PM_ARRAY | PM_HASHED)) != 0 {
+    if (t & (PM_ARRAY | PM_HASHED)) != 0 {                                    // c:2659 array/hash skip
         return;
     }
     let val: String = if t == PM_INTEGER {
-        // convbase(buf, pm->gsu.i->getfn(pm), pm->base)
-        format!("{}", intgetfn(pm))
+        // c:2664 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
+        let base = if pm.base > 0 { pm.base as u32 } else { 10 };
+        crate::ported::params::convbase(intgetfn(pm), base)                   // c:2664
     } else if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
-        // convfloat(pm->gsu.f->getfn(pm), pm->base, pm->node.flags, NULL)
-        format!("{}", floatgetfn(pm))
+        // c:2668 — `convfloat(pm->gsu.f->getfn(pm), pm->base,
+        //                     pm->node.flags, NULL)`.
+        crate::ported::utils::convfloat(
+            floatgetfn(pm), pm.base, pm.node.flags as u32)                    // c:2668
     } else {
         strgetfn(pm)
     };
