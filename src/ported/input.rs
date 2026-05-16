@@ -476,8 +476,10 @@ pub fn ingetptr() -> String {                                                // 
 /// Size of the shell input buffer
 const SHIN_BUF_SIZE: usize = 8192;
 
-/// Meta character marker
-pub const META: char = '\u{83}';
+/// Re-export of `META` from zsh_h.rs (canonical port of `Src/zsh.h:144`).
+/// Duplicate declarations of the Meta byte invite drift; keep one
+/// source of truth.
+pub use crate::ported::zsh_h::META;
 
 /// Check if a character needs Meta-encoding in the SHIN buffer.
 ///

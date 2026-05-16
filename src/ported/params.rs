@@ -5542,8 +5542,18 @@ pub fn uidgetfn() -> i64 {
 // from term_reinit_from_pm and consulted by ZLE before first paint.
 pub static TERMFLAGS: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
-// `TERM_UNKNOWN` from Src/zsh.h:1986.
-pub const TERM_UNKNOWN: i32 = 1 << 0;
+// `TERM_UNKNOWN` re-exported from canonical zsh_h.rs (port of
+// `Src/zsh.h:1986`). The local declaration here had the value
+// `1 << 0 = 0x01` — which is C's TERM_BAD (Src/zsh.h:1985), NOT
+// TERM_UNKNOWN. The canonical TERM_UNKNOWN value is 0x02.
+//
+// Callers reading `crate::ported::params::TERM_UNKNOWN` got the
+// TERM_BAD bit; the params.rs term-init path fired
+// `TERMFLAGS.fetch_or(TERM_UNKNOWN)` which actually set TERM_BAD,
+// while the prompt.rs guard at line 441 imported the correct
+// (0x02) value from zsh_h.rs — so the two paths disagreed silently
+// about which bit means "unknown terminal".
+pub use crate::ported::zsh_h::TERM_UNKNOWN;
 
 /// Port of `uidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4698`. C body:
 /// `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`
@@ -9406,6 +9416,26 @@ mod tests {
 
         let _ = pm;
         crate::ported::options::opt_state_set("exec", saved_exec);
+    }
+
+    /// Pin `TERM_UNKNOWN` bit value to the canonical C value at
+    /// `Src/zsh.h:1986`. The previous params.rs duplicate had
+    /// `1 << 0 = 0x01` which is actually C's TERM_BAD (Src/zsh.h:1985);
+    /// the correct TERM_UNKNOWN value is 0x02. This single-byte
+    /// drift caused the params.rs term-init code to silently set the
+    /// TERM_BAD bit instead of TERM_UNKNOWN, while prompt.rs guards
+    /// imported the correct 0x02 value from zsh_h.rs — the two
+    /// paths disagreed about which bit means \"unknown terminal\".
+    #[test]
+    fn term_unknown_bit_value_matches_c() {
+        use crate::ported::zsh_h::{TERM_BAD, TERM_UNKNOWN};
+        assert_eq!(TERM_UNKNOWN, 0x02,
+            "Src/zsh.h:1986 — TERM_UNKNOWN must be 0x02, got {:#x}", TERM_UNKNOWN);
+        assert_eq!(TERM_BAD, 0x01,
+            "Src/zsh.h:1985 — TERM_BAD must be 0x01 (and != TERM_UNKNOWN)");
+        // Crucially: TERM_BAD and TERM_UNKNOWN must be DISTINCT bits.
+        assert_ne!(TERM_BAD, TERM_UNKNOWN,
+            "TERM_BAD and TERM_UNKNOWN must be distinct (caught the 1<<0 drift bug)");
     }
 
     /// Pin `getstrvalue` PM_INTEGER branch to canonical C convbase
