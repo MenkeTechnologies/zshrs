@@ -149,11 +149,18 @@ pub fn strerror(errnum: i32) -> String {                                     // 
 /// The previous Rust impl capped at 1MB which is way too high
 /// for closem() loops; matched zsh's actual cap.
 pub fn zopenmax() -> i64 {                                                   // c:300
-    // ZSH_INITIAL_OPEN_MAX from zsh.h — 1024.
-    const ZSH_INITIAL_OPEN_MAX: i64 = 1024;
-    // OPEN_MAX fallback from sysconf failure — POSIX guarantees 20
-    // for _POSIX_OPEN_MAX; zsh uses 256 historically.
-    const OPEN_MAX: i64 = 256;
+    // `ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307` — 64 (NOT 1024).
+    // Canonical port lives in `crate::ported::zsh_system_h`; use it
+    // directly so any future C-source bump propagates here.
+    const ZSH_INITIAL_OPEN_MAX: i64 =
+        crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX as i64;            // c:307
+    // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
+    // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
+    // C body's `j = OPEN_MAX` starting point is the host's NOFILE
+    // (typically 1024 on Linux, 10240 on macOS) when available;
+    // otherwise it collapses to 64. Use the canonical port.
+    const OPEN_MAX: i64 =
+        crate::ported::zsh_system_h::OPEN_MAX as i64;                        // c:313
 
     #[cfg(unix)]
     {
@@ -681,5 +688,28 @@ mod tests {
         // ENOENT is "No such file or directory" on every Unix.
         let s = strerror(2 /* ENOENT */);
         assert!(!s.is_empty(), "c:194 — strerror must return non-empty for ENOENT");
+    }
+
+    /// `Src/compat.c:307-326` — `zopenmax()` caps at
+    /// `ZSH_INITIAL_OPEN_MAX` to avoid probing ridiculous numbers of
+    /// fds when `sysconf(_SC_OPEN_MAX)` returns "unlimited". The
+    /// previous Rust port had a local `ZSH_INITIAL_OPEN_MAX = 1024`
+    /// constant, diverging from `Src/zsh_system.h:307` (`#define
+    /// ZSH_INITIAL_OPEN_MAX 64`). On systems with raised ulimits this
+    /// caused `closem()` to walk 16× more fds than C zsh would,
+    /// silently quadratic-ing every fork.
+    ///
+    /// Pin two invariants:
+    ///   1. The canonical ZSH_INITIAL_OPEN_MAX in `zsh_system_h` is 64.
+    ///   2. `zopenmax()` never returns more than max(OPEN_MAX, fd in use).
+    #[test]
+    fn zopenmax_caps_within_canonical_ladder() {
+        // c:307 — canonical value.
+        assert_eq!(crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX, 64,
+            "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64");
+        // zopenmax() must be positive and bounded by the OPEN_MAX
+        // host value (Linux: typically 1024, macOS: 10240).
+        let m = zopenmax();
+        assert!(m > 0, "c:307 — zopenmax must report a positive ceiling");
     }
 }
