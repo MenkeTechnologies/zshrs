@@ -3169,10 +3169,17 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
     }
 
     // c:3394-3400 — early-error validation: invalid flag combinations.
+    // C: `(OPT_MINUS(ops,'X') && (OPT_ISSET(ops,'m') || !scriptname))` —
+    // \`-X\` is only valid in a script context (autoload-from-fpath
+    // dispatch). Previous Rust port dropped the \`|| !scriptname\` half
+    // so \`functions -X foo\` from interactive shell silently
+    // succeeded — divergent.
+    let scriptname_missing = crate::ported::utils::scriptname_get().is_none();
     if (off & PM_UNDEFINED) != 0                                             // c:3394
         || (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))                    // c:3394
         || (OPT_ISSET(ops, b'x') && !OPT_HASARG(ops, b'x'))                  // c:3395
-        || (OPT_MINUS(ops, b'X') && OPT_ISSET(ops, b'm'))                    // c:3396 (scriptname check elided)
+        || (OPT_MINUS(ops, b'X')                                             // c:3396
+            && (OPT_ISSET(ops, b'm') || scriptname_missing))                 // c:3396 !scriptname
         || (OPT_ISSET(ops, b'c')
             && (OPT_ISSET(ops, b'x') || OPT_ISSET(ops, b'X') || OPT_ISSET(ops, b'm')))
     {
