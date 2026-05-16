@@ -889,8 +889,41 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
             }
         }
         if array != 0 {                                                      // c:684
-            // c:685-687 — display arrays (PM_ARRAY filter). Static-link
-            // path: nothing to enumerate from env vars typed as arrays.
+            // c:685-687 — `scanhashtable(paramtab, 1, PM_ARRAY, 0,
+            //              paramtab->printnode, hadplus ? PRINT_NAMEONLY : 0)`.
+            // Walk paramtab filtering by PM_ARRAY and emit each as
+            // `name=(elem1 elem2 ...)`. Previous Rust port stubbed
+            // this body with a "nothing to enumerate" comment — but
+            // paramtab does store arrays in `u_arr`, so `set -A` (no
+            // name) MUST list every PM_ARRAY entry. Sorted via
+            // hnamcmp (meta-aware compare) per `sorted=1` in the C
+            // scanhashtable call.
+            let mut arr_entries: Vec<(String, Vec<String>)> = {
+                use crate::ported::zsh_h::{PM_ARRAY, PM_TYPE};
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                tab.iter()
+                    .filter(|(_, pm)| {
+                        PM_TYPE(pm.node.flags as u32) == PM_ARRAY
+                            && (pm.node.flags as u32
+                                & crate::ported::zsh_h::PM_UNSET) == 0
+                    })
+                    .map(|(k, pm)| {
+                        (k.clone(), pm.u_arr.clone().unwrap_or_default())
+                    })
+                    .collect()
+            };
+            arr_entries.sort_by(|a, b|
+                crate::ported::hashtable::hnamcmp(&a.0, &b.0));               // c:685 sorted=1
+            for (k, arr) in arr_entries {
+                if hadplus {                                                 // c:686 PRINT_NAMEONLY
+                    println!("{}", k);
+                } else {
+                    let quoted: Vec<String> = arr.iter()
+                        .map(|v| crate::ported::utils::quotedzputs(v))
+                        .collect();
+                    println!("{}=({})", k, quoted.join(" "));
+                }
+            }
         }
         if remaining.is_empty() && !hadend {                                 // c:688
             crate::ported::mem::unqueue_signals();
