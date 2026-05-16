@@ -6079,14 +6079,34 @@ pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:ut
     }
 }
 
-/// Port of `imeta()` macro from `Src/zsh.h`. Returns true for any
-/// byte that needs meta-encoding (high-bit + the special control
-/// bytes zsh treats as syntax). The Rust port treats every byte
-/// >= 0x83 as needing escape, matching the C macro's effective
-/// range on little-endian Unix.
+/// Port of `imeta()` macro from `Src/ztype.h:60` — `zistype(X, IMETA)`.
+///
+/// IMETA is set in the typtab at `Src/utils.c:4195-4201` for:
+///   - `'\0'` (c:4195)
+///   - `Meta` (0x83) (c:4196)
+///   - `Marker` (0xa2) (c:4197)
+///   - `Pound..=LAST_NORMAL_TOK` = `0x84..=0x9c` (c:4198)
+///   - `Snull..=Nularg` = `0x9d..=0xa1` (c:4200)
+///
+/// The CANONICAL set is `{0x00, 0x83..=0xa2}`. The previous Rust
+/// port used `b >= 0x83` (every byte 0x83..=0xff) which was WRONG
+/// for bytes `0xa3..=0xff`: C `imeta()` returns false for those,
+/// so metafy passes them through unchanged. Rust's broader range
+/// caused `metafy` to corrupt UTF-8 multibyte content (e.g.,
+/// `é` = `0xc3 0xa9`: both bytes are NOT IMETA in C, but Rust
+/// escaped both as `Meta + (byte ^ 32)`, mangling the encoding
+/// and breaking every downstream consumer that expects the raw
+/// UTF-8 bytes to round-trip).
+///
+/// Use the closed-range form rather than the typtab lookup so
+/// `metafy` / `imeta_byte` work in test contexts where the typtab
+/// isn't initialised, AND so the fast-path doesn't go through a
+/// Mutex lock per byte (`metafy` is called per-character on every
+/// shell input line).
 #[inline]
 pub fn imeta_byte(b: u8) -> bool {
-    b >= Meta
+    // c:4195-4201 — canonical IMETA range.
+    b == 0 || (0x83..=0xa2).contains(&b)
 }
 
 /// Port of `convfloat(double dval, int digits, int flags, FILE *fout)` from `Src/params.c:5690` (the C source has
@@ -6308,11 +6328,26 @@ mod tests {
 
     #[test]
     fn test_imeta_byte_threshold() {
-        // C `#define imeta(c) ((c) >= Meta)` — true for any byte
-        // >= 0x83.
-        assert!(!imeta_byte(0x82));
-        assert!(imeta_byte(Meta));
-        assert!(imeta_byte(0xFF));
+        // Canonical IMETA per Src/utils.c:4195-4201:
+        //   - 0x00 (c:4195)
+        //   - 0x83..=0xa2 (Meta through Marker — c:4196-4200)
+        //
+        // The previous version of this test asserted `imeta_byte(0xFF) == true`
+        // based on the WRONG `b >= Meta` predicate the Rust port
+        // originally used. C `imeta()` reads the typtab; 0xa3..=0xff
+        // have NO typtab assignment so they're NOT IMETA, and
+        // `metafy` must NOT escape them.
+        assert!(imeta_byte(0x00),  "c:4195 — NUL is IMETA");
+        assert!(!imeta_byte(0x82), "0x82 is NOT IMETA (below Meta)");
+        assert!(imeta_byte(Meta),  "c:4196 — Meta (0x83) is IMETA");
+        assert!(imeta_byte(0xa2),  "c:4197 — Marker (0xa2) is IMETA");
+        // c:4198-4200 upper bound — Nularg is the last IMETA byte.
+        assert!(imeta_byte(0xa1),  "c:4200 — Nularg (0xa1) is IMETA");
+        // 0xa3..=0xff are NOT IMETA — UTF-8 multi-byte content
+        // must pass through `metafy` unchanged.
+        assert!(!imeta_byte(0xa3), "0xa3 NOT IMETA (above Marker)");
+        assert!(!imeta_byte(0xc3), "0xc3 NOT IMETA (UTF-8 'é' lead)");
+        assert!(!imeta_byte(0xFF), "0xFF NOT IMETA");
     }
 
     #[test]
@@ -6415,14 +6450,57 @@ mod tests {
 
     #[test]
     fn test_metafy_imeta_predicate_matches_c_macro() {
-        // The C macro is `#define imeta(c) ((c) >= Meta)` —
-        // verify the Rust port's predicate matches via imeta_byte.
-        for b in 0u8..0x83 {
+        // Canonical C IMETA per Src/utils.c:4195-4201:
+        //   - 0x00 (c:4195)
+        //   - 0x83 (Meta, c:4196)
+        //   - 0x84..=0x9c (Pound..LAST_NORMAL_TOK=Bang, c:4198)
+        //   - 0x9d..=0xa1 (Snull..Nularg, c:4200)
+        //   - 0xa2 (Marker, c:4197)
+        //
+        // The closed set is {0x00, 0x83..=0xa2}. Every other byte
+        // (0x01..=0x82, 0xa3..=0xff) is NOT IMETA in C and so must
+        // NOT be Meta-encoded by `metafy`. The previous Rust
+        // hardcoded predicate `b >= 0x83` falsely marked
+        // 0xa3..=0xff as IMETA, corrupting UTF-8 multibyte
+        // content.
+
+        // NUL is IMETA (c:4195).
+        assert!(imeta_byte(0x00), "c:4195 — '\\0' IS imeta");
+
+        // 0x01..=0x82 are NOT IMETA (no typtab assignment for them).
+        for b in 0x01u8..=0x82 {
             assert!(!imeta_byte(b), "byte {:#x} should NOT be imeta", b);
         }
-        for b in 0x83u8..=0xff {
-            assert!(imeta_byte(b), "byte {:#x} should be imeta", b);
+
+        // 0x83..=0xa2 ARE IMETA (the canonical full range).
+        for b in 0x83u8..=0xa2 {
+            assert!(imeta_byte(b), "c:4196-4200 — byte {:#x} IS imeta", b);
         }
+
+        // 0xa3..=0xff are NOT IMETA. C `imeta()` returns false
+        // for these so `metafy` must pass them through unchanged.
+        // UTF-8 continuation bytes (0x80..=0xbf) and multi-byte
+        // leads (0xc0..=0xff) live here and must round-trip.
+        for b in 0xa3u8..=0xff {
+            assert!(!imeta_byte(b), "byte {:#x} should NOT be imeta (no c:4195-4201 assignment)", b);
+        }
+    }
+
+    /// Pin: `metafy` passes UTF-8 multibyte bytes through unchanged
+    /// when they fall outside the canonical IMETA range. Previously
+    /// the broader `b >= 0x83` predicate corrupted every UTF-8
+    /// continuation byte and lead byte that wasn't a token marker.
+    #[test]
+    fn metafy_preserves_utf8_high_bytes_outside_imeta_range() {
+        // 'é' = U+00E9 = UTF-8 0xc3 0xa9. Both bytes are >= 0x83 BUT
+        // both are also > 0xa2, so they're NOT IMETA per the typtab.
+        // C `metafy` passes them through unchanged.
+        let input = std::str::from_utf8(&[0xC3, 0xA9]).unwrap();
+        let out = metafy(input);
+        // Should round-trip the two bytes exactly (no Meta escape).
+        let out_bytes = out.as_bytes();
+        assert_eq!(out_bytes, &[0xC3, 0xA9],
+            "c:4196-4200 — UTF-8 bytes 0xc3/0xa9 outside IMETA range must pass through");
     }
 
     #[test]
