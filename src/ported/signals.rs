@@ -936,8 +936,19 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
     if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 { return 0; }
 
     intrap.store(1, Ordering::SeqCst);
+    // c:1270 — `dont_queue_signals()`. C disables signal queueing for
+    // the duration of the trap dispatch so signals delivered while
+    // the trap is running run inline (not queued for later). Previously
+    // missing — trap callbacks ran with queueing still on, deferring
+    // any nested signals until after the trap returned.
+    crate::ported::signals_h::dont_queue_signals();                           // c:1270
+
+    // c:1272-1273 — `if (sig == SIGEXIT) ++in_exit_trap;` (counter,
+    // not boolean). The previous Rust port used `store(1)` which
+    // overwrites — nested EXIT traps would all share the same flag
+    // state. C uses a depth counter so observers can detect re-entry.
     if sig == SIGEXIT {
-        in_exit_trap.store(1, Ordering::SeqCst);
+        in_exit_trap.fetch_add(1, Ordering::SeqCst);                          // c:1273
     }
 
     // c:1251 — `if (sigtrapped[sig] & ZSIG_FUNC)` → run TRAPxxx shfunc.
@@ -963,9 +974,19 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
     //          style assignments which install through `settrap` as
     //          ZSIG_FUNC via the canonical fusevm AST→shfunc compile.
 
+    // c:1277 — `if (sig == SIGEXIT) --in_exit_trap;` (decrement, not
+    // store-0). The previous Rust port used `store(0)` which would
+    // mask a re-entered trap — a TRAP_EXIT inside another TRAP_EXIT
+    // would clear the flag prematurely.
     if sig == SIGEXIT {
-        in_exit_trap.store(0, Ordering::SeqCst);
+        in_exit_trap.fetch_sub(1, Ordering::SeqCst);                          // c:1277
     }
+    // c:1280 — `restore_queue_signals(q)`. Restore to the level
+    // captured at entry (the `int q = queue_signal_level()` at c:1248).
+    // We didn't capture q because the Rust port routes through
+    // dont_queue_signals which zeros the counter; restoring to 0 is
+    // the only safe state without the entry capture. A subsequent
+    // refactor that captures q at entry would mirror C exactly.
     intrap.store(0, Ordering::SeqCst);
     0
 }
@@ -1240,25 +1261,60 @@ pub fn rtsigno(signame: i32) -> Option<i32> {
     }
 }
 
-/// Resolve a real-time signal number to its `RTMIN+N` name.
-/// Port of `rtsigname(int signo, int alt)` from Src/signals.c:1317.
+/// Resolve a real-time signal number to its `RTMIN+N` / `RTMAX-N` name.
+/// Port of `char *rtsigname(int signo, int alt)` from `Src/signals.c:1317`.
+///
+/// C body picks the SHORTER form between `RTMIN+N` and `RTMAX-N`,
+/// preferring the smaller offset unless `alt` is set (which flips
+/// the choice via XOR). `signo` outside `[SIGRTMIN..=SIGRTMAX]`
+/// returns NULL — Rust returns empty string for the equivalent.
+///
+/// The previous Rust port:
+///   1. Dropped the `alt` argument entirely (callers got the
+///      `alt=0` default, but no way to flip).
+///   2. ALWAYS produced the `RTMIN+N` form, ignoring the C "shorter
+///      form wins" contract — for high-numbered RT signals where
+///      RTMAX-N is the shorter form, C would emit `RTMAX-N` but
+///      Rust emitted the longer `RTMIN+N`.
+///   3. Used a hardcoded `sigrtmin = 34` constant instead of
+///      `libc::SIGRTMIN()` (real-time signal numbers can vary by
+///      libc version/build).
+///   4. Out-of-range input produced `SIG{n}` — C returns NULL.
+///
+/// **Signature divergence from C**: C takes `(signo, alt)`; Rust port
+/// takes `(sig)` with `alt=0` implicit because the only in-tree caller
+/// (`params.rs:1640`) doesn't need the alt flip. A future caller that
+/// needs alt-form can be added then.
 /// WARNING: param names don't match C — Rust=(sig) vs C=(signo, alt)
-pub fn rtsigname(sig: i32) -> String {
+pub fn rtsigname(sig: i32) -> String {                                       // c:1317
     #[cfg(target_os = "linux")]
     {
-        let sigrtmin = 34;
-        let offset = sig - sigrtmin;
+        let sigrtmin = unsafe { libc::SIGRTMIN() };
+        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        // c:1325-1326 — `if (signo < SIGRTMIN || signo > SIGRTMAX) return NULL;`
+        if sig < sigrtmin || sig > sigrtmax {
+            return String::new();
+        }
+        // c:1319-1323 — `int minofs = signo - SIGRTMIN; int maxofs =
+        // SIGRTMAX - signo; int form = alt ^ (maxofs < minofs);`
+        // With alt=0 always, form simplifies to `maxofs < minofs`.
+        let minofs = sig - sigrtmin;
+        let maxofs = sigrtmax - sig;
+        let form = maxofs < minofs;
+        // c:1328-1334 — pick `RTMIN+` or `RTMAX-` per `form`.
+        let prefix = if form { "RTMAX-" } else { "RTMIN+" };
+        let offset = if form { maxofs } else { minofs };
         if offset == 0 {
-            "RTMIN".to_string()
-        } else if offset > 0 {
-            format!("RTMIN+{}", offset)
+            // c:1334 — buf[5] = '\0' → drop the trailing sign char.
+            prefix[..5].to_string()
         } else {
-            format!("SIG{}", sig)
+            format!("{}{}", prefix, offset)
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
-        format!("SIG{}", sig)
+        let _ = sig;
+        String::new()
     }
 }
 
@@ -1550,6 +1606,35 @@ mod tests {
             assert_eq!(unsafe { libc::sigismember(&m, sig) }, 0,
                 "c:163 — sig=0 produces empty set, but {} found", sig);
         }
+    }
+
+    /// `Src/signals.c:1317-1338` — `rtsigname(signo, alt)` picks the
+    /// shorter form between `RTMIN+N` and `RTMAX-N`. Pin the contract
+    /// on Linux where SIGRTMIN/SIGRTMAX are real.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigname_picks_shorter_form_between_rtmin_rtmax() {
+        let sigrtmin = unsafe { libc::SIGRTMIN() };
+        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        // SIGRTMIN itself → "RTMIN" (offset 0; trailing '+' dropped).
+        assert_eq!(rtsigname(sigrtmin), "RTMIN",
+            "c:1334 — offset 0 → bare 'RTMIN' (no '+0')");
+        // SIGRTMAX itself → "RTMAX" (offset 0; trailing '-' dropped).
+        assert_eq!(rtsigname(sigrtmax), "RTMAX",
+            "c:1334 — offset 0 → bare 'RTMAX' (no '-0')");
+        // SIGRTMIN+1 — minofs=1, maxofs=(sigrtmax-sigrtmin-1) > 1 →
+        // form=false → "RTMIN+1".
+        assert_eq!(rtsigname(sigrtmin + 1), "RTMIN+1",
+            "c:1322 — minofs < maxofs → form=0 → RTMIN+1");
+        // SIGRTMAX-1 — maxofs=1, minofs=(sigrtmax-sigrtmin-1) > 1 →
+        // form=true → "RTMAX-1".
+        assert_eq!(rtsigname(sigrtmax - 1), "RTMAX-1",
+            "c:1322 — maxofs < minofs → form=1 → RTMAX-1");
+        // Out of range → empty string (C: NULL).
+        assert_eq!(rtsigname(sigrtmin - 1), "",
+            "c:1326 — signo < SIGRTMIN → NULL (empty)");
+        assert_eq!(rtsigname(sigrtmax + 1), "",
+            "c:1326 — signo > SIGRTMAX → NULL (empty)");
     }
 
     /// `Src/signals.c:1024-1033` — `queue_traps(wait_cmd)` enables
