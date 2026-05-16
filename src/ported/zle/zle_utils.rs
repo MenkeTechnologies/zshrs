@@ -82,7 +82,7 @@ pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {                 
 }
 
 /// Port of `zlelineasstring(...)` from Src/Zle/zle_utils.c:192.
-/// Vec<char>→String is the direct Rust port; C's mb_len/wcrtomb/
+/// `Vec<char>`→String is the direct Rust port; C's mb_len/wcrtomb/
 /// metafy pipeline collapses since Rust char is already UTF-32.
 /// WARNING: param names don't match C — Rust=(line, ll, _flags) vs C=(instr, inll, incs, outllp, outcsp, useheap)
 pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // c:192

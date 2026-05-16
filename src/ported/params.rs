@@ -3893,7 +3893,7 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {                       // 
 /// The previous Rust port handled the GATE logic correctly but
 /// SKIPPED the diagnostic emit, claiming the `funcstack` global
 /// wasn't ported. But `crate::ported::modules::parameter::FUNCSTACK`
-/// IS ported (Mutex<Vec<funcstack>>). Wire the walk:
+/// IS ported (`Mutex<Vec<funcstack>>`). Wire the walk:
 ///   for (i = funcstack; i; i = i->prev)
 ///       if (i->tp == FS_FUNC) {
 ///           msg = created ?
@@ -5994,7 +5994,7 @@ pub fn argzerosetfn(x: String) {                                             // 
 /// The previous Rust port ALWAYS returned `argzero`, defeating the
 /// POSIXARGZERO option entirely. After `exec -a foo` or function-call
 /// argv-rewrite, `$0` under POSIXARGZERO should report the ORIGINAL
-/// startup argv[0], not the rewritten name. Now wired via
+/// startup `argv[0]`, not the rewritten name. Now wired via
 /// `isset(POSIXARGZERO)` + the canonical posixzero accessor.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn argzerogetfn() -> String {
@@ -6043,7 +6043,7 @@ pub fn savehistsizegetfn() -> i64 {
 /// Port of `savehistsizesetfn(UNUSED(Param pm), zlong v)` from `Src/params.c:4994`. C body:
 /// `if ((savehistsiz = v) < 0) savehistsiz = 0;`
 ///
-/// The Rust port has TWO mirrors of `savehistsiz`: a Mutex<i64>
+/// The Rust port has TWO mirrors of `savehistsiz`: a `Mutex<i64>`
 /// in params.rs (read by `savehistsizegetfn`) AND an AtomicI64
 /// in hist.rs (read by the history-file writer at
 /// `Src/hist.c:savehistfile` per c:3878). The previous Rust port
