@@ -513,14 +513,31 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
 /// did `setopt nocaseglob` and ran `[[ ABC = abc ]]` would still get
 /// a case-sensitive failure under the Rust port; C respects nocaseglob.
 pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c:552
+    // c:556 — `char *s = args[num]; singsub(&s); return matchpat(str, s);`
+    //
+    // C calls `singsub(&s)` to perform parameter expansion / arithmetic
+    // / command substitution on the pattern BEFORE matching. Without
+    // this, `[[ $x = $pat ]]` would match the literal string "$pat"
+    // rather than the value of $pat. Previous Rust port skipped
+    // singsub entirely — `[[ $x = $pat ]]` silently failed to expand
+    // the RHS.
+    let p_raw = match args.get(num) {
+        Some(v) => v,
+        None => return false,
+    };
+    let p = crate::ported::subst::singsub(p_raw);                            // c:556
     // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
     let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
     // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
     // canonical-name spelling, NOT a "no_case_glob" variant).
     let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
-    args.get(num)
-        .map(|p| matchpat(str, p, extended, case_sensitive))
-        .unwrap_or(false)
+    // C: `matchpat(str, s)` where `str` is the text being matched
+    // and `s` is the pattern. Rust matchpat's signature is REVERSED:
+    // `matchpat(pattern, text, ...)`. The previous Rust port called
+    // `matchpat(str, p, ...)` which passed text as pattern AND
+    // pattern as text — silently mis-routing every `[[ a = pat ]]`
+    // glob test against the wrong side. Pass in Rust order.
+    matchpat(&p, str, extended, case_sensitive)                              // c:557
 }
 
 /// Port of `tracemodcond(char *name, char **args, int inf)` from Src/cond.c:563 — `xtrace`-mode
@@ -902,6 +919,24 @@ mod tests {
         // Out-of-bounds index → false (no panic, args.get returns None).
         assert!(!cond_match(&args, 99, "hello"),
             "out-of-bounds num returns false");
+
+        // c:556-557 — pattern goes through matchpat in (pattern, text)
+        // order. Asymmetric glob: `*.txt` is a pattern that matches
+        // `file.txt` (text) but NOT vice-versa. Previous Rust port had
+        // args reversed: matchpat(str, p, ...) = matchpat(text-as-pattern,
+        // pattern-as-text) — `[[ file.txt = *.txt ]]` would silently
+        // match `*.txt` against text="file.txt" treating "*.txt" as a
+        // string and "file.txt" as a glob, mis-routing every glob test.
+        let args = vec!["*.txt".to_string()];
+        assert!(cond_match(&args, 0, "file.txt"),
+            "c:556-557 — pattern `*.txt` matches text `file.txt`");
+        // The reverse direction MUST NOT match — `file.txt` is not a
+        // glob pattern that matches `*.txt` (the asterisk would be a
+        // literal). If args were reversed, this would pass too.
+        let args = vec!["file.txt".to_string()];
+        assert!(!cond_match(&args, 0, "*.txt"),
+            "c:556-557 — literal pattern `file.txt` does NOT match text `*.txt` \
+             (this catches the swapped-arg regression)");
     }
 
     /// Pin: `cond_val` routes through `mathevali` per `Src/cond.c:548`.
