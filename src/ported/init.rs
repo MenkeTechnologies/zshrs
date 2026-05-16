@@ -252,9 +252,17 @@ pub fn init_io(_cmd: Option<&str>) {                                         // 
     // xtrerr = stderr;                                                      // c:621
 
     // Make sure the tty is opened read/write.                               // c:623
+    //
+    // C uses `if (isatty(0))` — the truthy test, NOT a strict
+    // `== 1`. POSIX guarantees isatty returns 0 on false but
+    // "non-zero" on true with the exact value implementation-
+    // defined. macOS/glibc/musl all return 1 today but the
+    // strict `== 1` check is brittle — match C's truthy test
+    // so a future libc that returns any non-zero value still
+    // hits the SHTTY-open path.
     #[cfg(unix)]
     unsafe {
-        if libc::isatty(0) == 1 {                                            // c:624
+        if libc::isatty(0) != 0 {                                            // c:624
             let name_ptr = libc::ttyname(0);                                 // c:626
             if !name_ptr.is_null() {
                 let name = std::ffi::CStr::from_ptr(name_ptr);
@@ -268,7 +276,7 @@ pub fn init_io(_cmd: Option<&str>) {                                         // 
                             Ordering::SeqCst);                               // c:659
             }
         }
-        if SHTTY.load(Ordering::SeqCst) == -1 && libc::isatty(1) == 1 {      // c:662
+        if SHTTY.load(Ordering::SeqCst) == -1 && libc::isatty(1) != 0 {      // c:662
             SHTTY.store(crate::ported::utils::movefd(libc::dup(1)),
                         Ordering::SeqCst);                                   // c:663
         }

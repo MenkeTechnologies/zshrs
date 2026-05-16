@@ -318,7 +318,11 @@ pub struct ztmout {                                                          // 
             // we know the descriptor is in raw mode.
             use std::os::unix::io::AsRawFd;
             let fd = io::stdin().as_raw_fd();
-            let is_tty = unsafe { libc::isatty(fd) } == 1;
+            // POSIX guarantees isatty returns "non-zero" on true
+            // with the exact value implementation-defined. The
+            // `== 1` strict check is brittle; use `!= 0` to match
+            // the C source's truthy `if (isatty(fd))` semantics.
+            let is_tty = unsafe { libc::isatty(fd) } != 0;
             let in_raw_mode = if is_tty {
                 let mut t: libc::termios = unsafe { std::mem::zeroed() };
                 if unsafe { libc::tcgetattr(fd, &mut t) } == 0 {
