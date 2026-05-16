@@ -1813,9 +1813,51 @@ pub fn hwrep(rep: &str) {                                                     //
     ihwend();
 }
 
-/// Port of `char *hgetline(void)` from Src/hist.c.
-pub fn hgetline(entry: &histent) -> String {
-    entry.node.nam.clone()
+/// Port of `char *hgetline(void)` from `Src/hist.c:1769`.
+///
+/// C body:
+/// ```c
+/// if (!chline || hptr == chline) return NULL;
+/// *hptr = '\0';
+/// ret = dupstring(chline);
+/// hptr = chline;
+/// chwordpos = 0;
+/// return ret;
+/// ```
+///
+/// "Get the entire current line, deleting it in the history."
+/// Used by `pushlineoredit()` (zle_hist.c:856) to grab the
+/// in-flight line for ZLE editing without committing it to
+/// the history ring.
+///
+/// The previous Rust port took a `&histent` and returned its
+/// name — fundamentally different from the global chline
+/// truncation C performs. Operate on the canonical globals
+/// (`chline`, `hptr`, `chwordpos`) and return `Option<String>`
+/// (None for the C NULL case at c:1777).
+///
+/// No Rust callers used the old (entry) signature.
+pub fn hgetline() -> Option<String> {                                         // c:1769
+    let hp = hptr.load(Ordering::SeqCst);
+    let line = chline.lock().unwrap();
+    // c:1777 — `if (!chline || hptr == chline) return NULL;`
+    if line.is_empty() || hp == 0 {
+        return None;
+    }
+    // c:1779 — `*hptr = '\0';` truncate at hptr. In Rust, slice
+    // the substring [0..hp].
+    let truncated = if hp <= line.len() {
+        line[..hp].to_string()
+    } else {
+        line.clone()
+    };
+    drop(line);
+    // c:1780 — `ret = dupstring(chline);` (already a copy via
+    // Rust .to_string()).
+    // c:1783-1784 — reset line: hptr = 0, chwordpos = 0.
+    hptr.store(0, Ordering::SeqCst);
+    chwordpos.store(0, Ordering::SeqCst);
+    Some(truncated)                                                            // c:1786
 }
 
 /// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c:1793.
@@ -3783,6 +3825,46 @@ mod subst_modifier_tests {
             "c:2932 — !interact must skip write; original content preserved");
         // Restore.
         dosetopt(INTERACTIVE, if saved { 1 } else { 0 }, 0);
+    }
+
+    /// Pin: `hgetline` per `Src/hist.c:1769-1786` truncates the
+    /// in-flight `chline` at `hptr`, resets the globals, and
+    /// returns the captured snippet. Returns None when chline is
+    /// empty or hptr is at the start (C returns NULL).
+    #[test]
+    fn hgetline_truncates_chline_and_resets_globals() {
+        use std::sync::atomic::Ordering;
+        // Save state.
+        let saved_chline = std::mem::take(&mut *chline.lock().unwrap());
+        let saved_hptr = hptr.swap(0, Ordering::SeqCst);
+        let saved_chwordpos = chwordpos.swap(0, Ordering::SeqCst);
+
+        // Empty chline → None (c:1777).
+        assert_eq!(hgetline(), None,
+            "c:1777 — empty chline returns None");
+
+        // chline = "abcdef", hptr = 0 → None (c:1777 hp == 0).
+        *chline.lock().unwrap() = "abcdef".to_string();
+        hptr.store(0, Ordering::SeqCst);
+        assert_eq!(hgetline(), None,
+            "c:1777 — hptr == 0 returns None");
+
+        // chline = "abcdef", hptr = 3 → Some("abc"), reset hptr/pos.
+        *chline.lock().unwrap() = "abcdef".to_string();
+        hptr.store(3, Ordering::SeqCst);
+        chwordpos.store(2, Ordering::SeqCst);
+        let result = hgetline();
+        assert_eq!(result, Some("abc".to_string()),
+            "c:1779 — truncate chline at hptr=3 returns 'abc'");
+        assert_eq!(hptr.load(Ordering::SeqCst), 0,
+            "c:1783 — hptr reset to 0");
+        assert_eq!(chwordpos.load(Ordering::SeqCst), 0,
+            "c:1784 — chwordpos reset to 0");
+
+        // Restore state.
+        *chline.lock().unwrap() = saved_chline;
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
     }
 
     /// Pin: `histbackword` per `Src/hist.c:1711-1715` rewinds `hptr`
