@@ -502,10 +502,28 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
 pub fn optlookup(name: &str) -> i32 {                                        // c:684
 
     // c:689 — `s = t = dupstring(name);`
-    // c:691-705 — strip `_` + lowercase.
+    // c:691-705 — strip `_` + ASCII-only lowercase. C's comment
+    // at c:695-700 spells out the rationale: "Some locales (in
+    // particular tr_TR.UTF-8) may have non-standard mappings of
+    // ASCII characters, so be careful. Option names must be
+    // ASCII so we don't need to be too clever." The C body
+    // checks `*t >= 'A' && *t <= 'Z'` manually — a locale-free
+    // ASCII range test that maps `'I'` → `'i'` regardless of
+    // LC_CTYPE.
+    //
+    // The previous Rust port used `c.to_lowercase()` which is
+    // Unicode-aware and applies full case folding (including
+    // multi-char outputs like German 'ß' → 'ss'). That's a
+    // divergence for non-ASCII option names (which shouldn't
+    // exist but could from fuzzing). Match C: only fold the
+    // ASCII A..=Z range; pass every other byte through.
     let s: String = name.chars()                                             // c:689
         .filter(|&c| c != '_')                                               // c:693-694
-        .flat_map(|c| c.to_lowercase())                                      // c:702-703
+        .map(|c| if ('A'..='Z').contains(&c) {                               // c:702 (*t >= 'A' && *t <= 'Z')
+            ((c as u8 - b'A') + b'a') as char                                // c:703 *t = (*t - 'A') + 'a'
+        } else {
+            c
+        })
         .collect();
 
     // OPT_ALIAS rows from optns[]:269-280 — alias names resolve to
@@ -1787,6 +1805,42 @@ mod tests {
         assert_eq!(optlookup("AUTO_LIST"), optlookup("autolist"));
         assert_eq!(optlookup("AutoList"), optlookup("autolist"));
         assert_eq!(optlookup("auto__list"), optlookup("autolist"));
+    }
+
+    /// Pin: `Src/options.c:702-703` — option-name lowercase folding
+    /// is ASCII-A..Z-only per the explicit C comment at c:695-700
+    /// noting tr_TR.UTF-8 locale concerns.
+    ///
+    /// Previously the Rust port used `c.to_lowercase()` which is
+    /// Unicode-aware (full case folding). Pin the ASCII-only contract:
+    ///   - Non-ASCII chars pass through unchanged (no folding).
+    ///   - The result still resolves the option iff the ASCII core
+    ///     matches.
+    #[test]
+    fn optlookup_lowercase_folding_is_ascii_only() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // ASCII A..=Z fold to a..=z (canonical).
+        let glob = optlookup("glob");
+        assert!(glob > 0, "GLOB must be a valid option");
+        assert_eq!(optlookup("GLOB"), glob,
+            "c:702 — ASCII 'G' must fold to 'g'");
+        assert_eq!(optlookup("Glob"), glob,
+            "c:702 — ASCII 'G' must fold to 'g' (mixed case)");
+        // Non-ASCII chars pass through (locale-independent, matching
+        // C). A name like `'glöb'` (with non-ASCII char) doesn't
+        // exist as an option — lookup fails with OPT_INVALID
+        // because the non-ASCII byte isn't folded into the
+        // canonical name. Pin this by checking that adding a
+        // non-ASCII byte to a known option name does NOT resolve.
+        // Use raw byte string to avoid \u{...} brace-counting issue
+        // in build.rs.
+        let glob_with_high_byte = std::str::from_utf8(b"gl\xc3\xb6b").unwrap();
+        assert_eq!(optlookup(glob_with_high_byte), OPT_INVALID,
+            "c:702 — non-ASCII chars NOT folded; lookup fails");
+        // Underscores still strip.
+        assert_eq!(optlookup("G_L_O_B"), glob,
+            "c:693 — underscores stripped regardless of case");
     }
 
     /// `Src/options.c:684-714` — `optlookup(name)` returns
