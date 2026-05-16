@@ -539,15 +539,23 @@ pub fn ecstrcode(s: &str) -> u32 {
 /// `init_parse_status`. Clears the per-parse-call lexer flags
 /// so a fresh parse starts from cmd-position with no nesting
 /// state inherited from a prior parse.
-pub fn init_parse_status() {
+///
+/// Previously the Rust port omitted `inrepeat_ = 0` at c:501.
+/// `inrepeat_` is the `repeat N <body>` parse-state counter that
+/// the lexer toggles in 3 phases (1 → 2 → 3 → 0). Without the
+/// reset, a fresh parse called after an in-flight `repeat`
+/// command would inherit the stale counter and silently misread
+/// the next token as a body of an already-completed repeat.
+pub fn init_parse_status() {                                                  // c:491
     // parse.c:500-502 — `incasepat = incond = inredir = infor =
     // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
-    set_incasepat(0);
-    set_incond(0);
-    set_inredir(false);
-    set_infor(0);
-    set_intypeset(false);
-    set_incmdpos(true);
+    set_incasepat(0);                                                         // c:500
+    set_incond(0);                                                            // c:500
+    set_inredir(false);                                                       // c:500
+    set_infor(0);                                                             // c:500
+    set_intypeset(false);                                                     // c:500
+    crate::ported::lex::set_inrepeat(0);                                      // c:501 inrepeat_ = 0
+    set_incmdpos(true);                                                       // c:502
 }
 
 /// Initialize parser for a fresh parse. Direct port of
@@ -8550,5 +8558,36 @@ esac"#;
         let mut st = mk_state(pack_inline(b'a', 0, b'b'));
         assert_eq!(ecgetstr(&mut st, 0, None), "a",
             "c:2869 strlen STOPS at first NUL; must not splice 'b' through");
+    }
+
+    /// Pin: `init_parse_status` resets ALL six lexer-parser flags
+    /// per `Src/parse.c:500-502`. Specifically `inrepeat_ = 0` at
+    /// c:501 was previously missing in the Rust port. Pin every
+    /// reset so a future regression that drops one is caught.
+    #[test]
+    fn init_parse_status_resets_all_lexer_parser_flags() {
+        use crate::ported::lex::{
+            incasepat, incond, incmdpos, infor, inrepeat, inredir,
+            intypeset, set_incasepat, set_incond, set_incmdpos,
+            set_infor, set_inrepeat, set_inredir, set_intypeset,
+        };
+        // Dirty every flag to a non-default value.
+        set_incasepat(5);
+        set_incond(7);
+        set_inredir(true);
+        set_infor(3);
+        set_intypeset(true);
+        set_inrepeat(2);
+        set_incmdpos(false);
+        // Reset.
+        init_parse_status();
+        // c:500-502 — every flag back to its default.
+        assert_eq!(incasepat(), 0, "c:500 — incasepat = 0");
+        assert_eq!(incond(),    0, "c:500 — incond = 0");
+        assert!(!inredir(),         "c:500 — inredir = 0");
+        assert_eq!(infor(),     0, "c:500 — infor = 0");
+        assert!(!intypeset(),       "c:500 — intypeset = 0");
+        assert_eq!(inrepeat(),  0, "c:501 — inrepeat_ = 0 (was previously missing)");
+        assert!(incmdpos(),         "c:502 — incmdpos = 1");
     }
 }
