@@ -222,9 +222,33 @@ pub fn iaddtoline(c: i32) {                                                  // 
         exlast.fetch_sub(1, Ordering::SeqCst);                                // c:402
         chline.lock().unwrap().push('\\');                                    // c:403 zleentry ADD '\\'
     }
-    // c:410 — `exlast = inbufct;`
+    // c:405-411 — `if (excs > zlemetacs) { excs += 1 + inbufct -
+    // exlast; if (excs < zlemetacs) excs = zlemetacs; }`.
+    //
+    // ZLE cursor position adjustment after history-expanded byte
+    // gets injected: if the cursor `excs` was past the line cursor
+    // `zlemetacs`, account for the byte just consumed from the
+    // input buffer (1 + inbufct - exlast slots). The post-adjust
+    // clamp to zlemetacs avoids the cursor underrunning the line.
+    //
+    // The previous Rust port omitted the entire block — typing
+    // `!str` mid-line would leave the ZLE cursor at the wrong
+    // position after expansion.
+    let zlemetacs_v =
+        crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let excs_v = excs.load(Ordering::SeqCst);
+    if excs_v > zlemetacs_v {                                                // c:405
+        let inbufct_now = crate::ported::input::inbufct.with(|c| c.get());
+        let exlast_v = exlast.load(Ordering::SeqCst);
+        let mut new_excs = excs_v + 1 + inbufct_now - exlast_v;              // c:406
+        if new_excs < zlemetacs_v {                                          // c:407
+            new_excs = zlemetacs_v;                                          // c:410
+        }
+        excs.store(new_excs, Ordering::SeqCst);
+    }
+    // c:413 — `exlast = inbufct;`
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
-    exlast.store(inbufct_v, Ordering::SeqCst);                                // c:410
+    exlast.store(inbufct_v, Ordering::SeqCst);                                // c:413
     // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
     let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
         let idx = (c as u8).wrapping_sub(crate::ported::zsh_h::Pound as u8) as usize;
@@ -4097,6 +4121,76 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `iaddtoline` to its canonical C body at
+    /// `Src/hist.c:397-413`, specifically the c:405-411 ZLE cursor
+    /// adjustment block that the previous port skipped.
+    /// `excs > zlemetacs` → `excs += 1 + inbufct - exlast` with a
+    /// clamp to zlemetacs.
+    #[test]
+    fn iaddtoline_adjusts_excs_relative_to_zlemetacs() {
+        // Save state.
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_excs = excs.load(Ordering::SeqCst);
+        let saved_zlemetacs =
+            crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+        let saved_expanding = expanding.load(Ordering::SeqCst);
+        let saved_lexstop = lexstop.load(Ordering::SeqCst);
+        let saved_qbang = qbang.load(Ordering::SeqCst);
+        let saved_exlast = exlast.load(Ordering::SeqCst);
+
+        // Set up: expanding=1, lexstop=false, qbang=0 (no bang
+        // escape path), excs > zlemetacs so the adjustment fires.
+        *chline.lock().unwrap() = String::new();
+        expanding.store(1, Ordering::SeqCst);
+        lexstop.store(false, Ordering::SeqCst);
+        qbang.store(false, Ordering::SeqCst);
+        excs.store(10, Ordering::SeqCst);                                   // > zlemetacs
+        crate::ported::zle::compcore::ZLEMETACS.store(5, Ordering::SeqCst);
+        crate::ported::input::inbufct.with(|c| c.set(3));
+        exlast.store(2, Ordering::SeqCst);
+
+        // c:405-407 — excs(10) > zlemetacs(5), so
+        // new_excs = 10 + 1 + 3 - 2 = 12; 12 > 5 → no clamp.
+        iaddtoline(b'x' as i32);
+        assert_eq!(excs.load(Ordering::SeqCst), 12,
+            "c:406 — excs += 1 + inbufct - exlast (10+1+3-2=12)");
+
+        // c:407-410 — clamp branch: post-add excs < zlemetacs.
+        // Set excs=6, zlemetacs=20, inbufct=1, exlast=10.
+        // new_excs = 6 + 1 + 1 - 10 = -2; -2 < 20 → clamp to 20.
+        excs.store(6, Ordering::SeqCst);
+        // But guard: excs(6) > zlemetacs(20) is FALSE, so block
+        // wouldn't fire. Need excs > zlemetacs for entry: use
+        // excs=25, zlemetacs=20, inbufct=1, exlast=10 →
+        // new_excs = 25+1+1-10 = 17; 17 < 20 → clamp to 20.
+        excs.store(25, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLEMETACS.store(20, Ordering::SeqCst);
+        crate::ported::input::inbufct.with(|c| c.set(1));
+        exlast.store(10, Ordering::SeqCst);
+        iaddtoline(b'y' as i32);
+        assert_eq!(excs.load(Ordering::SeqCst), 20,
+            "c:407-410 — clamp to zlemetacs(20) when post-add excs<zlemetacs");
+
+        // No adjustment when excs <= zlemetacs.
+        excs.store(3, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLEMETACS.store(10, Ordering::SeqCst);
+        crate::ported::input::inbufct.with(|c| c.set(1));
+        exlast.store(0, Ordering::SeqCst);
+        iaddtoline(b'z' as i32);
+        assert_eq!(excs.load(Ordering::SeqCst), 3,
+            "c:405 — excs<=zlemetacs leaves excs unchanged");
+
+        // Restore.
+        *chline.lock().unwrap() = saved_chline;
+        excs.store(saved_excs, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLEMETACS
+            .store(saved_zlemetacs, Ordering::SeqCst);
+        expanding.store(saved_expanding, Ordering::SeqCst);
+        lexstop.store(saved_lexstop, Ordering::SeqCst);
+        qbang.store(saved_qbang, Ordering::SeqCst);
+        exlast.store(saved_exlast, Ordering::SeqCst);
     }
 
     /// Pin `ihwbegin` to its canonical C body at `Src/hist.c:1656-1670`.
