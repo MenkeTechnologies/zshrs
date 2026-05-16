@@ -5678,39 +5678,25 @@ fn ispecial(c: char) -> bool {                                              // c
     )
 }
 
-/// Convert integer to string with specified base
-/// Port from zsh/Src/utils.c convbase()
-/// Render an integer in an arbitrary base using zsh's `BASE#DIGITS`
-/// notation (per `setopt CBASES`-off default). Direct port of the
-/// radix-conversion loop in Src/utils.c::convbase.
+/// Convert integer to string with specified base — re-export of
+/// the canonical port at `crate::ported::params::convbase`.
 ///
-/// Format: `2#1010`, `8#777`, `16#FF`, `36#Z`. Negative values
-/// emit a leading `-` before the prefix. Base 0 or 10 returns the
-/// plain decimal string.
-pub fn convbase(val: i64, base: u32) -> String {
-    if base == 0 || base == 10 {
-        return val.to_string();
-    }
-    let neg = val < 0;
-    let abs = if neg { (val as i128).wrapping_neg() as u128 } else { val as u128 };
-    let s = match base {
-        2 => format!("2#{:b}", abs),
-        8 => format!("8#{:o}", abs),
-        16 => format!("16#{:X}", abs),
-        r if (2..=36).contains(&r) => {
-            let digits = "0123456789abcdefghijklmnopqrstuvwxyz".as_bytes();
-            let mut tmp = abs;
-            let mut buf = String::new();
-            if tmp == 0 { buf.push('0'); }
-            while tmp > 0 {
-                buf.push(digits[(tmp % r as u128) as usize] as char);
-                tmp /= r as u128;
-            }
-            format!("{}#{}", r, buf.chars().rev().collect::<String>())
-        }
-        _ => val.to_string(),
-    };
-    if neg { format!("-{}", s) } else { s }
+/// The previous Rust port at this file was a SECOND, divergent
+/// implementation of `convbase`:
+///   - Used LOWERCASE digit chars (`"0123456789abc..."`) for
+///     bases 11..36, while C uses UPPERCASE (`(dig - 10) + 'A'`
+///     at Src/params.c:5621).
+///   - Skipped CBASES + OCTALZEROES prefix handling at c:5598-5604
+///     (`0x`/`0` prefixes when option-gated).
+///   - Returned wrong format for bases not handled by the explicit
+///     match arms.
+///
+/// The canonical port lives at `params.rs::convbase_ptr` (c:5588
+/// faithful body) + `params.rs::convbase` (c:5634 wrapper). Route
+/// through there so utils.rs / params.rs agree byte-for-byte and
+/// no divergent duplicate stays alive.
+pub fn convbase(val: i64, base: u32) -> String {                             // c:5634 (Src/params.c)
+    crate::ported::params::convbase(val, base)
 }
 
 /// Check glob qualifier syntax
