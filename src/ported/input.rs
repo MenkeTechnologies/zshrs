@@ -250,8 +250,23 @@ pub fn ingetc() -> Option<char> {                                            // 
             inbufpos.with(|p| p.set(pos + 1));
             inbufct.with(|c| c.set(c.get().saturating_sub(1)));
 
-            // Skip internal tokens (range 0x83..=0x9b).
-            if (0x83..=0x9b).contains(&(c as u32)) {
+            // c:328 — `if (itok(lastc = (unsigned char) *inbufptr++)) continue;`
+            // Skip internal tokens via the canonical `itok()` predicate
+            // (`Src/ztype.h:52`), which tests bit `ITOK` in `typtab[c]`.
+            // Per `Src/utils.c:4198-4201` `inittyptab` sets ITOK on
+            // `Pound..LAST_NORMAL_TOK (0x84..0x9c)` AND `Snull..Nularg
+            // (0x9d..0xa1)` — canonical token range is `0x84..=0xa1`.
+            // The previous hardcoded range `0x83..=0x9b` was both too
+            // inclusive (included 0x83 = Meta lead byte, IMETA-only) and
+            // too narrow (excluded 0x9c..=0xa1 = Bang/Snull/Dnull/Bnull/
+            // Bnullkeep/Nularg). Marker (0xa2) is intentionally NOT in
+            // either set — it's IMETA-only per `c:4197`. Routing through
+            // `itok()` lets future `inittyptab` adjustments propagate
+            // automatically with zero changes here.
+            let cu32 = c as u32;
+            if cu32 < 256
+                && crate::ported::ztype_h::itok(cu32 as u8)
+            {
                 continue;
             }
 
@@ -666,5 +681,68 @@ mod tests {
             assert_eq!(*b.borrow(), "persist",
                 "empty-stack restore must leave buffer untouched");
         });
+    }
+
+    /// `Src/input.c:328` — `ingetc` skips bytes for which `itok()`
+    /// (the canonical predicate at `Src/ztype.h:52`) returns true.
+    /// Per `Src/utils.c:4198-4201`, `inittyptab` sets ITOK on
+    /// `Pound..LAST_NORMAL_TOK (0x84..0x9c)` and `Snull..Nularg
+    /// (0x9d..0xa1)` — i.e. the canonical token range is `0x84..=0xa1`.
+    /// A previous hardcoded `0x83..=0x9b` range was both too inclusive
+    /// (included 0x83 = Meta lead byte) and too narrow (excluded
+    /// 0x9c..=0xa1 = Bang/Snull/Dnull/Bnull/Bnullkeep/Nularg).
+    /// Pin the canonical itok-driven skip via two endpoints:
+    ///   * 0x9c (Bang) — ITOK, must be skipped.
+    ///   * 0xa1 (Nularg) — ITOK, must be skipped.
+    #[test]
+    fn ingetc_skips_token_bytes_via_itok_predicate() {
+        reset_input();
+        // Make sure typtab is populated (without this the per-thread
+        // typtab default may have ITOK bits unset).
+        crate::ported::utils::inittyptab();
+
+        let bang:   char = '\u{009c}'; // Bang (LAST_NORMAL_TOK)
+        let nularg: char = '\u{00a1}'; // Nularg (last ITOK byte)
+        let mut s = String::new();
+        s.push('a');
+        s.push(bang);
+        s.push('b');
+        s.push(nularg);
+        s.push('c');
+        inputsetline(&s, 0);
+        // c:328 — itok bytes must be silently skipped; visible
+        // sequence is "abc".
+        assert_eq!(ingetc(), Some('a'));
+        assert_eq!(ingetc(), Some('b'),
+            "c:328 — Bang (0x9c) must be skipped (ITOK bit set per inittyptab)");
+        assert_eq!(ingetc(), Some('c'),
+            "c:328 — Nularg (0xa1) must be skipped (ITOK bit set per inittyptab)");
+    }
+
+    /// `Src/input.c:328` — non-token bytes (e.g. Meta=0x83) must NOT
+    /// be skipped by `ingetc`. Meta is IMETA-only, never ITOK; treating
+    /// it as a token would corrupt every metafied character read by
+    /// the lexer. Same for Marker (0xa2) which is IMETA-only per
+    /// `Src/utils.c:4197` (`typtab[Marker] |= IMETA`, NOT ITOK).
+    #[test]
+    fn ingetc_does_not_skip_imeta_only_bytes() {
+        reset_input();
+        crate::ported::utils::inittyptab();
+        let meta: char = '\u{0083}';   // Meta lead byte — IMETA only
+        let marker: char = '\u{00a2}'; // Marker — IMETA only per c:4197
+        let mut s = String::new();
+        s.push('x');
+        s.push(meta);
+        s.push('y');
+        s.push(marker);
+        s.push('z');
+        inputsetline(&s, 0);
+        assert_eq!(ingetc(), Some('x'));
+        assert_eq!(ingetc(), Some(meta),
+            "c:328 — Meta (0x83) is IMETA-only, NOT ITOK; must pass through");
+        assert_eq!(ingetc(), Some('y'));
+        assert_eq!(ingetc(), Some(marker),
+            "c:328 / c:4197 — Marker (0xa2) is IMETA-only, NOT ITOK; must pass through");
+        assert_eq!(ingetc(), Some('z'));
     }
 }

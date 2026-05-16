@@ -503,4 +503,214 @@ mod tests {
         assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
     }
+
+    /// `Src/cond.c:179-180` — `[[ -s file ]]` is true iff stat succeeds
+    /// AND `st_size > 0`. Empty file → false; non-empty → true; missing → false.
+    #[test]
+    fn test_minus_s_size_gt_zero() {
+        use std::io::Write;
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+
+        let empty = dir.path().join("empty");
+        File::create(&empty).unwrap();
+        assert_eq!(evalcond(&["-s", empty.to_str().unwrap()], &opts, &vars, true), 1,
+            "c:179 — `-s` must be false for 0-byte file");
+
+        let nonempty = dir.path().join("nonempty");
+        let mut f = File::create(&nonempty).unwrap();
+        f.write_all(b"data").unwrap();
+        assert_eq!(evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true), 0,
+            "c:179 — `-s` must be true for non-empty file");
+
+        let missing = dir.path().join("not_there");
+        assert_eq!(evalcond(&["-s", missing.to_str().unwrap()], &opts, &vars, true), 1,
+            "c:179 — `-s` must be false when stat fails (missing file)");
+    }
+
+    /// `Src/cond.c:488` — `dolstat` uses `lstat(2)` so `-h` / `-L`
+    /// returns true for the LINK itself, even when the link target
+    /// doesn't exist. `-f` / `-d` against the same link returns false
+    /// (since they follow the link via `stat(2)` and find nothing).
+    #[cfg(unix)]
+    #[test]
+    fn test_minus_h_minus_L_detect_symlink_via_lstat() {
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+
+        let target = dir.path().join("nonexistent_target");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let link_s = link.to_str().unwrap();
+        assert_eq!(evalcond(&["-h", link_s], &opts, &vars, true), 0,
+            "c:488 — `-h` uses lstat; detects symlink even with missing target");
+        assert_eq!(evalcond(&["-L", link_s], &opts, &vars, true), 0,
+            "c:488 — `-L` is same as `-h`");
+        // -f / -d follow the link → false because target doesn't exist.
+        assert_eq!(evalcond(&["-f", link_s], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-d", link_s], &opts, &vars, true), 1);
+    }
+
+    /// `Src/cond.c:179-180` — `[[ -ef ]]` returns true iff two paths
+    /// resolve to the same inode (`st_dev` AND `st_ino` match). A
+    /// hardlink to the same file passes; an unrelated file fails.
+    #[cfg(unix)]
+    #[test]
+    fn test_dash_ef_same_inode() {
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let c = dir.path().join("c");
+        File::create(&a).unwrap();
+        std::fs::hard_link(&a, &b).unwrap();
+        File::create(&c).unwrap();
+
+        let as_ = a.to_str().unwrap();
+        let bs_ = b.to_str().unwrap();
+        let cs_ = c.to_str().unwrap();
+        assert_eq!(evalcond(&[as_, "-ef", bs_], &opts, &vars, true), 0,
+            "c:179 — hardlinks share st_ino + st_dev → -ef true");
+        assert_eq!(evalcond(&[as_, "-ef", cs_], &opts, &vars, true), 1,
+            "c:179 — distinct files → -ef false");
+    }
+
+    /// `Src/cond.c:179` — `-nt` / `-ot` compare st_mtime. Newer file
+    /// is `-nt` the older; same direction `-ot` is reversed.
+    #[cfg(unix)]
+    #[test]
+    fn test_dash_nt_dash_ot_compare_mtime() {
+        use std::io::Write;
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+
+        let older = dir.path().join("older");
+        let newer = dir.path().join("newer");
+        File::create(&older).unwrap();
+        // Sleep is needed because some FS have 1s mtime granularity.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let mut f = File::create(&newer).unwrap();
+        f.write_all(b"x").unwrap();
+
+        let o = older.to_str().unwrap();
+        let n = newer.to_str().unwrap();
+        assert_eq!(evalcond(&[n, "-nt", o], &opts, &vars, true), 0,
+            "c:179 — newer -nt older → true");
+        assert_eq!(evalcond(&[o, "-nt", n], &opts, &vars, true), 1,
+            "c:179 — older -nt newer → false");
+        assert_eq!(evalcond(&[o, "-ot", n], &opts, &vars, true), 0,
+            "c:179 — older -ot newer → true");
+    }
+
+    /// `Src/cond.c:179` — `-r` / `-w` map to access(F, R_OK)/W_OK.
+    /// Created files inherit rw permissions; chmod 0 strips them.
+    #[cfg(unix)]
+    #[test]
+    fn test_dash_r_dash_w_access_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+
+        let file = dir.path().join("rw");
+        File::create(&file).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let p = file.to_str().unwrap();
+        assert_eq!(evalcond(&["-r", p], &opts, &vars, true), 0,
+            "c:438 — mode 0600 → readable");
+        assert_eq!(evalcond(&["-w", p], &opts, &vars, true), 0,
+            "c:438 — mode 0600 → writable");
+
+        // Root can read anything; skip the strip-permissions check there.
+        if unsafe { libc::geteuid() } != 0 {
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+            assert_eq!(evalcond(&["-r", p], &opts, &vars, true), 1,
+                "c:438 — mode 0000 → not readable (non-root)");
+            assert_eq!(evalcond(&["-w", p], &opts, &vars, true), 1,
+                "c:438 — mode 0000 → not writable (non-root)");
+        }
+    }
+
+    /// `Src/cond.c:81-185` — Double-negation: `! ! foo` cancels out
+    /// at the COND_NOT recursion level. `!` parses right-associative.
+    #[test]
+    fn test_double_negation_cancels() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["!", "!", "-n", "x"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["!", "!", "-z", "x"], &opts, &vars, true), 1);
+    }
+
+    /// `Src/cond.c:81-185` — Implicit `-n` for a bare arg. `[[ foo ]]`
+    /// is the same as `[[ -n foo ]]`. Empty bare arg → false.
+    #[test]
+    fn test_implicit_minus_n_for_bare_arg() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["foo"], &opts, &vars, true), 0,
+            "non-empty bare arg → true (implicit -n)");
+        assert_eq!(evalcond(&[""], &opts, &vars, true), 1,
+            "empty bare arg → false (implicit -n)");
+    }
+
+    /// `Src/cond.c:525-540` — `cond_str(args, num)` returns the arg
+    /// at `num` after singsub. Out-of-bounds → empty string (no panic).
+    #[test]
+    fn test_cond_str_index_lookup() {
+        let args = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+        assert_eq!(cond_str(&args, 0, false), "alpha");
+        assert_eq!(cond_str(&args, 2, false), "gamma");
+        assert_eq!(cond_str(&args, 99, false), "",
+            "c:525 — out-of-bounds index returns empty (Rust safety)");
+    }
+
+    /// `Src/cond.c:539-554` — `cond_val(args, num)` parses arg as int.
+    /// Non-numeric → 0. Trimmed whitespace allowed.
+    #[test]
+    fn test_cond_val_int_coerce() {
+        let args = vec!["42".to_string(), "  -7 ".to_string(), "abc".to_string()];
+        assert_eq!(cond_val(&args, 0), 42);
+        assert_eq!(cond_val(&args, 1), -7,
+            "c:539 — whitespace must trim; negative supported");
+        assert_eq!(cond_val(&args, 2), 0,
+            "c:539 — non-numeric returns 0");
+        assert_eq!(cond_val(&args, 99), 0,
+            "c:539 — out-of-bounds returns 0");
+    }
+
+    /// `Src/cond.c:179-180` — `-a` / `-e` are aliases for "file exists".
+    /// Both must accept the same input.
+    #[test]
+    fn test_dash_a_dash_e_aliases() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("f");
+        File::create(&file).unwrap();
+        let p = file.to_str().unwrap();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["-e", p], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-a", p], &opts, &vars, true), 0,
+            "c:179 — -a is alias for -e in zsh test/[[ context");
+    }
+
+    /// `Src/cond.c:539` — implicit-numeric coercion fails for
+    /// non-numeric operands: `[[ abc -eq 5 ]]` should return error (2).
+    #[test]
+    fn test_minus_eq_non_numeric_returns_error() {
+        let (opts, vars) = empty_maps();
+        // Both posix and non-posix modes route through parse_num; if
+        // either side fails to parse → return 2 (cond error).
+        assert_eq!(evalcond(&["abc", "-eq", "5"], &opts, &vars, true), 2,
+            "non-numeric LHS in -eq must return 2 (error)");
+    }
+
+    /// `Src/cond.c:81` — Parenthesised grouping: `( expr )` evaluates
+    /// `expr` in isolation. Missing closing paren → return 2 (error).
+    #[test]
+    fn test_paren_grouping_and_error_on_missing_close() {
+        let (opts, vars) = empty_maps();
+        // Balanced: ! ( -z "" )  →  ! true → false (1)
+        assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true), 1);
+        // Missing close paren: error
+        assert_eq!(evalcond(&["(", "-z", ""], &opts, &vars, true), 2,
+            "missing closing `)` must return 2 (cond error)");
+    }
 }
