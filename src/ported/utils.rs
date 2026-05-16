@@ -147,8 +147,9 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     }
     // C: zerrmsg(stderr, fmt, ap);  — emit lineno prefix (when
     // SHINSTDIN unset or locallevel != 0) then formatted message + \n.
-    // Direct port of utils.c:301-308.
-    let lineno = *lineno_lock().lock().unwrap();
+    // Direct port of utils.c:301-308. Route through lex::lineno()
+    // (parser-advanced counter) — same fix as the zerrmsg call below.
+    let lineno = crate::ported::lex::lineno() as i32;
     if (!shinstdin || locallevel != 0) && lineno != 0 {
         let _ = stderr_lock.write_all(format!("{}: ", lineno).as_bytes());
     } else {
@@ -303,7 +304,17 @@ pub fn is_nicechar(c: char) -> bool {
 // va_list expansion; the C `file`+`fmt`+`ap` triplet collapses
 // because callers (zerr/zwarning) pre-format via Rust's `format!`.
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
-    let lineno = *lineno_lock().lock().unwrap();
+    // c:296 — `lineno` is the parser-advanced line counter. The
+    // previous Rust port read `lineno_lock` (a Mutex<i32> in utils.rs)
+    // that ONLY fusevm_bridge::set_lineno wrote to; the actual
+    // parser uses lex::LEX_LINENO (thread_local Cell<u64>) updated
+    // by every newline scan. Result: error messages emitted from
+    // parse-time always printed line 0 (or last fusevm_bridge value)
+    // rather than the actual line of the syntax error.
+    //
+    // Route through lex::lineno() so the parser-advanced counter
+    // drives the error prefix.
+    let lineno = crate::ported::lex::lineno() as i32;
     // c:310 — `unset(SHINSTDIN)`. Same fix as zwarning: route through
     // canonical isset() rather than the never-updated separate Mutex.
     let shinstdin = crate::ported::zsh_h::isset(
