@@ -6705,13 +6705,23 @@ pub fn printparamvalue(p: &mut crate::ported::zsh_h::param, printflags: i32) {
     let t = PM_TYPE(p.node.flags as u32);
     if t == PM_SCALAR || t == PM_NAMEREF {
         let s = strgetfn(p);
-        // quotedzputs equivalent — single-quote if it contains specials.
-        print!("{}", s);
+        // c:6053 — `quotedzputs(t, stdout)`. The previous Rust port
+        // used `print!("{}", s)` (raw), losing the shell-quoting
+        // that `typeset -p VAR` expects. Without quoting, `eval
+        // "$(typeset -p VAR)"` round-trip is BROKEN for any value
+        // with spaces, special chars, or shell metacharacters.
+        print!("{}", crate::ported::utils::quotedzputs(&s));                  // c:6053
     } else if t == PM_INTEGER {
         print!("{}", intgetfn(p));
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
-        // convfloat(p->gsu.f->getfn(p), p->base, p->node.flags, stdout)
-        print!("{}", floatgetfn(p));
+        // c:6063 — `convfloat(p->gsu.f->getfn(p), p->base, p->node.flags,
+        //          stdout)`. Honors pm.base for precision and
+        // pm.flags for PM_EFLOAT/PM_FFLOAT format selection. The
+        // previous Rust port used `print!("{}", floatgetfn(p))`
+        // which always renders in Rust's default float format
+        // (which differs from C's printf %g / %e formats).
+        print!("{}", crate::ported::utils::convfloat(
+            floatgetfn(p), p.base, p.node.flags as u32));                     // c:6063
     } else if t == PM_ARRAY {
         if (printflags & PRINT_KV_PAIR) == 0 {
             print!("(");
