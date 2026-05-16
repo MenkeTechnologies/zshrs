@@ -6069,8 +6069,16 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
 
     // c:7384-7400 — first arg is signal number / single `-` → clear.
     let first = &argv[0];
-    if getsigidx(first) != -1 || first == "-" {                            // c:7384
+    if getsigidx(first) != -1 || first == "-" {                              // c:7384
         let start = if first == "-" { 1 } else { 0 };                        // c:7385
+        // c:7399 — `return *argv != NULL;`. After a successful loop
+        // *argv is the trailing NULL (Rust: idx == len after the
+        // walk); on `break` due to an undefined signal *argv is the
+        // bad arg (idx < len). Previous Rust port hardcoded
+        // `return 0`, so `trap - INVALID` would silently report
+        // success and downstream scripts couldn't detect the bad
+        // signal name.
+        let mut had_error = 0i32;
         if start >= argv.len() {                                             // c:7386
             // c:7387 — clear all.
             if let Ok(mut t) = traps_table().lock() {
@@ -6082,6 +6090,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
                 if sig == -1 {                                               // c:7392
                     crate::ported::utils::zwarnnam(name,
                         &format!("undefined signal: {}", arg));              // c:7393
+                    had_error = 1;                                           // c:7399 *argv non-NULL on break
                     break;                                                   // c:7394
                 }
                 if let Ok(mut t) = traps_table().lock() {
@@ -6089,7 +6098,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
                 }
             }
         }
-        return 0;                                                            // c:7399
+        return had_error;                                                    // c:7399
     }
 
     // c:7404-7411 — first arg is the trap body.
@@ -6935,6 +6944,42 @@ pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<Stri
 mod tests {
     use crate::zsh_h::BINF_PREFIX;
     use super::*;
+
+    /// c:7399 — `trap - <undefined>` MUST report failure (non-zero
+    /// exit) so scripts can detect the bad signal name. The previous
+    /// Rust port returned 0 unconditionally from the clear path,
+    /// silently masking errors. C returns `*argv != NULL` — non-zero
+    /// when the loop broke on an undefined signal.
+    #[test]
+    fn bin_trap_clear_undefined_signal_returns_nonzero() {
+        let empty = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // `trap - BOGUS_NEVER_A_SIGNAL` → must return 1.
+        let r = bin_trap("trap",
+            &["-".into(), "BOGUS_NEVER_A_SIGNAL".into()],
+            &empty, 0);
+        assert_ne!(r, 0,
+            "trap - <undefined> must report error per c:7399 (got {})", r);
+    }
+
+    /// c:7399 — `trap - SIGUSR1` (valid signal) MUST return 0, even
+    /// when the trap was never set (remove is a no-op).
+    #[test]
+    fn bin_trap_clear_valid_signal_returns_zero() {
+        let empty = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_trap("trap", &["-".into(), "USR1".into()], &empty, 0);
+        assert_eq!(r, 0,
+            "trap - USR1 must succeed even with no prior trap (got {})", r);
+    }
 
     #[test]
     fn registration_table_matches_c_count() {
