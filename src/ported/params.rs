@@ -5454,9 +5454,27 @@ pub fn savehistsizegetfn() -> i64 {
 
 /// Port of `savehistsizesetfn(UNUSED(Param pm), zlong v)` from `Src/params.c:4994`. C body:
 /// `if ((savehistsiz = v) < 0) savehistsiz = 0;`
+///
+/// The Rust port has TWO mirrors of `savehistsiz`: a Mutex<i64>
+/// in params.rs (read by `savehistsizegetfn`) AND an AtomicI64
+/// in hist.rs (read by the history-file writer at
+/// `Src/hist.c:savehistfile` per c:3878). The previous Rust port
+/// only wrote to the params.rs lock; `hist.rs::savehistsiz`
+/// stayed pinned to its initial 0 value, so `SAVEHIST=10000`
+/// would store the limit in `savehistsiz_lock` (visible to
+/// `$SAVEHIST` reads) but the history-file writer would still
+/// cap at the original AtomicI64 value (effectively saving zero
+/// lines). Sync both storages so reads + writes agree.
+///
 /// WARNING: param names don't match C — Rust=(v) vs C=(pm, v)
-pub fn savehistsizesetfn(v: i64) {
-    *savehistsiz_lock().lock().expect("savehistsiz poisoned") = v.max(0);
+pub fn savehistsizesetfn(v: i64) {                                            // c:4994
+    let clamped = v.max(0);                                                   // c:4998
+    *savehistsiz_lock().lock().expect("savehistsiz poisoned") = clamped;
+    // Mirror to hist.rs::savehistsiz so the writer-side cap
+    // matches the just-assigned value. C uses a single global;
+    // the Rust port's twin-storage requires sync writes.
+    crate::ported::hist::savehistsiz.store(
+        clamped, std::sync::atomic::Ordering::SeqCst);                        // c:4994
 }
 
 /// Port of `errnosetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:5004`. C body:
@@ -7488,6 +7506,35 @@ mod gsu_tests {
         savehistsizesetfn(100);
         assert_eq!(savehistsizegetfn(), 100);
         savehistsizesetfn(original);
+    }
+
+    /// Pin: `savehistsizesetfn` syncs BOTH storage mirrors so the
+    /// twin-storage Rust adaptation behaves like the single global
+    /// in C. The params.rs Mutex<i64> drives `$SAVEHIST` reads;
+    /// the hist.rs AtomicI64 drives the history-file writer cap.
+    /// Previously only the params.rs side was written, so
+    /// `SAVEHIST=10000` left hist.rs at 0 and the writer would
+    /// cap at zero lines.
+    #[test]
+    fn savehistsizesetfn_syncs_to_hist_module() {
+        use std::sync::atomic::Ordering;
+        let original_params = savehistsizegetfn();
+        let original_hist = crate::ported::hist::savehistsiz.load(Ordering::SeqCst);
+        // Set via the setfn — both storages must reflect the value.
+        savehistsizesetfn(12345);
+        assert_eq!(savehistsizegetfn(), 12345,
+            "c:4994 — params.rs Mutex<i64> reflects new value");
+        assert_eq!(crate::ported::hist::savehistsiz.load(Ordering::SeqCst), 12345,
+            "c:4994 — hist.rs AtomicI64 synced (was the previous gap)");
+        // Negative clamps to 0 in BOTH stores.
+        savehistsizesetfn(-99);
+        assert_eq!(savehistsizegetfn(), 0,
+            "c:4998 — params.rs clamps to 0");
+        assert_eq!(crate::ported::hist::savehistsiz.load(Ordering::SeqCst), 0,
+            "c:4998 — hist.rs clamps to 0 too");
+        // Restore.
+        savehistsizesetfn(original_params);
+        crate::ported::hist::savehistsiz.store(original_hist, Ordering::SeqCst);
     }
 
     #[test]
