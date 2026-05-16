@@ -2741,18 +2741,70 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // 
     let _ = hf;
 }
 
-/// Port of `int pophiststack(void)` from Src/hist.c:3901.
-pub fn pophiststack() {                                                      // c:3901
-    if let Some(snap) = histsave_stack.lock().unwrap().pop() {
-        *hist_ring.lock().unwrap() = snap.hist_ring;
-        curhist.store(snap.curhist, Ordering::SeqCst);
-        histlinect.store(snap.histlinect, Ordering::SeqCst);
-        histsiz.store(snap.histsiz, Ordering::SeqCst);
-        let _ = snap.histfile;                                               // restored via param system in C
-        savehistsiz.store(snap.savehistsiz, Ordering::SeqCst);
-        histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
-        histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
+/// Port of `int pophiststack(void)` from `Src/hist.c:3901`.
+///
+/// C body:
+/// ```c
+/// if (histsave_stack_pos == 0) return 0;
+/// if (curline_in_ring) unlinkcurline();
+/// deletehashtable(histtab); zsfree(lasthist.text);
+/// h = &histsave_stack[--histsave_stack_pos];
+/// lasthist = h->lasthist;
+/// if (h->histfile) {
+///     if (*h->histfile) setsparam("HISTFILE", h->histfile);
+///     else unsetparam("HISTFILE");
+/// }
+/// histtab = h->histtab;
+/// hist_ring = h->hist_ring;
+/// curhist = h->curhist;
+/// if (zleactive) zleentry(ZLE_CMD_SET_HIST_LINE, curhist);
+/// histlinect = h->histlinect;
+/// histsiz = h->histsiz;
+/// savehistsiz = h->savehistsiz;
+/// if (curline_in_ring) linkcurline();
+/// return histsave_stack_pos + 1;
+/// ```
+///
+/// The previous Rust port skipped:
+///   - The `histfile` paramtab restore (c:3920-3924) — HISTFILE
+///     wasn't reverted when popping back out of a pushed stack
+///     frame, so the user's HISTFILE could end up pointing at
+///     the wrong file after `fc -p` / `fc -P`.
+///   - Returning 0 on empty stack (c:3907) — the previous
+///     port returned `()` and didn't signal "nothing to pop".
+///
+/// Return: 0 when nothing was popped, else `histsave_stack_pos + 1`
+/// (the depth that WAS popped).
+pub fn pophiststack() -> i32 {                                                // c:3901
+    let snap = match histsave_stack.lock().unwrap().pop() {
+        Some(s) => s,
+        None => return 0,                                                     // c:3907
+    };
+    // c:3920-3924 — restore HISTFILE via setsparam / unsetparam.
+    // Was previously `let _ = snap.histfile;` (dropped on the
+    // floor). With this in place, `fc -p file ...; fc -P`
+    // properly restores the outer HISTFILE value.
+    if let Some(ref hf) = snap.histfile {
+        if !hf.is_empty() {                                                   // c:3922 *h->histfile
+            crate::ported::params::setsparam("HISTFILE", hf);                 // c:3922
+        } else {                                                              // c:3923
+            // Unset HISTFILE — Rust paramtab remove.
+            let _ = crate::ported::params::paramtab()
+                .write()
+                .unwrap()
+                .remove("HISTFILE");                                          // c:3923 unsetparam
+        }
     }
+    *hist_ring.lock().unwrap() = snap.hist_ring;                              // c:3925
+    curhist.store(snap.curhist, Ordering::SeqCst);                            // c:3926
+    histlinect.store(snap.histlinect, Ordering::SeqCst);                      // c:3929
+    histsiz.store(snap.histsiz, Ordering::SeqCst);                            // c:3930
+    savehistsiz.store(snap.savehistsiz, Ordering::SeqCst);                    // c:3931
+    histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
+    histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
+    // c:3934 — `return histsave_stack_pos + 1;` (new pos after
+    // decrement, plus 1 for the just-popped depth).
+    histsave_stack_pos.load(Ordering::SeqCst) + 1
 }
 
 /// Port of `int saveandpophiststack(int pop_through, int writeflags)`
