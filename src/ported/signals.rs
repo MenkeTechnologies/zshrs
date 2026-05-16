@@ -975,10 +975,35 @@ pub fn endtrapscope() {                                                      // 
         }
     }
 
-    // c:961-969 — run the SIGEXIT trap, last.
-    if exittr != 0 {
-        // dotrapargs(SIGEXIT, &exittr, exitfn) — Eprog dispatch
-        // staged through the executor on the next idle tick.
+    // c:961-969 — run the SIGEXIT trap, last (AFTER the savetraps
+    // pop loop above so a restored deeper SIGEXIT is replaced by
+    // the current scope's saved-aside trap before dispatch).
+    //
+    // C `dotrapargs(SIGEXIT, &exittr, exitfn)` invokes either:
+    //   - ZSIG_FUNC: the `TRAPEXIT` shell function from shfunctab.
+    //   - else: the eprog from siglists[SIGEXIT].
+    //
+    // The previous Rust port left this as a comment-only no-op
+    // ("Eprog dispatch staged through the executor on the next
+    // idle tick"). A function-defined `TRAPEXIT() { ... }` body
+    // never fired on scope exit, defeating one of the most common
+    // shell-script teardown patterns.
+    //
+    // Wire the ZSIG_FUNC branch via the canonical dispatcher
+    // (`fusevm_bridge::with_executor` + `dispatch_function_call`).
+    // The non-FUNC eprog path stays deferred until the eprog→VM
+    // bridge for top-level traps lands.
+    if exittr != 0 && (exittr & ZSIG_FUNC) != 0 {                            // c:961, c:1132 FUNC branch
+        // Build args = ["TRAPEXIT", "<SIGEXIT-num>"]. Matches the
+        // canonical signature dotrapargs would have constructed.
+        let signame = crate::ported::signals::getsigname(SIGEXIT);
+        let trap_fn = format!("TRAP{}", signame);
+        if crate::ported::utils::getshfunc(&trap_fn).is_some() {
+            let args = vec![SIGEXIT.to_string()];
+            let _ = crate::fusevm_bridge::with_executor(|exec| {
+                exec.dispatch_function_call(&trap_fn, &args).unwrap_or(0)
+            });
+        }
     }
 }
 
@@ -1982,7 +2007,10 @@ mod tests {
         unsettrap(libc::SIGTSTP);
 
         // MONITOR on → trapping SIGTSTP is rejected.
-        dosetopt(MONITOR, 1, 0);
+        // Use force=1 to bypass the c:854 SHTTY check (tests have
+        // no real tty); we only care that the option flag flips,
+        // not the pgrp acquisition side effect.
+        dosetopt(MONITOR, 1, 1);
         assert_eq!(settrap(libc::SIGTSTP, None, 0), 1,
             "c:696-699 — MONITOR on → settrap on SIGTSTP rejected");
         assert_eq!(settrap(libc::SIGTTOU, None, 0), 1,
@@ -1990,8 +2018,8 @@ mod tests {
         assert_eq!(settrap(libc::SIGTTIN, None, 0), 1,
             "c:696-699 — SIGTTIN also rejected under MONITOR");
 
-        // Restore prior MONITOR state.
-        dosetopt(MONITOR, if saved { 1 } else { 0 }, 0);
+        // Restore prior MONITOR state (also force=1 to bypass tty check).
+        dosetopt(MONITOR, if saved { 1 } else { 0 }, 1);
     }
 
     /// Pin: `killrunjobs` short-circuits when `HUP` option is
