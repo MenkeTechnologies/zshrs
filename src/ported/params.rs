@@ -4550,12 +4550,34 @@ pub fn setnparam(s: &str, val: crate::ported::math::mnumber)                 // 
     assignnparam(s, val, ASSPM_WARN as i32)                                  // c:3748
 }
 
-/// Port of `assigniparam(char *s, zlong val, int flags)` from `Src/params.c:3753` (and its
-/// internal use as the integer branch of `setvalue`). C body
-/// builds an `mnumber{ .type = MN_INTEGER, .u.l = val }` and
-/// calls `assignnparam(s, mn, ASSPM_WARN)`.
-pub fn assigniparam(vbuf: &str, t: i64) {
-    assignnparam(vbuf, crate::ported::math::mnumber { l: t, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
+/// Port of `Param assigniparam(char *s, zlong val, int flags)` from
+/// `Src/params.c:3754-3761`.
+///
+/// C body (c:3757-3760):
+/// ```c
+/// mnumber mnval;
+/// mnval.type = MN_INTEGER;
+/// mnval.u.l = val;
+/// return assignnparam(s, mnval, flags);
+/// ```
+///
+/// Two divergences in the previous Rust port:
+///   1. Dropped the `flags` arg — caller-supplied flags (e.g.
+///      ASSPM_AUGMENT for `+= int`) couldn't be threaded through;
+///      every call hardcoded ASSPM_WARN regardless.
+///   2. Returned void instead of Param — losing the new param
+///      pointer the caller may want to read back.
+pub fn assigniparam(s: &str, val: i64, flags: i32)                           // c:3755
+    -> Option<crate::ported::zsh_h::Param>
+{
+    // c:3757-3759 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
+    let mnval = crate::ported::math::mnumber {
+        l: val,
+        d: 0.0,
+        type_: MN_INTEGER,
+    };
+    // c:3760 — `return assignnparam(s, mnval, flags);`
+    assignnparam(s, mnval, flags)                                            // c:3760
 }
 
 /// Port of `Param setiparam(char *s, zlong val)` from `Src/params.c:3767-3773`.
@@ -9234,6 +9256,52 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `assigniparam` to its canonical C body at `Src/params.c:3754-3761`.
+    /// Three-arg signature: `(s, val, flags)`. Previous Rust port
+    /// dropped the flags arg AND returned void; this restores both.
+    #[test]
+    fn assigniparam_takes_flags_arg_and_returns_param() {
+        use crate::ported::zsh_h::PM_INTEGER;
+
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+
+        let name = "zshrs_test_assigniparam_x";
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(name);
+        }
+
+        // c:3755-3760 — assigniparam returns Param and threads flags through.
+        let r = assigniparam(name, 77, ASSPM_WARN as i32);
+        assert!(r.is_some(), "c:3760 — returns Some(Param) for new int param");
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(name).expect("integer param created");
+            assert_ne!((pm.node.flags as u32) & PM_INTEGER, 0,
+                "c:3757-3760 — PM_INTEGER flag set");
+            assert_eq!(pm.u_val, 77,
+                "c:3759 — value stored in u_val");
+        }
+
+        // Reassign with a different flag value (0 — no warnings).
+        let r = assigniparam(name, 88, 0);
+        assert!(r.is_some(), "reassign returns Some");
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(name).expect("param still present");
+            assert_eq!(pm.u_val, 88, "reassign updates u_val");
+        }
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(name);
+        }
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setnparam` to its canonical C body at `Src/params.c:3745-3749`.
