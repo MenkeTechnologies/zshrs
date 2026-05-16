@@ -195,14 +195,20 @@ pub fn output_strftime(nam: &str, argv: &[&str],                             // 
 /// WARNING: param names don't match C — Rust=(nam, argv, func) vs C=(nam, argv, ops, func)
 pub fn bin_strftime(nam: &str, argv: &[&str],                                // c:187
                     ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    // c:191 — `char *tz = getsparam("TZ");`
-    let tz_saved = std::env::var("TZ").ok();
-    // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL); setsparam("TZ", ...);`
+    // c:191 — `char *tz = getsparam("TZ");`. Read TZ from paramtab
+    // (canonical shell var storage); previous port read
+    // `env::var("TZ")` which diverges from shell-internal TZ values
+    // not yet exported. Same env-vs-paramtab family as recent fixes.
+    let tz_saved = crate::ported::params::getsparam("TZ");                // c:191
+    // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL);
+    //              setsparam("TZ", tz);`. The Rust port mirrors via
+    // env::set_var so libc's strftime sees the locale-active TZ —
+    // setsparam alone doesn't propagate to the libc-level zone.
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);                                      // c:198 setsparam
     }
     let result = output_strftime(nam, argv, ops, func);                   // c:199
-    // c:200 — `endparamscope();`
+    // c:200 — `endparamscope();`. Restore the saved TZ.
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);
     }
