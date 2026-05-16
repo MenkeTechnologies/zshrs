@@ -2203,8 +2203,12 @@ pub fn getsigidx(s: &str) -> Option<i32> {
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    let sigrtmin = unsafe { libc::SIGRTMIN() };
-                    let sigrtmax = unsafe { libc::SIGRTMAX() };
+                    // `libc::SIGRTMIN()` / `SIGRTMAX()` are `extern "C" fn`
+                    // (NOT `unsafe`) on Linux — they're glibc functions
+                    // that read runtime values. The unsafe block was a
+                    // copy-paste leftover from when these were macros.
+                    let sigrtmin = libc::SIGRTMIN();
+                    let sigrtmax = libc::SIGRTMAX();
                     if x >= sigrtmin && x <= sigrtmax {
                         return Some(crate::ported::signals_h::SIGIDX(x));    // c:3058
                     }
@@ -2304,8 +2308,9 @@ pub fn getsigname(sig: i32) -> String {
             // unknown signal — losing the RT-signal naming entirely.
             #[cfg(target_os = "linux")]
             {
-                let sigrtmin = unsafe { libc::SIGRTMIN() };
-                let sigrtmax = unsafe { libc::SIGRTMAX() };
+                // glibc `SIGRTMIN()`/`SIGRTMAX()` are safe extern fns.
+                let sigrtmin = libc::SIGRTMIN();
+                let sigrtmax = libc::SIGRTMAX();
                 if sig >= sigrtmin && sig <= sigrtmax {                       // c:3100
                     let nm = crate::ported::signals::rtsigname(sig);          // c:3101 rtsigname(SIGNUM(sig), 0)
                     if !nm.is_empty() {

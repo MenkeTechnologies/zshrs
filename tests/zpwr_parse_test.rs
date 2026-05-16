@@ -39,15 +39,17 @@ fn parse_file(path: &Path) -> Result<(), String> {
         .stack_size(PARSE_STACK_SIZE)
         .name("parse-guard".into())
         .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                zsh::parse::parse_init(&content);
-                zsh::parse::parse().map(|_| ()).map_err(|errs| {
-                    errs.into_iter()
-                        .map(|e| format!("{:?}", e))
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                })
-            }));
+            // parse() now returns ZshProgram directly (no Result).
+            // Use errflag to detect parse failure (parse.rs:4049).
+            let result: Result<Result<(), String>, _> =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    use std::sync::atomic::Ordering;
+                    zsh::utils::errflag.store(0, Ordering::Relaxed);
+                    zsh::parse::parse_init(&content);
+                    let _ = zsh::parse::parse();
+                    let e = zsh::utils::errflag.load(Ordering::Relaxed);
+                    if e == 0 { Ok(()) } else { Err(format!("errflag={:#x}", e)) }
+                }));
             let _ = tx.send(result);
         })
         .map_err(|e| format!("thread spawn error: {}", e))?;

@@ -788,7 +788,12 @@ pub fn utmp_make(user: &str, line: &str, host: &str, time: i64, pid: i32, ut_typ
     copy(&mut u.ut_user, user);
     copy(&mut u.ut_line, line);
     copy(&mut u.ut_host, host);
-    u.ut_tv.tv_sec = time as libc::time_t;
+    // `ut_tv.tv_sec` is `i32` on Linux (Y2038-constrained `__u32` in
+    // utmpx.h's anonymous `struct ut_timeval`), but `i64` on macOS
+    // (real `struct timeval` with `time_t`). Use type inference (`as _`)
+    // so the cast picks the right width per target — `time as libc::time_t`
+    // was unconditionally i64 on macOS and failed Linux's i32 binding.
+    u.ut_tv.tv_sec = time as _;
     u.ut_pid = pid;
     u.ut_type = ut_type;
     u

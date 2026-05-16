@@ -6,15 +6,18 @@
 //! compile_zsh.rs migration.
 
 fn parse_ok(src: &str) {
+    // Clear errflag so we can detect parse errors specific to this call.
+    // The parser API used to return `Result<ZshProgram, Vec<Error>>`,
+    // but now returns `ZshProgram` directly per the C source's
+    // `Eprog parse_event(...)` shape — callers check `errflag` for
+    // failure (parse.rs:4049 doc comment).
+    use std::sync::atomic::Ordering;
+    zsh::utils::errflag.store(0, Ordering::Relaxed);
     zsh::parse::parse_init(src);
-    match zsh::parse::parse() {
-        Ok(_program) => {}
-        Err(errors) => panic!(
-            "parser rejected `{}`: {} errors. First: {:?}",
-            src,
-            errors.len(),
-            errors.first()
-        ),
+    let _program = zsh::parse::parse();
+    let err = zsh::utils::errflag.load(Ordering::Relaxed);
+    if err != 0 {
+        panic!("parser rejected `{}`: errflag = {:#x}", src, err);
     }
 }
 
@@ -235,7 +238,7 @@ fn p_nested_if() {
 #[test]
 fn probe_cond_shape() {
     zsh::parse::parse_init("[[ a == a ]]");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("[[]] AST: {:#?}", prog);
     assert_eq!(prog.lists.len(), 1);
     let pipe = &prog.lists[0].sublist.pipe;
@@ -244,14 +247,14 @@ fn probe_cond_shape() {
 
 #[test]
 fn probe_arith_shape() {
-    zsh::parse::parse_init("(( i < 3 ))");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("(( i < 3 ))");    let prog = zsh::parse::parse();
     eprintln!("(()) AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_compile_arith() {
     use zsh::compile_zsh::ZshCompiler;
-    zsh::parse::parse_init("(( x = 2 + 3 )); echo $x");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("(( x = 2 + 3 )); echo $x");    let prog = zsh::parse::parse();
     eprintln!("AST: {:#?}", prog);
     let comp = ZshCompiler::new();
     let chunk = comp.compile(&prog);
@@ -264,48 +267,48 @@ fn probe_compile_arith() {
 #[test]
 fn probe_unary_test_op() {
     zsh::parse::parse_init("[[ -d /tmp ]]");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("UNARY AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_case_pattern() {
-    zsh::parse::parse_init("case foo in *) echo def ;; esac");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("case foo in *) echo def ;; esac");    let prog = zsh::parse::parse();
     eprintln!("CASE AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_chain() {
     zsh::parse::parse_init("false && echo no || echo yes");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("CHAIN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_squoted() {
     zsh::parse::parse_init("echo 'a $b c'");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("SQ AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_regex_anchor() {
     zsh::parse::parse_init("[[ abc =~ ^a ]] && echo y");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("REGEX AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_dollar_single() {
     zsh::parse::parse_init(r#"echo $'a\tb'"#);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("DOLLAR-SINGLE AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_funcdef_compile() {
     use zsh::compile_zsh::ZshCompiler;
-    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse();
     let comp = ZshCompiler::new();
     let chunk = comp.compile(&prog);
     eprintln!("ops: {}", chunk.ops.len());
@@ -324,14 +327,14 @@ fn probe_funcdef_compile() {
 
 #[test]
 fn probe_funcdef_ast() {
-    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse();
     eprintln!("FUNC AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_assoc_two_in_dquote() {
     zsh::parse::parse_init(r#"echo "${foo[a]} ${foo[b]}""#);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ASSOC-TWO AST: {:#?}", prog);
 }
 
@@ -378,26 +381,26 @@ fn probe_lex_printf() {
 
 #[test]
 fn probe_cmdsub_inner() {
-    zsh::parse::parse_init(r#"echo $(printf "a\nb")"#);    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init(r#"echo $(printf "a\nb")"#);    let prog = zsh::parse::parse();
     eprintln!("CMDSUB AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_array_then_funcdef() {
     zsh::parse::parse_init("g=(o1); f() { :; }; f");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ARR-FN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_anon_fn() {
-    zsh::parse::parse_init("() { echo anon; }");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("() { echo anon; }");    let prog = zsh::parse::parse();
     eprintln!("ANON-FN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_for_implicit_pos() {
-    zsh::parse::parse_init(r#"f() { for x; do echo "[$x]"; done; }"#);    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init(r#"f() { for x; do echo "[$x]"; done; }"#);    let prog = zsh::parse::parse();
     eprintln!("FOR-IMPL AST: {:#?}", prog);
 }
 
@@ -420,55 +423,55 @@ fn probe_lex_regex_paren() {
 
 #[test]
 fn probe_regex_with_paren() {
-    zsh::parse::parse_init(r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]] && echo y"#);    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init(r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]] && echo y"#);    let prog = zsh::parse::parse();
     eprintln!("REGEX-PAREN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_proc_sub_input() {
-    zsh::parse::parse_init("/bin/cat <(echo line)");    let prog = zsh::parse::parse().unwrap();
+    zsh::parse::parse_init("/bin/cat <(echo line)");    let prog = zsh::parse::parse();
     eprintln!("PROC-SUB AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_bang_dollar() {
     zsh::parse::parse_init("echo !$");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("BANG-DOLLAR AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_quote_escape_dollar() {
     zsh::parse::parse_init(r#"echo "\$lit""#);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("QUOTE-ESCAPE AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_test_bang() {
     zsh::parse::parse_init("test ! -z foo");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("TEST-BANG AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_zshflag_count() {
     zsh::parse::parse_init("a=(x y z); echo ${(#)a}");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ZSHFLAG-COUNT AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_assoc_set_get() {
     zsh::parse::parse_init("typeset -A m; m[k]=v; echo ${m[k]}");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ASSOC AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_array_iter_for() {
     zsh::parse::parse_init("a=(red green blue); for c in ${a[@]}; do echo $c; done");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ARRAY-ITER AST: {:#?}", prog);
 }
 
@@ -476,28 +479,28 @@ fn probe_array_iter_for() {
 fn probe_alias_assign() {
     let src = "alias g='echo greeted'";
     zsh::parse::parse_init(src);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ALIAS-ASSIGN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_for_over_cmdsub() {
     zsh::parse::parse_init("for w in $(echo a b c); do echo $w; done");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("FOR-OVER-CMDSUB AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_array_idx() {
     zsh::parse::parse_init("arr=(a b c); echo $arr[2]");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("ARR-IDX AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_brace_alt() {
     zsh::parse::parse_init("echo {a,b,c}");
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("BRACE-ALT AST: {:#?}", prog);
 }
 
@@ -505,7 +508,7 @@ fn probe_brace_alt() {
 fn probe_heredoc_ast() {
     let src = "cat <<EOF\nline1\nline2\nEOF";
     zsh::parse::parse_init(src);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("HEREDOC AST: {:#?}", prog);
 }
 
@@ -513,6 +516,6 @@ fn probe_heredoc_ast() {
 fn probe_dollar_at_for() {
     let src = r#"f() { for x in "$@"; do echo "[$x]"; done; }; f a "two w" c"#;
     zsh::parse::parse_init(src);
-    let prog = zsh::parse::parse().unwrap();
+    let prog = zsh::parse::parse();
     eprintln!("DOLLAR-AT AST: {:#?}", prog);
 }
