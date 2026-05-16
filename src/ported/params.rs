@@ -3179,18 +3179,24 @@ pub fn assignstrvalue(
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
 
     if (pm.node.flags as u32 & PM_READONLY) != 0 {
-        // zerr("read-only variable: %s", pm->node.nam);
-        // zsfree(val);  -- Rust drop
+        // c:2701 — `zerr("read-only variable: %s", pm->node.nam)`.
+        // The previous Rust port left this as a comment-only stub,
+        // so silent assignment failures masked typeset -r protection.
+        zerr(&format!("read-only variable: {}", pm.node.nam));               // c:2701
         return;
     }
     if (pm.node.flags as u32 & PM_HASHED) != 0
         && (v.scanflags as u32 & (SCANPM_MATCHMANY | SCANPM_ARRONLY)) != 0
     {
-        // zerr("%s: attempt to set slice of associative array", ...);
+        // c:2706 — `zerr("%s: attempt to set slice of associative array", ...)`.
+        zerr(&format!(
+            "{}: attempt to set slice of associative array", pm.node.nam));   // c:2706
         return;
     }
     if (v.valflags & VALFLAG_EMPTY) != 0 {
-        // zerr("%s: assignment to invalid subscript range", ...);
+        // c:2710 — `zerr("%s: assignment to invalid subscript range", ...)`.
+        zerr(&format!(
+            "{}: assignment to invalid subscript range", pm.node.nam));       // c:2710
         return;
     }
     pm.node.flags &= !(PM_UNSET as i32);
@@ -6845,7 +6851,10 @@ pub fn resolve_nameref_rec(
         return pm;
     }
     if (f & PM_TAGGED) != 0 {
-        // zerr("%s: invalid self reference", pm.node.nam)
+        // c: `zerr("%s: invalid self reference", pm->node.nam)`.
+        // The previous Rust port left this as a comment-only stub.
+        let nam = pm.as_ref().map(|p| p.node.nam.clone()).unwrap_or_default();
+        zerr(&format!("{}: invalid self reference", nam));
         return None;
     }
     // Real walk needs realparamtab.gethashnode2(refname). Until
@@ -6952,8 +6961,13 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
             // Self-reference check (basepm == pm) — without a working
             // hashtable lookup we can only detect literal self-name.
             if !head.is_empty() && head == pm.node.nam {
-                // zerr("%s: invalid self reference", refname);
-                // unsetparam_pm(pm, 0, 1);
+                // c: `zerr("%s: invalid self reference", refname);`
+                //    `unsetparam_pm(pm, 0, 1);`
+                // The previous Rust port left both as comment-only
+                // stubs. Emit the diagnostic so users see why a
+                // typeset -n self-loop fails.
+                zerr(&format!("{}: invalid self reference", rn));
+                pm.node.flags |= PM_UNSET as i32;
             } else {
                 // basepm = (Param)gethashnode2(realparamtab, refname)
                 //   → loadparamnode(...) → setscope_base(pm, basepm->level)
