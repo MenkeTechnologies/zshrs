@@ -1910,35 +1910,52 @@ pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
     Some(entry.node.nam[pos1..pos2].to_string())
 }
 
-/// Port of `char *quote(char **tr)` from Src/hist.c.
-pub fn quote(s: &str) -> String {
+/// Port of `int quote(char **tr)` from `Src/hist.c:2486-2523`.
+/// Wraps `*tr` in single quotes; `'` inside becomes `'\''` and any
+/// `inblank(c)` (space/tab/newline) outside quotes that wasn't
+/// preceded by `\` becomes `'<c>'`.
+///
+/// Previous Rust port used `c.is_whitespace()` — broader than C's
+/// `inblank()` which is the narrow typtab INBLANK class (space, tab,
+/// newline ONLY). Drift would silently quote CR/FF/VT/NBSP/etc.
+/// chars that C leaves alone.
+pub fn quote(s: &str) -> String {                                            // c:2486
     let bytes: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(bytes.len() + 3);
     out.push('\'');
     let mut inquotes = false;
     let mut prev: char = '\0';
-    for (i, &c) in bytes.iter().enumerate() {
+    for &c in bytes.iter() {
+        // c:2499 — `inblank(*ptr)` is narrow space/tab/newline.
+        let is_inblank = matches!(c, ' ' | '\t' | '\n');
         if c == '\'' {
             inquotes = !inquotes;
             out.push('\''); out.push('\\'); out.push('\''); out.push('\'');
-        } else if c.is_whitespace() && !inquotes && prev != '\\' {
+        } else if is_inblank && !inquotes && prev != '\\' {                  // c:2514
             out.push('\''); out.push(c); out.push('\'');
         } else {
             out.push(c);
         }
-        prev = if i < bytes.len() { c } else { prev };
+        prev = c;
     }
     out.push('\'');
     out
 }
 
-/// Port of `char *quotebreak(char **tr)` from Src/hist.c:2527.
+/// Port of `int quotebreak(char **tr)` from `Src/hist.c:2527`. Same
+/// shape as `quote` but `inblank` chars get the `'<c>'` break-out
+/// treatment whether or not they're inside quotes.
+///
+/// `c.is_whitespace()` → `inblank(c)` fix per the same divergence
+/// pattern as `quote` above.
 pub fn quotebreak(s: &str) -> String {                                       // c:2527
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
     for c in s.chars() {
+        // c:2548 — `inblank(*ptr)` narrow set.
+        let is_inblank = matches!(c, ' ' | '\t' | '\n');
         if c == '\'' { result.push_str("'\\''"); }
-        else if c.is_whitespace() {
+        else if is_inblank {
             result.push('\''); result.push(c); result.push('\'');
         } else {
             result.push(c);
@@ -3268,5 +3285,44 @@ mod subst_modifier_tests {
         assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
         assert_eq!(casemodify("FOO BAR",     CASMOD_CAPS), "Foo Bar",
             "non-first letters lowercased");
+    }
+
+    /// `Src/hist.c:2486-2523` — `quote(s)` wraps in `'...'` and
+    /// breaks out `inblank` chars (NARROW space/tab/newline ONLY)
+    /// by closing the current quote span, emitting the blank in its
+    /// own `'<c>'` pair, then opening a fresh quote span. CR/FF/VT/
+    /// NBSP should NOT be broken out — they're not inblank.
+    #[test]
+    fn quote_breaks_only_narrow_inblank_chars() {
+        // c:2514 — close current quote, emit ` ` in its own pair, reopen.
+        assert_eq!(quote("a b"), "'a' 'b'",
+            "c:2514 — space broken out of single-quote span");
+        assert_eq!(quote("a\tb"), "'a'\t'b'");
+        assert_eq!(quote("a\nb"), "'a'\n'b'");
+        // CR (\r) is NOT inblank per C → must stay inside the quotes.
+        assert_eq!(quote("a\rb"), "'a\rb'",
+            "c:2499 — CR is NOT in C's inblank set; stays inside quotes");
+        // NBSP (0xA0) is NOT in narrow inblank either.
+        assert_eq!(quote("a\u{00A0}b"), "'a\u{00A0}b'",
+            "NBSP is not inblank; must remain inside the quote span");
+    }
+
+    /// `Src/hist.c:2527-2560` — `quotebreak(s)` same as quote but
+    /// breaks out inblank chars regardless of inquotes state. Pin
+    /// narrow-inblank behavior (no CR/FF/NBSP breaking).
+    #[test]
+    fn quotebreak_uses_narrow_inblank_set() {
+        assert_eq!(quotebreak("a b"), "'a' 'b'");
+        assert_eq!(quotebreak("a\tb"), "'a'\t'b'");
+        assert_eq!(quotebreak("a\nb"), "'a'\n'b'");
+        // CR — NOT inblank → stays inside.
+        assert_eq!(quotebreak("a\rb"), "'a\rb'",
+            "CR not in inblank set, must not be broken out");
+        // NBSP — NOT inblank.
+        assert_eq!(quotebreak("a\u{00A0}b"), "'a\u{00A0}b'",
+            "NBSP not in inblank, must not be broken out");
+        // Form-feed (\x0C) — NOT inblank.
+        assert_eq!(quotebreak("a\u{000C}b"), "'a\u{000C}b'",
+            "FF not in inblank, must not be broken out");
     }
 }

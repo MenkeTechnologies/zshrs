@@ -78,7 +78,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
             unsafe { libc::close(sfd); }                                 // c:115
             return 1;                                                    // c:116
         }
-        crate::ported::utils::addmodulefd(sfd);                          // c:119 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(sfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:119 FDT_EXTERNAL
         if targetfd != 0 {                                               // c:121
             sfd = crate::ported::utils::redup(sfd, targetfd);            // c:122
         } else {
@@ -136,7 +136,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
                     std::io::Error::last_os_error()));                   // c:200
             return 1;                                                    // c:201
         }
-        crate::ported::utils::addmodulefd(rfd);                          // c:204 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(rfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:204 FDT_EXTERNAL
         if targetfd != 0 {                                               // c:206
             sfd = crate::ported::utils::redup(rfd, targetfd);            // c:207
             if sfd < 0 {                                                 // c:208
@@ -188,7 +188,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
             unsafe { libc::close(sfd); }                                 // c:245
             return 1;                                                    // c:246
         }
-        crate::ported::utils::addmodulefd(sfd);                          // c:251 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(sfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:251 FDT_EXTERNAL
         if targetfd != 0 {                                               // c:253
             if crate::ported::utils::redup(sfd, targetfd) < 0 {          // c:254
                 crate::ported::utils::zerrnam(nam,

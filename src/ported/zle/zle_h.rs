@@ -1069,4 +1069,27 @@ mod tests {
         // the populated path.)
         assert!(Th(10).is_none() || Th(10).is_some());
     }
+
+    /// `Src/Zle/zle.h:207-220` — `ZLE_*` widget-flag values are
+    /// load-bearing. Pin every bit against the canonical C define.
+    /// Drift here would silently mis-dispatch every widget call
+    /// (YANKAFTER/YANKBEFORE/KILL flags drive paste-buffer behavior,
+    /// VIOPER drives vi-mode prefix waiting, ISCOMP drives completion
+    /// dispatch).
+    #[test]
+    fn zle_widget_flags_match_c_zle_h_canonical_values() {
+        assert_eq!(ZLE_MENUCMP,    1 << 2,  "c:207");
+        assert_eq!(ZLE_YANKAFTER,  1 << 3,  "c:208");
+        assert_eq!(ZLE_YANKBEFORE, 1 << 4,  "c:209");
+        assert_eq!(ZLE_YANK, ZLE_YANKAFTER | ZLE_YANKBEFORE,
+            "c:210 — composite");
+        assert_eq!(ZLE_LINEMOVE,   1 << 5,  "c:211");
+        assert_eq!(ZLE_VIOPER,     1 << 6,  "c:212");
+        assert_eq!(ZLE_LASTCOL,    1 << 7,  "c:213");
+        assert_eq!(ZLE_KILL,       1 << 8,  "c:214");
+        assert_eq!(ZLE_KEEPSUFFIX, 1 << 9,  "c:215");
+        assert_eq!(ZLE_NOTCOMMAND, 1 << 10, "c:216");
+        assert_eq!(ZLE_ISCOMP,     1 << 11, "c:217");
+        assert_eq!(ZLE_NOLAST,     1 << 14, "c:220");
+    }
 }
