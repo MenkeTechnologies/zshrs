@@ -600,11 +600,16 @@ pub fn init_signals() {                                                      // 
         let _ = crate::ported::signals::signal_setmask(&empty);
         // c:1404 — `for (i=0; i<NSIG; ++i) signal_default(i);`. NSIG
         // is `<signal.h>`-provided in C; libc-rs doesn't re-export it
-        // on every platform. 64 is the POSIX-mandated lower bound and
-        // matches all targets zshrs supports (macOS=64, Linux=65).
-        // Skipping signal 0 (not a real signal — `signal_default(0)`
-        // returns SIG_ERR on most libcs).
-        for i in 1..64i32 {
+        // directly. `signals_h::SIGCOUNT` is the canonical port of
+        // NSIG-1 (Linux=64, macOS=31).
+        //
+        // The previous Rust port used `1..64i32` — hardcoded, missing
+        // signal 64 on Linux (where NSIG=65) AND iterating PAST the
+        // valid range on macOS (where signals 32..63 don't exist).
+        // Use `1..=SIGCOUNT` so the loop iterates exactly NSIG-1
+        // signals on each platform, skipping signal 0 (C iterates
+        // it but signal_default(0) is implementation-defined).
+        for i in 1..=crate::ported::signals_h::SIGCOUNT {
             let _ = crate::ported::signals::signal_default(i);
         }
     }
