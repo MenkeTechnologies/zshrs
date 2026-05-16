@@ -20,19 +20,15 @@ use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
 /// $mend into the MatchData struct.
 #[allow(non_snake_case)]
 pub fn savematch(m: &mut MatchData) {                                         // c:40
-    let mut a: Option<Vec<String>>;                                           // c:40 char **a
     crate::ported::signals_h::queue_signals();                                // c:44
-    // c:45 — a = getaparam("match");
-    // Static-link path: getaparam reads from paramtab (bucket-2);
-    // src/ported/ doesn't reach the executor's array tables yet, so
-    // each read yields None. The MatchData fields take that None and
-    // act as "var was unset" per `restore` semantics (c:54-69).
-    a = None;
-    m.r#match = a;                                                            // c:46
-    a = None;                                                                 // c:47
-    m.mbegin = a;                                                             // c:48
-    a = None;                                                                 // c:49
-    m.mend = a;                                                               // c:50
+    // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
+    // captures. The previous Rust port hardcoded `a = None` for all
+    // three because the fabricated `getaparam(Option<&mut value>)` sig
+    // couldn't take a name string. Now that `getaparam(&str)` matches
+    // C, real reads from paramtab work end-to-end.
+    m.r#match = crate::ported::params::getaparam("match");                    // c:45-46
+    m.mbegin = crate::ported::params::getaparam("mbegin");                    // c:47-48
+    m.mend = crate::ported::params::getaparam("mend");                        // c:49-50
     crate::ported::signals_h::unqueue_signals();                              // c:51
 }
 

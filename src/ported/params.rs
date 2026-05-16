@@ -3735,23 +3735,46 @@ pub fn getsparam_u(s: &str) -> Option<String> {                              // 
     getsparam(s).map(|v| crate::ported::utils::unmeta(&v))
 }
 
-/// Port of `getaparam(char *s)` from `Src/params.c:3100`. C body:
+/// Port of `char **getaparam(char *s)` from `Src/params.c:3101-3110`.
+///
+/// C body:
 /// ```c
-/// struct value vbuf; Value v; char *t = s;
-/// if (idigit(*s)) return NULL;
-/// if ((v = fetchvalue(&vbuf, &s, 0, SCANPM_ARRONLY)) &&
+/// struct value vbuf;
+/// Value v;
+/// if (!idigit(*s) && (v = getvalue(&vbuf, &s, 0)) &&
 ///     PM_TYPE(v->pm->node.flags) == PM_ARRAY)
 ///     return v->pm->gsu.a->getfn(v->pm);
 /// return NULL;
 /// ```
-/// Returns `pm->u.arr` when the param is PM_ARRAY.
-pub fn getaparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let s = s?;
-    let pm = s.pm.as_mut()?;
-    if PM_TYPE(pm.node.flags as u32) != PM_ARRAY {
+///
+/// The previous Rust port was a fabrication: signature was
+/// `Option<&mut value> -> Option<Vec<String>>`, taking an already-
+/// resolved Value pointer rather than the C-canonical name string.
+/// No caller used it because the bogus signature fit nothing — and
+/// the in-tree `savematch` at modules/zutil.rs:30 hardcoded `a = None`
+/// because the existing API couldn't be threaded through.
+///
+/// Real C use: name lookup. e.g. `getaparam("match")` returns the
+/// `$match` array from the regex-match callouts (Modules/zutil.c:45).
+pub fn getaparam(name: &str) -> Option<Vec<String>> {                        // c:3101
+    // c:3107 — `if (idigit(*s))` reject digit-first names. C
+    // `getvalue` would also reject these later, but the explicit
+    // check matches C's flow.
+    if name.starts_with(|c: char| c.is_ascii_digit()) {                      // c:3107
         return None;
     }
-    Some(arrgetfn(pm))
+    // c:3107-3109 — `getvalue(&vbuf, &s, 0)` resolves the name to a
+    // paramtab entry. Then PM_TYPE check + `pm->u.arr` return.
+    if let Ok(tab) = paramtab().read() {
+        if let Some(pm) = tab.get(name) {
+            if PM_TYPE(pm.node.flags as u32) == PM_ARRAY {                   // c:3108
+                if let Some(arr) = pm.u_arr.as_ref() {                       // c:3109
+                    return Some(arr.clone());
+                }
+            }
+        }
+    }
+    None                                                                      // c:3110
 }
 
 /// Port of `gethparam(char *s)` from `Src/params.c:3115`. C body
@@ -9089,6 +9112,77 @@ mod tests {
         match saved {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
+        }
+    }
+
+    /// Pin `getaparam` to its canonical C body at `Src/params.c:3101-3110`.
+    /// Three branches: digit-first reject (c:3107), PM_ARRAY return
+    /// (c:3108-3109), non-array / missing-param return None (c:3110).
+    #[test]
+    fn getaparam_returns_array_for_pm_array_only() {
+        // c:3107 — digit-first name → None (positional params reject).
+        assert_eq!(getaparam("123abc"), None,
+            "c:3107 — digit-first name rejected");
+
+        // c:3110 — missing param → None.
+        assert_eq!(getaparam("zshrs_test_arr_nonexistent_xyz"), None,
+            "c:3110 — missing param returns None");
+
+        // Helper that builds a Param via the canonical createparam
+        // path so we don't reach into struct internals (param has
+        // many fields and no Default).
+        fn build_arr(name: &str, arr: Vec<String>) {
+            let mut tab = paramtab().write().unwrap();
+            tab.insert(name.to_string(), Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: crate::ported::zsh_h::PM_ARRAY as i32,
+                },
+                u_data: 0, u_arr: Some(arr), u_str: None,
+                u_val: 0, u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None,
+                gsu_a: None, gsu_h: None,
+                base: 0, width: 0,
+                env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        fn build_scalar(name: &str, s: &str) {
+            let mut tab = paramtab().write().unwrap();
+            tab.insert(name.to_string(), Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: crate::ported::zsh_h::PM_SCALAR as i32,
+                },
+                u_data: 0, u_arr: None, u_str: Some(s.to_string()),
+                u_val: 0, u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None,
+                gsu_a: None, gsu_h: None,
+                base: 0, width: 0,
+                env: None, ename: None, old: None, level: 0,
+            }));
+        }
+
+        // c:3108 — PM_ARRAY param returns the array contents.
+        build_arr("zshrs_test_getaparam_arr",
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]);
+        assert_eq!(
+            getaparam("zshrs_test_getaparam_arr"),
+            Some(vec!["one".to_string(), "two".to_string(), "three".to_string()]),
+            "c:3108-3109 — PM_ARRAY param returns its array"
+        );
+
+        // c:3108 — PM_SCALAR (non-array) param → None.
+        build_scalar("zshrs_test_getaparam_scalar", "not an array");
+        assert_eq!(getaparam("zshrs_test_getaparam_scalar"), None,
+            "c:3108 — non-PM_ARRAY param returns None");
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove("zshrs_test_getaparam_arr");
+            tab.remove("zshrs_test_getaparam_scalar");
         }
     }
 }
