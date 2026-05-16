@@ -56,6 +56,19 @@ Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
 VM debugging (stdout; does not suppress execution):
   --disasm       print fusevm opcodes for each compiled unit before VM run
 
+Editor integration (served by zshrs itself, consumed by editors/intellij
+and other LSP/DAP clients — Helix, Neovim, VS Code, …):
+  --lsp                  LSP server on stdio (completion / hover / definition
+                         / references / rename / documentSymbol / foldingRange
+                         / semanticTokens / formatting / diagnostics)
+  --dap HOST:PORT        DAP debug adapter; connects back to the IDE's listener
+                         at HOST:PORT and serves the Debug Adapter Protocol
+  --dump-reflection      emit the JSON consumed by the IntelliJ "zshrs"
+                         reflection tool window (builtins / keywords / options
+                         / special_vars, each tagged by category)
+  --docs NAME            render the hover card the LSP would return for NAME
+                         (used by the IntelliJ tool window's docs popup)
+
 Parity modes (caches OFF, daemon OFF — match the named reference shell
 byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
