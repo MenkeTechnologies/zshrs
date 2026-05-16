@@ -4492,21 +4492,43 @@ pub fn resetparam(pm: &mut crate::ported::zsh_h::param, flags: i32) -> i32 { // 
     0                                                                        // c:3819
 }
 
-/// Unset a parameter from all storage.
-/// Port of `unsetparam(char *s)` from Src/params.c:3819. C uses a single
-/// HashTable; our SubstState-style storage spans variables /
-/// arrays / assoc_arrays, so removal must touch all three to be
-/// thorough (matches `unsetparam_pm`'s flag-aware tear-down).
-/// WARNING: param names don't match C — Rust=(arrays, assoc_arrays, name) vs C=(s)
-pub fn unsetparam(                                                          // c:3819
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-) {
-    variables.remove(name);
-    arrays.remove(name);
-    assoc_arrays.remove(name);
+/// Port of `void unsetparam(char *s)` from `Src/params.c:3819`.
+///
+/// C body:
+/// ```c
+/// Param pm;
+/// queue_signals();
+/// if ((pm = (Param)(paramtab == realparamtab ?
+///         paramtab->getnode2(paramtab, s) :
+///         paramtab->getnode(paramtab, s))))
+///     unsetparam_pm(pm, 0, 1);
+/// unqueue_signals();
+/// ```
+///
+/// The previous Rust port took `(variables, arrays, assoc_arrays,
+/// name)` operating on EXTERNAL HashMap storage — a SubstState-
+/// era stale signature. C operates on the canonical `paramtab`
+/// global. No live callers used the old 4-arg form (all use
+/// `paramtab().write().remove(...)` directly), so renaming is
+/// safe.
+pub fn unsetparam(name: &str) {                                              // c:3819
+    crate::ported::signals::queue_signals();                                  // c:3823
+    // c:3825-3828 — look up the pm node; on hit, route through
+    // `unsetparam_pm(pm, 0, 1)`. The Rust paramtab HashMap is
+    // the canonical store; remove the entry if present.
+    let found = {
+        let tab = paramtab().read().unwrap();
+        tab.contains_key(name)
+    };
+    if found {
+        // c:3827 — `unsetparam_pm(pm, 0, 1)`. The full body lives
+        // at unsetparam_pm; here we trigger the tear-down by
+        // removing from paramtab and clearing the env-side too
+        // (delenv) so the env entry doesn't dangle.
+        let _ = paramtab().write().unwrap().remove(name);
+        crate::ported::params::delenv(name);                                  // c:3870 delenv side
+    }
+    crate::ported::signals::unqueue_signals();                                // c:3829
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
