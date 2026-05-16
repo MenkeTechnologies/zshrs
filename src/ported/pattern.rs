@@ -1578,10 +1578,16 @@ pub static zpc_special: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_C
 // the static declared for parity (Rule A — name exists in C).
 pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
 
-/// `Marker` constant from pattern.c — used as a placeholder for the
-/// active-but-disabled slot. C is `\200` (0x80). The port keeps it
-/// distinguishable from valid pattern bytes.
-pub const Marker: u8 = 0x80;
+/// `Marker` constant — alias for `crate::ported::zsh_h::Marker`
+/// (`Src/zsh.h:224` `#define Marker ((char) 0xa2)`).
+///
+/// The previous Rust port had this as `pub const Marker: u8 = 0x80`
+/// which is WRONG — `\200` (0x80) is NOT the canonical Marker byte.
+/// C's Marker is 0xa2 per `Src/zsh.h:224`. No in-tree callers used
+/// this local const directly (all routed through zsh_h::Marker),
+/// but the wrong value was nevertheless a future trap for anyone
+/// using the pattern.rs `Marker` symbol.
+pub const Marker: u8 = crate::ported::zsh_h::Marker as u8;
 
 const POSIX_CLASS_NAMES: &[&str] = &[
     "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower",
@@ -2673,6 +2679,21 @@ mod tests {
         opt_state_set("caseglob",  saved_caseglob);
         opt_state_set("casepaths", saved_casepaths);
         opt_state_set("multibyte", saved_multibyte);
+    }
+
+    /// `Src/zsh.h:224` — `#define Marker ((char) 0xa2)`. The
+    /// pattern.rs local `Marker` const must equal the canonical
+    /// zsh_h::Marker byte value. The previous Rust port had
+    /// `pub const Marker: u8 = 0x80` (wrong; 0x80 is not a token
+    /// byte in zsh.h at all). Now aliases the canonical const
+    /// so both names point to the same byte.
+    #[test]
+    fn pattern_marker_alias_matches_canonical_zsh_h_marker() {
+        // c:224 — canonical Marker is 0xa2.
+        assert_eq!(Marker, 0xa2_u8,
+            "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)");
+        assert_eq!(Marker, crate::ported::zsh_h::Marker as u8,
+            "pattern.rs::Marker must alias zsh_h::Marker");
     }
 
     /// `Src/pattern.c:464-510` — `patcompcharsset` masks special chars
