@@ -1508,10 +1508,72 @@ pub fn zshtokenize(s: &mut String, flags: i32) {                             // 
     *s = chars.into_iter().collect();
 }
 
-/// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
-/// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
-pub fn remnulargs(s: &mut String) {
-    s.retain(|c| c != '\0' && c != Bnullkeep);
+/// Port of `void remnulargs(char *s)` from `Src/glob.c:3649`.
+///
+/// C body (c:3651-3676): walks `s` looking for INULL bytes.
+///   - `Bnullkeep` in SCAN phase: skip (the `continue` at c:3658)
+///     — don't treat as a null marker.
+///   - Any other INULL: switch to COPY phase. In copy phase:
+///       - `Bnullkeep` becomes literal `\` (the "active backslash"
+///         is re-materialized).
+///       - Other INULLs: stripped.
+///       - Non-INULL: kept.
+///   - If the post-copy string is empty, replace with `Nularg`
+///     (single-char empty-arg marker).
+///
+/// The previous Rust port collapsed the body to
+/// `s.retain(|c| c != '\0' && c != Bnullkeep)` — a simple
+/// strip of NUL and Bnullkeep. Three divergences:
+///   - Stripped Bnullkeep entirely instead of preserving it in
+///     the scan-only phase (when it appears BEFORE any other
+///     inull) or converting to `\` in the copy phase.
+///   - Didn't strip Snull/Dnull/Bnull/Nularg — those inulls
+///     stayed in the output, polluting downstream processing.
+///   - Didn't emit Nularg sentinel for empty post-strip strings.
+pub fn remnulargs(s: &mut String) {                                          // c:3649
+    use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
+    if s.is_empty() {                                                         // c:3654
+        return;
+    }
+    // c:3656 `inull(c)` predicate: Snull / Dnull / Bnull / Bnullkeep / Nularg.
+    let is_inull = |c: char| {
+        c == Snull || c == Dnull || c == Bnull
+            || c == Bnullkeep || c == Nularg
+    };
+    let src: Vec<char> = s.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(src.len());
+    let mut i = 0usize;
+    // c:3656 — SCAN phase: copy chars, skip standalone Bnullkeep.
+    while i < src.len() {
+        let c = src[i];
+        if c == Bnullkeep {                                                   // c:3657 continue
+            i += 1;
+            continue;
+        }
+        if is_inull(c) {                                                      // c:3663 inull(c)
+            // c:3664+ — COPY phase: walk the rest, fold Bnullkeep
+            // to `\\`, strip other inulls.
+            i += 1;
+            while i < src.len() {
+                let d = src[i];
+                if d == Bnullkeep {                                           // c:3666
+                    out.push('\\');                                           // c:3667
+                } else if !is_inull(d) {                                      // c:3668
+                    out.push(d);                                              // c:3669
+                }
+                i += 1;
+            }
+            break;
+        }
+        // SCAN phase non-inull: keep verbatim.
+        out.push(c);
+        i += 1;
+    }
+    // c:3673-3675 — empty result → Nularg sentinel.
+    if out.is_empty() {
+        out.push(Nularg);
+    }
+    *s = out.into_iter().collect();
 }
 
 /// Port of `qualdev(UNUSED(char *name), struct stat *buf, off_t dv, UNUSED(char *dummy))` from Src/glob.c:3688.
@@ -4834,5 +4896,50 @@ mod tests {
     fn hasbraces_depth_1_check_for_comma_dotdot() {
         assert!(hasbraces("a{1,2}b{3,4}c", false),
             "two independent top-level pairs, first one matches at depth 1");
+    }
+
+    /// Pin: `remnulargs` per `Src/glob.c:3649-3679`:
+    ///   - Strings with NO inull bytes are unchanged.
+    ///   - Strings with ONLY Bnullkeep: keep as-is in scan phase
+    ///     (Bnullkeep is "active backslash" that hasn't triggered
+    ///     copy phase yet).
+    ///   - After encountering any other inull: switch to copy phase:
+    ///     * Bnullkeep → '\\' (literal backslash).
+    ///     * Other inulls (Snull/Dnull/Bnull/Nularg) → stripped.
+    ///     * Non-inull → kept.
+    ///   - Empty post-strip → replaced with single Nularg.
+    #[test]
+    fn remnulargs_matches_c_inull_handling() {
+        use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
+
+        // Plain ASCII unchanged (no inulls).
+        let mut s = "hello".to_string();
+        remnulargs(&mut s);
+        assert_eq!(s, "hello",
+            "c:3654 — no inull bytes leaves string unchanged");
+
+        // Snull-triggered copy: Snull stripped, rest kept.
+        let mut s = format!("ab{}cd", Snull);
+        remnulargs(&mut s);
+        assert_eq!(s, "abcd",
+            "c:3663 — Snull triggers copy; itself stripped, rest kept");
+
+        // Bnullkeep AFTER Snull trigger → '\\' (active backslash).
+        let mut s = format!("ab{}c{}d", Snull, Bnullkeep);
+        remnulargs(&mut s);
+        assert_eq!(s, "abc\\d",
+            "c:3666 — Bnullkeep in copy phase becomes literal '\\\\'");
+
+        // Other inulls (Bnull, Dnull) stripped in copy phase.
+        let mut s = format!("a{}b{}c{}d", Snull, Bnull, Dnull);
+        remnulargs(&mut s);
+        assert_eq!(s, "abcd",
+            "c:3668 — Bnull/Dnull stripped in copy phase");
+
+        // Empty post-strip → Nularg.
+        let mut s = format!("{}", Snull);
+        remnulargs(&mut s);
+        assert_eq!(s, format!("{}", Nularg),
+            "c:3674 — empty result replaced by Nularg sentinel");
     }
 }
