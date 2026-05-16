@@ -4268,10 +4268,27 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
     // c:4268-4273 — no args: list table.
     if argv.is_empty() {                                                     // c:4268
         crate::ported::mem::queue_signals();                                 // c:4269
+        // c:4270 — `scanhashtable(ht, 1, 0, 0, ht->printnode, printflags)`.
+        // Walk the selected table (cmdnamtab default, nameddirtab when
+        // `-d`). Previous Rust port only walked nameddirtab — `hash`
+        // with no args (the typical user-visible form) silently printed
+        // nothing on cmdnamtab.
         if dir_mode {
             if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
                 for (_n, nd) in t.iter() {                                   // c:4270
                     crate::ported::hashnameddir::printnameddirnode(nd, printflags);
+                }
+            }
+        } else {
+            // c:4270 — cmdnamtab walk (the default `ht`). PATH lookup
+            // arr is empty in the printnode call site because per-node
+            // hashed entries carry their own resolved path.
+            let path_arr: Vec<String> = Vec::new();
+            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
+                for (_n, cn) in t.iter() {                                   // c:4270
+                    print!("{}",
+                        crate::ported::hashtable::printcmdnamnode(
+                            cn, &path_arr, printflags as u32));
                 }
             }
         }
