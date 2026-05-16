@@ -673,12 +673,56 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
             }
         }
     }
+    // c:859-870 — EMACSMODE/VIMODE mutual-exclusion toggle.
+    // No `!force` guard in C — this branch fires regardless of
+    // force. `setopt emacs` must `unsetopt vi` and vice versa
+    // (the two are mutually exclusive ZLE keymap selectors).
+    // The previous Rust port skipped this entirely; both options
+    // could be on at once, leaving ZLE keymap selection ambiguous.
+    {
+        use crate::ported::zsh_h::{EMACSMODE, VIMODE};
+        if (idx == EMACSMODE || idx == VIMODE) && value != 0 {               // c:859
+            // c:870 — turn off the OTHER keymap option. Resolve
+            // the canonical name via opt_name (matches the
+            // storage key used by isset/opt_state_get/_set).
+            let other = idx ^ EMACSMODE ^ VIMODE;
+            let other_name = crate::ported::zsh_h::opt_name(other);
+            if !other_name.is_empty() {
+                opt_state_set(other_name, false);
+            }
+        }
+    }
+    // c:871-874 — SUNKEYBOARDHACK backward-compat: setopt
+    // sunkeyboardhack sets keyboardhackchar to '`'; unsetopt to '\0'.
+    // Also no `!force` guard in C.
+    {
+        use crate::ported::zsh_h::SUNKEYBOARDHACK;
+        if idx == SUNKEYBOARDHACK {                                          // c:871
+            // c:873 — `keyboardhackchar = (value ? '`' : '\0');`
+            crate::ported::params::keyboardhacksetfn(
+                if value != 0 { "`".to_string() } else { String::new() });
+        }
+    }
     // c:744 — locate the option name whose FNV hash matches idx.
     let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
-    match name {
+    let ret = match name {
         Some(n) => { opt_state_set(n, value != 0); 0 }                       // c:760 opts[optno] = value
         None => -1,                                                          // c:758
+    };
+    // c:877-884 — `if (optno == MULTIBYTE || BANGHIST || SHINSTDIN)
+    //                  inittyptab();`. These options change which
+    //                  bytes are special in pattern matching and
+    //                  word splitting; the typtab must be rebuilt.
+    // The previous Rust port skipped this tail entirely; flipping
+    // BANGHIST off would still leave `!` flagged ISPECIAL in the
+    // typtab, defeating the option's purpose.
+    use crate::ported::zsh_h::{BANGHIST, MULTIBYTE, SHINSTDIN as SHINSTDIN_C};
+    if ret == 0
+        && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN_C)       // c:879-882
+    {
+        crate::ported::utils::inittyptab();                                  // c:883
     }
+    ret
 }
 
 /// Build the value of `$-`: a string of the active single-letter
@@ -1700,7 +1744,12 @@ fn index_to_name(idx: i32) -> Option<&'static str> {
         x if x == zh::TYPESETSILENT       => "typesetsilent",
         x if x == zh::UNSET               => "unset",
         x if x == zh::VERBOSE             => "verbose",
-        x if x == zh::VIMODE              => "vimode",
+        // C `Src/options.c:255` lists this option as `"vi"` (the
+        // table entry is `{NULL, "vi", 0}, VIMODE`). Match the
+        // canonical name so `optlookup("vi")`, `opt_state_set("vi", _)`,
+        // and `isset(VIMODE)→opt_name(VIMODE)="vi"` all address
+        // the same storage slot.
+        x if x == zh::VIMODE              => "vi",                            // c:255
         x if x == zh::WARNCREATEGLOBAL    => "warncreateglobal",
         x if x == zh::WARNNESTEDVAR       => "warnnestedvar",
         x if x == zh::XTRACE              => "xtrace",
@@ -1745,6 +1794,34 @@ mod tests {
         assert!(isset(optlookup("xtrace")));
         dosetopt(optlookup("xtrace"), if false { 1 } else { 0 }, 0);
         assert!(!isset(optlookup("xtrace")));
+    }
+
+    /// Pin: `dosetopt(EMACSMODE, 1)` must turn OFF VIMODE per
+    /// `Src/options.c:870` (`new_opts[optno ^ EMACSMODE ^ VIMODE] = 0`).
+    /// Same in reverse for `dosetopt(VIMODE, 1)`. The previous Rust
+    /// port skipped this toggle, leaving both options on at once —
+    /// ambiguous ZLE keymap selection.
+    #[test]
+    fn dosetopt_emacs_vi_mutual_exclusion() {
+        use crate::ported::zsh_h::{EMACSMODE, VIMODE};
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // Pre-set both ON to prove the toggle clears the other.
+        opt_state_set("emacs", true);
+        opt_state_set("vi", true);
+        // `setopt emacs` (force=1 to bypass any unrelated gates).
+        dosetopt(EMACSMODE, 1, 1);
+        assert!(isset(EMACSMODE),  "EMACSMODE must be set");
+        assert!(!isset(VIMODE),
+            "c:870 — setopt emacs must clear VIMODE");
+        // `setopt vi` clears EMACSMODE.
+        dosetopt(VIMODE, 1, 1);
+        assert!(isset(VIMODE),     "VIMODE must be set");
+        assert!(!isset(EMACSMODE),
+            "c:870 — setopt vi must clear EMACSMODE");
+        // Cleanup.
+        opt_state_set("emacs", false);
+        opt_state_set("vi", false);
     }
 
     #[test]
