@@ -2179,7 +2179,12 @@ pub const STAT_DISOWN: i32 = 0x10000; // c:1095
 pub const SP_RUNNING: i32 = -1; // c:1097
 
 pub const JOBTEXTSIZE: usize = 80; // c:1104
-pub const MAXJOBS_ALLOC: i32 = 50; // c:1107
+// C: `#define MAXJOBS_ALLOC 50` (Src/zsh.h:1107) — an int literal.
+// Stored as `usize` so callers using it for Vec capacity / slice
+// indexing don't need `as usize` casts everywhere. Matches the
+// adjacent `MAX_PIPESTATS: usize` type choice (both are array
+// sizes in C).
+pub const MAXJOBS_ALLOC: usize = 50; // c:1107
 pub const MAX_PIPESTATS: usize = 256; // c:1166
 
 #[allow(non_camel_case_types)]
