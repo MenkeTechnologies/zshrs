@@ -5524,16 +5524,55 @@ pub fn setlang(x: Option<&str>) {                                            // 
     crate::ported::utils::inittyptab();
 }
 
-/// Port of `lc_allsetfn(Param pm, char *x)` from `Src/params.c:4871`. C body
-/// dispatches to `setlang(LANG)` if x empty, else `setlocale(LC_ALL, x)`.
+/// Port of `lc_allsetfn(Param pm, char *x)` from `Src/params.c:4873`.
+///
+/// C body (c:4873-4894):
+/// ```c
+/// strsetfn(pm, x);
+/// if (!x || !*x) {
+///     x = getsparam_u("LANG");
+///     if (x && *x) {
+///         queue_signals();
+///         setlang(x);
+///         unqueue_signals();
+///     }
+/// } else {
+///     setlocale(LC_ALL, unmeta(x));
+///     clear_mbstate();
+///     inittyptab();
+/// }
+/// ```
+///
+/// The previous Rust port for the non-empty case set the env
+/// var via `env::set_var("LC_ALL", &s)` but skipped THREE
+/// pieces:
+///   1. `setlocale(LC_ALL, unmeta(x))` — actively changes the
+///      program's locale per c:4890.
+///   2. `unmeta(x)` — strips Meta-encoded bytes before passing
+///      to libc setlocale per c:4890.
+///   3. `inittyptab()` — rebuilds the typtab for the new
+///      LC_CTYPE per c:4892.
+///
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn lc_allsetfn(x: Option<String>) {
+pub fn lc_allsetfn(x: Option<String>) {                                       // c:4873
     match x {
-        None => setlang(env::var("LANG").as_deref().ok()),
-        Some(s) if s.is_empty() => setlang(env::var("LANG").as_deref().ok()),
+        None => setlang(env::var("LANG").as_deref().ok()),                    // c:4881-4884
+        Some(s) if s.is_empty() => {                                          // c:4881
+            // c:4881 — empty x falls back to setlang(LANG).
+            setlang(env::var("LANG").as_deref().ok());
+        }
         Some(s) => {
+            // c:4889 — `setlocale(LC_ALL, unmeta(x));`
+            let unmeta = crate::ported::utils::unmeta(&s);                    // c:4889 unmeta(x)
+            let cstr = std::ffi::CString::new(unmeta.as_bytes())
+                .unwrap_or_default();
+            unsafe {
+                libc::setlocale(libc::LC_ALL, cstr.as_ptr());                 // c:4890
+            }
             env::set_var("LC_ALL", &s);
-            clear_mbstate();
+            clear_mbstate();                                                  // c:4891
+            // c:4892 — `inittyptab();` rebuild typtab for new LC_CTYPE.
+            crate::ported::utils::inittyptab();                               // c:4892
         }
     }
 }
