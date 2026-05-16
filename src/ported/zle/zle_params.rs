@@ -1099,6 +1099,10 @@ mod keybuf_tests {
     #[test]
     fn addkeybuf_plain_byte() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // imeta routes through the typtab populated by inittyptab.
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
         crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(b'a' as i32);
         assert_eq!(*crate::ported::zle::zle_keymap::keybuf.lock().unwrap(), vec![b'a']);
@@ -1107,7 +1111,11 @@ mod keybuf_tests {
     #[test]
     fn addkeybuf_meta_quoted() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // 0xa0 needs Meta-quoting → 0x83 then (0xa0 ^ 0x20) = 0x80
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        // 0xa0 is IMETA (Snull..=Nularg = 0x9d..=0xa1 per utils.c:4200)
+        // → Meta-quoted: 0x83 then (0xa0 ^ 0x20) = 0x80.
         crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(0xa0);
         assert_eq!(*crate::ported::zle::zle_keymap::keybuf.lock().unwrap(), vec![0x83, 0x80]);

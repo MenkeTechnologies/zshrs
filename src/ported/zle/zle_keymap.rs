@@ -1292,7 +1292,7 @@ pub fn getkeymapcmd(_km: i32) -> i32 { // c:1581
 /// Port of `addkeybuf(int c)` from Src/Zle/zle_keymap.c:1717.
 /// WARNING: param names don't match C — Rust=(zle, c) vs C=(c)
 pub fn addkeybuf(c: i32) {      // c:1717
-    // C body (zle_keymap.c:1700):
+    // C body (zle_keymap.c:1717-1727):
     //   addkeybuf(int c) {
     //     if(keybuflen + 3 > keybufsz) keybuf = realloc(...);
     //     if(imeta(c)) {
@@ -1305,16 +1305,25 @@ pub fn addkeybuf(c: i32) {      // c:1717
     //
     // Vec<u8> grows automatically — no realloc bookkeeping needed.
     let c = c & 0xff;
-    // c:imeta(c) — true if (c & 0x80) != 0 except for known
-    // safe single-byte values. zsh's imeta() returns true when
-    // byte needs Meta-quoting in the key buffer.
-    let is_meta = c >= 0x83 && c != 0x83 && c != 0x84;
+    // c:1721 — `if (imeta(c))` — route through the canonical IMETA
+    // typtab predicate (`Src/ztype.h:60`) so the byte set agrees with
+    // every other call site that checks `imeta(c)`. The previous Rust
+    // port used a hand-rolled `c >= 0x83 && c != 0x83 && c != 0x84`
+    // which:
+    //   * MISSED 0x00 (NUL — canonical IMETA per utils.c:4195)
+    //   * MISSED 0x83 (Meta itself — canonical IMETA per utils.c:4196)
+    //   * MISSED 0x84 (Pound — canonical IMETA per utils.c:4198)
+    //   * OVER-ENCODED 0xa3..=0xff (these are NOT IMETA per the
+    //     typtab; they should pass through as literal bytes).
+    // Routing through `ztype_h::imeta` ties the meta-encoding decision
+    // to the same typtab inittyptab() populates — one source of truth.
+    let is_meta = crate::ported::ztype_h::imeta(c as u8);                    // c:1721
     let mut buf = keybuf.lock().unwrap();
     if is_meta {
-        buf.push(0x83);                                                      // Meta
-        buf.push((c ^ 32) as u8);
+        buf.push(crate::ported::zsh_h::META as u8);                          // c:1722 Meta
+        buf.push((c ^ 32) as u8);                                            // c:1723 c ^ 32
     } else {
-        buf.push(c as u8);
+        buf.push(c as u8);                                                   // c:1725
     }
     // C terminates with '\0'; Rust Vec doesn't need that.
 }
@@ -1960,5 +1969,101 @@ mod tests {
         cleanup_keymaps();
         assert!(keybuf.lock().unwrap().is_empty(), "zfree(keybuf, ...)");
         assert!(keymapnamtab().lock().unwrap().is_empty(), "deletehashtable(keymapnamtab)");
+    }
+
+    /// `Src/Zle/zle_keymap.c:1717-1727` — `addkeybuf(c)` calls `imeta(c)`.
+    /// Per `Src/utils.c:4195`, NUL is IMETA (`typtab['\0'] |= IMETA`).
+    /// The previous Rust port used a hand-rolled `c >= 0x83 && c != 0x83
+    /// && c != 0x84` mask that excluded NUL entirely — binary input
+    /// passing through `addkeybuf` would drop the Meta-prefix and leave
+    /// a raw `\0` in `keybuf`, breaking the C-string-terminator check
+    /// at zle_keymap.c:1649.
+    #[test]
+    fn addkeybuf_encodes_nul_byte_per_imeta() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        keybuf.lock().unwrap().clear();
+        addkeybuf(0);
+        // c:1722-1723 — Meta=0x83, NUL ^ 0x20 = 0x20.
+        assert_eq!(*keybuf.lock().unwrap(), vec![0x83, 0x20],
+            "c:1721 — NUL must be Meta-encoded (was missed by old `c >= 0x83 && != 0x83 && != 0x84`)");
+    }
+
+    /// `Src/Zle/zle_keymap.c:1721` — `imeta(c)` returns true for the
+    /// Meta byte itself (0x83) per `Src/utils.c:4196`
+    /// (`typtab[Meta] |= IMETA`). A raw 0x83 in input MUST be
+    /// Meta-encoded as `Meta + (0x83 ^ 0x20) = 0x83 0xa3`. The previous
+    /// hand-rolled mask explicitly excluded 0x83 with `c != 0x83`,
+    /// passing the Meta byte through verbatim — corrupting any later
+    /// key-sequence parser that interprets 0x83 as a Meta-prefix.
+    #[test]
+    fn addkeybuf_encodes_meta_byte_itself() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        keybuf.lock().unwrap().clear();
+        addkeybuf(0x83);
+        assert_eq!(*keybuf.lock().unwrap(), vec![0x83, 0xa3],
+            "c:1721 — Meta byte (0x83) must itself be Meta-encoded");
+    }
+
+    /// `Src/Zle/zle_keymap.c:1721` — `imeta(c)` returns true for 0x84
+    /// (Pound), the first byte in the Pound..LAST_NORMAL_TOK range
+    /// (`Src/utils.c:4198`). The previous mask `c != 0x84` left Pound
+    /// unencoded; the canonical port must Meta-encode it.
+    #[test]
+    fn addkeybuf_encodes_pound_token_byte() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        keybuf.lock().unwrap().clear();
+        addkeybuf(0x84);
+        assert_eq!(*keybuf.lock().unwrap(), vec![0x83, 0xa4],
+            "c:1721 — Pound (0x84) is IMETA per utils.c:4198, must be Meta-encoded");
+    }
+
+    /// `Src/Zle/zle_keymap.c:1721` — `imeta(c)` returns FALSE for
+    /// bytes 0xa3..=0xff. Per `Src/utils.c:4195-4201`, the IMETA range
+    /// ends at Marker (0xa2). The previous hand-rolled mask flagged
+    /// 0xa3+ as imeta and over-encoded them; the canonical port must
+    /// pass them through as literal bytes (raw high-bit characters
+    /// from a UTF-8 terminal that are NOT zsh's internal markers).
+    #[test]
+    fn addkeybuf_passes_through_non_imeta_high_byte() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        keybuf.lock().unwrap().clear();
+        addkeybuf(0xa3);
+        assert_eq!(*keybuf.lock().unwrap(), vec![0xa3],
+            "c:1721 — 0xa3 is NOT IMETA (past Marker=0xa2); must pass through");
+        keybuf.lock().unwrap().clear();
+        addkeybuf(0xff);
+        assert_eq!(*keybuf.lock().unwrap(), vec![0xff],
+            "c:1721 — 0xff is NOT IMETA; must pass through");
+    }
+
+    /// `Src/Zle/zle_keymap.c:1721` — ASCII bytes (0x01..=0x7e) are
+    /// never IMETA (`Src/utils.c:4195-4201` marks only NUL=0x00 in the
+    /// low range). They pass through verbatim. Pin the boundary on
+    /// printable + control chars to ensure the typtab-driven predicate
+    /// agrees with `imeta` for all ASCII.
+    #[test]
+    fn addkeybuf_ascii_passes_through_literally() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+            .lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        for c in [0x01u8, 0x1f, 0x20, b'A', b'z', 0x7e, 0x7f] {
+            keybuf.lock().unwrap().clear();
+            addkeybuf(c as i32);
+            assert_eq!(*keybuf.lock().unwrap(), vec![c],
+                "c:1721 — ASCII byte 0x{:02x} must pass through", c);
+        }
     }
 }
