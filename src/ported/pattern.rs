@@ -276,6 +276,22 @@ pub fn patcompcharsset() {                                                    //
 
     let marker_byte = MARKER_CH as u32 as u8;
 
+    // c:471-478 — `for (...; i < ZPC_COUNT; ...) if (*disp) *spp = Marker;`
+    // Apply user disables from `disable -p` BEFORE the option-driven
+    // masks (so EXTENDEDGLOB / KSHGLOB / SHGLOB layer over the per-
+    // pattern disables). The previous Rust port skipped this pass
+    // entirely — `disable -p '#'` would have no effect on subsequent
+    // pattern compiles, defeating the entire `disable -p` builtin
+    // for pattern-token granularity.
+    {
+        let disp = zpc_disables.lock().unwrap();
+        for i in 0..(ZPC_COUNT as usize) {
+            if disp[i] != 0 {
+                sp[i] = marker_byte;                                          // c:476
+            }
+        }
+    }
+
     // c:480-483 — `if (!isset(EXTENDEDGLOB))` mask Tilde/Hat/Hash.
     if !crate::ported::zsh_h::isset(EXTENDEDGLOB) {
         sp[ZPC_TILDE_C as usize] = marker_byte;
