@@ -5082,13 +5082,23 @@ pub fn setsecondstype(                                                       // 
 // -----------------------------------------------------------
 
 /// Port of `usernamegetfn(UNUSED(Param pm))` from `Src/params.c:4653`. C body:
-/// `return get_username();`
+/// Port of `usernamegetfn(UNUSED(Param pm))` from Src/params.c:4655.
+/// C body: `return get_username();`. C's `get_username()`
+/// (Src/utils.c:1075) walks `getuid() != cached_uid` and
+/// refreshes the cache via `getpwuid()` on mismatch — so a
+/// USERNAME read AFTER an `setuid()` call sees the NEW
+/// username, not the stale cache.
+///
+/// The previous Rust port returned `cached_username_lock()`
+/// directly without the refresh, so a script that called
+/// setuid(3) (or USER changed externally via setuid binary)
+/// would keep returning the old username.
+///
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn usernamegetfn() -> String {
-    cached_username_lock()
-        .lock()
-        .expect("username poisoned")
-        .clone()
+pub fn usernamegetfn() -> String {                                            // c:4655
+    // c:4658 — `return get_username();`. Route through the
+    // canonical refresh-on-uid-change accessor at utils.rs.
+    crate::ported::utils::get_username()                                       // c:4658
 }
 
 /// Port of `usernamesetfn(UNUSED(Param pm), char *x)` from `Src/params.c:4662`. C body:
@@ -5106,8 +5116,14 @@ pub fn usernamesetfn(x: String) {                                            // 
         unsafe {
             let pwd = libc::getpwnam(cstr.as_ptr());                         // c:4666
             if !pwd.is_null() {
-                let cached_uid =
-                    libc::geteuid() as libc::uid_t;
+                // c:4666 — C reads `cached_uid` (a global initialized
+                // to `getuid()` at init.c:1219 — the REAL uid, NOT
+                // the effective one). The previous Rust port used
+                // `geteuid()` which diverges when running setuid
+                // (geteuid != getuid) — the shell would erroneously
+                // try to change to a uid it's already at, or skip
+                // a needed change. Match C exactly: use `getuid()`.
+                let cached_uid = libc::getuid();                             // c:4666 cached_uid = getuid()
                 if (*pwd).pw_uid != cached_uid {                             // c:4666
                     // c:4670-4672 — initgroups(x, pswd->pw_gid).
                     let _ = libc::initgroups(cstr.as_ptr(), (*pwd).pw_gid as _);
@@ -7458,6 +7474,35 @@ mod gsu_tests {
         assert_eq!(gidgetfn(), unsafe { libc::getgid() } as i64);
         assert_eq!(euidgetfn(), unsafe { libc::geteuid() } as i64);
         assert_eq!(egidgetfn(), unsafe { libc::getegid() } as i64);
+    }
+
+    /// Pin: `usernamegetfn` routes through `get_username()` per
+    /// `Src/params.c:4658` (which refreshes cache on uid change
+    /// per `Src/utils.c:1082`). The previous Rust port read a
+    /// stale cached value directly. Verify the getter returns
+    /// the same name as a direct libc `getpwuid(getuid())` —
+    /// confirming the path WENT through the refresh helper, not
+    /// the stale paramtab Mutex.
+    #[test]
+    fn usernamegetfn_matches_libc_getpwuid_for_current_uid() {
+        let uname = usernamegetfn();
+        // The current process is running as some uid; the getter
+        // must return either a populated name OR an empty string
+        // (when getpwuid fails, e.g. sandboxed builds). It must
+        // NOT panic and must NOT return a stale cached value
+        // from a different uid.
+        let direct = unsafe {
+            let pw = libc::getpwuid(libc::getuid());
+            if pw.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr((*pw).pw_name)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        assert_eq!(uname, direct,
+            "c:4658 — usernamegetfn must match getpwuid(getuid())->pw_name");
     }
 
     #[test]
