@@ -112,7 +112,16 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     let argzero = argzero_lock().lock().unwrap().clone();
     let locallevel = crate::ported::params::locallevel
         .load(std::sync::atomic::Ordering::Relaxed);
-    let shinstdin = *shinstdin_lock().lock().unwrap();
+    // c:90/97 — `isset(SHINSTDIN)`. The previous Rust port read a
+    // separate `shinstdin_lock` Mutex<bool> that was NEVER updated
+    // by `setopt SHINSTDIN` / option-init — always returned the
+    // default `false`. zwarning's prefix-emission branch was thus
+    // always taking the `shinstdin == false` path regardless of
+    // actual option state. Route through canonical isset() so the
+    // option state drives the prefix.
+    let shinstdin = crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::SHINSTDIN
+    );
     let prefix: String = scriptname
         .or(argzero)
         .unwrap_or_default();
@@ -295,7 +304,11 @@ pub fn is_nicechar(c: char) -> bool {
 // because callers (zerr/zwarning) pre-format via Rust's `format!`.
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
     let lineno = *lineno_lock().lock().unwrap();
-    let shinstdin = *shinstdin_lock().lock().unwrap();
+    // c:310 — `unset(SHINSTDIN)`. Same fix as zwarning: route through
+    // canonical isset() rather than the never-updated separate Mutex.
+    let shinstdin = crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::SHINSTDIN
+    );
     let locallevel = crate::ported::params::locallevel
         .load(std::sync::atomic::Ordering::Relaxed);
     // C: if ((unset(SHINSTDIN) || locallevel) && lineno) — prefix
