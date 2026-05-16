@@ -154,21 +154,33 @@ pub fn ihwaddc(c: i32) {                                                     // 
         // empty, so behave like the inactive-history C path.
         return;
     }
-    // c:362-366 — bang-escape under qbang.
+    // c:362-366 — bang-escape under qbang. C calls `hwaddc('\\');`
+    // which routes through the function pointer back to ihwaddc,
+    // so the '\\' push ALSO advances hptr. Rust mirrors by pushing
+    // + incrementing hptr.
     let bc = bangchar.load(Ordering::SeqCst);
     if c == bc && stophist.load(Ordering::SeqCst) < 2 && qbang.load(Ordering::SeqCst) {
         chline.lock().unwrap().push('\\');                                    // c:366 `hwaddc('\\');`
+        hptr.fetch_add(1, Ordering::SeqCst);                                  // c:366 (recursive hptr++)
     }
-    // c:368 `*hptr++ = c;`
-    chline.lock().unwrap().push(c as u8 as char);
+    // c:368 — `*hptr++ = c;`. C writes the byte at the hptr cursor
+    // then advances it. The previous Rust port called `chline.push(c)`
+    // but never updated the `hptr` global — so every subsequent
+    // `ihwbegin`/`ihwend` reading `hptr` saw a stale value. The
+    // chwords table would record word boundaries at position 0
+    // (initial hptr) regardless of how many chars had been added.
+    chline.lock().unwrap().push(c as u8 as char);                            // c:368
+    hptr.fetch_add(1, Ordering::SeqCst);                                      // c:368 hptr++
     // c:370-374 — resize tracking. Rust `String` grows on `push`
     // automatically, but `hlinesz` mirrors C's allocation count
-    // for any caller that reads it (e.g. `hwend()`).
-    let cur_len = chline.lock().unwrap().len() as i32;
+    // for any caller that reads it (e.g. `hwend()`). C condition
+    // is `hptr - chline >= hlinesz`; mirror with the canonical
+    // `hptr` global (matches the c:1658 / c:1693 fixes).
+    let cur_off = hptr.load(Ordering::SeqCst) as i32;                         // c:381 hptr - chline
     let sz = hlinesz.load(Ordering::SeqCst);
-    if cur_len >= sz {
+    if cur_off >= sz {                                                        // c:381
         let new_sz = sz + 64;
-        hlinesz.store(new_sz, Ordering::SeqCst);
+        hlinesz.store(new_sz, Ordering::SeqCst);                              // c:384
     }
 }
 
@@ -4130,6 +4142,77 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `ihwaddc` to its canonical C body at `Src/hist.c:355-389`.
+    /// C: `*hptr++ = c;` writes the byte and advances the cursor.
+    /// The previous Rust port pushed to chline but never updated
+    /// the `hptr` global — every subsequent ihwbegin/ihwend read a
+    /// stale hptr=0, so chwords boundary positions stayed pinned
+    /// to 0 no matter how many chars were appended.
+    #[test]
+    fn ihwaddc_advances_hptr_on_each_push() {
+        // Save state.
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_hptr = hptr.load(Ordering::SeqCst);
+        let saved_errflag =
+            crate::ported::utils::errflag.load(Ordering::SeqCst);
+        let saved_lexstop = lexstop.load(Ordering::SeqCst);
+        let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
+        let saved_qbang = qbang.load(Ordering::SeqCst);
+        let saved_bangchar = bangchar.load(Ordering::SeqCst);
+        let saved_stophist = stophist.load(Ordering::SeqCst);
+        let saved_hlinesz = hlinesz.load(Ordering::SeqCst);
+
+        // Set up: history active, no errors, no alias-only.
+        *chline.lock().unwrap() = "AB".to_string();   // chline must be non-empty
+        hptr.store(2, Ordering::SeqCst);
+        crate::ported::utils::errflag.store(0, Ordering::SeqCst);
+        lexstop.store(false, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(0));
+        qbang.store(false, Ordering::SeqCst);
+        stophist.store(0, Ordering::SeqCst);
+        bangchar.store(b'!' as i32, Ordering::SeqCst);
+        hlinesz.store(64, Ordering::SeqCst);
+
+        // Push 'x' → chline grows AND hptr advances.
+        ihwaddc(b'x' as i32);
+        assert_eq!(chline.lock().unwrap().as_str(), "ABx",
+            "c:368 — chline grows");
+        assert_eq!(hptr.load(Ordering::SeqCst), 3,
+            "c:368 — hptr advances by 1 (CRITICAL — previous port left this stale)");
+
+        // Push 'y' → second advance.
+        ihwaddc(b'y' as i32);
+        assert_eq!(hptr.load(Ordering::SeqCst), 4,
+            "c:368 — hptr advances on each push");
+
+        // Bang-escape with qbang: qbang=true, c=bangchar → '\\' AND c
+        // get pushed, hptr advances by 2.
+        qbang.store(true, Ordering::SeqCst);
+        ihwaddc(b'!' as i32);
+        assert_eq!(chline.lock().unwrap().as_str(), "ABxy\\!",
+            "c:366 — qbang escape pushes '\\\\' before bangchar");
+        assert_eq!(hptr.load(Ordering::SeqCst), 6,
+            "c:366+c:368 — both pushes advance hptr (was off-by-one previously)");
+
+        // errflag set → no-op.
+        crate::ported::utils::errflag.store(1, Ordering::SeqCst);
+        let hptr_before = hptr.load(Ordering::SeqCst);
+        ihwaddc(b'z' as i32);
+        assert_eq!(hptr.load(Ordering::SeqCst), hptr_before,
+            "c:359 — errflag short-circuits, hptr unchanged");
+
+        // Restore.
+        *chline.lock().unwrap() = saved_chline;
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        crate::ported::utils::errflag.store(saved_errflag, Ordering::SeqCst);
+        lexstop.store(saved_lexstop, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
+        qbang.store(saved_qbang, Ordering::SeqCst);
+        bangchar.store(saved_bangchar, Ordering::SeqCst);
+        stophist.store(saved_stophist, Ordering::SeqCst);
+        hlinesz.store(saved_hlinesz, Ordering::SeqCst);
     }
 
     /// Pin `ihwend` to its canonical C body at `Src/hist.c:1686-1705`.
