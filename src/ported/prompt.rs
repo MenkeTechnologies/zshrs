@@ -1015,22 +1015,40 @@ pub fn match_named_colour(teststrp: &str) -> Option<u8> {                       
     teststrp.parse::<u8>().ok() // c:1933 (fall-through to numeric)
 }
 
-/// Detect whether the terminal supports true color (24-bit).
-/// Port of `truecolor_terminal()` from Src/prompt.c:1935.
-pub fn truecolor_terminal() -> bool {
-    // Check COLORTERM environment variable
-    if let Ok(ct) = std::env::var("COLORTERM") {
-        if ct == "truecolor" || ct == "24bit" {
-            return true;
+/// Port of `static int truecolor_terminal(void)` from Src/prompt.c:1935.
+///
+/// C body (c:1935-1944):
+/// ```c
+/// char **f, **flist = getaparam(".term.extensions");
+/// int result;
+/// for (f = flist; f && *f; f++) {
+///     result = **f != '-';
+///     if (!strcmp(*f + !result, "truecolor"))
+///         return result;
+/// }
+/// return 0; /* disabled by default */
+/// ```
+///
+/// Walks `$.term.extensions` (a shell array of capability names; entries
+/// prefixed with `-` mean "disabled"). Returns true when `truecolor` is
+/// present and not negated. The previous Rust port did a heuristic
+/// COLORTERM/TERM-string match — not how C decides. Off-by-default
+/// matches C's final `return 0`.
+pub fn truecolor_terminal() -> bool {                                       // c:1935
+    if let Some(flist) = crate::ported::params::getaparam(".term.extensions") {
+        for f in &flist {                                                   // c:1939
+            if f.is_empty() { continue; }
+            // c:1940 — `result = **f != '-'`; the `-` prefix disables.
+            let (result, name) = match f.strip_prefix('-') {
+                Some(rest) => (false, rest),
+                None       => (true,  f.as_str()),
+            };
+            if name == "truecolor" {                                        // c:1941
+                return result;                                              // c:1942
+            }
         }
     }
-    // Check TERM for known truecolor terminals
-    if let Ok(term) = std::env::var("TERM") {
-        if term.contains("256color") || term.contains("direct") || term.contains("kitty") {
-            return true;
-        }
-    }
-    false
+    false                                                                    // c:1944
 }
 
 impl buf_vars {
@@ -2657,6 +2675,40 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:1935-1944 — `truecolor_terminal` returns true iff
+    /// `.term.extensions` array contains an un-negated `truecolor`
+    /// entry. The previous Rust port did COLORTERM/TERM heuristics
+    /// (an entirely different decision rule). Regression target:
+    /// a session with `.term.extensions=(truecolor)` MUST report
+    /// truecolor; a session with `.term.extensions=(-truecolor)` MUST
+    /// report disabled regardless of COLORTERM/TERM env.
+    #[test]
+    fn truecolor_terminal_routes_through_term_extensions_array() {
+        let saved = crate::ported::params::getaparam(".term.extensions");
+
+        // Empty / unset → false (c:1944).
+        let _ = crate::ported::params::setaparam(
+            ".term.extensions", vec![]);
+        assert!(!super::truecolor_terminal(),
+                "empty .term.extensions must report off");
+
+        // truecolor present → true (c:1940-1942 with result=1).
+        let _ = crate::ported::params::setaparam(
+            ".term.extensions", vec!["truecolor".to_string()]);
+        assert!(super::truecolor_terminal(),
+                ".term.extensions=(truecolor) must report on");
+
+        // -truecolor → explicitly disabled (c:1940 with result=0).
+        let _ = crate::ported::params::setaparam(
+            ".term.extensions", vec!["-truecolor".to_string()]);
+        assert!(!super::truecolor_terminal(),
+                ".term.extensions=(-truecolor) must report off");
+
+        // Restore.
+        let _ = crate::ported::params::setaparam(
+            ".term.extensions", saved.unwrap_or_default());
+    }
 
     /// c:134 — when `home` is a prefix of `path` AND tilde=true,
     /// promptpath MUST substitute. Catches a regression where the
