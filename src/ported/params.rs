@@ -8004,7 +8004,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             if opt("nounset")  { letters.push('u'); }
             if opt("xtrace")   { letters.push('x'); }
             if opt("verbose")  { letters.push('v'); }
-            if opt("noexec")   { letters.push('n'); }
+            // c:Src/params.c — `set -n` toggles \`exec\` OFF (default ON).
+            // The previous Rust port called \`opt(\"noexec\")\` which is
+            // not a real option name in zsh; the lookup always returned
+            // false, so \`$-\` never included 'n' even when \`set -n\` was
+            // active. Read the canonical \`exec\` option and push 'n'
+            // when UNSET.
+            if !opt("exec")    { letters.push('n'); }
             if opt("hashall")  { letters.push('h'); }
             Some(letters)
         }
@@ -9416,6 +9422,31 @@ mod tests {
 
         let _ = pm;
         crate::ported::options::opt_state_set("exec", saved_exec);
+    }
+
+    /// Pin `$-` rendering to honor `set -n` (noexec). The previous
+    /// Rust port called `opt("noexec")` which isn't a real option
+    /// name in zsh — the lookup always returned false so `$-` never
+    /// included 'n' even when `set -n` was active.
+    #[test]
+    fn dash_param_rendering_honors_noexec_via_exec_negation() {
+        let saved = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+
+        // With exec=true (default), $- should NOT include 'n'.
+        crate::ported::options::opt_state_set("exec", true);
+        let s = lookup_special_var("-").unwrap_or_default();
+        assert!(!s.contains('n'),
+            "exec=true → $-=`{}` must NOT include 'n'", s);
+
+        // With exec=false (`set -n`), $- SHOULD include 'n'.
+        crate::ported::options::opt_state_set("exec", false);
+        let s = lookup_special_var("-").unwrap_or_default();
+        assert!(s.contains('n'),
+            "exec=false → $-=`{}` MUST include 'n' (was silently dropped \
+             when reading non-existent option name `noexec`)", s);
+
+        crate::ported::options::opt_state_set("exec", saved);
     }
 
     /// Pin `TERM_UNKNOWN` bit value to the canonical C value at
