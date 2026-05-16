@@ -6633,14 +6633,55 @@ mod tests {
     #[test]
     fn registration_table_matches_c_count() {
         // Src/builtin.c:40-137 has 79 rows total (5 BIN_PREFIX + 71
-        // BUILTIN + 3 debug-only BUILTIN). The Rust port also exposes
-        // limit/ulimit/unlimit eagerly even though their C home is
-        // Src/Builtins/rlimits.c:868-870 (loaded via zmodload zsh/rlimits) —
-        // so `type limit` etc. work without an explicit zmodload step.
-        // That bumps the total from 79 → 82. If C grows or shrinks
-        // rows, this fires; bump alongside the additions in BUILTINS
-        // above.
-        assert_eq!(BUILTINS.len(), 82);
+        // BUILTIN + 3 debug-only BUILTIN). The Rust port bundles
+        // additional builtins eagerly that C would load via zmodload:
+        //   zsh/rlimits (limit/ulimit/unlimit)
+        //   zsh/zle (bindkey/vared/zle)
+        //   zsh/cap (cap/getcap/setcap)
+        //   zsh/files (chmod/chown/ln/mkdir/rm/rmdir/sync)
+        //   zsh/complete (compadd/compset)
+        //   zsh/terminfo (echoti)
+        //   zsh/pcre (pcre_compile/pcre_match/pcre_study)
+        //   zsh/zutil (zformat/zgdbmpath)
+        // Total Rust BUILTINS table size pinned at 112 to catch
+        // accidental additions/removals. Bump alongside intentional
+        // changes to the BUILTINS table above.
+        assert_eq!(BUILTINS.len(), 112,
+            "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
+    }
+
+    /// `Src/builtin.c:40-137` — every name in the canonical C builtin
+    /// table must be present in the Rust port. Pins coverage of all
+    /// 79 C builtins by name (ignores option-mask / handler details).
+    /// Detects regressions where a builtin gets accidentally dropped
+    /// from BUILTINS. Names extracted from upstream zsh `Src/builtin.c`.
+    #[test]
+    fn registration_table_contains_all_c_builtins() {
+        // Canonical 79 names from Src/builtin.c:40-137 (verbatim).
+        let c_names: &[&str] = &[
+            "-", ".", ":", "[",
+            "alias", "autoload", "bg", "break", "builtin", "bye",
+            "cd", "chdir", "command", "continue", "declare", "dirs",
+            "disable", "disown", "echo", "emulate", "enable", "eval",
+            "exec", "exit", "export", "false", "fc", "fg", "float",
+            "functions", "getln", "getopts", "hash", "hashinfo",
+            "history", "integer", "jobs", "kill", "let", "local",
+            "logout", "mem", "noglob", "patdebug", "popd", "print",
+            "printf", "pushd", "pushln", "pwd", "r", "read",
+            "readonly", "rehash", "return", "set", "setopt", "shift",
+            "source", "suspend", "test", "times", "trap", "true",
+            "ttyctl", "type", "typeset", "umask", "unalias",
+            "unfunction", "unhash", "unset", "unsetopt", "wait",
+            "whence", "where", "which", "zcompile", "zmodload",
+        ];
+        assert_eq!(c_names.len(), 79,
+            "C builtin.c row count is 79 — recount if changed");
+        let table_names: std::collections::HashSet<&str> =
+            BUILTINS.iter().map(|b| b.node.nam.as_str()).collect();
+        for c_name in c_names {
+            assert!(table_names.contains(*c_name),
+                "missing C builtin '{}' from BUILTINS table", c_name);
+        }
     }
 
     #[test]

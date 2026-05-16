@@ -799,4 +799,44 @@ mod tests {
         let _ = Cadata::default();
         let _ = Cldata::default();
     }
+
+    /// `Src/Zle/comp.h:85-95` — `CGF_*` completion group flags.
+    /// Pin every bit value vs the canonical C define.
+    #[test]
+    fn cgf_flags_match_c_comp_h_canonical_values() {
+        assert_eq!(CGF_NOSORT,  1,    "c:85");
+        assert_eq!(CGF_LINES,   2,    "c:86");
+        assert_eq!(CGF_HASDL,   4,    "c:87");
+        assert_eq!(CGF_UNIQALL, 8,    "c:88");
+        assert_eq!(CGF_UNIQCON, 16,   "c:89");
+        assert_eq!(CGF_PACKED,  32,   "c:90");
+        assert_eq!(CGF_ROWS,    64,   "c:91");
+        assert_eq!(CGF_FILES,   128,  "c:92");
+        assert_eq!(CGF_MATSORT, 256,  "c:93");
+        assert_eq!(CGF_NUMSORT, 512,  "c:94");
+        assert_eq!(CGF_REVSORT, 1024, "c:95");
+    }
+
+    /// `Src/Zle/comp.h:127-143` — `CMF_*` completion-match flags
+    /// (Cmatch struct, not Cmatcher). 17 flags total.
+    #[test]
+    fn cmf_match_flags_match_c_comp_h_canonical_values() {
+        assert_eq!(CMF_FILE,     1 << 0,  "c:127");
+        assert_eq!(CMF_REMOVE,   1 << 1,  "c:128");
+        assert_eq!(CMF_ISPAR,    1 << 2,  "c:129");
+        assert_eq!(CMF_PARBR,    1 << 3,  "c:130");
+        assert_eq!(CMF_PARNEST,  1 << 4,  "c:131");
+        assert_eq!(CMF_NOLIST,   1 << 5,  "c:132");
+        assert_eq!(CMF_DISPLINE, 1 << 6,  "c:133");
+        assert_eq!(CMF_HIDE,     1 << 7,  "c:134");
+        assert_eq!(CMF_NOSPACE,  1 << 8,  "c:135");
+        assert_eq!(CMF_PACKED,   1 << 9,  "c:136");
+        assert_eq!(CMF_ROWS,     1 << 10, "c:137");
+        assert_eq!(CMF_MULT,     1 << 11, "c:138");
+        assert_eq!(CMF_FMULT,    1 << 12, "c:139");
+        assert_eq!(CMF_ALL,      1 << 13, "c:140");
+        assert_eq!(CMF_DUMMY,    1 << 14, "c:141");
+        assert_eq!(CMF_MORDER,   1 << 15, "c:142");
+        assert_eq!(CMF_DELETE,   1 << 16, "c:143");
+    }
 }

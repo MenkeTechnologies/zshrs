@@ -1311,4 +1311,21 @@ mod tests {
     fn passwd_file_is_posix_standard_location() {
         assert_eq!(PASSWD_FILE, "/etc/passwd");
     }
+
+    /// `configure.ac:2978-2984` + `config.h:13-19` — canonical zsh
+    /// config defaults. Pin all three (HISTSIZE, FCEDIT, TMPPREFIX)
+    /// against the upstream `config.h` values; drift on any silently
+    /// changes user-facing behavior on a first-run shell.
+    #[test]
+    fn default_config_values_match_upstream_config_h() {
+        // config.h:13 — DEFAULT_HISTSIZE 30.
+        assert_eq!(DEFAULT_HISTSIZE, 30,
+            "configure.ac:2978 / config.h:13 — DEFAULT_HISTSIZE = 30");
+        // config.h:16 — DEFAULT_FCEDIT "vi".
+        assert_eq!(DEFAULT_FCEDIT, "vi",
+            "configure.ac:2981 / config.h:16 — DEFAULT_FCEDIT = \"vi\"");
+        // config.h:19 — DEFAULT_TMPPREFIX "/tmp/zsh".
+        assert_eq!(DEFAULT_TMPPREFIX, "/tmp/zsh",
+            "configure.ac:2984 / config.h:19 — DEFAULT_TMPPREFIX = \"/tmp/zsh\"");
+    }
 }

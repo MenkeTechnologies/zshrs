@@ -3764,4 +3764,143 @@ mod tests {
         let just_array = PM_TYPE(PM_ARRAY | PM_LEFT | PM_TIED);
         assert_eq!(just_array, PM_ARRAY);
     }
+
+    /// `Src/zsh.h:1878-1944` — `PM_*` flag values are load-bearing.
+    /// Pin EVERY parameter-mode flag against the canonical C define.
+    /// If any value drifts, serialised param state (typeset, export,
+    /// hash dumps) corrupts on the next read.
+    #[test]
+    fn pm_flags_match_c_zsh_h_canonical_values() {
+        assert_eq!(PM_SCALAR,         0,        "c:1878");
+        assert_eq!(PM_ARRAY,          1 << 0,   "c:1879");
+        assert_eq!(PM_INTEGER,        1 << 1,   "c:1880");
+        assert_eq!(PM_EFLOAT,         1 << 2,   "c:1881");
+        assert_eq!(PM_FFLOAT,         1 << 3,   "c:1882");
+        assert_eq!(PM_HASHED,         1 << 4,   "c:1883");
+        assert_eq!(PM_LEFT,           1 << 5,   "c:1888");
+        assert_eq!(PM_RIGHT_B,        1 << 6,   "c:1889");
+        assert_eq!(PM_RIGHT_Z,        1 << 7,   "c:1890");
+        assert_eq!(PM_LOWER,          1 << 8,   "c:1891");
+        assert_eq!(PM_UPPER,          1 << 9,   "c:1895");
+        assert_eq!(PM_UNDEFINED,      1 << 9,   "c:1896 (aliases PM_UPPER for funcs)");
+        assert_eq!(PM_READONLY,       1 << 10,  "c:1898");
+        assert_eq!(PM_TAGGED,         1 << 11,  "c:1899");
+        assert_eq!(PM_EXPORTED,       1 << 12,  "c:1900");
+        assert_eq!(PM_ABSPATH_USED,   1 << 12,  "c:1901 (aliases EXPORTED for funcs)");
+        assert_eq!(PM_UNIQUE,         1 << 13,  "c:1905");
+        assert_eq!(PM_HIDE,           1 << 14,  "c:1908");
+        assert_eq!(PM_HIDEVAL,        1 << 15,  "c:1910");
+        assert_eq!(PM_TIED,           1 << 16,  "c:1912");
+        assert_eq!(PM_SPECIAL,        1 << 20,  "c:1922");
+        assert_eq!(PM_RO_BY_DESIGN,   1 << 21,  "c:1924");
+        assert_eq!(PM_LOCAL,          1 << 19,  "c:1920");
+        assert_eq!(PM_UNSET,          1 << 24,  "c:1930");
+        assert_eq!(PM_NAMEREF,        1 << 30,  "c:1944");
+    }
+
+    /// `Src/zsh.h:1953-1965` — `SCANPM_*` flag values for parameter
+    /// scanning. Used by `${(k)hash}` / `${(K)hash}` / `${(m)hash}`
+    /// expansion paths. Drift here mis-routes every hash scan.
+    #[test]
+    fn scanpm_flags_match_c_zsh_h_canonical_values() {
+        assert_eq!(SCANPM_WANTVALS,   1 << 0, "c:1953");
+        assert_eq!(SCANPM_WANTKEYS,   1 << 1, "c:1954");
+        assert_eq!(SCANPM_WANTINDEX,  1 << 2, "c:1955");
+        assert_eq!(SCANPM_MATCHKEY,   1 << 3, "c:1956");
+        assert_eq!(SCANPM_MATCHVAL,   1 << 4, "c:1957");
+        assert_eq!(SCANPM_MATCHMANY,  1 << 5, "c:1958");
+        assert_eq!(SCANPM_ASSIGNING,  1 << 6, "c:1959");
+        assert_eq!(SCANPM_KEYMATCH,   1 << 7, "c:1960");
+        assert_eq!(SCANPM_DQUOTED,    1 << 8, "c:1961");
+        assert_eq!(SCANPM_ARRONLY,    1 << 9, "c:1965");
+    }
+
+    /// `Src/zsh.h:144-224` — parser token byte values. These are
+    /// **load-bearing single-byte sentinels** for every lex/parse
+    /// path (Pound for `#` comments, Star for `*` glob, Stringg for
+    /// `$param`, etc.). A drift on any byte would silently mis-route
+    /// every parsed token.
+    #[test]
+    fn token_byte_values_match_c_zsh_h() {
+        assert_eq!(META,        '\u{83}',  "c:144");
+        assert_eq!(Pound,       '\u{84}',  "c:159");
+        assert_eq!(Stringg,     '\u{85}',  "c:160");
+        assert_eq!(Hat,         '\u{86}',  "c:161");
+        assert_eq!(Star,        '\u{87}',  "c:162");
+        assert_eq!(Inpar,       '\u{88}',  "c:163");
+        assert_eq!(Inparmath,   '\u{89}',  "c:164");
+        assert_eq!(Outpar,      '\u{8a}',  "c:165");
+        assert_eq!(Outparmath,  '\u{8b}',  "c:166");
+        assert_eq!(Qstring,     '\u{8c}',  "c:167");
+        assert_eq!(Equals,      '\u{8d}',  "c:168");
+        assert_eq!(Bar,         '\u{8e}',  "c:169");
+        assert_eq!(Inbrace,     '\u{8f}',  "c:170");
+        assert_eq!(Outbrace,    '\u{90}',  "c:171");
+        assert_eq!(Inbrack,     '\u{91}',  "c:172");
+        assert_eq!(Outbrack,    '\u{92}',  "c:173");
+        assert_eq!(Tick,        '\u{93}',  "c:174");
+        assert_eq!(Inang,       '\u{94}',  "c:175");
+        assert_eq!(Outang,      '\u{95}',  "c:176");
+        assert_eq!(OutangProc,  '\u{96}',  "c:177");
+        assert_eq!(Quest,       '\u{97}',  "c:178");
+        assert_eq!(Tilde,       '\u{98}',  "c:179");
+        assert_eq!(Qtick,       '\u{99}',  "c:180");
+        assert_eq!(Comma,       '\u{9a}',  "c:181");
+        assert_eq!(Dash,        '\u{9b}',  "c:182");
+        assert_eq!(Bang,        '\u{9c}',  "c:183");
+        assert_eq!(LAST_NORMAL_TOK, Bang,  "c:188 == Bang");
+        assert_eq!(Snull,       '\u{9d}',  "c:193");
+        assert_eq!(Dnull,       '\u{9e}',  "c:194");
+        assert_eq!(Bnull,       '\u{9f}',  "c:195");
+        assert_eq!(Bnullkeep,   '\u{a0}',  "c:200");
+        assert_eq!(Nularg,      '\u{a1}',  "c:206");
+        assert_eq!(Marker,      '\u{a2}',  "c:224");
+    }
+
+    /// `Src/zsh.h:226-232` — SPECCHARS / PATCHARS string literals.
+    /// Pin the exact 25-char SPECCHARS set and 13-char PATCHARS set
+    /// against the canonical C define. Drift on either would silently
+    /// change which chars trigger quoting / pattern matching.
+    #[test]
+    fn specchars_patchars_match_c_zsh_h() {
+        // c:228 — `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`.
+        assert_eq!(SPECCHARS, "#$^*()=|{}[]`<>?~;&\n\t \\\'\"",
+            "c:228 — SPECCHARS literal must match C verbatim");
+        assert_eq!(SPECCHARS.chars().count(), 25,
+            "c:228 — SPECCHARS has 25 chars");
+        // c:232 — `PATCHARS "#^*()|[]<>?~\\"`.
+        assert_eq!(PATCHARS, "#^*()|[]<>?~\\",
+            "c:232 — PATCHARS literal must match C verbatim");
+        assert_eq!(PATCHARS.chars().count(), 13,
+            "c:232 — PATCHARS has 13 chars");
+    }
+
+    /// `Src/zsh.h:149-153` — DEFAULT_IFS and DEFAULT_IFS_SH literals.
+    #[test]
+    fn default_ifs_strings_match_c_zsh_h() {
+        // c:149 — `DEFAULT_IFS " \t\n\203 "` (5 chars; \203 is Meta).
+        assert_eq!(DEFAULT_IFS, " \t\n\u{83} ",
+            "c:149 — DEFAULT_IFS = space + tab + newline + Meta + space");
+        assert_eq!(DEFAULT_IFS.chars().count(), 5,
+            "c:149 — DEFAULT_IFS is 5 chars");
+        // c:153 — `DEFAULT_IFS_SH " \t\n"` (3 chars, POSIX sh).
+        assert_eq!(DEFAULT_IFS_SH, " \t\n",
+            "c:153 — DEFAULT_IFS_SH = POSIX 3-char set");
+    }
+
+    /// `Src/zsh.h:1879-1883` — `PM_TYPE_MASK` covers the 5 type bits
+    /// (PM_ARRAY..PM_HASHED). Every non-type flag must be OUTSIDE
+    /// this mask. Pin so a regression that bleeds modifier flags
+    /// into the type space fails.
+    #[test]
+    fn pm_type_mask_excludes_modifier_flags() {
+        let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED;
+        // Modifier flags MUST be outside the type-mask range.
+        for modifier in &[PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER,
+                           PM_READONLY, PM_EXPORTED, PM_LOCAL, PM_UNSET] {
+            assert_eq!(modifier & type_mask, 0,
+                "modifier flag 0x{:x} must NOT overlap type mask 0x{:x}",
+                modifier, type_mask);
+        }
+    }
 }

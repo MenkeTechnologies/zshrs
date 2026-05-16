@@ -1293,9 +1293,17 @@ enum tstack_u {
     },
 }
 
-// c:1022-1026 — fstr[] (getredirs)
+// c:1022-1026 — `static char *fstr[]` from `Src/text.c:1022`.
+// Indexed by `f->type` (the REDIR_* enum in `Src/zsh.h:377-397`).
+// Position 12 = `REDIR_HERESTR` = `"<<<"` — previously typo'd as `"<<"`,
+// which would silently misrender `cmd <<<word` as `cmd <<word`.
+// Position 15 = `REDIR_CLOSE` is NULL in C (the dispatch routes via
+// the `#ifdef DEBUG` branch only); Rust keeps `">&-"` here so an
+// out-of-band index lookup doesn't panic, but the real REDIR_CLOSE
+// case is filtered out of the match in `getredirs` (matches C
+// release-build semantics).
 const FSTR: [&str; 18] = [
-    ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<", "<&", ">&",
+    ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<<", "<&", ">&",
     ">&-",
     "<", ">",
 ];
@@ -1432,5 +1440,51 @@ mod tests {
         taddnl(0);
         taddnl(1);
         tdopending();
+    }
+
+    /// `Src/text.c:1022-1026` — `static char *fstr[]` is indexed by
+    /// `f->type` (the REDIR_* enum at `Src/zsh.h:377-397`). The order
+    /// is the contract: a regression that swaps positions silently
+    /// misrenders every `getredirs` output. Pin every slot in the
+    /// table by C-source comment. Position 12 (REDIR_HERESTR) was
+    /// previously typo'd as `"<<"` instead of `"<<<"`, dropping the
+    /// third `<` from herestring round-trips.
+    #[test]
+    fn fstr_table_matches_c_source_position_by_position() {
+        // c:1024-1026 — verbatim list (NULL at position 15 → ">&-" placeholder).
+        let expected = [
+            ">",   // REDIR_WRITE       = 0
+            ">|",  // REDIR_WRITENOW    = 1
+            ">>",  // REDIR_APP         = 2
+            ">>|", // REDIR_APPNOW      = 3
+            "&>",  // REDIR_ERRWRITE    = 4
+            "&>|", // REDIR_ERRWRITENOW = 5
+            "&>>", // REDIR_ERRAPP      = 6
+            "&>>|",// REDIR_ERRAPPNOW   = 7
+            "<>",  // REDIR_READWRITE   = 8
+            "<",   // REDIR_READ        = 9
+            "<<",  // REDIR_HEREDOC     = 10
+            "<<-", // REDIR_HEREDOCDASH = 11
+            "<<<", // REDIR_HERESTR     = 12 — c:1025 third `<` is load-bearing
+            "<&",  // REDIR_MERGEIN     = 13
+            ">&",  // REDIR_MERGEOUT    = 14
+            ">&-", // REDIR_CLOSE       = 15 — NULL in C; placeholder here
+            "<",   // REDIR_INPIPE      = 16
+            ">",   // REDIR_OUTPIPE     = 17
+        ];
+        assert_eq!(FSTR.len(), expected.len(),
+            "c:1022 — fstr[] must have exactly 18 slots");
+        for (i, &want) in expected.iter().enumerate() {
+            assert_eq!(FSTR[i], want,
+                "c:1024-1026 — FSTR[{}] must be {:?}, got {:?}",
+                i, want, FSTR[i]);
+        }
+        // Pin the herestring slot specifically — that was the
+        // typo'd cell.
+        assert_eq!(FSTR[REDIR_HERESTR as usize], "<<<",
+            "c:1025 — REDIR_HERESTR (12) must render as `<<<`");
+        // Pin the heredoc slot too — it shares fstr's 10 cell.
+        assert_eq!(FSTR[REDIR_HEREDOC as usize], "<<",
+            "c:1024 — REDIR_HEREDOC (10) must render as `<<`");
     }
 }

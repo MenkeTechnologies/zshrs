@@ -7994,6 +7994,30 @@ mod tests {
             "default `!^#` round-trips through atomics");
     }
 
+    /// `Src/params.c:5118-5128` — `homesetfn(x)` round-trip:
+    /// `homesetfn(s); homegetfn() == s` for non-symlink paths and
+    /// CHASELINKS-off. Pins the basic store-then-read contract.
+    #[test]
+    fn homesetfn_stores_value_for_getfn() {
+        let saved = crate::ported::params::homegetfn();
+        crate::ported::params::homesetfn("/tmp/zshrs_test_home".to_string());
+        assert_eq!(crate::ported::params::homegetfn(), "/tmp/zshrs_test_home",
+            "c:5121-5126 — homesetfn → homegetfn round-trip");
+        // Restore.
+        crate::ported::params::homesetfn(saved);
+    }
+
+    /// `Src/params.c:5125-5126` — empty input becomes `ztrdup("")`.
+    /// Pin empty-string handling.
+    #[test]
+    fn homesetfn_empty_input_stores_empty() {
+        let saved = crate::ported::params::homegetfn();
+        crate::ported::params::homesetfn(String::new());
+        assert_eq!(crate::ported::params::homegetfn(), "",
+            "c:5126 — empty x stores empty (no panic)");
+        crate::ported::params::homesetfn(saved);
+    }
+
     /// `Src/params.c:5004-5011` — `errnosetfn(x)` writes errno
     /// unconditionally, then warns (NOT errors) on truncation. The
     /// store happens regardless of warning. Pin set→get round-trip.

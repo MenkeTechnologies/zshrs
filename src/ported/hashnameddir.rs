@@ -210,6 +210,13 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::{hashnode, nameddir};
 
+    /// Process-wide lock serialising tests that mutate the global
+    /// `nameddirtab`. Without this, parallel `cargo test` invocations
+    /// race on the shared HashMap — `fresh_table()` from one test
+    /// can clear an entry another just inserted, producing flaky
+    /// "entry inserted" assertion failures. No C counterpart.
+    static NAMEDDIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn fresh_table() {
         if let Ok(mut t) = nameddirtab().lock() {
             t.clear();
@@ -231,6 +238,7 @@ mod tests {
 
     #[test]
     fn addnameddirnode_sets_diff_and_inserts() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:125 — `nd->diff = strlen(nd->dir) - strlen(nam);`
         fresh_table();
         addnameddirnode("p", make_nd("p", "/home/user/projects", 0));
@@ -244,6 +252,7 @@ mod tests {
 
     #[test]
     fn removenameddirnode_returns_node_and_clears_entry() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:137-141 — removehashnode + finddir(NULL).
         fresh_table();
         addnameddirnode("k", make_nd("k", "/tmp/k", 0));
@@ -256,6 +265,7 @@ mod tests {
 
     #[test]
     fn removenameddirnode_missing_returns_none() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:139 — `if(hn) finddir(NULL);` only fires when a node
         // was actually present; the function still returns NULL
         // when it wasn't.
@@ -265,6 +275,7 @@ mod tests {
 
     #[test]
     fn emptynameddirtable_clears_and_resets_allusersadded() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:86-87 — emptyhashtable + allusersadded = 0.
         fresh_table();
         addnameddirnode("a", make_nd("a", "/a", 0));
@@ -277,6 +288,7 @@ mod tests {
 
     #[test]
     fn createnameddirtable_resets_allusersadded() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:76 — `allusersadded = 0;`
         allusersadded.store(1, Ordering::Relaxed);
         createnameddirtable();
@@ -300,6 +312,7 @@ mod tests {
     /// runs inside the c:98 conditional.
     #[test]
     fn fillnameddirtable_short_circuits_when_allusersadded_set() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         allusersadded.store(1, Ordering::Relaxed);
         fillnameddirtable();
         assert_eq!(allusersadded.load(Ordering::Relaxed), 1,
@@ -312,6 +325,7 @@ mod tests {
     /// would underflow on a `hash -d short=/x` style entry.
     #[test]
     fn addnameddirnode_diff_can_be_negative() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // name "longname" (8) longer than dir "/x" (2) → diff = -6.
         fresh_table();
         addnameddirnode("longname", make_nd("longname", "/x", 0));
@@ -329,6 +343,7 @@ mod tests {
     /// stale `diff` field.
     #[test]
     fn addnameddirnode_overwrites_existing_entry() {
+        let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("p", make_nd("p", "/old", 0));
         addnameddirnode("p", make_nd("p", "/new/longer/path", 0));

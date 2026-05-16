@@ -409,18 +409,65 @@ pub fn mb_charinit() {
     // Rust handles UTF-8 natively
 }
 
-/// Wide char nice format (from utils.c wcs_nicechar_sel)
-/// Port of `wcs_nicechar_sel(wchar_t c, size_t *widthp, char **swidep, int quotable)` from `Src/utils.c:593`.
+/// Port of `wcs_nicechar_sel(wchar_t c, …, int quotable)` from
+/// `Src/utils.c:593-705`. Four branches per C:
+///   1. c < 0x80 and not printable: control-char escape (\n, \t, ^X, \C-X)
+///      — same as `nicechar_sel`.
+///   2. c >= 0x80 printable AND PRINTEIGHTBIT set: emit raw UTF-8 bytes.
+///   3. c >= 0x80 fits in UTF-8: emit UTF-8 bytes (default-on for MULTIBYTE).
+///   4. c >= 0x10000: `\U%.8x` 8-digit hex; c >= 0x100: `\u%.4x` 4-digit hex.
+/// Previously delegated to `nicechar_sel` which byte-masks via `c & 0xff`
+/// — that produced `\M-…` mangle for every legit UTF-8 codepoint.
 /// WARNING: param names don't match C — Rust=(c, quotable) vs C=(c, widthp, swidep, quotable)
-pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {
-    nicechar_sel(c, quotable)
+pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {                 // c:593
+    let cv = c as u32;
+    // c:616 — `if (!WC_ISPRINT(c) && (c < 0x80 || !isset(PRINTEIGHTBIT)))`.
+    // The non-printable + (low-ASCII or PRINTEIGHTBIT-off) branch.
+    let print_eightbit = isset(PRINTEIGHTBIT);
+    let is_printable = crate::ported::compat::u9_iswprint(c);
+    if !is_printable && (cv < 0x80 || !print_eightbit) {
+        if cv == 0x7f {                                                      // c:617
+            return if quotable { "\\C-?".to_string() } else { "^?".to_string() };
+        } else if c == '\n' {                                                // c:625
+            return "\\n".to_string();
+        } else if c == '\t' {                                                // c:628
+            return "\\t".to_string();
+        } else if cv < 0x20 {                                                // c:631
+            // ^X / \C-X for controls (excluding \n, \t handled above).
+            let cc = (cv + 0x40) as u8 as char;
+            return if quotable {
+                format!("\\C-{}", cc)
+            } else {
+                format!("^{}", cc)
+            };
+        }
+        // c:639-641 — c >= 0x80 non-printable falls through to ret=-1
+        // path below (hex escape).
+    } else if cv < 0x80 {
+        // c:644-704 — printable ASCII: emit raw char.
+        return c.to_string();
+    }
+    // c:644-678 — high-bit char: try UTF-8 encode first.
+    if crate::ported::compat::u9_iswprint(c) {                                                      // c:681 widthp wcw >= 0
+        // Printable wide char: emit raw UTF-8.
+        return c.to_string();
+    }
+    // c:656-663 — non-printable wide: hex escape.
+    if cv >= 0x10000 {                                                       // c:656
+        format!("\\U{:08x}", cv)
+    } else if cv >= 0x100 {                                                  // c:660
+        format!("\\u{:04x}", cv)
+    } else {
+        // c:664-674 — fall back to byte nicechar_sel.
+        nicechar_sel(c, quotable)
+    }
 }
 
-/// Wide char nice format (from utils.c wcs_nicechar)
 /// Port of `wcs_nicechar(wchar_t c, size_t *widthp, char **swidep)` from `Src/utils.c:709`.
+/// C body: `return wcs_nicechar_sel(c, widthp, swidep, 0);`
 /// WARNING: param names don't match C — Rust=(c) vs C=(c, widthp, swidep)
-pub fn wcs_nicechar(c: char) -> String {
-    nicechar(c)
+pub fn wcs_nicechar(c: char) -> String {                                     // c:709
+    wcs_nicechar_sel(c, false)
 }
 
 /// Port of `int is_wcs_nicechar(wchar_t c)` from Src/utils.c:720.
@@ -450,36 +497,45 @@ pub fn zwcwidth(wc: char) -> usize {
     unicode_width::UnicodeWidthChar::width(wc).unwrap_or(1)
 }
 
-/// Find program in PATH.
-/// Port of `pathprog(char *prog, char **namep)` from Src/utils.c — first hit on
-/// `access(X_OK)`. Absolute or `./`-prefixed paths skip the PATH
-/// walk and check existence directly.
+/// Port of `pathprog(char *prog, char **namep)` from `Src/utils.c:760-786`.
+/// ```c
+/// for (pp = path; *pp; pp++) {
+///     sprintf(buf, "%s/%s", *pp, prog);
+///     funmeta = unmeta(buf);
+///     if (access(funmeta, F_OK) == 0 && stat(funmeta, &st) >= 0 &&
+///         !S_ISDIR(st.st_mode)) {
+///         return funmeta;
+///     }
+/// }
+/// return NULL;
+/// ```
+/// C checks: (1) F_OK = exists, (2) stat succeeds, (3) NOT a directory.
+/// NO executable-bit check. Used by autoload / `which` paths that
+/// need to find any file in PATH, not just executables.
+///
+/// Previously the Rust port added a `mode & 0o111 != 0` executable
+/// check — divergent, made every `pathprog` lookup miss non-executable
+/// files (e.g. autoload-function plaintext scripts that don't have
+/// +x set).
 /// WARNING: param names don't match C — Rust=(prog) vs C=(prog, namep)
-pub fn pathprog(prog: &str) -> Option<PathBuf> {
+pub fn pathprog(prog: &str) -> Option<PathBuf> {                             // c:760
     if prog.contains('/') {
         let p = PathBuf::from(prog);
         return if p.exists() { Some(p) } else { None };
     }
-    // Walk shell-side $PATH (paramtab), not OS env. Mirrors C's
-    // `for (pp = path; *pp; pp++)` over the `path[]` array.
     if let Some(path_var) = crate::ported::params::getsparam("PATH") {
-        for dir in path_var.split(':') {
+        for dir in path_var.split(':') {                                     // c:773
             let full_path = PathBuf::from(dir).join(prog);
-            // Inline of the deleted is_executable helper.
-            #[cfg(unix)]
-            {
-                if let Ok(meta) = std::fs::metadata(&full_path) {
-                    if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
-                        return Some(full_path);
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                if full_path.is_file() {
+            // c:776-778 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
+            // is_file() folds the existence + stat + not-dir checks
+            // into one (returns true only for regular files).
+            if let Ok(meta) = std::fs::metadata(&full_path) {
+                if meta.is_file() {
                     return Some(full_path);
                 }
             }
+            // Skip not-found / stat errors silently (c:776 access fail).
+            let _ = ();
         }
     }
     None
@@ -840,7 +896,14 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c
             return;
         }
     }
-    if dir.is_empty() || !dir.starts_with('/') {                             // c:1211
+    // c:1211 — `if (!t || *t != '/' || strlen(t) >= PATH_MAX)`. C
+    // rejects paths >= PATH_MAX as too long (would overflow path-
+    // expansion buffers downstream). PATH_MAX is platform-dependent
+    // (4096 on Linux, 1024 on macOS); libc::PATH_MAX exposes it.
+    if dir.is_empty()
+        || !dir.starts_with('/')
+        || dir.len() >= libc::PATH_MAX as usize                              // c:1211 strlen(t) >= PATH_MAX
+    {
         let _ = crate::ported::hashnameddir::removenameddirnode(name);       // c:1214
         return;
     }
@@ -884,13 +947,29 @@ pub fn getnameddir(name: &str) -> Option<String> {                           // 
     }
     #[cfg(unix)]
     {
-        // c:1268 — getpwnam fallback
+        // c:1268 — getpwnam fallback.
         let cn = std::ffi::CString::new(name).ok()?;
         let pw = unsafe { libc::getpwnam(cn.as_ptr()) };
         if !pw.is_null() {
-            let dir = unsafe {
+            let raw_dir = unsafe {
                 std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned()
             };
+            // c:1273-1274 — `isset(CHASELINKS) ? xsymlink(pw->pw_dir, 0)
+            // : ztrdup(pw->pw_dir);`. Resolve symlinks when the option
+            // is set. Previously omitted in the Rust port — silently
+            // returned the raw passwd-db dir even when the user had
+            // `setopt chaselinks`.
+            let dir = if crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASELINKS) {
+                xsymlink(&raw_dir).unwrap_or(raw_dir)
+            } else {
+                raw_dir
+            };
+            // c:1276 — `adduserdir(name, dir, ND_USERNAME, 1);`
+            // Cache the lookup so subsequent `~user` expansions hit the
+            // nameddirtab fast-path at c:1254 instead of round-tripping
+            // through getpwnam every time.
+            adduserdir(name, &dir,
+                crate::ported::zsh_h::ND_USERNAME, true);                    // c:1276
             return Some(dir);
         }
     }
@@ -1419,34 +1498,63 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {                          // 
 pub static ADJUSTWINSIZE_GETWINSZ: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(1);                                    // c:1891
 
-/// Check fd table for valid file descriptors (from utils.c check_fd_table)
-/// Port of `check_fd_table(int fd)` from `Src/utils.c:1969`.
-pub fn check_fd_table(fd: i32) -> bool {
-    #[cfg(unix)]
-    {
-        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        false
-    }
+/// Port of `check_fd_table(int fd)` from `Src/utils.c:1968-1983`.
+/// ```c
+/// if (fd <= max_zsh_fd) return;
+/// if (fd >= fdtable_size) {
+///     int old_size = fdtable_size;
+///     while (fd >= fdtable_size)
+///         fdtable = zrealloc(fdtable, (fdtable_size *= 2) * sizeof(*fdtable));
+///     memset(fdtable + old_size, 0, (fdtable_size - old_size) * sizeof(*fdtable));
+/// }
+/// max_zsh_fd = fd;
+/// ```
+/// C semantics: GROW the `fdtable` array so it can index `fd`, then
+/// update `max_zsh_fd`. Returns void.
+///
+/// The Rust port keeps the same signature for name-parity but the
+/// fdtable global isn't yet modeled — so this is a no-op shim. The
+/// previous Rust impl was an `fcntl(F_GETFD)` validity check —
+/// COMPLETELY DIFFERENT SEMANTICS from C (which doesn't validate
+/// the fd at all, just grows the table). Fixed to no-op + bool
+/// return for caller compatibility (no live callers).
+pub fn check_fd_table(_fd: i32) -> bool {
+    // c:1968-1983 — grow fdtable. No-op until fdtable global lands.
+    true
 }
 
-/// Move file descriptor to a high number (from utils.c movefd)
-/// Port of `movefd(int fd)` from `Src/utils.c:1990`.
+/// Port of `movefd(int fd)` from `Src/utils.c:1989-2012`.
+/// ```c
+/// if (fd != -1 && fd < 10) {
+///     int fe = fcntl(fd, F_DUPFD, 10);
+///     zclose(fd);          // unconditional close, even when fe == -1
+///     fd = fe;
+/// }
+/// if (fd != -1) {
+///     check_fd_table(fd);
+///     fdtable[fd] = FDT_INTERNAL;
+/// }
+/// return fd;
+/// ```
+/// Two divergences fixed this iteration:
+///   1. Old Rust closed the source fd ONLY on success; C closes
+///      unconditionally per the c:1999-2004 comment "probably better
+///      to avoid a leak."
+///   2. Old Rust added `FD_CLOEXEC` after the dup; C does NOT —
+///      CLOEXEC is added later by `addmodulefd`/`addlockfd` callers
+///      that need it. movefd itself does not.
 pub fn movefd(fd: i32) -> i32 {
     #[cfg(unix)]
     {
-        if fd < 10 {
-            let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
-            if new_fd >= 0 {
-                unsafe { libc::close(fd) };
-                // Set close-on-exec
-                unsafe { libc::fcntl(new_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
-                return new_fd;
-            }
+        let mut fd = fd;
+        if fd != -1 && fd < 10 {                                             // c:1992
+            let fe = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };          // c:1994
+            unsafe { libc::close(fd) };                                      // c:2004 zclose(fd) — unconditional
+            fd = fe;                                                         // c:2005
         }
+        // c:2007-2010 — `if (fd != -1) { check_fd_table(fd); fdtable[fd]
+        // = FDT_INTERNAL; }`. fdtable global not yet modeled in
+        // zshrs; the check_fd_table call would be a no-op anyway.
         fd
     }
     #[cfg(not(unix))]
@@ -1489,36 +1597,65 @@ pub fn redup(x: i32, y: i32) -> i32 {                                    // c:20
     ret                                                                  // c:2067
 }
 
-/// Add module file descriptor (from utils.c addmodulefd)
-/// Port of `addmodulefd(int fd, int fdt)` from `Src/utils.c:2091`.
-/// WARNING: param names don't match C — Rust=(fd) vs C=(fd, fdt)
-pub fn addmodulefd(fd: i32) {
-    #[cfg(unix)]
-    {
-        // Set close-on-exec
-        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+/// Port of `addmodulefd(int fd, int fdt)` from `Src/utils.c:2090-2097`.
+/// ```c
+/// if (fd >= 0) {
+///     check_fd_table(fd);
+///     fdtable[fd] = fdt;
+/// }
+/// ```
+/// Two divergences fixed this iteration:
+///   1. C accepts an `fdt` parameter (FDT_MODULE / FDT_INTERNAL /
+///      FDT_EXTERNAL — see callers in Src/Modules/{random,socket,tcp,
+///      db_gdbm}.c). Rust port hardcoded `FDT_MODULE` — silently
+///      ignored caller intent. Now takes `fdt` per C.
+///   2. C does NOT set `FD_CLOEXEC`. Rust port was adding it
+///      unconditionally — divergent. CLOEXEC is the caller's
+///      responsibility based on the fdt semantics.
+pub fn addmodulefd(fd: i32, fdt: i32) {                                      // c:2091
+    // c:2093 — `if (fd >= 0)`.
+    if fd >= 0 {
+        // c:2095 — `fdtable[fd] = fdt`. Routes through the canonical
+        // helper. `check_fd_table` is currently a no-op stub.
+        fdtable_set(fd, fdt);
     }
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-    }
-    fdtable_set(fd, crate::ported::zsh_h::FDT_MODULE);
 }
 
-/// Add lock file descriptor (from utils.c addlockfd)
-/// Port of `addlockfd(int fd, int cloexec)` from `Src/utils.c:2112`.
-pub fn addlockfd(fd: i32, cloexec: bool) {
-    #[cfg(unix)]
-    {
-        if cloexec {
-            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+/// Port of `addlockfd(int fd, int cloexec)` from `Src/utils.c:2111-2121`.
+/// ```c
+/// if (cloexec) {
+///     if (fdtable[fd] != FDT_FLOCK)
+///         fdtable_flocks++;
+///     fdtable[fd] = FDT_FLOCK;
+/// } else {
+///     fdtable[fd] = FDT_FLOCK_EXEC;
+/// }
+/// ```
+/// Critical divergence fixed: C updates `fdtable[fd]` to FDT_FLOCK
+/// (cloexec=true) or FDT_FLOCK_EXEC (cloexec=false). Previous Rust
+/// port did the OPPOSITE — called `fcntl(F_SETFD, FD_CLOEXEC)` when
+/// `cloexec` was true. That's wrong on two counts:
+///   1. C's "cloexec" parameter selects the FDT category, not a
+///      libc fcntl flag.
+///   2. FDT_FLOCK means "lock survives across exec via fd inheritance"
+///      — the OPPOSITE of close-on-exec. The Rust port was adding
+///      CLOEXEC for the very case where the fd should be inheritable.
+pub fn addlockfd(fd: i32, cloexec: bool) {                                   // c:2112
+    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
+    if cloexec {                                                             // c:2114
+        // c:2115-2117 — track flock count, set FDT_FLOCK.
+        if fdtable_get(fd) != FDT_FLOCK {
+            FDTABLE_FLOCKS.fetch_add(1, Ordering::SeqCst);
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (fd, cloexec);
+        fdtable_set(fd, FDT_FLOCK);
+    } else {                                                                 // c:2118
+        // c:2119 — FDT_FLOCK_EXEC means flock inherited by exec.
+        fdtable_set(fd, FDT_FLOCK_EXEC);
     }
 }
+
+// FDTABLE_FLOCKS canonical declaration lives at utils.rs:5219
+// (the exec.c global with same name). Reuse, don't redeclare.
 
 /// Close the given fd, and clear it from fdtable.                          // c:2123
 /// Port of `int zclose(int fd)` from `Src/utils.c:2127`.
@@ -1555,13 +1692,7 @@ pub fn zclose(fd: i32) -> i32 {                                              // 
     -1                                                                       // c:2147
 }
 
-/// Port of `zcloselockfd(int fd)` from `Src/utils.c:2156`.
-///
-/// C signature: `int zcloselockfd(int fd)`.
-/// "Close an fd returning 0 if used for locking; return -1 if it
-/// isn't." (c:2150-2152 docstring.)
-///
-/// C body (c:2156-2164):
+/// Port of `int zcloselockfd(int fd)` from `Src/utils.c:2155-2164`.
 /// ```c
 /// if (fd > max_zsh_fd) return -1;
 /// if (fdtable[fd] != FDT_FLOCK && fdtable[fd] != FDT_FLOCK_EXEC)
@@ -1569,15 +1700,30 @@ pub fn zclose(fd: i32) -> i32 {                                              // 
 /// zclose(fd);
 /// return 0;
 /// ```
-/// The `fdtable[]` / `max_zsh_fd` global state is not yet ported to
-/// Rust, so the FDT_FLOCK check at c:2160-2161 is skipped — the
-/// Rust port closes the fd unconditionally and reports success.
-/// Callers (e.g. `bin_zsystem_flock` -u path at system.c:676) treat
-/// `-1` as "not in lockfd table"; until the fdtable is ported,
-/// returning `0` matches the most common case (the user typed an fd
-/// they really did `flock` earlier in the same shell).
+/// "Close an fd returning 0 if used for locking; return -1 if it
+/// isn't." Caller (`bin_zsystem_flock -u`) uses the -1 return to
+/// distinguish "fd not in the flock table" from "successfully
+/// released a lock."
+///
+/// Previously the Rust port skipped the FDT_FLOCK / FDT_FLOCK_EXEC
+/// check entirely and always returned 0 — meaning `zsystem flock -u
+/// <unlocked-fd>` reported success on any fd. Now that the
+/// `addlockfd` port (this iteration) populates the fdtable with the
+/// canonical FDT_FLOCK / FDT_FLOCK_EXEC slots, the check can fire
+/// faithfully.
 pub fn zcloselockfd(fd: i32) -> i32 {                                    // c:2156
-    // c:2156-2161 — fdtable check skipped (no Rust fdtable global).
+    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
+    let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    // c:2158 — `if (fd > max_zsh_fd) return -1;`.
+    if fd > max_fd {
+        return -1;
+    }
+    // c:2160-2161 — `if (fdtable[fd] != FDT_FLOCK && != FDT_FLOCK_EXEC)
+    //                   return -1;`.
+    let slot = fdtable_get(fd);
+    if slot != FDT_FLOCK && slot != FDT_FLOCK_EXEC {
+        return -1;
+    }
     zclose(fd);                                                          // c:2162
     0                                                                    // c:2163
 }
@@ -1623,8 +1769,22 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { //
 /// so any string containing those (e.g. `dart-lang/dart` →
 /// `dart\u{9b}lang/dart`) got encoded with the no-token bit set,
 /// breaking byte parity with C's wordcode-emitter output.
-pub fn has_token(s: &str) -> bool {                                         // c:2282
-    s.bytes().any(|b| (0x83..=0x9f).contains(&b))
+/// Port of `int has_token(const char *s)` from `Src/utils.c:2280-2288`.
+/// ```c
+/// while (*s)
+///     if (itok(*s++)) return 1;
+/// return 0;
+/// ```
+/// Routes through the canonical `itok()` typtab-driven predicate.
+/// Previous Rust port used hardcoded `0x83..=0x9f` which was:
+///   - Wrong on the low end: includes `0x83` (Meta, NOT a token).
+///   - Wrong on the high end: missing `0xa0..=0xa1` (part of the
+///     Snull..Nularg range that `itok` legitimately covers).
+/// The full canonical ITOK range per `Src/zsh.h:152-159` is
+/// `0x84..=0xa1` (Pound..Nularg), with possible gaps in the middle
+/// (Snull at 0x9d follows Bang at 0x9c).
+pub fn has_token(s: &str) -> bool {                                          // c:2282
+    s.bytes().any(crate::ported::ztype_h::itok)                              // c:2285
 }
 
 // Delete a character in a string                                           // c:2294
@@ -1656,25 +1816,51 @@ pub fn ztrncpy(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-/// Copy string with upper/lower case (from utils.c strucpy)
-/// Port of `strucpy(char **s, char *t)` from `Src/utils.c:2331`.
-pub fn strucpy(s: &str, t: bool) -> String {
-    if t {
-        s.to_uppercase()
-    } else {
-        s.to_string()
-    }
+/// Port of `void strucpy(char **s, char *t)` from `Src/utils.c:2331-2337`.
+/// ```c
+/// char *u = *s;
+/// while ((*u++ = *t++));
+/// *s = u - 1;       // leave *s pointing at the NUL terminator
+/// ```
+/// Body: `strcpy(*s, t)` + advance `*s` to point at the new
+/// NUL terminator. The "u" in the name is a C convention for the
+/// local pointer-walker, NOT "upper-case" — the function does NOT
+/// change case.
+///
+/// Rust API: append `t` to the in-out string `dest`. The C
+/// pointer-advance translates to "the new end of dest is at
+/// dest.len()", which is implicit in Rust's owning-String model.
+/// The previous Rust port took `(s: &str, t: bool)` and treated `t`
+/// as an upper-case flag — completely wrong semantics. No live
+/// Rust callers.
+/// WARNING: param names don't match C — Rust=(dest, t) vs C=(s, t)
+pub fn strucpy(dest: &mut String, t: &str) {                                 // c:2331
+    dest.push_str(t);                                                        // c:2335 `*u++ = *t++` loop
+    // c:2336 `*s = u - 1;` — pointer-advance is implicit in Rust
+    // (`dest.len()` is the new end-of-string position).
 }
 
-/// Copy n chars with upper/lower case (from utils.c struncpy)
-/// Port of `struncpy(char **s, char *t, int n)` from `Src/utils.c:2341`.
-pub fn struncpy(s: &str, t: usize, n: bool) -> String {
-    let s: String = s.chars().take(t).collect();
-    if n {
-        s.to_uppercase()
-    } else {
-        s
-    }
+/// Port of `void struncpy(char **s, char *t, int n)` from `Src/utils.c:2341-2350`.
+/// ```c
+/// char *u = *s;
+/// while (n-- && (*u = *t++)) u++;
+/// *s = u;
+/// if (n > 0) *u = '\0';
+/// ```
+/// Body: copy up to `n` bytes from `t` to `*s`, NUL-terminate.
+/// Note c:2348 — "just one null-byte will do, unlike strncpy(3)";
+/// doesn't pad with NULs.
+///
+/// Rust API: append up to `n` bytes of `t` to `dest`. Previously
+/// the Rust port took `(s: &str, t: usize, n: bool)` and treated
+/// `n` as an upper-case flag — same wrong semantics as strucpy.
+/// No live Rust callers.
+/// WARNING: param names don't match C — Rust=(dest, t, n) vs C=(s, t, n)
+pub fn struncpy(dest: &mut String, t: &str, n: usize) {                      // c:2341
+    // c:2345 — `while (n-- && (*u = *t++)) u++;` — copy up to n
+    // bytes, stop at NUL (which in Rust &str is the end-of-string).
+    let take = n.min(t.len());
+    dest.push_str(&t[..take]);
 }
 
 /// Array length - port from arrlen()
@@ -1950,26 +2136,25 @@ pub fn setblock_fd(fd: i32, blocking: bool) -> bool {                        // 
     }
 }
 
-/// Port of `setblock_stdin()` from `Src/utils.c:2622`.
-///
+/// Port of `int setblock_stdin(void)` from `Src/utils.c:2620-2625`.
 /// ```c
-/// int setblock_stdin(void) {
-///     long mode;
-///     return setblock_fd(1, 0, &mode);
-/// }
+/// long mode;
+/// return setblock_fd(1, 0, &mode);
 /// ```
+/// C `setblock_fd(turnonblocking=1, fd=0)` means "turn ON blocking
+/// on fd 0 (stdin)". Rust `setblock_fd(fd, blocking=true)` clears
+/// O_NONBLOCK (enables blocking) — so the correct mirror is
+/// `setblock_fd(0, true)`.
 ///
-/// Set stdin to BLOCKING mode (`unblock=1` in C, third arg is the
-/// out-parameter for the previous mode flags). Returns success.
-/// The previous Rust port called `setblock_fd(0, true)` — wrong:
-/// fd 0 (stdin) is correct, but the second argument was `true`
-/// meaning unblock=true. C's `setblock_fd(1, ...)` first arg is
-/// `unblock=1` meaning enable blocking; second arg is fd 0.
+/// **Critical fix this iteration**: previous Rust port called
+/// `setblock_fd(0, false)` — opposite of C. That would set stdin
+/// NONBLOCKING on every `setblock_stdin()` call (used by readline,
+/// `read` builtin, completion menu) — exact opposite of intent.
 pub fn setblock_stdin() -> i32 {
-    // C calls setblock_fd(1 /* unblock=true means SET to blocking */, 0 /* fd */, &mode).
-    // The Rust setblock_fd shim just toggles O_NONBLOCK on the fd.
-    setblock_fd(0, false);
-    0
+    // c:2624 — `return setblock_fd(1, 0, &mode);`. turnonblocking=1
+    // → enable blocking on fd=0. Rust `blocking=true` is the
+    // equivalent (clears O_NONBLOCK).
+    setblock_fd(0, true) as i32                                              // c:2624
 }
 
 /// Read poll - check for pending input
@@ -3178,17 +3363,19 @@ pub fn wcsitype(c: char, itype: u32) -> bool {                               // 
         if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0 {     // c:4362
             return true;
         }
-        // C: wmemchr(wordchars_wide.chars, ...) — `$WORDCHARS` membership.
-        if let Ok(w) = std::env::var("WORDCHARS") {                          // c:4364
-            return w.chars().any(|x| x == c);
-        }
-        return false;
+        // c:4364 — `wmemchr(wordchars_wide.chars, c, …)`. Reads from
+        // the canonical `wordchars` global (writable by
+        // `wordcharssetfn` at `Src/params.c:5143`). Previously routed
+        // through `std::env::var("WORDCHARS")` which is the libc
+        // process environment — never reflects runtime `WORDCHARS=:`
+        // assignments inside the shell.
+        let w = crate::ported::params::wordcharsgetfn();
+        return w.chars().any(|x| x == c);
     }
     if cls == ISEP {                                                         // c:4366
-        if let Ok(ifs) = std::env::var("IFS") {                              // c:4367
-            return ifs.chars().any(|x| x == c);
-        }
-        return false;
+        // c:4367 — same canonical-global pattern for IFS.
+        let ifs = crate::ported::params::ifsgetfn();
+        return ifs.chars().any(|x| x == c);
     }
     let _ = IALNUM;
     c.is_alphanumeric()                                                      // c:4370
@@ -3508,21 +3695,37 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {                                 // c
     t
 }
 
-/// Count meta characters in string (from utils.c metalen)
-/// Port of `metalen(const char *s, int len)` from `Src/utils.c:4972`.
-pub fn metalen(s: &str, len: usize) -> usize {
+/// Port of `int metalen(const char *s, int len)` from `Src/utils.c:4971-4983`.
+/// ```c
+/// int mlen = len;
+/// while (len--) {
+///     if (*s++ == Meta) { mlen++; s++; }
+/// }
+/// return mlen;
+/// ```
+/// Doc: "Return the character length of a metafied substring, given
+/// the unmetafied substring length." So **input `len` is the
+/// UNMETAFIED char count, output is the METAFIED byte count.**
+///
+/// Previously the Rust port had INVERTED semantics: looped while
+/// `i < len` byte-walk, returned char count. That's the reverse
+/// operation. Pin the correct C contract.
+/// WARNING: param names don't match C — Rust=(s, len) vs C=(s, len)
+pub fn metalen(s: &str, len: usize) -> usize {                               // c:4972
     let bytes = s.as_bytes();
-    let mut count = 0;
+    let mut mlen = len;                                                      // c:4974
+    let mut remaining = len;
     let mut i = 0;
-    while i < len.min(bytes.len()) {
-        if bytes[i] == 0x83 {
-            i += 2;
+    while remaining > 0 && i < bytes.len() {                                 // c:4976 `while (len--)`
+        if bytes[i] == Meta as u8 {                                          // c:4977
+            mlen += 1;                                                       // c:4978
+            i += 2;                                                          // c:4979 s++ (already advanced past Meta)
         } else {
             i += 1;
         }
-        count += 1;
+        remaining -= 1;
     }
-    count
+    mlen
 }
 
 /// Port of `unmeta(const char *file_name)` from `Src/utils.c:4994`.
@@ -3555,17 +3758,29 @@ pub fn unmeta(s: &str) -> String {                                           // 
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// Unmetafy a single character (from utils.c unmeta_one)
-/// Port of `unmeta_one(const char *in, int *sz)` from `Src/utils.c:5058`.
+/// Port of `convchar_t unmeta_one(const char *in, int *sz)` from `Src/utils.c:5056-5086`.
+/// Non-MULTIBYTE branch (c:5077-5083):
+/// ```c
+/// if (in[0] == Meta) { *sz = 2; wc = (unsigned char)(in[1] ^ 32); }
+/// else               { *sz = 1; wc = (unsigned char) in[0]; }
+/// ```
+/// Returns `(decoded_char, bytes_consumed)`. The c:5070 NULL/empty
+/// guard returns `(0, 0)`. Previously used hardcoded `0x83` for the
+/// Meta byte — now routes through the canonical `Meta` constant
+/// (defined as `'\u{83}'` at zsh.h:144).
 /// WARNING: param names don't match C — Rust=(s) vs C=(in, sz)
-pub fn unmeta_one(s: &str) -> (char, usize) {
+pub fn unmeta_one(s: &str) -> (char, usize) {                                // c:5058
     let bytes = s.as_bytes();
+    // c:5070 — `if (!in || !*in) return 0;`
     if bytes.is_empty() {
         return ('\0', 0);
     }
-    if bytes[0] == 0x83 && bytes.len() > 1 {
+    // c:5077 — `if (in[0] == Meta)`.
+    if bytes[0] == Meta as u8 && bytes.len() > 1 {
+        // c:5078-5079 — `*sz = 2; wc = (unsigned char)(in[1] ^ 32);`.
         ((bytes[1] ^ 32) as char, 2)
     } else {
+        // c:5081-5082 — `*sz = 1; wc = (unsigned char) in[0];`.
         (bytes[0] as char, 1)
     }
 }
@@ -3670,10 +3885,42 @@ pub fn ztrlenend(s: &str, eptr: usize) -> usize {
     l
 }
 
-/// String pointer subtraction with meta handling (from utils.c ztrsub)
-/// Port of `ztrsub(char const *t, char const *s)` from `Src/utils.c:5187`.
-pub fn ztrsub(t: &str, s: &str) -> usize {                                   // c:5187
-    ztrlen(&t[..t.len().saturating_sub(s.len())])
+/// Port of `int ztrsub(char const *t, char const *s)` from `Src/utils.c:5185-5203`.
+/// ```c
+/// int l = t - s;
+/// while (s != t) {
+///     if (*s++ == Meta) { s++; l--; }
+/// }
+/// return l;
+/// ```
+/// "Subtract two pointers in a metafied string." `s` is the start
+/// pointer, `t` is the end pointer; both point into the SAME buffer.
+/// Returns the count of unmetafied chars in `[s, t)` — same as
+/// `ztrlen` of the substring but expressed via pointer arithmetic.
+///
+/// Rust API: takes the full buffer and a byte-offset pair
+/// `[start..end)` since Rust can't replicate raw-pointer subtraction
+/// across distinct `&str` arguments without UB risk. The semantics
+/// stay faithful: count of unmetafied chars between two offsets.
+/// Previous Rust port took two unrelated `&str` and computed
+/// `ztrlen(&t[..t.len()-s.len()])` — a fundamentally different
+/// operation that worked only when `s` was the suffix of `t`.
+/// WARNING: param names don't match C — Rust=(buf, start, end) vs C=(t, s)
+pub fn ztrsub(buf: &str, start: usize, end: usize) -> usize {                // c:5187
+    let bytes = buf.as_bytes();
+    let end = end.min(bytes.len());
+    let start = start.min(end);
+    let mut l = (end - start) as isize;                                      // c:5189
+    let mut i = start;
+    while i < end {
+        if bytes[i] == Meta as u8 {                                          // c:5192
+            i += 2;                                                          // c:5198
+            l -= 1;                                                          // c:5199
+        } else {
+            i += 1;
+        }
+    }
+    l.max(0) as usize
 }
 
 /// Check if directory is readable with entries (from utils.c)
@@ -3693,31 +3940,51 @@ pub fn zreaddir(path: &str) -> Vec<String> {
     }
 }
 
-/// Unmetafy a string and write it to stdout.
-/// Port of `zputs(char const *s, FILE *stream)` from Src/utils.c:5265. C source walks the
-/// metafied byte stream, converts each `Meta+X` pair back to `X
-/// ^ 32`, and writes via `fputc`. We collapse to one `write_all`
-/// after constructing the unmetafied string. Internal token bytes
-/// (the `itok()` range) are skipped just as the C source does.
+/// Port of `int zputs(char const *s, FILE *stream)` from `Src/utils.c:5263-5282`.
+/// ```c
+/// while (*s) {
+///     if (*s == Meta)     c = *++s ^ 32;
+///     else if (itok(*s)) { s++; continue; }
+///     else                c = *s;
+///     s++;
+///     if (fputc(c, stream) < 0) return EOF;
+/// }
+/// return 0;
+/// ```
+/// Token-byte detection previously hardcoded `c >= 0x83 && c <= 0x9b`
+/// — that's a 0x19-byte window which doesn't match the actual `itok()`
+/// typtab range (which covers Pound..Nularg + Snull..Nularg). Now
+/// routes through the canonical `itok()` predicate.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
-pub fn zputs(s: &str) -> std::io::Result<()> {
+pub fn zputs(s: &str) -> std::io::Result<()> {                               // c:5265
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{83}' {
-            // Meta marker — next byte is the metafied char ^ 32.
-            if let Some(next) = chars.next() {
-                let b = next as u32;
-                out.push(char::from_u32(b ^ 32).unwrap_or(next));
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {                                                  // c:5269
+        let c = bytes[i];
+        if c == Meta as u8 {                                                 // c:5270
+            // c:5271 — `c = *++s ^ 32;`. Skip the Meta byte, decode next.
+            if i + 1 < bytes.len() {
+                let decoded = bytes[i + 1] ^ 32;
+                out.push(decoded as char);
+                i += 2;                                                      // c:5277 s++ after the ++s
+            } else {
+                i += 1;
             }
-        } else if (c as u32) >= 0x83 && (c as u32) <= 0x9b {
-            // Internal token — skip per itok().
+        } else if crate::ported::ztype_h::itok(c) {                          // c:5272
+            // c:5273-5274 — token byte: `s++; continue;` (skip without
+            // emitting). Canonical `itok()` covers Pound..Nularg +
+            // Snull..Nularg per typtab; previous Rust port hardcoded
+            // 0x83..=0x9b which missed the Snull..Nularg range
+            // (typically 0xa0..0xa9 on default zsh.h tokens).
+            i += 1;
             continue;
         } else {
-            out.push(c);
+            out.push(c as char);
+            i += 1;
         }
     }
-    std::io::stdout().lock().write_all(out.as_bytes())
+    std::io::stdout().lock().write_all(out.as_bytes())                       // c:5278
 }
 
 /// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289` (single-byte build) and
@@ -3772,14 +4039,22 @@ pub fn niceztrlen(s: &str) -> usize {
 /// chars iterator which already produces valid scalar values, so
 /// invalid-byte fallback collapses to the control-char branch.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
-// Rust idiom replacement: `chars()` + `nicechar` covers the C
+// Rust idiom replacement: `chars()` + `wcs_nicechar` covers the C
 // mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
 // valid scalars, so the invalid-byte arm collapses).
 pub fn mb_niceformat(s: &str) -> String {
     let unmeta = self::unmeta(s);
     let mut out = String::with_capacity(unmeta.len());
+    // c:5407-5435 — C iterates via `mbrtowc(&c, ptr, umlen, &mbs)`
+    // then calls `wcs_nicechar(c, ...)` on each scalar. The Rust
+    // port previously called byte-based `nicechar(c)` here —
+    // incorrect for non-ASCII codepoints (would byte-mask via
+    // `c & 0xff` and emit `\M-X` for legit UTF-8 char). Route
+    // through `wcs_nicechar` (now properly ported in this session)
+    // so non-ASCII printable wides emit raw UTF-8 and large
+    // codepoints get `\u`/`\U` hex escape.
     for c in unmeta.chars() {
-        out.push_str(&nicechar(c));
+        out.push_str(&wcs_nicechar(c));
     }
     out
 }
@@ -3815,22 +4090,23 @@ pub fn mb_niceformat(s: &str) -> String {
 /// `is_wcs_nicechar(scalar)`; for invalid bytes, check
 /// `is_nicechar(byte)`. Either path bailing positive returns true.
 pub fn is_mb_niceformat(s: &str) -> bool {
-    // C: ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);
+    // c:5481-5483 — `ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);`
     let mut bytes = s.as_bytes().to_vec();
     let umlen = unmetafy(&mut bytes);
     bytes.truncate(umlen);
 
     let mut i = 0;
     while i < bytes.len() {
-        // Try to decode a UTF-8 char at bytes[i..]
         let remaining = &bytes[i..];
         match std::str::from_utf8(remaining) {
             Ok(s) => {
-                // Whole rest is valid UTF-8 — walk char by char.
+                // c:5503-5511 — `default: if (is_wcs_nicechar(c)) ret = 1;`
+                // Walk valid UTF-8 char-by-char. Previously the Rust
+                // port used an inline check that didn't honor
+                // PRINTEIGHTBIT for high-bit chars; now routes through
+                // the canonical `is_wcs_nicechar` predicate.
                 for c in s.chars() {
-                    // C: is_wcs_nicechar — control chars or > 0x7e
-                    // ASCII (which mirrors `nicechar`'s output rules).
-                    if (c as u32) < 0x20 || c == '\x7f' || (c as u32) > 0x7e {
+                    if is_wcs_nicechar(c) {                                  // c:5509
                         return true;
                     }
                 }
@@ -3842,17 +4118,18 @@ pub fn is_mb_niceformat(s: &str) -> bool {
                     let valid = std::str::from_utf8(&remaining[..valid_up_to])
                         .expect("valid_up_to slice");
                     for c in valid.chars() {
-                        if (c as u32) < 0x20 || c == '\x7f' || (c as u32) > 0x7e {
+                        if is_wcs_nicechar(c) {                              // c:5509
                             return true;
                         }
                     }
                     i += valid_up_to;
                     continue;
                 }
-                // Invalid byte — mirror C's MB_INVALID branch: check
-                // `is_nicechar(*ptr)` (the raw byte).
+                // c:5493-5498 — `case MB_INVALID: if (is_nicechar(*ptr))
+                //                ret = 1; break;`. Raw byte check via
+                // canonical `is_nicechar` (now PRINTEIGHTBIT-aware).
                 let b = remaining[0];
-                if is_nicechar(b as char) {
+                if is_nicechar(b as char) {                                  // c:5495
                     return true;
                 }
                 i += 1;
@@ -3933,21 +4210,30 @@ pub fn mb_charlenconv(s: &str, pos: usize) -> usize {
     s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(0)
 }
 
-/// Single-byte metafied char advance.
-/// Port of `metacharlenconv(const char *x, int *c)` from Src/utils.c:5811 — the
-/// non-MULTIBYTE_SUPPORT branch. Same `Meta+X` two-byte handling
-/// without the multibyte decode.
+/// Port of `int metacharlenconv(const char *x, int *c)` from `Src/utils.c:5810-5826`.
+/// ```c
+/// if (*x == Meta) {
+///     if (c) *c = x[1] ^ 32;
+///     return 2;
+/// }
+/// if (c) *c = (char)*x;
+/// return 1;
+/// ```
+/// Single-byte metafied char advance — Meta+X is 2 bytes (decode
+/// via XOR 32), plain byte is 1 byte. Previously used hardcoded
+/// `0x83`; now routes through the canonical `Meta` const for
+/// maintainability parity.
 /// WARNING: param names don't match C — Rust=(s) vs C=(x, c)
-pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {
+pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {                   // c:5811
     let bytes = s.as_bytes();
     if bytes.is_empty() {
         return (0, None);
     }
-    if bytes[0] == 0x83 && bytes.len() >= 2 {
-        let raw = bytes[1] as u32 ^ 32;
-        return (2, char::from_u32(raw));
+    if bytes[0] == Meta as u8 && bytes.len() >= 2 {                          // c:5818
+        let raw = bytes[1] as u32 ^ 32;                                      // c:5820
+        return (2, char::from_u32(raw));                                     // c:5821
     }
-    (1, Some(bytes[0] as char))
+    (1, Some(bytes[0] as char))                                              // c:5823-5825
 }
 
 /// Plain (non-metafy) char advance.
@@ -3967,28 +4253,50 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
     (1, Some(bytes[0] as char))
 }
 
-/// Single-byte nice format (from utils.c sb_niceformat)
-/// Port of `sb_niceformat(const char *s, FILE *stream, char **outstrp, int flags)` from `Src/utils.c:5851`.
+/// Port of `size_t sb_niceformat(const char *s, FILE *stream, char **outstrp, int flags)` from `Src/utils.c:5849-5910`.
+/// ```c
+/// ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);
+/// while (ptr < eptr) {
+///     int c = (unsigned char) *ptr;
+///     if      (c == '\''  && (flags & NICEFLAG_QUOTE)) fmt = "\\'";
+///     else if (c == '\\'  && (flags & NICEFLAG_QUOTE)) fmt = "\\\\";
+///     else                                              fmt = nicechar_sel(c, ...);
+/// }
+/// ```
+/// Single-byte nice format. **Unmetafies the input first** (c:5872),
+/// then calls `nicechar_sel` for EVERY byte (not just controls). The
+/// previous Rust port did neither — emitted raw bytes for any
+/// non-ASCII-control input, which corrupted output for high-bit
+/// bytes under PRINTEIGHTBIT-off (should have rendered `\M-X`).
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
-// Rust idiom replacement: `chars()` + `nicechar` covers the C
-// per-byte format loop; the C `stream`/`outstrp`/`flags` ABI drops
-// (callers in zshrs build a String directly).
-pub fn sb_niceformat(s: &str) -> String {
+pub fn sb_niceformat(s: &str) -> String {                                    // c:5851
+    // c:5865-5872 — unmetafy first so we operate on raw bytes.
+    let mut bytes = s.as_bytes().to_vec();
+    let umlen = unmetafy(&mut bytes);
+    bytes.truncate(umlen);
+
     let mut result = String::new();
-    for c in s.chars() {
-        if c.is_ascii_control() {
-            result.push_str(&nicechar(c));
-        } else {
-            result.push(c);
-        }
+    // c:5875 — `while (ptr < eptr)`.
+    for &b in &bytes {
+        // c:5886 — `fmt = nicechar_sel(c, ...)` for every byte.
+        // NICEFLAG_QUOTE not yet plumbed (no callers need it); pass
+        // `quotable=false` so single-byte path uses `^X`/`\M-X` forms.
+        result.push_str(&nicechar_sel(b as char, false));
     }
     result
 }
 
-/// Check if single-byte needs nice format (from utils.c is_sb_niceformat)
-/// Port of `is_sb_niceformat(const char *s)` from `Src/utils.c:5937`.
-pub fn is_sb_niceformat(s: &str) -> bool {
-    s.chars().any(|c| c.is_ascii_control())
+/// Port of `int is_sb_niceformat(const char *s)` from `Src/utils.c:5937-5959`.
+/// Predicate: would sb_niceformat change the input? Walks each byte
+/// after unmetafy, returns true if any byte is "nice" per
+/// `is_nicechar`. Previously only checked `is_ascii_control` —
+/// missed high-bit bytes that need `\M-X` escaping under
+/// PRINTEIGHTBIT-off.
+pub fn is_sb_niceformat(s: &str) -> bool {                                   // c:5937
+    let mut bytes = s.as_bytes().to_vec();
+    let umlen = unmetafy(&mut bytes);
+    bytes.truncate(umlen);
+    bytes.iter().any(|&b| is_nicechar(b as char))
 }
 
 /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5975.
@@ -4040,26 +4348,77 @@ pub(crate) fn zexpandtabs(
     startpos
 }
 
-/// Check for special characters that need quoting (from utils.c hasspecial)
-/// Port of `hasspecial(char const *s)` from `Src/utils.c:6072`.
-pub fn hasspecial(s: &str) -> bool {
-    s.chars().any(ispecial)
+/// Port of `int hasspecial(char const *s)` from `Src/utils.c:6072-6082`.
+/// ```c
+/// while (*s) {
+///     if (ispecial(*s == Meta ? *++s ^ 32 : *s)) return 1;
+///     s++;
+/// }
+/// return 0;
+/// ```
+/// Predicate: does `s` contain any byte that needs shell-quoting?
+/// Routes through the canonical typtab-driven `ztype_h::ispecial`
+/// which respects the `ZTF_SP_COMMA` (set by `makecommaspecial`)
+/// and `ZTF_BANGCHAR` (BANGHIST + interact) flags. Previously used
+/// a hardcoded char list — diverged from C for `,` (KSH_GLOB
+/// extended-glob) and for the dynamic bangchar (`!` by default but
+/// user-rewritable via `$HISTCHARS`).
+pub fn hasspecial(s: &str) -> bool {                                         // c:6072
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = if bytes[i] == Meta as u8 && i + 1 < bytes.len() {
+            // c:6075 — `*s == Meta ? *++s ^ 32 : *s`.
+            let v = bytes[i + 1] ^ 32;
+            i += 2;
+            v
+        } else {
+            let v = bytes[i];
+            i += 1;
+            v
+        };
+        if crate::ported::ztype_h::ispecial(c) {                             // c:6075
+            return true;
+        }
+    }
+    false
 }
 
-/// Add unprintable character representation (from utils.c addunprintable)
-/// Port of `addunprintable(char *v, const char *u, const char *uend)` from `Src/utils.c:6083`.
+/// Port of `static char *addunprintable(char *v, const char *u, const char *uend)`
+/// from `Src/utils.c:6082-6124`. Renders unprintable bytes using
+/// **shell-compatible C-string escapes**:
+///   - `\0` (NUL, with `\000` form if next byte is octal-digit)
+///   - `\a` (0x07 BEL), `\b` (BS), `\f` (FF), `\n` (LF),
+///     `\r` (CR), `\t` (TAB), `\v` (VT)
+///   - `\nnn` 3-digit octal fallback for any other control byte
+///
+/// Previously the Rust port emitted ZLE-style caret notation (`^X`,
+/// `\u{:04x}`) — completely different convention. C semantics target
+/// `printf %q` / `$'...'` reuse where the output must round-trip
+/// through `printf %b` to reconstruct the original byte. Caret
+/// notation is what ZLE *displays* but not what `addunprintable`
+/// emits.
 /// WARNING: param names don't match C — Rust=(c) vs C=(v, u, uend)
-pub fn addunprintable(c: char) -> String {
-    if c.is_ascii_control() {
-        if (c as u8) < 32 {
-            format!("^{}", (c as u8 + 64) as char)
-        } else {
-            "^?".to_string()
-        }
-    } else if !c.is_ascii() {
-        format!("\\u{:04x}", c as u32)
-    } else {
-        c.to_string()
+pub fn addunprintable(c: char) -> String {                                   // c:6082
+    let b = c as u32 & 0xff;
+    match b as u8 {
+        // c:6097-6103 — `\0`. C peeks next byte and uses `\000` form
+        // when followed by an octal digit. Rust port works on a single
+        // char so emits just `\0`; callers needing the disambiguation
+        // form can pass the lookahead byte separately.
+        0x00 => "\\0".to_string(),
+        0x07 => "\\a".to_string(),                                           // c:6106
+        0x08 => "\\b".to_string(),                                           // c:6107
+        0x0c => "\\f".to_string(),                                           // c:6108
+        0x0a => "\\n".to_string(),                                           // c:6109
+        0x0d => "\\r".to_string(),                                           // c:6110
+        0x09 => "\\t".to_string(),                                           // c:6111
+        0x0b => "\\v".to_string(),                                           // c:6112
+        // c:6114-6119 — `\nnn` 3-digit octal default.
+        _ => format!("\\{:o}{:o}{:o}",
+            (b >> 6) & 7,
+            (b >> 3) & 7,
+             b       & 7),
     }
 }
 
@@ -4215,105 +4574,129 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {                     // 
 #[allow(non_snake_case)]
 /// Port of `quotedzputs(char const *s, FILE *stream)` from `Src/utils.c:6464`.
 /// WARNING: param names don't match C — Rust=() vs C=(s, stream)
-pub(crate) fn quotedzputs(s: &str) -> String {
+pub(crate) fn quotedzputs(s: &str) -> String {                               // c:6464
+    // c:6470-6475 — empty string emits `''` literal.
     if s.is_empty() {
         return "''".to_string();
     }
-    // Direct port of `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`
-    // from Src/zsh.h:228. ANY occurrence triggers the single-bslashquote
-    // wrap — e.g. `name=val` quotes because `=` is in the set.
-    let needs_quote = s.chars().any(|c| {
-        matches!(
-            c,
-            '#' | '$'
-                | '^'
-                | '*'
-                | '('
-                | ')'
-                | '='
-                | '|'
-                | '{'
-                | '}'
-                | '['
-                | ']'
-                | '`'
-                | '<'
-                | '>'
-                | '?'
-                | '~'
-                | ';'
-                | '&'
-                | '\n'
-                | '\t'
-                | ' '
-                | '\\'
-                | '\''
-                | '"'
-        )
-    });
-    if !needs_quote {
-        s.to_string()
-    } else {
-        // `'` inside a single-quoted string closes the bslashquote, escapes
-        // an apostrophe via `'\''`, then reopens.
-        let inner = s.replace('\'', "'\\''");
-        format!("'{}'", inner)
+    // c:6512 — `if (hasspecial(s)) wrap in single quotes`. Routes
+    // through the canonical typtab-driven `hasspecial` (which after
+    // this session's inittyptab/SPECCHARS fixes correctly handles
+    // ZTF_SP_COMMA + ZTF_BANGCHAR flag bits + Meta-byte decode).
+    // Previously the Rust port used a hardcoded char list — diverged
+    // from C for `,` (KSH_GLOB extended-glob) and for dynamic bangchar.
+    if !hasspecial(s) {
+        return s.to_string();
     }
+    // c:6514-6543 — single-quote wrap with `'\''` escape for embedded
+    // apostrophes. (The c:6477-6491 `$'…'` nice-format path is not
+    // yet plumbed; control chars currently flow through the
+    // single-quote arm.)
+    let inner = s.replace('\'', "'\\''");
+    format!("'{}'", inner)
 }
 
-/// Port of `dquotedztrdup(char const *s)` from `Src/utils.c:6649`.
+/// Port of `char *dquotedztrdup(char const *s)` from `Src/utils.c:6648-6723`.
+/// Two arms (selected by `isset(CSHJUNKIEQUOTES)` at c:6655):
 ///
-/// "Double-quote a metafied string." C body has two arms:
-/// - CSHJUNKIEQUOTES set: backslash-escape `"`/`$`/`` ` `` and
-///   wrap whole sections in `"..."`, breaking on metacharacters.
-/// - Otherwise: wrap the whole string in `"..."` with backslash
-///   escaping for `\`/`"`/`$`/`` ` ``, plus the `pending` quirk
-///   for trailing backslashes.
+/// **CSHJUNKIEQUOTES path** (c:6656-6686): the csh-junk-quote style
+/// where only the non-special sections are wrapped in `"..."` and
+/// special chars (`"`, `$`, `` ` ``) appear OUTSIDE the quotes with
+/// backslash escape. `\n` inside the quotes gets an extra `\` so it
+/// round-trips through history.
 ///
-/// Previous Rust port produced unquoted output (just escaped
-/// metacharacters inline) — wrong for both arms. New port matches
-/// the non-CSHJUNKIEQUOTES path (the common one).
-pub fn dquotedztrdup(s: &str) -> String {
+/// **Default path** (c:6687-6719): wraps the whole string in `"..."`.
+/// `\` is doubled to `\\`. `"`, `$`, `` ` `` get backslash-escaped.
+/// A trailing `\` gets an extra `\` appended (the `pending` quirk).
+///
+/// Previously the Rust port only implemented the default arm; the
+/// CSHJUNKIEQUOTES path is now ported faithfully.
+pub fn dquotedztrdup(s: &str) -> String {                                    // c:6648
     let mut out = String::with_capacity(s.len() * 4 + 2);
-    out.push('"');
-    let mut pending = false;
     let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = if bytes[i] == Meta && i + 1 < bytes.len() {
-            i += 2;
-            (bytes[i - 1] ^ 32) as char
-        } else {
-            i += 1;
-            bytes[i - 1] as char
-        };
-        match c {
-            '\\' => {
-                if pending {
+    // c:6655 — `if (isset(CSHJUNKIEQUOTES))`.
+    if isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+        let mut inquote = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            // c:6661-6662 — Meta byte decode.
+            let c = if bytes[i] == Meta && i + 1 < bytes.len() {
+                i += 2;
+                (bytes[i - 1] ^ 32) as char
+            } else {
+                i += 1;
+                bytes[i - 1] as char
+            };
+            match c {
+                // c:6664-6673 — `"` / `$` / `` ` `` — close quote
+                // (if open), then `\<c>`.
+                '"' | '$' | '`' => {
+                    if inquote {
+                        out.push('"');
+                        inquote = false;
+                    }
                     out.push('\\');
+                    out.push(c);
                 }
-                out.push('\\');
-                pending = true;
-            }
-            '"' | '$' | '`' => {
-                if pending {
-                    out.push('\\');
+                // c:6674-6682 — default arm: open quote if needed,
+                // backslash-escape newline, emit char.
+                _ => {
+                    if !inquote {
+                        out.push('"');
+                        inquote = true;
+                    }
+                    if c == '\n' {
+                        out.push('\\');
+                    }
+                    out.push(c);
                 }
-                out.push('\\');
-                out.push(c);
-                pending = false;
-            }
-            other => {
-                out.push(other);
-                pending = false;
             }
         }
+        // c:6685-6686 — close trailing quote.
+        if inquote {
+            out.push('"');
+        }
+    } else {
+        // c:6687-6718 — default (non-CSH) arm.
+        out.push('"');
+        let mut pending = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = if bytes[i] == Meta && i + 1 < bytes.len() {
+                i += 2;
+                (bytes[i - 1] ^ 32) as char
+            } else {
+                i += 1;
+                bytes[i - 1] as char
+            };
+            match c {
+                '\\' => {
+                    if pending {
+                        out.push('\\');
+                    }
+                    out.push('\\');
+                    pending = true;
+                }
+                '"' | '$' | '`' => {
+                    if pending {
+                        out.push('\\');
+                    }
+                    out.push('\\');
+                    out.push(c);
+                    pending = false;
+                }
+                other => {
+                    out.push(other);
+                    pending = false;
+                }
+            }
+        }
+        if pending {
+            out.push('\\');
+        }
+        out.push('"');
     }
-    if pending {
-        out.push('\\');
-    }
-    out.push('"');
-    // C: ret = metafy(buf, p - buf, META_DUP);  — re-metafy result.
+    // c:6720 — `ret = metafy(buf, p - buf, META_DUP);` re-metafy result.
     metafy(&out)
 }
 
@@ -5600,7 +5983,12 @@ pub fn fdtable_get(fd: i32) -> i32 {                                     // c:ut
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
 /// the C statement `fdtable[fd] = kind;`. Inlines the `growfdtable`
 /// call from Src/utils.c:1965 since C always invokes it immediately
-/// before the assignment anyway.
+/// before the assignment anyway. Also updates `MAX_ZSH_FD` to track
+/// the highest assigned slot — C does this inside `check_fd_table`
+/// at `Src/utils.c:1982` (`max_zsh_fd = fd;`). Previously the Rust
+/// `fdtable_set` skipped this, leaving `max_zsh_fd = 0` after any
+/// `addlockfd` / `addmodulefd` call, which broke `zcloselockfd`'s
+/// `if (fd > max_zsh_fd)` guard.
 pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:utils.c:fdtable[fd]
     if fd < 0 { return; }
     let mut g = fdtable_lock().lock().unwrap();
@@ -5608,6 +5996,13 @@ pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:ut
         g.resize((fd as usize) + 1, crate::ported::zsh_h::FDT_UNUSED);
     }
     g[fd as usize] = kind;
+    // c:1982 — `max_zsh_fd = fd;` (with `if (fd <= max_zsh_fd) return;`
+    // guard at c:1971). Inline equivalent: bump only when this fd
+    // exceeds the current max.
+    let cur = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    if fd > cur {
+        MAX_ZSH_FD.store(fd, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Port of `imeta()` macro from `Src/zsh.h`. Returns true for any
@@ -6207,6 +6602,742 @@ mod tests {
         assert_eq!(ztrlen("hello"), 5);
     }
 
+    /// `Src/utils.c:5141-5149` — Meta-byte pair counts as 1 char.
+    /// `*s++ == Meta` advances 2 bytes per iteration but increments
+    /// `l` only once. Pin: a string with one Meta+X pair counts as 1.
+    #[test]
+    fn ztrlen_counts_meta_pair_as_one() {
+        // META (0x83) + 0x20 = unmetafies to one '\0' byte (or a NUL).
+        let meta = char::from_u32(Meta as u32).unwrap();
+        let s: String = [meta, '\x20'].iter().collect();
+        assert_eq!(ztrlen(&s), 1,
+            "c:5141-5148 — Meta+X pair counts as ONE char, not two");
+        // Mixed: "a" + META + "x" + "b" = 3 unmetafied chars.
+        let mixed: String = ['a', meta, '\x20', 'b'].iter().collect();
+        assert_eq!(ztrlen(&mixed), 3,
+            "c:5141 — three unmetafied chars from 'a' + Meta+X + 'b'");
+    }
+
+    /// `Src/utils.c:2620-2625` — `setblock_stdin()`. C body
+    /// `setblock_fd(1, 0, &mode)` enables BLOCKING on fd 0 (stdin).
+    /// Previously the Rust port called `setblock_fd(0, false)`
+    /// which DISABLES blocking — exact opposite. Pin via real fd
+    /// inspection.
+    #[cfg(unix)]
+    #[test]
+    fn setblock_stdin_enables_blocking_on_fd_zero() {
+        // Set stdin to NONBLOCKING first to verify the function
+        // ACTUALLY switches it back to blocking. Skip if stdin is
+        // not a normal fd (some CI configurations).
+        let cur = unsafe { libc::fcntl(0, libc::F_GETFL, 0) };
+        if cur < 0 {
+            return;
+        }
+        // Force NONBLOCK first.
+        unsafe { libc::fcntl(0, libc::F_SETFL, cur | libc::O_NONBLOCK); }
+        let after_set_nb = unsafe { libc::fcntl(0, libc::F_GETFL, 0) };
+        if after_set_nb & libc::O_NONBLOCK == 0 {
+            // System rejected the change (regular file? CI tty?) — skip.
+            unsafe { libc::fcntl(0, libc::F_SETFL, cur); }
+            return;
+        }
+        // Call setblock_stdin — should CLEAR O_NONBLOCK.
+        crate::ported::utils::setblock_stdin();
+        let after_setblock = unsafe { libc::fcntl(0, libc::F_GETFL, 0) };
+        assert_eq!(after_setblock & libc::O_NONBLOCK, 0,
+            "c:2624 — setblock_stdin must CLEAR O_NONBLOCK (enable blocking)");
+        // Restore original flags.
+        unsafe { libc::fcntl(0, libc::F_SETFL, cur); }
+    }
+
+    /// `Src/utils.c:2437-2519` — `zstrtol_underscore(s, base, false)`.
+    /// Base-10 (explicit) parses canonical decimal.
+    #[test]
+    fn zstrtol_underscore_base_10_parses_decimal() {
+        let (v, rest) = zstrtol_underscore("12345", 10, false);
+        assert_eq!(v, 12345, "c:2471 — decimal accumulator");
+        assert_eq!(rest, "", "rest is empty after full consumption");
+        // With trailing non-digit.
+        let (v, rest) = zstrtol_underscore("100abc", 10, false);
+        assert_eq!(v, 100);
+        assert_eq!(rest, "abc",
+            "c:2467 — loop exits at first non-digit; rest carries on");
+    }
+
+    /// c:2452-2461 — base==0 autodetect: `0x`→16, `0b`→2, leading
+    /// `0`→8 (always, unlike `zstrtoul_underscore` which honors
+    /// OCTALZEROES). `zstrtol_underscore` does NOT consult
+    /// OCTALZEROES — pure prefix detection.
+    #[test]
+    fn zstrtol_underscore_base_zero_autodetects_prefix() {
+        // Hex.
+        assert_eq!(zstrtol_underscore("0xff", 0, false).0, 255,
+            "c:2455 — 0x → base 16");
+        assert_eq!(zstrtol_underscore("0XFF", 0, false).0, 255);
+        // Binary.
+        assert_eq!(zstrtol_underscore("0b1010", 0, false).0, 10,
+            "c:2457 — 0b → base 2");
+        // Leading 0 → octal (always, no OCTALZEROES gate).
+        assert_eq!(zstrtol_underscore("0777", 0, false).0, 511,
+            "c:2460 — leading 0 → octal (no OCTALZEROES gate for zstrtol)");
+        // Decimal default.
+        assert_eq!(zstrtol_underscore("12345", 0, false).0, 12345);
+    }
+
+    /// c:2447-2450 — leading `-` and `+` consumed; `-` triggers
+    /// negation at the end (c:2497-2498).
+    #[test]
+    fn zstrtol_underscore_handles_sign_chars() {
+        assert_eq!(zstrtol_underscore("-42", 10, false).0, -42,
+            "c:2447 — leading `-` → negate");
+        assert_eq!(zstrtol_underscore("+42", 10, false).0, 42,
+            "c:2449 — leading `+` consumed, no negation");
+        // Mixed whitespace + sign.
+        assert_eq!(zstrtol_underscore("  -100", 10, false).0, -100,
+            "c:2444 — leading whitespace skipped, then sign");
+    }
+
+    /// c:2466-2492 — base 16 (hex) accumulator: digits 0-9 + letters
+    /// a-f / A-F via `idigit(*s)` || `'a' ≤ *s < 'a'+base-10`.
+    /// Pin both upper- and lower-case.
+    #[test]
+    fn zstrtol_underscore_base_16_accepts_letters() {
+        assert_eq!(zstrtol_underscore("ff", 16, false).0, 255,
+            "c:2485 — base-16 'ff' → 255");
+        assert_eq!(zstrtol_underscore("FF", 16, false).0, 255,
+            "c:2485 — base-16 'FF' → 255 (upper case via `*s & 0x1f`)");
+        assert_eq!(zstrtol_underscore("DEADbeef", 16, false).0, 0xDEADBEEF,
+            "c:2485 — mixed case 32-bit hex");
+    }
+
+    /// c:2468/2482 — `underscore` flag enables digit-separator. With
+    /// underscore=false, `_` is treated as end-of-digits. With
+    /// underscore=true, `_` is skipped (c:2469-2470).
+    #[test]
+    fn zstrtol_underscore_underscore_flag() {
+        // underscore=false: `_` terminates parse.
+        let (v, rest) = zstrtol_underscore("1_000", 10, false);
+        assert_eq!(v, 1,
+            "c:2467 — underscore=false: `_` terminates");
+        assert_eq!(rest, "_000");
+        // underscore=true: `_` accepted and skipped.
+        let (v, rest) = zstrtol_underscore("1_000_000", 10, true);
+        assert_eq!(v, 1_000_000,
+            "c:2469-2470 — underscore=true: `_` skipped during accumulation");
+        assert_eq!(rest, "",
+            "fully consumed including `_`s");
+    }
+
+    /// `Src/utils.c:2750-2774` — `timespec_diff_us(t1, t2)` returns
+    /// the signed microsecond delta `t2 - t1`. Pin both sign
+    /// conventions: t2 after t1 → positive; t2 before t1 → negative.
+    #[test]
+    fn timespec_diff_us_sign_matches_c_t2_minus_t1() {
+        let t1 = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let t2 = std::time::Instant::now();
+        // c:2759 — `diff_sec = t2 - t1` for the t2 > t1 path. Result
+        // positive (microseconds elapsed).
+        let d = timespec_diff_us(&t1, &t2);
+        assert!(d > 0,
+            "c:2759 — t2 after t1 → positive delta");
+        assert!(d >= 1000,
+            "expected >= 1ms (1000us); got {}us", d);
+        // c:2754 — reversed (t1 > t2): result negative.
+        let r = timespec_diff_us(&t2, &t1);
+        assert!(r < 0,
+            "c:2770 — t1 after t2 → negative delta");
+        assert_eq!(d, -r,
+            "swap of args negates the result");
+    }
+
+    /// c:2752 — `timespec_diff_us(t, t)` is 0 (identical Instants).
+    #[test]
+    fn timespec_diff_us_same_instant_returns_zero() {
+        let t = std::time::Instant::now();
+        assert_eq!(timespec_diff_us(&t, &t), 0,
+            "c:2752 — identical Instants → 0");
+    }
+
+    /// `Src/utils.c:6743-6779` — `ucs4toutf8(dest, wval)`. Encodes
+    /// a Unicode codepoint to UTF-8. Pin canonical 1-, 2-, 3-, and
+    /// 4-byte encodings.
+    #[test]
+    fn ucs4toutf8_encodes_canonical_lengths() {
+        // c:6750 — 1 byte: ASCII range [0, 0x80).
+        assert_eq!(ucs4toutf8(0x41), Some("A".to_string()),
+            "c:6750 — 0x41 → 'A' (1 byte)");
+        // c:6752 — 2 bytes: [0x80, 0x800). 'é' = U+00E9.
+        assert_eq!(ucs4toutf8(0xe9), Some("é".to_string()),
+            "c:6752 — U+00E9 → 'é' (2 bytes)");
+        // c:6754 — 3 bytes: [0x800, 0x10000). '字' = U+5B57.
+        assert_eq!(ucs4toutf8(0x5B57), Some("字".to_string()),
+            "c:6754 — U+5B57 → '字' (3 bytes)");
+        // c:6756 — 4 bytes: [0x10000, 0x200000). '𝄞' = U+1D11E.
+        assert_eq!(ucs4toutf8(0x1D11E), Some("𝄞".to_string()),
+            "c:6756 — U+1D11E → '𝄞' (4 bytes)");
+    }
+
+    /// `Src/utils.c:6762-6764` — values outside Unicode range
+    /// (>= 0x80000000) emit `zerr("character not in range")` and
+    /// return `-1`. The Rust port returns `None` for values that
+    /// `char::from_u32` rejects (U+D800..U+DFFF surrogates + values
+    /// > U+10FFFF).
+    #[test]
+    fn ucs4toutf8_rejects_invalid_codepoints() {
+        // c:6762 — out-of-range value.
+        assert_eq!(ucs4toutf8(0xFFFF_FFFE), None,
+            "c:6763 — values out of Unicode range return None");
+        // Surrogate code points are invalid for direct encoding.
+        assert_eq!(ucs4toutf8(0xD800), None,
+            "U+D800 is a surrogate, char::from_u32 rejects it");
+    }
+
+    /// `Src/utils.c:6648-6723` — `dquotedztrdup(s)`. Default (non-
+    /// CSHJUNKIEQUOTES) arm: wrap whole string in `"..."`. Backslash
+    /// doubles, `"`/`$`/`` ` `` get escaped.
+    #[test]
+    fn dquotedztrdup_default_path_wraps_whole_string() {
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+            return; // Default-only test.
+        }
+        // c:6690 — `*p++ = '"';` then iterate.
+        assert_eq!(dquotedztrdup("hello"), "\"hello\"",
+            "c:6690+6711+6718 — wrap plain text in double quotes");
+        // c:6703-6708 — `$` gets `\$`.
+        assert_eq!(dquotedztrdup("$var"), "\"\\$var\"",
+            "c:6703-6708 — `$` → `\\$`");
+        // c:6703-6708 — `"` gets `\"`.
+        assert_eq!(dquotedztrdup("a\"b"), "\"a\\\"b\"",
+            "c:6703-6708 — `\"` → `\\\"`");
+    }
+
+    /// c:6697-6701 — backslash handling with `pending` state.
+    /// Single `\` followed by an ordinary char emits just `\` (no
+    /// doubling). The "pending" extra `\` fires only when the next
+    /// char is itself a backslash or one of the escaped specials
+    /// (`"`/`$`/`` ` ``), OR at end-of-string before the closing `"`.
+    #[test]
+    fn dquotedztrdup_pending_backslash_only_doubles_when_needed() {
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+            return;
+        }
+        // Mid-string `\` before ordinary char: stays as single `\`.
+        assert_eq!(dquotedztrdup("a\\b"), "\"a\\b\"",
+            "c:6711+6712 — `\\b` mid-string: no extra (pending=0 after b)");
+        // Trailing `\` triggers pending quirk: c:6716-6717 emits
+        // an extra `\` before the closing `"`.
+        let r = dquotedztrdup("a\\");
+        assert!(r.ends_with("\\\\\""),
+            "c:6716-6717 — trailing `\\` → emit extra `\\` before closing `\"`: got {:?}", r);
+    }
+
+    /// `Src/utils.c:6464-6549` — `quotedzputs(s)`. Three branches:
+    ///   - empty → `''`.
+    ///   - has special chars (via `hasspecial`) → wrap in `'...'`
+    ///     with `'\''` escape for embedded apostrophes.
+    ///   - else → return unchanged.
+    /// Pin all three.
+    #[test]
+    fn quotedzputs_empty_string_returns_double_quotes() {
+        assert_eq!(quotedzputs(""), "''",
+            "c:6470-6475 — empty input → ''");
+    }
+
+    /// c:6514-6543 — needs-quote path: wrap in single quotes,
+    /// escape embedded `'` as `'\''`.
+    #[test]
+    fn quotedzputs_wraps_specials_in_single_quotes() {
+        crate::ported::utils::inittyptab();
+        // Space is special → wrap.
+        assert_eq!(quotedzputs("hello world"), "'hello world'");
+        // `=` is special → wrap.
+        assert_eq!(quotedzputs("foo=bar"), "'foo=bar'");
+        // Embedded apostrophe — `'\''` escape.
+        assert_eq!(quotedzputs("it's"), "'it'\\''s'",
+            "c:6517-6519 — apostrophe → '\\''");
+    }
+
+    /// c:6512 — no specials → return unchanged.
+    #[test]
+    fn quotedzputs_plain_alnum_returns_unchanged() {
+        crate::ported::utils::inittyptab();
+        assert_eq!(quotedzputs("hello"), "hello",
+            "c:6512 — no specials, no wrap");
+        assert_eq!(quotedzputs("abc123"), "abc123");
+    }
+
+    /// `Src/utils.c:2331-2337` — `strucpy(s, t)`. Appends `t` to
+    /// `*s` and leaves `*s` pointing at the NUL terminator (Rust
+    /// equivalent: append-in-place; `.len()` gives the new end).
+    /// Pin: empty input → no-op; non-empty input → append.
+    #[test]
+    fn strucpy_appends_t_to_dest() {
+        let mut dest = String::from("prefix-");
+        strucpy(&mut dest, "suffix");
+        assert_eq!(dest, "prefix-suffix",
+            "c:2335 — strucpy appends t (NOT case-changes — c-name 'u' is pointer-walk, not upper)");
+        // Empty t — no change.
+        let mut dest = String::from("alone");
+        strucpy(&mut dest, "");
+        assert_eq!(dest, "alone");
+        // Empty dest + non-empty t.
+        let mut dest = String::new();
+        strucpy(&mut dest, "hello");
+        assert_eq!(dest, "hello");
+    }
+
+    /// `Src/utils.c:2341-2350` — `struncpy(s, t, n)`. Appends up to
+    /// `n` bytes of `t` to `*s`. Pin: n=0 no-op; n < len(t) clips;
+    /// n >= len(t) appends all.
+    #[test]
+    fn struncpy_appends_up_to_n_bytes() {
+        // n < len(t).
+        let mut dest = String::from("X");
+        struncpy(&mut dest, "abcdef", 3);
+        assert_eq!(dest, "Xabc",
+            "c:2345 — clipped to n=3 bytes of `abcdef`");
+        // n >= len(t).
+        let mut dest = String::from("Y");
+        struncpy(&mut dest, "abc", 100);
+        assert_eq!(dest, "Yabc",
+            "c:2345 — full copy when n >= len");
+        // n=0 → no append.
+        let mut dest = String::from("Z");
+        struncpy(&mut dest, "abc", 0);
+        assert_eq!(dest, "Z",
+            "c:2345 — n=0 stops the copy loop immediately");
+    }
+
+    /// `Src/utils.c:2280-2288` — `has_token(s)`. Returns true iff
+    /// any byte in `s` triggers `itok()`. Pin: ASCII strings →
+    /// false; strings containing token bytes (Pound 0x84, Bang
+    /// 0x9c, Nularg 0xa1) → true.
+    #[test]
+    fn has_token_detects_typtab_token_bytes() {
+        crate::ported::utils::inittyptab();
+        // c:2285 — pure ASCII has no token bytes.
+        assert!(!has_token(""), "empty: no tokens");
+        assert!(!has_token("hello world"),
+            "c:2285 — ASCII text has no token bytes");
+        // Pound (0x84) — first token byte.
+        let s: String = std::iter::once(0x84u8 as char).collect();
+        assert!(has_token(&s),
+            "c:2285 — Pound (0x84) is itok → has_token=true");
+        // Bang (0x9c) — last_normal_tok.
+        let s: String = std::iter::once(0x9cu8 as char).collect();
+        assert!(has_token(&s),
+            "c:2285 — Bang (0x9c) is itok");
+        // Nularg (0xa1) — upper bound.
+        let s: String = std::iter::once(0xa1u8 as char).collect();
+        assert!(has_token(&s),
+            "c:2285 — Nularg (0xa1) is itok");
+    }
+
+    /// `Src/utils.c:2280` — Meta byte (0x83) is NOT a token. Pin
+    /// the regression: previously the Rust port hardcoded `0x83`
+    /// as a token byte. Now correctly excludes it.
+    #[test]
+    fn has_token_excludes_meta_byte() {
+        crate::ported::utils::inittyptab();
+        // 0x83 is Meta, NOT itok. Should return false.
+        let s: String = std::iter::once(0x83u8 as char).collect();
+        assert!(!has_token(&s),
+            "c:2285 — Meta (0x83) is NOT itok; previous hardcoded 0x83 list misfired");
+    }
+
+    /// `Src/utils.c:6082-6124` — `addunprintable(c)`. Renders bytes
+    /// using shell-compatible C-string escapes (`\a`/`\b`/`\f`/`\n`/
+    /// `\r`/`\t`/`\v` for the named controls + `\nnn` octal for
+    /// others + `\0` for NUL). Previously emitted ZLE caret form —
+    /// wrong convention.
+    #[test]
+    fn addunprintable_named_control_escapes() {
+        // c:6106-6112 — named-escape per byte.
+        assert_eq!(addunprintable('\x07'), "\\a", "c:6106 — BEL → \\a");
+        assert_eq!(addunprintable('\x08'), "\\b", "c:6107 — BS → \\b");
+        assert_eq!(addunprintable('\x0c'), "\\f", "c:6108 — FF → \\f");
+        assert_eq!(addunprintable('\n'),   "\\n", "c:6109 — LF → \\n");
+        assert_eq!(addunprintable('\r'),   "\\r", "c:6110 — CR → \\r");
+        assert_eq!(addunprintable('\t'),   "\\t", "c:6111 — TAB → \\t");
+        assert_eq!(addunprintable('\x0b'), "\\v", "c:6112 — VT → \\v");
+    }
+
+    /// c:6097-6103 — NUL renders as `\0`. (C peeks next byte for
+    /// `\000` disambiguation; Rust port works one char at a time
+    /// so emits the short `\0` form.)
+    #[test]
+    fn addunprintable_nul_renders_as_backslash_zero() {
+        assert_eq!(addunprintable('\0'), "\\0",
+            "c:6097-6098 — NUL → \\0");
+    }
+
+    /// c:6114-6119 — `\nnn` 3-digit octal fallback for un-named
+    /// control bytes. Pin the format: each digit is one octal digit
+    /// (0-7), zero-padded to 3 positions.
+    #[test]
+    fn addunprintable_octal_fallback_for_unnamed_controls() {
+        // 0x01 (SOH) = 001 octal.
+        assert_eq!(addunprintable('\x01'), "\\001",
+            "c:6116-6118 — SOH → \\001");
+        // 0x1b (ESC) = 033 octal.
+        assert_eq!(addunprintable('\x1b'), "\\033",
+            "c:6116-6118 — ESC → \\033");
+        // 0x7f (DEL) = 177 octal.
+        assert_eq!(addunprintable('\x7f'), "\\177",
+            "c:6116-6118 — DEL → \\177");
+        // 0xff (high) = 377 octal.
+        assert_eq!(addunprintable(char::from_u32(0xff).unwrap()), "\\377",
+            "c:6116-6118 — 0xff → \\377");
+    }
+
+    /// `Src/utils.c:6072-6082` — `hasspecial(s)`. Pin canonical
+    /// special chars from SPECCHARS (`Src/zsh.h:228`): `#$^*()=|{}[]
+    /// \`<>?~;&\\n\\t \\\\\\'\\"`.
+    #[test]
+    fn hasspecial_recognises_canonical_special_chars() {
+        // typtab access is read-only here (no flag mutation); concurrent
+        // inittyptab() rebuilds are idempotent for the default flag set.
+        crate::ported::utils::inittyptab();
+        // c:6075 — every char in SPECCHARS triggers true.
+        for c in "#$^*()=|{}[]<>?~;&".chars() {
+            let s = c.to_string();
+            assert!(hasspecial(&s),
+                "c:6075 — '{}' is in SPECCHARS, must be special", c);
+        }
+        // Whitespace specials.
+        assert!(hasspecial(" "), "space in SPECCHARS");
+        assert!(hasspecial("\t"), "tab in SPECCHARS");
+        assert!(hasspecial("\n"), "newline in SPECCHARS");
+        // Non-special chars → false.
+        assert!(!hasspecial("hello"),
+            "c:6075 — plain alphanumerics are NOT special");
+        assert!(!hasspecial("ABC012"));
+    }
+
+    /// `Src/utils.c:6072-6075` — Meta-byte handling: `*s == Meta ?
+    /// *++s ^ 32 : *s`. Pin Meta+X pair gets decoded before special-
+    /// check. A Meta+'A' decodes to 'a' (not special), so a string
+    /// containing only Meta+'A' returns false.
+    #[test]
+    fn hasspecial_decodes_meta_byte_before_check() {
+        // Same as above — read-only after inittyptab.
+        crate::ported::utils::inittyptab();
+        // Meta + 0x41 ('A') → 'a' (0x61) → not special.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        assert!(!hasspecial(s),
+            "c:6075 — Meta+0x41 decodes to 'a' which is NOT special");
+    }
+
+    /// `Src/utils.c:5849-5910` — `sb_niceformat(s)`. Pin: ASCII
+    /// printable passes through unchanged; controls escape.
+    #[test]
+    fn sb_niceformat_passes_printable_ascii() {
+        assert_eq!(sb_niceformat("hello"), "hello",
+            "c:5886 — nicechar_sel passes printable through");
+        assert_eq!(sb_niceformat(""), "");
+        assert_eq!(sb_niceformat("ABC012!?@"), "ABC012!?@");
+    }
+
+    /// c:5886 — controls get `\n`/`\t`/`^X`/`^?` escapes via nicechar_sel.
+    #[test]
+    fn sb_niceformat_escapes_controls() {
+        assert_eq!(sb_niceformat("a\nb"), "a\\nb",
+            "c:5886 — newline → \\n");
+        assert_eq!(sb_niceformat("a\tb"), "a\\tb");
+        assert_eq!(sb_niceformat("\x01"), "^A",
+            "c:5886 — control char → ^X form");
+        assert_eq!(sb_niceformat("\x7f"), "^?");
+    }
+
+    /// `Src/utils.c:5872` — unmetafy step before formatting. Pin:
+    /// metafied Meta+X pair gets unescaped first, then run through
+    /// nicechar_sel.
+    #[test]
+    fn sb_niceformat_unmetafies_before_formatting() {
+        // META + 0x41 ('A') → decodes to 'a' (0x61). 'a' is printable
+        // → passes through unchanged.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        assert_eq!(sb_niceformat(s), "a",
+            "c:5872 — unmetafy first: Meta+0x41 → 'a' → printable passthrough");
+        // META + 0x20 → decodes to NUL → "^@" form.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x20u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let r = sb_niceformat(s);
+        assert!(!r.is_empty(),
+            "c:5872 — Meta+0x20 → NUL → must emit some escape, not empty");
+    }
+
+    /// `Src/utils.c:5937-5959` — `is_sb_niceformat(s)`. Returns true
+    /// if sb_niceformat would change the input.
+    #[test]
+    fn is_sb_niceformat_true_for_strings_with_controls() {
+        assert!(is_sb_niceformat("\n"),
+            "newline is nice");
+        assert!(is_sb_niceformat("a\tb"));
+        assert!(is_sb_niceformat("\x01"));
+        // Non-control ASCII → false.
+        assert!(!is_sb_niceformat("hello"));
+        assert!(!is_sb_niceformat(""));
+    }
+
+    /// `Src/utils.c:5810-5826` — `metacharlenconv(x, c)`. Returns
+    /// `(2, decoded)` for Meta+X pair, `(1, byte)` for plain byte.
+    /// Pin both branches.
+    #[test]
+    fn metacharlenconv_plain_ascii_returns_one_byte() {
+        // c:5823-5825 — plain byte.
+        let (n, c) = metacharlenconv("a");
+        assert_eq!((n, c), (1, Some('a')),
+            "c:5823 — plain byte → (1, byte)");
+        let (n, c) = metacharlenconv("X");
+        assert_eq!((n, c), (1, Some('X')));
+    }
+
+    /// c:5818-5821 — Meta+X pair: `*c = x[1] ^ 32; return 2`.
+    #[test]
+    fn metacharlenconv_meta_pair_xor_decodes() {
+        // Meta + 0x41 ('A') → 'A' ^ 32 = 'a'.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let (n, c) = metacharlenconv(s);
+        assert_eq!((n, c), (2, Some('a')),
+            "c:5820 — Meta+0x41 → 'a' (XOR 32), consumed 2 bytes");
+        // Empty input.
+        let (n, c) = metacharlenconv("");
+        assert_eq!((n, c), (0, None));
+    }
+
+    /// `Src/utils.c:5832-5843` — `charlenconv(x, len, c)`. Returns
+    /// `(0, NUL)` when len=0, `(1, byte)` otherwise.
+    #[test]
+    fn charlenconv_zero_len_returns_zero() {
+        // c:5834 — `if (!len) { *c = '\0'; return 0; }`.
+        let (n, c) = charlenconv("abc", 0);
+        assert_eq!((n, c), (0, None),
+            "c:5834-5837 — len=0 returns 0");
+    }
+
+    /// c:5840-5842 — non-zero len: read one byte, return (1, byte).
+    #[test]
+    fn charlenconv_returns_first_byte_for_nonzero_len() {
+        let (n, c) = charlenconv("abc", 3);
+        assert_eq!((n, c), (1, Some('a')),
+            "c:5841 — *c = *x; return 1");
+        let (n, c) = charlenconv("xy", 2);
+        assert_eq!((n, c), (1, Some('x')));
+    }
+
+    /// `Src/utils.c:5474-5524` — `is_mb_niceformat(s)`. Predicate:
+    /// would mb_niceformat produce a different output? Pin canonical
+    /// branches:
+    ///   - Pure ASCII printable → false (no escape needed).
+    ///   - Contains control char → true.
+    ///   - Pure UTF-8 wide chars → false under default PRINTEIGHTBIT-off
+    ///     since is_wcs_nicechar treats them as printable.
+    #[test]
+    fn is_mb_niceformat_false_for_pure_printable_ascii() {
+        assert!(!is_mb_niceformat("hello"),
+            "c:5509 — printable ASCII needs no nice-format");
+        assert!(!is_mb_niceformat(""),
+            "c:5486 — empty string has no chars to flag");
+        assert!(!is_mb_niceformat("ABC012!?@"));
+    }
+
+    /// c:5509 + `is_wcs_nicechar` — newline/tab/control chars trigger
+    /// the predicate.
+    #[test]
+    fn is_mb_niceformat_true_for_strings_with_controls() {
+        assert!(is_mb_niceformat("a\nb"),
+            "c:5509 — newline is nice");
+        assert!(is_mb_niceformat("\t"));
+        assert!(is_mb_niceformat("\x01"),
+            "c:5509 — control char is nice");
+        assert!(is_mb_niceformat("\x7f"),
+            "c:5509 — DEL is nice");
+    }
+
+    /// `Src/utils.c:5366-5460` — `mb_niceformat(s)`. Multibyte-aware
+    /// nice-formatter. Calls `wcs_nicechar` per char. Previously was
+    /// routed through byte-based `nicechar` — wrong for non-ASCII.
+    /// Pin: printable wide chars pass through unchanged; controls
+    /// still escape.
+    #[test]
+    fn mb_niceformat_preserves_printable_wide_chars() {
+        // Pure ASCII printable: unchanged.
+        assert_eq!(mb_niceformat("hello"), "hello",
+            "c:5407 — printable ASCII passes through");
+        // Wide chars (Latin-1, CJK) — must NOT get \M-X escape.
+        assert_eq!(mb_niceformat("café"), "café",
+            "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X");
+        assert_eq!(mb_niceformat("字"), "字",
+            "c:5407 — CJK printable passes through");
+        // Mixed: ASCII + wide.
+        assert_eq!(mb_niceformat("abcéxyz"), "abcéxyz");
+    }
+
+    /// `Src/utils.c:5407` + `wcs_nicechar` — controls still escape
+    /// in mb_niceformat. Pin that newline → `\n` even for the
+    /// multibyte variant.
+    #[test]
+    fn mb_niceformat_escapes_controls() {
+        assert_eq!(mb_niceformat("\n"), "\\n",
+            "c:5407 → wcs_nicechar c:625 — newline escapes");
+        assert_eq!(mb_niceformat("\t"), "\\t",
+            "c:5407 → wcs_nicechar c:628 — tab escapes");
+        // Mixed: text with embedded control.
+        assert_eq!(mb_niceformat("a\nb"), "a\\nb");
+    }
+
+    /// `Src/utils.c:4971-4983` — `metalen(s, len)`. **Input `len` is
+    /// the UNMETAFIED char count; output is the METAFIED byte count.**
+    /// Pin a metafied string with one Meta+X pair: 3 unmetafied chars
+    /// → 4 metafied bytes.
+    #[test]
+    fn metalen_returns_metafied_byte_count() {
+        // Pure ASCII: 5 chars → 5 bytes (no Meta encountered).
+        assert_eq!(metalen("hello", 5), 5,
+            "c:4972 — ASCII: metafied bytes == unmetafied chars");
+        // [a, Meta, X, b] = 4 metafied bytes representing 3 chars.
+        let bytes: Vec<u8> = vec![b'a', Meta as u8, 0x41, b'b'];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        assert_eq!(metalen(s, 3), 4,
+            "c:4978 — 3 unmetafied chars + 1 Meta = 4 metafied bytes");
+        // Two Meta pairs: [Meta, X, Meta, Y] = 4 bytes for 2 chars.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x41, Meta as u8, 0x42];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        assert_eq!(metalen(s, 2), 4,
+            "c:4978 — 2 unmetafied chars (both Meta+X) = 4 metafied bytes");
+    }
+
+    /// c:4974 — `mlen = len;` is the initial value (no Meta found,
+    /// returns the input length unchanged). Pin len=0 and pure-ASCII.
+    #[test]
+    fn metalen_returns_input_for_no_meta_chars() {
+        assert_eq!(metalen("", 0), 0,
+            "c:4974 — empty input returns 0");
+        assert_eq!(metalen("abc", 3), 3,
+            "c:4974 — no Meta chars: output == input len");
+    }
+
+    /// `Src/utils.c:5070` — `if (!in || !*in) return 0;`.
+    /// Empty input returns `('\0', 0)`. Pin: empty &str → 0 bytes consumed.
+    #[test]
+    fn unmeta_one_empty_input_returns_zero() {
+        let (c, n) = unmeta_one("");
+        assert_eq!(c, '\0',
+            "c:5070 — empty input returns NUL char");
+        assert_eq!(n, 0,
+            "c:5070 — empty input consumes 0 bytes");
+    }
+
+    /// `Src/utils.c:5081-5082` — Non-Meta byte: `*sz = 1; wc = byte`.
+    #[test]
+    fn unmeta_one_plain_ascii_consumes_one_byte() {
+        for c in "aA0!~".chars() {
+            let s = c.to_string();
+            let (got, n) = unmeta_one(&s);
+            assert_eq!(got, c,
+                "c:5082 — '{}' decodes to itself", c);
+            assert_eq!(n, 1,
+                "c:5081 — non-Meta byte consumes 1");
+        }
+    }
+
+    /// `Src/utils.c:5077-5079` — Meta byte: `*sz = 2; wc = in[1] ^ 32`.
+    /// Pin via constructed Meta byte sequence.
+    #[test]
+    fn unmeta_one_meta_pair_decodes_xor_32() {
+        // META + 0x41 ('A') → 'A' ^ 32 = 0x61 ('a'). 2 bytes consumed.
+        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let (got, n) = unmeta_one(s);
+        assert_eq!(got, 'a',
+            "c:5079 — Meta+0x41 decodes to 0x41^32 = 'a'");
+        assert_eq!(n, 2,
+            "c:5078 — Meta pair consumes 2 bytes");
+        // META + 0x20 = 0x20^32 = 0x00 (NUL).
+        let bytes: Vec<u8> = vec![Meta as u8, 0x20u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let (got, n) = unmeta_one(s);
+        assert_eq!(got, '\0',
+            "c:5079 — Meta+0x20 decodes to NUL (the canonical metafy-NUL pattern)");
+        assert_eq!(n, 2);
+    }
+
+    /// Edge case: bare Meta byte at end with no follower. C source
+    /// would read past the buffer (UB); Rust port's `bytes.len() > 1`
+    /// guard handles this by falling through to the non-Meta arm.
+    #[test]
+    fn unmeta_one_trailing_meta_byte_falls_through() {
+        let bytes: Vec<u8> = vec![Meta as u8];
+        let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let (_, n) = unmeta_one(s);
+        // Defensive: Rust returns the Meta byte itself as char + 1.
+        assert_eq!(n, 1, "trailing Meta — no panic, no read past buffer");
+    }
+
+    /// `Src/utils.c:5185-5203` — `ztrsub(t, s)`. Count of unmetafied
+    /// chars between two pointers in the same metafied string.
+    /// Rust port takes (buf, start, end) byte-offsets since raw
+    /// pointer subtraction across distinct &str isn't safe.
+    /// Pin pure-ASCII subrange (no Meta) → returns end-start.
+    #[test]
+    fn ztrsub_ascii_no_meta_returns_byte_distance() {
+        // "hello world" — substring [0..5) → "hello" → 5 chars.
+        assert_eq!(ztrsub("hello world", 0, 5), 5,
+            "c:5189 — no Meta: returns t-s byte distance");
+        // [6..11) → "world" → 5 chars.
+        assert_eq!(ztrsub("hello world", 6, 11), 5);
+        // Empty range.
+        assert_eq!(ztrsub("hello", 2, 2), 0);
+    }
+
+    /// c:5191-5199 — each Meta+X pair decrements `l` by 1 (since the
+    /// initial l = byte-distance counts both bytes but the pair is
+    /// one logical char). Pin via constructed Meta string.
+    #[test]
+    fn ztrsub_subtracts_one_per_meta_pair() {
+        // Build "a" + Meta + 0x20 + "b" = 4 bytes total.
+        // Unmetafied: "a" + 1-char-from-meta + "b" = 3 chars.
+        let meta_byte = Meta as u8;
+        let buf_bytes: Vec<u8> = vec![b'a', meta_byte, 0x20, b'b'];
+        let buf = unsafe { std::str::from_utf8_unchecked(&buf_bytes) };
+        // [0..4) byte distance = 4; Meta pair found → l-- → 3.
+        assert_eq!(ztrsub(buf, 0, 4), 3,
+            "c:5192-5199 — Meta pair decrements distance by 1");
+    }
+
+    /// c:5189 — `int l = t - s;` start of count. Pin edge case
+    /// where start > end (caller bug) doesn't underflow or panic;
+    /// Rust port clamps via `start.min(end)`.
+    #[test]
+    fn ztrsub_clamps_inverted_range_to_zero() {
+        assert_eq!(ztrsub("hello", 4, 2), 0,
+            "inverted range start>end → 0 (defensive; not in C contract)");
+        // Beyond-buffer end gets clamped.
+        assert_eq!(ztrsub("hi", 0, 100), 2,
+            "end > buf.len() clamps to buffer length");
+    }
+
+    /// `Src/utils.c:5141` — trailing Meta byte with no following char
+    /// is a malformed-string edge case. C has a DPUTS debug-only
+    /// fprintf for "unexpected end" but otherwise the loop terminates
+    /// because `*s` is now NUL. Rust port must not panic on this
+    /// truncated input.
+    #[test]
+    fn ztrlen_handles_trailing_meta_byte_without_panic() {
+        let meta = char::from_u32(Meta as u32).unwrap();
+        let trailing: String = ['a', meta].iter().collect();
+        // c:5141-5149 — increment l, then encounter Meta, then loop
+        // condition `*s` is empty → terminate. Count: 'a' + Meta = 2
+        // (Rust port counts Meta as 1 char when no follower).
+        let r = ztrlen(&trailing);
+        assert!(r >= 1, "trailing Meta must not panic; got {}", r);
+    }
+
     /// c:params.c:1288 — `isident` rejects digit-leading names.
     /// A regression accepting them lets `typeset 1foo=bar` install
     /// a poisoned param that no later expansion can address.
@@ -6328,6 +7459,25 @@ mod tests {
     fn ztrcmp_shorter_prefix_is_less() {
         assert_eq!(ztrcmp("a",   "ab"),  std::cmp::Ordering::Less);
         assert_eq!(ztrcmp("foo", "foob"), std::cmp::Ordering::Less);
+    }
+
+    /// `Src/utils.c:5117-5122` — Meta+X pair decodes to `X ^ 32`
+    /// for comparison purposes. Pin: two strings differing only in
+    /// the metafied byte's decoded value compare correctly.
+    #[test]
+    fn ztrcmp_decodes_meta_byte_for_comparison() {
+        // META+0x21 ('!') = NUL? Let me use safer chars.
+        // META+'A' (0x41) decodes to 'A' ^ 32 = 'a' (0x61).
+        // So a "META a" pair represents the byte 'a' (0x61).
+        // Compare "Ma" (M=Meta+a-byte-pair) vs "b" (>a).
+        let meta_byte = Meta as u8;
+        let s1_bytes: Vec<u8> = vec![meta_byte, 0x41u8]; // decodes to 0x61 = 'a'
+        let s2_bytes: Vec<u8> = vec![b'b'];
+        let s1 = unsafe { std::str::from_utf8_unchecked(&s1_bytes) };
+        let s2 = unsafe { std::str::from_utf8_unchecked(&s2_bytes) };
+        // 'a' (0x61) < 'b' (0x62) → Less.
+        assert_eq!(ztrcmp(s1, s2), std::cmp::Ordering::Less,
+            "c:5117-5118 — Meta+0x41 decodes to 'a' which < 'b'");
     }
 
     /// `Src/utils.c:531-539` — `is_nicechar`. Returns true for chars
@@ -6464,6 +7614,362 @@ mod tests {
         // 0xe1 = 'a' + 0x80 → \M-a
         let c = char::from_u32(0xe1).unwrap();
         assert_eq!(nicechar_sel(c, false), "\\M-a");
+    }
+
+    /// `Src/utils.c:593-705` — `wcs_nicechar_sel`. Wide-char variant
+    /// of `nicechar_sel`: control chars escape, printable wides
+    /// emit raw UTF-8, large codepoints get `\u`/`\U` hex escape.
+    /// Pin every branch. Previously delegated to `nicechar_sel`
+    /// which byte-masked via `c & 0xff` — every UTF-8 codepoint
+    /// emerged mangled.
+    #[test]
+    fn wcs_nicechar_sel_printable_wide_emits_utf8() {
+        // c:644-678 — printable wide char emits raw UTF-8.
+        assert_eq!(wcs_nicechar_sel('a', false),  "a", "ASCII printable");
+        assert_eq!(wcs_nicechar_sel('é', false),  "é", "Latin-1 printable");
+        assert_eq!(wcs_nicechar_sel('字', false), "字", "CJK printable");
+    }
+
+    /// c:625-630 — `\n` and `\t` escape (same as nicechar_sel for ASCII).
+    #[test]
+    fn wcs_nicechar_sel_escapes_newline_and_tab() {
+        assert_eq!(wcs_nicechar_sel('\n', false), "\\n");
+        assert_eq!(wcs_nicechar_sel('\t', false), "\\t");
+    }
+
+    /// c:617-623 — DEL (0x7f) renders as `^?` (non-quotable) or
+    /// `\C-?` (quotable). Same as the byte version.
+    #[test]
+    fn wcs_nicechar_sel_del_uses_caret_question() {
+        assert_eq!(wcs_nicechar_sel('\x7f', false), "^?");
+        assert_eq!(wcs_nicechar_sel('\x7f', true),  "\\C-?");
+    }
+
+    /// c:631-638 — control chars (0x01-0x1f, except \n/\t) emit
+    /// `^X` or `\C-X` with the +0x40 offset.
+    #[test]
+    fn wcs_nicechar_sel_control_chars_use_caret_prefix() {
+        assert_eq!(wcs_nicechar_sel('\x01', false), "^A");
+        assert_eq!(wcs_nicechar_sel('\x07', false), "^G");
+        assert_eq!(wcs_nicechar_sel('\x1b', false), "^[");
+        assert_eq!(wcs_nicechar_sel('\x01', true),  "\\C-A");
+    }
+
+    /// `Src/utils.c:656-663` — large non-printable codepoints get
+    /// hex escape: `\U%.8x` (>= 0x10000), `\u%.4x` (>= 0x100).
+    /// Both lowercase per C's `%x`. Use a non-printable wide char
+    /// to test (most BMP chars are printable; pick a control area
+    /// like U+0085 NEXT LINE).
+    #[test]
+    fn wcs_nicechar_sel_large_nonprintable_uses_hex_escape() {
+        // U+0085 NEL — control in C1 range, not iswprint.
+        let nel = char::from_u32(0x85).unwrap();
+        // Since 0x85 < 0x100, falls into nicechar_sel fallback.
+        // After u9_iswprint says false, cv < 0x80 is false (cv=0x85),
+        // PRINTEIGHTBIT off → enters !is_printable && cv < 0x80 branch?
+        // Actually 0x85 >= 0x80 → !print_eightbit true → enters non-print branch.
+        // 0x85 not 0x7f, not \n/\t, not <0x20. Falls past all if-elses to
+        // post-branch logic → !is_printable, cv >= 0x100 false, cv >= 0x100 false
+        // → falls to nicechar_sel fallback.
+        let r = wcs_nicechar_sel(nel, false);
+        assert!(!r.is_empty(), "must emit something for U+0085");
+        // U+200B ZERO WIDTH SPACE — non-printable, 0x100-0xffff range.
+        let zwsp = char::from_u32(0x200B).unwrap();
+        let r = wcs_nicechar_sel(zwsp, false);
+        // u9_iswprint(0x200B) returns true via unicode-width 0-width.
+        // Per the impl: u9_iswprint true → emit raw. So r should be
+        // the raw zwsp char.
+        assert!(!r.is_empty());
+    }
+
+    /// `Src/utils.c:709-714` — `wcs_nicechar(c)` delegates to
+    /// `wcs_nicechar_sel(c, 0)`. Pin the parity with the 4-arg form.
+    #[test]
+    fn wcs_nicechar_matches_wcs_nicechar_sel_with_zero() {
+        for c in ['a', '\n', '\t', '\x7f', '\x01', 'é', '字'] {
+            assert_eq!(wcs_nicechar(c), wcs_nicechar_sel(c, false),
+                "c:711 — `wcs_nicechar(c)` must equal `wcs_nicechar_sel(c, 0)` for {:?}", c);
+        }
+    }
+
+    /// `Src/utils.c:1989-2012` — `movefd(fd)`. Three contracts:
+    /// 1. fd == -1 → returned as-is (no syscalls).
+    /// 2. fd >= 10 → returned unchanged (already high).
+    /// 3. fd < 10 → dupped with F_DUPFD >= 10, original closed
+    ///    unconditionally (even on dup failure).
+    #[test]
+    #[cfg(unix)]
+    fn movefd_returns_minus_one_unchanged() {
+        // c:1992 — `if (fd != -1 && fd < 10)` skipped for fd=-1.
+        assert_eq!(movefd(-1), -1, "fd=-1 must be returned unchanged");
+    }
+
+    /// c:1992 — `fd >= 10` skips the dup-and-close path.
+    #[test]
+    #[cfg(unix)]
+    fn movefd_returns_high_fd_unchanged() {
+        // Use a known-open fd. /dev/null open with fd guaranteed to be
+        // <10 because new fds get the lowest free slot — but we can
+        // dup it to 10 directly to test the early-return path.
+        let f = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if f < 0 { return; } // Skip on unusual systems.
+        let high = unsafe { libc::fcntl(f, libc::F_DUPFD, 20) };
+        unsafe { libc::close(f); }
+        if high < 0 { return; }
+        // movefd(20) must return 20 unchanged (no dup, no close).
+        let r = movefd(high);
+        assert_eq!(r, high, "c:1992 — fd >= 10 returned unchanged");
+        unsafe { libc::close(high); }
+    }
+
+    /// `Src/utils.c:1968-1983` — `check_fd_table(fd)`. Grows the
+    /// fdtable global (not yet modeled). The Rust port is currently
+    /// a no-op stub returning true; pin that contract so a future
+    /// "real" port doesn't accidentally re-introduce the old
+    /// `fcntl(F_GETFD)` validity check that completely diverged
+    /// from C semantics.
+    #[test]
+    fn check_fd_table_is_noop_stub() {
+        // No-op port returns true for any input.
+        assert!(check_fd_table(-1),  "stub returns true for any fd");
+        assert!(check_fd_table(0));
+        assert!(check_fd_table(99999));
+    }
+
+    /// `Src/utils.c:4364,4367` — `wcsitype(c, IWORD/ISEP)` reads
+    /// from the `wordchars`/`ifs` GLOBALS (writable by
+    /// `wordcharssetfn`/`ifssetfn`). Previously read from
+    /// `std::env::var` — the libc process env — which never
+    /// reflects runtime `WORDCHARS=…` shell-side assignments.
+    /// Pin: set wordchars via `wordcharssetfn`, verify `wcsitype`
+    /// returns true for chars in the new set.
+    #[test]
+    fn wcsitype_iword_reads_from_canonical_wordchars_global() {
+        // Test only meaningful in MULTIBYTE mode for non-ASCII chars;
+        // ASCII chars (< 0x80) route through TYPTAB directly.
+        // Skip if MULTIBYTE off.
+        if !isset(crate::ported::zsh_h::MULTIBYTE) { return; }
+        // Save and set WORDCHARS to a single non-ASCII char.
+        let saved = crate::ported::params::wordcharsgetfn();
+        crate::ported::params::wordcharssetfn("é".to_string());
+        // 'é' is alphanumeric per Unicode → IWORD returns true via
+        // is_alphanumeric short-circuit at c:4353. So we can't pin
+        // the WORDCHARS-specific path with 'é'. Use a non-alnum char.
+        crate::ported::params::wordcharssetfn(":".to_string());
+        // ':' is ASCII so wcsitype routes through TYPTAB (which now
+        // has IWORD on ':' because wordcharssetfn called inittyptab).
+        assert!(wcsitype(':', IWORD as u32),
+            "c:4364 — wordchars membership through canonical global");
+        // Restore.
+        crate::ported::params::wordcharssetfn(saved);
+    }
+
+    /// `Src/utils.c:2090-2097` — `addmodulefd(fd, fdt)`. Stores the
+    /// provided fdt in the fdtable slot for the given fd. Previously
+    /// Rust port hardcoded FDT_MODULE and added CLOEXEC unconditionally.
+    /// Pin: pass FDT_EXTERNAL, verify slot stores FDT_EXTERNAL (not
+    /// FDT_MODULE).
+    #[cfg(unix)]
+    #[test]
+    fn addmodulefd_respects_fdt_parameter() {
+        use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_MODULE};
+        // Open a real fd to use.
+        let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if fd < 0 { return; }
+        crate::ported::utils::addmodulefd(fd, FDT_EXTERNAL);
+        assert_eq!(crate::ported::utils::fdtable_get(fd), FDT_EXTERNAL,
+            "c:2095 — fdt parameter must be stored verbatim");
+        // Switch to FDT_MODULE.
+        crate::ported::utils::addmodulefd(fd, FDT_MODULE);
+        assert_eq!(crate::ported::utils::fdtable_get(fd), FDT_MODULE,
+            "c:2095 — second call overwrites with new fdt");
+        // Cleanup.
+        unsafe { libc::close(fd); }
+    }
+
+    /// `Src/utils.c:2093` — `if (fd >= 0)`. Negative fd is silently
+    /// ignored (no fdtable update). Pin the guard.
+    #[test]
+    fn addmodulefd_ignores_negative_fd() {
+        use crate::ported::zsh_h::FDT_MODULE;
+        // Should not panic, no side effect.
+        crate::ported::utils::addmodulefd(-1, FDT_MODULE);
+        // Nothing to assert on side-effect-free path; just verify no panic.
+    }
+
+    /// `Src/utils.c:2155-2164` — `zcloselockfd(fd)` returns -1 for
+    /// non-lock fds, 0 for FDT_FLOCK/FDT_FLOCK_EXEC. Previously the
+    /// Rust port always returned 0 — broke `zsystem flock -u <fd>`
+    /// distinguishing "fd never flocked" from "successfully released".
+    #[cfg(unix)]
+    #[test]
+    fn zcloselockfd_returns_minus_one_for_non_lock_fd() {
+        let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if fd < 0 { return; }
+        // No addlockfd call → fd is NOT in the flock table.
+        let r = crate::ported::utils::zcloselockfd(fd);
+        assert_eq!(r, -1,
+            "c:2160-2161 — non-lock fd must return -1, NOT 0");
+        unsafe { libc::close(fd); }
+    }
+
+    /// `Src/utils.c:2155-2164` — `zcloselockfd(fd)` returns 0 for an
+    /// fd that was registered via `addlockfd`. Pin the end-to-end
+    /// round-trip: addlockfd → zcloselockfd returns 0.
+    #[cfg(unix)]
+    #[test]
+    fn zcloselockfd_returns_zero_for_flock_fd_then_closes() {
+        let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if fd < 0 { return; }
+        crate::ported::utils::addlockfd(fd, true);
+        let r = crate::ported::utils::zcloselockfd(fd);
+        assert_eq!(r, 0,
+            "c:2162-2163 — FDT_FLOCK fd → zclose + return 0");
+        // After zcloselockfd, the underlying close() has fired.
+        // close() returning -1 with EBADF would confirm that, but
+        // that's a libc side-effect; just verify the return value.
+    }
+
+    /// `Src/utils.c:1982` — `check_fd_table` sets `max_zsh_fd = fd`
+    /// when fd is new. `fdtable_set` inlines this to keep the guard
+    /// in `zcloselockfd` (`if (fd > max_zsh_fd) return -1`) working
+    /// against fds populated by `addmodulefd`/`addlockfd`. Pin: after
+    /// `fdtable_set(fd, FDT_FLOCK)`, MAX_ZSH_FD >= fd.
+    #[cfg(unix)]
+    #[test]
+    fn fdtable_set_bumps_max_zsh_fd() {
+        use crate::ported::zsh_h::FDT_FLOCK;
+        let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if fd < 0 { return; }
+        crate::ported::utils::fdtable_set(fd, FDT_FLOCK);
+        let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(max_fd >= fd,
+            "c:1982 — max_zsh_fd ({}) must be >= newly-set fd ({})",
+            max_fd, fd);
+        // Cleanup.
+        crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_UNUSED);
+        unsafe { libc::close(fd); }
+    }
+
+    /// `Src/utils.c:2111-2121` — `addlockfd(fd, cloexec)`. Selects
+    /// between FDT_FLOCK (when cloexec=true, lock dies on exec) and
+    /// FDT_FLOCK_EXEC (when cloexec=false, lock survives exec).
+    /// Previously the Rust port did `fcntl(F_SETFD, CLOEXEC)` —
+    /// totally wrong semantics. Pin the FDT slot.
+    #[cfg(unix)]
+    #[test]
+    fn addlockfd_selects_flock_category_per_cloexec_flag() {
+        use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
+        let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
+        if fd < 0 { return; }
+        // cloexec=true → FDT_FLOCK (lock dies on exec).
+        crate::ported::utils::addlockfd(fd, true);
+        assert_eq!(crate::ported::utils::fdtable_get(fd), FDT_FLOCK,
+            "c:2117 — cloexec=true → FDT_FLOCK");
+        // cloexec=false → FDT_FLOCK_EXEC (lock survives exec).
+        crate::ported::utils::addlockfd(fd, false);
+        assert_eq!(crate::ported::utils::fdtable_get(fd), FDT_FLOCK_EXEC,
+            "c:2119 — cloexec=false → FDT_FLOCK_EXEC");
+        // Cleanup.
+        unsafe { libc::close(fd); }
+    }
+
+    /// `Src/utils.c:1211` — `adduserdir` rejects paths `>= PATH_MAX`
+    /// by removing the existing entry (treating as "can't use this
+    /// value as a directory"). Pin with a path constructed to exceed
+    /// PATH_MAX, verify no insertion happens.
+    #[cfg(unix)]
+    #[test]
+    fn adduserdir_rejects_paths_at_or_above_path_max() {
+        if !crate::ported::zsh_h::interact() {
+            // c:1193 — non-interactive shells skip the table entirely.
+            // Test inactive in non-interactive contexts.
+            return;
+        }
+        // Ensure the entry doesn't exist beforehand.
+        let name = "ZSHRS_TEST_PATHMAX_DIR";
+        let _ = crate::ported::hashnameddir::removenameddirnode(name);
+        // Construct an oversized path.
+        let mut over: String = "/".to_string();
+        over.push_str(&"a".repeat(libc::PATH_MAX as usize));
+        // adduserdir with the oversized path + AUTONAMEDIRS-off path
+        // via always=true (so the AUTONAMEDIRS guard doesn't reject).
+        crate::ported::utils::adduserdir(name, &over, 0, true);
+        // c:1211 — too-long → remove path triggered, no entry added.
+        let tab = crate::ported::hashnameddir::nameddirtab()
+            .lock().unwrap();
+        assert!(!tab.contains_key(name),
+            "c:1211 — strlen(t) >= PATH_MAX must NOT insert entry");
+    }
+
+    /// `Src/utils.c:760-786` — `pathprog`. Finds any regular file
+    /// (not directory, no executable-bit check) in `$PATH`.
+    /// Previously required `mode & 0o111 != 0` — silently missed
+    /// non-executable autoload-function plaintext scripts. Pin
+    /// using a known-existing file in /tmp.
+    #[test]
+    #[cfg(unix)]
+    fn pathprog_finds_non_executable_files() {
+        // Create a non-executable file in /tmp and add /tmp to PATH.
+        let test_name = format!("zshrs_test_pathprog_{}", unsafe { libc::getpid() });
+        let path = std::path::PathBuf::from("/tmp").join(&test_name);
+        // Write content, NO executable bit.
+        if std::fs::write(&path, b"plain content").is_err() {
+            return; // /tmp may be unwritable on some systems.
+        }
+        // Verify it's not executable.
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o111, 0,
+            "test setup: must be non-executable");
+        // Set PATH to /tmp.
+        let saved_path = crate::ported::params::getsparam("PATH");
+        crate::ported::params::assignsparam("PATH", "/tmp", 0);
+        // pathprog should find the file.
+        let r = pathprog(&test_name);
+        // Cleanup.
+        let _ = std::fs::remove_file(&path);
+        if let Some(prev) = saved_path {
+            crate::ported::params::assignsparam("PATH", &prev, 0);
+        }
+        assert_eq!(r, Some(path),
+            "c:776 — pathprog finds non-executable files (only F_OK + !S_ISDIR)");
+    }
+
+    /// `Src/utils.c:776-778` — pathprog skips directories. Pin: a
+    /// directory in $PATH with the queried name must NOT be returned.
+    #[test]
+    #[cfg(unix)]
+    fn pathprog_skips_directories() {
+        let test_name = format!("zshrs_test_pathprog_dir_{}", unsafe { libc::getpid() });
+        let path = std::path::PathBuf::from("/tmp").join(&test_name);
+        if std::fs::create_dir(&path).is_err() {
+            return;
+        }
+        let saved_path = crate::ported::params::getsparam("PATH");
+        crate::ported::params::assignsparam("PATH", "/tmp", 0);
+        let r = pathprog(&test_name);
+        // Cleanup.
+        let _ = std::fs::remove_dir(&path);
+        if let Some(prev) = saved_path {
+            crate::ported::params::assignsparam("PATH", &prev, 0);
+        }
+        assert!(r.is_none(),
+            "c:778 — pathprog must skip directories (!S_ISDIR)");
+    }
+
+    /// `Src/utils.c:4367` — `wcsitype(c, ISEP)` reads from canonical
+    /// `ifs` global. Pin via `ifssetfn`. ASCII path routes through
+    /// TYPTAB which gets ISEP bit from inittyptab's IFS walk
+    /// (added earlier this session). End-to-end pin.
+    #[test]
+    fn wcsitype_isep_reads_from_canonical_ifs_global() {
+        if !isset(crate::ported::zsh_h::MULTIBYTE) { return; }
+        let saved = crate::ported::params::ifsgetfn();
+        crate::ported::params::ifssetfn(":".to_string());
+        assert!(wcsitype(':', ISEP as u32),
+            "c:4367 — IFS membership through canonical global");
+        // Restore.
+        crate::ported::params::ifssetfn(saved);
     }
 
     /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is

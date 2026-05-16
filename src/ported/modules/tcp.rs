@@ -163,7 +163,8 @@ pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessi
     let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:245
     sess_with(idx, |s| { s.fd = fd; });                                  // c:245 sess->fd = ...
     if fd >= 0 {
-        crate::ported::utils::addmodulefd(fd);                           // c:245
+        crate::ported::utils::addmodulefd(fd, crate::ported::zsh_h::FDT_MODULE); // c:245 FDT_MODULE
+
     }
     Some(idx)                                                            // c:245 return sess
 }
@@ -472,7 +473,7 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
             tcp_close(sess);                                             // c:550
             return 1;                                                    // c:551
         }
-        crate::ported::utils::addmodulefd(rfd);                          // c:555
+        crate::ported::utils::addmodulefd(rfd, crate::ported::zsh_h::FDT_MODULE); // c:555 FDT_MODULE
         if targetfd != 0 {                                               // c:557
             let nfd = crate::ported::utils::redup(rfd, targetfd);        // c:558
             sess_with(sidx, |s| { s.fd = nfd; });

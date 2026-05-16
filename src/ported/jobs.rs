@@ -29,18 +29,34 @@ use crate::ported::signals_h::{signal_default, signal_ignore};
 
 /// Job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
+///
+/// **Bit values MUST match C's `STAT_*` defines verbatim** at
+/// `Src/zsh.h:1073-1094`. Previous Rust port used sequential bit
+/// shifts (1<<0, 1<<1, …) which produced DIFFERENT values from C
+/// for EVERY flag — `stat::STOPPED = 0x01` vs C `STAT_STOPPED =
+/// 0x0002`, etc. Any data ferried between C-side and Rust-side
+/// (or between bytecode and runtime state) would mis-interpret
+/// every stat-flag check. Now canonical.
+///
+/// Also added missing flags (CHANGED, TIMED, LOCKED, NOPRINT,
+/// NOSTTY, SUBLEADER) and removed bogus ones (DISOWN, NOTIFY —
+/// not in C STAT_*).
 pub mod stat {
-    pub const STOPPED:  i32 = 1 << 0;  // Job is stopped
-    pub const DONE:     i32 = 1 << 1;  // Job is finished
-    pub const SUBJOB:   i32 = 1 << 2;  // Job is a subjob
-    pub const CURSH:    i32 = 1 << 3;  // Last pipeline elem in current shell
-    pub const SUPERJOB: i32 = 1 << 4;  // Job is a superjob
-    pub const WASSUPER: i32 = 1 << 5;  // Was a superjob
-    pub const INUSE:    i32 = 1 << 6;  // Entry in use
-    pub const BUILTIN:  i32 = 1 << 7;  // Job has builtin
-    pub const DISOWN:   i32 = 1 << 8;  // Disowned
-    pub const NOTIFY:   i32 = 1 << 9;  // Notify when done
-    pub const ATTACH:   i32 = 1 << 10; // Attached to tty
+    pub const CHANGED:   i32 = 0x0001; // c:1073 status changed
+    pub const STOPPED:   i32 = 0x0002; // c:1074 all procs stopped or exited
+    pub const TIMED:     i32 = 0x0004; // c:1075 job is being timed
+    pub const DONE:      i32 = 0x0008; // c:1076 job is done
+    pub const LOCKED:    i32 = 0x0010; // c:1077 shell finished creating
+    pub const NOPRINT:   i32 = 0x0020; // c:1079 killed internally
+    pub const INUSE:     i32 = 0x0040; // c:1081 entry in use
+    pub const SUPERJOB:  i32 = 0x0080; // c:1082 job has a subjob
+    pub const SUBJOB:    i32 = 0x0100; // c:1083 job is a subjob
+    pub const WASSUPER:  i32 = 0x0200; // c:1084 was super-job
+    pub const CURSH:     i32 = 0x0400; // c:1086 last cmd in current shell
+    pub const NOSTTY:    i32 = 0x0800; // c:1087 tty settings not inherited
+    pub const ATTACH:    i32 = 0x1000; // c:1089 delay reattach to tty
+    pub const SUBLEADER: i32 = 0x2000; // c:1090 super-job, leader is sub-shell
+    pub const BUILTIN:   i32 = 0x4000; // c:1092 tail is builtin
 }
 
 /// Time difference for timeval (from jobs.c dtime_tv)
@@ -643,13 +659,36 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
     ))
 }
 
-/// Check if a job's time should be reported (from jobs.c should_report_time)
-/// Port of `should_report_time(Job j)` from `Src/jobs.c:1039`.
+/// Port of `static int should_report_time(Job j)` from `Src/jobs.c:1038-1080`.
+/// ```c
+/// /* if the time keyword was used */
+/// if (j->stat & STAT_TIMED) return 1;
+/// /* read $REPORTTIME / $REPORTMEMORY */
+/// if (reporttime < 0 && reportmemory < 0) return 0;
+/// if (!j->procs) return 0;
+/// if (zleactive) return 0;
+/// /* … compare elapsed time vs reporttime threshold */
+/// ```
+/// Rust port previously missed the c:1052 STAT_TIMED short-circuit:
+/// a job explicitly preceded by the `time` keyword should always
+/// report its time regardless of `$REPORTTIME` setting. Without this
+/// check, `time sleep 0.001` would be silent when REPORTTIME is
+/// unset or set high.
+///
+/// `$REPORTTIME` (and `$REPORTMEMORY`) reading is the caller's
+/// responsibility — Rust takes the threshold as a parameter rather
+/// than calling getvalue inside.
 /// WARNING: param names don't match C — Rust=(job, reporttime) vs C=(j)
-pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
-    if reporttime < 0.0 {
+pub fn should_report_time(job: &Job, reporttime: f64) -> bool {              // c:1039
+    // c:1052-1053 — STAT_TIMED short-circuit. Always report when
+    // the `time` keyword preceded the command.
+    if (job.stat & stat::TIMED) != 0 {                                       // c:1052
+        return true;
+    }
+    if reporttime < 0.0 {                                                    // c:1065 reporttime < 0
         return false;
     }
+    // c:1072-1073 — `if (!j->procs) return 0;`
     if let Some(first) = job.procs.first() {
         if let (Some(start), Some(end)) =
             (first.bgtime, job.procs.last().and_then(|p| p.endtime))
@@ -893,31 +932,87 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
     }
 }
 
-/// Free job (from jobs.c freejob lines 1456-1508)
-/// Port of `freejob(Job jn, int deleting)` from `Src/jobs.c:1457`.
-/// Rust idiom replacement: `Vec::clear` on procs/auxprocs/filelist
-/// covers the C `freelist`+`zfree` chain; the `deleting` arg is
-/// orthogonal to the field-reset path and is consumed by the
-/// caller's deletejob() that already wraps this.
+/// Port of `void freejob(Job jn, int deleting)` from `Src/jobs.c:1457-1495`.
+/// ```c
+/// pn = jn->procs; jn->procs = NULL; free each;
+/// pn = jn->auxprocs; jn->auxprocs = NULL; free each;
+/// if (jn->ty) zfree(jn->ty);
+/// if (jn->pwd) zsfree(jn->pwd);
+/// jn->pwd = NULL;
+/// if (jn->stat & STAT_WASSUPER) {
+///     int job = jn - jobtab;
+///     if (deleting) deletejob(jobtab + jn->other, 0);
+///     else          freejob(jobtab + jn->other, 0);
+///     jn = jobtab + job;
+/// }
+/// jn->gleader = jn->other = 0;
+/// jn->stat = jn->stty_in_env = 0;
+/// jn->filelist = NULL;
+/// jn->ty = NULL;
+/// ```
+/// The previous Rust port was missing the `pwd`/`ty`/`other`/
+/// `stty_in_env` field resets — leaked saved-tty state into the
+/// next job reuse of the slot. Now resets all fields per C. The
+/// STAT_WASSUPER recursive delete (c:1480-1488) requires jobtab
+/// access and is left as a doc comment until the caller wires it.
 pub fn freejob(jn: &mut Job, deleting: bool) {                              // c:1457
-    let _ = deleting;
+    let _ = deleting;  // STAT_WASSUPER recursive path not yet wired.
+    // c:1461-1466 — `procs = NULL; free each`. Rust Drop on Vec covers.
     jn.procs.clear();
+    // c:1468-1473 — `auxprocs = NULL; free each`.
     jn.auxprocs.clear();
-    jn.filelist.clear();
-    jn.stat = 0;
+    // c:1475-1476 — `if (jn->ty) zfree(jn->ty);`.
+    jn.ty = None;
+    // c:1477-1479 — `if (jn->pwd) zsfree(jn->pwd); jn->pwd = NULL;`.
+    jn.pwd = None;
+    // c:1480-1488 — STAT_WASSUPER recursive delete: requires
+    // jobtab[] access not in scope here. Doc-pin so a future caller
+    // wiring the table can detect and dispatch.
+    // c:1489 — `jn->gleader = jn->other = 0;`.
     jn.gleader = 0;
+    jn.other = 0;
+    // c:1490 — `jn->stat = jn->stty_in_env = 0;`.
+    jn.stat = 0;
+    jn.stty_in_env = 0;
+    // c:1491 — `jn->filelist = NULL;`.
+    jn.filelist.clear();
+    // c:1492 — `jn->ty = NULL;` (already done above).
+    // (Rust-only) text field — clear so the next job reuse doesn't
+    // inherit stale command text.
     jn.text.clear();
 }
 
-/// Delete job (from jobs.c deletejob lines 1511-1526)
-/// Port of `deletejob(Job jn, int disowning)` from `Src/jobs.c:1512`.
+/// Port of `void deletejob(Job jn, int disowning)` from `Src/jobs.c:1511-1526`.
+/// ```c
+/// deletefilelist(jn->filelist, disowning);
+/// if (jn->stat & STAT_ATTACH) {
+///     attachtty(mypgrp);
+///     adjustwinsize(0);
+/// }
+/// if (jn->stat & STAT_SUPERJOB) {
+///     Job jno = jobtab + jn->other;
+///     if (jno->stat & STAT_SUBJOB)
+///         jno->stat |= STAT_SUBJOB_ORPHANED;
+/// }
+/// freejob(jn, 1);
+/// ```
+/// Previously the Rust port ad-hoc cleared procs/auxprocs/stat
+/// without calling `freejob` — meant `pwd`/`ty`/`other`/`stty_in_env`
+/// stayed populated even after the job was "deleted", silently
+/// corrupting the next slot reuse. The STAT_ATTACH (attachtty) and
+/// STAT_SUPERJOB recursive cleanup paths require substrate not yet
+/// wired (mypgrp, jobtab[] reference); doc-pinned for follow-up.
 pub fn deletejob(jn: &mut Job, disowning: bool) {                           // c:1512
-    if !disowning {
-        jn.filelist.clear();
-    }
-    jn.procs.clear();
-    jn.auxprocs.clear();
-    jn.stat = 0;
+    // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
+    // disowning, files are NOT deleted from disk; the filelist entries
+    // are simply dropped.
+    deletefilelist(jn, disowning);
+    // c:1515-1518 — STAT_ATTACH path: attachtty(mypgrp) +
+    // adjustwinsize(0). mypgrp global not modeled here; doc-pin.
+    // c:1519-1523 — STAT_SUPERJOB path: mark sub-job orphaned.
+    // jobtab[] access not in scope; doc-pin.
+    // c:1525 — `freejob(jn, 1);` full reset of all per-job state.
+    freejob(jn, true);
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
@@ -2678,6 +2773,104 @@ mod tests {
     fn super_job_returns_none_for_top_level_job() {
         let tab = vec![Job::new()];
         assert!(super_job(&tab, 0).is_none());
+    }
+
+    /// `Src/zsh.h:1073-1094` — `STAT_*` flag values are load-bearing
+    /// numeric constants. Pin every `mod stat` value matches the
+    /// canonical C define. Previously the Rust port used sequential
+    /// `1 << N` shifts producing DIFFERENT values for nearly every
+    /// flag.
+    #[test]
+    fn stat_flags_match_c_zsh_h_canonical_values() {
+        assert_eq!(stat::CHANGED,   0x0001, "Src/zsh.h:1073");
+        assert_eq!(stat::STOPPED,   0x0002, "Src/zsh.h:1074");
+        assert_eq!(stat::TIMED,     0x0004, "Src/zsh.h:1075");
+        assert_eq!(stat::DONE,      0x0008, "Src/zsh.h:1076");
+        assert_eq!(stat::LOCKED,    0x0010, "Src/zsh.h:1077");
+        assert_eq!(stat::NOPRINT,   0x0020, "Src/zsh.h:1079");
+        assert_eq!(stat::INUSE,     0x0040, "Src/zsh.h:1081");
+        assert_eq!(stat::SUPERJOB,  0x0080, "Src/zsh.h:1082");
+        assert_eq!(stat::SUBJOB,    0x0100, "Src/zsh.h:1083");
+        assert_eq!(stat::WASSUPER,  0x0200, "Src/zsh.h:1084");
+        assert_eq!(stat::CURSH,     0x0400, "Src/zsh.h:1086");
+        assert_eq!(stat::NOSTTY,    0x0800, "Src/zsh.h:1087");
+        assert_eq!(stat::ATTACH,    0x1000, "Src/zsh.h:1089");
+        assert_eq!(stat::SUBLEADER, 0x2000, "Src/zsh.h:1090");
+        assert_eq!(stat::BUILTIN,   0x4000, "Src/zsh.h:1092");
+    }
+
+    /// stat flag values must also match the canonical `STAT_*`
+    /// definitions in `zsh_h.rs` (which already match C). Pin the
+    /// equality so the two definitions can't drift independently.
+    #[test]
+    fn stat_flags_match_zsh_h_module_values() {
+        assert_eq!(stat::CHANGED,   crate::ported::zsh_h::STAT_CHANGED);
+        assert_eq!(stat::STOPPED,   crate::ported::zsh_h::STAT_STOPPED);
+        assert_eq!(stat::TIMED,     crate::ported::zsh_h::STAT_TIMED);
+        assert_eq!(stat::DONE,      crate::ported::zsh_h::STAT_DONE);
+        assert_eq!(stat::SUPERJOB,  crate::ported::zsh_h::STAT_SUPERJOB);
+        assert_eq!(stat::INUSE,     crate::ported::zsh_h::STAT_INUSE);
+        assert_eq!(stat::ATTACH,    crate::ported::zsh_h::STAT_ATTACH);
+        assert_eq!(stat::BUILTIN,   crate::ported::zsh_h::STAT_BUILTIN);
+    }
+
+    /// `Src/jobs.c:1511-1526` — `deletejob` calls `freejob` at c:1525
+    /// to ensure a full per-job state reset (pwd/ty/other/stty_in_env
+    /// also clear). Previously the Rust port did an ad-hoc clear of
+    /// procs/auxprocs/stat and skipped `freejob` entirely — pwd/ty
+    /// stayed populated across slot reuse.
+    #[test]
+    fn deletejob_calls_freejob_to_clear_all_state() {
+        let mut jn = Job::new();
+        jn.pwd = Some("/tmp/deletejob-pwd".to_string());
+        jn.other = 42;
+        jn.stty_in_env = 1;
+        jn.stat = stat::SUPERJOB;
+        deletejob(&mut jn, false);
+        // c:1525 — freejob(jn, 1) called → all fields reset.
+        assert_eq!(jn.pwd, None,
+            "c:1525 — pwd cleared via freejob chain");
+        assert_eq!(jn.other, 0,
+            "c:1525 — other cleared");
+        assert_eq!(jn.stty_in_env, 0,
+            "c:1525 — stty_in_env cleared");
+        assert_eq!(jn.stat, 0,
+            "c:1525 — stat cleared");
+    }
+
+    /// `Src/jobs.c:1457-1495` — `freejob(jn, deleting)`. Resets ALL
+    /// per-job state including `pwd`, `ty`, `other`, `stty_in_env`
+    /// (previously missing). Pin: pre-populate every field, call
+    /// freejob, verify ALL reset to zero/empty/None.
+    #[test]
+    fn freejob_resets_all_per_job_state_fields() {
+        let mut jn = Job::new();
+        // Pre-populate every freejob-reset field.
+        jn.pwd = Some("/tmp/saved-pwd".to_string());
+        jn.gleader = 12345;
+        jn.other = 7;
+        jn.stat = stat::SUPERJOB;
+        jn.stty_in_env = 1;
+        jn.text = "echo foo".to_string();
+        // Call freejob.
+        freejob(&mut jn, false);
+        // All fields reset.
+        assert_eq!(jn.pwd, None,
+            "c:1477-1479 — pwd reset to None");
+        assert_eq!(jn.gleader, 0,
+            "c:1489 — gleader = 0");
+        assert_eq!(jn.other, 0,
+            "c:1489 — other = 0");
+        assert_eq!(jn.stat, 0,
+            "c:1490 — stat = 0");
+        assert_eq!(jn.stty_in_env, 0,
+            "c:1490 — stty_in_env = 0");
+        assert_eq!(jn.text, "",
+            "Rust-only: text cleared");
+        assert!(jn.procs.is_empty(), "c:1462 — procs cleared");
+        assert!(jn.auxprocs.is_empty(), "c:1469 — auxprocs cleared");
+        assert!(jn.filelist.is_empty(), "c:1491 — filelist cleared");
+        assert!(jn.ty.is_none(), "c:1475 — ty cleared");
     }
 
     /// `Src/jobs.c:259-270` — `super_job` requires THREE conditions:
