@@ -2852,4 +2852,170 @@ mod paramtypestr_table_tests {
         let s = paramtypestr(&p);
         assert!(s.contains("-local"), "level>0 must add '-local' (got {s:?})");
     }
+
+    /// `Src/Modules/parameter.c:48 + c:91-92` — PM_UNSET short-circuits
+    /// to empty string BEFORE the type/modifier dispatch. Pin this
+    /// guard: a regression that drops the PM_UNSET check would emit
+    /// stale type labels for unset params, leaking PM state through
+    /// `${(t)varname}` for never-assigned params.
+    #[test]
+    fn unset_param_renders_as_empty_string() {
+        use crate::ported::zsh_h::PM_UNSET;
+        // Even with type + modifier flags set, PM_UNSET wins.
+        let s = paramtypestr(&pm(PM_INTEGER | PM_UNSET | PM_READONLY));
+        assert_eq!(s, "",
+            "c:48,91-92 — PM_UNSET wins over every type + modifier");
+    }
+
+    /// `Src/Modules/parameter.c:49-50` — PM_AUTOLOAD emits "undefined"
+    /// regardless of any other type/modifier bits set. Pin both the
+    /// exact string and the precedence over PM_INTEGER etc.
+    #[test]
+    fn autoload_param_renders_as_undefined() {
+        use crate::ported::zsh_h::PM_AUTOLOAD;
+        assert_eq!(paramtypestr(&pm(PM_AUTOLOAD)), "undefined",
+            "c:49-50 — PM_AUTOLOAD → 'undefined'");
+        // Even with type bits + modifiers set, AUTOLOAD wins.
+        let s = paramtypestr(&pm(PM_AUTOLOAD | PM_INTEGER | PM_READONLY));
+        assert_eq!(s, "undefined",
+            "c:49-50 — PM_AUTOLOAD precedence over type+modifier");
+    }
+
+    /// `Src/Modules/parameter.c:53` — PM_SCALAR has value 0 (all type
+    /// bits clear). A bare param with no type bits set renders as
+    /// "scalar". Pin so a regression that emits "" or "unknown" for
+    /// the zero-type case breaks the most-common `${(t)foo}` path.
+    #[test]
+    fn scalar_param_renders_as_scalar() {
+        assert_eq!(paramtypestr(&pm(PM_SCALAR)), "scalar",
+            "c:53 — bare PM_SCALAR (zero type bits) → 'scalar'");
+    }
+
+    /// `Src/Modules/parameter.c:54` — PM_NAMEREF renders as "nameref".
+    /// Catches a regression that omits the nameref branch (zsh added
+    /// nameref support in 5.10+).
+    #[test]
+    fn nameref_param_renders_as_nameref() {
+        use crate::ported::zsh_h::PM_NAMEREF;
+        assert_eq!(paramtypestr(&pm(PM_NAMEREF)), "nameref",
+            "c:54 — PM_NAMEREF → 'nameref'");
+    }
+
+    /// `Src/Modules/parameter.c:65-90` — Every modifier flag adds a
+    /// `-suffix`. Sweep all eight modifiers (LEFT/RIGHT_B/RIGHT_Z/
+    /// LOWER/UPPER/TAGGED/TIED/UNIQUE/HIDE/HIDEVAL/SPECIAL) so a
+    /// regression silently dropping one breaks `${(t)foo}` typeset
+    /// output for that flag.
+    #[test]
+    fn left_modifier_renders_dash_left_suffix() {
+        use crate::ported::zsh_h::PM_LEFT;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_LEFT));
+        assert!(s.contains("-left"), "c:65-66 — PM_LEFT → '-left' (got {s:?})");
+    }
+
+    #[test]
+    fn right_b_modifier_renders_dash_right_blanks_suffix() {
+        use crate::ported::zsh_h::PM_RIGHT_B;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_B));
+        assert!(s.contains("-right_blanks"),
+            "c:67-68 — PM_RIGHT_B → '-right_blanks' (got {s:?})");
+    }
+
+    #[test]
+    fn right_z_modifier_renders_dash_right_zeros_suffix() {
+        use crate::ported::zsh_h::PM_RIGHT_Z;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_Z));
+        assert!(s.contains("-right_zeros"),
+            "c:69-70 — PM_RIGHT_Z → '-right_zeros' (got {s:?})");
+    }
+
+    #[test]
+    fn lower_modifier_renders_dash_lower_suffix() {
+        use crate::ported::zsh_h::PM_LOWER;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_LOWER));
+        assert!(s.contains("-lower"),
+            "c:71-72 — PM_LOWER → '-lower' (got {s:?})");
+    }
+
+    #[test]
+    fn upper_modifier_renders_dash_upper_suffix() {
+        use crate::ported::zsh_h::PM_UPPER;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_UPPER));
+        assert!(s.contains("-upper"),
+            "c:73-74 — PM_UPPER → '-upper' (got {s:?})");
+    }
+
+    #[test]
+    fn tagged_modifier_renders_dash_tag_suffix() {
+        use crate::ported::zsh_h::PM_TAGGED;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_TAGGED));
+        assert!(s.contains("-tag"),
+            "c:77-78 — PM_TAGGED → '-tag' (got {s:?})");
+    }
+
+    #[test]
+    fn tied_modifier_renders_dash_tied_suffix() {
+        use crate::ported::zsh_h::PM_TIED;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_TIED));
+        assert!(s.contains("-tied"),
+            "c:79-80 — PM_TIED → '-tied' (got {s:?})");
+    }
+
+    #[test]
+    fn unique_modifier_renders_dash_unique_suffix() {
+        use crate::ported::zsh_h::PM_UNIQUE;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_UNIQUE));
+        assert!(s.contains("-unique"),
+            "c:83-84 — PM_UNIQUE → '-unique' (got {s:?})");
+    }
+
+    #[test]
+    fn hide_modifier_renders_dash_hide_suffix() {
+        use crate::ported::zsh_h::PM_HIDE;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_HIDE));
+        assert!(s.contains("-hide"),
+            "c:85-86 — PM_HIDE → '-hide' (got {s:?})");
+    }
+
+    #[test]
+    fn hideval_modifier_renders_dash_hideval_suffix() {
+        use crate::ported::zsh_h::PM_HIDEVAL;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_HIDEVAL));
+        assert!(s.contains("-hideval"),
+            "c:87-88 — PM_HIDEVAL → '-hideval' (got {s:?})");
+    }
+
+    #[test]
+    fn special_modifier_renders_dash_special_suffix() {
+        use crate::ported::zsh_h::PM_SPECIAL;
+        let s = paramtypestr(&pm(PM_SCALAR | PM_SPECIAL));
+        assert!(s.contains("-special"),
+            "c:89-90 — PM_SPECIAL → '-special' (got {s:?})");
+    }
+
+    /// `Src/Modules/parameter.c:43-94` — Multiple modifiers stack in C
+    /// source order (level → LEFT → RIGHT_B → RIGHT_Z → LOWER → UPPER
+    /// → READONLY → TAGGED → TIED → EXPORTED → UNIQUE → HIDE →
+    /// HIDEVAL → SPECIAL). Pin the order so a regen that reshuffles
+    /// the branches changes `${(t)foo}` output across the whole zsh
+    /// ecosystem.
+    #[test]
+    fn multiple_modifiers_concatenate_in_c_source_order() {
+        use crate::ported::zsh_h::{PM_LEFT, PM_READONLY, PM_EXPORTED};
+        let mut p = pm(PM_INTEGER | PM_LEFT | PM_READONLY | PM_EXPORTED);
+        p.level = 1;
+        let s = paramtypestr(&p);
+        // c:43-94 emits left BEFORE readonly BEFORE export.
+        let i_left  = s.find("-left").expect("missing -left");
+        let i_ro    = s.find("-readonly").expect("missing -readonly");
+        let i_exp   = s.find("-export").expect("missing -export");
+        let i_local = s.find("-local").expect("missing -local");
+        // c:63-64 — local is FIRST (level check fires before any flag).
+        assert!(i_local < i_left,
+            "c:63-64 — -local must precede -left");
+        assert!(i_left < i_ro,
+            "c:65-76 — -left must precede -readonly");
+        assert!(i_ro < i_exp,
+            "c:75-82 — -readonly must precede -export");
+    }
 }
