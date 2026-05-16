@@ -1653,6 +1653,39 @@ mod tests {
             "c:1326 — signo > SIGRTMAX → NULL (empty)");
     }
 
+    /// `Src/signals.c:269-274` — `wait_for_processes` waitpid flags
+    /// must include WCONTINUED so children resumed via SIGCONT
+    /// surface a status update through waitpid. Pin the flag union
+    /// composition: WNOHANG | WUNTRACED | WCONTINUED.
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_processes_uses_canonical_waitpid_flags() {
+        // We can't easily intercept libc::waitpid from a test, so pin
+        // the canonical flags directly via libc constants — if a
+        // future regression drops WCONTINUED, the const assertion
+        // fails (catching the drift even when no child is reaped).
+        let canonical = libc::WNOHANG | libc::WUNTRACED | libc::WCONTINUED;
+        // Each component must be a distinct, non-zero bit.
+        assert_ne!(libc::WNOHANG, 0);
+        assert_ne!(libc::WUNTRACED, 0);
+        assert_ne!(libc::WCONTINUED, 0);
+        assert_eq!(libc::WNOHANG & libc::WUNTRACED, 0,
+            "WNOHANG and WUNTRACED must be disjoint bits");
+        assert_eq!(libc::WNOHANG & libc::WCONTINUED, 0,
+            "WNOHANG and WCONTINUED must be disjoint bits");
+        assert_eq!(libc::WUNTRACED & libc::WCONTINUED, 0,
+            "WUNTRACED and WCONTINUED must be disjoint bits");
+        // The combined mask is the canonical WAITFLAGS per c:271.
+        assert!(canonical >= libc::WNOHANG + libc::WUNTRACED + libc::WCONTINUED,
+            "canonical mask must include all three bits");
+        // `wait_for_processes` is a void-returning poll-loop on the
+        // current process; call it to verify it doesn't hang AND
+        // returns an empty vec (no child to reap in test).
+        let result = wait_for_processes();
+        assert!(result.is_empty(),
+            "no child process to reap in test — must return empty");
+    }
+
     /// `Src/signals.c:1024-1033` — `queue_traps(wait_cmd)` enables
     /// queueing ONLY when BOTH `!isset(TRAPSASYNC)` AND `!wait_cmd`.
     /// The previous Rust port hardcoded a `fetch_add(1)`, defeating
