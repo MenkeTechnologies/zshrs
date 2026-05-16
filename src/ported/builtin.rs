@@ -5075,9 +5075,53 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
             // FALLTHROUGH to BIN_EXIT
             zexit(num, ZEXIT_NORMAL);
         }
-        // c:5867+ — BIN_EXIT: complex local-scope guard.
+        // c:5870-5894 — BIN_EXIT: function-context guard. C body:
+        //   if (locallevel > forklevel && shell_exiting != -1) {
+        //       if (stopmsg || (zexit(0, ZEXIT_DEFERRED), !stopmsg)) {
+        //           if (trap_state) trap_state = TRAP_STATE_FORCE_RETURN;
+        //           retflag = 1; breaks = loops;
+        //           exit_pending = 1; exit_level = locallevel; exit_val = num;
+        //       }
+        //   } else zexit(num, ZEXIT_NORMAL);
+        //
+        // Inside a function (locallevel > forklevel) the shell can't
+        // exit directly — EXIT traps still need to run. The probe
+        // path zexit(0, ZEXIT_DEFERRED) calls checkjobs; if no
+        // stopmsg triggered, we defer: set retflag + breaks +
+        // exit_pending so the function unwind takes us out.
+        //
+        // The previous Rust port skipped this entire guard, always
+        // calling zexit(num, ZEXIT_NORMAL) directly. `exit` inside
+        // a function would terminate without running EXIT traps or
+        // unwinding the function stack.
         x if x == BIN_EXIT => {
-            zexit(num, ZEXIT_NORMAL);
+            let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
+            if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
+                // Probe via ZEXIT_DEFERRED — may set stopmsg.
+                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                    zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
+                }
+                if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884 still no stopmsg → defer
+                    let trap_state = crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    if trap_state != 0 {                                     // c:5885
+                        crate::exec::TRAP_STATE.store(                       // c:5886
+                            crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                            Ordering::Relaxed,
+                        );
+                    }
+                    RETFLAG.store(1, Ordering::Relaxed);                     // c:5887
+                    BREAKS.store(LOOPS.load(Ordering::Relaxed),              // c:5888
+                                 Ordering::Relaxed);
+                    EXIT_PENDING.store(1, Ordering::Relaxed);                // c:5889
+                    // exit_level not yet ported as a global; the
+                    // RETFLAG path handles function-scope unwind.
+                    EXIT_VAL.store(num, Ordering::Relaxed);                  // c:5891
+                }
+            } else {
+                zexit(num, ZEXIT_NORMAL);                                    // c:5894
+            }
         }
         _ => {}
     }
