@@ -4529,11 +4529,25 @@ pub fn assignnparam(
     None
 }
 
-/// Port of `setnparam(char *s, mnumber val)` from `Src/params.c:3744`. C body:
-/// `return assignnparam(s, val, ASSPM_WARN);` — single-line
-/// wrapper. Stub until `assignnparam` is implemented.
-pub fn setnparam(s: &str, val: f64) {
-    assignnparam(s, crate::ported::math::mnumber { l: 0, d: val, type_: MN_FLOAT }, crate::ported::zsh_h::ASSPM_WARN);
+/// Port of `Param setnparam(char *s, mnumber val)` from `Src/params.c:3745-3749`.
+///
+/// C body (c:3747-3748):
+/// ```c
+/// return assignnparam(s, val, ASSPM_WARN);
+/// ```
+///
+/// Single-line wrapper around `assignnparam` with ASSPM_WARN flags.
+///
+/// The previous Rust port took `(s: &str, val: f64) -> ()` — losing
+/// the integer branch (callers couldn't set integer params via
+/// `setnparam`) AND the Param return. No real callers existed because
+/// the fabricated sig fit nothing. Match C exactly: `(s, val)` where
+/// `val` is the canonical `mnumber` tagged union, returning the
+/// resulting Param.
+pub fn setnparam(s: &str, val: crate::ported::math::mnumber)                 // c:3746
+    -> Option<crate::ported::zsh_h::Param>
+{
+    assignnparam(s, val, ASSPM_WARN as i32)                                  // c:3748
 }
 
 /// Port of `assigniparam(char *s, zlong val, int flags)` from `Src/params.c:3753` (and its
@@ -9220,6 +9234,62 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `setnparam` to its canonical C body at `Src/params.c:3745-3749`.
+    /// MUST accept `mnumber` (integer or float) and return Param.
+    /// Previous Rust port took `f64` only and returned void — losing
+    /// the integer side and the Param return entirely.
+    #[test]
+    fn setnparam_accepts_both_integer_and_float() {
+        use crate::ported::math::{mnumber, MN_INTEGER as MN_INT, MN_FLOAT as MN_FLT};
+        use crate::ported::zsh_h::{PM_INTEGER, PM_FFLOAT};
+
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+
+        // Clean up any leftover.
+        let int_name = "zshrs_test_setnparam_i";
+        let flt_name = "zshrs_test_setnparam_f";
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(int_name);
+            tab.remove(flt_name);
+        }
+
+        // c:3748 — integer branch: setnparam returns Some(Param) with
+        // PM_INTEGER flag and u_val set.
+        let r = setnparam(int_name, mnumber { l: 999, d: 0.0, type_: MN_INT });
+        assert!(r.is_some(), "setnparam returns Some for new param");
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(int_name).expect("integer param created");
+            assert_ne!((pm.node.flags as u32) & PM_INTEGER, 0,
+                "c:3748 — PM_INTEGER flag set for integer mnumber");
+            assert_eq!(pm.u_val, 999,
+                "c:3748 — integer value stored in u_val");
+        }
+
+        // c:3748 — float branch: setnparam with MN_FLOAT creates PM_FFLOAT.
+        let r = setnparam(flt_name, mnumber { l: 0, d: 3.14, type_: MN_FLT });
+        assert!(r.is_some(), "setnparam returns Some for new float param");
+        {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(flt_name).expect("float param created");
+            assert_ne!((pm.node.flags as u32) & PM_FFLOAT, 0,
+                "c:3748 — PM_FFLOAT flag set for float mnumber");
+            assert!((pm.u_dval - 3.14).abs() < 1e-10,
+                "c:3748 — float value stored in u_dval");
+        }
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(int_name);
+            tab.remove(flt_name);
+        }
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setiparam` to its canonical C body at `Src/params.c:3767-3773`.
