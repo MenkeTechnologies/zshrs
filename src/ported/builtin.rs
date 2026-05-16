@@ -4738,12 +4738,19 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
                 .unwrap_or(false)
         };
         if !is_array {                                                       // c:5600
-            num = first.trim().parse::<i32>().unwrap_or_else(|_| {           // c:5601
+            // c:5601 — `num = mathevali(*argv++);`. The previous Rust port
+            // used `parse::<i32>()` which rejects any non-trivial
+            // arithmetic: `shift 1+2` would silently return ret=1
+            // instead of shifting by 3. Route through mathevali.
+            num = crate::ported::math::mathevali(first).unwrap_or_else(|_| {
                 ret = 1;
                 0
-            });
+            }) as i32;                                                       // c:5601
             idx = 1;
-            if ret != 0 {
+            // c:5602-5605 — `if (errflag) return 1;`.
+            if ret != 0
+                || crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+            {
                 crate::ported::mem::unqueue_signals();                       // c:5604
                 return 1;
             }
