@@ -333,11 +333,23 @@ pub fn tccap_get_name(cap: usize) -> &'static str {                          // 
 /// table (`tccaps`) is lazy-populated by the termcap module on
 /// first lookup rather than upfront here.
 pub fn init_term() -> i32 {                                                  // c:771
-    // if (!*term) { termflags |= TERM_UNKNOWN; return 0; }                  // c:771-780
-    let term = std::env::var("TERM").unwrap_or_default();
-    if term.is_empty() {
-        crate::ported::params::TERMFLAGS.fetch_or(1, Ordering::SeqCst);
-        return 0;
+    // c:777 — `if (!*term) { termflags |= TERM_UNKNOWN; return 0; }`.
+    //
+    // Two divergences in the previous Rust port:
+    //   1. Read \`std::env::var(\"TERM\")\` — should be paramtab via the
+    //      shell's \`term\` global (Src/init.c:777 references \`term\`).
+    //      Same env-vs-paramtab fix family as the prior termcap +
+    //      bin_vared TERM fixes.
+    //   2. \`TERMFLAGS.fetch_or(1)\` set bit 0 which is TERM_BAD
+    //      (Src/zsh.h:1985 = 0x01). C sets TERM_UNKNOWN (0x02 per
+    //      Src/zsh.h:1986). Same bit-value drift family as the
+    //      earlier TERM_UNKNOWN params.rs fix.
+    let term = crate::ported::params::getsparam("TERM")
+        .unwrap_or_default();
+    if term.is_empty() {                                                     // c:777
+        crate::ported::params::TERMFLAGS.fetch_or(
+            crate::ported::zsh_h::TERM_UNKNOWN, Ordering::SeqCst);            // c:778
+        return 0;                                                            // c:779
     }
     // unset zle if using zsh under emacs                                    // c:782
     if term == "emacs" {                                                     // c:783
