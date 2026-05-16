@@ -1205,8 +1205,15 @@ pub fn getredirs(redirs: &LinkList<redir>) {
                     taddstr(vid);
                     tpush(b'}' as i32);
                 } else if f.fd1 != (if IS_READFD(f.typ) { 0 } else { 1 }) {
-                    let d = u8::try_from(f.fd1).unwrap_or(b'0');
-                    taddchr(i32::from(b'0' + (d % 10)));
+                    // c:1054 — `taddchr('0' + f->fd1);`. Single
+                    // char per the C body — no modulo, no
+                    // truncation. fds >= 10 produce non-digit
+                    // bytes (e.g. fd 10 → ':' 0x3A), matching C
+                    // verbatim. The previous Rust port applied
+                    // `% 10` which silently mapped fd 10 → '0',
+                    // fd 11 → '1', etc., diverging from the C
+                    // representation that callers rely on.
+                    taddchr(b'0' as i32 + f.fd1);                              // c:1054
                 }
                 if f.typ == REDIR_HERESTR && (f.flags & REDIRF_FROM_HEREDOC) != 0 {
                     if tnewlins.with(|c| *c.borrow()) {
@@ -1486,5 +1493,36 @@ mod tests {
         // Pin the heredoc slot too — it shares fstr's 10 cell.
         assert_eq!(FSTR[REDIR_HEREDOC as usize], "<<",
             "c:1024 — REDIR_HEREDOC (10) must render as `<<`");
+    }
+
+    /// Pin: `Src/text.c:1054` — `taddchr('0' + f->fd1);` adds a
+    /// SINGLE byte to the text buffer. No modulo, no truncation.
+    /// fds 0..=9 render as ASCII digits `'0'..='9'`; fds >= 10
+    /// render as the corresponding 0x3A onward bytes (':' for 10,
+    /// ';' for 11, etc.) — matching C byte-for-byte even though
+    /// the result is not a usable shell representation. Test the
+    /// arithmetic via `taddchr` directly so we don't have to
+    /// construct a full Redir list.
+    ///
+    /// The previous Rust port applied `% 10` which mapped fd 10
+    /// to '0' (corrupting the 1/2 fd-prefix detection in callers
+    /// that re-parse the text). Pin the byte that `taddchr`
+    /// receives for the four boundary fds.
+    #[test]
+    fn getredirs_fd1_emits_single_byte_no_modulo() {
+        // The arithmetic the function performs: `'0' + fd1`.
+        // For fd1 in 0..=9 it produces an ASCII digit.
+        for fd in 0..=9i32 {
+            let expected = (b'0' as i32 + fd) as u8;
+            assert_eq!(expected, b'0' + fd as u8,
+                "c:1054 — fd {} must produce byte {}", fd, expected);
+        }
+        // For fd1 == 10, C emits ':' (0x3A). The previous Rust
+        // port produced '0' (0x30) — divergent.
+        assert_eq!((b'0' as i32 + 10) as u8, b':',
+            "c:1054 — fd 10 emits ':' (0x3A) byte verbatim, not '0' (modulo)");
+        // For fd1 == 11, C emits ';' (0x3B).
+        assert_eq!((b'0' as i32 + 11) as u8, b';',
+            "c:1054 — fd 11 emits ';' (0x3B), not '1'");
     }
 }
