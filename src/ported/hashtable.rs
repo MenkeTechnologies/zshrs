@@ -546,12 +546,26 @@ impl Default for reswd_table {
 pub use crate::ported::zsh_h::alias as Alias;
 use crate::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED};
 
-/// Port of `hnamcmp(const void *ap, const void *bp)` from `Src/hashtable.c:341`.
+/// Port of `static int hnamcmp(const void *ap, const void *bp)`
+/// from `Src/hashtable.c:341-346`. C body:
+/// ```c
+/// HashNode a = *(HashNode *)ap;
+/// HashNode b = *(HashNode *)bp;
+/// return ztrcmp(a->nam, b->nam);
+/// ```
 ///
-/// `ztrcmp` over hash-node names — used by qsort for sorted
-/// scan output (`functions`, `alias`, etc.).
+/// `ztrcmp` is a META-AWARE compare that XORs Meta-escaped bytes
+/// with 32 before comparing (Src/utils.c:5106). The previous Rust
+/// port used `str::cmp` which does naive byte-wise lexicographic
+/// compare — for Meta-encoded hash-table keys this sorts them
+/// incorrectly (Meta byte 0x83 sorts AFTER ASCII printable but the
+/// real underlying byte 0x83^32=0xa3 should compare as a high byte).
+///
+/// Route through the canonical `crate::ported::utils::ztrcmp` so
+/// `functions`, `alias`, etc. sort their key listings the same way
+/// C does for Meta-encoded names.
 pub fn hnamcmp(ap: &str, bp: &str) -> std::cmp::Ordering {
-    ap.cmp(bp)
+    crate::ported::utils::ztrcmp(ap, bp)                                     // c:345
 }
 
 /// Port of `scanmatchtable(HashTable ht, Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags)` from `Src/hashtable.c:373`.
@@ -2197,6 +2211,41 @@ mod tests {
         assert!(hasher("test") != 0);
         assert_eq!(hasher("test"), hasher("test"));
         assert_ne!(hasher("test"), hasher("Test"));
+    }
+
+    /// Pin `hnamcmp` to its canonical C body at `Src/hashtable.c:341-346`:
+    /// must route through `ztrcmp` (META-AWARE compare), not naive
+    /// `str::cmp`. The previous Rust port used byte-wise cmp which
+    /// sorts Meta-encoded keys incorrectly.
+    #[test]
+    fn hnamcmp_uses_ztrcmp_meta_aware_compare() {
+        use std::cmp::Ordering;
+        // Plain ASCII: same as str::cmp.
+        assert_eq!(hnamcmp("apple", "banana"), Ordering::Less);
+        assert_eq!(hnamcmp("banana", "apple"), Ordering::Greater);
+        assert_eq!(hnamcmp("equal", "equal"), Ordering::Equal);
+
+        // Empty string sorts before non-empty.
+        assert_eq!(hnamcmp("", "a"), Ordering::Less);
+        assert_eq!(hnamcmp("a", ""), Ordering::Greater);
+
+        // Meta-encoded byte: 0x83 0x41 → real 0x61 ('a'). The
+        // Meta-aware ztrcmp treats `\x83\x41` as 'a' for compare
+        // purposes; naive str::cmp would compare 0x83 vs 0x61 (so
+        // "\x83\x41" would sort AFTER 'a'). Verify the Meta-aware
+        // path: the encoded "a" should compare equal-ish to "a".
+        // Construct via unsafe bytes since 0x83 isn't valid UTF-8
+        // alone — Rust ztrcmp operates on bytes.
+        let meta_a_bytes: Vec<u8> = vec![0x83, 0x41];  // Meta + 'A'^32 = 'a'
+        let meta_a = unsafe { std::str::from_utf8_unchecked(&meta_a_bytes) };
+        // Real "a" (0x61) vs encoded "a" (0x83 0x41): ztrcmp resolves
+        // both to 0x61 at the first position → Equal. But ztrcmp also
+        // takes into account end-of-string, so encoded "a" is longer
+        // by one byte unstripped. The C ztrcmp loop skips matching
+        // prefix; here the first bytes differ (0x61 vs 0x83), so it
+        // resolves c1=0x61, c2=(0x41^32)=0x61 → Equal. Verify.
+        assert_eq!(hnamcmp("a", meta_a), Ordering::Equal,
+            "c:345 — Meta-encoded 'a' (0x83 0x41) compares equal to real 'a'");
     }
 
     #[test]
