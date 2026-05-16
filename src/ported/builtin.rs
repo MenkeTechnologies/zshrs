@@ -5924,8 +5924,28 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
     let args_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let options = std::collections::HashMap::new();
     let mut variables = std::collections::HashMap::new();
+    // C `evalcond` reaches param values through `getvalue` / `getsparam`
+    // which read paramtab. The previous Rust port populated the
+    // variables map from `std::env::vars()` — the OS environment —
+    // so shell-internal vars (not exported) appeared "unset" to
+    // `[[ -z $var ]]` / `[[ $a = $b ]]` etc. Walk paramtab to mirror
+    // C; fall back to env for entries the paramtab hasn't imported.
+    {
+        let tab = crate::ported::params::paramtab().read().unwrap();
+        for (k, pm) in tab.iter() {
+            // Skip PM_UNSET — these are name-declared-but-no-value.
+            if (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0 {
+                continue;
+            }
+            let v = pm.u_str.clone().unwrap_or_default();
+            variables.insert(k.clone(), v);
+        }
+    }
+    // Layer env vars on top of paramtab for the rare case where the
+    // OS env has a name paramtab hasn't yet imported (e.g. external
+    // wrapper that exec'd zshrs with env vars).
     for (k, v) in std::env::vars() {
-        variables.insert(k, v);
+        variables.entry(k).or_insert(v);
     }
     let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
     let mut ret = crate::ported::cond::evalcond(&args_refs, &options, &variables, posix); // c:7305
