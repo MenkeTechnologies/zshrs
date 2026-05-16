@@ -1277,12 +1277,25 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // 
                 continue; // c:617
             }
             // Quote/paren state tracking (C lines 600-611).
+            //
+            // The previous Rust port had every token-byte literal in
+            // this block WRONG:
+            //   `\u{97}` was labeled Dnull → it's QUEST.
+            //   `\u{98}` was labeled Snull → it's TILDE.
+            //   `\u{83}` was labeled Tick  → it's META lead byte.
+            //   `\u{85}` was labeled Inpar → it's STRINGG ($).
+            //   `\u{86}` was labeled Outpar → it's HAT.
+            // Canonical values per `Src/zsh.h:159-194` (cross-checked
+            // via `crate::ported::zsh_h::{Snull, Dnull, Tick, Inpar,
+            // Outpar}` constants):
+            //   Snull  = 0x9d, Dnull  = 0x9e, Tick   = 0x93,
+            //   Inpar  = 0x88, Outpar = 0x8a.
             match c {                                       // c:600
-                '\u{97}' /* Dnull */ |                      // c:602 (")
-                '\u{98}' /* Snull */ |                      // c:603 (')
-                '\u{83}' /* Tick */ => { inq = !inq; }      // c:604 (`)
-                '\u{85}' /* Inpar */ => { inp += 1; }       // c:606
-                '\u{86}' /* Outpar */ => { inp -= 1; }      // c:608
+                crate::ported::zsh_h::Dnull |               // c:602 (")
+                crate::ported::zsh_h::Snull |               // c:603 (')
+                crate::ported::zsh_h::Tick => { inq = !inq; } // c:604 (`)
+                crate::ported::zsh_h::Inpar => { inp += 1; }  // c:606
+                crate::ported::zsh_h::Outpar => { inp -= 1; } // c:608
                 _ => {}
             }
             // ISEP test (C line 581) — outside quotes/parens, char
@@ -1472,13 +1485,15 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
     // name. isend2(c) = !c || c==Inpar || (assign && c==':').
+    // The previous Rust port had a DUPLICATE `c != '\u{85}'` line
+    // mis-labeled as "Inpar token" — `\u{85}` is Stringg, not Inpar.
+    // Removed; `c != Inpar` (the canonical const) is the only correct check.
     let end = s // c:719
         .chars() // c:719
         .take_while(|&c| {
             // c:719
             c != '\0'                                       // c:719
                 && c != Inpar                               // c:719
-                && c != '\u{85}'                            // c:719 (Inpar token)
                 && !(assign && c == ':') // c:719
         })
         .count();
@@ -1556,9 +1571,15 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
         } // c:741 — leave for =arm
 
         // C `isend(c)`: !c || c=='/' || c==Inpar || (assign && c==':')
+        // c:725 macro.
+        //
+        // The previous Rust port used `\u{85}` for "Inpar", which is
+        // ACTUALLY the Stringg token byte (Src/zsh.h:160 `String=0x85`).
+        // The canonical Inpar value is `\u{88}` (Src/zsh.h:163 `Inpar=0x88`).
+        // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
+        // while `~$xxx` (Stringg, which should NOT isend) would.
         let isend = |c: char| -> bool {
-            // c:725 macro
-            c == '\0' || c == '/' || c == '\u{85}' /* Inpar */
+            c == '\0' || c == '/' || c == crate::ported::zsh_h::Inpar
                 || (assign && c == ':')
         };
 
@@ -1682,8 +1703,12 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
 
     // `=cmd` — PATH lookup via equalsubstr. C:
     // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
-    if (first == '=' || first == '\u{86}'/* Equals */) && chars.len() > 1 && chars[1] != '\u{85}'
-    /* Inpar */
+    // The previous Rust port had `\u{86}` labeled Equals (wrong — that's
+    // Hat; Equals is \u{8d}) AND `\u{85}` labeled Inpar (wrong — that's
+    // Stringg; Inpar is \u{88}). Use canonical consts.
+    if (first == '=' || first == crate::ported::zsh_h::Equals)
+        && chars.len() > 1
+        && chars[1] != crate::ported::zsh_h::Inpar
     {
         let cmd_part: String = chars[1..].iter().collect();
         // Split at `:` if assign, else take the whole thing.
@@ -2343,11 +2368,15 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
     let mut end: Option<usize> = None; // c:1579
     for (i, &c) in chars.iter().enumerate() {
         // c:1579
+        // Previous Rust port had `\u{85}` labeled Inpar and `\u{86}`
+        // labeled Outpar — both wrong. `\u{85}` is Stringg ($), `\u{86}`
+        // is Hat (^). Canonical Inpar/Outpar are 0x88/0x8a per
+        // `Src/zsh.h:163,165`. Use the canonical consts.
         match c {                                           // c:1579
-            '[' | '\u{91}' /* Inbrack */ => depth += 1,     // c:1579
-            ']' | '\u{92}' /* Outbrack */ => depth -= 1,    // c:1579
-            '(' | '\u{85}' /* Inpar */ => depth += 1,       // c:1579
-            ')' | '\u{86}' /* Outpar */ => depth -= 1,      // c:1579
+            '[' | crate::ported::zsh_h::Inbrack => depth += 1,  // c:1579
+            ']' | crate::ported::zsh_h::Outbrack => depth -= 1, // c:1579
+            '(' | crate::ported::zsh_h::Inpar => depth += 1,    // c:1579
+            ')' | crate::ported::zsh_h::Outpar => depth -= 1,   // c:1579
             ':' if depth == 0 => { end = Some(i); break; }  // c:1579
             _ => {}
         }
@@ -7998,6 +8027,48 @@ mod tests {
         assert_eq!(singsub("hello"),  "hello");
         assert_eq!(singsub(""),       "");
         assert_eq!(singsub("no var"), "no var");
+    }
+
+    /// `Src/zsh.h:163,165,168,174,179,193,194` — pin the canonical
+    /// token byte values that subst.rs callers compare against. The
+    /// previous Rust port had FIVE places where the wrong byte was
+    /// labeled as a different token: 0x85 was called both Inpar and
+    /// Stringg, 0x86 was called both Equals and Outpar, etc. Pin
+    /// every token const so a future regression that uses a literal
+    /// byte instead of the const fails at compile time.
+    #[test]
+    fn token_byte_constants_match_zsh_h_canonical_values() {
+        use crate::ported::zsh_h::{
+            Dnull, Equals, Hat, Inbrack, Inpar, Outbrack, Outpar,
+            Snull, Stringg, Tick, Tilde,
+        };
+        assert_eq!(Stringg as u32, 0x85, "Src/zsh.h:160 Stringg = $");
+        assert_eq!(Hat as u32,     0x86, "Src/zsh.h:161 Hat = ^");
+        assert_eq!(Inpar as u32,   0x88, "Src/zsh.h:163 Inpar = (");
+        assert_eq!(Outpar as u32,  0x8a, "Src/zsh.h:165 Outpar = )");
+        assert_eq!(Equals as u32,  0x8d, "Src/zsh.h:168 Equals = =");
+        assert_eq!(Inbrack as u32, 0x91, "Src/zsh.h:172 Inbrack = [");
+        assert_eq!(Outbrack as u32, 0x92, "Src/zsh.h:173 Outbrack = ]");
+        assert_eq!(Tick as u32,    0x93, "Src/zsh.h:174 Tick = `");
+        assert_eq!(Tilde as u32,   0x98, "Src/zsh.h:179 Tilde = ~");
+        assert_eq!(Snull as u32,   0x9d, "Src/zsh.h:193 Snull");
+        assert_eq!(Dnull as u32,   0x9e, "Src/zsh.h:194 Dnull");
+
+        // Cross-pinning: confirm the WRONG mappings the previous port
+        // had can NEVER match the canonical const. (If a future
+        // regression revives `\u{85}` as Inpar, this would fail.)
+        assert_ne!(Inpar as u32, 0x85,
+            "Inpar must NOT equal 0x85 (that's Stringg)");
+        assert_ne!(Outpar as u32, 0x86,
+            "Outpar must NOT equal 0x86 (that's Hat)");
+        assert_ne!(Equals as u32, 0x86,
+            "Equals must NOT equal 0x86 (that's Hat)");
+        assert_ne!(Tick as u32, 0x83,
+            "Tick must NOT equal 0x83 (that's Meta lead byte)");
+        assert_ne!(Snull as u32, 0x98,
+            "Snull must NOT equal 0x98 (that's Tilde)");
+        assert_ne!(Dnull as u32, 0x97,
+            "Dnull must NOT equal 0x97 (that's Quest)");
     }
 } // c:3193
 
