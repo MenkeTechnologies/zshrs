@@ -2350,4 +2350,110 @@ mod tests {
         assert_eq!(result, "100%");
     }
 
+    /// `Src/Modules/zutil.c:923-936` — Unknown spec character emits the
+    /// original `%X` literal back into the output (not consumed). Pin
+    /// the fallback so a regen that drops the unknown-spec branch would
+    /// silently swallow `%z` when only `%n` was registered.
+    #[test]
+    fn zformat_unknown_spec_emits_literal_percent_x() {
+        let mut specs = HashMap::new();
+        specs.insert('n', "hello".to_string());
+        // %z is unknown; must round-trip
+        let result = zformat_substring("%z %n", &specs, false);
+        assert_eq!(result, "%z hello",
+            "c:923-936 — unknown spec emits raw `%X` segment");
+    }
+
+    /// `Src/Modules/zutil.c:825-826` — Right-align flag with explicit
+    /// min-width. `%-5n` right-pads with spaces on the LEFT. Pin both
+    /// arms (left/right) since a regen flipping the polarity would
+    /// silently invert every zformat-prompted output.
+    #[test]
+    fn zformat_right_align_with_min_width() {
+        let mut specs = HashMap::new();
+        specs.insert('n', "ab".to_string());
+        // Left-align (default): pad on RIGHT
+        assert_eq!(zformat_substring("[%5n]",  &specs, false),  "[ab   ]");
+        // Right-align (-): pad on LEFT
+        assert_eq!(zformat_substring("[%-5n]", &specs, false),  "[   ab]");
+    }
+
+    /// `Src/Modules/zutil.c:825-845` — Min + Max combined: `%5.10n`
+    /// means right-pad to min=5, truncate at max=10. With value
+    /// "hello world" (11 chars), max=10 truncates to "hello worl".
+    #[test]
+    fn zformat_min_max_combined() {
+        let mut specs = HashMap::new();
+        specs.insert('n', "hello world".to_string());
+        // max=10 truncates the 11-char value
+        let r = zformat_substring("[%5.10n]", &specs, false);
+        assert_eq!(r, "[hello worl]");
+        // Short value: min=5 right-pads (default = left-align)
+        specs.insert('n', "hi".to_string());
+        let r = zformat_substring("[%5.10n]", &specs, false);
+        assert_eq!(r, "[hi   ]",
+            "c:828-845 — min-pad then max-truncate; short value gets the pad only");
+    }
+
+    /// `Src/Modules/zutil.c:975-976` — `%)` is pre-registered as `)`
+    /// so the parser can emit a literal `)` from the user's format
+    /// string. Pin the alias.
+    #[test]
+    fn zformat_close_paren_escape() {
+        let specs = HashMap::new();
+        let r = zformat_substring("a%)b", &specs, false);
+        assert_eq!(r, "a)b", "c:975-976 — `%)` emits literal `)`");
+    }
+
+    /// `Src/Modules/zutil.c:847-887` — Ternary
+    /// `%(SPEC.true-text.false-text)` emits the FIRST branch ("true-text")
+    /// when the spec exists. Per `man zshmodules`: "if the contents of
+    /// the spec are present then true-text is output, otherwise
+    /// false-text." With presence=true (zformat -F), spec-set means
+    /// emit true-text.
+    #[test]
+    fn zformat_ternary_presence_mode_spec_set() {
+        let mut specs = HashMap::new();
+        specs.insert('s', "anything".to_string());
+        // presence=true: spec exists → TRUE branch (first text).
+        let r = zformat_substring("%(s.yes.no)", &specs, true);
+        assert_eq!(r, "yes",
+            "c:847-887 — spec set, presence=true → TRUE branch (true-text first)");
+    }
+
+    /// `Src/Modules/zutil.c:847-887` — Ternary with missing spec in
+    /// presence-mode emits the SECOND branch ("false-text"). Per
+    /// docs: "if contents of the spec are present then true-text is
+    /// output, otherwise false-text."
+    #[test]
+    fn zformat_ternary_presence_mode_spec_unset() {
+        let specs = HashMap::new();
+        let r = zformat_substring("%(s.yes.no)", &specs, true);
+        assert_eq!(r, "no",
+            "c:847-887 — spec unset, presence=true → FALSE branch (false-text second)");
+    }
+
+    /// `Src/Modules/zutil.c:937-948` — Plain (non-`%`) bytes between
+    /// specs emit verbatim. Pin the simplest no-spec passthrough.
+    #[test]
+    fn zformat_literal_text_passes_through() {
+        let specs = HashMap::new();
+        let r = zformat_substring("hello, world", &specs, false);
+        assert_eq!(r, "hello, world");
+        // Empty format → empty output
+        let r = zformat_substring("", &specs, false);
+        assert_eq!(r, "");
+    }
+
+    /// `Src/Modules/zutil.c:890-922` — When max=0 (`.0`), the value is
+    /// truncated to ZERO chars — but the min-pad still fires. Edge case
+    /// that pins the order: truncate-then-pad, not pad-then-truncate.
+    #[test]
+    fn zformat_max_zero_truncates_to_empty_but_keeps_min_pad() {
+        let mut specs = HashMap::new();
+        specs.insert('n', "abc".to_string());
+        let r = zformat_substring("[%3.0n]", &specs, false);
+        assert_eq!(r, "[   ]",
+            "c:890-922 — max=0 → empty value, min=3 → 3 spaces");
+    }
 }

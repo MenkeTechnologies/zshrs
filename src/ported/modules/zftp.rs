@@ -4287,4 +4287,134 @@ mod tests {
         zftp_cleanup();
         assert!(zftp_state().lock().unwrap().sessions.is_empty());
     }
+
+    /// `Src/Modules/zftp.c:267` — `#define ZFST_TYPE(x) (x & ZFST_TMSK)`.
+    /// The type mask isolates the transfer-type bit (`ZFST_IMAG` = 0x0001)
+    /// from the rest of the zfstatus word. Pin the mask semantics so a
+    /// regen that flips `ZFST_TMSK` silently to a wider value mis-extracts
+    /// other status bits (mode/login/syst/etc) as if they were type.
+    #[test]
+    fn zfst_type_isolates_transfer_type_bit() {
+        // Pure ASCII → 0
+        assert_eq!(ZFST_TYPE(ZFST_ASCI),                                0);
+        // Pure IMAGE → 1
+        assert_eq!(ZFST_TYPE(ZFST_IMAG),                                1);
+        // Mode + image flags set → still 1 (mode masked out)
+        assert_eq!(ZFST_TYPE(ZFST_IMAG | ZFST_BLOC),                    1);
+        // Image + LOGI + SYST → still 1
+        assert_eq!(ZFST_TYPE(ZFST_IMAG | ZFST_LOGI | ZFST_SYST),        1);
+        // No image bit + lots of other flags → 0
+        assert_eq!(ZFST_TYPE(ZFST_LOGI | ZFST_SYST | ZFST_BLOC),        0);
+    }
+
+    /// `Src/Modules/zftp.c:267` — `#define ZFST_MODE(x) (x & ZFST_MMSK)`.
+    /// Mode mask isolates the stream-vs-block bit (`ZFST_BLOC` = 0x0004).
+    /// Same regression risk as ZFST_TYPE: a too-wide MMSK would mis-claim
+    /// LOGI / SYST / NOPS / NOSZ / TRSZ / CLOS bits as "mode."
+    #[test]
+    fn zfst_mode_isolates_transfer_mode_bit() {
+        assert_eq!(ZFST_MODE(ZFST_STRE),                                0);
+        assert_eq!(ZFST_MODE(ZFST_BLOC),                                4);
+        // BLOC + IMAG → still 4 (type masked out)
+        assert_eq!(ZFST_MODE(ZFST_BLOC | ZFST_IMAG),                    4);
+        // BLOC + LOGI + SYST → still 4
+        assert_eq!(ZFST_MODE(ZFST_BLOC | ZFST_LOGI | ZFST_SYST),        4);
+        // LOGI + SYST + NOPS + NOSZ + TRSZ + CLOS, no BLOC → 0
+        let many = ZFST_LOGI | ZFST_SYST | ZFST_NOPS | ZFST_NOSZ | ZFST_TRSZ | ZFST_CLOS;
+        assert_eq!(ZFST_MODE(many),                                     0);
+    }
+
+    /// `Src/Modules/zftp.c:546-570` — `zfargstring(cmd, args)` joins
+    /// `cmd` with space-separated `args`. Empty argv yields just `cmd`.
+    /// A regression appending a trailing space on empty argv would mess
+    /// up `zftp_send` calls that compare-against a known FTP verb.
+    #[test]
+    fn zfargstring_empty_args_returns_cmd() {
+        assert_eq!(zfargstring("RETR", &[]),                            "RETR");
+        assert_eq!(zfargstring("QUIT", &[]),                            "QUIT");
+        assert_eq!(zfargstring("",     &[]),                            "");
+    }
+
+    /// `Src/Modules/zftp.c:546-570` — one argument case: single space
+    /// between cmd and arg, no trailing whitespace.
+    #[test]
+    fn zfargstring_single_arg_one_space() {
+        assert_eq!(zfargstring("RETR", &["file.txt"]),                  "RETR file.txt");
+        assert_eq!(zfargstring("USER", &["anonymous"]),                 "USER anonymous");
+    }
+
+    /// `Src/Modules/zftp.c:546-570` — multi-arg: space-separated, no
+    /// double-spacing or trailing space. The C body builds the buffer
+    /// via `sprintf(...,"%s",...)` with explicit space separators.
+    #[test]
+    fn zfargstring_multi_arg_space_joined() {
+        assert_eq!(
+            zfargstring("USER", &["anonymous", "pass@example.com"]),
+            "USER anonymous pass@example.com"
+        );
+        assert_eq!(
+            zfargstring("PORT", &["192", "168", "1", "1", "4", "1"]),
+            "PORT 192 168 1 1 4 1"
+        );
+    }
+
+    /// `Src/Modules/zftp.c:546-570` — empty args don't get filtered
+    /// out (C source's `sprintf("%s ",arg)` with empty arg → bare space).
+    /// Pin the exact behavior so a "smart" regression doesn't add a
+    /// silent skip-empty filter that would silently drop legitimate
+    /// (but empty) positional args.
+    #[test]
+    fn zfargstring_empty_arg_emits_space() {
+        assert_eq!(zfargstring("CMD", &["", "after"]),                  "CMD  after");
+        assert_eq!(zfargstring("CMD", &["before", ""]),                 "CMD before ");
+    }
+
+    /// `Src/Modules/zftp.c:3902-3905` — ZFST_ASCI is 0, ZFST_IMAG is 1.
+    /// These are the only two type values; their mutual exclusion is
+    /// what the c:267 mask depends on. Pin the exact values so a
+    /// regen that flips them silently inverts the ASCII vs binary
+    /// transfer selection across the entire zftp subcommand surface.
+    #[test]
+    fn zfst_type_constants_are_zero_and_one() {
+        assert_eq!(ZFST_ASCI, 0);
+        assert_eq!(ZFST_IMAG, 1);
+        assert_eq!(ZFST_TMSK, 1);
+        assert_eq!(ZFST_ASCI | ZFST_IMAG, ZFST_TMSK);
+    }
+
+    /// `Src/Modules/zftp.c:3914-3919` — Mode bit values + mask.
+    /// ZFST_STRE=0, ZFST_BLOC=4, ZFST_MMSK=4. The MMSK == BLOC contract
+    /// is load-bearing: type=0/1 in bit 0-0, mode=4 in bit 2. Pin so
+    /// a regen that shifts MMSK to bit 1 silently overlaps the type bit.
+    #[test]
+    fn zfst_mode_constants_have_correct_bit_position() {
+        assert_eq!(ZFST_STRE, 0);
+        assert_eq!(ZFST_BLOC, 0x04);
+        assert_eq!(ZFST_MMSK, 0x04);
+        assert_eq!(ZFST_STRE | ZFST_BLOC, ZFST_MMSK);
+        // The type mask MUST NOT overlap the mode mask.
+        assert_eq!(ZFST_TMSK & ZFST_MMSK, 0,
+            "c:3907/3919 — type and mode bit-fields must be disjoint");
+    }
+
+    /// `Src/Modules/zftp.c:3920-3931` — Higher status bits. Pin the
+    /// exact values so a regen reshuffling them breaks every call site
+    /// that does `if (zfstatusp[s] & ZFST_LOGI)` style checks.
+    #[test]
+    fn zfst_status_flag_bits_are_pairwise_distinct() {
+        let flags = [ZFST_LOGI, ZFST_SYST, ZFST_NOPS, ZFST_NOSZ, ZFST_TRSZ, ZFST_CLOS];
+        // All distinct
+        let mut sorted = flags.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), flags.len(),
+            "ZFST_* status flags must be pairwise distinct");
+        // None overlap with type or mode masks
+        for f in flags {
+            assert_eq!(f & ZFST_TMSK, 0,
+                "ZFST flag 0x{:x} must not overlap type mask", f);
+            assert_eq!(f & ZFST_MMSK, 0,
+                "ZFST flag 0x{:x} must not overlap mode mask", f);
+        }
+    }
 }
