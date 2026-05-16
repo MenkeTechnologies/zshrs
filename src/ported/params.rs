@@ -1425,11 +1425,29 @@ pub fn createparamtable() {                                                  // 
     };
     setsparam("HOST", &crate::ported::utils::ztrdup_metafy(&hostname));      // c:875
 
-    // c:878-882 — LOGNAME from getlogin() / cached_username
-    // (ztrdup_metafy wrap c:879).
-    let logname = std::env::var("LOGNAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_default();
+    // c:878-882 — LOGNAME from `getlogin()` libc syscall (with
+    // \`cached_username\` as fallback when DISABLE_DYNAMIC_NSS).
+    //
+    // The previous Rust port read \`env::var(\"LOGNAME\")\` /
+    // \`env::var(\"USER\")\` — different source. \`getlogin\` returns the
+    // kernel's record of the controlling-terminal login user; env
+    // LOGNAME/USER is whatever the parent process passed in (can be
+    // spoofed). For audit / SUID-aware code paths, the kernel's view
+    // is the right one.
+    let logname = unsafe {
+        let p = libc::getlogin();
+        if p.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        }
+    };                                                                       // c:880 getlogin()
+    let logname = if logname.is_empty() {
+        // c:882 — `ztrdup(cached_username)` fallback.
+        crate::ported::utils::get_username()
+    } else {
+        logname
+    };
     setsparam("LOGNAME", &crate::ported::utils::ztrdup_metafy(&logname));    // c:878
 
     // c:891 — pushheap() / c:921 — popheap(). Wraps the env-import
