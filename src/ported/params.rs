@@ -3433,10 +3433,17 @@ pub fn assignstrvalue(
 /// `pm->gsu.f->setfn(pm, val.u.d)`. EXECOPT/PM_READONLY checks
 /// at top.
 pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::ported::math::mnumber) {
+    // c:2860 — `if (unset(EXECOPT)) return;`. In NO_EXEC mode, param
+    // mutations must be skipped so dry-run shell evaluation doesn't
+    // leak state into the param table. The previous Rust port skipped
+    // this check; `zsh -n -c '(( x=5 ))'` would mutate $x silently.
+    if unset(EXECOPT) {                                                       // c:2860
+        return;
+    }
     let v = match v { Some(v) => v, None => return };
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
     if (pm.node.flags as u32 & PM_READONLY) != 0 {
-        zerr(&format!("read-only variable: {}", pm.node.nam));                // c:2858
+        zerr(&format!("read-only variable: {}", pm.node.nam));                // c:2862
         return;
     }
     let t = PM_TYPE(pm.node.flags as u32);
@@ -8149,6 +8156,12 @@ mod gsu_tests {
     fn setnumvalue_stores_int_value_into_scalar_pm() {
         use crate::ported::zsh_h::{param, hashnode, value, PM_SCALAR};
         use crate::ported::math::{mnumber, MN_INTEGER};
+        // c:2860 — setnumvalue bails when unset(EXECOPT). The unit-test
+        // env doesn't run through createoptiontable so we set "exec"
+        // explicitly to simulate normal runtime.
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
         // Build a scalar Param with no special base/width.
         let mut pm = Box::new(param {
             node: hashnode { next: None, nam: "x".to_string(), flags: PM_SCALAR as i32 },
@@ -8173,6 +8186,7 @@ mod gsu_tests {
             "c:2871 — setnumvalue must store the rendered integer; \
              was previously dropped via `let _ = s;`");
         let _ = pm;
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     #[test]
@@ -9282,6 +9296,57 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `setnumvalue` EXECOPT bail per `Src/params.c:2860`.
+    /// When unset(EXECOPT) (i.e. NO_EXEC mode via `zsh -n` or
+    /// `set -n`), param mutations MUST be skipped so dry-run shell
+    /// evaluation doesn't leak state into the param table.
+    #[test]
+    fn setnumvalue_bails_under_no_exec() {
+        use crate::ported::zsh_h::{param, hashnode, value, PM_INTEGER};
+        use crate::ported::math::{mnumber, MN_INTEGER};
+
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+
+        // c:2860 — NO_EXEC: setnumvalue must not mutate the param.
+        crate::ported::options::opt_state_set("exec", false);
+        let mut pm = Box::new(param {
+            node: hashnode {
+                next: None, nam: "ne".to_string(),
+                flags: PM_INTEGER as i32,
+            },
+            u_data: 0, u_arr: None, u_str: None,
+            u_val: 999, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None,
+            gsu_a: None, gsu_h: None,
+            base: 0, width: 0,
+            env: None, ename: None, old: None, level: 0,
+        });
+        let mut v = value {
+            pm: Some(pm.clone()),
+            arr: Vec::new(),
+            scanflags: 0, valflags: 0,
+            start: 0, end: -1,
+        };
+        let val = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        setnumvalue(Some(&mut v), val);
+        // pm.u_val MUST still be 999 (the initial), not 42.
+        let stored = v.pm.as_ref().unwrap().u_val;
+        assert_eq!(stored, 999,
+            "c:2860 — NO_EXEC: setnumvalue must NOT mutate pm.u_val \
+             (was {} but should stay 999)", stored);
+
+        // With exec=true, the same call mutates.
+        crate::ported::options::opt_state_set("exec", true);
+        setnumvalue(Some(&mut v), val);
+        let stored = v.pm.as_ref().unwrap().u_val;
+        assert_eq!(stored, 42,
+            "with EXEC set, setnumvalue stores u_val = 42");
+
+        let _ = pm;
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `getstrvalue` PM_INTEGER branch to canonical C convbase
