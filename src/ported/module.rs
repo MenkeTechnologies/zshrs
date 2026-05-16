@@ -3037,21 +3037,20 @@ pub struct modulestab {
 // helpers below.
 // =====================================================================
 
-/// `BINF_ADDED` flag from `Src/zsh.h:1459`. Set when the builtin is
-/// in the runtime hash table.
-pub const BINF_ADDED: u32 = 1 << 3;
-
-/// `CONDF_INFIX` flag from `Src/zsh.h`. Marks an infix `[[ … ]]`
-/// condition (`-eq`, `-ot`, etc.) vs prefix (`-z`, `-n`).
-pub const CONDF_INFIX: u32 = 1;
-
-/// `CONDF_ADDED` flag from `Src/zsh.h`. Set when the condition is
-/// in the runtime hash table.
-pub const CONDF_ADDED: u32 = 1 << 1;
-
-/// `MFF_ADDED` flag from `Src/zsh.h`. Set when the math function is
-/// in the runtime hash table.
-pub const MFF_ADDED: u32 = 1 << 1;
+// `BINF_ADDED` / `CONDF_INFIX` / `CONDF_ADDED` / `MFF_ADDED` were
+// previously duplicated here as `pub const … : u32 = …` with values
+// that happened to match the canonical zsh_h.rs declarations — but
+// with a type mismatch (u32 here, i32 in zsh_h.rs).
+//
+// C uses `int` for all four flags. Re-exporting from zsh_h.rs:
+//   - Eliminates the duplicate (single source of truth)
+//   - Picks the i32 type matching C `int`
+//   - Catches future C-source drift in ONE place (zsh_h.rs)
+//
+// The drift caught earlier in this series was the HIST_* values
+// where hist.rs declared `1<<N` bit positions but zsh_h.rs had the
+// canonical C values — different bits. Avoid the same hazard here.
+pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_INFIX, CONDF_ADDED, MFF_ADDED};
 
 
 
