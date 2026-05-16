@@ -4671,10 +4671,31 @@ pub fn intvarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
 
 /// Port of `zlevarsetfn(Param pm, zlong x)` from `Src/params.c:4224`. C body sets
 /// the int and triggers `adjustwinsize` for LINES/COLUMNS.
-pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
-    pm.u_val = x;
-    if pm.node.nam == "LINES" || pm.node.nam == "COLUMNS" {
-        let _ = crate::ported::utils::adjustwinsize(0);
+/// Port of `zlevarsetfn(Param pm, zlong x)` from `Src/params.c:4226`.
+/// C body: `*p = x; if (p == &zterm_lines || p == &zterm_columns)
+/// adjustwinsize(2 + (p == &zterm_columns));`
+///
+/// The `from` argument to `adjustwinsize` is documented at
+/// `Src/utils.c:1883-1887`: 0=signal, 1=manual, 2=LINES callback,
+/// 3=COLUMNS callback. Each value selects a different code path
+/// inside `adjustwinsize` — for example, `from=2` skips the
+/// COLUMNS-specific ioctl, and `from=3` skips the LINES path.
+///
+/// The previous Rust port passed `0` for both LINES and COLUMNS,
+/// which triggered the FULL `getwinsz` ioctl + both adjustlines
+/// AND adjustcolumns calls AND the potential setiparam recursion
+/// — diverging from C's narrow "just adjust the one axis we
+/// changed" semantics. Effect: setting `LINES=80` would re-issue
+/// `setiparam("COLUMNS", ...)` recursively, churning the
+/// paramtab for no reason.
+pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {           // c:4226
+    pm.u_val = x;                                                            // c:4230 *p = x;
+    // c:4231-4232 — `2 + (p == &zterm_columns)` selects 2 for LINES
+    // (zterm_lines) and 3 for COLUMNS (zterm_columns).
+    if pm.node.nam == "LINES" {
+        let _ = crate::ported::utils::adjustwinsize(2);                      // c:4232 LINES path
+    } else if pm.node.nam == "COLUMNS" {
+        let _ = crate::ported::utils::adjustwinsize(3);                      // c:4232 COLUMNS path
     }
 }
 
