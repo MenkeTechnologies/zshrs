@@ -339,37 +339,84 @@ pub fn run_queued_signals() {                                            // c:78
 
 /// Port of `#define child_block()` from `Src/signals.h:52`. Block
 /// SIGCHLD so the parent can manipulate job-table state without
-/// racing the reaper. zshrs's signals.rs holds the `sigchld_mask`
-/// global; until it's ported, this is a no-op stub.
+/// racing the reaper.
+///
+/// C body: `signal_block(signal_mask(SIGCHLD))`. The previous Rust
+/// port was a no-op with a stale comment ("sigchld_mask not yet
+/// wired") — but `signal_mask` and `signal_block` ARE both ported.
+/// Without this block, the parent's job-table mutations could race
+/// the SIGCHLD reaper inside wait_for_processes, corrupting jobtab
+/// entries (e.g. setting STAT_DONE on a job the reaper hasn't seen).
 #[inline]
 #[allow(non_snake_case)]
+#[cfg(unix)]
 pub fn child_block() {                                                   // c:52
-    // signal_block(sigchld_mask) — sigchld_mask not yet wired. No-op.
+    let mask = crate::ported::signals::signal_mask(libc::SIGCHLD);
+    let _ = crate::ported::signals::signal_block(&mask);
 }
+
+/// Non-unix no-op shim.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(not(unix))]
+pub fn child_block() {}
 
 /// Port of `#define child_unblock()` from `Src/signals.h:53`.
 /// Counterpart to `child_block`.
 #[inline]
 #[allow(non_snake_case)]
+#[cfg(unix)]
 pub fn child_unblock() {                                                 // c:53
-    // signal_unblock(sigchld_mask) — see child_block doc.
+    let mask = crate::ported::signals::signal_mask(libc::SIGCHLD);
+    let _ = crate::ported::signals::signal_unblock(&mask);
 }
+
+/// Non-unix no-op shim.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(not(unix))]
+pub fn child_unblock() {}
 
 /// Port of `#define winch_block()` from `Src/signals.h:56/59`.
 /// Block SIGWINCH (terminal-resize signal) so prompt-redraw and
 /// listing code can read terminal dimensions atomically.
+///
+/// C body: `signal_block(signal_mask(SIGWINCH))`. The previous Rust
+/// port was a no-op with a stale comment ("signal_mask not yet
+/// wired") — but `signal_mask` and `signal_block` ARE both ported
+/// at `crate::ported::signals`. Now wired exactly per c:56.
 #[inline]
 #[allow(non_snake_case)]
+#[cfg(unix)]
 pub fn winch_block() {                                                   // c:56
-    // signal_block(signal_mask(SIGWINCH)) — signal_mask not yet wired.
+    let mask = crate::ported::signals::signal_mask(libc::SIGWINCH);
+    let _ = crate::ported::signals::signal_block(&mask);
 }
+
+/// Non-unix no-op shim.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(not(unix))]
+pub fn winch_block() {}
 
 /// Port of `#define winch_unblock()` from `Src/signals.h:57/60`.
 /// Counterpart to `winch_block`.
+///
+/// C body: `signal_unblock(signal_mask(SIGWINCH))`. Same wire-up
+/// gap as winch_block — fixed now.
 #[inline]
 #[allow(non_snake_case)]
+#[cfg(unix)]
 pub fn winch_unblock() {                                                 // c:57
+    let mask = crate::ported::signals::signal_mask(libc::SIGWINCH);
+    let _ = crate::ported::signals::signal_unblock(&mask);
 }
+
+/// Non-unix no-op shim.
+#[inline]
+#[allow(non_snake_case)]
+#[cfg(not(unix))]
+pub fn winch_unblock() {}
 
 // ---------------------------------------------------------------------------
 // Convenience wrappers (c:64-67).
