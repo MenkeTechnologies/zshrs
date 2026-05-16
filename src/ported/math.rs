@@ -1919,12 +1919,64 @@ pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1
     matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
 }
 
-/// Port of `mathevalarg(char *s, char **ss)` from Src/math.c:1514 — evaluate one
-/// arg expression and return as integer. Used by `let` builtin
-/// and others that take an arith-expr argument.
-/// WARNING: param names don't match C — Rust=() vs C=(s, ss)
-pub(crate) fn mathevalarg(expr: &str) -> i64 {
-    matheval(expr).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0)
+/// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.
+///
+/// C body (c:1517-1538):
+/// ```c
+/// mnumber x;
+/// int xmtok = mtok;
+/// /* At this entry point we don't allow an empty expression,
+///  * whereas we do with matheval(). */
+/// if (*s == Nularg)
+///     s++;
+/// if (!*s) {
+///     zerr("bad math expression: empty string");
+///     return (zlong)0;
+/// }
+/// x = mathevall(s, MPREC_ARG, ss);
+/// if (mtok == COMMA)
+///     (*ss)--;
+/// mtok = xmtok;
+/// return (x.type & MN_FLOAT) ? (zlong)x.u.d : x.u.l;
+/// ```
+///
+/// Two key differences from `matheval`:
+///   1. Empty input is an ERROR (zerr + return 0), NOT silent 0.
+///      C's comment: `$array[$ind]` where `$ind` is unset should
+///      produce an error, not silently index 0.
+///   2. Uses `MPREC_ARG` precedence so the parser stops at the
+///      end-of-arg boundary (comma, close-paren) rather than
+///      consuming everything as one top-level expression.
+///
+/// The previous Rust port collapsed to `matheval(expr).unwrap_or(0)`
+/// — silently returning 0 on empty input AND defeating the
+/// `MPREC_ARG` vs `MPREC_TOP` distinction. (The MPREC distinction
+/// is structural — Rust mathevall doesn't yet thread the prec_tp
+/// arg; flagged for follow-up.)
+pub(crate) fn mathevalarg(expr: &str) -> i64 {                              // c:1514
+    use crate::ported::zsh_h::Nularg;
+    // c:1517 — `int xmtok = mtok;` save.
+    let xmtok = M_MTOK.with(|c| c.get());                                    // c:1517
+    // c:1528-1529 — `if (*s == Nularg) s++;`. Skip the parser sentinel.
+    let s = if let Some(rest) = expr.strip_prefix(Nularg) {                  // c:1528
+        rest
+    } else {
+        expr
+    };
+    // c:1530-1532 — empty after Nularg-skip is a HARD error here.
+    if s.is_empty() {                                                        // c:1530
+        crate::ported::utils::zerr("bad math expression: empty string");     // c:1531
+        return 0;                                                            // c:1532
+    }
+    // c:1534 — `mathevall(s, MPREC_ARG, ss)`. The Rust port doesn't yet
+    // thread the prec_tp arg through mathevall (uses C_PREC/Z_PREC toggle
+    // only); structural follow-up.
+    let result = matheval(s).map(|n|
+        if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }
+    ).unwrap_or(0);                                                          // c:1538
+    // c:1537 — `mtok = xmtok;` restore.
+    M_MTOK.with(|c| c.set(xmtok));                                           // c:1537
+    result
 }
 
 /// Port of `checkunary(int mtokc, char *mptr)` from `Src/math.c:1548`.
@@ -2685,6 +2737,34 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pin `mathevalarg` empty-string error path per c:1530-1532.
+    /// Unlike `matheval` which returns MN_INTEGER 0 on empty, this
+    /// entry point treats empty as a HARD error (emits zerr and
+    /// returns 0). Used by callers like `$array[$ind]` where unset
+    /// `$ind` should produce a diagnostic rather than silently index 0.
+    #[test]
+    fn mathevalarg_empty_emits_error_and_returns_zero() {
+        // Empty input → returns 0 with error message emitted.
+        let r = mathevalarg("");
+        assert_eq!(r, 0, "c:1532 — empty input returns 0");
+
+        // Nularg-only → also empty after skip, returns 0.
+        let nularg_only: String = "\u{a1}".to_string();
+        let r = mathevalarg(&nularg_only);
+        assert_eq!(r, 0,
+            "c:1528-1532 — Nularg-only is empty after skip, returns 0");
+
+        // Valid expression → real evaluation.
+        let r = mathevalarg("1 + 2");
+        assert_eq!(r, 3, "c:1534 — non-empty expression evaluates normally");
+
+        // Nularg-prefixed expression → skipped, then evaluated.
+        let nularg_plus: String = "\u{a1}5 * 5".to_string();
+        let r = mathevalarg(&nularg_plus);
+        assert_eq!(r, 25,
+            "c:1529 — Nularg skipped, then `5 * 5` evaluates to 25");
+    }
 
     /// Pin `matheval` empty + Nularg fast paths per c:1489-1495.
     /// Empty input MUST return MN_INTEGER 0 without invoking the
