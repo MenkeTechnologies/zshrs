@@ -1556,11 +1556,16 @@ pub fn createparamtable() {                                                  // 
     }
 
     // c:949-953 — SHLVL: unconditionally addenv with the incremented
-    // value (C says "shlvl value in environment needs updating
-    // unconditionally"). C uses `++shlvl` and sprintf into a stack
-    // buf, then addenv(pm, buf).
-    let new_shlvl: i32 = std::env::var("SHLVL")
-        .ok()
+    // value. C uses the \`shlvl\` integer global (IPDEF5 declared at
+    // params.c:358 with varinteger_gsu) which was populated during
+    // env-import. C: \`++shlvl\` then \`sprintf(buf, \"%d\", (int)shlvl)\`.
+    //
+    // The previous Rust port read SHLVL fresh from env::var; the
+    // canonical read is through paramtab (which has the parsed
+    // integer post-import). Falls back to env for the rare case
+    // where paramtab hasn't seen the import yet.
+    let new_shlvl: i32 = crate::ported::params::getsparam("SHLVL")
+        .or_else(|| std::env::var("SHLVL").ok())
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
         + 1;                                                                 // c:951 `++shlvl`
