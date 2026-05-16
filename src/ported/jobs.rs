@@ -3174,8 +3174,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn getsigname_emits_rt_form_for_rt_signal_range() {
-        let sigrtmin = unsafe { libc::SIGRTMIN() };
-        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
         // SIGRTMIN → "RTMIN".
         assert_eq!(getsigname(sigrtmin), "RTMIN",
             "c:3101 — RTMIN sig → bare RTMIN");

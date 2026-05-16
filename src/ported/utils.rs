@@ -5598,7 +5598,7 @@ pub fn argzero() -> Option<String> {
 }
 
 /// Port of `char *posixzero` from `Src/params.c:76`. The original
-/// argv[0] preserved from shell startup, unchanged by later `exec -a`
+/// `argv[0]` preserved from shell startup, unchanged by later `exec -a`
 /// or function-call rewrites. C's `argzerogetfn` (params.c:4958)
 /// returns this instead of `argzero` when `isset(POSIXARGZERO)`.
 ///

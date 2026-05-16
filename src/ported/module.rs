@@ -2654,8 +2654,8 @@ pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> =                       // c:12
 
 /// Port of `int setconddefs(char const *nam, Conddef c, int size, int *e)`
 /// from `Src/module.c:754`. Bulk add/delete of condition definitions:
-/// the parallel `e[]` array selects per-entry add (e[i]!=0) vs delete
-/// (e[i]==0). Returns 1 if any individual op clashed, 0 if all clean.
+/// the parallel `e[]` array selects per-entry add (`e[i] != 0`) vs delete
+/// (`e[i] == 0`). Returns 1 if any individual op clashed, 0 if all clean.
 pub fn setconddefs(nam: &str,                                                // c:754
                    c: &mut [crate::ported::zsh_h::conddef],
                    e: Option<&[i32]>) -> i32 {
@@ -2874,7 +2874,7 @@ pub fn deletewrapper(_m: &str, w: &crate::ported::zsh_h::funcwrap) -> i32 { // c
 /// `CONDF_INFIX`, math funcs `f:NAME`, params `p:NAME`. Trailing
 /// abstract slots (`n_abstract`) are pre-allocated but left empty so
 /// the module's own setup can fill them in. C uses zhalloc heap
-/// allocation — Box goes out of scope here as Rust's Vec<String>
+/// allocation — Box goes out of scope here as Rust's `Vec<String>`
 /// owns the entries (Drop happens automatically). Per-module Rust
 /// files in `src/ported/modules/*.rs` and `src/ported/builtins/*.rs`
 /// each carry a `featuresarray` shim that delegates to this
@@ -2916,7 +2916,7 @@ pub fn featuresarray(                                                        // 
 /// `CONDF_ADDED`, math funcs `MFF_ADDED`, params the `pm` non-null
 /// check. Trailing abstract slots are left at 0 (filled by the
 /// module's own enables_). C uses zhalloc heap allocation; Rust's
-/// Vec<i32> owns the entries (Drop happens automatically). Per-
+/// `Vec<i32>` owns the entries (Drop happens automatically). Per-
 /// module shims in `src/ported/modules/*.rs` delegate to this
 /// canonical free fn once the modules table is wired through.
 /// WARNING: param names don't match C — Rust=(_m, bn, cd, mf, pd, n_abstract) vs C=(m, f)

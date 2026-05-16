@@ -1650,7 +1650,7 @@ thread_local! {
 pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Port of `char zpc_disables[ZPC_COUNT]` from `Src/pattern.c:268`.
-/// Per-token disable byte — when zpc_disables[i] is non-zero, the
+/// Per-token disable byte — when `zpc_disables[i]` is non-zero, the
 /// pattern token at index `i` (ZPC_*) is treated as a literal,
 /// not its meta-meaning.
 pub static zpc_disables: Mutex<[u8; ZPC_COUNT as usize]> =

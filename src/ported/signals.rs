@@ -1446,15 +1446,15 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
 ///
 /// **Fixed**:
 ///   * Signature now matches C: `(signame: &str) -> Option<i32>`.
-///   * Returns Option<i32> (None = C's 0 sentinel for parse failure).
+///   * Returns `Option<i32>` (None = C's 0 sentinel for parse failure).
 ///   * Uses `libc::SIGRTMIN()` / `libc::SIGRTMAX()` for canonical bounds.
 ///   * Parses "RTMIN[+N]" / "RTMAX[-N]" per C body.
 /// WARNING: param names don't match C — Rust takes &str directly
 pub fn rtsigno(signame: &str) -> Option<i32> {                                // c:1291
     #[cfg(target_os = "linux")]
     {
-        let sigrtmin = unsafe { libc::SIGRTMIN() };
-        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
         let maxofs = sigrtmax - sigrtmin;                                     // c:1296
 
         // c:1298-1306 — `if (!strncmp(signame, "RTMIN", 5)) ...
@@ -1529,8 +1529,8 @@ pub fn rtsigno(signame: &str) -> Option<i32> {                                //
 pub fn rtsigname(sig: i32) -> String {                                       // c:1317
     #[cfg(target_os = "linux")]
     {
-        let sigrtmin = unsafe { libc::SIGRTMIN() };
-        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
         // c:1325-1326 — `if (signo < SIGRTMIN || signo > SIGRTMAX) return NULL;`
         if sig < sigrtmin || sig > sigrtmax {
             return String::new();
@@ -1875,8 +1875,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn rtsigno_parses_rt_signal_names() {
-        let sigrtmin = unsafe { libc::SIGRTMIN() };
-        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
         // Bare RTMIN / RTMAX (no offset).
         assert_eq!(rtsigno("RTMIN"), Some(sigrtmin),
             "c:1300 — bare RTMIN");
@@ -1907,8 +1907,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn rtsigname_picks_shorter_form_between_rtmin_rtmax() {
-        let sigrtmin = unsafe { libc::SIGRTMIN() };
-        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let sigrtmin = libc::SIGRTMIN();
+        let sigrtmax = libc::SIGRTMAX();
         // SIGRTMIN itself → "RTMIN" (offset 0; trailing '+' dropped).
         assert_eq!(rtsigname(sigrtmin), "RTMIN",
             "c:1334 — offset 0 → bare 'RTMIN' (no '+0')");

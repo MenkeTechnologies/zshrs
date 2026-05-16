@@ -1063,7 +1063,7 @@ pub fn enableshfuncnode(hn: &str) {
 /// filename string, and sticky options struct. Rust port: drop
 /// runs all of this when the entry is removed; this helper just
 /// removes from the table to trigger the drop chain.
-/// Rust idiom replacement: `HashMap::remove` triggers the Box<T>
+/// Rust idiom replacement: `HashMap::remove` triggers the `Box<T>`
 /// drop cascade — same teardown as the C zfree chain, automated.
 pub fn freeshfuncnode(hn: &str) {
     shfunctab_lock()

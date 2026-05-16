@@ -1004,7 +1004,7 @@ pub fn zle_usable() -> i32 {                                                 // 
 /// ```
 /// `zle -f flag...` — set widget-execution flags (yank/yankbefore/
 /// kill) on the currently-running widget.
-/// Rust idiom replacement: Arc<Widget> is immutable in zshrs, so
+/// Rust idiom replacement: `Arc<Widget>` is immutable in zshrs, so
 /// the C `w->flags |= ZLE_*` mutation lives on the widget-execution
 /// path itself; this entry validates args + returns success.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
@@ -1012,7 +1012,7 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
     // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { Widget w =
     //                bindk->widget; for(flag = args; *flag; flag++)
     //                set ZLE_* bit per flag-name }`. Without mutating
-    // the Arc<Widget> flags (current shape is immutable Arc<Widget>),
+    // the `Arc<Widget>` flags (current shape is immutable `Arc<Widget>`),
     // we can validate the flag names but not write back. The C source
     // mutates w->flags directly; for the simplified port, we just
     // validate args + return success when usable.
@@ -1111,7 +1111,7 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
 /// Mutates the global `WATCH_FDS` (`Src/Zle/zle_main.c:204`)
 /// directly so the poll loop in `zle_main::raw_getbyte` sees the
 /// new registration on the next iteration.
-/// Rust idiom replacement: WATCH_FDS Mutex<HashMap> covers the C
+/// Rust idiom replacement: WATCH_FDS `Mutex<HashMap>` covers the C
 /// `watch_fds` LinkList add/remove; the poll loop in `raw_getbyte`
 /// reads the map directly, no callback-table indirection needed.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
