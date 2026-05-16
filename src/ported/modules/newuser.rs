@@ -98,9 +98,15 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
         return 0;                                                         // c:82
     }
 
-    // c:84-88 — fall back to $HOME if ZDOTDIR unset.
+    // c:84-88 — `if (!dotdir) { dotdir = home; if (!dotdir) return 0; }`.
+    //
+    // C reads the `home` global which is the shell's $HOME param.
+    // The previous Rust port read `std::env::var("HOME")` — OS env —
+    // which diverges when the shell has updated HOME via paramtab
+    // but hasn't yet exported the change. Route through getsparam.
     if dotdir.is_empty() {
-        dotdir = std::env::var("HOME").unwrap_or_default();              // c:85
+        dotdir = crate::ported::params::getsparam("HOME")                // c:85
+            .unwrap_or_default();
         if dotdir.is_empty() {
             return 0;                                                     // c:87
         }
