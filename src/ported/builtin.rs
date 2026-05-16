@@ -1000,18 +1000,17 @@ pub fn bin_dirs(_name: &str, argv: &[String],                                // 
             " "
         };
         // c:771-774 — print pwd via fprintdir or zputs (`-l`).
+        // Previous Rust port inlined a HOME-prefix replacement which
+        // only abbreviated `$HOME/...` to `~/...` — missed every
+        // user-defined nameddirtab entry (`hash -d proj=/big/path`).
+        // Route through `utils::fprintdir` which calls `finddir`,
+        // matching C's named-dir abbreviation.
         let pwd = crate::ported::params::getsparam("PWD")
             .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
         if OPT_ISSET(ops, b'l') {                                            // c:771
             print!("{}", pwd);                                               // c:772
         } else {
-            // fprintdir replaces $HOME prefix with `~`; approximate.
-            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
-            if !home.is_empty() && pwd.starts_with(&home) {
-                print!("~{}", &pwd[home.len()..]);                           // c:774 (effective)
-            } else {
-                print!("{}", pwd);
-            }
+            print!("{}", crate::ported::utils::fprintdir(&pwd));             // c:774
         }
         // c:775-781 — walk dirstack list.
         if let Ok(stack) = DIRSTACK.lock() {                                 // c:775
@@ -1025,12 +1024,7 @@ pub fn bin_dirs(_name: &str, argv: &[String],                                // 
                 if OPT_ISSET(ops, b'l') {                                    // c:777
                     print!("{}", entry);                                     // c:778
                 } else {
-                    let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
-                    if !home.is_empty() && entry.starts_with(&home) {
-                        print!("~{}", &entry[home.len()..]);
-                    } else {
-                        print!("{}", entry);
-                    }
+                    print!("{}", crate::ported::utils::fprintdir(entry));    // c:780
                 }
             }
         }
