@@ -122,21 +122,49 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
 
 // Find process and job associated with pid.                                // c:191
 // Return 1 if search was successful, else return 0.                        // c:191
-/// Find a process by PID in the job table (from jobs.c findproc)
-pub fn findproc(jobtab: &[Job], pid: i32) -> Option<(usize, usize, bool)> {
-    for (ji, job) in jobtab.iter().enumerate() {
-        for (pi, proc) in job.procs.iter().enumerate() {
-            if proc.pid == pid {
-                return Some((ji, pi, false));
-            }
+/// Port of `int findproc(pid_t pid, Job *jptr, Process *pptr, int aux)`
+/// from `Src/jobs.c:191`.
+///
+/// C body (c:198-236) walks `jobtab[1..=maxjob]`:
+///   - Skips entries where `(stat & STAT_DONE)` per c:204 — these are
+///     jobs already marked dead.
+///   - Walks ONLY `procs` OR `auxprocs` based on the `aux` arg, not
+///     both. The previous Rust port walked both arrays.
+///   - Prefers a `SP_RUNNING` match: if multiple pids hit but only
+///     one is still running, returns it. The previous Rust port
+///     returned the FIRST match regardless of running state.
+///
+/// **WARNING: param names don't match C** — Rust (jobtab, pid, aux)
+/// vs C (pid, **jptr, **pptr, int aux). Returns `Some((job_idx,
+/// proc_idx, aux_was_true))` rather than mutating out-pointers.
+pub fn findproc(jobtab: &[Job], pid: i32, aux: bool) -> Option<(usize, usize, bool)> { // c:191
+    let mut last_match: Option<(usize, usize, bool)> = None;
+    // c:198 — `for (i = 1; i <= maxjob; i++)`. Index 0 (the shell
+    // itself) is skipped.
+    for (ji, job) in jobtab.iter().enumerate().skip(1) {
+        // c:204 — `if (jobtab[i].stat & STAT_DONE) continue;`. Don't
+        // match against jobs already marked dead; their pids might
+        // be recycled by the kernel and collide with a live pid.
+        if (job.stat & stat::DONE) != 0 {
+            continue;
         }
-        for (pi, proc) in job.auxprocs.iter().enumerate() {
-            if proc.pid == pid {
-                return Some((ji, pi, true));
+        // c:209-210 — walk EITHER procs OR auxprocs based on aux.
+        let procs: &[Process] = if aux { &job.auxprocs } else { &job.procs };
+        for (pi, proc) in procs.iter().enumerate() {
+            if proc.pid == pid {                                              // c:228
+                // c:229-232 — `if (pn->status == SP_RUNNING) return 1;`.
+                // Prefer a running match; otherwise record the last
+                // matching slot and keep looking.
+                if proc.status == SP_RUNNING {
+                    return Some((ji, pi, aux));                               // c:231 return 1
+                }
+                last_match = Some((ji, pi, aux));                             // c:227 record
             }
         }
     }
-    None
+    // c:235 — `return (*pptr && *jptr);` — at least one slot matched
+    // (even if not running). Rust returns last_match.
+    last_match
 }
 
 // `TimeInfo` / `ChildTimes` deleted — both folded into canonical
@@ -473,7 +501,12 @@ pub fn update_job(job: &mut Job) -> bool {                                   // 
 /// Update a background job after waitpid (from jobs.c update_bg_job)
 /// Port of `update_bg_job(Job jn, pid_t pid, int status)` from `Src/jobs.c:677`.
 pub fn update_bg_job(jn: &mut [Job], pid: i32, status: i32) -> bool {
-    if let Some((ji, pi, is_aux)) = findproc(jn, pid) {
+    // Try primary procs first, then auxprocs — C `findproc` takes
+    // an explicit `aux` arg and the caller decides which subset is
+    // relevant. update_bg_job needs to handle BOTH because the
+    // waitpid'd pid might land in either.
+    let hit = findproc(jn, pid, false).or_else(|| findproc(jn, pid, true));
+    if let Some((ji, pi, is_aux)) = hit {
         if is_aux {
             jn[ji].auxprocs[pi].status = status;
             jn[ji].auxprocs[pi].endtime = Some(Instant::now());
@@ -3010,7 +3043,8 @@ mod tests {
     #[test]
     fn findproc_unknown_pid_returns_none() {
         let tab: Vec<Job> = vec![Job::new(), Job::new()];
-        assert!(findproc(&tab, 99999).is_none());
+        assert!(findproc(&tab, 99999, false).is_none());
+        assert!(findproc(&tab, 99999, true).is_none());
     }
 
     /// c:findproc — finding the actual pid returns the (job_idx,
@@ -3019,15 +3053,44 @@ mod tests {
     #[test]
     fn findproc_known_pid_returns_correct_indices() {
         let mut tab: Vec<Job> = vec![Job::new(), Job::new()];
+        tab[1].stat = stat::INUSE;
         let mut p = Process::new(12345);
         p.status = SP_RUNNING;
         tab[1].procs.push(p);
-        let r = findproc(&tab, 12345);
-        assert!(r.is_some(), "must find the seeded pid");
+        // Search non-aux side — should hit.
+        let r = findproc(&tab, 12345, false);
+        assert!(r.is_some(), "must find the seeded pid via aux=false");
         let (job_idx, proc_idx, is_aux) = r.unwrap();
         assert_eq!(job_idx, 1);
         assert_eq!(proc_idx, 0);
         assert!(!is_aux, "primary procs vec, not auxprocs");
+        // Search aux side — should miss (no auxprocs entries).
+        assert!(findproc(&tab, 12345, true).is_none(),
+            "c:209 — aux=true must NOT match a procs (non-aux) entry");
+    }
+
+    /// Pin: c:204 — `findproc` skips jobs with `STAT_DONE` set. A
+    /// terminated pid recycled by the kernel onto a new live process
+    /// must not match the stale STAT_DONE entry. The previous Rust
+    /// port returned the STAT_DONE entry and SIGCHLD would have
+    /// reaped the wrong job.
+    #[test]
+    fn findproc_skips_stat_done_jobs() {
+        let mut tab: Vec<Job> = vec![Job::new(), Job::new(), Job::new()];
+        // Job 1: STAT_DONE with pid 7777 — must be skipped.
+        tab[1].stat = stat::DONE | stat::INUSE;
+        let mut p1 = Process::new(7777);
+        p1.status = 0; // exited
+        tab[1].procs.push(p1);
+        // Job 2: live job with the SAME pid (recycled).
+        tab[2].stat = stat::INUSE;
+        let mut p2 = Process::new(7777);
+        p2.status = SP_RUNNING;
+        tab[2].procs.push(p2);
+        // Search for pid 7777 — must hit job 2, not job 1.
+        let r = findproc(&tab, 7777, false);
+        assert_eq!(r, Some((2, 0, false)),
+            "c:204 — STAT_DONE entry must be skipped; live job 2 wins");
     }
 
     /// `Src/jobs.c:752-765` — `printhhmmss(secs)` three-branch

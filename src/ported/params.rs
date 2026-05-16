@@ -5381,21 +5381,58 @@ pub fn langsetfn(x: String) {                                                 //
     setlang(Some(&unmeta_x));
 }
 
-/// Port of `lcsetfn(Param pm, char *x)` from `Src/params.c:4904`. C body:
-/// per-category `setlocale` with LC_ALL precedence + LANG fallback.
-pub fn lcsetfn(pm: &str, x: Option<String>) {
+/// Port of `lcsetfn(Param pm, char *x)` from `Src/params.c:4906`. C body
+/// (c:4912-4931):
+/// ```c
+/// strsetfn(pm, x);
+/// if ((x2 = getsparam("LC_ALL")) && *x2) return;
+/// queue_signals();
+/// if (!x || !*x) x = getsparam("LANG");
+/// if (x && *x) {
+///     for (ln = lc_names; ln->name; ln++)
+///         if (!strcmp(ln->name, pm->node.nam))
+///             setlocale(ln->category, unmeta(x));
+/// }
+/// unqueue_signals();
+/// clear_mbstate();
+/// inittyptab();
+/// ```
+///
+/// Two divergences in the previous Rust port:
+///   1. Missed `inittyptab()` call at c:4932 — LC_CTYPE changes
+///      shift which bytes are isalpha/iblank/isep, but the
+///      typtab stayed pinned to the prior locale's classes.
+///      `setopt POSIX_BUILTINS; LC_NUMERIC=tr_TR.UTF-8; ...`
+///      would still classify with the old C locale's tables.
+///   2. The Meta-unmeta'ing on the value passed to setlocale
+///      wasn't applied. C uses `setlocale(cat, unmeta(x))`.
+pub fn lcsetfn(pm: &str, x: Option<String>) {                                 // c:4906
+    // c:4913-4914 — `if ((x2 = getsparam("LC_ALL")) && *x2) return;`.
     if let Ok(lc_all) = env::var("LC_ALL") {
         if !lc_all.is_empty() {
             return;
         }
     }
+    // c:4917-4918 — `if (!x || !*x) x = getsparam("LANG");`.
     let val = x
         .filter(|s| !s.is_empty())
         .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()));
+    // c:4924-4928 — apply `setlocale(category, unmeta(x))` for the
+    // matching LC_* category. The Rust port writes the env var as
+    // a stand-in (zshrs uses Rust UTF-8 natively rather than libc
+    // locale tables for most paths). The unmeta step matches
+    // c:4928 `unmeta(x)` semantics.
     if let Some(v) = val {
-        env::set_var(pm, v);
+        let unmeta = crate::ported::utils::unmeta(&v);                        // c:4928 unmeta(x)
+        env::set_var(pm, &unmeta);
     }
+    // c:4930 — `clear_mbstate();` — LC_CTYPE may have changed.
     clear_mbstate();
+    // c:4931 — `inittyptab();` — rebuild typtab classifications.
+    // The previous Rust port skipped this; char-classification
+    // predicates would stay pinned to the prior locale's class
+    // set even after `LC_CTYPE=` was assigned.
+    crate::ported::utils::inittyptab();                                       // c:4931
 }
 
 /// Direct port of `static void argzerosetfn(UNUSED(Param pm),
