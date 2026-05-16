@@ -1735,21 +1735,30 @@ pub fn ihwend() {                                                            // 
     {
         return;
     }
+    // c:1691 — `if (chwordpos%2 && chline)`. Even chwordpos means
+    // we're between words (no in-flight word to close).
     let pos = chwordpos.load(Ordering::SeqCst);
     if pos % 2 == 0 {
         return;
     }
-    let cur = chline.lock().unwrap().len() as i16;
+    // c:1693 — `if (hptr > chline + chwords[chwordpos-1])`. The
+    // previous Rust port used `chline.lock().unwrap().len()` for
+    // the cursor position; that only equals `hptr - chline` when
+    // hptr is at end of the buffer. Any lexer rewind would mis-
+    // close the word boundary. Read the canonical `hptr` global
+    // matching the `ihwbegin` fix at c:1658.
+    let cur = hptr.load(Ordering::SeqCst) as i16;                            // c:1693
     let mut words = chwords.lock().unwrap();
     let start_idx = (pos - 1) as usize;
-    if cur > words[start_idx] {
+    if cur > words[start_idx] {                                              // c:1693
         let end_idx = pos as usize;
         if words.len() <= end_idx {
             words.resize(end_idx + 1, 0);
         }
-        words[end_idx] = cur;
+        words[end_idx] = cur;                                                // c:1694
         chwordpos.fetch_add(1, Ordering::SeqCst);
     } else {
+        // c:1700 — `chwordpos--;` "scrub that last word, doesn't exist".
         chwordpos.fetch_sub(1, Ordering::SeqCst);
     }
 }
@@ -4121,6 +4130,68 @@ mod subst_modifier_tests {
         chwordpos.store(saved_pos, Ordering::SeqCst);
         hptr.store(saved_hptr, Ordering::SeqCst);
         *chwords.lock().unwrap() = saved_words;
+    }
+
+    /// Pin `ihwend` to its canonical C body at `Src/hist.c:1686-1705`.
+    /// Same family of fix as `ihwbegin`: use the `hptr` global to
+    /// compute the cursor position, NOT `chline.len()`. C: `if (hptr
+    /// > chline + chwords[chwordpos-1])` writes `chwords[chwordpos++]
+    /// = hptr - chline`; the previous Rust port used chline.len()
+    /// for the cursor.
+    #[test]
+    fn ihwend_uses_hptr_not_chline_len() {
+        // Save state.
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_chwords = chwords.lock().unwrap().clone();
+        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
+        let saved_hptr = hptr.load(Ordering::SeqCst);
+        let saved_stop = stophist.load(Ordering::SeqCst);
+        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
+
+        // Set up: chline is "ABCDEFGHIJ" (10 bytes), hptr at 7
+        // (lexer rewound). chwordpos=1 (in-flight word that started
+        // at chwords[0]=2). C expects chwords[1] = hptr-chline = 7,
+        // not chline.len() = 10.
+        *chline.lock().unwrap() = "ABCDEFGHIJ".to_string();
+        *chwords.lock().unwrap() = vec![2, 0];
+        chwordpos.store(1, Ordering::SeqCst);
+        hptr.store(7, Ordering::SeqCst);
+        stophist.store(0, Ordering::SeqCst);
+        histactive.store(0, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(0));
+
+        ihwend();
+
+        assert_eq!(chwords.lock().unwrap().get(1).copied(), Some(7),
+            "c:1694 — chwords[chwordpos] = hptr - chline = 7 (NOT chline.len()=10)");
+        assert_eq!(chwordpos.load(Ordering::SeqCst), 2,
+            "c:1694 — chwordpos++ on successful close");
+
+        // c:1700 scrub branch — hptr<=chwords[start] → chwordpos--.
+        *chwords.lock().unwrap() = vec![5, 0];
+        chwordpos.store(1, Ordering::SeqCst);
+        hptr.store(3, Ordering::SeqCst);                        // hptr(3) <= chwords[0]=5
+        ihwend();
+        assert_eq!(chwordpos.load(Ordering::SeqCst), 0,
+            "c:1700 — chwordpos-- when hptr <= chwords[chwordpos-1]");
+
+        // Even chwordpos short-circuits (between-words, no in-flight).
+        chwordpos.store(2, Ordering::SeqCst);
+        hptr.store(9, Ordering::SeqCst);
+        *chwords.lock().unwrap() = vec![0, 4, 5, 8];
+        ihwend();
+        assert_eq!(chwordpos.load(Ordering::SeqCst), 2,
+            "c:1691 — even chwordpos short-circuits");
+
+        // Restore.
+        *chline.lock().unwrap() = saved_chline;
+        *chwords.lock().unwrap() = saved_chwords;
+        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        stophist.store(saved_stop, Ordering::SeqCst);
+        histactive.store(saved_active, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
     }
 
     /// Pin `iaddtoline` to its canonical C body at
