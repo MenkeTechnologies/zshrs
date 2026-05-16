@@ -2242,21 +2242,41 @@ pub fn remtpath(s: &str, count: i32) -> String {                             // 
     s.to_string()
 }
 
-/// Port of `char *remtext(char **str)` from Src/hist.c:2122.
+/// Port of `int remtext(char **junkptr)` from Src/hist.c:2122.
+///
+/// C body (c:2122-2132):
+/// ```c
+/// for (str = strend(*junkptr); str >= *junkptr && !IS_DIRSEP(*str); --str)
+///     if (*str == '.') {
+///         *str = '\0';
+///         return 1;
+///     }
+/// return 0;
+/// ```
+///
+/// Walks backward from the end of the string looking for `.`,
+/// stopping at the rightmost `/` or the start of the string. When
+/// found, truncates the string at the `.` (drops `.` AND the
+/// extension). The Rust signature returns the truncated string
+/// rather than mutating + returning int.
+///
+/// Edge cases pinned by C: `.hidden` → `""`, `foo/.bashrc` → `foo/`.
+/// The previous Rust port guarded with `dot_pos > 0` which kept the
+/// leading-dot files unchanged — a divergence from C's behavior.
 pub fn remtext(s: &str) -> String {                                          // c:2122
-    if let Some(slash_pos) = s.rfind('/') {
-        let after_slash = &s[slash_pos + 1..];
-        if let Some(dot_pos) = after_slash.rfind('.') {
-            if dot_pos > 0 {
-                return format!("{}/{}", &s[..slash_pos], &after_slash[..dot_pos]);
-            }
-        }
-        return s.to_string();
+    // c:2126 — find the rightmost `/` to bound the scan (C walks back
+    // from end until it hits a dirsep). Everything after that slash
+    // (or the whole string if no slash) is the basename region.
+    let (prefix, basename) = match s.rfind('/') {
+        Some(i) => (&s[..=i], &s[i + 1..]),
+        None    => ("",       s),
+    };
+    // c:2127 — `if (*str == '.')`. Find rightmost `.` in basename;
+    // truncate there. C makes no exception for leading dot.
+    if let Some(dot_pos) = basename.rfind('.') {                             // c:2127
+        return format!("{}{}", prefix, &basename[..dot_pos]);                // c:2128
     }
-    if let Some(dot_pos) = s.rfind('.') {
-        if dot_pos > 0 { return s[..dot_pos].to_string(); }
-    }
-    s.to_string()
+    s.to_string()                                                            // c:2131
 }
 
 /// Port of `char *rembutext(char **str)` from Src/hist.c:2136.
@@ -4034,13 +4054,23 @@ mod subst_modifier_tests {
         assert_eq!(remtext("file"),          "file");
     }
 
-    /// c:2122 — leading dot is NOT an extension separator; `.bashrc`
-    /// has no extension to strip. Regression treating it as one would
-    /// turn every dotfile into an empty string.
+    /// c:2122 + Doc/Zsh/expn.yo:303-310 — the `:r` modifier strips
+    /// "a `.` followed by any number of characters (including zero)
+    /// that are neither `.` nor `/` and that continue to the end of
+    /// the string." Leading dot IS an extension separator: `.bashrc`
+    /// is wholly an extension (`.` + `bashrc`), so `:r` strips it
+    /// entirely. The C body walks backward from end stopping at `/`
+    /// and truncates at the first `.` found — no exception for dot
+    /// at position 0.
+    /// Regression target: a previous Rust port guarded with
+    /// `dot_pos > 0` keeping leading-dot files unchanged, which
+    /// diverges from `${.bashrc:r}` in real zsh.
     #[test]
-    fn remtext_treats_leading_dot_as_part_of_name() {
-        assert_eq!(remtext(".bashrc"),      ".bashrc");
-        assert_eq!(remtext("path/.bashrc"), "path/.bashrc");
+    fn remtext_strips_leading_dot_per_zsh_doc() {
+        assert_eq!(remtext(".bashrc"),      "",
+            "$.bashrc:r is an extension per Doc/Zsh/expn.yo:303");
+        assert_eq!(remtext("path/.bashrc"), "path/",
+            "extension scan stops at `/`, then strips at first `.`");
     }
 
     /// c:2136 — `rembutext("path/file.ext")` returns `"ext"` (the
