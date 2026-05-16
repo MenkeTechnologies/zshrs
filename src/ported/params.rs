@@ -1632,8 +1632,10 @@ pub fn createparamtable() {                                                  // 
     );                                                                       // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
-        &crate::ported::utils::ztrdup_metafy("5.9"),
-    );                                                                       // c:966 — TODO: pull from Makefile VERSION
+        &crate::ported::utils::ztrdup_metafy(
+            crate::ported::patchlevel::ZSH_VERSION,
+        ),
+    );                                                                       // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
     setsparam(
         "ZSH_PATCHLEVEL",
         &crate::ported::utils::ztrdup_metafy(
