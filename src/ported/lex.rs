@@ -3950,12 +3950,19 @@ pub fn untokenize(s: &str) -> String {
 
     while i < chars.len() {
         let c = chars[i];
-        // Token chars live in zsh's META range (0x83 = META through 0x9f =
-        // Bnull). Anything in that range needs un-mapping before display
-        // or downstream consumption. The original `< 32` test was wrong —
-        // none of zsh's tokens land in that range.
+        // C `itok()` (Src/ztype.h:52 + Src/utils.c:4198-4201) covers
+        // the canonical TOKEN range Pound (0x84) through Nularg (0x9d
+        // via Snull's chain to Nularg=0xa1). The previous Rust port
+        // used `(0x83..=0x9f)` which both:
+        //   * INCLUDED 0x83 = META (metafy lead byte, IMETA-only, NOT
+        //     ITOK), and
+        //   * EXCLUDED 0xa0 (Bnullkeep) and 0xa1 (Nularg) — both
+        //     legitimate ITOK bytes per zsh.h:199-205.
+        // Match C exactly: ITOK is 0x84..=0xa1 (Pound..Nularg).
+        // Marker (0xa2) is intentionally NOT in the range — C's untokenize
+        // never strips it (it's IMETA-only per Src/utils.c:4197).
         let cu = c as u32;
-        if (0x83..=0x9f).contains(&cu) {
+        if (0x84..=0xa1).contains(&cu) {
             // `Qstring Snull` opens a `$'...'` ANSI-C-quoted region.
             // Per Src/subst.c:301-304, when `stringsubst()` hits an
             // `Snull` it calls `stringsubstquote()` (line 206) which
@@ -4003,6 +4010,11 @@ pub fn untokenize(s: &str) -> String {
                 c if c == Bang => result.push('!'),
                 c if c == Snull || c == Dnull || c == Bnull => {
                     // Null markers - skip
+                }
+                // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
+                // Nularg gets dropped (no replacement char emitted).
+                c if c == Nularg => {
+                    // Skip — matches C's c != Nularg gate.
                 }
                 _ => {
                     // Unknown token, try ztokens lookup
@@ -4303,16 +4315,59 @@ mod tests {
         assert_eq!(untokenize("a/b/c"),      "a/b/c");
     }
 
-    /// c:3952 — Marker / Bnull / Snull are the C tokenisation
-    /// sentinels (Src/zsh.h). They must be removed by untokenize.
-    /// Regression that leaves them in would visibly mangle output.
+    /// `Src/exec.c:2079-2106` — `untokenize(s)` walks the string and
+    /// replaces ITOK bytes (Pound=\u{84} through Nularg=\u{a1} per
+    /// `Src/zsh.h:159-191`) using the `ztokens` table; Nularg is
+    /// dropped entirely (no replacement char).
+    ///
+    /// The previous Rust port called Pound "Marker" in this test —
+    /// incorrect. Marker is `\u{a2}` (Src/zsh.h:224) and is OUTSIDE
+    /// the ITOK range — C's untokenize doesn't touch it. Pound
+    /// (`\u{84}`) IS ITOK and gets replaced. Pin the canonical
+    /// contract: Pound replaced (or stripped), but text not in
+    /// the ITOK range passes through verbatim.
     #[test]
     fn untokenize_strips_marker_sentinels() {
-        // Marker = 0x84 per zsh.h Marker constant.
-        let with_marker = format!("a{}b", '\u{84}');
+        // Pound = \u{84} per zsh.h:159. ITOK byte; untokenize should
+        // strip or replace it (the literal byte must NOT survive).
+        let with_pound = format!("a{}b", crate::ported::zsh_h::Pound);
+        let cleaned = untokenize(&with_pound);
+        assert!(!cleaned.contains(crate::ported::zsh_h::Pound),
+            "Pound (\\u{{84}}) sentinel must be replaced (got {cleaned:?})");
+        // Marker = \u{a2} per zsh.h:224. NOT in ITOK range. C's
+        // untokenize doesn't touch it — passes through verbatim.
+        let with_marker = format!("x{}y", crate::ported::zsh_h::Marker);
         let cleaned = untokenize(&with_marker);
-        assert!(!cleaned.contains('\u{84}'),
-            "Marker sentinel must be stripped (got {cleaned:?})");
+        assert!(cleaned.contains(crate::ported::zsh_h::Marker),
+            "Marker (\\u{{a2}}) is NOT ITOK; must pass through untokenize verbatim");
+    }
+
+    /// `Src/utils.c:4198-4201` — ITOK range is Pound..Nularg
+    /// = `\u{84}..=\u{a1}`. The previous Rust port's untokenize used
+    /// `(0x83..=0x9f)` — too inclusive on the low end (META=0x83 is
+    /// IMETA-only, never ITOK) and too narrow on the high end
+    /// (excluded Bnullkeep=0xa0 and Nularg=0xa1, both ITOK).
+    ///
+    /// Pin the META exclusion AND Nularg drop. Bnullkeep is in the
+    /// ITOK range but falls past the C ztokens[] array (`c - Pound`
+    /// = 28, array len = 28); the Rust port falls through to `push(c)`
+    /// for unknown tokens — matching C's `*p++ = ztokens[c - Pound]`
+    /// (reads past array, UB; effectively drops via the implicit NUL).
+    /// We don't assert specific Bnullkeep output to avoid pinning the
+    /// C UB behavior.
+    #[test]
+    fn untokenize_range_matches_c_itok_endpoints() {
+        // META (\u{83}) is IMETA-only, NOT ITOK. Must pass through.
+        let with_meta = format!("a{}b", '\u{83}');
+        let cleaned = untokenize(&with_meta);
+        assert!(cleaned.contains('\u{83}'),
+            "c:4197 — META (\\u{{83}}) is IMETA-only, never ITOK");
+        // Nularg (\u{a1}) IS ITOK. C's untokenize SKIPS it (no
+        // replacement char per c:2089 `if (c != Nularg)`).
+        let with_nularg = format!("a{}b", crate::ported::zsh_h::Nularg);
+        let cleaned = untokenize(&with_nularg);
+        assert!(!cleaned.contains(crate::ported::zsh_h::Nularg),
+            "c:2089 — Nularg (\\u{{a1}}) must be DROPPED by untokenize");
     }
 
     /// `untokenize_preserve_quotes` keeps quote sentinels (Bnull/Snull)

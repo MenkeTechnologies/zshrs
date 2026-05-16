@@ -2163,31 +2163,29 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
         // c:1469
         let mut chars: Vec<char> = buf.chars().collect(); // c:1469
         let mut qt = false; // c:1470
-                            // C constant references — these are the token bytes the
-                            // lexer emits. Authoritative values from src/ported/subst.rs
-                            // tokens module: STRING=\u{81}, Qstring=\u{82},
-                            // Tick=\u{83}, Qtick=\u{84}, Dnull=\u{97}.
+        // The previous Rust port had FAKE token-byte values in the
+        // comment block here: STRING=\u{81}, Qstring=\u{82}, Tick=\u{83},
+        // Qtick=\u{84}, Dnull=\u{97}. NONE of these match `Src/zsh.h:159-194`.
+        // Canonical values:
+        //   Stringg = \u{85} (c:160), Qstring = \u{8c} (c:167),
+        //   Tick    = \u{93} (c:174), Qtick   = \u{99} (c:180),
+        //   Dnull   = \u{9e} (c:194).
+        // With the wrong literals, this Qstring/Qtick→String/Tick
+        // rewrite + Dnull-toggle loop NEVER fired on real input —
+        // every `$'...'` and `` $`...` `` expansion produced wrong
+        // tokenization downstream. Now uses canonical consts.
         for c in chars.iter_mut() {
             // c:1472
             if !qt {
                 // c:1473
-                if *c == '\u{82}'
-                /* Qstring */
-                {
-                    // c:1474
-                    *c = '\u{81}' /* STRING */; // c:1475
-                } else if *c == '\u{84}'
-                /* Qtick */
-                {
-                    // c:1476
-                    *c = '\u{83}' /* Tick */; // c:1477
+                if *c == crate::ported::zsh_h::Qstring {                     // c:1474
+                    *c = crate::ported::zsh_h::Stringg;                      // c:1475
+                } else if *c == crate::ported::zsh_h::Qtick {                // c:1476
+                    *c = crate::ported::zsh_h::Tick;                         // c:1477
                 }
             }
-            if *c == '\u{97}'
-            /* Dnull */
-            {
-                // c:1480
-                qt = !qt; // c:1481
+            if *c == crate::ported::zsh_h::Dnull {                            // c:1480
+                qt = !qt;                                                     // c:1481
             }
         }
         buf = chars.iter().collect(); // c:1483
