@@ -97,6 +97,7 @@ pub const NEQ: i32 = 23;          // c:132  !=
 pub const DAND: i32 = 24;         // c:133  &&
 pub const DOR: i32 = 25;          // c:134  ||
 pub const DXOR: i32 = 26;         // c:135  ^^
+pub const QUEST: i32 = 27;        // c:136  ? (ternary)
 pub const COLON: i32 = 28;        // c:137  :
 pub const EQ: i32 = 29;           // c:138  =
 pub const PLUSEQ: i32 = 30;       // c:139  +=
@@ -112,6 +113,7 @@ pub const SHRIGHTEQ: i32 = 39;    // c:148  >>=
 pub const DANDEQ: i32 = 40;       // c:149  &&=
 pub const DOREQ: i32 = 41;        // c:150  ||=
 pub const DXOREQ: i32 = 42;       // c:151  ^^=
+pub const COMMA: i32 = 43;        // c:152  ,
 pub const EOI: i32 = 44;          // c:153  end of input
 pub const PREPLUS: i32 = 45;      // c:154  ++x
 pub const PREMINUS: i32 = 46;     // c:155  --x
@@ -1110,11 +1112,11 @@ pub(crate) fn zzlex() -> i32 {
                         m_yyval_set(mnumber { l: m_lastval() as i64, d: 0.0, type_: MN_INTEGER });
                         return NUM;
                     }
-                    return Quest;
+                    return QUEST;
                 }
 
                 ':' => return COLON,
-                ',' => return Comma,
+                ',' => return COMMA,
 
                 '[' => {
                     // [base]value or output format [#base]
@@ -1515,7 +1517,7 @@ pub(crate) fn op(what: i32) {
             let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
                 // Must be integers
                 (mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }), d: 0.0, type_: MN_INTEGER }, mnumber { l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER })
-            } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != Comma {
+            } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
                 // Different types, coerce to float
                 (mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }), type_: MN_FLOAT }, mnumber { l: 0, d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT })
             } else {
@@ -1671,7 +1673,7 @@ pub(crate) fn op(what: i32) {
                         }
                     }
 
-                    Comma => b,
+                    COMMA => b,
                     EQ => b,
 
                     _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
@@ -1794,7 +1796,7 @@ pub(crate) fn op(what: i32) {
                 setmathvar(name, new_val);
                 push(new_val, mv.lval);
             }
-            Quest => {
+            QUEST => {
                 // Ternary: stack has [cond, true_val, false_val]
                 // val already popped = false_val
                 // Need to pop true_val and cond
@@ -2014,7 +2016,7 @@ pub(crate) fn checkunary() {
                         return;
                     }
                 }
-                Quest => {
+                QUEST => {
                     // Ternary operator
                     if m_stack_is_empty() {
                         m_error_set("bad math expression".to_string());
@@ -2056,13 +2058,13 @@ pub(crate) fn checkunary() {
                     if q {
                         m_noeval_inc();
                     }
-                    let quest_prec = m_prec()[Quest as usize];
+                    let quest_prec = m_prec()[QUEST as usize];
                     mathparse(quest_prec);
                     if q {
                         m_noeval_dec();
                     }
 
-                    op(Quest);
+                    op(QUEST);
                     continue;
                 }
                 _ => {
@@ -2104,9 +2106,6 @@ pub(crate) fn checkunary() {
             checkunary();
         }
     }
-pub const Quest: i32 = 27;        // c:136  ?
-pub const Comma: i32 = 43;        // c:152  ,
-
 /// Zsh precedence table (default)
 static Z_PREC: [u8; TOKCOUNT] = [
     1, 137, 2, 2, 2, // InPar OutPar Not Comp PostPlus
@@ -2381,10 +2380,10 @@ pub(crate) fn with_lastval(val: i32) {
     }
 
     // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
-    // expression `prec[Comma] + 1` directly in mathparse() and
+    // expression `prec[COMMA] + 1` directly in mathparse() and
     // mathevall() everywhere it's needed (math.c:1594, 367).
     pub(crate) fn top_prec() -> u8 {
-        m_prec()[Comma as usize] + 1
+        m_prec()[COMMA as usize] + 1
     }
 
 // WARNING: NOT IN MATH.C — Rust-only accessor (note plural — singular
@@ -2923,5 +2922,98 @@ mod tests {
         // Double-NOT normalises to 0/1.
         assert_eq!(mathevali("!!42").unwrap(), 1);
         assert_eq!(mathevali("!!0").unwrap(),  0);
+    }
+
+    /// `Src/math.c:109-161` — math token IDs are `#define`d as a
+    /// densely-packed integer ladder used as indices into the precedence
+    /// (`Z_PREC` / `C_PREC`) and type (`OP_TYPE`) tables. Position is
+    /// load-bearing: shifting any value silently mis-routes every math
+    /// expression at runtime. Pin every value individually so a reorder
+    /// or off-by-one fails this test. QUEST=27 and COMMA=43 specifically
+    /// were previously typed in Title-case (`Quest`/`Comma`) violating
+    /// the C-source casing rule.
+    #[test]
+    fn math_token_ids_match_c_source_position_for_position() {
+        let table = [
+            ("M_INPAR",    M_INPAR,    0),
+            ("M_OUTPAR",   M_OUTPAR,   1),
+            ("NOT",        NOT,        2),
+            ("COMP",       COMP,       3),
+            ("POSTPLUS",   POSTPLUS,   4),
+            ("POSTMINUS",  POSTMINUS,  5),
+            ("UPLUS",      UPLUS,      6),
+            ("UMINUS",     UMINUS,     7),
+            ("AND",        AND,        8),
+            ("XOR",        XOR,        9),
+            ("OR",         OR,         10),
+            ("MUL",        MUL,        11),
+            ("DIV",        DIV,        12),
+            ("MOD",        MOD,        13),
+            ("PLUS",       PLUS,       14),
+            ("MINUS",      MINUS,      15),
+            ("SHLEFT",     SHLEFT,     16),
+            ("SHRIGHT",    SHRIGHT,    17),
+            ("LES",        LES,        18),
+            ("LEQ",        LEQ,        19),
+            ("GRE",        GRE,        20),
+            ("GEQ",        GEQ,        21),
+            ("DEQ",        DEQ,        22),
+            ("NEQ",        NEQ,        23),
+            ("DAND",       DAND,       24),
+            ("DOR",        DOR,        25),
+            ("DXOR",       DXOR,       26),
+            ("QUEST",      QUEST,      27),  // c:136 — was Title-case Quest, divergent
+            ("COLON",      COLON,      28),
+            ("EQ",         EQ,         29),
+            ("PLUSEQ",     PLUSEQ,     30),
+            ("MINUSEQ",    MINUSEQ,    31),
+            ("MULEQ",      MULEQ,      32),
+            ("DIVEQ",      DIVEQ,      33),
+            ("MODEQ",      MODEQ,      34),
+            ("ANDEQ",      ANDEQ,      35),
+            ("XOREQ",      XOREQ,      36),
+            ("OREQ",       OREQ,       37),
+            ("SHLEFTEQ",   SHLEFTEQ,   38),
+            ("SHRIGHTEQ",  SHRIGHTEQ,  39),
+            ("DANDEQ",     DANDEQ,     40),
+            ("DOREQ",      DOREQ,      41),
+            ("DXOREQ",     DXOREQ,     42),
+            ("COMMA",      COMMA,      43),  // c:152 — was Title-case Comma, divergent
+            ("EOI",        EOI,        44),
+            ("PREPLUS",    PREPLUS,    45),
+            ("PREMINUS",   PREMINUS,   46),
+            ("NUM",        NUM,        47),
+            ("ID",         ID,         48),
+            ("POWER",      POWER,      49),
+            ("CID",        CID,        50),
+            ("POWEREQ",    POWEREQ,    51),
+            ("FUNC",       FUNC,       52),
+        ];
+        for (name, got, want) in table {
+            assert_eq!(got, want,
+                "c:109-161 — {} must be {} (C source value)", name, want);
+        }
+        // TOKCOUNT = 53 must equal the table length (no holes).
+        assert_eq!(TOKCOUNT, table.len() + 0,
+            "c:162 — TOKCOUNT must match the number of tokens");
+        // QUEST sits between DXOR and COLON; gap was 26→28 BEFORE the
+        // QUEST=27 fix, exposing a missing index. Pin the ordering.
+        assert_eq!(QUEST, DXOR + 1, "c:136 — QUEST immediately follows DXOR");
+        assert_eq!(COLON, QUEST + 1, "c:137 — COLON immediately follows QUEST");
+        assert_eq!(COMMA, DXOREQ + 1, "c:152 — COMMA immediately follows DXOREQ");
+        assert_eq!(EOI, COMMA + 1, "c:153 — EOI immediately follows COMMA");
+    }
+
+    /// `Src/math.c:109-162` — the precedence and type tables MUST have
+    /// length `TOKCOUNT`. Pin both lengths so a future token addition
+    /// without table updates fails immediately.
+    #[test]
+    fn math_dispatch_tables_match_tokcount() {
+        assert_eq!(Z_PREC.len(), TOKCOUNT,
+            "Z_PREC must have one slot per math token");
+        assert_eq!(C_PREC.len(), TOKCOUNT,
+            "C_PREC must have one slot per math token");
+        assert_eq!(OP_TYPE.len(), TOKCOUNT,
+            "OP_TYPE must have one slot per math token");
     }
 }
