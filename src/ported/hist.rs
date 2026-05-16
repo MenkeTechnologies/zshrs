@@ -1057,15 +1057,37 @@ pub fn nohwabort() { /* do nothing */ }                                      // 
 /// Port of `static void nohwe(void)` from Src/hist.c:1072.
 pub fn nohwe() { /* do nothing */ }                                          // c:1072
 
-/// Port of `void ihwbegin(int offset)` from Src/hist.c.
+/// Port of `void ihwbegin(int offset)` from `Src/hist.c:1656`.
+///
+/// C gate:
+/// ```c
+/// if (stophist == 2 || (histactive & HA_INWORD) ||
+///     (inbufflags & (INP_ALIAS|INP_HIST)) == INP_ALIAS)
+///     return;
+/// ```
+///
+/// The previous Rust port checked only `stophist == 2 || HA_INWORD`,
+/// missing the `INP_ALIAS-only` gate. Effect: word-position
+/// recording fired during alias expansion (when `INP_ALIAS` is set
+/// and `INP_HIST` is not), capturing alias-substituted bytes as
+/// fresh words. The C source skips alias-only input from the
+/// history-word table because aliases are pre-expansion and
+/// shouldn't show up as user-typed words in `!:N` etc.
 pub fn ihwbegin(offset: i32) {                                               // c:1656
+    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
-    if stop == 2 || (active & HA_INWORD) != 0 {
+    let inflags = crate::ported::input::inbufflags.with(|f| f.get());
+    // c:1659 — `(inbufflags & (INP_ALIAS|INP_HIST)) == INP_ALIAS`
+    // means "alias-only input (no history layered above)".
+    if stop == 2
+        || (active & HA_INWORD) != 0
+        || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS                  // c:1659
+    {
         return;
     }
     let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 != 0 {
+    if pos % 2 != 0 {                                                        // c:1664
         chwordpos.fetch_sub(1, Ordering::SeqCst);
     }
     let start = (chline.lock().unwrap().len() as i32 + offset).max(0) as i16;
@@ -1074,7 +1096,7 @@ pub fn ihwbegin(offset: i32) {                                               // 
     if words.len() <= idx {
         words.resize(idx + 1, 0);
     }
-    words[idx] = start;
+    words[idx] = start;                                                      // c:1668
     chwordpos.fetch_add(1, Ordering::SeqCst);
 }
 
