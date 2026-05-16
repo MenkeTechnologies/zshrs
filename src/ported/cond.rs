@@ -246,13 +246,31 @@ pub fn evalcond(                                                             // 
                         Some(a) => { *pos += 1; a.to_string() }
                         None => return 2,
                     };
+                    // c:415-422 — C uses `mathevali(left)` /
+                    // `mathevali(right)` for the integer-compare ops
+                    // (-eq / -ne / -lt / -gt / -le / -ge). The previous
+                    // Rust port called `s.parse::<i64>()` which
+                    // silently returned None for any non-trivial
+                    // arithmetic — `[[ 1+2 -eq 3 ]]` errored out at
+                    // parse time even though C evaluates the LHS to 3.
+                    //
+                    // Under POSIX-mode, C falls back to plain integer
+                    // parsing (no arithmetic eval). Mirror both
+                    // branches.
                     let parse_num = |s: &str| -> Option<f64> {
                         let t = s.trim();
                         if posix {
+                            // POSIX: plain integer only.
                             t.parse::<i64>().ok().map(|i| i as f64)
                         } else {
-                            t.parse::<i64>().map(|i| i as f64)
-                                .or_else(|_| t.parse::<f64>()).ok()
+                            // c:415 — route through `mathevali`.
+                            // Falls back to plain decimal / float
+                            // parsing for non-arith string operands.
+                            crate::ported::math::mathevali(t)
+                                .ok()
+                                .map(|i| i as f64)
+                                .or_else(|| t.parse::<i64>().ok().map(|i| i as f64))
+                                .or_else(|| t.parse::<f64>().ok())
                         }
                     };
                     let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
@@ -956,5 +974,30 @@ mod tests {
         let result = evalcond(&["-t", "0"], &opts, &vars, true);
         assert!(result == 0 || result == 1,
             "c:330 — `-t 0` plain digit still works, got {}", result);
+    }
+
+    /// Pin: `[[ N -eq M ]]` etc. route both operands through
+    /// `mathevali` per `Src/cond.c:415`. The previous Rust port's
+    /// `parse_num` only called `s.parse::<i64>()`, so `[[ 1+2 -eq
+    /// 3 ]]` returned 2 (syntax error) instead of evaluating the
+    /// LHS to 3.
+    #[test]
+    fn evalcond_int_compare_routes_through_mathevali() {
+        let (opts, vars) = empty_maps();
+        // c:415 — `[[ 1+2 -eq 3 ]]` evaluates LHS via mathevali.
+        // Should return 0 (true).
+        assert_eq!(evalcond(&["1+2", "-eq", "3"], &opts, &vars, false), 0,
+            "c:415 — `1+2 -eq 3` must mathevali LHS to 3, return 0");
+        // c:415 — `[[ 4 -gt 1+2 ]]` evaluates RHS via mathevali.
+        assert_eq!(evalcond(&["4", "-gt", "1+2"], &opts, &vars, false), 0,
+            "c:415 — `4 -gt 1+2` must mathevali RHS to 3, return 0");
+        // POSIX mode falls back to plain integer parsing — no
+        // arithmetic eval. `[[ 1+2 -eq 3 ]]` under POSIX should
+        // fail to parse the LHS (return 2 = syntax error).
+        assert_eq!(evalcond(&["1+2", "-eq", "3"], &opts, &vars, true), 2,
+            "POSIX — no mathevali; non-numeric LHS = error");
+        // Plain integers still work in POSIX mode.
+        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0,
+            "POSIX — plain integers compare normally");
     }
 }
