@@ -224,13 +224,33 @@ fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {        // c
 /// Port of `patcompcharsset()` from `Src/pattern.c:464`.
 ///
 /// Initializes the `zpc_special` table for the active globbing
-/// regime. The C source resets every ZPC_* slot to 0 or the literal
-/// character it represents, then masks off characters disabled via
-/// `disables`.
+/// regime. The C source resets every ZPC_* slot to its literal
+/// character, then masks off characters via `Marker` (0xa2 — the
+/// canonical "invalid" sentinel) for three option-driven cases:
+///   1. `!isset(EXTENDEDGLOB)` → Tilde/Hat/Hash disabled.
+///   2. `!isset(KSHGLOB)`      → KSH_QUEST/STAR/PLUS/BANG/BANG2/AT disabled.
+///   3. `isset(SHGLOB)`        → Inpar/Inang disabled.
+///
+/// The previous Rust port omitted ALL THREE option-mask passes AND
+/// the KSH_* slot initialisations entirely, leaving `[*+?@!](pattern)`
+/// silently unparsed when `setopt kshglob` was on, and rendering
+/// `setopt noextendedglob` / `setopt shglob` no-ops.
+///
+/// `disables` (from `disable -p`) is not yet modeled in zshrs — the C
+/// `for (i=0; i<ZPC_COUNT; ...) if (*disp) *spp = Marker;` pass is
+/// skipped pending the disable-table port.
 pub fn patcompcharsset() {                                                    // c:464
+    use crate::ported::zsh_h::{
+        EXTENDEDGLOB, KSHGLOB, SHGLOB, Marker as MARKER_CH,
+        ZPC_HASH as ZPC_HASH_C, ZPC_HAT as ZPC_HAT_C, ZPC_INANG as ZPC_INANG_C,
+        ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2,
+        ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE as ZPC_TILDE_C,
+    };
     let mut sp = zpc_special.lock().unwrap();
     *sp = [0u8; ZPC_COUNT as usize];
-    // Default special chars (matches pattern.c init block).
+    // c:469 — `memcpy(zpc_special, zpc_chars, ZPC_COUNT)`. The default
+    // char for every ZPC_* slot. Direct positional assignment here
+    // since zshrs doesn't carry the `zpc_chars` const array yet.
     sp[ZPC_SLASH as usize]     = b'/';
     sp[ZPC_NULL as usize]      = 0;
     sp[ZPC_BAR as usize]       = b'|';
@@ -244,6 +264,41 @@ pub fn patcompcharsset() {                                                    //
     sp[ZPC_HAT as usize]       = b'^';
     sp[ZPC_HASH as usize]      = b'#';
     sp[ZPC_BNULLKEEP as usize] = 0;
+    // c:478-490 — KSH_GLOB slots (omitted from previous Rust port).
+    // Each defaults to the literal ksh-glob trigger char. The
+    // option-mask pass below disables them when KSHGLOB is off.
+    sp[ZPC_KSH_QUEST as usize] = b'?';
+    sp[ZPC_KSH_STAR  as usize] = b'*';
+    sp[ZPC_KSH_PLUS  as usize] = b'+';
+    sp[ZPC_KSH_BANG  as usize] = b'!';
+    sp[ZPC_KSH_BANG2 as usize] = b'!';
+    sp[ZPC_KSH_AT    as usize] = b'@';
+
+    let marker_byte = MARKER_CH as u32 as u8;
+
+    // c:480-483 — `if (!isset(EXTENDEDGLOB))` mask Tilde/Hat/Hash.
+    if !crate::ported::zsh_h::isset(EXTENDEDGLOB) {
+        sp[ZPC_TILDE_C as usize] = marker_byte;
+        sp[ZPC_HAT_C   as usize] = marker_byte;
+        sp[ZPC_HASH_C  as usize] = marker_byte;
+    }
+
+    // c:485-491 — `if (!isset(KSHGLOB))` mask the six KSH_* slots.
+    if !crate::ported::zsh_h::isset(KSHGLOB) {
+        sp[ZPC_KSH_QUEST as usize] = marker_byte;
+        sp[ZPC_KSH_STAR  as usize] = marker_byte;
+        sp[ZPC_KSH_PLUS  as usize] = marker_byte;
+        sp[ZPC_KSH_BANG  as usize] = marker_byte;
+        sp[ZPC_KSH_BANG2 as usize] = marker_byte;
+        sp[ZPC_KSH_AT    as usize] = marker_byte;
+    }
+
+    // c:499-505 — `if (isset(SHGLOB))` mask Inpar/Inang (case/numeric
+    // ranges not valid under sh-emulation).
+    if crate::ported::zsh_h::isset(SHGLOB) {
+        sp[ZPC_INPAR_C as usize] = marker_byte;
+        sp[ZPC_INANG_C as usize] = marker_byte;
+    }
 }
 
 /// Port of `patcompstart()` from `Src/pattern.c:517`.
@@ -2550,5 +2605,108 @@ mod tests {
         assert!(!patmatch("abc", "abcd"));
         assert!(!patmatch("abc", "ab"));
         assert!(!patmatch("abc", ""));
+    }
+
+    /// `Src/pattern.c:464-510` — `patcompcharsset` masks special chars
+    /// based on EXTENDEDGLOB, KSHGLOB, and SHGLOB. The previous Rust
+    /// port omitted ALL THREE option-driven mask passes plus all six
+    /// KSH_* slot initialisations. Pin the option-respect contract.
+    ///
+    /// Test toggles each option and verifies the corresponding slots
+    /// flip between default literal char and the `Marker` sentinel.
+    #[test]
+    fn patcompcharsset_respects_extendedglob_kshglob_shglob_options() {
+        use crate::ported::options::{opt_state_get, opt_state_set};
+        use crate::ported::zsh_h::{
+            Marker as MARKER_CH, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INPAR,
+            ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS,
+            ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE,
+        };
+        let marker_byte = MARKER_CH as u32 as u8;
+
+        // Save state.
+        let saved_extended = opt_state_get("extendedglob").unwrap_or(false);
+        let saved_ksh      = opt_state_get("kshglob").unwrap_or(false);
+        let saved_sh       = opt_state_get("shglob").unwrap_or(false);
+
+        // 1. EXTENDEDGLOB off → Tilde/Hat/Hash → Marker.
+        opt_state_set("extendedglob", false);
+        opt_state_set("kshglob", true);    // so KSH_* slots stay literal
+        opt_state_set("shglob", false);    // so Inpar/Inang stay literal
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_TILDE as usize], marker_byte,
+                "c:480 — !EXTENDEDGLOB → Tilde = Marker");
+            assert_eq!(sp[ZPC_HAT as usize],   marker_byte,
+                "c:481 — !EXTENDEDGLOB → Hat = Marker");
+            assert_eq!(sp[ZPC_HASH as usize],  marker_byte,
+                "c:482 — !EXTENDEDGLOB → Hash = Marker");
+        }
+
+        // 2. EXTENDEDGLOB on → Tilde/Hat/Hash → literal chars.
+        opt_state_set("extendedglob", true);
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_TILDE as usize], b'~',
+                "c:478 — EXTENDEDGLOB on → Tilde = literal '~'");
+            assert_eq!(sp[ZPC_HAT as usize],   b'^');
+            assert_eq!(sp[ZPC_HASH as usize],  b'#');
+        }
+
+        // 3. KSHGLOB off → KSH_* slots → Marker.
+        opt_state_set("kshglob", false);
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_KSH_QUEST as usize], marker_byte,
+                "c:486 — !KSHGLOB → KSH_QUEST = Marker");
+            assert_eq!(sp[ZPC_KSH_STAR  as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_PLUS  as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_BANG  as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_BANG2 as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_AT    as usize], marker_byte);
+        }
+
+        // 4. KSHGLOB on → KSH_* slots → literal trigger chars.
+        opt_state_set("kshglob", true);
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_KSH_QUEST as usize], b'?',
+                "c:478 — KSHGLOB on → KSH_QUEST = '?'");
+            assert_eq!(sp[ZPC_KSH_STAR  as usize], b'*');
+            assert_eq!(sp[ZPC_KSH_PLUS  as usize], b'+');
+            assert_eq!(sp[ZPC_KSH_BANG  as usize], b'!');
+            assert_eq!(sp[ZPC_KSH_BANG2 as usize], b'!');
+            assert_eq!(sp[ZPC_KSH_AT    as usize], b'@');
+        }
+
+        // 5. SHGLOB on → Inpar/Inang → Marker.
+        opt_state_set("shglob", true);
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_INPAR as usize], marker_byte,
+                "c:501 — SHGLOB on → Inpar = Marker");
+            assert_eq!(sp[ZPC_INANG as usize], marker_byte,
+                "c:501 — SHGLOB on → Inang = Marker");
+        }
+
+        // 6. SHGLOB off → Inpar/Inang → literal chars.
+        opt_state_set("shglob", false);
+        patcompcharsset();
+        {
+            let sp = zpc_special.lock().unwrap();
+            assert_eq!(sp[ZPC_INPAR as usize], b'(',
+                "c:478 — !SHGLOB → Inpar = '('");
+            assert_eq!(sp[ZPC_INANG as usize], b'<');
+        }
+
+        // Restore.
+        opt_state_set("extendedglob", saved_extended);
+        opt_state_set("kshglob",      saved_ksh);
+        opt_state_set("shglob",       saved_sh);
     }
 }
