@@ -3499,6 +3499,13 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
 /// after assign (c:2966-2967), VALFLAG_INV + !KSHARRAYS off-by-one
 /// (c:2938-2942).
 pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // c:2895
+    // c:2897-2898 — `if (unset(EXECOPT)) return;`. Match the same
+    // NO_EXEC bail as setnumvalue at c:2860. Without it,
+    // `zsh -n -c 'arr=(a b c)'` would mutate arr during a parse-
+    // only run.
+    if unset(EXECOPT) {                                                       // c:2897
+        return;
+    }
 
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
 
@@ -8492,6 +8499,11 @@ mod tests {
 
     #[test]
     fn test_setarrvalue() {
+        // c:2897 — setarrvalue bails when unset(EXECOPT). Set "exec"
+        // for the unit-test env (real zsh defaults exec=true).
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
         // C-faithful: setarrvalue takes a Value pointing at a Param
         // with u_arr set. Construct one inline.
         use crate::ported::zsh_h::{hashnode, param, PM_ARRAY};
@@ -8514,6 +8526,7 @@ mod tests {
         setarrvalue(&mut v, vec!["X".into(), "Y".into()]);
         let arr = v.pm.unwrap().u_arr.unwrap();
         assert_eq!(arr, vec!["a", "X", "Y", "d"]);
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     #[test]
@@ -9296,6 +9309,52 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `setarrvalue` EXECOPT bail per `Src/params.c:2897-2898`.
+    /// Same NO_EXEC semantic as setnumvalue: dry-run shell evaluation
+    /// must not mutate array params.
+    #[test]
+    fn setarrvalue_bails_under_no_exec() {
+        use crate::ported::zsh_h::{param, hashnode, value, PM_ARRAY};
+
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+
+        crate::ported::options::opt_state_set("exec", false);
+        let pm = Box::new(param {
+            node: hashnode {
+                next: None, nam: "noexec_arr".to_string(),
+                flags: PM_ARRAY as i32,
+            },
+            u_data: 0,
+            u_arr: Some(vec!["initial".to_string()]),
+            u_str: None, u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None,
+            gsu_a: None, gsu_h: None,
+            base: 0, width: 0,
+            env: None, ename: None, old: None, level: 0,
+        });
+        let mut v = value {
+            pm: Some(pm),
+            arr: Vec::new(),
+            scanflags: 0, valflags: 0,
+            start: 0, end: -1,
+        };
+        // Under NO_EXEC, the assign must be skipped.
+        setarrvalue(&mut v, vec!["new1".to_string(), "new2".to_string()]);
+        let arr = v.pm.as_ref().unwrap().u_arr.clone().unwrap_or_default();
+        assert_eq!(arr, vec!["initial".to_string()],
+            "c:2897 — NO_EXEC: setarrvalue must NOT replace u_arr");
+
+        // With exec=true, the same call replaces.
+        crate::ported::options::opt_state_set("exec", true);
+        setarrvalue(&mut v, vec!["new1".to_string(), "new2".to_string()]);
+        let arr = v.pm.as_ref().unwrap().u_arr.clone().unwrap_or_default();
+        assert_eq!(arr, vec!["new1".to_string(), "new2".to_string()],
+            "with EXEC set, setarrvalue replaces u_arr");
+
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setnumvalue` EXECOPT bail per `Src/params.c:2860`.
