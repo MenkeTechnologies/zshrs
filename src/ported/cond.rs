@@ -303,15 +303,22 @@ pub fn evalcond(                                                             // 
 
 /// Port of `doaccess(char *s, int c)` from Src/cond.c:438 — `[[ -r/-w/-x ]]` test.
 /// Returns true (non-zero) when `access(2)` reports the file is
-/// reachable for the requested mode. The C source special-cases
-/// `/dev/fd/N` to use `faccessat` against the descriptor; we do the
-/// same with a manual `fstat`-based check (an open fd always
-/// satisfies POSIX `R_OK`/`W_OK`/`X_OK` if its descriptor permits
-/// the action; portable equivalent for our uses).
+/// reachable for the requested mode.
+///
+/// C body (c:438-446):
+///     #ifdef HAVE_FACCESSX
+///         if (!strncmp(s, "/dev/fd/", 8))
+///             return !faccessx(atoi(s + 8), c, ACC_SELF);
+///     #endif
+///     return !access(unmeta(s), c);
+///
+/// The HAVE_FACCESSX branch is Solaris-only (not available on
+/// Linux/macOS via libc-rs). On Linux/macOS C falls through to
+/// `access(unmeta(s), c)` which uses the kernel-provided
+/// `/dev/fd/N` symlink resolution. Rust port mirrors this with
+/// `libc::access(unmeta(s), c)` directly — the kernel handles
+/// `/dev/fd/N` transparently.
 pub fn doaccess(s: &str, c: i32) -> i32 {                                    // c:438
-    // C body: HAVE_FACCESSX branch is skipped on all Linux/macOS
-    // builds (Solaris-only). Main path:
-    //     return !access(unmeta(s), c);
     let cs = match std::ffi::CString::new(crate::ported::utils::unmeta(s)) {  // c:445 unmeta(s)
         Ok(v) => v, Err(_) => return 0,
     };
