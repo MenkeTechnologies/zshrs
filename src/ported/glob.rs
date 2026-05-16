@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ported::sort::zstrcmp;
 use crate::ported::utils::{init_dirsav, restoredir, lchdir};
 use std::path::Component;
-use crate::ported::zsh_h::{SUB_END, SUB_LONG};
+use crate::ported::zsh_h::{SUB_END, SUB_LONG, SUB_START};
 use crate::ported::zsh_h::{Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde};
 use crate::ported::zsh_h::Bnullkeep;
 use std::process::Command;
@@ -1064,10 +1064,11 @@ pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
 /// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
 /// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
 pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
-    // C uses local bits `SUB_START` (anchor at head) / `SUB_END`
-    // (anchor at tail) / `SUB_LONG` (`##`/`%%` doubled = longest).
-    // `SUB_START` is `0x1000` in zsh.h:1993.
-    const SUB_START: i32 = 0x1000;
+    // c:1993 — `SUB_START` (anchor at head) / `SUB_END` (anchor at
+    // tail) / `SUB_LONG` (`##`/`%%` doubled = longest). All three
+    // imported from the canonical zsh_h.rs port; the previous local
+    // redeclaration risked the same drift hazard as the HIST_*
+    // bit-value bug caught earlier.
     let mut flags: i32 = 0;
     let mut pattern = pat.to_string();
 
@@ -1266,8 +1267,8 @@ pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // 
     // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-
     // anchor replacement loop with multibyte tracking. Rust port walks
     // chars + `matchpat`; full Patprog substrate (with chunked DFA
-    // execution) lives in src/ported/pattern.rs.
-    const SUB_START: i32 = 0x1000;
+    // execution) lives in src/ported/pattern.rs. SUB_START imported
+    // from zsh_h.rs at top-of-file rather than redeclared locally.
     let anchored_start = (fl & SUB_START) != 0;
     let anchored_end = (fl & SUB_END) != 0;
     let substr_mode = (fl & SUB_SUBSTR) != 0;
