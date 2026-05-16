@@ -5872,18 +5872,27 @@ pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // 
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_let(_name: &str, argv: &[String],                                 // c:7469
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+    use std::sync::atomic::Ordering;
+
     // c:7472 — `mnumber val = zero_mnumber;`
-    let mut val: mnumber = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };                               // c:7472
-    let mut had_error = false;
-    // c:7474-7475 — `while (*argv) val = matheval(*argv++);`
+    let mut val: mnumber = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };      // c:7472
+    // c:7474-7475 — `while (*argv) val = matheval(*argv++);` — DO walk
+    // every arg even if one fails. C doesn't break on error mid-loop;
+    // it just lets errflag accumulate. Previously the Rust port broke
+    // on first failure, leaving later args unevaluated.
     for expr in argv {                                                       // c:7474
-        match matheval(expr) {                                               // c:7475
-            Ok(v) => val = v,
-            Err(_) => { had_error = true; break; }
+        if let Ok(v) = matheval(expr) {                                      // c:7475
+            val = v;
         }
+        // Failed matheval → continue loop; errflag will be checked below.
     }
-    // c:7476-7480 — math errors are non-fatal in let; return 2.
-    if had_error {                                                           // c:7476
+    // c:7476-7480 — math errors are non-fatal in let; CLEAR ERRFLAG_ERROR
+    // and return 2. The previous Rust port used a local `had_error` flag
+    // and left the global `errflag` set — every subsequent command saw
+    // the error state, defeating C's "let errors are local" contract.
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {              // c:7476
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);                // c:7478
         return 2;                                                            // c:7479
     }
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
@@ -6897,5 +6906,91 @@ mod tests {
         assert_eq!(fixdir("subdir"),  "subdir");
         assert_eq!(fixdir("a/b/c"),   "a/b/c");
         assert_eq!(fixdir("."),       ".");
+    }
+
+    /// Shared mutex for bin_let tests that toggle the global errflag.
+    static BIN_LET_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `Src/builtin.c:7469-7484` — `bin_let` semantics:
+    ///   1. Returns 0 (success) when the LAST arg evaluates to non-zero.
+    ///   2. Returns 1 (failure) when the LAST arg evaluates to zero.
+    ///   3. Returns 2 AND CLEARS ERRFLAG_ERROR when any arg errors.
+    /// The previous Rust port used a local `had_error` flag and never
+    /// cleared `errflag`, letting `let` errors leak into subsequent
+    /// commands — defeating the C `let` "errors are non-fatal and local"
+    /// contract.
+    #[test]
+    fn bin_let_clears_errflag_on_math_error() {
+        let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved = errflag.load(Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
+
+        // 1. Last arg evaluates to non-zero → return 0.
+        let ops = crate::ported::zsh_h::options {
+            ind: [0; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let argv = vec!["1".to_string()];
+        assert_eq!(bin_let("let", &argv, &ops, 0), 0,
+            "c:7482 — last expr non-zero → return 0 (success)");
+
+        // 2. Last arg evaluates to zero → return 1.
+        let argv = vec!["0".to_string()];
+        assert_eq!(bin_let("let", &argv, &ops, 0), 1,
+            "c:7482 — last expr zero → return 1 (failure)");
+
+        // 3. Bad-syntax arg → return 2 AND clear ERRFLAG_ERROR.
+        // Pre-set errflag manually to simulate matheval failure side
+        // effect (since exact bad-syntax behavior of the matheval port
+        // is implementation-dependent — what we're pinning is the
+        // bin_let response to a set errflag).
+        errflag.store(ERRFLAG_ERROR, Ordering::Relaxed);
+        // Use a valid expression so matheval succeeds, but errflag
+        // is already set from a prior step.
+        let argv = vec!["1".to_string()];
+        let rc = bin_let("let", &argv, &ops, 0);
+        assert_eq!(rc, 2,
+            "c:7479 — pre-set ERRFLAG_ERROR triggers c:7476-7480 cleanup, returns 2");
+        // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
+        assert_eq!(errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR, 0,
+            "c:7478 — ERRFLAG_ERROR must be CLEARED after let error");
+
+        // Restore.
+        errflag.store(saved, Ordering::Relaxed);
+    }
+
+    /// `Src/builtin.c:7474-7475` — C walks ALL argv via
+    /// `while (*argv) val = matheval(*argv++);`. The LAST matheval
+    /// result is what determines the return code. The previous Rust
+    /// port broke on first error, skipping later args. Pin: a sequence
+    /// of two non-zero exprs returns 0 even if both are evaluated.
+    #[test]
+    fn bin_let_walks_all_argv_last_wins() {
+        let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        errflag.store(0, Ordering::Relaxed);
+
+        let ops = crate::ported::zsh_h::options {
+            ind: [0; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // c:7474 — `5; 0` (two args): last is 0 → return 1.
+        let argv = vec!["5".to_string(), "0".to_string()];
+        assert_eq!(bin_let("let", &argv, &ops, 0), 1,
+            "c:7474 — last arg wins (here: 0 → return 1)");
+
+        // c:7474 — `0; 5` (two args): last is 5 → return 0.
+        let argv = vec!["0".to_string(), "5".to_string()];
+        assert_eq!(bin_let("let", &argv, &ops, 0), 0,
+            "c:7474 — last arg wins (here: 5 → return 0)");
+
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
     }
 }
