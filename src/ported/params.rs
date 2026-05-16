@@ -1905,15 +1905,16 @@ pub fn createspecialhash(name: &str, flags: i32)                             // 
 
     // c:1204-1205 — if shadowing an old param, set level=locallevel.
     if pm.old.is_some() {
-        // C: `pm->level = locallevel`. Rust port reads locallevel
-        // via the helper accessor (utils.rs).
-        let ll = {
-            // The `locallevel` global is module-private in utils;
-            // approximate via the LOCALLEVEL OnceLock accessor if
-            // available, else 0.
-            0_i32
-        };
-        pm.level = ll;
+        // C: `pm->level = locallevel`. The previous Rust port had
+        // `let ll = 0_i32;` as a hardcoded placeholder — meaning
+        // shadowed special-hash params (`fpath`, `path`, `psvar`,
+        // etc. assigned inside a function via local) would NEVER
+        // get their level tagged for restoration. After the function
+        // returned, the original param would be inaccessible because
+        // the shadow record's level (always 0) wouldn't trigger the
+        // endparamscope unset. Now reads the canonical `locallevel`
+        // global from params.rs (matching the C global).
+        pm.level = locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32; // c:1205
     }
 
     // c:1206-1207 — GSU selection. We can't set the gsu_h pointer
