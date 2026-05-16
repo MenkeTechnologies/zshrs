@@ -5616,11 +5616,21 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
         // "real opts"; under -l we build a snapshot HashMap and
         // mutate THAT instead of touching global state. Under
         // !-l we apply emulate semantics to the live table.
-        let bits = match shname.as_str() {
-            "csh" => EMULATE_CSH,
-            "ksh" => EMULATE_KSH,
-            "sh"  => EMULATE_SH,
-            _     => crate::ported::zsh_h::EMULATE_ZSH,
+        // c:537-549 — C `emulate(zsh_name, ...)` reads ONLY the first
+        // char (after stripping a leading `r` for rcsh/rksh): 'c'
+        // → CSH, 'k' → KSH, 's'/'b' → SH (so `bash` aliases to sh),
+        // else ZSH. Previous Rust port did full-string equality so
+        // `emulate rcsh` / `emulate bash` silently fell back to ZSH.
+        let bytes = shname.as_bytes();
+        let mut ch = if !bytes.is_empty() { bytes[0] } else { 0 };
+        if ch == b'r' && bytes.len() >= 2 {                                  // c:539
+            ch = bytes[1];                                                   // c:540
+        }
+        let bits = match ch {                                                // c:543
+            b'c' => EMULATE_CSH,                                             // c:544
+            b'k' => EMULATE_KSH,                                             // c:546
+            b's' | b'b' => EMULATE_SH,                                       // c:548
+            _    => crate::ported::zsh_h::EMULATE_ZSH,                       // c:550
         };
         // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
         crate::ported::options::emulation
@@ -6994,6 +7004,47 @@ mod tests {
             &empty, 0);
         assert_ne!(r, 0,
             "trap - <undefined> must report error per c:7399 (got {})", r);
+    }
+
+    /// Src/options.c:537-549 — `emulate(zsh_name, ...)` dispatches
+    /// on the FIRST char of the shell name, stripping a leading `r`
+    /// (so `rcsh`/`rksh` work as restricted variants of their base
+    /// shell). `bash` aliases to SH (the `'b'` branch of the case).
+    /// Pin the bits assigned by `bin_emulate` for the canonical
+    /// names + their first-char-overlap aliases.
+    #[test]
+    fn bin_emulate_dispatches_on_first_char_per_c537() {
+        use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_KSH, EMULATE_SH};
+        let empty = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let saved = crate::ported::options::emulation
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        // Each (name, expected_bits) — name covers the canonical
+        // shell names AND their `r`-prefix / first-char variants.
+        for (name, expected) in [
+            ("csh",   EMULATE_CSH),
+            ("ksh",   EMULATE_KSH),
+            ("sh",    EMULATE_SH),
+            ("rcsh",  EMULATE_CSH),                                          // c:539-540
+            ("rksh",  EMULATE_KSH),                                          // c:539-540
+            ("bash",  EMULATE_SH),                                           // c:548 'b'
+        ] {
+            crate::ported::options::emulation
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            bin_emulate("emulate", &[name.into()], &empty, 0);
+            let bits = crate::ported::options::emulation
+                .load(std::sync::atomic::Ordering::Relaxed);
+            assert_eq!(bits, expected,
+                "emulate {} must set bits {:#x}, got {:#x}",
+                name, expected, bits);
+        }
+        crate::ported::options::emulation
+            .store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// c:7399 — `trap - SIGUSR1` (valid signal) MUST return 0, even
