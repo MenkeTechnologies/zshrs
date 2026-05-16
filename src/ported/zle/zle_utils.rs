@@ -371,16 +371,42 @@ pub fn foredel(ct: i32, _flags: i32) {  // c:1105
 /// WARNING: param names don't match C — Rust=(zle, s) vs C=(s, flags)
 pub fn setline(s: &str,         // c:1129
                flags: i32) {
-    // C body c:1131-1156 — replaces zleline with `s`; if !ZSL_KEEPCS
-    //                      reset zlecs to 0 or len(s). flags bit
-    //                      ZSL_KEEPCS = 1.
-     ZLELINE.lock().unwrap().clear();
-     ZLELINE.lock().unwrap().extend(s.chars());
-     ZLELL.store( ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
-    if flags & 1 == 0 {
-         ZLECS.store( ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                               // c:1145
+    // C body c:1129-1156:
+    //   if ((flags & ZSL_TOEND) && (zlecs = zlell) && invicmdmode())
+    //       DECCS();
+    //   else if (zlecs > zlell)
+    //       zlecs = zlell;
+    //
+    // Flag constants (Src/Zle/zle.h:404-407):
+    //   ZSL_COPY  = 1  — copy the argument, don't modify it
+    //   ZSL_TOEND = 2  — go to the end of the new line
+    //
+    // The previous Rust port had THREE bugs:
+    //   1. Used `flags & 1` (ZSL_COPY) for the cursor-position decision
+    //      — should be `flags & 2` (ZSL_TOEND).
+    //   2. INVERTED the condition (`==0` instead of `!=0`) — sent the
+    //      cursor to end-of-line when ZSL_COPY was UNSET, the opposite
+    //      of C's "ZSL_TOEND set → end-of-line".
+    //   3. Missing the `else if (zlecs > zlell) zlecs = zlell;` clamp
+    //      — cursor outside the new line stayed at the stale position.
+    use crate::ported::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
+    let _ = ZSL_COPY;                                                        // c:1135 (no-op in Rust: &str is already independent)
+    let mut line = ZLELINE.lock().unwrap();
+    line.clear();
+    line.extend(s.chars());
+    let new_len = line.len();
+    drop(line);
+    ZLELL.store(new_len, std::sync::atomic::Ordering::SeqCst);
+    if (flags & ZSL_TOEND) != 0 {                                            // c:1146
+        // c:1146 — `zlecs = zlell` (and DECCS+invicmdmode skipped: the
+        // DECCS substrate is the multibyte combining-char decrementer
+        // and Rust's Vec<char> doesn't carry combining chars in storage).
+        ZLECS.store(new_len, std::sync::atomic::Ordering::SeqCst);
+    } else if (ZLECS.load(std::sync::atomic::Ordering::SeqCst)) > new_len { // c:1148-1149
+        // c:1149 — `zlecs = zlell;` clamp.
+        ZLECS.store(new_len, std::sync::atomic::Ordering::SeqCst);
     }
-     ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);          // c:1150 CCRIGHT
 }
 
 /// Port of `findbol()` from `Src/Zle/zle_utils.c:1158`.
@@ -1624,5 +1650,83 @@ mod findbol_findeol_tests {
         zle_with("abc\ndef", 6);
         assert_eq!(findbol(), 4,
             "c:1162 — bol is at offset AFTER the previous newline");
+    }
+
+    /// `Src/Zle/zle_utils.c:1146` — `setline(s, ZSL_TOEND)` sends the
+    /// cursor to the END of the new line. The previous Rust port checked
+    /// the WRONG flag bit (ZSL_COPY=1 instead of ZSL_TOEND=2) AND
+    /// inverted the condition, so `setline("hi", 2)` left the cursor at
+    /// 0 instead of 2. Catches the fix.
+    #[test]
+    fn setline_with_zsl_toend_moves_cursor_to_end() {
+        let _g = zle_test_setup();
+        use crate::ported::zle::zle_h::ZSL_TOEND;
+        zle_with("xxxxxxxxxx", 5);                 // pre-set cursor at 5
+        setline("hi", ZSL_TOEND);                  // ZSL_TOEND=2
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "hi");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2,
+            "c:1146 — ZSL_TOEND → cursor at zlell");
+    }
+
+    /// `Src/Zle/zle_utils.c:1148-1149` — when ZSL_TOEND is NOT set, the
+    /// cursor stays where it was UNLESS it would now be past zlell, in
+    /// which case it clamps to zlell. Pin the no-stale-cursor invariant.
+    #[test]
+    fn setline_without_zsl_toend_clamps_overshoot_cursor() {
+        let _g = zle_test_setup();
+        // Pre-set cursor at 10, then replace line with shorter "abc" (3 chars).
+        zle_with("xxxxxxxxxxxx", 10);
+        setline("abc", 0);                         // no flags
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "abc");
+        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3,
+            "c:1148-1149 — cursor past new zlell must clamp to zlell");
+    }
+
+    /// `Src/Zle/zle_utils.c:1148-1149` — when ZSL_TOEND is NOT set and
+    /// the existing cursor still fits within the new line, the cursor
+    /// stays put (no movement). Pin the preserve-position invariant —
+    /// regression that flipped to "always go to end" would break every
+    /// undo/redo path that calls setline mid-edit.
+    #[test]
+    fn setline_without_zsl_toend_preserves_in_range_cursor() {
+        let _g = zle_test_setup();
+        zle_with("abcdef", 2);                     // cursor at 'c'
+        setline("ABCDEFGH", 0);                    // longer; cursor=2 still fits
+        let line: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(line, "ABCDEFGH");
+        assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2,
+            "c:1148-1149 — in-range cursor stays put when ZSL_TOEND unset");
+    }
+
+    /// `Src/Zle/zle_utils.c:1146` — flag bit 2 (ZSL_TOEND) takes
+    /// precedence; combining with ZSL_COPY (1) doesn't change the
+    /// cursor-position behavior since ZSL_COPY only controls
+    /// argument duplication (a no-op in Rust where `&str` is borrowed).
+    #[test]
+    fn setline_with_zsl_copy_alone_does_not_change_cursor_logic() {
+        let _g = zle_test_setup();
+        use crate::ported::zle::zle_h::ZSL_COPY;
+        zle_with("abcdefghij", 5);
+        setline("xyz", ZSL_COPY);                  // ZSL_COPY=1, no TOEND
+        // Cursor was 5, new line is 3 chars → clamp to 3.
+        assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3,
+            "c:1148-1149 — ZSL_COPY alone doesn't trigger TOEND; clamp still applies");
+    }
+
+    /// `Src/Zle/zle_utils.c` ZSL_* constants — `ZSL_COPY=1`, `ZSL_TOEND=2`.
+    /// Pin the exact values per `Src/Zle/zle.h:406-407` so a regen
+    /// renumbering them silently inverts setline behavior.
+    #[test]
+    fn zsl_constants_match_c_source_values() {
+        use crate::ported::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
+        assert_eq!(ZSL_COPY,  1, "Src/Zle/zle.h:406 — ZSL_COPY = 1");
+        assert_eq!(ZSL_TOEND, 2, "Src/Zle/zle.h:407 — ZSL_TOEND = 2");
+        // Bit-disjoint so setline can OR them.
+        assert_eq!(ZSL_COPY & ZSL_TOEND, 0,
+            "flag bits must be disjoint for OR-composition");
     }
 }
