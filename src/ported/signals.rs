@@ -479,17 +479,77 @@ extern "C" fn zhandler(sig: libc::c_int) {
     }
 }
 
-/// Kill all running jobs with the given signal.
-/// Port of `killrunjobs(int from_signal)` from Src/signals.c:506.
-/// Rust idiom replacement: zshrs's executor walks its own job table
-/// during shutdown; the C source's global `jobtab` iteration lives
-/// in `exec_jobs`, not in signals.rs.
-// SIGHUP any jobs left running                                             // c:506
+/// Kill all running jobs with SIGHUP at shell exit.
+///
+/// Port of `void killrunjobs(int from_signal)` from `Src/signals.c:506`.
+/// C body:
+/// ```c
+/// if (unset(HUP)) return;
+/// for (i = 1; i <= maxjob; i++)
+///     if ((from_signal || i != thisjob) && (jobtab[i].stat & STAT_LOCKED) &&
+///         !(jobtab[i].stat & STAT_NOPRINT) &&
+///         !(jobtab[i].stat & STAT_STOPPED)) {
+///         if (jobtab[i].gleader != getpid() &&
+///             killpg(jobtab[i].gleader, SIGHUP) != -1)
+///             killed++;
+///     }
+/// if (killed) zwarn("warning: %d jobs SIGHUPed", killed);
+/// ```
+///
+/// The previous Rust port was a `let _ = from_signal;` no-op
+/// stub. That meant `exit` from an interactive shell with
+/// running jobs would NOT SIGHUP them — the jobs would survive
+/// the parent shell and become orphans (or daemons).
 #[cfg(unix)]
-pub fn killrunjobs(from_signal: i32) {
-    // This would need access to the job table
-    // In practice, the exec module calls this during shutdown
-    let _ = from_signal;
+pub fn killrunjobs(from_signal: i32) {                                       // c:506
+    // c:512 — `if (unset(HUP)) return;`. HUP option gates the
+    // whole walk: when `setopt nohup`, jobs survive shell exit.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::HUP) {              // c:512
+        return;
+    }
+    let my_pid = unsafe { libc::getpid() };
+    let mut killed: i32 = 0;
+    // c:514 — `for (i = 1; i <= maxjob; i++)`. Skip index 0
+    // (shell itself).
+    let tab = crate::ported::jobs::JOBTAB
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let tab = tab.lock().expect("jobtab poisoned");
+    let thisjob = crate::ported::jobs::THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .map(|g| *g)
+        .unwrap_or(-1);
+    for (i, job) in tab.iter().enumerate().skip(1) {
+        // c:515-517 — gate: (from_signal || i != thisjob) AND
+        // STAT_LOCKED AND !STAT_NOPRINT AND !STAT_STOPPED.
+        if !(from_signal != 0 || i as i32 != thisjob) {                       // c:515
+            continue;
+        }
+        if (job.stat & crate::ported::jobs::stat::LOCKED) == 0 {              // c:516
+            continue;
+        }
+        if (job.stat & crate::ported::jobs::stat::NOPRINT) != 0 {             // c:516
+            continue;
+        }
+        if (job.stat & crate::ported::jobs::stat::STOPPED) != 0 {             // c:516
+            continue;
+        }
+        // c:518-520 — `if (jobtab[i].gleader != getpid() &&
+        //                  killpg(jobtab[i].gleader, SIGHUP) != -1)
+        //                  killed++;`
+        // The gleader check avoids the shell HUP-ing itself.
+        if job.gleader != my_pid
+            && unsafe { libc::killpg(job.gleader, libc::SIGHUP) } != -1       // c:519
+        {
+            killed += 1;                                                      // c:520
+        }
+    }
+    drop(tab);
+    // c:524 — `if (killed) zwarn("warning: %d jobs SIGHUPed", killed);`
+    if killed != 0 {                                                          // c:524
+        crate::ported::utils::zwarn(&format!(
+            "warning: {} jobs SIGHUPed", killed));                            // c:524
+    }
 }
 
 /// Kill a specific job by process group.
@@ -1932,5 +1992,28 @@ mod tests {
 
         // Restore prior MONITOR state.
         dosetopt(MONITOR, if saved { 1 } else { 0 }, 0);
+    }
+
+    /// Pin: `killrunjobs` short-circuits when `HUP` option is
+    /// unset per `Src/signals.c:512` (`if (unset(HUP)) return;`).
+    /// Pin the side-effect-free path; testing the killpg side is
+    /// inherently hostile (would kill real process groups) and
+    /// requires fork+exec scaffolding outside unit-test scope.
+    #[cfg(unix)]
+    #[test]
+    fn killrunjobs_short_circuits_when_hup_unset() {
+        use crate::ported::options::dosetopt;
+        use crate::ported::zsh_h::HUP;
+        let saved = crate::ported::zsh_h::isset(HUP);
+        // Force HUP off; killrunjobs must return immediately.
+        dosetopt(HUP, 0, 0);
+        // If the body iterated, it would try to read JOBTAB. With
+        // no jobs added it would return without doing anything. The
+        // contract pinned here: this returns without panicking
+        // regardless of jobtab state.
+        killrunjobs(0);
+        killrunjobs(1);
+        // Restore.
+        dosetopt(HUP, if saved { 1 } else { 0 }, 0);
     }
 }
