@@ -519,6 +519,11 @@ pub fn zwcwidth(wc: char) -> usize {
 /// +x set).
 /// WARNING: param names don't match C — Rust=(prog) vs C=(prog, namep)
 pub fn pathprog(prog: &str) -> Option<PathBuf> {                             // c:760
+    // The early-return on `prog` containing '/' is a Rust-port
+    // convenience NOT in C's pathprog. C unconditionally walks $PATH
+    // and prefixes each entry. The convenience is harmless since
+    // C's caller (`findcmd`) handles slashes separately before
+    // calling pathprog.
     if prog.contains('/') {
         let p = PathBuf::from(prog);
         return if p.exists() { Some(p) } else { None };
@@ -526,16 +531,23 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {                             // 
     if let Some(path_var) = crate::ported::params::getsparam("PATH") {
         for dir in path_var.split(':') {                                     // c:773
             let full_path = PathBuf::from(dir).join(prog);
-            // c:776-778 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
-            // is_file() folds the existence + stat + not-dir checks
-            // into one (returns true only for regular files).
-            if let Ok(meta) = std::fs::metadata(&full_path) {
+            // c:776 — `funmeta = unmeta(buf)`. The previous Rust port
+            // passed the raw composed path to `fs::metadata`, missing
+            // the unmeta step. Paths containing Meta-encoded bytes
+            // (from PATH entries or prog name with metafy lead bytes)
+            // would silently miss valid executables.
+            let unmeta_path = crate::ported::utils::unmeta(
+                full_path.to_str().unwrap_or(""),
+            );                                                               // c:776 unmeta(buf)
+            // c:777-779 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
+            // is_file() folds existence + stat + not-dir into one.
+            if let Ok(meta) = std::fs::metadata(&unmeta_path) {
                 if meta.is_file() {
-                    return Some(full_path);
+                    // Return the unmeta'd path since that's what
+                    // C does (funmeta is the returned value).
+                    return Some(PathBuf::from(unmeta_path));
                 }
             }
-            // Skip not-found / stat errors silently (c:776 access fail).
-            let _ = ();
         }
     }
     None
