@@ -304,18 +304,42 @@ pub fn patcompcharsset() {                                                    //
 /// Port of `patcompstart()` from `Src/pattern.c:517`.
 ///
 /// Resets per-compile globals. Called at the start of `patcompile`.
-/// Matches C c:523-525 — GF_MULTIBYTE is defaulted on when zsh was
-/// built with MULTIBYTE_SUPPORT. Rust's `&str` is natively UTF-8 so
-/// the equivalent is "always on" unless the caller toggles via (#U).
+///
+/// **C body (c:517-526)** — strict order matters:
+///   1. `patcompcharsset()` — must run FIRST so the zpc_special
+///      table reflects the current option state before parsing.
+///   2. `patglobflags = isset(CASEGLOB) || isset(CASEPATHS) ? 0 :
+///      GF_IGNCASE;` — case-insensitivity is the default UNLESS
+///      one of the case-sensitive options is set.
+///   3. `if (isset(MULTIBYTE)) patglobflags |= GF_MULTIBYTE;` —
+///      multibyte handling is option-gated, NOT unconditional.
+///
+/// The previous Rust port had three divergences: (a) called
+/// patcompcharsset LAST instead of FIRST, (b) unconditionally set
+/// GF_MULTIBYTE even when `setopt nomultibyte`, (c) NEVER set
+/// GF_IGNCASE — `setopt nocaseglob` had zero effect on pattern
+/// case-folding.
 pub fn patcompstart() {                                                       // c:517
+    use crate::ported::zsh_h::{CASEGLOB, CASEPATHS, MULTIBYTE, isset};
+    // c:519 — `patcompcharsset()` FIRST.
+    patcompcharsset();
     patout.lock().unwrap().clear();
     patnpar.store(1, Ordering::Relaxed);
     patflags.store(0, Ordering::Relaxed);
-    patglobflags.store(GF_MULTIBYTE, Ordering::Relaxed);                      // c:525
+    // c:520-523 — CASE option dispatch.
+    let mut flags: i32 = if isset(CASEGLOB) || isset(CASEPATHS) {
+        0                                                                    // c:521 case-sensitive
+    } else {
+        GF_IGNCASE                                                           // c:523 default = ignore case
+    };
+    // c:524-525 — MULTIBYTE option respect.
+    if isset(MULTIBYTE) {
+        flags |= GF_MULTIBYTE;                                               // c:525
+    }
+    patglobflags.store(flags, Ordering::Relaxed);
     errsfound.store(0, Ordering::Relaxed);
     forceerrs.store(-1, Ordering::Relaxed);
     patparse_off.store(0, Ordering::Relaxed);
-    patcompcharsset();
 }
 
 // =====================================================================
@@ -2605,6 +2629,50 @@ mod tests {
         assert!(!patmatch("abc", "abcd"));
         assert!(!patmatch("abc", "ab"));
         assert!(!patmatch("abc", ""));
+    }
+
+    /// `Src/pattern.c:517-526` — `patcompstart` reads CASEGLOB /
+    /// CASEPATHS / MULTIBYTE option state into `patglobflags`. The
+    /// previous Rust port hardcoded `GF_MULTIBYTE` unconditionally
+    /// (ignoring MULTIBYTE option) AND never set `GF_IGNCASE`
+    /// (ignoring CASEGLOB option entirely). Pin all three branches.
+    #[test]
+    fn patcompstart_sets_patglobflags_per_option_state() {
+        use crate::ported::options::{opt_state_get, opt_state_set};
+        let saved_caseglob  = opt_state_get("caseglob").unwrap_or(false);
+        let saved_casepaths = opt_state_get("casepaths").unwrap_or(false);
+        let saved_multibyte = opt_state_get("multibyte").unwrap_or(false);
+
+        // 1. CASEGLOB ON + CASEPATHS ON + MULTIBYTE ON → flags = GF_MULTIBYTE only.
+        opt_state_set("caseglob",  true);
+        opt_state_set("casepaths", true);
+        opt_state_set("multibyte", true);
+        patcompstart();
+        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(f & GF_IGNCASE,  0,
+            "c:521 — CASEGLOB on → GF_IGNCASE off");
+        assert_ne!(f & GF_MULTIBYTE, 0,
+            "c:525 — MULTIBYTE on → GF_MULTIBYTE bit set");
+
+        // 2. CASEGLOB OFF + CASEPATHS OFF → flags |= GF_IGNCASE.
+        opt_state_set("caseglob",  false);
+        opt_state_set("casepaths", false);
+        patcompstart();
+        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        assert_ne!(f & GF_IGNCASE,  0,
+            "c:523 — default case-insensitive → GF_IGNCASE bit set");
+
+        // 3. MULTIBYTE OFF → GF_MULTIBYTE bit cleared.
+        opt_state_set("multibyte", false);
+        patcompstart();
+        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(f & GF_MULTIBYTE, 0,
+            "c:524 — !MULTIBYTE → GF_MULTIBYTE bit clear");
+
+        // Restore.
+        opt_state_set("caseglob",  saved_caseglob);
+        opt_state_set("casepaths", saved_casepaths);
+        opt_state_set("multibyte", saved_multibyte);
     }
 
     /// `Src/pattern.c:464-510` — `patcompcharsset` masks special chars
