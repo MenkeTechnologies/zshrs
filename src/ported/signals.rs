@@ -541,14 +541,19 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         return 1;
     }
     // c:696 (zsh.h:2563) — `if (jobbing && (sig == SIGTTOU ||
-    // sig == SIGTSTP || sig == SIGTTIN)) return 1;`. `jobbing` is the
-    // macro `isset(MONITOR)` per `Src/zsh.h:2563`. The previous Rust
-    // port hardcoded `jobbing = false`, defeating the C rejection of
-    // trapping job-control signals when MONITOR is on — a real
-    // divergence that let users break their own job control silently
-    // by trapping SIGTSTP from inside an interactive shell.
+    // sig == SIGTSTP || sig == SIGTTIN)) { zerr("can't trap SIG%s
+    // in interactive shells", ...); return 1; }`. The previous Rust
+    // port both hardcoded `jobbing = false` (now fixed) AND omitted
+    // the `zerr` emission — silently failing with no diagnostic.
+    // C names the specific signal in the error so the user knows
+    // which trap was rejected.
     let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR); // c:696
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
+        // c:697 — `zerr("can't trap SIG%s in interactive shells", sigs[sig])`.
+        let signame = getsigname(sig);
+        crate::ported::utils::zerr(
+            &format!("can't trap SIG{} in interactive shells", signame),
+        );
         return 1;                                                             // c:699
     }
 
@@ -557,7 +562,17 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     queue_signals();
     unsettrap(sig);
 
-    let l_is_empty = l.is_none();
+    // c:712 — `if (!(flags & ZSIG_FUNC) && empty_eprog(l))`. C's
+    // `empty_eprog` returns true for NULL, NULL prog, OR a prog whose
+    // first wordcode is WCB_END (`Src/parse.c:586`). The previous Rust
+    // port used `l.is_none()`, catching only the NULL case — a non-
+    // NULL but empty Eprog (e.g. `trap -- '' SIGINT` with an empty
+    // body) would fall through to the trapped branch, install a
+    // handler, and dispatch to an empty body instead of ignoring.
+    let l_is_empty = match &l {
+        None => true,
+        Some(eprog) => crate::ported::parse::empty_eprog(eprog),
+    };
     // c:711 — `siglists[sig] = l`.
     if let Ok(mut g) = siglists.lock() {
         if let Some(slot) = g.get_mut(sig as usize) {
