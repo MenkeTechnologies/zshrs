@@ -851,7 +851,7 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                     }
                 }
                 b'h' => {                                                    // c:870
-                    let count = digitcount(&sline) as i32;                   // c:871
+                    let count = digitcount();                                // c:871
                     sline = remtpath(&sline, count);
                 }
                 b'e' => {                                                    // c:877
@@ -861,7 +861,7 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                     sline = remtext(&sline);                                 // c:885
                 }
                 b't' => {                                                    // c:891
-                    let count = digitcount(&sline) as i32;                   // c:892
+                    let count = digitcount();                                // c:892
                     sline = remlpaths(&sline, count);
                 }
                 b's' | b'S' => {                                             // c:898-899
@@ -1055,9 +1055,58 @@ pub fn substfailed() -> i32 {                                                // 
     -1                                                                       // c:567
 }
 
-/// Port of `int digitcount(char *s)` from Src/hist.c.
-pub fn digitcount(s: &str) -> usize {                                        // c:574
-    s.chars().take_while(|c| c.is_ascii_digit()).count()
+/// Port of `static int digitcount(void)` from `Src/hist.c:573-589`.
+///
+/// C body:
+/// ```c
+/// int c = ingetc(), count;
+/// if (idigit(c)) {
+///     count = 0;
+///     do {
+///         count = 10 * count + (c - '0');
+///         c = ingetc();
+///     } while (idigit(c));
+/// } else
+///     count = 0;
+/// inungetc(c);
+/// return count;
+/// ```
+///
+/// "Return a count given by decimal digits after a modifier."
+/// Pulls characters off the INPUT STREAM via `ingetc`/`inungetc`,
+/// NOT from a passed-in string. Called from c:871 (`:h` modifier)
+/// and c:892 (`:t` modifier) to parse the digit count after the
+/// modifier letter.
+///
+/// The previous Rust port was a complete fabrication: signature was
+/// `(s: &str) -> usize` counting leading digits in an argument
+/// string. No real caller — the C function streams from input, not
+/// a string. Pin the C signature exactly.
+pub fn digitcount() -> i32 {                                                  // c:574
+    let mut c: i32 = crate::ported::input::ingetc()                          // c:576 ingetc()
+        .map(|ch| ch as i32)
+        .unwrap_or(-1);
+    let mut count: i32;
+    if c >= 0 && (c as u8 as char).is_ascii_digit() {                        // c:578 idigit(c)
+        count = 0;                                                            // c:579
+        loop {
+            count = 10 * count + (c - b'0' as i32);                          // c:581
+            c = crate::ported::input::ingetc()                                // c:582 ingetc()
+                .map(|ch| ch as i32)
+                .unwrap_or(-1);
+            if c < 0 || !(c as u8 as char).is_ascii_digit() {                // c:583
+                break;
+            }
+        }
+    } else {
+        count = 0;                                                            // c:586
+    }
+    if c >= 0 {
+        if let Some(ch) = char::from_u32(c as u32) {                          // c:587 inungetc(c)
+            crate::ported::input::inungetc(ch);
+        }
+    }
+    count                                                                     // c:588
 }
 
 /// Port of `void strinbeg(int dohist)` from `Src/hist.c:1033-1044`.
@@ -3905,17 +3954,32 @@ mod subst_modifier_tests {
         assert_eq!(histreduceblanks("\nx"), "\nx");
     }
 
-    /// `digitcount` returns the run-length of leading ASCII digits.
-    /// Used by hist-event parsing (`!42` etc.). Regression that misses
-    /// the trailing-digit run (e.g. stops too early) would mis-parse
-    /// large event numbers as smaller ones.
+    /// Pin `digitcount` to its canonical C body at `Src/hist.c:573-589`.
+    /// C reads digits FROM THE INPUT STREAM via ingetc/inungetc, NOT
+    /// from a string argument. The previous Rust port's `(s: &str)`
+    /// signature was a fabrication with no real caller; the C version
+    /// is used by `:h` and `:t` modifiers at c:871/c:892 to parse
+    /// the digit count after the modifier letter.
     #[test]
-    fn digitcount_counts_leading_run() {
-        assert_eq!(digitcount("12345"),    5);
-        assert_eq!(digitcount("42abc"),    2);
-        assert_eq!(digitcount("abc"),      0);
-        assert_eq!(digitcount(""),         0);
-        assert_eq!(digitcount("0"),        1);
+    fn digitcount_streams_from_ingetc() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // Push "42abc" into the input stream; digitcount() should
+        // parse 42 and inungetc() the 'a'. Use inputsetline to
+        // seed the input buffer.
+        crate::ported::input::inputsetline("42abc", 0);
+        let n = digitcount();
+        assert_eq!(n, 42, "c:581 — decimal digit accumulation");
+
+        // Next ingetc must yield 'a' (the inungetc'd terminator).
+        let nxt = crate::ported::input::ingetc().unwrap_or('\0');
+        assert_eq!(nxt, 'a', "c:587 — non-digit terminator was inungetc'd");
+
+        // No digits at all → returns 0, inungetc's the first char.
+        crate::ported::input::inputsetline("xyz", 0);
+        let n = digitcount();
+        assert_eq!(n, 0, "c:586 — non-digit first char returns 0");
+        let nxt = crate::ported::input::ingetc().unwrap_or('\0');
+        assert_eq!(nxt, 'x', "c:587 — even the non-digit first char is inungetc'd");
     }
 
     /// `hist_in_word` / `hist_is_in_word` round-trip — the state flag
