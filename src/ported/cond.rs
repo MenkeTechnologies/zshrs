@@ -369,8 +369,14 @@ pub fn dostat(s: &str) -> u32 {                                              // 
 /// Port of `dolstat(char *s)` from Src/cond.c:488 — like `dostat()` but
 /// uses `lstat(2)` so symlinks are *not* followed. Underpins
 /// `[[ -h ]]` / `[[ -L ]]`.
+///
+/// C body (c:489): `if (lstat(unmeta(s), &st) < 0) return 0;`.
+/// The previous Rust port passed `s` directly to `fs::symlink_metadata`,
+/// missing the `unmeta(s)` step — paths containing Meta-encoded bytes
+/// would fail to resolve. Same divergence as the now-fixed `getstat`.
 pub fn dolstat(s: &str) -> u32 {                                             // c:488
-    fs::symlink_metadata(s).map(|m| m.mode()).unwrap_or(0)
+    let us = crate::ported::utils::unmeta(s);                                 // c:489 unmeta(s)
+    fs::symlink_metadata(&us).map(|m| m.mode()).unwrap_or(0)
 }
 
 /// Port of `optison(char *name, char *s)` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
