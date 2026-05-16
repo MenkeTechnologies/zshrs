@@ -5876,12 +5876,19 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // c:7454
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use std::sync::Mutex;
+    // c:7456-7461 — route through the canonical jobs::TTYFROZEN
+    // global. The previous builtin.rs duplicate AtomicI32 NEVER synced
+    // with jobs.rs's Mutex<i32> store; `ttyctl -f` set the local
+    // Atomic but didn't freeze the tty from the perspective of the
+    // job-control wait path that reads jobs::TTYFROZEN.
+    let cell = crate::ported::jobs::TTYFROZEN.get_or_init(|| Mutex::new(0_i32));
     if OPT_ISSET(ops, b'f') {                                                // c:7456
-        TTYFROZEN.store(1, Ordering::Relaxed);                               // c:7457
+        *cell.lock().expect("TTYFROZEN poisoned") = 1;                       // c:7457
     } else if OPT_ISSET(ops, b'u') {                                         // c:7458
-        TTYFROZEN.store(0, Ordering::Relaxed);                               // c:7459
+        *cell.lock().expect("TTYFROZEN poisoned") = 0;                       // c:7459
     } else {
-        let f = TTYFROZEN.load(Ordering::Relaxed);
+        let f = *cell.lock().expect("TTYFROZEN poisoned");
         // c:7461 — `printf("tty is %sfrozen\n", ttyfrozen ? "" : "not ");`
         println!("tty is {}frozen", if f != 0 { "" } else { "not " });       // c:7461
     }
@@ -6305,10 +6312,10 @@ pub static ZOPTIND: std::sync::atomic::AtomicI32 =
 pub static OPTCIND: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
-// `ttyfrozen` global from Src/init.c — tty-state freeze flag controlled
-// by `ttyctl -f/-u` and consulted by ZLE on prompt entry.
-pub static TTYFROZEN: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+// `ttyfrozen` global lives canonically in jobs.rs (`OnceLock<Mutex<i32>>`
+// at jobs.rs:2625). The previous AtomicI32 duplicate here NEVER
+// synced with the jobs.rs store — same desync hazard as the prior
+// MAXJOB / THISJOB fix. Callers route through jobs::TTYFROZEN.
 
 /// Port of `mod_export int ineval` from `Src/builtin.c:6389`. Set
 /// while `eval` is dispatching its body (incremented before
