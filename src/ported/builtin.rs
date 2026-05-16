@@ -4559,15 +4559,35 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
     }
 
     // Helper closure that prints one Alias respecting printflags.
+    // Mirrors `printaliasnode(HashNode, int printflags)` from
+    // Src/hashtable.c:1256-1336 (the simple-print subset that
+    // bin_alias actually emits — PRINT_LIST, PRINT_NAMEONLY, and
+    // the default `name=value`).
     let print_alias = |a: &Alias, pflags: i32| {
+        // c:1262-1265 — PRINT_NAMEONLY emits the name and a newline.
         if (pflags & PRINT_NAMEONLY) != 0 {
             println!("{}", a.node.nam);
-        } else if (pflags & PRINT_LIST) != 0 {
-            // c form: `alias name=value`
-            println!("alias {}={}", a.node.nam, a.text);
-        } else {
-            println!("{}={}", a.node.nam, a.text);
+            return;
         }
+        // c:1311-1330 — PRINT_LIST prefix: `alias ` then `-s `/`-g `
+        // for ALIAS_SUFFIX/ALIAS_GLOBAL, then `-- ` for names that
+        // start with `-` or `+`. The previous Rust port emitted bare
+        // `alias name=value` without any of these flags, so `alias
+        // -L` for a global alias was indistinguishable from a
+        // regular one and the output wasn't re-executable.
+        if (pflags & PRINT_LIST) != 0 {
+            print!("alias ");
+            if (a.node.flags & ALIAS_SUFFIX as i32) != 0 {                   // c:1322
+                print!("-s ");
+            } else if (a.node.flags & ALIAS_GLOBAL as i32) != 0 {            // c:1324
+                print!("-g ");
+            }
+            if a.node.nam.starts_with('-') || a.node.nam.starts_with('+') {  // c:1330
+                print!("-- ");
+            }
+        }
+        // c:1334-1336 — `quotedzputs(nam); putchar('='); quotedzputs(text); putchar('\n');`
+        println!("{}={}", a.node.nam, a.text);
     };
 
     // c:4495-4500 — no args: list all (filtered by flags).
