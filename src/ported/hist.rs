@@ -1663,11 +1663,25 @@ pub fn ihwabort() {                                                          // 
     hist_keep_comment.store(1, Ordering::SeqCst);
 }
 
-/// Port of `void ihwend(void)` from Src/hist.c.
+/// Port of `void ihwend(void)` from `Src/hist.c:1686`.
+///
+/// Same gate as `ihwbegin` at c:1688:
+///   stophist == 2 || (histactive & HA_INWORD) ||
+///   (inbufflags & (INP_ALIAS|INP_HIST)) == INP_ALIAS
+///
+/// The previous Rust port missed the INP_ALIAS-only arm
+/// (matching the `ihwbegin` divergence). Words started during
+/// alias expansion got closed too — corrupting the chwords
+/// table when an alias expansion ended.
 pub fn ihwend() {                                                            // c:1686
+    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
-    if stop == 2 || (active & HA_INWORD) != 0 {
+    let inflags = crate::ported::input::inbufflags.with(|f| f.get());
+    if stop == 2
+        || (active & HA_INWORD) != 0
+        || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS                  // c:1688
+    {
         return;
     }
     let pos = chwordpos.load(Ordering::SeqCst);
