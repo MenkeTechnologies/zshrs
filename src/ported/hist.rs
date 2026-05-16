@@ -2319,7 +2319,26 @@ pub fn flockhistfile(path: &str) -> i32 {
 /// into the Result-bubbling; HFILE_APPEND/HFILE_USE_OPTIONS flag
 /// handling lives on the caller's writeflags decision.
 pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // c:2922
-    let path: String = match fn_path {
+    // c:2931-2934 — `if (!interact || savehistsiz <= 0 || !hist_ring
+    //                || (!fn && !(fn = getsparam("HISTFILE")))) return;`
+    //
+    // Two early-return gates the previous Rust port missed:
+    //   1. `!interact` — non-interactive shells must not write
+    //      history. A script that has accumulated commands
+    //      shouldn't pollute the interactive user's HISTFILE.
+    //   2. `savehistsiz <= 0` — when SAVEHIST=0 (or negative),
+    //      history saving is explicitly disabled. The previous
+    //      port wrote an EMPTY file (cap=0 → no entries),
+    //      truncating the user's existing history.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)        // c:2932 !interact
+    {
+        return;
+    }
+    let cap = savehistsiz.load(Ordering::SeqCst);                             // c:2932 savehistsiz
+    if cap <= 0 {                                                             // c:2932 savehistsiz <= 0
+        return;
+    }
+    let path: String = match fn_path {                                        // c:2933 fn / HISTFILE
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
@@ -2330,11 +2349,11 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // 
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .write(true).create(true).truncate(true).open(&path)
     {
-        let cap = savehistsiz.load(Ordering::SeqCst).max(0) as usize;
+        let cap = cap as usize;
         let ring = hist_ring.lock().unwrap();
         let mut count = 0;
         for entry in ring.iter().rev() {
-            if cap > 0 && count >= cap { break; }
+            if count >= cap { break; }
             let dur = entry.ftim.saturating_sub(entry.stim);
             let _ = writeln!(file, ": {}:{};{}", entry.stim, dur, entry.node.nam);
             count += 1;
@@ -3404,5 +3423,36 @@ mod subst_modifier_tests {
         // Form-feed (\x0C) — NOT inblank.
         assert_eq!(quotebreak("a\u{000C}b"), "'a\u{000C}b'",
             "FF not in inblank, must not be broken out");
+    }
+
+    /// Pin: `savehistfile` short-circuits when `!interact` per
+    /// `Src/hist.c:2932`. Non-interactive shells must not write
+    /// to the user's HISTFILE — a script running with INTERACTIVE
+    /// off should leave the user's history untouched even when
+    /// passed an explicit fn_path.
+    ///
+    /// Also pins the `savehistsiz <= 0` short-circuit. Previously
+    /// the port wrote an EMPTY file (cap=0 means no entries
+    /// written), TRUNCATING the user's saved history. Either
+    /// gate firing must leave the file untouched.
+    #[test]
+    fn savehistfile_short_circuits_on_non_interactive() {
+        use crate::ported::options::dosetopt;
+        use crate::ported::zsh_h::INTERACTIVE;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hist_test");
+        let path_str = path.to_str().unwrap();
+        // Pre-populate with content so we can detect "untouched".
+        std::fs::write(&path, b"PRESERVED").expect("seed write");
+        // Force INTERACTIVE off; savehistfile must NOT touch the
+        // file regardless of fn_path.
+        let saved = crate::ported::zsh_h::isset(INTERACTIVE);
+        dosetopt(INTERACTIVE, 0, 0);
+        savehistfile(Some(path_str), 0);
+        let after = std::fs::read(&path).expect("read after");
+        assert_eq!(after, b"PRESERVED",
+            "c:2932 — !interact must skip write; original content preserved");
+        // Restore.
+        dosetopt(INTERACTIVE, if saved { 1 } else { 0 }, 0);
     }
 }
