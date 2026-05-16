@@ -295,9 +295,16 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c
 #[cfg(unix)]
 pub fn wait_for_processes() -> Vec<(i32, i32)> {
     let mut results = Vec::new();
+    // c:271-274 — `WAITFLAGS = WNOHANG|WUNTRACED|WCONTINUED`. The
+    // previous Rust port used `WNOHANG|WUNTRACED` only, dropping the
+    // WCONTINUED bit so children that were resumed via SIGCONT
+    // wouldn't surface a status update — silently breaking
+    // `fg`/`bg` job-table tracking. WCONTINUED is POSIX and
+    // available in libc-rs on every platform zshrs supports.
+    let waitflags = libc::WNOHANG | libc::WUNTRACED | libc::WCONTINUED;       // c:271
     loop {
         let mut status: i32 = 0;
-        let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG | libc::WUNTRACED) };
+        let pid = unsafe { libc::waitpid(-1, &mut status, waitflags) };
         if pid <= 0 {
             break;
         }
