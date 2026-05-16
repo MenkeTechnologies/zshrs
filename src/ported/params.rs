@@ -6433,7 +6433,9 @@ pub fn startparamscope(_table: &mut crate::ported::zsh_h::HashTable) {
 pub fn endparamscope() {
     queue_signals();
     crate::ported::utils::dec_locallevel();                                  // c:5861 locallevel--
-    crate::ported::hist::saveandpophiststack(crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
+    // c:5863 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
+    // all stack entries with locallevel > current.
+    crate::ported::hist::saveandpophiststack(0, crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
     let ll = crate::ported::utils::locallevel();
     // c:5867 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
     // the live paramtab (HashMap-backed until the hashtable.c vtable
