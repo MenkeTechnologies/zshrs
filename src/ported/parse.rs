@@ -2356,11 +2356,16 @@ thread_local! {
 /// `[ A op B ]` — `=` / `==` / `!=` / `<` / `>` / `=~` / `-X`.
 ///
 /// C does `(b[0] == Equals || b[0] == '=')` etc., matching BOTH the
-/// raw ASCII operator char AND its tokenized marker form (Equals =
-/// `\u{8d}`, Outang = `\u{8e}`, Inang = `\u{91}`, Tilde = `\u{96}`,
-/// Bang = `\u{8b}`, Dash = `\u{9b}`). Inside `[[ ... ]]` the lexer
-/// emits the marker bytes — comparing against literal-only `b"=="`
-/// misses every cond op.
+/// raw ASCII operator char AND its tokenized marker form per
+/// `Src/zsh.h:159-194`:
+///   Equals = `\u{8d}`, Outang = `\u{95}`, Inang  = `\u{94}`,
+///   Tilde  = `\u{98}`, Bang   = `\u{9c}`, Dash   = `\u{9b}`.
+/// Inside `[[ ... ]]` the lexer emits the marker bytes — comparing
+/// against literal-only `b"=="` misses every cond op.
+/// (The previous Rust port had the doc comment values wrong:
+/// Outang=0x8e was actually Bar; Inang=0x91 was Inbrack;
+/// Tilde=0x96 was OutangProc; Bang=0x8b was Outparmath. The code
+/// itself uses the correct const names, so this was a docs-only fix.)
 pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     // c:2659
     let bc: Vec<char> = b.chars().collect();
