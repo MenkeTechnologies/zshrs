@@ -352,7 +352,14 @@ fn ensure_termcap_loaded() -> bool {
         1 => true,
         -1 => false,
         _ => {
-            let term = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
+            // C `init_term` (Src/init.c:771) reads the `term` global
+            // which is the shell's $TERM param. The previous Rust port
+            // read \`std::env::var(\"TERM\")\` which diverges when the
+            // shell has updated TERM via paramtab without exporting yet.
+            // Route through getsparam — same env-vs-paramtab family as
+            // the recent newuser HOME / bin_strftime TZ fixes.
+            let term = crate::ported::params::getsparam("TERM")
+                .unwrap_or_else(|| "dumb".into());
             let term_c = match std::ffi::CString::new(term) { Ok(c) => c, Err(_) => return false };
             let r = {
                 let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
