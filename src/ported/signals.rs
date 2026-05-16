@@ -848,11 +848,28 @@ pub fn handletrap(sig: i32) -> i32 {                                         // 
 }
 
 /// Direct port of `void queue_traps(int wait_cmd)` from
-/// `Src/signals.c:1041`. Increments `trap_queueing_enabled` so
-/// signals delivered while a long-running builtin is mid-flight
-/// stash into `trap_queue[]` instead of dispatching inline.
-pub fn queue_traps(_wait_cmd: i32) {                                          // c:1024
-    trap_queueing_enabled.fetch_add(1, Ordering::SeqCst);
+/// `Src/signals.c:1024-1033`.
+///
+/// C body:
+///     if (!isset(TRAPSASYNC) && !wait_cmd)
+///         trap_queueing_enabled = 1;
+///
+/// C ONLY enables queueing when NEITHER `TRAPSASYNC` is set NOR the
+/// caller is the `wait` builtin (which wants traps to fire immediately
+/// so the wait can be interrupted). The previous Rust port:
+///   1. Dropped the `wait_cmd` arg (named `_wait_cmd`), defeating the
+///      `wait` builtin's expectation that trap delivery stays inline.
+///   2. Skipped the `isset(TRAPSASYNC)` check, defeating async-trap mode.
+///   3. Used `fetch_add(1)` instead of `= 1` — turned the C boolean
+///      flag into a counter, breaking the symmetric `= 0` reset that
+///      `unqueue_traps` does at c:1042.
+pub fn queue_traps(wait_cmd: i32) {                                           // c:1024
+    // c:1026 — both gates must be off for queueing to be enabled.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::TRAPSASYNC)
+        && wait_cmd == 0
+    {
+        trap_queueing_enabled.store(1, Ordering::SeqCst);                     // c:1031
+    }
 }
 
 // Disable trap queuing and run the traps.                                 // c:1041
@@ -1518,6 +1535,46 @@ mod tests {
             assert_eq!(unsafe { libc::sigismember(&m, sig) }, 0,
                 "c:163 — sig=0 produces empty set, but {} found", sig);
         }
+    }
+
+    /// `Src/signals.c:1024-1033` — `queue_traps(wait_cmd)` enables
+    /// queueing ONLY when BOTH `!isset(TRAPSASYNC)` AND `!wait_cmd`.
+    /// The previous Rust port hardcoded a `fetch_add(1)`, defeating
+    /// both option gates entirely. Pin:
+    ///   * TRAPSASYNC=on  → queue_traps(0) is a no-op.
+    ///   * wait_cmd=1     → queue_traps(1) is a no-op.
+    ///   * both off       → queue_traps(0) sets trap_queueing_enabled=1.
+    #[cfg(unix)]
+    #[test]
+    fn queue_traps_respects_trapsasync_and_wait_cmd() {
+        use crate::ported::options::dosetopt;
+        use crate::ported::zsh_h::TRAPSASYNC;
+        let saved = crate::ported::zsh_h::isset(TRAPSASYNC);
+
+        // Setup: TRAPSASYNC off, trap_queueing_enabled cleared.
+        dosetopt(TRAPSASYNC, 0, 0);
+        trap_queueing_enabled.store(0, Ordering::SeqCst);
+
+        // wait_cmd=1 → queueing stays disabled.
+        queue_traps(1);
+        assert_eq!(trap_queueing_enabled.load(Ordering::SeqCst), 0,
+            "c:1026 — wait_cmd=1 gate must block queueing");
+
+        // wait_cmd=0 + TRAPSASYNC=off → queueing enabled.
+        queue_traps(0);
+        assert_eq!(trap_queueing_enabled.load(Ordering::SeqCst), 1,
+            "c:1031 — both gates off → queueing enabled = 1");
+
+        // Reset; turn TRAPSASYNC on.
+        trap_queueing_enabled.store(0, Ordering::SeqCst);
+        dosetopt(TRAPSASYNC, 1, 0);
+        queue_traps(0);
+        assert_eq!(trap_queueing_enabled.load(Ordering::SeqCst), 0,
+            "c:1026 — TRAPSASYNC=on must block queueing even with wait_cmd=0");
+
+        // Restore.
+        dosetopt(TRAPSASYNC, if saved { 1 } else { 0 }, 0);
+        trap_queueing_enabled.store(0, Ordering::SeqCst);
     }
 
     /// `Src/signals.c:696-699` — `settrap` rejects trapping
