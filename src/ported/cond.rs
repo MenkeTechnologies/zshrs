@@ -176,8 +176,16 @@ pub fn evalcond(                                                             // 
                                     else { 3 }
                                 }
                                 'v' => b2i(vars.contains_key(&arg)),
-                                't' => arg.parse::<i32>()
-                                       .map(|fd| b2i(unsafe { libc::isatty(fd) } != 0))
+                                // c:330+ — `-t fd` accepts ARITHMETIC
+                                // (`mathevali`), not just plain digits.
+                                // C: `fd = mathevali(left); return
+                                // !isatty(fd);`. The previous Rust port
+                                // used `.parse::<i32>()` which rejected
+                                // `[[ -t $((0)) ]]` / `[[ -t 1+0 ]]`.
+                                // Route through `mathevali` so all
+                                // arith-expression forms work.
+                                't' => crate::ported::math::mathevali(&arg)
+                                       .map(|fd| b2i(unsafe { libc::isatty(fd as i32) } != 0))
                                        .unwrap_or(2),
                                 _ => 2,
                             };
@@ -895,5 +903,33 @@ mod tests {
         // Out-of-bounds index → 0 (args.get returns None).
         assert_eq!(cond_val(&args, 99), 0,
             "out-of-bounds num returns 0");
+    }
+
+    /// Pin: `[[ -t fd ]]` routes the fd through `mathevali` per
+    /// Src/cond.c:330+, accepting any arithmetic expression. The
+    /// previous Rust port used `.parse::<i32>()` which only
+    /// accepted plain decimal digits, rejecting valid forms like
+    /// `[[ -t 1+0 ]]` or `[[ -t $((1)) ]]` (`$(())` expansion
+    /// already happens before the test, but other arith forms
+    /// like `2-1` would reach the test verbatim).
+    ///
+    /// fd 1 (stdout) under cargo test is typically not a tty
+    /// (piped to test harness), so the result is "not a tty"
+    /// (return code 1). Any non-tty fd returns 1; this confirms
+    /// the mathevali path resolved the expression — the previous
+    /// `.parse()` would have returned 2 (syntax error) for `1+0`.
+    #[test]
+    fn evalcond_dash_t_accepts_arithmetic_per_cond_c() {
+        let (opts, vars) = empty_maps();
+        // c:330 — `[[ -t 1+0 ]]`. Should evaluate to 0 or 1 (tty
+        // check), NOT 2 (syntax error). The previous Rust port
+        // would return 2 because `.parse::<i32>("1+0")` fails.
+        let result = evalcond(&["-t", "1+0"], &opts, &vars, true);
+        assert!(result == 0 || result == 1,
+            "c:330 — `-t 1+0` must mathevali to fd 1 (not parse fail), got {}", result);
+        // c:330 — `[[ -t 0 ]]` plain digit also works.
+        let result = evalcond(&["-t", "0"], &opts, &vars, true);
+        assert!(result == 0 || result == 1,
+            "c:330 — `-t 0` plain digit still works, got {}", result);
     }
 }
