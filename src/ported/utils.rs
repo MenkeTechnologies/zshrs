@@ -883,7 +883,12 @@ pub fn finddir_scan(path: &str) -> Option<(String, String)> {                // 
 /// Rust signature returns `Option<String>` (the abbreviated path
 /// `~name/rest`) instead of the C `Nameddir` pointer.
 pub fn finddir(path: &str) -> Option<String> {                              // c:1127
-    let home = std::env::var("HOME").unwrap_or_default();                   // c:1127
+    // C reads the global `home` variable, not `getenv("HOME")` — the
+    // global is updated whenever the user assigns `HOME=...` inside
+    // the shell. Route through `getsparam("HOME")` to match: paramtab
+    // is the canonical store and the env-fallback path picks up
+    // pre-paramtab-init reads.
+    let home = crate::ported::params::getsparam("HOME").unwrap_or_default(); // c:1133-1134 (homenode.dir = home)
     if !home.is_empty() && home.len() > 1 && path.starts_with(&home) {      // c:1138-1141
         let rest = &path[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
@@ -6283,6 +6288,31 @@ fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:1133-1134 — `finddir` reads the global `home` variable (the
+    /// canonical `$HOME` storage, not `getenv("HOME")`). The global
+    /// is updated by `homesetfn` (Src/params.c:5118) whenever the user
+    /// assigns `HOME=...` inside the shell.
+    /// Regression target: a previous Rust port read `env::var("HOME")`
+    /// so an in-shell `HOME=...` assignment would not retarget
+    /// `~`-abbreviation until the user re-exported HOME.
+    #[test]
+    fn finddir_uses_paramtab_home_not_env() {
+        // Stash and replace the canonical HOME via homesetfn — the
+        // same code path PM_SPECIAL dispatch routes through.
+        let saved = crate::ported::params::homegetfn();
+        let sentinel = "/tmp/zshrs-finddir-pin".to_string();
+        crate::ported::params::homesetfn(sentinel.clone());
+
+        // `/tmp/zshrs-finddir-pin/x` must abbreviate to `~/x`.
+        let abbrev = super::finddir(&format!("{}/x", sentinel));
+        assert_eq!(abbrev.as_deref(), Some("~/x"),
+                   "finddir must consult canonical HOME (got {:?})",
+                   abbrev);
+
+        // Restore.
+        crate::ported::params::homesetfn(saved);
+    }
 
     #[test]
     fn test_sepsplit() {
