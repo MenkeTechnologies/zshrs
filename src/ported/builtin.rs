@@ -3879,6 +3879,15 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
     if OPT_ISSET(ops, b'f') { printflags |= PRINT_WHENCE_FUNCDEF; }          // c:4012
 
     // c:4015-4024 — BIN_COMMAND -V or -V-equivalent flag wrangling.
+    // C body:
+    //   if (func == BIN_COMMAND)
+    //       if (OPT_ISSET(ops,'V')) { printflags = aliasflags = PRINT_WHENCE_VERBOSE; v = 1; }
+    //       else { aliasflags = PRINT_LIST; printflags = PRINT_WHENCE_SIMPLE; v = 0; }
+    //   else aliasflags = printflags;
+    // Previous Rust port omitted the `v = 0` reset in the non-V
+    // command branch, so `command foo` with a stray user -v leaked
+    // verbose mode. Mirror C: force v unconditionally under
+    // BIN_COMMAND.
     let mut v = v;
     let _aliasflags = if func == BIN_COMMAND {                               // c:4015
         if OPT_ISSET(ops, b'V') {                                            // c:4016
@@ -3887,6 +3896,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
             PRINT_WHENCE_VERBOSE
         } else {
             printflags = PRINT_WHENCE_SIMPLE;                                // c:4021
+            v = false;                                                       // c:4022
             PRINT_LIST                                                       // c:4020
         }
     } else {
