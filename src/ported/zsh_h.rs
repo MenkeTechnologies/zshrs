@@ -3049,6 +3049,11 @@ pub fn opt_name(opt: i32) -> &'static str {
         x if x == XTRACE => "xtrace",
         x if x == USEZLE => "zle",
         x if x == DVORAK => "dvorak",
+        // VIMODE was missing entirely from the opt_name table.
+        // The storage key in ZSH_OPTIONS_SET is "vi" (not "vimode")
+        // — must match so isset(VIMODE) and opt_state_set("vi")
+        // address the same slot.
+        x if x == VIMODE => "vi",
         _ => "",
     }
 }
