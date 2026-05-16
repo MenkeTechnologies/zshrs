@@ -1253,22 +1253,67 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
 // file placement).
 
 /// Resolve a real-time signal name to its number.
-/// Port of `rtsigno(const char* signame)` from Src/signals.c:1291 — Linux-only;
-/// macOS lacks `SIGRTMIN`/`SIGRTMAX`.
+/// Port of `int rtsigno(const char* signame)` from `Src/signals.c:1291-1313`.
 ///
-/// SIGRTMIN is typically 34 on Linux, not available on macOS
-pub fn rtsigno(signame: i32) -> Option<i32> {
+/// **C signature**: `int rtsigno(const char* signame)` — takes a
+/// NAME STRING ("RTMIN", "RTMIN+3", "RTMAX-1", etc.) and returns
+/// the signal number, or 0 on parse failure.
+///
+/// **Previous Rust port divergence**: signature was `rtsigno(signame:
+/// i32) -> Option<i32>` — took an offset INT and added it to a
+/// hardcoded SIGRTMIN=34. This was completely different from C: the
+/// C function parses a NAME STRING, not an integer offset. The
+/// hardcoded `sigrtmin=34` was also wrong (RT range can vary by libc).
+///
+/// **Fixed**:
+///   * Signature now matches C: `(signame: &str) -> Option<i32>`.
+///   * Returns Option<i32> (None = C's 0 sentinel for parse failure).
+///   * Uses `libc::SIGRTMIN()` / `libc::SIGRTMAX()` for canonical bounds.
+///   * Parses "RTMIN[+N]" / "RTMAX[-N]" per C body.
+/// WARNING: param names don't match C — Rust takes &str directly
+pub fn rtsigno(signame: &str) -> Option<i32> {                                // c:1291
     #[cfg(target_os = "linux")]
     {
-        // SIGRTMIN is 34 on most Linux systems
-        let sigrtmin = 34;
-        let sigrtmax = 64;
-        let sig = sigrtmin + signame;
-        if sig <= sigrtmax {
-            Some(sig)
+        let sigrtmin = unsafe { libc::SIGRTMIN() };
+        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        let maxofs = sigrtmax - sigrtmin;                                     // c:1296
+
+        // c:1298-1306 — `if (!strncmp(signame, "RTMIN", 5)) ...
+        // else if (!strncmp(signame, "RTMAX", 5)) ... else return 0;`
+        let (sig, dir, op): (i32, i32, char) = if let Some(rest) = signame.strip_prefix("RTMIN") {
+            (sigrtmin, 1, '+')                                                // c:1300
+        } else if let Some(rest) = signame.strip_prefix("RTMAX") {
+            (sigrtmax, -1, '-')                                               // c:1302
         } else {
-            None
+            return None;                                                       // c:1304 return 0
+        };
+
+        // c:1307-1311 — `if (signame[5] == x.op) { offset = strtol(...);
+        //                                          if (offset > maxofs) return 0;
+        //                                          x.sig += offset * x.dir; }`
+        let rest = if signame.starts_with("RTMIN") {
+            &signame[5..]
+        } else {
+            &signame[5..]
+        };
+        let mut final_sig = sig;
+        if !rest.is_empty() {
+            if rest.starts_with(op) {
+                let num_str = &rest[1..];
+                let offset: i32 = match num_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => return None,                                    // c:1312
+                };
+                if offset > maxofs {
+                    return None;                                              // c:1310 return 0
+                }
+                final_sig += offset * dir;
+            } else {
+                // c:1313 — `if (*end) return 0;` — any non-op trailing → fail.
+                return None;
+            }
         }
+        Some(final_sig)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1622,6 +1667,41 @@ mod tests {
             assert_eq!(unsafe { libc::sigismember(&m, sig) }, 0,
                 "c:163 — sig=0 produces empty set, but {} found", sig);
         }
+    }
+
+    /// `Src/signals.c:1291-1313` — `rtsigno(signame)` parses a NAME
+    /// STRING ("RTMIN", "RTMIN+N", "RTMAX-N") and returns the signum,
+    /// or 0 (Rust None) on parse failure.
+    ///
+    /// The previous Rust port had a completely wrong signature
+    /// (`rtsigno(i32)` taking an offset int). Now matches C exactly.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_parses_rt_signal_names() {
+        let sigrtmin = unsafe { libc::SIGRTMIN() };
+        let sigrtmax = unsafe { libc::SIGRTMAX() };
+        // Bare RTMIN / RTMAX (no offset).
+        assert_eq!(rtsigno("RTMIN"), Some(sigrtmin),
+            "c:1300 — bare RTMIN");
+        assert_eq!(rtsigno("RTMAX"), Some(sigrtmax),
+            "c:1302 — bare RTMAX");
+        // With offset.
+        assert_eq!(rtsigno("RTMIN+1"), Some(sigrtmin + 1),
+            "c:1307-1311 — RTMIN+N");
+        assert_eq!(rtsigno("RTMAX-1"), Some(sigrtmax - 1),
+            "c:1307-1311 — RTMAX-N");
+        // Invalid input.
+        assert_eq!(rtsigno("SIGINT"), None,
+            "c:1304 — non-RT name returns None");
+        assert_eq!(rtsigno(""), None,
+            "empty string returns None");
+        // Out-of-range offset.
+        let maxofs = sigrtmax - sigrtmin;
+        assert_eq!(rtsigno(&format!("RTMIN+{}", maxofs + 1)), None,
+            "c:1310 — offset > maxofs returns None");
+        // Malformed (non-op trailing char).
+        assert_eq!(rtsigno("RTMINx"), None,
+            "c:1313 — trailing non-op char returns None");
     }
 
     /// `Src/signals.c:1317-1338` — `rtsigname(signo, alt)` picks the

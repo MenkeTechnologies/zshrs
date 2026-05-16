@@ -2172,15 +2172,15 @@ pub fn getsigidx(s: &str) -> Option<i32> {
         "IO" | "POLL" => Some(libc::SIGIO),
         "SYS" => Some(libc::SIGSYS),
         _ => {
-            // c:3075-3078 — `rtsigno(s)` for "RTMIN+N"/"RTMAX-N" input.
+            // c:3075-3078 — `if ((x = rtsigno(s))) return SIGIDX(x);`
+            // Parse "RTMIN+N" / "RTMAX-N" via the canonical helper
+            // and convert the resulting signum to its trap-table
+            // index via SIGIDX.
             #[cfg(target_os = "linux")]
             {
-                // crate::ported::signals::rtsigno takes an i32 signum
-                // currently (not a name string); the C `rtsigno(s)`
-                // takes a name and returns the signum. The Rust port
-                // doesn't have the name-parsing form yet -- deferred.
-                // For now, "RTMIN+N" / "RTMAX-N" inputs return None,
-                // matching the pre-c:3075 fall-through.
+                if let Some(signum) = crate::ported::signals::rtsigno(s) {    // c:3075
+                    return Some(crate::ported::signals_h::SIGIDX(signum));    // c:3076
+                }
             }
             None                                                              // c:3081 return -1
         }
