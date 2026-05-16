@@ -284,22 +284,35 @@ pub(crate) fn printrlim(val: rlim_t, unit: &str) {
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(base) vs C=(s, t, base)
 pub(crate) fn zstrtorlimt(s: &str, base: i32) -> (rlim_t, usize) {
-    if s == "unlimited" || s.starts_with("unlimited") {
-        return (RLIM_INFINITY, "unlimited".len());
+    // c:277-281 — `if (strcmp(s, "unlimited") == 0) { ... }`. EXACT
+    // match per `strcmp`. The previous Rust port used `s.starts_with`
+    // which incorrectly treated `"unlimited_garbage"` or `"unlimitedX"`
+    // as unlimited, then advanced pos to 9 — leaving trailing junk
+    // unconsumed. C only matches the exact 9-char word.
+    if s == "unlimited" {                                                    // c:277 strcmp == 0
+        return (RLIM_INFINITY, "unlimited".len());                          // c:279 *t = s + 9
     }
     let bytes = s.as_bytes();
     let mut pos: usize = 0;
     let mut base = base;
     if base == 0 {
-        if pos < bytes.len() && bytes[pos] != b'0' {
-            base = 10;
+        // c:283-291 — `if (*s != '0') base = 10; else if (*++s == 'x' || *s == 'X')
+        //              base = 16, s++; else base = 8;`
+        // C reads `*s` even for empty-input — `*s` returns the NUL
+        // terminator which compares unequal to '0', so base=10 (no s++).
+        // The previous Rust port used `bytes[pos] != b'0'` guarded ONLY
+        // by `pos < bytes.len()`; on empty input the short-circuit
+        // evaluated `else` and incremented pos to 1, leaving pos past-end.
+        // Match C: treat past-end the same as "not '0'" (base=10, no advance).
+        if pos >= bytes.len() || bytes[pos] != b'0' {                        // c:285 *s != '0' (with NUL semantics)
+            base = 10;                                                       // c:286
         } else {
-            pos += 1;
+            pos += 1;                                                        // c:287 ++s
             if pos < bytes.len() && (bytes[pos] == b'x' || bytes[pos] == b'X') {
-                base = 16;
+                base = 16;                                                   // c:288
                 pos += 1;
             } else {
-                base = 8;
+                base = 8;                                                    // c:289
             }
         }
     }
@@ -1731,5 +1744,118 @@ mod tests {
         let after_second_boot = RESINFO.get().unwrap().lock().unwrap().len();
         assert_eq!(after_second_boot, nlimits(),
             "second boot must re-populate (port bug fixed 2026-05)");
+    }
+
+    /// `Src/Builtins/rlimits.c:277-281` — `zstrtorlimt("unlimited")` uses
+    /// `strcmp(s, "unlimited") == 0` — EXACT match. The previous Rust
+    /// port used `s.starts_with("unlimited")` which falsely accepted
+    /// `"unlimited_garbage"` and `"unlimitedXYZ"` as unlimited,
+    /// advancing pos to 9 and leaving the trailing junk silently
+    /// consumed by the caller. Pin the strcmp-equivalent behavior.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_unlimited_requires_exact_match() {
+        // c:277 — exact "unlimited" returns RLIM_INFINITY.
+        let (v, n) = zstrtorlimt("unlimited", 10);
+        assert_eq!(v, RLIM_INFINITY);
+        assert_eq!(n, 9, "advance past the 9 chars of 'unlimited'");
+
+        // c:277 — prefix-match must NOT trigger the unlimited branch.
+        // "unlimitedX" → C strcmp fails → falls through to digit parse;
+        // digit parse on 'u' fails (not 0-9) → returns (0, 0).
+        let (v, n) = zstrtorlimt("unlimitedX", 10);
+        assert_ne!(v, RLIM_INFINITY,
+            "c:277 — strcmp requires exact match, not prefix");
+        assert_eq!(v, 0,
+            "non-digit prefix → no consumption, ret=0");
+        assert_eq!(n, 0,
+            "c:294 — digit loop exits immediately on 'u'");
+    }
+
+    /// `Src/Builtins/rlimits.c:283-291` — `if (!base)` block reads `*s`
+    /// directly; on empty input `*s` returns NUL which compares unequal
+    /// to '0' so base=10 is chosen WITHOUT advancing s. The previous
+    /// Rust port lacked a past-end guard, fell into the else branch,
+    /// and incremented pos to 1 (past-end) — leaving the caller with
+    /// a bogus consumed-bytes count.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_empty_input_does_not_advance_pos() {
+        let (v, n) = zstrtorlimt("", 0);
+        assert_eq!(v, 0, "empty → no digits → 0");
+        assert_eq!(n, 0,
+            "c:285 — past-end NUL behaves like 'not 0' → base=10 path, no advance");
+    }
+
+    /// `Src/Builtins/rlimits.c:283-291` — base==0 detects `0x` hex
+    /// prefix. Pin so a regression that drops the hex-detection silently
+    /// reads `0xff` as octal `0` (then chokes on 'x').
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_base_zero_detects_hex_prefix() {
+        let (v, n) = zstrtorlimt("0xff", 0);
+        assert_eq!(v, 255, "c:288 — 0x → base 16");
+        assert_eq!(n, 4);
+        let (v, _) = zstrtorlimt("0XAB", 0);
+        assert_eq!(v, 0xAB, "c:288 — 0X (uppercase) also triggers hex");
+    }
+
+    /// `Src/Builtins/rlimits.c:283-291` — base==0 with leading `0` (no
+    /// `x`/`X`) means octal. Pin so `"0777"` parses to 511.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_base_zero_leading_zero_is_octal() {
+        let (v, n) = zstrtorlimt("0777", 0);
+        assert_eq!(v, 511, "c:289 — leading 0 (no x) → base 8");
+        assert_eq!(n, 4);
+        // Leading 0 then digit out of octal range stops at the digit.
+        let (v, n) = zstrtorlimt("089", 0);
+        assert_eq!(v, 0,
+            "c:289 — base 8 doesn't accept '8'/'9'; stops immediately");
+        assert_eq!(n, 1,
+            "consumed only the leading '0'");
+    }
+
+    /// `Src/Builtins/rlimits.c:294` — base<=10 loop accepts digits in
+    /// the range `'0'..='0'+base`. Boundary check for base 2 (binary
+    /// would only accept '0' and '1').
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_base_2_only_accepts_binary_digits() {
+        let (v, n) = zstrtorlimt("1010", 2);
+        assert_eq!(v, 10);
+        assert_eq!(n, 4);
+        // '2' is NOT a binary digit; consumption stops.
+        let (v, n) = zstrtorlimt("12", 2);
+        assert_eq!(v, 1, "base 2 stops at '2'");
+        assert_eq!(n, 1);
+    }
+
+    /// `Src/Builtins/rlimits.c:297-301` — base>10 hex loop accepts
+    /// lowercase 'a'..'a'+base-10 AND uppercase 'A'..'A'+base-10. Pin
+    /// case-insensitive hex acceptance (and the boundary at base-10).
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_base_16_accepts_mixed_case_hex() {
+        let (v, _) = zstrtorlimt("DEADbeef", 16);
+        assert_eq!(v, 0xDEADBEEF, "mixed case hex");
+        // Char beyond 'f' / 'F' in base 16 stops parse.
+        let (v, n) = zstrtorlimt("ffg", 16);
+        assert_eq!(v, 0xff);
+        assert_eq!(n, 2, "stops at 'g' (out of base-16 range)");
+    }
+
+    /// `Src/Builtins/rlimits.c:294,297` — non-numeric leading char
+    /// → no consumption, return (0, 0). Pin so the function never
+    /// returns past-end pos for bogus input.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_non_digit_prefix_consumes_zero_bytes() {
+        let (v, n) = zstrtorlimt("abc", 10);
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
+        let (v, n) = zstrtorlimt("!", 16);
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
     }
 }
