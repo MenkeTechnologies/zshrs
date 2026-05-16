@@ -193,6 +193,17 @@ pub fn ZISPRINT(c: u8) -> bool {                                         // c:89
     c == b' ' || c.is_ascii_graphic()
 }
 
+/// Process-wide lock serialising tests that read or write TYPTAB
+/// ISEP/IWSEP bits. `ifssetfn` mutates the global IFS + typtab and
+/// parallel reads race against the rebuild. No C counterpart.
+///
+/// Lives at module scope (still `#[cfg(test)]`) so cross-module
+/// tests in `input.rs`, `params.rs`, etc. can serialize against the
+/// same Mutex.
+#[cfg(test)]
+pub(crate) static TYPTAB_TEST_LOCK: std::sync::Mutex<()> =
+    std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,10 +335,8 @@ mod tests {
         assert!(!idigit(b' '));
     }
 
-    /// Process-wide lock serialising tests that read or write TYPTAB
-    /// ISEP/IWSEP bits. `ifssetfn` mutates the global IFS + typtab
-    /// and parallel reads race against the rebuild. No C counterpart.
-    static TYPTAB_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // TYPTAB_TEST_LOCK moved to module scope for cross-module access.
+    use super::TYPTAB_TEST_LOCK;
 
     /// `Src/ztype.h:53` — `#define isep(X) zistype(X, ISEP)`.
     /// `Src/utils.c:4216-4230` walks the IFS string and ORs ISEP on

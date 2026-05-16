@@ -3149,7 +3149,16 @@ pub fn inittyptab() {                                                    // util
     t[b'\t' as usize] |= (IBLANK | INBLANK) as u32;
     t[b'\n' as usize] |= INBLANK as u32;
 
-    // c:4131-4132 — Meta + Marker marked IMETA.
+    // c:4195 — `typtab['\0'] |= IMETA;`. Previously omitted in the
+    // Rust port — '\0' had only ICNTRL (set by the 0..32 loop at
+    // c:4169) and was missing IMETA. C `imeta('\0')` is true (the
+    // NUL byte must be Meta-encoded as `Meta + ('\0' ^ 32)`); the
+    // Rust `imeta()` typtab predicate returned false, so any code
+    // routing through `imeta(c)` (e.g. `input::shingetline`)
+    // failed to Meta-encode NUL bytes from stdin, corrupting the
+    // SHIN buffer when piped binary data hit a `\0`.
+    t[0] |= IMETA as u32;                                                    // c:4195
+    // c:4196-4197 — Meta + Marker marked IMETA.
     {
         use crate::ported::zsh_h::{Marker, META};
         t[META as usize] |= IMETA as u32;
