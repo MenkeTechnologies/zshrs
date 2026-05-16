@@ -154,23 +154,36 @@ pub fn ihwaddc(c: i32) {                                                     // 
         // empty, so behave like the inactive-history C path.
         return;
     }
-    // c:362-366 — bang-escape under qbang. C calls `hwaddc('\\');`
-    // which routes through the function pointer back to ihwaddc,
-    // so the '\\' push ALSO advances hptr. Rust mirrors by pushing
-    // + incrementing hptr.
+    // c:362-368 — `*hptr++ = c;`. C writes the byte at the hptr
+    // cursor then advances; the qbang escape arm also writes via
+    // the recursive `hwaddc('\\');` call.
+    //
+    // The previous Rust port called `chline.push(c)` which only
+    // APPENDS — after `hwrep` rewinds hptr to mid-buffer, new
+    // pushes would land at chline.end instead of overwriting the
+    // word being replaced. Mirror C exactly: write each byte at
+    // the hptr position (growing only when hptr == chline.len()),
+    // then advance hptr.
     let bc = bangchar.load(Ordering::SeqCst);
-    if c == bc && stophist.load(Ordering::SeqCst) < 2 && qbang.load(Ordering::SeqCst) {
-        chline.lock().unwrap().push('\\');                                    // c:366 `hwaddc('\\');`
-        hptr.fetch_add(1, Ordering::SeqCst);                                  // c:366 (recursive hptr++)
+    let qbang_active =
+        c == bc && stophist.load(Ordering::SeqCst) < 2 && qbang.load(Ordering::SeqCst);
+    {
+        let mut buf = chline.lock().expect("chline poisoned");
+        let bytes = unsafe { buf.as_mut_vec() };
+        let mut pos = hptr.load(Ordering::SeqCst);
+        // Mirror the recursive `hwaddc('\\');` at c:366 — also writes
+        // at hptr + advances.
+        if qbang_active {
+            if pos < bytes.len() { bytes[pos] = b'\\'; }                     // c:366
+            else { while bytes.len() < pos { bytes.push(0); } bytes.push(b'\\'); }
+            pos += 1;
+        }
+        // c:368 — `*hptr++ = c;`.
+        if pos < bytes.len() { bytes[pos] = c as u8; }
+        else { while bytes.len() < pos { bytes.push(0); } bytes.push(c as u8); }
+        pos += 1;
+        hptr.store(pos, Ordering::SeqCst);
     }
-    // c:368 — `*hptr++ = c;`. C writes the byte at the hptr cursor
-    // then advances it. The previous Rust port called `chline.push(c)`
-    // but never updated the `hptr` global — so every subsequent
-    // `ihwbegin`/`ihwend` reading `hptr` saw a stale value. The
-    // chwords table would record word boundaries at position 0
-    // (initial hptr) regardless of how many chars had been added.
-    chline.lock().unwrap().push(c as u8 as char);                            // c:368
-    hptr.fetch_add(1, Ordering::SeqCst);                                      // c:368 hptr++
     // c:370-374 — resize tracking. Rust `String` grows on `push`
     // automatically, but `hlinesz` mirrors C's allocation count
     // for any caller that reads it (e.g. `hwend()`). C condition
@@ -3770,6 +3783,15 @@ thread_local! {
 mod subst_modifier_tests {
     use super::*;
 
+    /// Tests that touch the shared chline/hptr/chwords globals
+    /// must serialize through this Mutex — cargo's parallel test
+    /// runner races on these atomics otherwise.
+    fn hist_test_lock() -> &'static std::sync::Mutex<()> {
+        static L: std::sync::OnceLock<std::sync::Mutex<()>> =
+            std::sync::OnceLock::new();
+        L.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     #[test]
     fn s_replaces_first_occurrence() {
         // c:3743 — `:s/old/new/` single substitution.
@@ -4060,6 +4082,7 @@ mod subst_modifier_tests {
     /// empty or hptr is at the start (C returns NULL).
     #[test]
     fn hgetline_truncates_chline_and_resets_globals() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Save state.
         let saved_chline = std::mem::take(&mut *chline.lock().unwrap());
@@ -4102,6 +4125,7 @@ mod subst_modifier_tests {
     /// Otherwise no-op.
     #[test]
     fn histbackword_rewinds_hptr_on_even_boundary() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Capture and reset state.
         let saved_pos = chwordpos.swap(0, Ordering::SeqCst);
@@ -4144,6 +4168,59 @@ mod subst_modifier_tests {
         *chwords.lock().unwrap() = saved_words;
     }
 
+    /// Pin `ihwaddc` to the C `*hptr++ = c;` OVERWRITE semantic.
+    /// When hptr < chline.len() (e.g. after hwrep rewinds), the byte
+    /// goes AT the cursor, not appended. The previous Rust port used
+    /// `String::push` which appends only — pushing past the rewound
+    /// hptr would leave the old word bytes intact and stash new bytes
+    /// at the chline tail.
+    #[test]
+    fn ihwaddc_overwrites_at_hptr_not_append() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // Save state.
+        let saved_chline = chline.lock().unwrap().clone();
+        let saved_hptr = hptr.load(Ordering::SeqCst);
+        let saved_errflag =
+            crate::ported::utils::errflag.load(Ordering::SeqCst);
+        let saved_lexstop = lexstop.load(Ordering::SeqCst);
+        let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
+        let saved_qbang = qbang.load(Ordering::SeqCst);
+        let saved_stophist = stophist.load(Ordering::SeqCst);
+        let saved_hlinesz = hlinesz.load(Ordering::SeqCst);
+
+        // Set up chline="echo oldword extra", rewind hptr to 5
+        // (start of "oldword"). Push "NEW" → chline must become
+        // "echo NEWword extra" with hptr advanced to 8.
+        *chline.lock().unwrap() = "echo oldword extra".to_string();
+        hptr.store(5, Ordering::SeqCst);
+        crate::ported::utils::errflag.store(0, Ordering::SeqCst);
+        lexstop.store(false, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(0));
+        qbang.store(false, Ordering::SeqCst);
+        stophist.store(0, Ordering::SeqCst);
+        hlinesz.store(64, Ordering::SeqCst);
+
+        ihwaddc(b'N' as i32);
+        ihwaddc(b'E' as i32);
+        ihwaddc(b'W' as i32);
+
+        let cl = chline.lock().unwrap().clone();
+        assert_eq!(cl.as_str(), "echo NEWword extra",
+            "c:368 — *hptr++ = c writes AT cursor (NOT appends to end)");
+        assert_eq!(hptr.load(Ordering::SeqCst), 8,
+            "c:368 — hptr advances over the three overwrites");
+
+        // Restore.
+        *chline.lock().unwrap() = saved_chline;
+        hptr.store(saved_hptr, Ordering::SeqCst);
+        crate::ported::utils::errflag.store(saved_errflag, Ordering::SeqCst);
+        lexstop.store(saved_lexstop, Ordering::SeqCst);
+        crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
+        qbang.store(saved_qbang, Ordering::SeqCst);
+        stophist.store(saved_stophist, Ordering::SeqCst);
+        hlinesz.store(saved_hlinesz, Ordering::SeqCst);
+    }
+
     /// Pin `ihwaddc` to its canonical C body at `Src/hist.c:355-389`.
     /// C: `*hptr++ = c;` writes the byte and advances the cursor.
     /// The previous Rust port pushed to chline but never updated
@@ -4152,6 +4229,7 @@ mod subst_modifier_tests {
     /// to 0 no matter how many chars were appended.
     #[test]
     fn ihwaddc_advances_hptr_on_each_push() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_hptr = hptr.load(Ordering::SeqCst);
@@ -4223,6 +4301,7 @@ mod subst_modifier_tests {
     /// for the cursor.
     #[test]
     fn ihwend_uses_hptr_not_chline_len() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_chwords = chwords.lock().unwrap().clone();
@@ -4284,6 +4363,7 @@ mod subst_modifier_tests {
     /// clamp to zlemetacs.
     #[test]
     fn iaddtoline_adjusts_excs_relative_to_zlemetacs() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_excs = excs.load(Ordering::SeqCst);
@@ -4357,6 +4437,7 @@ mod subst_modifier_tests {
     #[test]
     fn ihwbegin_records_hptr_not_chline_len() {
         use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_chwords = chwords.lock().unwrap().clone();
@@ -4529,6 +4610,7 @@ mod subst_modifier_tests {
     /// the match. The previous Rust port dropped marg entirely.
     #[test]
     fn hconsearch_returns_histnum_and_word_index() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save ring state.
         let saved_ring = {
             let r = hist_ring.lock().unwrap();
@@ -4633,6 +4715,7 @@ mod subst_modifier_tests {
     /// `curline` untouched.
     #[test]
     fn checkcurline_flushes_to_curline_only_when_active_and_matching() {
+        let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_curhist = curhist.load(Ordering::SeqCst);
         let saved_active = histactive.load(Ordering::SeqCst);
         let saved_chline = chline.lock().unwrap().clone();
