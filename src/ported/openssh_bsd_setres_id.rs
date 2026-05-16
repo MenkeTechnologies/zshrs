@@ -266,4 +266,80 @@ mod tests {
             assert_eq!(r, 0);
         }
     }
+
+    /// c:42 — `setresgid` with the current GID for all three slots
+    /// must NOT clear errno from a previous syscall. The C source's
+    /// short-circuit at c:113 returns 0 without touching the kernel,
+    /// so errno is whatever it was before.
+    #[test]
+    #[cfg(unix)]
+    fn setresgid_noop_does_not_clobber_existing_errno() {
+        unsafe {
+            // Seed errno with a sentinel that won't naturally collide.
+            errno_set(libc::EILSEQ);
+            let me = libc::getgid();
+            let r = setresgid(me, me, me);
+            assert_eq!(r, 0);
+            assert_eq!(errno_get(), libc::EILSEQ,
+                "no-op short-circuit must not reset errno on success");
+        }
+    }
+
+    /// c:74 — Asymmetry test: `setresgid(me, me, OTHER)` triggers the
+    /// ENOSYS reject just like `setresgid(OTHER, me, me)`. The C
+    /// pre-check is "any non-matching real/effective/saved triple →
+    /// ENOSYS"; pin both sides.
+    #[test]
+    #[cfg(unix)]
+    fn setresgid_real_matches_effective_but_saved_differs() {
+        unsafe {
+            let me = libc::getgid();
+            let other: libc::gid_t = if me == 0 { 1 } else { 0 };
+            let r = setresgid(me, me, other);
+            assert_eq!(r, -1);
+            assert_eq!(errno_get(), libc::ENOSYS);
+        }
+    }
+
+    /// c:91 — the ENOSYS pre-check is `if (ruid != suid)` only;
+    /// effective vs saved disagreement is NOT rejected here. The
+    /// function instead proceeds to `setreuid(ruid, euid)` / `seteuid`,
+    /// which fails with EPERM (not ENOSYS) for non-root users.
+    /// Pin the asymmetry so a regen that tightens the pre-check to
+    /// "any unequal triple" gets caught.
+    #[test]
+    #[cfg(unix)]
+    fn setresuid_effective_differs_from_saved_does_not_get_enosys() {
+        unsafe {
+            let me = libc::getuid();
+            // Skip on root since seteuid(other) would succeed.
+            if me == 0 { return; }
+            let r = setresuid(me, 0, me);
+            assert_eq!(r, -1, "non-root cannot seteuid(0)");
+            assert_ne!(errno_get(), libc::ENOSYS,
+                "ENOSYS is reserved for the c:91 ruid!=suid pre-check");
+        }
+    }
+
+    /// `errno_str(0)` must be a non-empty string. The Rust-only
+    /// formatter wraps `std::io::Error::from_raw_os_error(0)` which
+    /// returns "Success" or "Undefined error: 0" depending on libc;
+    /// pin only that it's non-empty so downstream `format!()`
+    /// callers don't print "{}" literal.
+    #[test]
+    fn errno_str_returns_nonempty_for_zero() {
+        let s = errno_str(0);
+        assert!(!s.is_empty(), "errno_str(0) returned empty string");
+    }
+
+    /// `errno_str(EINVAL)` must mention an invalid-argument shape.
+    /// Catches a regression where the formatter returns a literal
+    /// "{}" or the integer instead of the strerror(3) text.
+    #[test]
+    fn errno_str_for_einval_contains_recognizable_phrase() {
+        let s = errno_str(libc::EINVAL);
+        let l = s.to_lowercase();
+        assert!(l.contains("invalid") || l.contains("argument") || l.contains("inval"),
+            "errno_str(EINVAL) = {:?} — must contain readable text", s);
+    }
 }

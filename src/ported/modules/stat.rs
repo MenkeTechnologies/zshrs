@@ -725,4 +725,172 @@ mod tests {
         let s = statprint(&meta, path.to_str().unwrap(), ST_SIZE, 0);
         assert_eq!(s, "5");
     }
+
+    /// c:47 — `statmodeprint` for the BLOCK device file type. The
+    /// `pm[0]` lookup at c:84-103 must yield 'b'. Pin all file-type
+    /// chars so a regen that swaps `0o060_000` and `0o020_000`
+    /// silently renders block devices as char devices.
+    #[test]
+    fn statmodeprint_file_type_chars_match_ls_output() {
+        // S_IFREG (regular file)
+        assert_eq!(&statmodeprint(0o100_644, STF_STRING)[..1], "-");
+        // S_IFDIR
+        assert_eq!(&statmodeprint(0o040_755, STF_STRING)[..1], "d");
+        // S_IFLNK (symlink)
+        assert_eq!(&statmodeprint(0o120_777, STF_STRING)[..1], "l");
+        // S_IFCHR (char device)
+        assert_eq!(&statmodeprint(0o020_644, STF_STRING)[..1], "c");
+        // S_IFBLK (block device)
+        assert_eq!(&statmodeprint(0o060_644, STF_STRING)[..1], "b");
+        // S_IFIFO (named pipe)
+        assert_eq!(&statmodeprint(0o010_644, STF_STRING)[..1], "p");
+        // S_IFSOCK
+        assert_eq!(&statmodeprint(0o140_644, STF_STRING)[..1], "s");
+    }
+
+    /// c:111-115 — setuid bit renders as 's' in the user-execute
+    /// slot when execute is set, 'S' when not. Pin both polarities
+    /// for setuid, setgid, and sticky so a regen flipping the
+    /// uppercase/lowercase dispatch gets caught.
+    #[test]
+    fn statmodeprint_setuid_setgid_sticky_render_correctly() {
+        // 4755 = setuid + executable → 's' in user slot
+        let s = statmodeprint(0o104_755, STF_STRING);
+        assert_eq!(s.chars().nth(3), Some('s'),
+            "setuid+x must render as 's' in user-execute slot");
+
+        // 4644 = setuid + NOT executable → 'S' in user slot
+        let s = statmodeprint(0o104_644, STF_STRING);
+        assert_eq!(s.chars().nth(3), Some('S'),
+            "setuid without x must render as 'S' (uppercase)");
+
+        // 2755 = setgid + group-x → 's' in group-execute slot
+        let s = statmodeprint(0o102_755, STF_STRING);
+        assert_eq!(s.chars().nth(6), Some('s'),
+            "setgid+gx must render as 's' in group-execute slot");
+
+        // 2644 = setgid without group-x → 'S'
+        let s = statmodeprint(0o102_644, STF_STRING);
+        assert_eq!(s.chars().nth(6), Some('S'),
+            "setgid without gx must render as 'S'");
+
+        // 1755 = sticky + world-x → 't' in other-execute slot
+        let s = statmodeprint(0o101_755, STF_STRING);
+        assert_eq!(s.chars().nth(9), Some('t'),
+            "sticky+ox must render as 't' in other-execute slot");
+
+        // 1644 = sticky without world-x → 'T'
+        let s = statmodeprint(0o101_644, STF_STRING);
+        assert_eq!(s.chars().nth(9), Some('T'),
+            "sticky without ox must render as 'T'");
+    }
+
+    /// c:47-93 — `STF_RAW | STF_STRING` produces "raw (string)" with
+    /// the raw form OUTSIDE parens and the string form inside.
+    /// Pin the format because user scripts grep for "^(0?[0-9]+) \("
+    /// to split the two halves.
+    #[test]
+    fn statmodeprint_raw_and_string_renders_with_parens() {
+        let s = statmodeprint(0o100_644, STF_RAW | STF_STRING);
+        // Decimal raw form, space, paren, 10-char string, close paren
+        assert!(s.contains(" ("), "missing ' (' separator: {}", s);
+        assert!(s.ends_with(')'), "missing closing ')': {}", s);
+        // The closing paren must come right after the 10-char ls form
+        let open = s.find('(').unwrap();
+        let close = s.rfind(')').unwrap();
+        assert_eq!(close - open - 1, 10,
+            "expected 10-char ls-mode between parens, got: {:?}", &s[open+1..close]);
+    }
+
+    /// c:47-93 — `statmodeprint(0)` with STF_STRING renders all dashes
+    /// after the file-type indicator. Edge case: zero permissions on
+    /// a "no file-type" mode falls through to '?'.
+    #[test]
+    fn statmodeprint_zero_mode_renders_unknown_type_no_perms() {
+        let s = statmodeprint(0, STF_STRING);
+        assert_eq!(s.len(), 10);
+        assert_eq!(&s[..1], "?", "mode with no S_IFMT bits → unknown");
+        assert_eq!(&s[1..], "---------",
+            "no permission bits → all dashes");
+    }
+
+    /// c:132 — `statuidprint` raw form is just the decimal uid;
+    /// pin the no-leading-zeros, no-prefix shape so a regen that
+    /// renders octal silently breaks `${(t)f[uid]}`.
+    #[test]
+    fn statuidprint_raw_is_decimal() {
+        let s = statuidprint(1000, STF_RAW);
+        assert_eq!(s, "1000");
+    }
+
+    /// c:132 — `statuidprint` for uid 0 must include "root" in the
+    /// string form (every Unix has uid 0 = root). Pin the well-known
+    /// case so a regen that breaks the getpwuid path doesn't silently
+    /// fall back to numeric.
+    #[test]
+    fn statuidprint_uid_zero_resolves_to_root() {
+        let s = statuidprint(0, STF_STRING);
+        // Some hardened systems map uid 0 to a different name, but
+        // it MUST resolve to non-numeric.
+        assert!(!s.parse::<u32>().is_ok(),
+            "uid 0 fell back to numeric form: {}", s);
+        assert!(!s.is_empty());
+    }
+
+    /// c:161 — `statgidprint` raw form is decimal.
+    #[test]
+    fn statgidprint_raw_is_decimal() {
+        let s = statgidprint(100, STF_RAW);
+        assert_eq!(s, "100");
+    }
+
+    /// c:211 — `statulprint` for zero must render "0". A regression
+    /// that prints "" or "0x0" silently breaks numeric script
+    /// comparisons.
+    #[test]
+    fn statulprint_zero_renders_as_zero_digit() {
+        assert_eq!(statulprint(0), "0");
+    }
+
+    /// c:211 — `statulprint` for u64::MAX renders the full decimal
+    /// digit string. Pin the no-overflow / no-truncation behavior.
+    #[test]
+    fn statulprint_u64_max_renders_full_digits() {
+        let s = statulprint(u64::MAX);
+        assert_eq!(s, "18446744073709551615");
+    }
+
+    /// c:36-38 — STF_* flag values must each occupy a unique single
+    /// bit, AND must not overlap with each other (so they can be
+    /// OR'd together). Pin the bit-distinctness because the flags
+    /// are AND-tested individually throughout statprint.
+    #[test]
+    fn stf_flag_values_are_distinct_single_bits() {
+        for f in [STF_NAME, STF_FILE, STF_STRING, STF_RAW,
+                  STF_PICK, STF_ARRAY, STF_GMT, STF_HASH, STF_OCTAL] {
+            assert!(f > 0, "STF_* flag {} must be positive", f);
+            assert_eq!((f as u32).count_ones(), 1,
+                "STF_* flag {} = 0b{:b} must be a single bit",
+                f, f);
+        }
+        // Pairwise: no two flags share a bit
+        let flags = [STF_NAME, STF_FILE, STF_STRING, STF_RAW,
+                     STF_PICK, STF_ARRAY, STF_GMT, STF_HASH, STF_OCTAL];
+        for (i, &a) in flags.iter().enumerate() {
+            for &b in &flags[i+1..] {
+                assert_eq!(a & b, 0,
+                    "STF flags {} and {} overlap", a, b);
+            }
+        }
+    }
+
+    /// c:651-690 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

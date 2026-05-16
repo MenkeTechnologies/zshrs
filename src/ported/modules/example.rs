@@ -577,4 +577,86 @@ mod tests {
         let arr = arrparam.lock().unwrap();
         assert_eq!(arr.as_ref().unwrap().as_slice(), &[s("hello"), s("world")]);
     }
+
+    /// c:104 — `math_sum` with zero args returns identity (0). Pin
+    /// the empty-input arithmetic identity.
+    #[test]
+    fn math_sum_zero_args_returns_zero() {
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, 0, "sum of nothing must be 0");
+    }
+
+    /// c:104 — `math_sum` with a single integer is identity.
+    #[test]
+    fn math_sum_single_int_arg_is_identity() {
+        let argv = [mnumber { l: 42, d: 0.0, type_: MN_INTEGER }];
+        let r = math_sum("sum", 1, &argv, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, 42);
+    }
+
+    /// c:104 — All-float input stays MN_FLOAT (no downcast). Pin
+    /// the float-preservation rule because a regen that prefers
+    /// integer "for tidiness" would silently truncate fractions.
+    #[test]
+    fn math_sum_all_floats_preserves_float_type() {
+        let argv = [
+            mnumber { l: 0, d: 1.5, type_: MN_FLOAT },
+            mnumber { l: 0, d: 2.5, type_: MN_FLOAT },
+        ];
+        let r = math_sum("sum", 2, &argv, 0);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 4.0).abs() < 1e-9);
+    }
+
+    /// c:104 — Negative integers preserved.
+    #[test]
+    fn math_sum_handles_negative_ints() {
+        let argv = [
+            mnumber { l: -5, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+        ];
+        let r = math_sum("sum", 2, &argv, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, -2, "−5 + 3 = −2");
+    }
+
+    /// c:133 — `math_length` on empty string returns 0. Pin so a
+    /// regen that adds `+ 1` for a NUL terminator gets caught.
+    #[test]
+    fn math_length_empty_string_returns_zero() {
+        let r = math_length("length", "", 0);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, 0);
+    }
+
+    /// c:133 — Multi-byte UTF-8 yields BYTE count, not char count
+    /// (zsh's strlen semantics).
+    #[test]
+    fn math_length_multibyte_returns_byte_count() {
+        // "café" = "caf" + "é" (é = 2 bytes in UTF-8) = 5 bytes
+        let r = math_length("length", "café", 0);
+        assert_eq!(r.l, 5,
+            "math_length must count bytes, not chars — got {}", r.l);
+    }
+
+    /// c:95 — `cond_i_ex` (no-arg demo) returns 0 (false). Pin so a
+    /// regen that returns 1 (true) silently inverts every `[[ -i-ex ]]`.
+    #[test]
+    fn cond_i_ex_returns_zero() {
+        let r = cond_i_ex(&[], 0);
+        assert_eq!(r, 0,
+            "cond_i_ex demo condition must return 0 (false)");
+    }
+
+    /// c:286-335 — module-lifecycle stubs return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

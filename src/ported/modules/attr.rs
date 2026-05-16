@@ -633,4 +633,78 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    /// c:98 — `bin_getattr` with NO args returns nonzero (needs at
+    /// least path + attr name). Pin the usage-error gate.
+    #[test]
+    fn bin_getattr_no_args_returns_nonzero() {
+        let ops = empty_ops();
+        let rc = bin_getattr("zgetattr", &[], &ops, 0);
+        assert_ne!(rc, 0, "bin_getattr without args must error");
+    }
+
+    /// c:98 — `bin_getattr` with ONE arg (path only, no attr name)
+    /// returns nonzero. Pin the second-arg-required gate.
+    #[test]
+    fn bin_getattr_one_arg_returns_nonzero() {
+        let ops = empty_ops();
+        let argv = vec!["/tmp".to_string()];
+        let rc = bin_getattr("zgetattr", &argv, &ops, 0);
+        assert_ne!(rc, 0, "bin_getattr with only path must error");
+    }
+
+    /// c:133 — `bin_setattr` body (c:135-146) has NO internal arity
+    /// check. Upstream dispatcher (BUILTIN min_args=3 at attr.c:300)
+    /// enforces it before calling the body. Calling the body
+    /// directly with <3 args reads `argv[2]` as empty (Rust port via
+    /// `argv.get(2).unwrap_or("")`; C reads OOB as UB).
+    ///
+    /// Pin the body's actual behavior: empty value + bogus path →
+    /// xsetxattr fails → return 1.
+    #[test]
+    fn bin_setattr_with_bogus_path_returns_nonzero() {
+        let ops = empty_ops();
+        let argv = vec!["/__definitely_not_a_path__".to_string(),
+                        "user.test".to_string(),
+                        "value".to_string()];
+        let rc = bin_setattr("zsetattr", &argv, &ops, 0);
+        assert_eq!(rc, 1, "bin_setattr on bogus path must return 1 per c:144");
+    }
+
+    /// c:175 — `bin_delattr` on a nonexistent path returns nonzero.
+    /// Pin the error-passthrough from removexattr's ENOENT.
+    #[test]
+    fn bin_delattr_nonexistent_path_returns_nonzero() {
+        let ops = empty_ops();
+        let argv = vec!["/__definitely_not_a_path__".to_string(),
+                        "user.test".to_string()];
+        let rc = bin_delattr("zdelattr", &argv, &ops, 0);
+        assert_ne!(rc, 0, "delattr on bogus path must error");
+    }
+
+    /// c:222 — `bin_listattr` on a nonexistent path returns nonzero.
+    /// Pin the listxattr error-surface contract.
+    #[test]
+    fn bin_listattr_nonexistent_path_returns_nonzero() {
+        let ops = empty_ops();
+        let argv = vec!["/__definitely_not_a_path__".to_string()];
+        let rc = bin_listattr("zlistattr", &argv, &ops, 0);
+        assert_ne!(rc, 0, "listattr on bogus path must error");
+    }
+
+    /// c:37 — `xgetxattr` on a nonexistent path returns negative
+    /// (errno = ENOENT). Pin the negative-return signal.
+    #[test]
+    fn xgetxattr_nonexistent_path_returns_negative() {
+        let mut buf = [0u8; 64];
+        let r = xgetxattr("/__nonexistent__", "user.foo", &mut buf, 0);
+        assert!(r < 0, "xgetxattr on bogus path must surface error");
+    }
+
+    /// c:67 — `xsetxattr` on a nonexistent path returns nonzero.
+    #[test]
+    fn xsetxattr_nonexistent_path_returns_nonzero() {
+        let r = xsetxattr("/__nonexistent__", "user.foo", b"v", 0, 0);
+        assert_ne!(r, 0, "xsetxattr on bogus path must surface error");
+    }
 }

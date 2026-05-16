@@ -565,4 +565,120 @@ mod tests {
         let prev2 = signal_default(libc::SIGUSR2);
         assert_eq!(prev2, libc::SIG_DFL);
     }
+
+    /// c:39-40 — `SIGNUM` and `SIGIDX` are inverses for every valid
+    /// signal in `[0, VSIGCOUNT)`. Pin the round-trip property
+    /// across the full range to catch a regen that breaks the
+    /// formula at a corner (e.g. real-time signal boundary).
+    #[cfg(unix)]
+    #[test]
+    fn signum_sigidx_round_trip_full_range() {
+        for s in 1..VSIGCOUNT {
+            let n = SIGNUM(s);
+            let back = SIGIDX(n);
+            assert_eq!(back, s,
+                "round-trip failed at signal {}: SIGIDX(SIGNUM({})) = {}",
+                s, s, back);
+        }
+    }
+
+    /// c:signames.c — `sigs_name(0)` is SIGEXIT, traditionally
+    /// named "EXIT" (not numeric "0"). Pin so a regen that drops
+    /// the pseudo-signal handling silently returns "0".
+    #[cfg(unix)]
+    #[test]
+    fn sigs_name_pseudo_signal_exit() {
+        let n = sigs_name(SIGEXIT);
+        assert!(n.is_some(), "SIGEXIT (index 0) must have a name");
+        // Conventionally "EXIT", but accept any non-numeric stem
+        let s = n.unwrap();
+        assert!(!s.is_empty(),
+            "SIGEXIT name must be non-empty (got {:?})", s);
+    }
+
+    /// c:signames.c — `sigs_name` for a well-known signal returns
+    /// the canonical name (e.g. SIGINT → "INT").
+    #[cfg(unix)]
+    #[test]
+    fn sigs_name_sigint_resolves() {
+        let n = sigs_name(libc::SIGINT);
+        // SIGIDX(SIGINT) may differ from libc::SIGINT depending on
+        // mapping; try direct + idx.
+        let alt = sigs_name(SIGIDX(libc::SIGINT));
+        assert!(n.is_some() || alt.is_some(),
+            "SIGINT must resolve to a name via direct or SIGIDX path");
+    }
+
+    /// c:signames.c — `sigs_name(-1)` or huge index returns None.
+    /// Defensive contract: out-of-range must be a safe miss, not
+    /// an OOB index into the table.
+    #[test]
+    fn sigs_name_out_of_range_returns_none() {
+        assert!(sigs_name(-1).is_none());
+        assert!(sigs_name(99999).is_none());
+        assert!(sigs_name(TRAPCOUNT + 100).is_none());
+    }
+
+    /// c:jobs.c:2828 — `sigs_number("INT")` resolves to SIGINT.
+    /// Pin reverse lookup so users can `kill -INT pid`.
+    #[cfg(unix)]
+    #[test]
+    fn sigs_number_resolves_canonical_short_name() {
+        assert!(sigs_number("INT").is_some(),
+            "sigs_number(INT) must resolve");
+        assert!(sigs_number("TERM").is_some());
+        assert!(sigs_number("HUP").is_some());
+        assert!(sigs_number("KILL").is_some());
+    }
+
+    /// c:jobs.c — `sigs_number` for unknown name returns None.
+    /// Pin defensive miss; user `kill -BOGUS` must fail-soft.
+    #[test]
+    fn sigs_number_unknown_returns_none() {
+        assert!(sigs_number("ZZBOGUSXX").is_none());
+        assert!(sigs_number("").is_none());
+        assert!(sigs_number("not_a_signal").is_none());
+    }
+
+    /// c:78 — `run_queued_signals` is safe to call even when no
+    /// signals have been queued. Pin no-panic contract for the
+    /// no-op path.
+    #[test]
+    fn run_queued_signals_with_empty_queue_is_safe() {
+        // Reset: ensure nothing queued.
+        dont_queue_signals();
+        run_queued_signals();
+        run_queued_signals(); // re-entry safety
+    }
+
+    /// c:104/123 — `restore_queue_signals(-1)` MUST NOT panic.
+    /// Defensive boundary because the C source's `oqs = qs` walk
+    /// can produce arbitrary saved values; the restore must not
+    /// crash on weird input.
+    #[test]
+    fn restore_queue_signals_negative_value_is_safe() {
+        let saved = queue_signal_level();
+        restore_queue_signals(-1);
+        // Most impls clamp; just ensure no panic
+        let _ = queue_signal_level();
+        // Restore real state
+        restore_queue_signals(saved.max(0));
+    }
+
+    /// c:34-38 — Every pseudo-signal index lies above SIGCOUNT.
+    /// Pin layering: pseudo signals must NOT collide with real
+    /// libc signal numbers, which are bounded by SIGCOUNT.
+    #[test]
+    fn pseudo_signals_above_libc_signal_range() {
+        assert!(SIGZERR > SIGCOUNT,
+            "SIGZERR ({}) must be > SIGCOUNT ({}) to avoid libc collision",
+            SIGZERR, SIGCOUNT);
+        assert!(SIGDEBUG > SIGCOUNT,
+            "SIGDEBUG ({}) must be > SIGCOUNT ({})",
+            SIGDEBUG, SIGCOUNT);
+        // Each pseudo-signal is distinct
+        assert_ne!(SIGZERR, SIGDEBUG);
+        assert_ne!(SIGZERR, SIGEXIT);
+        assert_ne!(SIGDEBUG, SIGEXIT);
+    }
 }

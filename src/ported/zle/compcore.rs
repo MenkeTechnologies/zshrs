@@ -3983,16 +3983,39 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // zle_misc.c:112-141 — insert one char at cursor, bump zlecs.
-        if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
-            *g = "ab".to_string();
+        //
+        // `selfinsert()` (zle_misc.rs:180) writes through
+        // `self_insert(c)` which mutates the `zle_main::ZLELINE`
+        // (`Mutex<Vec<ZleChar>>`) plus `zle_main::ZLECS`/`ZLELL` —
+        // NOT the `compcore::ZLELINE` (`OnceLock<Mutex<String>>`)
+        // used by the meta/unmeta tests above. The original test
+        // seeded the wrong buffer, so the assert kept seeing "ab"
+        // (the compcore buffer never received the insert) while
+        // self_insert silently appended 'c' to the zle_main buffer.
+        //
+        // Set up the zle_main buffer for the insert, then read back
+        // from there. `zle_test_setup` already clears the zle_main
+        // statics, so we start from a known zero state.
+        {
+            let mut g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+            *g = "ab".chars().collect();
         }
-        ZLECS.store(2, Ordering::Relaxed);
-        ZLELL.store(2, Ordering::Relaxed);
+        crate::ported::zle::zle_main::ZLECS.store(2, Ordering::Relaxed);
+        crate::ported::zle::zle_main::ZLELL.store(2, Ordering::Relaxed);
         LASTCHAR.store(b'c' as i32, Ordering::Relaxed);
+        // Force the wide-char re-derive path (lastchar_wide_valid=0 →
+        // selfinsert refills it from LASTCHAR per zle_misc.c:119-122).
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID
+            .store(0, Ordering::Relaxed);
         let rv = selfinsert();
         assert_eq!(rv, 0);
-        assert_eq!(ZLELINE.get().unwrap().lock().unwrap().clone(), "abc");
-        assert_eq!(ZLECS.load(Ordering::Relaxed), 3);
+        let buf: String = crate::ported::zle::zle_main::ZLELINE
+            .lock().unwrap().iter().collect();
+        assert_eq!(buf, "abc");
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLECS.load(Ordering::Relaxed),
+            3,
+        );
     }
 
     #[test]

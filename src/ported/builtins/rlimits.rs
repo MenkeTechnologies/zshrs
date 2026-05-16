@@ -1342,25 +1342,37 @@ fn ensure_limits_initialized() {}
 /// `UNKNOWN-N` placeholder so `printulimit()` / `showlimitvalue()`
 /// can format unknown limits without a NULL dereference.
 pub(crate) fn set_resinfo() {
-    RESINFO.get_or_init(|| {
-        let mut v: Vec<resinfo_T> = Vec::with_capacity(nlimits());
-        for i in 0..nlimits() as i32 {
-            let entry = known_resources
-                .iter()
-                .find(|r| r.res == i)
-                .cloned()
-                .unwrap_or_else(|| resinfo_T {
-                    res: -1,
-                    name: leak_unknown_name(i),
-                    r#type: zlimtype::ZLIMTYPE_UNKNOWN,
-                    unit: 1,
-                    opt: 'N',
-                    descr: leak_unknown_name(i),
-                });
-            v.push(entry);
-        }
-        Mutex::new(v)
-    });
+    // The C source (`Src/Builtins/rlimits.c:194-216`) zshcalloc's a
+    // fresh `resinfo[]` array every call — `boot_()` invokes
+    // set_resinfo and `cleanup_()` invokes free_resinfo, so the
+    // pair runs once per module load/unload cycle. The Rust port
+    // must ALWAYS re-populate the inner Vec (not just first time)
+    // or a `boot_/cleanup_/boot_` sequence leaves the table empty.
+    //
+    // Previously this used `OnceLock::get_or_init` which only ran the
+    // populate closure ONCE per process. After `free_resinfo()`
+    // cleared the Mutex's inner Vec, subsequent `set_resinfo()` was
+    // a silent no-op. Fixed 2026-05: init the OnceLock if needed,
+    // then always rebuild the Vec inside the existing Mutex.
+    let lock = RESINFO.get_or_init(|| Mutex::new(Vec::with_capacity(nlimits())));
+    let mut v = lock.lock().unwrap_or_else(|e| e.into_inner());
+    v.clear();                                                            // c:194 fresh zshcalloc
+    v.reserve(nlimits());
+    for i in 0..nlimits() as i32 {
+        let entry = known_resources
+            .iter()
+            .find(|r| r.res == i)
+            .cloned()
+            .unwrap_or_else(|| resinfo_T {
+                res: -1,                                                  // c:209
+                name: leak_unknown_name(i),                               // c:210
+                r#type: zlimtype::ZLIMTYPE_UNKNOWN,                       // c:211
+                unit: 1,                                                  // c:212
+                opt: 'N',
+                descr: leak_unknown_name(i),
+            });
+        v.push(entry);
+    }
 }
 
 // WARNING: NOT IN RLIMITS.C — Rust-only helper. C `set_resinfo()`
@@ -1570,5 +1582,154 @@ mod tests {
         let lock = RESINFO.get().unwrap();
         let v = lock.lock().unwrap();
         assert_eq!(v.len(), nlimits());
+    }
+
+    /// c:286 — `zstrtorlimt` parses zero correctly. Pin `0` →
+    /// `(0, 1)` so a regression that returns RLIM_INFINITY or treats
+    /// `0` as the empty-string sentinel gets caught.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_zero_is_zero_with_one_consumed() {
+        let (v, consumed) = zstrtorlimt("0", 10);
+        assert_eq!(v, 0);
+        assert_eq!(consumed, 1);
+    }
+
+    /// c:286 — `zstrtorlimt` with empty input reports 0 chars
+    /// consumed. Callers distinguish "no digits" from a real "0"
+    /// by checking `consumed == 0`.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_empty_input_consumed_is_zero() {
+        let (_v, consumed) = zstrtorlimt("", 10);
+        assert_eq!(consumed, 0,
+            "empty input must report 0 chars consumed");
+    }
+
+    /// c:286 — `zstrtorlimt` stops at the first non-digit and
+    /// reports the partial consumption. Catches a regression that
+    /// over-counts by including trailing garbage in `consumed`.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_stops_at_non_digit() {
+        let (v, consumed) = zstrtorlimt("42abc", 10);
+        assert_eq!(v, 42);
+        assert_eq!(consumed, 2,
+            "must consume only the digit prefix, not the alpha suffix");
+    }
+
+    /// c:286 — `zstrtorlimt("unlimited", base)` ignores `base` and
+    /// yields `(RLIM_INFINITY, len("unlimited"))` for any base.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_unlimited_ignores_base() {
+        for base in [0, 8, 10, 16] {
+            let (v, consumed) = zstrtorlimt("unlimited", base);
+            assert_eq!(v, RLIM_INFINITY,
+                "base={} must still recognize 'unlimited'", base);
+            assert_eq!(consumed, "unlimited".len());
+        }
+    }
+
+    /// c:286 — `zstrtorlimt(_, 0)` auto-detects base: leading `0x`
+    /// → hex, leading `0` → octal, else decimal. Pin the octal arm
+    /// because a regression that drops it silently mis-parses
+    /// classic Unix octal `0644` permission limits.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_auto_base_octal_prefix() {
+        let (v, _) = zstrtorlimt("0644", 0);
+        assert_eq!(v, 0o644, "leading 0 must parse as octal in base=0");
+    }
+
+    /// c:239 — `find_resource('z')` returns -1 (unknown char). Pin
+    /// the sentinel because callers downstream branch on `< 0`.
+    #[test]
+    #[cfg(unix)]
+    fn find_resource_unknown_char_returns_negative() {
+        set_resinfo();
+        assert!(find_resource('z') < 0,
+            "unknown limit char must return < 0");
+        assert!(find_resource(' ') < 0);
+        assert!(find_resource('@') < 0);
+    }
+
+    /// c:239 — `find_resource` is case-sensitive. zsh's limit chars
+    /// are lowercase; 't' is cpu time, 'T' must not collide.
+    #[test]
+    #[cfg(unix)]
+    fn find_resource_is_case_sensitive() {
+        set_resinfo();
+        let lower_t = find_resource('t');
+        let upper_t = find_resource('T');
+        assert!(lower_t >= 0, "'t' (cpu time) must resolve");
+        assert_ne!(lower_t, upper_t,
+            "case-sensitivity collision: 't' and 'T' both index {}", lower_t);
+    }
+
+    /// c:139 — `set_resinfo` is idempotent: calling it twice
+    /// produces the same table. Pin re-entry safety because the
+    /// RESINFO global is OnceLock+Mutex; a regen that re-inits the
+    /// inner on every call would discard runtime state.
+    #[test]
+    #[cfg(unix)]
+    fn set_resinfo_is_idempotent() {
+        set_resinfo();
+        let len_first = RESINFO.get().unwrap().lock().unwrap().len();
+        set_resinfo();
+        let len_second = RESINFO.get().unwrap().lock().unwrap().len();
+        assert_eq!(len_first, len_second,
+            "set_resinfo must be idempotent");
+    }
+
+    /// c:1235-1276 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:1241 — `features_` populates the feature names and returns
+    /// 0. rlimits exports `limit` / `ulimit` / `unlimit` builtins;
+    /// the feature array must be non-empty.
+    #[test]
+    fn features_returns_nonempty_list() {
+        let m: *const module = std::ptr::null();
+        let mut features: Vec<String> = Vec::new();
+        assert_eq!(features_(m, &mut features), 0);
+        assert!(!features.is_empty(),
+            "rlimits module must advertise at least one feature");
+    }
+
+    /// c:913-921 — `boot_/cleanup_` re-init cycle. The C source
+    /// pairs `boot_()` (which calls `set_resinfo()`) with
+    /// `cleanup_()` (which calls `free_resinfo()`) — a second
+    /// `boot_` after `cleanup_` MUST re-populate the table.
+    ///
+    /// This pins the port fix landed 2026-05 that replaced the
+    /// `OnceLock::get_or_init` (one-shot) pattern in `set_resinfo`
+    /// with always-rebuild-the-inner-Vec semantics. Before the fix,
+    /// a `boot/cleanup/boot` sequence left the table empty because
+    /// the get_or_init closure only ran on the first call;
+    /// subsequent `set_resinfo` invocations were silent no-ops.
+    #[test]
+    #[cfg(unix)]
+    fn boot_cleanup_boot_cycle_repopulates_resinfo() {
+        let m: *const module = std::ptr::null();
+        let _ = boot_(m);
+        let after_first_boot = RESINFO.get().unwrap().lock().unwrap().len();
+        assert_eq!(after_first_boot, nlimits(),
+            "first boot must fully populate");
+        let _ = cleanup_(m);
+        let after_cleanup = RESINFO.get().unwrap().lock().unwrap().len();
+        assert_eq!(after_cleanup, 0,
+            "cleanup must empty the table");
+        let _ = boot_(m);
+        let after_second_boot = RESINFO.get().unwrap().lock().unwrap().len();
+        assert_eq!(after_second_boot, nlimits(),
+            "second boot must re-populate (port bug fixed 2026-05)");
     }
 }

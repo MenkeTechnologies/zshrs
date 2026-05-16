@@ -490,4 +490,115 @@ mod tests {
         assert!((r.type_ == MN_FLOAT));
         assert!((0.0..1.0).contains(&r.d));
     }
+
+    /// c:173 — `MF_COS` of 0 is 1.0 exactly. Trigonometric identity
+    /// pin; catches a regression that swaps cos/sin dispatch.
+    #[test]
+    fn math_func_cos_of_zero_is_one() {
+        let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
+        let r = math_func("cos", 1, &argv, MF_COS);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// c:173 — `MF_SIN` of 0 is 0. Symmetric to the cos test;
+    /// any libm aliasing would surface here.
+    #[test]
+    fn math_func_sin_of_zero_is_zero() {
+        let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
+        let r = math_func("sin", 1, &argv, MF_SIN);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!(r.d.abs() < 1e-9, "sin(0) = {}", r.d);
+    }
+
+    /// c:173 — `MF_SQRT` of 4 is 2.0. Pure-math anchor that catches
+    /// any regression in the int→float promotion before sqrt.
+    #[test]
+    fn math_func_sqrt_of_four_is_two() {
+        let argv = [mnumber { l: 0, d: 4.0, type_: MN_FLOAT }];
+        let r = math_func("sqrt", 1, &argv, MF_SQRT);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 2.0).abs() < 1e-9, "sqrt(4) = {}", r.d);
+    }
+
+    /// c:173 — `MF_EXP` of 0 is 1.0 (e^0 identity).
+    #[test]
+    fn math_func_exp_of_zero_is_one() {
+        let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
+        let r = math_func("exp", 1, &argv, MF_EXP);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// c:173 — `MF_LOG` of 1.0 is 0.0 (natural log identity).
+    #[test]
+    fn math_func_log_of_one_is_zero() {
+        let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
+        let r = math_func("log", 1, &argv, MF_LOG);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!(r.d.abs() < 1e-9, "log(1) = {}", r.d);
+    }
+
+    /// c:173 — `MF_FLOOR` of 3.7 is 3.0 (NOT 4.0). Pin direction
+    /// because a regen could swap floor/ceil dispatch.
+    #[test]
+    fn math_func_floor_rounds_down() {
+        let argv = [mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
+        let r = math_func("floor", 1, &argv, MF_FLOOR);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert_eq!(r.d, 3.0);
+    }
+
+    /// c:173 — `MF_CEIL` of 3.1 is 4.0. Symmetric to floor.
+    #[test]
+    fn math_func_ceil_rounds_up() {
+        let argv = [mnumber { l: 0, d: 3.1, type_: MN_FLOAT }];
+        let r = math_func("ceil", 1, &argv, MF_CEIL);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert_eq!(r.d, 4.0);
+    }
+
+    /// c:173 — `MF_FABS` of negative is positive AND the result
+    /// type stays MN_FLOAT (NOT coerced to MN_INTEGER like the
+    /// integer-typed `abs`).
+    #[test]
+    fn math_func_fabs_preserves_float_type() {
+        let argv = [mnumber { l: 0, d: -2.5, type_: MN_FLOAT }];
+        let r = math_func("fabs", 1, &argv, MF_FABS);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert_eq!(r.d, 2.5);
+    }
+
+    /// c:173 — `MF_ISINF` of +infinity is 1; of finite is 0. Pin
+    /// both branches so a regression that returns the IEEE-754
+    /// classify code (3 / 0 / 4 / 5) instead of the boolean gets
+    /// caught.
+    #[test]
+    fn math_func_isinf_classifies_correctly() {
+        let argv_inf = [mnumber { l: 0, d: f64::INFINITY, type_: MN_FLOAT }];
+        let r_inf = math_func("isinf", 1, &argv_inf, MF_ISINF | tflag(TF_NOASS));
+        assert_eq!(r_inf.l, 1, "isinf(+inf) must be 1");
+
+        let argv_fin = [mnumber { l: 0, d: 1.5, type_: MN_FLOAT }];
+        let r_fin = math_func("isinf", 1, &argv_fin, MF_ISINF | tflag(TF_NOASS));
+        assert_eq!(r_fin.l, 0, "isinf(finite) must be 0");
+    }
+
+    /// c:439 — `math_string` for an unknown id must not panic.
+    /// Defensive contract; return value is impl-defined but the
+    /// function must not crash.
+    #[test]
+    fn math_string_unknown_id_does_not_panic() {
+        let _ = math_string("nope", "", 9999);
+    }
+
+    /// c:548-590 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

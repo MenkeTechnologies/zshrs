@@ -2678,4 +2678,110 @@ mod tests {
         assert!(fc.prog.is_none());
         assert!(fc.next.is_none());
     }
+
+    /// c:167-191 — pin every COL_* index that the dispatcher relies
+    /// on. Catches a regen that reorders the column constants
+    /// (silently shifts every `mcolors.files[COL_X]` access by one).
+    /// Names match upstream zsh `complist.c:167-191` verbatim.
+    #[test]
+    fn col_indices_full_set_matches_c_layout() {
+        assert_eq!(COL_FI, 1);
+        assert_eq!(COL_LN, 3);
+        assert_eq!(COL_PI, 4);
+        assert_eq!(COL_SO, 5);
+        assert_eq!(COL_BD, 6);
+        assert_eq!(COL_CD, 7);
+        assert_eq!(COL_OR, 8);
+        assert_eq!(COL_MI, 9);
+        assert_eq!(COL_SU, 10);
+        assert_eq!(COL_SG, 11);
+        assert_eq!(COL_TW, 12);
+        assert_eq!(COL_OW, 13);
+        assert_eq!(COL_ST, 14);
+        assert_eq!(COL_RC, 17);
+        assert_eq!(COL_TC, 19);
+        assert_eq!(COL_SP, 20);
+        assert_eq!(COL_MA, 21);  // c:188 marker
+        assert_eq!(COL_HI, 22);  // c:189 highlight
+        assert_eq!(COL_DU, 23);  // c:190 duplicate
+    }
+
+    /// c:197-201 — `COLNAMES` is the canonical LS_COLORS two-letter
+    /// key list. Every entry is exactly 2 lowercase ASCII letters.
+    /// Pin the shape because LS_COLORS parsing uses `strncmp(p, name, 2)`
+    /// after locating an `=`; a regen that adds a 1-char or 3-char
+    /// entry would mismatch the C-side `len=2` walk.
+    #[test]
+    fn colnames_entries_are_two_lowercase_letters() {
+        for (i, &name) in COLNAMES.iter().enumerate() {
+            assert_eq!(name.len(), 2,
+                "COLNAMES[{}] = {:?} must be exactly 2 chars", i, name);
+            for c in name.chars() {
+                assert!(c.is_ascii_lowercase(),
+                    "COLNAMES[{}] = {:?} contains non-lowercase char {:?}",
+                    i, name, c);
+            }
+        }
+    }
+
+    /// c:197-201 — COLNAMES has no duplicates. The C source uses
+    /// `strncmp` with `len=2` to find the matching index; duplicates
+    /// would silently make later entries unreachable.
+    #[test]
+    fn colnames_has_no_duplicates() {
+        let unique: std::collections::HashSet<_> = COLNAMES.iter().copied().collect();
+        assert_eq!(unique.len(), COLNAMES.len(),
+            "duplicate entry in COLNAMES");
+    }
+
+    /// c:205-209 — `DEFCOLS` parallels COLNAMES; both must have the
+    /// same length. A length mismatch breaks the index-zipping
+    /// the `getcoldef` path relies on at c:330.
+    #[test]
+    fn defcols_and_colnames_have_equal_lengths() {
+        assert_eq!(DEFCOLS.len(), COLNAMES.len(),
+            "DEFCOLS and COLNAMES must have parallel indices");
+        assert_eq!(NUM_COLS, COLNAMES.len(),
+            "NUM_COLS must equal COLNAMES.len()");
+    }
+
+    /// c:488 — `filecol(col)` produces a node whose `col` field is
+    /// owned (independent of caller). Pin the Cow / clone contract.
+    #[test]
+    fn filecol_owns_its_col_string() {
+        let original = "0;31".to_string();
+        let fc = filecol(&original);
+        // Even if the caller mutates the original, fc.col stays
+        // intact (it's a copy/owned slice).
+        drop(original);
+        assert_eq!(fc.col, "0;31");
+    }
+
+    /// c:488 — Multiple `filecol()` calls produce INDEPENDENT nodes.
+    /// Pin the no-shared-mutation contract.
+    #[test]
+    fn filecol_distinct_calls_produce_independent_nodes() {
+        let a = filecol("red");
+        let b = filecol("blue");
+        assert_eq!(a.col, "red");
+        assert_eq!(b.col, "blue");
+        assert!(a.prog.is_none());
+        assert!(b.next.is_none());
+    }
+
+    /// c:275 — `getcolval` with empty input returns empty. Pin the
+    /// edge case so a regen panicking on empty input gets caught.
+    #[test]
+    fn getcolval_empty_input_returns_empty() {
+        let r = getcolval("", 0);
+        assert_eq!(r, "");
+    }
+
+    /// c:1054 — `compprintnl` should be safe to call without ZLE
+    /// state set up. Pin no-panic contract.
+    #[test]
+    fn compprintnl_does_not_panic_outside_zle() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _ = compprintnl(0);
+    }
 }

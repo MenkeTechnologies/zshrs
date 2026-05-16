@@ -410,4 +410,140 @@ mod tests {
         assert_eq!(selectargument(), 1, "c:225 — empty buffer fails 2*n > zlell+1");
     }
 
+    /// c:34-36 — `blankwordclass` digits and underscore are word
+    /// chars (class 1). Pin the contract because digits' iswspace
+    /// status is locale-dependent and a regression could change it.
+    #[test]
+    fn blankwordclass_digits_and_underscore_are_word_chars() {
+        for d in '0'..='9' {
+            assert_eq!(blankwordclass(d), 1, "digit {:?} must NOT be iblank", d);
+        }
+        assert_eq!(blankwordclass('_'), 1, "underscore is a word char");
+    }
+
+    /// c:36 — `\0` (NUL) is NOT iswspace, so it falls through to
+    /// the non-iblank branch → class 1. Pin this so a regression
+    /// that special-cases NUL doesn't silently change vi word
+    /// selection at the buffer boundary.
+    #[test]
+    fn blankwordclass_nul_is_not_iblank() {
+        assert_eq!(blankwordclass('\0'), 1,
+            "NUL byte must classify as non-iblank per wcsiblank semantics");
+    }
+
+    /// c:36 — emoji and other non-BMP chars are not iswspace, so
+    /// they fall through to class 1. Pin this so a regen that
+    /// over-narrows the classifier to ASCII doesn't drop them
+    /// silently into the wrong vi word group.
+    #[test]
+    fn blankwordclass_non_bmp_chars_are_word_chars() {
+        assert_eq!(blankwordclass('\u{1F600}'), 1, "emoji is non-iblank");
+        assert_eq!(blankwordclass('\u{2603}'),  1, "snowman is non-iblank");
+    }
+
+    /// c:225 — `selectargument` with `zlell=0` MUST NOT touch MARK
+    /// or ZLECS. Pinning the no-side-effect property protects
+    /// against a regression that increments MARK to 1 before the
+    /// guard check.
+    #[test]
+    fn selectargument_empty_buffer_leaves_mark_and_zlecs_unchanged() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_main::MARK.store(42, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(7, Ordering::SeqCst);
+        let r = selectargument();
+        assert_eq!(r, 1);
+        assert_eq!(crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst), 42,
+            "MARK must not be touched on the c:225 guard branch");
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst), 7,
+            "ZLECS must not be touched on the c:225 guard branch");
+    }
+
+    /// c:225 — `selectargument` with `zmult = 0 && MOD_MULT` triggers
+    /// the `n < 1` half of the guard. Pin the second half of the
+    /// guard predicate so a regression that simplifies the OR to
+    /// just the size check gets caught.
+    #[test]
+    fn selectargument_zero_mult_returns_one() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(11, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, Ordering::SeqCst);
+        let mut z = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
+        z.flags = MOD_MULT;
+        z.mult = 0;
+        drop(z);
+        assert_eq!(selectargument(), 1, "n<1 guard branch must fire");
+    }
+
+    /// c:225 — `selectargument` with `zmult = -1 && MOD_MULT` also
+    /// fires the n<1 guard (negative count). Pin negative-count
+    /// rejection.
+    #[test]
+    fn selectargument_negative_mult_returns_one() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(11, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, Ordering::SeqCst);
+        let mut z = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
+        z.flags = MOD_MULT;
+        z.mult = -1;
+        drop(z);
+        assert_eq!(selectargument(), 1, "negative count must fail the n<1 guard");
+    }
+
+    /// c:36 — `blankwordclass(' ')` returns 0 (iblank). C dispatch
+    /// at `Src/Zle/zle.h:62`: ZC_iblank → wcsiblank → iswspace AND
+    /// not '\n'. ASCII space is iswspace AND not '\n' → iblank → 0.
+    #[test]
+    fn blankwordclass_pure_space_is_iblank() {
+        assert_eq!(blankwordclass(' '), 0,
+            "space MUST be iblank (class 0)");
+    }
+
+    /// c:36 — `\t` (tab) is iblank.
+    #[test]
+    fn blankwordclass_tab_is_iblank() {
+        assert_eq!(blankwordclass('\t'), 0,
+            "tab MUST be iblank (class 0)");
+    }
+
+    /// c:36 — `\n` (newline) is NOT iblank per `wcsiblank` def
+    /// (`Src/utils.c:4304 — iswspace(wc) && wc != L'\\n'`). Pin
+    /// the newline-exclusion because a regen that drops the `!= '\n'`
+    /// condition would silently treat newline as whitespace and
+    /// break vi `aW` word selection across line boundaries.
+    #[test]
+    fn blankwordclass_newline_is_NOT_iblank() {
+        assert_eq!(blankwordclass('\n'), 1,
+            "newline must NOT be iblank per wcsiblank's explicit exclusion");
+    }
+
+    /// c:34 — `blankwordclass` is a pure function: same input →
+    /// same output, no side effects. Verify idempotency by calling
+    /// 1000 times with the same input.
+    #[test]
+    fn blankwordclass_is_idempotent() {
+        for _ in 0..1000 {
+            assert_eq!(blankwordclass('a'), 1);
+            assert_eq!(blankwordclass(' '), 0);
+            assert_eq!(blankwordclass('\n'), 1);
+        }
+    }
+
+    /// c:212 — `selectargument` against a buffer with ONLY whitespace
+    /// must NOT panic (defensive). The n=1, 2*n > zlell+1 guard
+    /// fires for zlell=0/1; for zlell=3+ (`   `), the guard passes
+    /// and the function walks the buffer.
+    #[test]
+    fn selectargument_whitespace_only_buffer_does_not_panic() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "   ".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, Ordering::SeqCst);
+        let _ = selectargument();
+    }
 }

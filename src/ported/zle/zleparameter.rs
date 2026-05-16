@@ -381,4 +381,135 @@ mod tests {
         // zsh has ~160 builtin widgets
         assert!(BUILTIN_WIDGETS.len() > 150);
     }
+
+    /// c:37 — `widgetstr` user form preserves the function name in
+    /// the suffix so `${widgets[my-widget]}` reads `user:my-fn`.
+    /// Pinning the suffix shape catches a regression that drops the
+    /// function-name part (which scripts grep for to bind to widgets).
+    #[test]
+    fn widgetstr_user_form_carries_function_name_after_colon() {
+        let s = widgetstr("a-fn", true, false);
+        let (kind, rest) = s.split_once(':').expect("missing colon");
+        assert_eq!(kind, "user");
+        assert_eq!(rest, "a-fn", "function-name suffix must round-trip");
+    }
+
+    /// c:37 — `widgetstr(_, true, true)` — both flags true. The C
+    /// dispatch order is is_completion FIRST, so this branch yields
+    /// "completion:..." not "user:...". Pin the precedence so a
+    /// regen flipping branch order gets caught (would silently swap
+    /// the type label for completion widgets).
+    #[test]
+    fn widgetstr_completion_wins_over_user_when_both_true() {
+        let s = widgetstr("foo", true, true);
+        assert!(s.starts_with("completion:"),
+            "is_completion must dominate is_user, got: {}", s);
+    }
+
+    /// c:59 — `getpmwidgets` should NOT silently de-dup. If a user
+    /// or completion widget shares a name with a builtin, the user/
+    /// completion entry overwrites the builtin (HashMap semantics
+    /// last-write-wins on equal keys). Pin the overwrite direction
+    /// so a regen flipping insert order silently changes which type
+    /// `${widgets[x]}` reports.
+    #[test]
+    fn getpmwidgets_user_overrides_builtin_on_name_collision() {
+        let mut user = HashMap::new();
+        user.insert("accept-line".to_string(), "my-fn".to_string());
+        let comp = HashMap::new();
+        let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
+        // "accept-line" should be the user entry, NOT "builtin"
+        assert_eq!(widgets.get("accept-line"), Some(&"user:my-fn".to_string()),
+            "user widget must override builtin of same name");
+        // "backward-char" stays builtin (no user entry)
+        assert_eq!(widgets.get("backward-char"), Some(&"builtin".to_string()));
+    }
+
+    /// c:81 — `scanpmwidgets` callback fires once per entry across
+    /// all three buckets. Counter-test ensures no bucket is silently
+    /// skipped.
+    #[test]
+    fn scanpmwidgets_callback_fires_for_every_bucket() {
+        let mut user = HashMap::new();
+        user.insert("u-widget".to_string(), "u-fn".to_string());
+        let mut comp = HashMap::new();
+        comp.insert("c-widget".to_string(), "c-fn".to_string());
+        let mut seen: Vec<(String, String)> = Vec::new();
+        scanpmwidgets(&["b-widget"], &user, &comp, |n, t| {
+            seen.push((n.to_string(), t.to_string()));
+        });
+        let names: std::collections::HashSet<_> = seen.iter().map(|(n, _)| n.clone()).collect();
+        assert!(names.contains("b-widget"));
+        assert!(names.contains("u-widget"));
+        assert!(names.contains("c-widget"));
+        // Type labels also carry the bucket prefix
+        let types: std::collections::HashSet<_> = seen.iter().map(|(_, t)| t.clone()).collect();
+        assert!(types.contains("builtin"));
+        assert!(types.iter().any(|t| t.starts_with("user:")));
+        assert!(types.iter().any(|t| t.starts_with("completion:")));
+    }
+
+    /// c:105 — `keymapsgetfn` returns a copy, not a reference. Mutating
+    /// the result must NOT affect the input slice. Pin the
+    /// allocation contract because the C source uses `ztrdup` per
+    /// entry — the Rust port's `.iter().map(|s| s.to_string())` must
+    /// preserve that.
+    #[test]
+    fn keymapsgetfn_returns_independent_copies() {
+        let input: &[&str] = &["a", "b", "c"];
+        let mut out = keymapsgetfn(input);
+        out.push("d".to_string());
+        // Input still has 3, out has 4
+        assert_eq!(input.len(), 3);
+        assert_eq!(out.len(), 4);
+    }
+
+    /// `BUILTIN_WIDGETS` must not contain duplicates — the C source's
+    /// thingytab is keyed by name and would silently dedupe; the
+    /// Rust hardcoded list must do the same proactively.
+    #[test]
+    fn builtin_widgets_has_no_duplicates() {
+        let unique: std::collections::HashSet<_> = BUILTIN_WIDGETS.iter().copied().collect();
+        assert_eq!(unique.len(), BUILTIN_WIDGETS.len(),
+            "duplicate widget name in BUILTIN_WIDGETS — would corrupt $widgets");
+    }
+
+    /// `BUILTIN_WIDGETS` entries must follow the `lowercase-with-
+    /// hyphens` convention zsh's own widget names use. Catches a
+    /// regression that adds an underscore-named or uppercase entry
+    /// which couldn't be bound via `bindkey` without quoting.
+    #[test]
+    fn builtin_widgets_entries_are_kebab_case() {
+        for w in BUILTIN_WIDGETS {
+            assert!(!w.is_empty(), "empty widget name");
+            for c in w.chars() {
+                assert!(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-',
+                    "widget {:?} has non-kebab-case char {:?}", w, c);
+            }
+            assert!(!w.starts_with('-'),
+                "widget {:?} starts with '-' — would parse as a flag", w);
+            assert!(!w.ends_with('-'), "widget {:?} ends with '-'", w);
+        }
+    }
+
+    /// `DEFAULT_KEYMAPS` must include the four POSIX-required
+    /// names (emacs, viins, vicmd, main). zsh's startup expects
+    /// each of these to exist; a regression that drops "main"
+    /// would silently break every user's `bindkey -A main`.
+    #[test]
+    fn default_keymaps_includes_required_names() {
+        for required in ["emacs", "viins", "vicmd", "main"] {
+            assert!(DEFAULT_KEYMAPS.contains(&required),
+                "DEFAULT_KEYMAPS missing required name: {}", required);
+        }
+    }
+
+    /// c:147-183 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        assert_eq!(setup_(), 0);
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        assert_eq!(finish_(), 0);
+    }
 }

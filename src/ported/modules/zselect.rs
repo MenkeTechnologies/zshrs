@@ -468,4 +468,70 @@ mod tests {
         assert_eq!(fdmax, 6);
         assert!(unsafe { libc::FD_ISSET(5, &fdset) });
     }
+
+    /// c:40 — `handle_digits` with fd=0 is legal (stdin). Pin the
+    /// edge case so a regen that adds `if fd == 0 → error` (a wrong
+    /// "no stdin allowed" guard) gets caught.
+    #[test]
+    fn handle_digits_accepts_fd_zero() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        assert_eq!(handle_digits("zselect", "0", &mut fdset, &mut fdmax), 0);
+        assert_eq!(fdmax, 1, "fdmax should be fd+1 = 1");
+        assert!(unsafe { libc::FD_ISSET(0, &fdset) });
+    }
+
+    /// c:40 — `handle_digits` advances `fdmax` monotonically as new
+    /// fds are added. Pin the high-water-mark behavior so a regen
+    /// that always overwrites `fdmax = fd+1` (instead of taking the
+    /// max) breaks across multiple fd additions.
+    #[test]
+    fn handle_digits_fdmax_tracks_highest_fd() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        handle_digits("zselect", "10", &mut fdset, &mut fdmax);
+        assert_eq!(fdmax, 11);
+        // Adding a smaller fd must NOT lower fdmax
+        handle_digits("zselect", "3", &mut fdset, &mut fdmax);
+        assert_eq!(fdmax, 11,
+            "fdmax must not regress when smaller fd is added");
+        // Adding a larger fd should bump fdmax
+        handle_digits("zselect", "20", &mut fdset, &mut fdmax);
+        assert_eq!(fdmax, 21);
+    }
+
+    /// c:40 — Negative fd input is rejected. handle_digits only
+    /// accepts non-negative decimal integers. Pin the rejection so
+    /// a regen that strtol's the leading `-` as part of digits
+    /// would set a wildly-out-of-range fd.
+    #[test]
+    fn handle_digits_rejects_negative() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "-5", &mut fdset, &mut fdmax);
+        assert_eq!(r, 1, "negative fd must be rejected");
+    }
+
+    /// c:40 — Empty string input is rejected.
+    #[test]
+    fn handle_digits_rejects_empty_string() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "", &mut fdset, &mut fdmax);
+        assert_eq!(r, 1, "empty fd string must be rejected");
+    }
+
+    /// c:288-325 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

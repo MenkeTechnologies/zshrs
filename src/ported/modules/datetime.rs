@@ -506,4 +506,112 @@ mod tests {
         let r = output_strftime("strftime", &[], &ops, 0);
         assert_eq!(r, 1);
     }
+
+    /// c:206 — `getcurrentsecs` matches `time(NULL)` within 1 second.
+    /// Pinning the libc-passthrough so a regression that adds an
+    /// offset (timezone, monotonic-vs-realtime confusion) gets caught.
+    #[test]
+    fn getcurrentsecs_matches_libc_time() {
+        let libc_now = unsafe { libc::time(std::ptr::null_mut()) } as i64;
+        let our_now = getcurrentsecs();
+        assert!((our_now - libc_now).abs() <= 1,
+            "getcurrentsecs {} drifted from libc::time {}", our_now, libc_now);
+    }
+
+    /// c:212 — `getcurrentrealtime` returns a value with nonzero
+    /// sub-second precision over a small sample. Catches a regression
+    /// that truncates to whole seconds (e.g. wrong tv_nsec scaling).
+    #[test]
+    fn getcurrentrealtime_carries_subsecond_precision() {
+        let mut saw_fractional = false;
+        for _ in 0..10 {
+            let rt = getcurrentrealtime();
+            if rt.fract().abs() > 1e-9 {
+                saw_fractional = true;
+                break;
+            }
+        }
+        assert!(saw_fractional,
+            "getcurrentrealtime over 10 samples never produced a fractional part");
+    }
+
+    /// c:220 — `getcurrenttime` returns `(secs, nanos)` with
+    /// nanos < 1_000_000_000. Pinning the nanos invariant catches
+    /// a regression that returns microseconds (cap 1e6) or the raw
+    /// time-spec value without modulo.
+    #[test]
+    fn getcurrenttime_nanos_under_one_billion() {
+        for _ in 0..5 {
+            let (_secs, nanos) = getcurrenttime();
+            assert!(nanos < 1_000_000_000,
+                "nanos {} >= 1e9 — unit confusion in c:220 port", nanos);
+            assert!(nanos >= 0, "nanos {} negative", nanos);
+        }
+    }
+
+    /// c:212 — Wall-clock advances monotonically forward between two
+    /// `getcurrentrealtime` calls. Captures a "clock went backward"
+    /// regression that would break `$EPOCHREALTIME` script timing.
+    #[test]
+    fn getcurrentrealtime_advances_forward() {
+        let a = getcurrentrealtime();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let b = getcurrentrealtime();
+        assert!(b >= a, "realtime went backward: {} -> {}", a, b);
+        assert!(b - a < 5.0, "realtime jumped {} seconds in 10ms sleep", b - a);
+    }
+
+    /// c:206 — `getcurrentsecs` advances monotonically across sleeps.
+    /// Same as above but for the integer-second accessor.
+    #[test]
+    fn getcurrentsecs_advances_or_stays_equal() {
+        let a = getcurrentsecs();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let b = getcurrentsecs();
+        assert!(b >= a, "seconds went backward: {} -> {}", a, b);
+    }
+
+    /// c:99 — `output_strftime` with `%s` (epoch seconds) and `%n`
+    /// flag must print the exact epoch back. Pinning the
+    /// non-side-effect path catches a regression that mangles the
+    /// `-n` (no-newline) shortcut.
+    #[test]
+    fn output_strftime_percent_s_round_trips() {
+        let ops = ops_for(&[b'n'], Some("EPOCH_ROUND_TRIP"));
+        let r = output_strftime("strftime", &["%s", "1234567890"], &ops, 0);
+        assert_eq!(r, 0);
+        assert_eq!(pt_get("EPOCH_ROUND_TRIP").as_deref(), Some("1234567890"));
+    }
+
+    /// c:42-99 — `output_strftime` with an unparseable epoch input
+    /// must return nonzero. Catches a regression that silently
+    /// produces "Wed Dec 31 ..." (epoch 0) on garbage input.
+    #[test]
+    fn output_strftime_invalid_epoch_returns_nonzero() {
+        let ops = ops_for(&[b'n'], Some("BAD"));
+        let r = output_strftime("strftime", &["%s", "not-a-number"], &ops, 0);
+        assert_ne!(r, 0, "garbage epoch must be rejected");
+    }
+
+    /// c:270-307 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// c:285 — `enables_` returns 0 and populates `enables` to
+    /// non-None (the module always advertises ≥ 1 feature). A None
+    /// return would mean "no features" and `zmodload -F zsh/datetime`
+    /// would silently disable strftime.
+    #[test]
+    fn enables_populates_some_vec() {
+        let m: *const module = std::ptr::null();
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(enables_(m, &mut enables), 0);
+        assert!(enables.is_some(), "enables must be Some after enables_");
+    }
 }

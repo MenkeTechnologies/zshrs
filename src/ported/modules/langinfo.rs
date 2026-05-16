@@ -323,4 +323,81 @@ mod tests {
         assert!(!v.is_empty());
         assert!(v.iter().any(|(k, _)| k == "CODESET"));
     }
+
+    /// c:65 — `nl_names` is the authoritative table of every POSIX
+    /// nl_item name. Verify the set includes every category the
+    /// langinfo(3) spec lists, not just CODESET. A regression that
+    /// truncates the table would silently break `$(getlanginfo D_FMT)`
+    /// and similar lookups in user scripts.
+    #[test]
+    fn nl_names_covers_canonical_locale_items() {
+        for required in [
+            "CODESET", "D_T_FMT", "D_FMT", "T_FMT", "T_FMT_AMPM",
+            "AM_STR", "PM_STR", "DAY_1", "DAY_7", "ABDAY_1", "MON_1",
+            "MON_12", "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR",
+        ] {
+            assert!(NL_NAMES.contains(&required),
+                "NL_NAMES missing {} — port table truncated?", required);
+        }
+    }
+
+    /// c:65 — every entry in NL_NAMES must be a valid nl_item name
+    /// per langinfo.h: ALL_CAPS_WITH_UNDERSCORES, no leading digit.
+    /// Pinning the shape catches a regression that adds spaces or
+    /// lowercase entries (which would silently fail `getlanginfo` on
+    /// the user-facing builtin path).
+    #[test]
+    fn nl_names_entries_are_uppercase_identifiers() {
+        for &n in NL_NAMES {
+            assert!(!n.is_empty(), "empty entry in NL_NAMES");
+            assert!(n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "NL_NAMES entry {:?} contains non-uppercase chars", n);
+            assert!(!n.starts_with(|c: char| c.is_ascii_digit()),
+                "NL_NAMES entry {:?} starts with a digit", n);
+        }
+    }
+
+    /// c:65 — NL_NAMES must not have duplicate entries. The C source
+    /// preserves the LC_* category groupings; an accidental duplicate
+    /// would silently double-emit in `scanlanginfo`.
+    #[test]
+    fn nl_names_has_no_duplicates() {
+        let unique: std::collections::HashSet<_> = NL_NAMES.iter().copied().collect();
+        assert_eq!(unique.len(), NL_NAMES.len(),
+            "duplicate entry in NL_NAMES");
+    }
+
+    /// c:430 — `scanlanginfo` keys must be a subset of NL_NAMES.
+    /// (The C source walks `nl_names` in order.) Anything extra
+    /// would indicate a parallel hardcoded list drifted out of sync
+    /// with the canonical table.
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_keys_are_subset_of_nl_names() {
+        for (k, _) in scanlanginfo() {
+            assert!(NL_NAMES.contains(&k.as_str()),
+                "scanlanginfo emitted {:?} which is not in NL_NAMES", k);
+        }
+    }
+
+    /// c:396 — `getlanginfo` is case-sensitive: lowercase input must
+    /// not match the uppercase canonical name. Catches a regression
+    /// that adds a `.to_uppercase()` for "convenience".
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_is_case_sensitive() {
+        assert!(getlanginfo("CODESET").is_some());
+        assert!(getlanginfo("codeset").is_none(),
+            "getlanginfo must be case-sensitive per the C source's strcmp lookup");
+    }
+
+    /// c:472-510 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const crate::ported::zsh_h::module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

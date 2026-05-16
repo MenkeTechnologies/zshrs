@@ -1261,4 +1261,98 @@ mod tests {
         let n = tccap_get_name(9999);
         assert!(n.is_empty(), "out-of-range index must return empty (got {n:?})");
     }
+
+    /// c:418 — `parseopts` consumes `-x` (xtrace) as a flag without
+    /// an argument. Pin the no-arg-required path; a regression that
+    /// always reads `argv[idx+1]` would OOB-index when -x is the
+    /// last arg.
+    #[test]
+    fn parseopts_dash_x_is_single_slot_flag() {
+        let mut argv = vec!["-x".to_string()];
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        let r = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0);
+        assert_eq!(r, 0);
+        assert_eq!(idx, 1, "-x consumes exactly 1 arg slot");
+        assert!(cmd.is_none(), "-x must NOT capture a command");
+    }
+
+    /// c:418 — `parseopts` -c with NO following argument. The
+    /// contract is "no valid command captured" so the caller can
+    /// surface a usage error.
+    #[test]
+    fn parseopts_dash_c_without_argument_does_not_capture_command() {
+        let mut argv = vec!["-c".to_string()];
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        let _ = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0);
+        assert!(cmd.is_none() || cmd.as_deref() == Some(""),
+            "-c without arg must NOT capture a usable command");
+    }
+
+    /// c:418 — `parseopts` consumes multiple flags in sequence.
+    /// Pin the per-arg loop so a regen that early-exits after the
+    /// first flag silently drops -v.
+    #[test]
+    fn parseopts_consumes_multiple_flags() {
+        let mut argv = vec!["-x".to_string(), "-v".to_string()];
+        let mut idx = 0usize;
+        let mut cmd: Option<String> = None;
+        let r = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 0);
+        assert_eq!(r, 0);
+        assert_eq!(idx, 2, "both flags must be consumed");
+    }
+
+    /// c:756 — `tccap_get_name(0)` returns the first cap name. The
+    /// table is non-empty per init.c:75; index 0 must be a valid
+    /// stem. Pin the boundary so a regen that adds an "off-by-one
+    /// slot 0" mistake gets caught.
+    #[test]
+    fn tccap_get_name_index_zero_is_nonempty() {
+        let n = tccap_get_name(0);
+        assert!(!n.is_empty(),
+            "index 0 must yield a real cap name; got {:?}", n);
+        for c in n.chars() {
+            assert!(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_',
+                "cap name {:?} contains non-termcap char {:?}", n, c);
+        }
+    }
+
+    /// c:1713 — `noop_function` MUST be safe to call without panics.
+    /// C body is empty; the Rust port mirrors it. Re-entry test
+    /// catches a regen that adds stateful side-effects.
+    #[test]
+    fn noop_function_is_safe_to_call_multiple_times() {
+        noop_function();
+        noop_function();
+        noop_function();
+    }
+
+    /// c:1720 — `noop_function_int(n)` ignores its argument across
+    /// the full i32 range. Pin no-side-effect contract.
+    #[test]
+    fn noop_function_int_ignores_argument() {
+        noop_function_int(0);
+        noop_function_int(42);
+        noop_function_int(-1);
+        noop_function_int(i32::MAX);
+        noop_function_int(i32::MIN);
+    }
+
+    /// c:1743 — `zleentry(cmd)` for an unknown cmd code returns
+    /// None (matching the C "no zle" branch). Every call site
+    /// assumes None means "no ZLE active".
+    #[test]
+    fn zleentry_unknown_command_returns_none() {
+        assert!(zleentry(99999).is_none(),
+            "unknown zle command must return None, not a default string");
+    }
+
+    /// c:1551 — `source("")` on empty path must NOT segfault. The
+    /// C source opens("") which fails with ENOENT, returning non-0.
+    #[test]
+    fn source_empty_path_returns_nonzero() {
+        let r = source("");
+        assert_ne!(r, 0, "source of empty path must report failure");
+    }
 }

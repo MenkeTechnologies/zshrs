@@ -159,7 +159,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 ### World-first capabilities (verified prior-art survey)
 
-zshrs targets four stacked world-firsts on a single substrate, none of which exist in any active shell as of 2026:
+zshrs targets five stacked world-firsts on a single substrate, none of which exist in any active shell as of 2026:
 
 | Capability | Prior art in any shell? |
 |---|---|
@@ -167,8 +167,9 @@ zshrs targets four stacked world-firsts on a single substrate, none of which exi
 | Sharded rkyv-mmap'd bytecode image cache with two-level lookup (~150-200ns) | No — zsh `.zwc` is per-file static; bash has no compiled form |
 | Companion daemon spanning bytecode cache + supervised jobs + cross-shell IPC + federation | No — fish had `fishd` for var-sync only (removed 2014); no other shell ever shipped a daemon |
 | Native cross-shell pub/sub + dispatch + federation as first-class primitives | No — zconvey is a zsh plugin built on filesystem-IPC + per-prompt polling; not native to any shell |
+| **Native LSP server + DAP debug adapter built into the shell binary** | **No — no shell (bash, zsh, fish, nu, elvish, oil, xonsh, murex) ships `--lsp` or `--dap` first-class. Third-party LSPs exist for bash (`bash-language-server`, Node-based) and zsh (none mainstream); none are part of the shell itself. zshrs ships `zshrs --lsp` (stdio, hand-rolled JSON-RPC, dependency-free) and `zshrs --dap HOST:PORT` (TCP, full Debug Adapter Protocol) in `src/extensions/lsp.rs` + `src/extensions/dap.rs`; the JetBrains plugin at `editors/intellij/` drives both. First shell with editor-tooling as a native subsystem.** |
 
-The combination of all four in one shell is what's defended in the patent strategy (`memory/aot_patent_strategy.md`) as two omnibus claims: (1) unified-AOT, (2) daemon architecture.
+The combination of all five in one shell is what's defended in the patent strategy (`memory/aot_patent_strategy.md`) as three omnibus claims: (1) unified-AOT, (2) daemon architecture, (3) native editor-tooling subsystem.
 
 ### Execution Modes
 

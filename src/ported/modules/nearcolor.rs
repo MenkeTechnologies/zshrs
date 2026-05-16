@@ -523,4 +523,127 @@ mod tests {
 
         tccolours.store(saved, Ordering::SeqCst);
     }
+
+    /// c:41 — `deltae` is symmetric in its arguments: swapping lab1
+    /// and lab2 gives the same value. The formula is
+    /// `(L1-L2)² + (a1-a2)² + (b1-b2)²` so symmetry is a guarantee.
+    /// Pinning it catches a regression that introduces an asymmetric
+    /// term (rare but possible if someone "optimises" the powi(2)
+    /// into a multiply with a sign drift).
+    #[test]
+    fn deltae_is_symmetric() {
+        let mut a = cielab::default();
+        let mut b = cielab::default();
+        RGBtoLAB(200, 50, 25, &mut a);
+        RGBtoLAB(25, 200, 50, &mut b);
+        let d_ab = deltae(&a, &b);
+        let d_ba = deltae(&b, &a);
+        assert!((d_ab - d_ba).abs() < 1e-9, "deltae symmetry broken: {} vs {}", d_ab, d_ba);
+    }
+
+    /// c:41 — `deltae` between two distinct colours is strictly
+    /// positive. Pin the non-degenerate case so a regression that
+    /// returns 0 (or NaN) for unequal inputs fails loudly.
+    #[test]
+    fn deltae_distinct_colors_is_positive() {
+        let mut white = cielab::default();
+        let mut black = cielab::default();
+        RGBtoLAB(0xff, 0xff, 0xff, &mut white);
+        RGBtoLAB(0, 0, 0, &mut black);
+        let d = deltae(&white, &black);
+        assert!(d > 0.0 && d.is_finite(),
+            "deltae(white, black) = {} — must be a finite positive value", d);
+    }
+
+    /// c:50-74 — `RGBtoLAB` of pure black gives L=0, a=0, b=0. The
+    /// inverse-sRGB branch at c:55 takes the `R / 12.92` path for
+    /// R=0, and the XYZ→Lab branch at c:64 takes the
+    /// `7.787 * X + 16/116` path. The final L = 116·Y - 16 should
+    /// resolve to exactly 0 for black.
+    #[test]
+    fn rgb_to_lab_pure_black_yields_zero() {
+        let mut lab = cielab::default();
+        RGBtoLAB(0, 0, 0, &mut lab);
+        assert!(lab.L.abs() < 1e-9, "L for black = {}; should be 0", lab.L);
+        assert!(lab.a.abs() < 1e-9, "a for black = {}; should be 0", lab.a);
+        assert!(lab.b.abs() < 1e-9, "b for black = {}; should be 0", lab.b);
+    }
+
+    /// c:50 — `RGBtoLAB` of pure white gives L ≈ 100 (the L*a*b*
+    /// space's maximum lightness). Catches a regression that uses the
+    /// wrong D65 whitepoint scaling factor at c:60-62.
+    #[test]
+    fn rgb_to_lab_pure_white_has_lightness_near_100() {
+        let mut lab = cielab::default();
+        RGBtoLAB(0xff, 0xff, 0xff, &mut lab);
+        assert!((lab.L - 100.0).abs() < 1.0,
+            "L for white = {}, expected ≈ 100", lab.L);
+    }
+
+    /// c:142-143 — `mapRGBto256` for pure black hits the all-zero
+    /// `r=g=b=0` slot at the start of the 6×6×6 cube → index 16
+    /// (`16 + 0*36 + 0*6 + 0`).
+    #[test]
+    fn map_rgb_to_256_black_is_16() {
+        assert_eq!(mapRGBto256(0, 0, 0), 16);
+    }
+
+    /// c:142-143 — primary red `0xff,0,0` lives on the outer face
+    /// of the cube at r=5, g=0, b=0 → `16 + 5*36 = 196`.
+    #[test]
+    fn map_rgb_to_256_pure_red_is_196() {
+        assert_eq!(mapRGBto256(0xff, 0, 0), 196);
+    }
+
+    /// c:142-143 — primary green `0,0xff,0` → r=0, g=5, b=0
+    /// → `16 + 0 + 5*6 + 0 = 46`.
+    #[test]
+    fn map_rgb_to_256_pure_green_is_46() {
+        assert_eq!(mapRGBto256(0, 0xff, 0), 46);
+    }
+
+    /// c:142-143 — primary blue `0,0,0xff` → r=0, g=0, b=5
+    /// → `16 + 0 + 0 + 5 = 21`.
+    #[test]
+    fn map_rgb_to_256_pure_blue_is_21() {
+        assert_eq!(mapRGBto256(0, 0, 0xff), 21);
+    }
+
+    /// c:102-103 — `mapRGBto88` for pure black hits r=0, g=0, b=0
+    /// → `16 + 0 + 0 + 0 = 16`. Symmetry with the 256-colour case.
+    #[test]
+    fn map_rgb_to_88_black_is_16() {
+        assert_eq!(mapRGBto88(0, 0, 0), 16);
+    }
+
+    /// c:102-103 — primary red `0xff,0,0`: r=3 (the 0xff bucket in
+    /// the 4-level RGB ramp at c:76), g=b=0 → `16 + 3*16 + 0 + 0 = 64`.
+    #[test]
+    fn map_rgb_to_88_pure_red_is_64() {
+        assert_eq!(mapRGBto88(0xff, 0, 0), 64);
+    }
+
+    /// c:147-156 — `getnearestcolor` with `tccolours = 0` (terminal
+    /// reports no palette) must take the default branch and return
+    /// -1. Pinning this protects callers from a regression that
+    /// invokes `mapRGBto256` regardless of palette size.
+    #[test]
+    fn getnearestcolor_unknown_palette_returns_neg_one() {
+        let saved = tccolours.load(Ordering::SeqCst);
+        tccolours.store(0, Ordering::SeqCst);
+        let col = color_rgb { red: 100, green: 100, blue: 100 };
+        let r = getnearestcolor(std::ptr::null(), &col);
+        tccolours.store(saved, Ordering::SeqCst);
+        assert_eq!(r, -1);
+    }
+
+    /// c:169-220 — module lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

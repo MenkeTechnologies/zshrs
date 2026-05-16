@@ -348,11 +348,41 @@ mod tests {
 
     #[test]
     fn casematch_off_is_case_insensitive() {
-        // casematch flag now consults the global options table via
-        // optlookup("casematch"); leaving it at default (1) means
-        // case-sensitive — `HELLO` vs `hello` should NOT match.
+        // c:74-76 — `casematch` flag drives whether REG_ICASE is OR'd
+        // into the regcomp flags. `isset(CASEMATCH)` is the C-side
+        // gate; the Rust port reads via `optlookup("casematch")`.
+        //
+        // The zsh C source declares `casematch` with `OPT_ALL`
+        // (options.c:106) — defaults to ON in every emulation. C's
+        // `createoptiontable` populates that default at shell start;
+        // the Rust `OPTS_LIVE` table doesn't (it's initialized empty
+        // and grows as the options builtin / startup code sets values).
+        // Without an explicit set, `isset(CASEMATCH)` returns false,
+        // the test silently wraps `(?i)` around `hello`, and `HELLO`
+        // matches — yielding 1 instead of 0.
+        //
+        // Match the C startup contract: set casematch=true at the top,
+        // restore at the end. Same idiom params.rs tests use for
+        // `exec` (8212/8547/9392).
+        let saved = crate::ported::options::opt_state_get("casematch").unwrap_or(false);
+        crate::ported::options::opt_state_set("casematch", true);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
-        assert_eq!(r, 0);
+        crate::ported::options::opt_state_set("casematch", saved);
+        assert_eq!(r, 0, "casematch=true → case-sensitive → HELLO vs hello must NOT match");
+    }
+
+    /// c:74-76 — same flag, opposite branch. With `casematch=false`
+    /// (the user did `unsetopt CASE_MATCH`), the Rust port must wrap
+    /// the pattern in `(?i)` so `HELLO` matches `hello`. Pinning the
+    /// inverse case prevents a regression that ignores the flag in
+    /// both directions.
+    #[test]
+    fn casematch_unset_is_case_insensitive() {
+        let saved = crate::ported::options::opt_state_get("casematch").unwrap_or(false);
+        crate::ported::options::opt_state_set("casematch", false);
+        let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
+        crate::ported::options::opt_state_set("casematch", saved);
+        assert_eq!(r, 1, "casematch=false → case-insensitive → HELLO matches hello");
     }
 
     /// c:54 — `zcond_regex_match` returns 1 when the pattern matches.

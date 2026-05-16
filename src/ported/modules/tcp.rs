@@ -849,4 +849,88 @@ mod tests {
         let mut buf = [0u8; 4];
         assert_eq!(zsh_inet_pton(libc::AF_INET, "bad-ip", &mut buf), 0);
     }
+
+    /// c:72 — `zsh_inet_ntop` on `0.0.0.0` returns the canonical
+    /// wildcard string. Pin the boundary because some libc impls
+    /// have historically rendered it as empty or "*".
+    #[test]
+    fn inet_ntop_wildcard_address_is_zero_dotted() {
+        let bytes = [0u8, 0, 0, 0];
+        assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("0.0.0.0"));
+    }
+
+    /// c:72 — `zsh_inet_ntop` on `255.255.255.255` (broadcast).
+    /// Pin the max-octet rendering since octet width and base-10
+    /// formatting share the inner loop.
+    #[test]
+    fn inet_ntop_broadcast_address_is_all_255() {
+        let bytes = [255u8, 255, 255, 255];
+        assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(),
+                   Some("255.255.255.255"));
+    }
+
+    /// c:122 — `zsh_inet_pton` round-trips through `inet_ntop` for a
+    /// sweep of typical addresses. Bidirectional contract pinned.
+    #[test]
+    fn inet_pton_ntop_round_trips_for_typical_addresses() {
+        for ip in &["192.168.1.1", "10.0.0.1", "172.16.254.1", "8.8.8.8"] {
+            let mut buf = [0u8; 4];
+            assert_eq!(zsh_inet_pton(libc::AF_INET, ip, &mut buf), 1,
+                "pton failed on {}", ip);
+            assert_eq!(zsh_inet_ntop(libc::AF_INET, &buf).as_deref(), Some(*ip),
+                "round-trip mismatch for {}", ip);
+        }
+    }
+
+    /// c:122 — `zsh_inet_pton` rejects out-of-range octets. "256"
+    /// is the off-by-one to pin (0-255 valid; 256 invalid).
+    #[test]
+    fn inet_pton_rejects_octet_over_255() {
+        let mut buf = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "256.0.0.0", &mut buf), 0);
+    }
+
+    /// c:122 — `zsh_inet_pton` with empty string returns 0. Pin
+    /// defensive shape; libc::inet_pton returns 0 for "" but a
+    /// regression could panic on the empty CString allocation.
+    #[test]
+    fn inet_pton_rejects_empty_string() {
+        let mut buf = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "", &mut buf), 0);
+    }
+
+    /// c:215 — `zts_alloc` flag-passthrough: the new session's
+    /// `flags` field MUST equal the input flags exactly (no extra
+    /// bits OR'd in by the allocator).
+    #[test]
+    fn zts_alloc_flags_passthrough() {
+        let _ = zts_alloc(ZTCP_LISTEN);
+        ZTCP_SESSIONS.with(|s| {
+            let sessions = s.borrow();
+            let last = sessions.last().unwrap();
+            assert_eq!(last.flags, ZTCP_LISTEN,
+                "flags must be passed through verbatim");
+        });
+    }
+
+    /// c:253 — `zts_delete` on a non-existent fd is a safe no-op;
+    /// the session count does not change.
+    #[test]
+    fn zts_delete_unknown_fd_is_safe() {
+        let before = ZTCP_SESSIONS.with(|s| s.borrow().len());
+        let _ = zts_delete(99999);
+        let after = ZTCP_SESSIONS.with(|s| s.borrow().len());
+        assert_eq!(before, after,
+            "delete of unknown fd must not change session count");
+    }
+
+    /// c:714-740 — module-lifecycle stubs all return 0 in C.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

@@ -1162,4 +1162,91 @@ mod tests {
         let dead = utmp_make("user", "pts/0", "", 0, 1, libc::DEAD_PROCESS as i16);
         assert!(!utmp_is_active(&dead));
     }
+
+    /// c:434 — `watchlog_match` glob: literal `"*"` matches any.
+    #[test]
+    fn watchlog_match_asterisk_matches_anything() {
+        assert!(watchlog_match("*", ""));
+        assert!(watchlog_match("*", "anything"));
+        assert!(watchlog_match("*", "host.example.com"));
+    }
+
+    /// c:434 — Exact-string match (no implicit prefix/suffix).
+    #[test]
+    fn watchlog_match_exact_string() {
+        assert!(watchlog_match("alice", "alice"));
+        assert!(!watchlog_match("alice", "bob"));
+        assert!(!watchlog_match("alice", "alice.local"),
+            "exact match must NOT match prefix of value");
+    }
+
+    /// c:434 — Empty pattern only matches empty value (NOT a
+    /// wildcard).
+    #[test]
+    fn watchlog_match_empty_pattern_only_matches_empty() {
+        assert!(watchlog_match("", ""));
+        assert!(!watchlog_match("", "x"));
+    }
+
+    /// c:527 — `ucmp` returns 0 on identical entries.
+    #[test]
+    fn ucmp_identical_entries_returns_zero() {
+        let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        let b = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        assert_eq!(ucmp(&a, &b), 0,
+            "identical utmp entries must compare equal");
+    }
+
+    /// c:527-531 — `ucmp` compares ONLY by (ut_time, ut_line) — NOT
+    /// by user name. Two entries with same time + same line are
+    /// equal regardless of user. Pin this C-faithful semantic
+    /// because the comparator feeds into a sorted utmp diff at c:600.
+    #[test]
+    fn ucmp_ignores_user_when_time_and_line_match() {
+        let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        let b = utmp_make("bob",   "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        assert_eq!(ucmp(&a, &b), 0,
+            "c:527-531 — ucmp uses only (time, line); different users are EQUAL");
+    }
+
+    /// c:531 — Different ut_time produces non-zero, signed-difference
+    /// ordering.
+    #[test]
+    fn ucmp_different_times_are_unequal() {
+        let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        let b = utmp_make("alice", "pts/0", "h", 200, 1, libc::USER_PROCESS as i16);
+        let r = ucmp(&a, &b);
+        assert!(r < 0, "earlier time must sort first; got {}", r);
+        let r = ucmp(&b, &a);
+        assert!(r > 0, "later time must sort after; got {}", r);
+    }
+
+    /// c:527 — Same user on different lines (e.g. two tmux panes)
+    /// → non-zero.
+    #[test]
+    fn ucmp_different_lines_are_unequal() {
+        let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
+        let b = utmp_make("alice", "pts/1", "h", 100, 1, libc::USER_PROCESS as i16);
+        assert_ne!(ucmp(&a, &b), 0,
+            "different ttys must compare unequal");
+    }
+
+    /// c:458 — Empty watch list → no entry matches.
+    #[test]
+    fn check_entry_with_empty_watch_list_returns_false() {
+        let entry = utmp_make("anyone", "pts/0", "", 0, 1, libc::USER_PROCESS as i16);
+        set_watch_list(vec![]);
+        assert!(!check_entry(&entry, "me"),
+            "empty watch list must not match any entry");
+    }
+
+    /// c:712-770 — module-lifecycle stubs all return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

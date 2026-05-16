@@ -842,4 +842,106 @@ mod tests {
         let s = name_for_anonymous_function("anon", "/tmp/foo.zsh", 42);
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
+
+    /// c:97 — `findpfunc` on an empty table returns None. A
+    /// regression that returns 0 (a valid index!) would silently
+    /// corrupt every subsequent per-function profile accumulation.
+    #[test]
+    fn findpfunc_empty_table_returns_none() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_state();
+        assert!(findpfunc("never-called").is_none());
+    }
+
+    /// c:97 — `findpfunc` after two inserts returns the right index.
+    /// Pin the index-zero-based contract because the find result
+    /// feeds back into CALLS[i].
+    #[test]
+    fn findpfunc_returns_correct_index_after_insert() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_state();
+        CALLS.lock().unwrap().push(Pfunc { name: "alpha".into(), ..Default::default() });
+        CALLS.lock().unwrap().push(Pfunc { name: "beta".into(), ..Default::default() });
+        assert_eq!(findpfunc("alpha"), Some(0));
+        assert_eq!(findpfunc("beta"), Some(1));
+        assert!(findpfunc("gamma").is_none());
+    }
+
+    /// c:109 — `findparc(f, t)` on an empty arcs table → None.
+    #[test]
+    fn findparc_empty_table_returns_none() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_state();
+        assert!(findparc(0, 1).is_none());
+    }
+
+    /// c:109 — `findparc` distinguishes (f1, t1) from (f1, t2):
+    /// same `from`, different `to` is a different arc.
+    #[test]
+    fn findparc_distinguishes_to_field() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_state();
+        ARCS.lock().unwrap().push(Parc { from: 0, to: 1, ..Default::default() });
+        ARCS.lock().unwrap().push(Parc { from: 0, to: 2, ..Default::default() });
+        assert_eq!(findparc(0, 1), Some(0));
+        assert_eq!(findparc(0, 2), Some(1));
+        assert!(findparc(0, 99).is_none());
+        assert!(findparc(99, 1).is_none());
+    }
+
+    /// c:121 — `cmpsfuncs` compares by `self_time` DESCENDING (C
+    /// source: `(int)((*b)->self < (*a)->self) - (int)((*a)->self < (*b)->self)`
+    /// — i.e. higher self_time sorts first). Pin the direction
+    /// because a regen that flips to ascending would silently
+    /// invert the user-facing `zprof` output ordering.
+    #[test]
+    fn cmpsfuncs_compares_by_self_time_descending() {
+        let high = Pfunc { name: "_".into(), self_time: 100.0, ..Default::default() };
+        let low  = Pfunc { name: "_".into(), self_time: 1.0,   ..Default::default() };
+        // higher self_time sorts FIRST → Ordering::Less for (high, low)
+        assert_eq!(cmpsfuncs(&high, &low), std::cmp::Ordering::Less);
+        assert_eq!(cmpsfuncs(&low, &high), std::cmp::Ordering::Greater);
+        assert_eq!(cmpsfuncs(&high, &high), std::cmp::Ordering::Equal);
+    }
+
+    /// c:74 — `freepfuncs` empties the input vec.
+    #[test]
+    fn freepfuncs_empties_input_vec() {
+        let mut v = vec![
+            Pfunc { name: "x".into(), ..Default::default() },
+            Pfunc { name: "y".into(), ..Default::default() },
+        ];
+        freepfuncs(&mut v);
+        assert!(v.is_empty(), "freepfuncs must clear the input vec");
+    }
+
+    /// c:86 — `freeparcs` empties the input arc vec.
+    #[test]
+    fn freeparcs_empties_input_vec() {
+        let mut v = vec![
+            Parc { from: 0, to: 1, ..Default::default() },
+            Parc { from: 2, to: 3, ..Default::default() },
+        ];
+        freeparcs(&mut v);
+        assert!(v.is_empty(), "freeparcs must clear the input vec");
+    }
+
+    /// c:121 vs c:127 — `cmpsfuncs` sorts by `self_time`, `cmptfuncs`
+    /// sorts by `time` (cumulative). Pin they produce DIFFERENT
+    /// orderings on an input where the two fields disagree, so a
+    /// regen that aliases the field accessor in one of them gets
+    /// caught.
+    #[test]
+    fn cmpsfuncs_and_cmptfuncs_differ_when_fields_disagree() {
+        // `alpha` has high self_time but LOW cumulative time.
+        // `beta`  has low self_time but HIGH cumulative time.
+        let alpha = Pfunc { name: "_".into(), self_time: 100.0, time: 1.0,   ..Default::default() };
+        let beta  = Pfunc { name: "_".into(), self_time: 1.0,   time: 100.0, ..Default::default() };
+        let by_self = cmpsfuncs(&alpha, &beta);
+        let by_time = cmptfuncs(&alpha, &beta);
+        // by_self: alpha has higher self_time → alpha sorts first → Less
+        // by_time: beta has higher cumulative time → alpha sorts after → Greater
+        assert_ne!(by_self, by_time,
+            "cmpsfuncs (self_time) and cmptfuncs (time) must differ when fields disagree");
+    }
 }

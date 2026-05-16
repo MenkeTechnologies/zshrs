@@ -70,11 +70,37 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
                 }
             }
             '\\' => {
-                // Escape sequence
+                // Escape sequence — must mirror C's
+                // `Src/utils.c:6993-7017` switch:
+                //   \a → 0x07 (BEL)         c:6995
+                //   \b → 0x08 (BS)          c:7003
+                //   \e / \E → 0x1b (ESC)    c:7019/7026
+                //   \f → 0x0c (FF)          c:7013
+                //   \n → 0x0a (LF)          c:7000
+                //   \r → 0x0d (CR)          c:7016
+                //   \t → 0x09 (TAB)         c:7006
+                //   \v → 0x0b (VT)          c:7009
+                // The previous Rust port only handled e/E/n/t/r,
+                // silently dropping \a/\b/\f/\v through the
+                // generic Some(&c) arm — `getkeystring("\\b")`
+                // returned ['b'] (0x62) instead of [0x08]. Fixed
+                // 2026-05 to match the C switch verbatim.
                 match chars.peek() {
+                    Some(&'a') => {
+                        chars.next();
+                        result.push(0x07); // BEL — c:6995
+                    }
+                    Some(&'b') => {
+                        chars.next();
+                        result.push(0x08); // BS — c:7003
+                    }
                     Some(&'e') | Some(&'E') => {
                         chars.next();
                         result.push(0x1b); // ESC
+                    }
+                    Some(&'f') => {
+                        chars.next();
+                        result.push(0x0c); // FF — c:7013
                     }
                     Some(&'n') => {
                         chars.next();
@@ -87,6 +113,10 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
                     Some(&'r') => {
                         chars.next();
                         result.push(b'\r');
+                    }
+                    Some(&'v') => {
+                        chars.next();
+                        result.push(0x0b); // VT — c:7009
                     }
                     Some(&'M') => {
                         chars.next();
@@ -853,5 +883,62 @@ mod tests {
     fn bindlistout_empty_for_unknown_keymap() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(bindlistout("does-not-exist").is_empty());
+    }
+
+    /// c:utils.c:6915 — `getkeystring("")` returns empty. Defensive
+    /// edge case so a regression panicking on empty doesn't crash
+    /// every `bindkey ""` invocation.
+    #[test]
+    fn getkeystring_empty_string_returns_empty() {
+        assert!(getkeystring("").is_empty());
+    }
+
+    /// c:utils.c:6915 — `\\b` decodes to backspace (0x08). Pin the
+    /// canonical backspace shortcut so a regen that maps it to DEL
+    /// (0x7f) gets caught.
+    #[test]
+    fn getkeystring_decodes_backspace() {
+        assert_eq!(getkeystring("\\b"), vec![0x08]);
+    }
+
+    /// c:utils.c:6915 — `\\C-A` is equivalent to `\\C-a` (control
+    /// shortcuts are case-INsensitive per zsh convention).
+    #[test]
+    fn getkeystring_control_prefix_is_case_insensitive() {
+        let lower = getkeystring("\\C-a");
+        let upper = getkeystring("\\C-A");
+        assert_eq!(lower, upper,
+            r#"\\C-a and \\C-A must decode identically"#);
+        assert_eq!(lower, vec![0x01]);
+    }
+
+    /// `iwidget_lookup` for `accept-line` resolves — the most-used
+    /// widget (Enter key). Smoke test for the internal-widget table
+    /// every zsh user depends on.
+    #[test]
+    fn iwidget_lookup_resolves_accept_line() {
+        assert!(iwidget_lookup("accept-line").is_some(),
+            "accept-line is the canonical Enter-key widget; must resolve");
+    }
+
+    /// `iwidget_lookup` for empty string returns None. Defensive
+    /// boundary.
+    #[test]
+    fn iwidget_lookup_empty_name_returns_none() {
+        assert!(iwidget_lookup("").is_none());
+    }
+
+    /// c:566 — `bindkey` does NOT validate widget existence at
+    /// bind time (C resolves the widget via Thingy at trigger
+    /// time). Pin that an unknown-widget bind SUCCEEDS — a regen
+    /// that tightens this to reject unknowns would break user
+    /// scripts that bind to widgets defined later in startup.
+    #[test]
+    fn bindkey_unknown_widget_binds_anyway_matching_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let ok = bindkey("main", "\\C-x", "user-widget-not-yet-defined");
+        assert!(ok,
+            "C source resolves widgets at trigger time, so bind-time \
+             unknowns must SUCCEED");
     }
 }

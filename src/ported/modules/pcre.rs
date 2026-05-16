@@ -811,4 +811,80 @@ mod tests {
         let (status, _, _) = bin_pcre_match("pcre_match", &[s("test")], &empty_ops(), 0);
         assert_eq!(status, 1);
     }
+
+    /// c:312 — `getposint` parses a non-negative integer.
+    #[test]
+    fn getposint_parses_positive_decimal() {
+        let r = getposint("42", "test");
+        assert_eq!(r, 42);
+    }
+
+    /// c:312 — `getposint("0", _)` returns 0. Pin the boundary so
+    /// a regen rejecting "0" as "non-positive" silently breaks
+    /// `pcre_match -a vec` call sites.
+    #[test]
+    fn getposint_zero_is_valid() {
+        let r = getposint("0", "test");
+        assert_eq!(r, 0);
+    }
+
+    /// c:312 — `getposint` for non-numeric input signals error
+    /// (negative return per the C zwarnnam + -1 pattern).
+    #[test]
+    fn getposint_non_numeric_returns_negative() {
+        let r = getposint("abc", "test");
+        assert!(r < 0, "non-numeric must return negative sentinel, got {}", r);
+    }
+
+    /// c:70 — `bin_pcre_compile` with NO args reads `args.first()`
+    /// as empty string, which the `regex` crate compiles as a valid
+    /// (always-matching) empty pattern. This matches the C source
+    /// which relies on the BUILTIN dispatcher's `min_args=1` to
+    /// reject empty argv before reaching the body. Pin the
+    /// pass-through behavior so a regen that adds an internal arity
+    /// guard (deviation from C) gets caught.
+    #[test]
+    fn bin_pcre_compile_no_args_compiles_empty_pattern() {
+        PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
+        let r = bin_pcre_compile("pcre_compile", &[], &empty_ops(), 0);
+        assert_eq!(r, 0, "C body has no arity check; empty pattern compiles");
+    }
+
+    /// c:328 — `bin_pcre_match` with no args returns 1 (needs at
+    /// least the subject string).
+    #[test]
+    fn bin_pcre_match_no_args_returns_one() {
+        bin_pcre_compile("pcre_compile", &[s("x")], &empty_ops(), 0);
+        let (status, _, _) = bin_pcre_match("pcre_match", &[], &empty_ops(), 0);
+        assert_eq!(status, 1, "no subject must surface as error");
+    }
+
+    /// c:422 — `cond_pcre_match` with malformed pattern surfaces
+    /// as no-match (0) — compile fails inside, function returns
+    /// "no match" rather than panicking.
+    #[test]
+    fn cond_pcre_match_malformed_pattern_returns_no_match() {
+        let (m, _, _) = cond_pcre_match(&[s("anything"), s("[")], 0);
+        assert_eq!(m, 0, "malformed regex must fail-soft to no-match");
+    }
+
+    /// c:422 — Caret anchor: `^foo` matches "foo bar" but NOT
+    /// "bar foo". Pin anchor semantics.
+    #[test]
+    fn cond_pcre_match_caret_anchor_requires_start() {
+        let (m, _, _) = cond_pcre_match(&[s("foo bar"), s("^foo")], 0);
+        assert_eq!(m, 1, "caret matches at start");
+        let (m, _, _) = cond_pcre_match(&[s("bar foo"), s("^foo")], 0);
+        assert_eq!(m, 0, "caret must NOT match mid-string");
+    }
+
+    /// c:542-580 — module-lifecycle stubs all return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

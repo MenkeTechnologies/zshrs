@@ -594,4 +594,81 @@ mod tests {
         let _ = fs::remove_file(f1);
         let _ = fs::remove_file(f2);
     }
+
+    /// c:167 — `get_contents` on a nonexistent file returns None.
+    #[test]
+    fn get_contents_nonexistent_file_returns_none() {
+        assert!(get_contents("/__never_a_file__/x").is_none(),
+            "missing file must return None, not empty Some");
+    }
+
+    /// c:167 — `get_contents` on an EMPTY file returns Some("") —
+    /// distinguishes "exists but empty" from "missing". A regression
+    /// that conflates the two would break `${mapfile[/some/empty]}`
+    /// detection in user scripts.
+    #[test]
+    fn get_contents_empty_file_returns_empty_string() {
+        let f = "/tmp/zshrs_mapfile_empty.txt";
+        let _ = fs::write(f, "");
+        let r = get_contents(f);
+        assert_eq!(r.as_deref(), Some(""),
+            "empty file must yield Some(\"\"), not None");
+        let _ = fs::remove_file(f);
+    }
+
+    /// c:167 — Round-trip: write then read back. Pin file content
+    /// fidelity (no encoding mangling, no trailing-newline insertion).
+    #[test]
+    fn get_contents_round_trips_write() {
+        let f = "/tmp/zshrs_mapfile_rt.txt";
+        let payload = "line1\nline2\nno_trailing_nl";
+        setpmmapfile(f, payload, false);
+        let r = get_contents(f);
+        assert_eq!(r.as_deref(), Some(payload),
+            "round-trip must preserve content exactly");
+        let _ = fs::remove_file(f);
+    }
+
+    /// c:68 — `setpmmapfile` with empty value writes an EMPTY file
+    /// (a valid write, NOT a delete).
+    #[test]
+    fn setpmmapfile_empty_value_writes_empty_file() {
+        let f = "/tmp/zshrs_mapfile_empty_write.txt";
+        let _ = fs::remove_file(f);
+        setpmmapfile(f, "", false);
+        assert!(Path::new(f).exists(), "empty value must still create the file");
+        assert_eq!(get_contents(f).as_deref(), Some(""));
+        let _ = fs::remove_file(f);
+    }
+
+    /// c:126 — `unsetpmmapfile` on a missing path is a safe no-op.
+    /// Pin defensive behavior; a regression that unwrap()s the
+    /// `remove_file` Result would crash the shell on every `unset
+    /// mapfile[/missing]` call.
+    #[test]
+    fn unsetpmmapfile_missing_file_is_safe_noop() {
+        unsetpmmapfile("/__never_existed_zshrs_mapfile__", false);
+    }
+
+    /// c:241 — `scanpmmapfile` always emits empty string values per
+    /// c:263. Pin the empty-value contract because users iterating
+    /// `${(kv)mapfile}` rely on values being empty (and use
+    /// `${mapfile[/path]}` for content).
+    #[test]
+    fn scanpmmapfile_values_always_empty() {
+        for (_k, v) in scanpmmapfile() {
+            assert!(v.is_empty(),
+                "scanpmmapfile must emit empty values per c:263");
+        }
+    }
+
+    /// c:279-310 — module-lifecycle stubs return 0.
+    #[test]
+    fn module_lifecycle_shims_all_return_zero() {
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }
