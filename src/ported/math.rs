@@ -1912,11 +1912,23 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {                       // c
     result
 }
 
-/// Evaluate and return integer
-/// Math evaluator that coerces the result to integer.
-/// Port of `mathevali(char *s)` from Src/math.c:1505.
-pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1505
-    matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+/// Port of `mnumber matheval(char *s)` integer-coerce front-end
+/// `mod_export zlong mathevali(char *s)` from Src/math.c:1505.
+///
+/// C body (c:1505-1509):
+/// ```c
+/// mnumber x = matheval(s);
+/// return (x.type & MN_FLOAT) ? (zlong)x.u.d : x.u.l;
+/// ```
+///
+/// Uses bitwise AND against MN_FLOAT — `x.type` is a bitfield holding
+/// MN_INTEGER (1), MN_FLOAT (2), MN_UNSET (4). The previous Rust port
+/// did `n.type_ == MN_FLOAT` (strict equality) — which misclassifies
+/// any result where MN_FLOAT is set alongside another flag (e.g. an
+/// uninitialized-then-set result might carry MN_FLOAT|MN_UNSET = 6).
+pub fn mathevali(s: &str) -> Result<i64, String> {                          // c:1505
+    matheval(s).map(|n|                                                      // c:1506
+        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l })            // c:1508
 }
 
 /// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.
@@ -1971,9 +1983,12 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {                              // c
     // c:1534 — `mathevall(s, MPREC_ARG, ss)`. The Rust port doesn't yet
     // thread the prec_tp arg through mathevall (uses C_PREC/Z_PREC toggle
     // only); structural follow-up.
-    let result = matheval(s).map(|n|
-        if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }
-    ).unwrap_or(0);                                                          // c:1538
+    // c:1538 — `(x.type & MN_FLOAT) ? (zlong)x.u.d : x.u.l`. Bitwise
+    // check against MN_FLOAT; strict equality `== MN_FLOAT` misclassifies
+    // composite type bitfields (e.g. MN_FLOAT|MN_UNSET).
+    let result = matheval(s).map(|n|                                         // c:1538
+        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }
+    ).unwrap_or(0);
     // c:1537 — `mtok = xmtok;` restore.
     M_MTOK.with(|c| c.set(xmtok));                                           // c:1537
     result
@@ -2964,6 +2979,20 @@ mod tests {
     fn mathevali_divide_by_zero_errors() {
         assert!(mathevali("1/0").is_err());
         assert!(mathevali("5/(2-2)").is_err());
+    }
+
+    /// c:1505-1508 — `mathevali` returns `(x.type & MN_FLOAT) ?
+    /// (zlong)x.u.d : x.u.l`. A float result rounded toward zero;
+    /// MN_INTEGER returns x.u.l unchanged. Regression target: the
+    /// previous Rust port used strict equality `== MN_FLOAT` which
+    /// misclassifies any composite MN_FLOAT|MN_X bitfield.
+    #[test]
+    fn mathevali_truncates_float_via_bitmask_not_strict_eq() {
+        // Float expression → truncated toward zero (3.7 → 3, -3.7 → -3).
+        assert_eq!(mathevali("3.7").unwrap(),    3);
+        assert_eq!(mathevali("-3.7").unwrap(),  -3);
+        // Pure integer expression → MN_INTEGER path, no truncation.
+        assert_eq!(mathevali("42").unwrap(),   42);
     }
 
     /// c:1480 — mod-by-zero is also an error (matches POSIX).
