@@ -158,10 +158,35 @@ pub fn evalcond(                                                             // 
                                 'S' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32),
                                 'u' => b2i(dostat(&arg) & libc::S_ISUID as u32 != 0),
                                 'w' => b2i(doaccess(&arg, 2) != 0),          // c:438
-                                'x' => b2i(doaccess(&arg, 1) != 0
-                                           || getstat(&arg)
-                                                  .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFDIR as u32)
-                                                  .unwrap_or(false)),
+                                // c:368-373 — `-x file` test:
+                                //   if (privasserted()) {
+                                //       mode_t mode = dostat(left);
+                                //       return !((mode & S_IXUGO) || S_ISDIR(mode));
+                                //   }
+                                //   return !doaccess(left, X_OK);
+                                //
+                                // The previous Rust port unconditionally
+                                // did `doaccess || S_ISDIR` — adding the
+                                // S_ISDIR fallback even for non-privileged
+                                // shells. Under non-privileged shell,
+                                // `[[ -x /no-x-perm-dir ]]` would return
+                                // TRUE in Rust (the S_ISDIR fallback
+                                // bypassed the access check) but FALSE
+                                // in C (doaccess alone, no S_ISDIR fall-
+                                // back). Gate on `privasserted()` to
+                                // match C exactly.
+                                'x' => {
+                                    if crate::ported::utils::privasserted() {     // c:368
+                                        let mode = dostat(&arg);
+                                        // c:370 — `(mode & S_IXUGO) || S_ISDIR(mode)`.
+                                        let s_ixugo = 0o111u32; // S_IXUSR|S_IXGRP|S_IXOTH
+                                        let is_dir = mode & libc::S_IFMT as u32
+                                                   == libc::S_IFDIR as u32;
+                                        b2i((mode & s_ixugo) != 0 || is_dir)      // c:370
+                                    } else {                                       // c:372
+                                        b2i(doaccess(&arg, 1) != 0)               // c:373 X_OK
+                                    }
+                                }
                                 'O' => b2i(getstat(&arg).map(|m| m.uid() == unsafe { libc::geteuid() })
                                            .unwrap_or(false)),
                                 'G' => b2i(getstat(&arg).map(|m| m.gid() == unsafe { libc::getegid() })
