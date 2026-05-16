@@ -728,12 +728,12 @@ pub fn unsettrap(sig: i32) {                                                 // 
     // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
     // special branches AND the RT-signal branch entirely.
     let interact = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
-    // c:808 `forklevel` — depth of subshell forks. C global at exec.c
-    // tracks fork nesting. Rust port doesn't model this yet; assume 0
-    // (top-level shell, not inside a subshell). This makes the SIGPIPE
-    // branch fire when interact is true, matching the most common
-    // user-facing case. A future forklevel global wires here directly.
-    let forklevel: i32 = 0;
+    // c:808 `forklevel` — depth of subshell forks. C global at
+    // exec.c:1052 set to `locallevel` at every entersubsh() (c:1221).
+    // Read live from the ported global so SIGPIPE only re-installs in
+    // the top-level shell, never inside a forked subshell.
+    let forklevel: i32 =
+        crate::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
     if sig == libc::SIGINT && interact {                                     // c:802
         // c:803-805 — `intr(); noholdintr();`. Re-enable SIGINT
         // delivery (subshells ignoring SIGINT need the unblock).

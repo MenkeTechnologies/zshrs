@@ -689,13 +689,25 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {              // 
         return false;
     }
     // c:1072-1073 — `if (!j->procs) return 0;`
-    if let Some(first) = job.procs.first() {
-        if let (Some(start), Some(end)) =
-            (first.bgtime, job.procs.last().and_then(|p| p.endtime))
-        {
-            let elapsed = end.duration_since(start).as_secs_f64();
-            return elapsed >= reporttime;
-        }
+    let first = match job.procs.first() {
+        Some(p) => p,
+        None => return false,
+    };
+    // c:1074 — `if (zleactive) return 0;`. ZLE is line-editing the
+    // prompt; never spew a timing line into the editor. Previously
+    // the Rust port skipped this gate entirely; a job that finished
+    // while ZLE was active would print into the active prompt and
+    // corrupt the editor display.
+    if crate::ported::builtins::sched::zleactive
+        .load(std::sync::atomic::Ordering::Relaxed) != 0                     // c:1074
+    {
+        return false;
+    }
+    if let (Some(start), Some(end)) =
+        (first.bgtime, job.procs.last().and_then(|p| p.endtime))
+    {
+        let elapsed = end.duration_since(start).as_secs_f64();
+        return elapsed >= reporttime;
     }
     false
 }
@@ -3088,5 +3100,78 @@ mod tests {
         assert_eq!(getsigname(libc::SIGKILL), "KILL");
         // EXIT pseudo-signal at index 0.
         assert_eq!(getsigname(0), "EXIT");
+    }
+
+    /// Serialise tests that mutate the global ZLE-active flag.
+    static ZLEACTIVE_TEST_LOCK: std::sync::Mutex<()> =
+        std::sync::Mutex::new(());
+
+    /// Pin: STAT_TIMED short-circuits **regardless of zleactive** per
+    /// `Src/jobs.c:1052-1053` — the STAT_TIMED check happens BEFORE
+    /// the zleactive gate, so explicit `time foo` always reports.
+    #[test]
+    fn should_report_time_stat_timed_overrides_zleactive() {
+        use std::sync::atomic::Ordering;
+        let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
+        let prev = crate::ported::builtins::sched::zleactive
+            .load(Ordering::Relaxed);
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        let mut job = Job::new();
+        job.stat |= stat::TIMED;
+        // STAT_TIMED returns true even with zleactive=1 and no procs.
+        assert!(should_report_time(&job, -1.0));
+        crate::ported::builtins::sched::zleactive.store(prev, Ordering::Relaxed);
+    }
+
+    /// Pin: `zleactive` short-circuits per `Src/jobs.c:1074`. When
+    /// the line editor is active, never report a timing line even
+    /// if reporttime would otherwise trigger. Without this gate the
+    /// timing line corrupts the active prompt.
+    #[test]
+    fn should_report_time_zleactive_suppresses() {
+        use std::sync::atomic::Ordering;
+        let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
+        let prev = crate::ported::builtins::sched::zleactive
+            .load(Ordering::Relaxed);
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        // Build a job with one proc that would otherwise satisfy the
+        // elapsed-time threshold: bgtime now, endtime now + 10s,
+        // reporttime=1s.
+        let mut job = Job::new();
+        let now = std::time::Instant::now();
+        let mut p = Process::new(1);
+        p.bgtime = Some(now);
+        p.endtime = Some(now + std::time::Duration::from_secs(10));
+        job.procs.push(p);
+        // With zleactive=1, suppressed.
+        assert!(!should_report_time(&job, 1.0));
+        // With zleactive=0, fires.
+        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        assert!(should_report_time(&job, 1.0));
+        crate::ported::builtins::sched::zleactive.store(prev, Ordering::Relaxed);
+    }
+
+    /// Pin: reporttime<0 short-circuits per `Src/jobs.c:1065`.
+    /// Without `$REPORTTIME` set (or with REPORTTIME<0 sentinel),
+    /// no timing line is reported.
+    #[test]
+    fn should_report_time_negative_threshold_suppresses() {
+        let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
+        let mut job = Job::new();
+        let now = std::time::Instant::now();
+        let mut p = Process::new(1);
+        p.bgtime = Some(now);
+        p.endtime = Some(now + std::time::Duration::from_secs(10));
+        job.procs.push(p);
+        assert!(!should_report_time(&job, -1.0));
+    }
+
+    /// Pin: missing first proc returns 0 per `Src/jobs.c:1072`
+    /// (`if (!j->procs) return 0`).
+    #[test]
+    fn should_report_time_no_procs_returns_false() {
+        let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
+        let job = Job::new(); // no procs, no STAT_TIMED
+        assert!(!should_report_time(&job, 0.0));
     }
 }
