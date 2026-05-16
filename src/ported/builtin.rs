@@ -4532,6 +4532,10 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
                 crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 // Collect names then remove (avoid iterator/mutation conflict).
+                // c:4408 — `scanmatchtable(ht, pprog, ...)` walks every
+                // entry in the selected table. Previous Rust port left
+                // Tab::CmdNam returning an empty Vec, so `unhash -m PAT`
+                // (default cmd-hash table) silently matched zero entries.
                 let names: Vec<String> = match &tab {
                     Tab::Alias => crate::ported::hashtable::aliastab_lock().read()
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
@@ -4541,7 +4545,10 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
                     Tab::Shfunc => shfunctab_table().lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
-                    Tab::CmdNam => Vec::new(),
+                    // c:4408 — cmdnamtab walk via `cmdnamtab_lock().iter()`.
+                    Tab::CmdNam => crate::ported::hashtable::cmdnamtab_lock().read()
+                        .map(|t| t.iter().map(|(n,_)| n.clone()).collect())
+                        .unwrap_or_default(),
                 };
                 for nm in &names {
                     if crate::ported::pattern::pattry(&prog, nm) {           // c:4408
