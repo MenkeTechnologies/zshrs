@@ -6319,8 +6319,11 @@ pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 pub use crate::ported::params::locallevel as LOCALLEVEL;
 pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-// `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
-pub const ZEXIT_NORMAL: i32 = 0;
+// `ZEXIT_NORMAL` re-exported from canonical zsh_h.rs (port of the
+// `enum { ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED }` in Src/zsh.h).
+// Same single-source-of-truth pattern as TERM_UNKNOWN / HISTFLAG_*
+// / etc — duplicate const declarations are a drift hazard.
+pub use crate::ported::zsh_h::ZEXIT_NORMAL;
 
 // Local builders that construct C-shape `builtin` rows for the
 // static registration table below. They mirror the

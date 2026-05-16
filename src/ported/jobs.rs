@@ -2566,15 +2566,15 @@ pub fn release_pgrp() {                                                      // 
     }
 }
 
-/// Special process status values
-pub const SP_RUNNING: i32 = -1;
-
-/// Maximum pipestats
-pub const MAX_PIPESTATS: usize = 256;
-
-/// Job-table allocation chunk size.
-/// Port of `MAXJOBS_ALLOC` from `Src/zsh.h:1107`.
-pub const MAXJOBS_ALLOC: usize = 50;
+// SP_RUNNING / MAX_PIPESTATS / MAXJOBS_ALLOC moved to canonical home
+// at zsh_h.rs (ports of `Src/zsh.h:1097/1107/1166`). Re-export here
+// so existing jobs.rs callers keep their unqualified usage, with
+// single-source-of-truth values that can never drift from zsh_h.rs.
+//
+// Same consolidation pattern as the prior HISTFLAG_* / SUB_START /
+// TERM_UNKNOWN fixes — duplicate const declarations are a known
+// drift hazard.
+pub use crate::ported::zsh_h::{SP_RUNNING, MAX_PIPESTATS, MAXJOBS_ALLOC};
 
 // the process group of the shell at startup                                 // c:54
 /// Port of `origpgrp` from `Src/jobs.c:58`.
