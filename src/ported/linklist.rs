@@ -340,10 +340,22 @@ pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:
 }
 
 // Create linklist of specified size. node->dats are not initialized.      // c:331
-/// Port of `newsizedlist(int size)` (`Src/linklist.c:331`).
-#[allow(unused_variables)]
-pub fn newsizedlist<T>(size: usize) -> LinkList<T> {                        // c:331
-    LinkList::new()
+/// Port of `newsizedlist(int size)` from `Src/linklist.c:331-348`.
+///
+/// C body allocates a header + `size` pre-linked placeholder nodes
+/// with uninitialized data; the C `for` loop wires prev/next
+/// pointers (c:339-341). Callers iterate and fill data into each
+/// slot.
+///
+/// The previous Rust port returned an empty list (ignoring `size`),
+/// so any caller expecting `size` placeholder slots would iterate
+/// over nothing. Fix by pushing `size` default-constructed nodes.
+pub fn newsizedlist<T: Default>(size: usize) -> LinkList<T> {                // c:331
+    let mut list = LinkList::new();
+    for _ in 0..size {                                                       // c:339-341
+        list.push_back(T::default());
+    }
+    list
 }
 
 /// Port of `joinlists(LinkList first, LinkList second)` (`Src/linklist.c:360`).
@@ -390,6 +402,25 @@ mod tests {
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
         assert_eq!(list.flags, 0);
+    }
+
+    /// Pin `newsizedlist(N)` to canonical C body at
+    /// `Src/linklist.c:339-341`: pre-allocates N placeholder nodes
+    /// with uninitialized data, ready for callers to fill in.
+    /// The previous Rust port returned an empty list, ignoring `size`.
+    #[test]
+    fn newsizedlist_preallocates_n_slots() {
+        let list: LinkList<i32> = newsizedlist(5);
+        assert_eq!(list.len(), 5,
+            "c:339-341 — newsizedlist(5) must pre-allocate 5 nodes");
+        // Default-constructed i32 is 0; every slot ready for assign.
+        for v in list.iter() {
+            assert_eq!(*v, 0, "pre-allocated slots default to 0");
+        }
+
+        let zero_list: LinkList<String> = newsizedlist(0);
+        assert_eq!(zero_list.len(), 0,
+            "newsizedlist(0) is the same as new()");
     }
 
     #[test]
