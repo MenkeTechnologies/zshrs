@@ -29,6 +29,8 @@ pub use crate::aot;
 pub use crate::arith_compiler;
 pub use crate::ast_sexp;
 pub use crate::autoload_cache;
+pub use crate::dap;
+pub use crate::lsp;
 pub use crate::canonical_apply;
 pub use crate::compile_zsh;
 pub use crate::completion;

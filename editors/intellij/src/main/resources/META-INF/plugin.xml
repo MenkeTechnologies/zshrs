@@ -1,0 +1,108 @@
+<idea-plugin>
+    <id>com.menketechnologies.zshrs</id>
+    <name>zshrs</name>
+    <vendor email="linux.dev25@gmail.com" url="https://github.com/MenkeTechnologies/zshrs">MenkeTechnologies</vendor>
+
+    <description><![CDATA[
+        <p>JetBrains IDE support for <b>zshrs</b> — the first compiled Unix shell
+        (Rust bytecode VM + fusevm JIT + persistent worker pool).</p>
+
+        <ul>
+            <li><b>.zsh / .zshrc / .zlogin / .zlogout / .zprofile / .zshenv</b> file association
+                with syntax highlighting (keywords, builtins, sigils, parameters, options, redirections).</li>
+            <li><b>LSP integration</b> via <code>zshrs --lsp</code>: completion (builtins, options,
+                parameters, function names), hover docs, goto-definition, find-references, rename,
+                document symbols, folding, formatting, diagnostics.</li>
+            <li><b>Run configurations</b> for any zsh script with options for <code>--no-rcs</code>,
+                <code>--xtrace</code>, <code>--verbose</code>, <code>--disasm</code> (fusevm bytecode dump),
+                <code>--dump-ast</code>, working directory, script args.</li>
+            <li><b>Debugger</b> wired to <code>zshrs --dap HOST:PORT</code> over TCP: line breakpoints,
+                step over/into/out, frames, scopes, variables (scalars + arrays + hashes), evaluate.</li>
+            <li><b>Color settings page</b> with 40+ slots for tweaking token colors.</li>
+            <li><b>Settings → Tools → zshrs</b> to point at a non-PATH <code>zshrs</code> binary.</li>
+            <li><b>Reflection tool window</b> showing builtins, options, keywords, parameter flags
+                fetched live from <code>zshrs --dump-reflection</code>.</li>
+        </ul>
+
+        <p><b>Requirements:</b> a paid JetBrains IDE on 2024.2+ (RustRover, IDEA Ultimate, GoLand,
+        PyCharm Pro, WebStorm, etc.) because zshrs uses the platform LSP API. Community editions
+        are not supported.</p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <h3>0.11.4</h3>
+        <ul>
+            <li>Initial release. .zsh/.zshrc/etc file types, lexer-based highlighting,
+                LSP client over <code>zshrs --lsp</code>, DAP debugger over <code>zshrs --dap</code>,
+                run configurations, reflection tool window.</li>
+        </ul>
+    ]]></change-notes>
+
+    <!-- Platform LSP API (paid IDEs) -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.ultimate</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- File types -->
+        <fileType
+            name="zsh"
+            implementationClass="com.menketechnologies.zshrs.ZshrsFileType"
+            fieldName="INSTANCE"
+            language="zshrs"
+            extensions="zsh"
+            fileNames=".zshrc;.zshenv;.zlogin;.zlogout;.zprofile;.zpreztorc"/>
+
+        <!-- Highlighter -->
+        <lang.syntaxHighlighterFactory
+            language="zshrs"
+            implementationClass="com.menketechnologies.zshrs.ZshrsSyntaxHighlighterFactory"/>
+
+        <!-- Color settings page -->
+        <colorSettingsPage implementation="com.menketechnologies.zshrs.ZshrsColorSettingsPage"/>
+
+        <!-- Commenter (line comment with #) -->
+        <lang.commenter language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsCommenter"/>
+
+        <!-- LSP server provider -->
+        <platform.lsp.serverSupportProvider
+            implementation="com.menketechnologies.zshrs.lsp.ZshrsLspServerSupportProvider"/>
+
+        <!-- Settings -->
+        <applicationService serviceImplementation="com.menketechnologies.zshrs.ZshrsSettings"/>
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.menketechnologies.zshrs.ZshrsSettingsConfigurable"
+            id="com.menketechnologies.zshrs.settings"
+            displayName="zshrs"/>
+
+        <!-- Run configuration -->
+        <configurationType implementation="com.menketechnologies.zshrs.run.ZshrsRunConfigurationType"/>
+        <runConfigurationProducer
+            implementation="com.menketechnologies.zshrs.run.ZshrsRunConfigurationProducer"/>
+        <programRunner implementation="com.menketechnologies.zshrs.run.ZshrsProgramRunner"/>
+        <programRunner implementation="com.menketechnologies.zshrs.run.ZshrsDebugRunner"/>
+
+        <!-- Debugger: line-breakpoint type -->
+        <xdebugger.breakpointType implementation="com.menketechnologies.zshrs.dap.ZshrsBreakpointType"/>
+
+        <!-- Reflection tool window -->
+        <toolWindow
+            id="zshrs"
+            anchor="right"
+            secondary="false"
+            icon="com.menketechnologies.zshrs.ZshrsIcons.FILE"
+            factoryClass="com.menketechnologies.zshrs.toolwindow.ZshrsReflectionToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <action
+            id="zshrs.RunFile"
+            class="com.menketechnologies.zshrs.actions.RunZshrsFileAction"
+            text="Run with zshrs"
+            description="Run the selected zsh script with the zshrs interpreter"
+            icon="com.menketechnologies.zshrs.ZshrsIcons.FILE">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
