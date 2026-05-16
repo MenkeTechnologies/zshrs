@@ -4682,23 +4682,41 @@ pub fn resetparam(pm: &mut crate::ported::zsh_h::param, flags: i32) -> i32 { // 
 /// `paramtab().write().remove(...)` directly), so renaming is
 /// safe.
 pub fn unsetparam(name: &str) {                                              // c:3819
-    crate::ported::signals::queue_signals();                                  // c:3823
-    // c:3825-3828 — look up the pm node; on hit, route through
-    // `unsetparam_pm(pm, 0, 1)`. The Rust paramtab HashMap is
-    // the canonical store; remove the entry if present.
-    let found = {
+    crate::ported::signals::queue_signals();                                  // c:3825
+    // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
+    // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
+    //
+    // Two divergences in the previous Rust port:
+    //   1. Missing PM_NAMEREF check — `unsetparam("ref")` where `ref`
+    //      is a nameref would remove the ref alias itself. C explicitly
+    //      skips nameref params here (they're cleared via the
+    //      ref-specific path, not the value-side unset).
+    //   2. Bypassed `unsetparam_pm` — removed the entry directly from
+    //      paramtab without running the readonly-guard at c:3850, the
+    //      stdunsetfn dispatch at c:3870, or the `pm->old` scope
+    //      restore. `typeset -r x=foo; unset x` would silently succeed
+    //      in Rust where C rejects with `read-only variable: x`.
+    let (found, is_nameref) = {
         let tab = paramtab().read().unwrap();
-        tab.contains_key(name)
+        match tab.get(name) {
+            Some(pm) => (true, (pm.node.flags as u32 & PM_NAMEREF) != 0),
+            None => (false, false),
+        }
     };
-    if found {
-        // c:3827 — `unsetparam_pm(pm, 0, 1)`. The full body lives
-        // at unsetparam_pm; here we trigger the tear-down by
-        // removing from paramtab and clearing the env-side too
-        // (delenv) so the env entry doesn't dangle.
-        let _ = paramtab().write().unwrap().remove(name);
-        crate::ported::params::delenv(name);                                  // c:3870 delenv side
+    if found && !is_nameref {                                                // c:3826-3830
+        // c:3831 — `unsetparam_pm(pm, 0, 1)`. Take an owned copy out
+        // of paramtab so we can mutate it (unsetparam_pm wants
+        // &mut), run the readonly-guard + env teardown, then re-insert
+        // or fully remove based on the readonly path.
+        let mut pm_owned = paramtab().write().unwrap().remove(name).unwrap();
+        let rejected = unsetparam_pm(&mut pm_owned, 0, 1);                   // c:3831
+        if rejected != 0 {
+            // Readonly rejection — restore the entry so the state
+            // is unchanged.
+            paramtab().write().unwrap().insert(name.to_string(), pm_owned);
+        }
     }
-    crate::ported::signals::unqueue_signals();                                // c:3829
+    crate::ported::signals::unqueue_signals();                                // c:3832
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
@@ -9256,6 +9274,77 @@ mod tests {
             Some(v) => env::set_var("ZSHRS_TEST_LOCALE_GSU", v),
             None => env::remove_var("ZSHRS_TEST_LOCALE_GSU"),
         }
+    }
+
+    /// Pin `unsetparam` to its canonical C body at `Src/params.c:3819-3833`.
+    /// Two guards the previous Rust port skipped:
+    ///   1. PM_NAMEREF params are NOT removed by unsetparam (c:3830).
+    ///   2. PM_READONLY rejection per unsetparam_pm c:3850 — readonly
+    ///      params survive the unset call.
+    #[test]
+    fn unsetparam_skips_nameref_and_readonly() {
+        use crate::ported::zsh_h::{PM_NAMEREF, PM_READONLY, PM_SCALAR};
+
+        let saved_exec = crate::ported::options::opt_state_get("exec")
+            .unwrap_or(false);
+        crate::ported::options::opt_state_set("exec", true);
+
+        // Helper: install a scalar param with the given flag-set.
+        fn install(name: &str, value: &str, flags: u32) {
+            let mut tab = paramtab().write().unwrap();
+            tab.insert(name.to_string(), Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: (PM_SCALAR | flags) as i32,
+                },
+                u_data: 0, u_arr: None, u_str: Some(value.to_string()),
+                u_val: 0, u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None,
+                gsu_a: None, gsu_h: None,
+                base: 0, width: 0,
+                env: None, ename: None, old: None, level: 0,
+            }));
+        }
+
+        // c:3830 — nameref params skip the unset.
+        let nameref_name = "zshrs_test_unsetparam_nameref";
+        install(nameref_name, "target_var_name", PM_NAMEREF);
+        unsetparam(nameref_name);
+        {
+            let tab = paramtab().read().unwrap();
+            assert!(tab.contains_key(nameref_name),
+                "c:3830 — PM_NAMEREF param survives unsetparam");
+        }
+
+        // c:3850 (via unsetparam_pm) — readonly rejection.
+        let ro_name = "zshrs_test_unsetparam_readonly";
+        install(ro_name, "locked", PM_READONLY);
+        unsetparam(ro_name);
+        {
+            let tab = paramtab().read().unwrap();
+            assert!(tab.contains_key(ro_name),
+                "c:3850 — PM_READONLY param survives unsetparam");
+        }
+
+        // Plain scalar removed normally.
+        let plain_name = "zshrs_test_unsetparam_plain";
+        install(plain_name, "removable", 0);
+        unsetparam(plain_name);
+        {
+            let tab = paramtab().read().unwrap();
+            assert!(!tab.contains_key(plain_name),
+                "plain scalar successfully removed");
+        }
+
+        // Clean up.
+        {
+            let mut tab = paramtab().write().unwrap();
+            tab.remove(nameref_name);
+            tab.remove(ro_name);
+            tab.remove(plain_name);
+        }
+        crate::ported::options::opt_state_set("exec", saved_exec);
     }
 
     /// Pin `assigniparam` to its canonical C body at `Src/params.c:3754-3761`.
