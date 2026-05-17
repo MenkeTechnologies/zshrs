@@ -1463,10 +1463,40 @@ pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [        // 
     Some("+("), Some("!("), Some("\\!("), Some("@("),
 ];
 
-/// Port of `savepatterndisables()` from `Src/pattern.c:4220`. Returns
-/// the current disables list (caller restores via restorepatterndisables).
-pub fn savepatterndisables() -> Vec<String> {                                 // c:4220
-    patterndisables.lock().unwrap().clone()
+/// Port of `unsigned int savepatterndisables(void)` from
+/// `Src/pattern.c:4220`.
+///
+/// C body (c:4220-4233):
+/// ```c
+/// unsigned int disables, bit;
+/// char *disp;
+/// disables = 0;
+/// for (bit = 1, disp = zpc_disables;
+///      disp < zpc_disables + ZPC_COUNT;
+///      bit <<= 1, disp++) {
+///     if (*disp) disables |= bit;
+/// }
+/// return disables;
+/// ```
+///
+/// Encodes the current `zpc_disables[ZPC_COUNT]` byte-array as a u32
+/// bitmask (one bit per slot, low bit = zpc_disables[0]).
+/// The previous Rust port returned a `Vec<String>` clone of
+/// `patterndisables` (a completely different data structure — names
+/// list, not the per-token byte array). `restorepatterndisables(u32)`
+/// at c:4258 reads this bitmask back into `zpc_disables`, so the
+/// returned shape MUST be the u32 bitmask.
+pub fn savepatterndisables() -> u32 {                                         // c:4220
+    let disp = zpc_disables.lock().unwrap();                                  // c:4225 disp = zpc_disables
+    let mut disables: u32 = 0;                                                // c:4224
+    let mut bit: u32 = 1;                                                     // c:4226 bit = 1
+    for i in 0..(ZPC_COUNT as usize) {                                        // c:4226-4228
+        if disp[i] != 0 {                                                     // c:4230
+            disables |= bit;                                                  // c:4231
+        }
+        bit <<= 1;                                                            // c:4226 bit <<= 1
+    }
+    disables                                                                  // c:4232
 }
 
 /// Port of `startpatternscope()` from `Src/pattern.c:4241`. Begins a
@@ -2875,5 +2905,46 @@ mod tests {
         opt_state_set("extendedglob", saved_extended);
         opt_state_set("kshglob",      saved_ksh);
         opt_state_set("shglob",       saved_sh);
+    }
+
+    /// `Src/pattern.c:4220-4233` — `savepatterndisables` encodes the
+    /// `zpc_disables[ZPC_COUNT]` byte-array as a u32 bitmask (low bit
+    /// = slot 0). The previous Rust port returned the WRONG data
+    /// structure (a `Vec<String>` clone of `patterndisables`, a
+    /// completely separate name-list global). Pin the round-trip
+    /// against `restorepatterndisables` so a regen re-introducing the
+    /// type mismatch breaks the test.
+    #[test]
+    fn savepatterndisables_returns_u32_bitmask_round_trip() {
+        // Save existing state.
+        let saved = savepatterndisables();
+        // Clear everything, install a known pattern.
+        restorepatterndisables(0);
+        assert_eq!(savepatterndisables(), 0,
+            "c:4220 — all-zeros zpc_disables → 0 bitmask");
+        // Set slot 0 and slot 3.
+        let want = (1u32 << 0) | (1u32 << 3);
+        restorepatterndisables(want);
+        assert_eq!(savepatterndisables(), want,
+            "c:4220 — round-trip: restore → save must yield same bitmask");
+        // Restore prior state so test isolation holds.
+        restorepatterndisables(saved);
+    }
+
+    /// `Src/pattern.c:4220-4233` — every set bit in the output bitmask
+    /// corresponds to a non-zero slot in `zpc_disables`. Sweep all
+    /// ZPC_COUNT slots so a regen that off-by-one's the loop bounds
+    /// gets caught.
+    #[test]
+    fn savepatterndisables_each_slot_maps_to_its_bit() {
+        let saved = savepatterndisables();
+        for slot in 0..(ZPC_COUNT as usize) {
+            restorepatterndisables(1u32 << slot);
+            let got = savepatterndisables();
+            assert_eq!(got, 1u32 << slot,
+                "c:4220 — slot {} must map to bit {}, got 0x{:x}",
+                slot, slot, got);
+        }
+        restorepatterndisables(saved);
     }
 }
