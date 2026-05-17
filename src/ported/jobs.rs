@@ -1048,14 +1048,44 @@ pub fn freejob(jn: &mut Job, deleting: bool) {                              // c
 /// STAT_SUPERJOB recursive cleanup paths require substrate not yet
 /// wired (mypgrp, jobtab[] reference); doc-pinned for follow-up.
 pub fn deletejob(jn: &mut Job, disowning: bool) {                           // c:1512
+    use crate::ported::zsh_h::{STAT_ATTACH, STAT_SUPERJOB, STAT_SUBJOB, STAT_SUBJOB_ORPHANED};
     // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
     // disowning, files are NOT deleted from disk; the filelist entries
     // are simply dropped.
     deletefilelist(jn, disowning);
-    // c:1515-1518 — STAT_ATTACH path: attachtty(mypgrp) +
-    // adjustwinsize(0). mypgrp global not modeled here; doc-pin.
-    // c:1519-1523 — STAT_SUPERJOB path: mark sub-job orphaned.
-    // jobtab[] access not in scope; doc-pin.
+    // c:1515-1518 — `if (jn->stat & STAT_ATTACH) { attachtty(mypgrp);
+    //                adjustwinsize(0); }`. `attachtty(mypgrp)` is the
+    // canonical `tcsetpgrp(0, mypgrp)` (the same pattern used inline at
+    // jobs.rs:2503/2527). `adjustwinsize(0)` re-reads $LINES/$COLUMNS
+    // from TIOCGWINSZ; on Rust we route through the canonical utils
+    // adjustcolumns/adjustlines which lazy-evaluate on demand, so the
+    // call is a no-op (the next adjust* read picks up the new pgrp).
+    if (jn.stat & STAT_ATTACH) != 0 {                                        // c:1515
+        #[cfg(unix)]
+        unsafe {
+            let pgrp = crate::ported::modules::clone::mypgrp
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if pgrp > 0 {
+                libc::tcsetpgrp(0, pgrp);                                    // c:1516 attachtty(mypgrp)
+            }
+        }
+        // c:1517 — `adjustwinsize(0);` — Rust adjust* are lazy-read.
+    }
+    // c:1519-1523 — `if (jn->stat & STAT_SUPERJOB) { Job jno = jobtab +
+    //                jn->other; if (jno->stat & STAT_SUBJOB)
+    //                  jno->stat |= STAT_SUBJOB_ORPHANED; }`.
+    if (jn.stat & STAT_SUPERJOB) != 0 {                                      // c:1519
+        let other = jn.other as usize;
+        if let Some(tab) = JOBTAB.get() {                                    // c:1520 jobtab + jn->other
+            if let Ok(mut jobs) = tab.lock() {
+                if let Some(jno) = jobs.get_mut(other) {
+                    if (jno.stat & STAT_SUBJOB) != 0 {                       // c:1521
+                        jno.stat |= STAT_SUBJOB_ORPHANED;                    // c:1522
+                    }
+                }
+            }
+        }
+    }
     // c:1525 — `freejob(jn, 1);` full reset of all per-job state.
     freejob(jn, true);
 }
