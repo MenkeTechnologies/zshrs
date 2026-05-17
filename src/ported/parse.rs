@@ -3512,16 +3512,74 @@ pub fn load_dump_file(
 }
 
 /// Port of `try_dump_file(char *path, char *name, char *file, int *ksh, int test_only)`
-/// from `Src/parse.c:3746`. Tries to load a function from a `.zwc`
-/// in the given fpath directory. Returns `(found, ksh_load)` —
-/// stub: returns false until the dump-cache port (`FuncDump`) lands.
+/// from `Src/parse.c:3746`. Tries to load function `name` from a
+/// `.zwc` digest (`<path>.zwc`) or per-function compiled file
+/// (`<file>.zwc`) when each is newer than its uncompiled source.
 pub fn try_dump_file(
-    _path: &str,
-    _name: &str,
-    _file: &str, // c:3746
-    _test_only: bool,
-) -> Option<(bool, bool)> {
-    None
+    path: &str,
+    name: &str,
+    file: &str,                                                              // c:3746
+    test_only: bool,
+) -> Option<(Vec<u32>, bool)> {
+    use std::fs;
+
+    // c:3753-3758 — if path ends in .zwc, treat as direct digest.
+    if path.ends_with(FD_EXT) {
+        crate::ported::signals::queue_signals();
+        let result = fs::metadata(path)
+            .ok()
+            .and_then(|m| check_dump_file(path, &m, name, test_only));
+        crate::ported::signals::unqueue_signals();
+        return result;
+    }
+
+    // c:3759-3760 — dig = "<path>.zwc", wc = "<file>.zwc".
+    let dig = format!("{}{}", path, FD_EXT);
+    let wc = format!("{}{}", file, FD_EXT);
+
+    // c:3762-3764 — zwcstat(dig, &std); stat(wc, &stc); stat(file, &stn);
+    let std_meta = fs::metadata(&dig);
+    let stc_meta = fs::metadata(&wc);
+    let stn_meta = fs::metadata(file);
+
+    crate::ported::signals::queue_signals();
+
+    // c:3771-3777 — try digest if newer than (or in absence of) wc/file.
+    if let Ok(std_m) = &std_meta {
+        let dig_mtime = std_m.modified().ok();
+        let wc_newer_or_missing = match &stc_meta {
+            Err(_) => true,
+            Ok(c) => dig_mtime >= c.modified().ok(),
+        };
+        let src_newer_or_missing = match &stn_meta {
+            Err(_) => true,
+            Ok(n) => dig_mtime >= n.modified().ok(),
+        };
+        if wc_newer_or_missing && src_newer_or_missing {
+            if let Some(prog) = check_dump_file(&dig, std_m, name, test_only) {
+                crate::ported::signals::unqueue_signals();
+                return Some(prog);
+            }
+        }
+    }
+
+    // c:3779-3784 — try per-function .zwc if newer than (or in absence of) source.
+    if let Ok(stc_m) = &stc_meta {
+        let wc_mtime = stc_m.modified().ok();
+        let src_newer_or_missing = match &stn_meta {
+            Err(_) => true,
+            Ok(n) => wc_mtime >= n.modified().ok(),
+        };
+        if src_newer_or_missing {
+            if let Some(prog) = check_dump_file(&wc, stc_m, name, test_only) {
+                crate::ported::signals::unqueue_signals();
+                return Some(prog);
+            }
+        }
+    }
+
+    crate::ported::signals::unqueue_signals();                               // c:3787
+    None                                                                     // c:3788
 }
 
 /// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
@@ -3740,17 +3798,84 @@ pub fn closedumps() {
 
 /// Port of `dump_autoload(char *nam, char *file, int on, Options ops, int func)`
 /// from `Src/parse.c:4042`. Registers every function in a `.zwc`
-/// for autoload via `shfunctab`. Stub: returns 1 (error) until the
-/// dump-cache port lands.
+/// for autoload via `shfunctab`.
 pub fn dump_autoload(
     nam: &str,
-    file: &str, // c:4042
-    _on: i32,
-    _ops: &crate::ported::zsh_h::options,
-    _func: i32,
+    file: &str,                                                              // c:4042
+    on: i32,
+    ops: &crate::ported::zsh_h::options,
+    func: i32,
 ) -> i32 {
-    zwarnnam(nam, &format!("{}: zwc-based autoload not yet ported", file));
-    1
+    use crate::ported::zsh_h::shfunc;
+    let mut ret = 0;                                                         // c:4047
+
+    // c:4049-4050 — if (!strsfx(FD_EXT, file)) file = dyncat(file, FD_EXT);
+    let file_owned;
+    let file = if !file.ends_with(FD_EXT) {
+        file_owned = format!("{}{}", file, FD_EXT);
+        file_owned.as_str()
+    } else {
+        file
+    };
+
+    // c:4052-4053 — if (!(h = load_dump_header(nam, file, 1))) return 1;
+    let h = match load_dump_header(nam, file, 1) {
+        Some(buf) => buf,
+        None => return 1,
+    };
+
+    // c:4055-4056 — for (n = firstfdhead(h); n < e; n = nextfdhead(n))
+    let hlen = fdheaderlen(&h) as usize;                                     // c:4055
+    let mut n_off = firstfdhead_offset();
+    while n_off < hlen {
+        let head = match read_fdhead(&h, n_off) {
+            Some(hd) => hd,
+            None => break,
+        };
+        // c:4057-4061 — shf = zshcalloc; shf->node.flags = on; ...addnode(fdname + fdhtail)
+        let name_full = fdname(&h, n_off);
+        let tail = fdhtail(&head) as usize;
+        let basename: String = name_full.chars().skip(tail).collect();
+        let mut shf = shfunc {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: basename.clone(),
+                flags: on,                                                   // c:4058
+            },
+            filename: None,
+            lineno: 0,
+            funcdef: None,
+            redir: None,
+            sticky: None,                                                    // c:4060 NULL
+            body: None,
+        };
+        // c:4059 — shf->funcdef = mkautofn(shf);  (placeholder Eprog ptr)
+        let _ = crate::ported::builtin::mkautofn(&mut shf as *mut _);
+        // c:4061 — shfunctab->addnode(...)
+        let snapshot = shf.clone();
+        {
+            let mut tab = crate::ported::hashtable::shfunctab_lock()
+                .write()
+                .expect("shfunctab poisoned");
+            tab.add(shf);
+        }
+        // c:4062-4063 — if (OPT_ISSET(ops,'X') && eval_autoload(...)) ret = 1;
+        if crate::ported::zsh_h::OPT_ISSET(ops, b'X') {
+            let mut shf_ref = snapshot;
+            if crate::ported::builtin::eval_autoload(
+                &mut shf_ref as *mut _,
+                &basename,
+                ops,
+                func,
+            ) != 0
+            {
+                ret = 1;
+            }
+        }
+        n_off = nextfdhead_offset(&h, n_off);
+    }
+    let _ = nam;
+    ret                                                                      // c:4065
 }
 
 /// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
@@ -8007,6 +8132,56 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// `try_source_file` MUST refuse a stale `.zwc` cache when the
+    /// uncompiled source has been modified more recently. The C body
+    /// at c:3819 reads `stc.st_mtime >= stn.st_mtime` — explicitly
+    /// `>=`, meaning only an equal-or-newer zwc is acceptable.
+    ///
+    /// A regression that ignored the mtime check (or used the wrong
+    /// direction) would silently keep loading the OLD compiled body
+    /// after the user edited the source file — every `source foo.zsh`
+    /// would replay yesterday's code, the worst-class shell bug.
+    ///
+    /// Pin: create source + .zwc, then touch source to make it
+    /// newer. try_source_file must return None.
+    #[test]
+    fn try_source_file_skips_stale_zwc() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("script.zsh");
+        let zwc = dir.path().join("script.zsh.zwc");
+        // Create zwc FIRST (older), then source (newer).
+        fs::write(&zwc, b"placeholder zwc").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(&src, b"echo hi").unwrap();
+
+        let result = try_source_file(src.to_str().unwrap());
+        assert!(result.is_none(),
+            "c:3819 — stale .zwc (older than source) MUST be rejected; \
+             got {:?}", result);
+    }
+
+    /// `try_source_file` returns None when no `.zwc` exists for the
+    /// requested file (c:3819 `if let Ok(meta_c) = &stc` gate fails).
+    /// This is the common case — most user scripts don't ship with
+    /// a pre-compiled `.zwc`. The fn returning None lets the caller
+    /// fall through to the source-read path. A regression that
+    /// returned `Some(file)` on missing `.zwc` would route every
+    /// `source foo.zsh` through `check_dump_file` against a
+    /// non-existent file and crash.
+    #[test]
+    fn try_source_file_returns_none_when_no_zwc() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("plain.zsh");
+        fs::write(&src, b"echo hi").unwrap();
+        // No .zwc sibling.
+
+        let result = try_source_file(src.to_str().unwrap());
+        assert!(result.is_none(),
+            "c:3819 gate fails when stat(wc) returns Err → None");
+    }
 
     /// Test helper. Mirrors zsh's `errflag` save/clear/check pattern
     /// around a parse — see `Src/init.c:loop` which clears errflag

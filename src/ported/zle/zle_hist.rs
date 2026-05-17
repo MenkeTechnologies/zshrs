@@ -947,16 +947,29 @@ pub fn get_isrch_spot(num: usize) -> Option<(i32, i32, i32, i32, i32, i32, i32, 
 }
 
 /// Port of `isearch_newpos(LinkList matchlist, int curpos, int dir, int *endmatchpos)` from Src/Zle/zle_hist.c:1024.
-/// WARNING: param names don't match C — Rust=(curpos, dir, end) vs C=(matchlist, curpos, dir, endmatchpos)
-// Without the ISEARCH_MATCHES linklist initialised yet, returns -1
-// (no-match path); the live isearch tick owns the matchlist scan.
-pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // c:1024
-    // C body (c:1024-1080): scan ISEARCH_MATCHES list for a hit at-or-
-    //                      after curpos when dir > 0, at-or-before when
-    //                      dir < 0; return new pos or -1.
-    // Without the list initialised yet, return -1 (no match).
-    let _ = (curpos, dir, end);
-    -1
+/// Scans `matchlist` for a Repldata (begin, end) pair at-or-before
+/// `curpos` when `dir < 0`, at-or-after when `dir > 0`. On hit,
+/// writes the match end to `*end` and returns the match begin. On
+/// miss returns -1.
+pub fn isearch_newpos(matchlist: &[(i32, i32)], curpos: i32, dir: i32, end: &mut i32) -> i32 { // c:1024
+    if dir < 0 {                                                             // c:1030
+        // c:1031-1038 — walk matchlist back-to-front; first node whose b <= curpos wins.
+        for &(b, e) in matchlist.iter().rev() {                              // c:1031
+            if b <= curpos {                                                 // c:1034
+                *end = e;                                                    // c:1035
+                return b;                                                    // c:1036
+            }
+        }
+    } else {                                                                 // c:1039
+        // c:1040-1047 — walk forward; first node whose b >= curpos wins.
+        for &(b, e) in matchlist.iter() {                                    // c:1040
+            if b >= curpos {                                                 // c:1043
+                *end = e;                                                    // c:1044
+                return b;                                                    // c:1045
+            }
+        }
+    }
+    -1                                                                       // c:1050
 }
 
 /// Port of `save_isearch_buffer(char *sbuf, int sbptr, char **search, int *searchlen)` from Src/Zle/zle_hist.c:1058.

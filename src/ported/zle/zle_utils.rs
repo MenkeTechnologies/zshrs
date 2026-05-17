@@ -560,11 +560,29 @@ pub fn findline() -> (usize, usize) {  // c:1180
 }
 
 /// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197.
+/// Returns 1 for affirmative ('y'/'\t'), 0 for negative ('n'/ctrl/EOF).
 pub fn getzlequery() -> i32 {                                                // c:1197
-    // C body c:1199-1300 — reads y/n response from terminal interactive
-    //                      prompt. Without a live tty read we report
-    //                      cancel (-1).
-    -1
+    use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::ERRFLAG_INT;
+    use std::sync::atomic::Ordering;
+    // c:1201-1210 — FIONREAD typeahead check → negative response if buffered.
+    //               Without a live tty fd here, skip the typeahead probe.
+    // c:1213 — c = getfullchar(0);
+    let c = crate::ported::zle::zle_main::getfullchar(false);
+    // c:1218 — errflag &= ~ERRFLAG_INT;
+    errflag.fetch_and(!ERRFLAG_INT, Ordering::Relaxed);
+    // c:1219-1224 — '\t' → 'y'; ctrl/EOF → 'n'; else tolower.
+    let c = match c {
+        Some('\t') => 'y',                                                   // c:1219-1220
+        Some(ch) if ch.is_control() => 'n',                                  // c:1221-1222 ZC_icntrl
+        None => 'n',                                                         // c:1221 ZLEEOF
+        Some(ch) => ch.to_ascii_lowercase(),                                 // c:1223-1224
+    };
+    // c:1226-1231 — echo response (skipping newline). No live tty echo
+    //               here; the canonical zlewrites lands when the
+    //               refresh substrate is wired.
+    // c:1232 — return c == ZWC('y');
+    if c == 'y' { 1 } else { 0 }
 }
 
 /// Position save/restore

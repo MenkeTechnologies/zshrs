@@ -1317,20 +1317,62 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
 /// Per C `cd_try_chdir` (c:1116-1181), the return is `buf` — the
 /// composed path the chdir was attempted against, after `fixdir()`
 /// logical-normalisation (resolving `.`/`..` only, NOT symlinks).
-/// Only when `chasinglinks` is set (c:1163) does the path become
-/// the resolved cwd; the default keeps the logical path so
-/// subsequent `pwd` reads "/tmp" not "/private/tmp" on macOS.
-/// WARNING: param names don't match C — Rust=(_cnam, dest, _hard) vs C=(cnam, dest, hard)
-pub fn cd_do_chdir(_cnam: &str, dest: &str, _hard: i32) -> Option<String> {  // c:967
-    // c:1003-1008 — `if (*dest == '/')` absolute-path branch:
-    //   `if ((ret = cd_try_chdir(NULL, dest, hard))) return ret;`
-    // Static-link path: chdir directly; return the LOGICAL path
-    // that succeeded (the `buf` variable in C c:1180 `metafy(buf,
-    // -1, META_NOALLOC)`).
-    match std::env::set_current_dir(dest) {                                  // c:1172 lchdir
-        Ok(_) => Some(dest.to_string()),                                     // c:1180 return metafy(buf, ...)
-        Err(_) => None,                                                      // c:1088 zwarnnam + return NULL
+/// Walks $cdpath when dest is relative and not `./` or `../`.
+pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {    // c:967
+    // c:996-998 — nocdpath = first segment is "." or ".."
+    let nocdpath = dest.starts_with("./") || dest == "."
+        || dest.starts_with("../") || dest == "..";
+
+    // c:1003-1008 — absolute path: try as-is, warn on failure.
+    if dest.starts_with('/') {
+        if let Some(ret) = cd_try_chdir("", dest, hard) {
+            return Some(ret);
+        }
+        crate::ported::utils::zwarnnam(cnam,
+            &format!("{}: {}", std::io::Error::last_os_error(), dest));
+        return None;
     }
+
+    // c:1015-1018 — check $cdpath for "." (presence flips hasdot).
+    let posix_cd = crate::ported::zsh_h::isset(
+        crate::ported::options::optlookup("posixcd"));
+    let cdpath_str = crate::ported::params::getsparam("CDPATH").unwrap_or_default();
+    let cdpath: Vec<&str> = if cdpath_str.is_empty() { Vec::new() }
+                            else { cdpath_str.split(':').collect() };
+    let hasdot = !nocdpath && !posix_cd
+        && cdpath.iter().any(|p| p.is_empty() || *p == ".");
+
+    // c:1026-1031 — if no dot in cdpath (and !POSIXCD), try as-is first.
+    if !hasdot && !posix_cd {
+        if let Some(ret) = cd_try_chdir("", dest, hard) {
+            return Some(ret);
+        }
+    }
+
+    // c:1034-1043 — walk $cdpath unless nocdpath.
+    if !nocdpath {
+        for pp in cdpath.iter() {
+            if let Some(ret) = cd_try_chdir(pp, dest, hard) {
+                // c:1037-1040 — print resolved path when from CDPATH (non-".").
+                if !pp.is_empty() && *pp != "." {
+                    println!("{}", ret);
+                }
+                return Some(ret);
+            }
+        }
+    }
+
+    // c:1057-1063 — POSIXCD-mode last-resort: try dest as-is.
+    if posix_cd {
+        if let Some(ret) = cd_try_chdir("", dest, hard) {
+            return Some(ret);
+        }
+    }
+
+    // c:1071 — failure warning.
+    crate::ported::utils::zwarnnam(cnam,
+        &format!("no such file or directory: {}", dest));
+    None
 }
 
 /// Port of `cd_able_vars(char *s)` from Src/builtin.c:1088.
@@ -1358,23 +1400,57 @@ pub fn cd_able_vars(s: &str) -> Option<String> {                             // 
         .map(|val| format!("{}{}", val, tail))
 }
 
-/// Port of `cd_try_chdir(char *pfix, char *dest, int hard)` from Src/builtin.c:1116.
-/// C: `static char *cd_try_chdir(char *pfix, char *dest, int hard)` —
-///   compose `pfix/dest`, attempt chdir, optionally chase symlinks.
-#[allow(unused_variables)]
-pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {  // c:1116
-    // c:1116 — `dlen = strlen(pfix) + 1; buf = ...; sprintf(buf, "%s/%s", pfix, dest);`
-    let buf = if pfix.is_empty() {
+/// Port of `cd_try_chdir(char *pfix, char *dest, int hard)` from `Src/builtin.c:1116`.
+/// Compose `pfix/dest` (or `pwd/pfix/dest` for relative pfix, or
+/// `pwd/dest` for empty pfix + relative dest), normalise via `fixdir`,
+/// then attempt chdir. Falls back to `dest` alone when the full path
+/// fails but `pfix` was present (cwd/parent may have been renamed).
+pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {   // c:1116
+    use std::sync::atomic::Ordering;
+    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+
+    // c:1122-1158 — build buf from pfix/dest/pwd combinations.
+    let mut buf = if !pfix.is_empty() {
+        if pfix.starts_with('/') {                                           // c:1123
+            // c:1133 — buf = tricat(pfix, "/", dest)
+            if pfix.ends_with('/') {
+                format!("{}{}", pfix, dest)
+            } else {
+                format!("{}/{}", pfix, dest)
+            }
+        } else {
+            // c:1135-1146 — pwd + "/" + pfix + "/" + dest
+            let pwd_trim = if pwd == "/" { "" } else { pwd.as_str() };
+            format!("{}/{}/{}", pwd_trim, pfix, dest)
+        }
+    } else if dest.starts_with('/') {                                        // c:1148
+        // c:1149 — buf = ztrdup(dest)
         dest.to_string()
-    } else if pfix.ends_with('/') {
-        format!("{}{}", pfix, dest)
-    } else {
-        format!("{}/{}", pfix, dest)                                         // c:1122
+    } else {                                                                 // c:1150
+        // c:1151-1157 — pwd + "/" + dest (trimming trailing slash off pwd)
+        let pwd_trim = pwd.trim_end_matches('/');
+        format!("{}/{}", pwd_trim, dest)
     };
-    match std::env::set_current_dir(&buf) {                                  // c:1183
-        Ok(_) => Some(buf),
-        Err(_) => None,                                                      // c:1185
+
+    // c:1163-1166 — fixdir normalisation, skipped if chasing symlinks.
+    if CHASINGLINKS.load(Ordering::Relaxed) == 0 {
+        buf = fixdir(&buf);                                                  // c:1164
     }
+
+    // c:1172-1183 — try lchdir(buf); on failure and (pfix || dest abs) was
+    //               not the input shape that allows fallback, give up.
+    let _ = hard;
+    if crate::ported::utils::lchdir(&buf).is_ok() {
+        return Some(buf);
+    }
+    // c:1173 — fallback: try `dest` alone when pfix was non-empty
+    //          and dest isn't already absolute.
+    if !pfix.is_empty() && !dest.starts_with('/') {
+        if crate::ported::utils::lchdir(dest).is_ok() {
+            return Some(dest.to_string());
+        }
+    }
+    None                                                                     // c:1185
 }
 
 /// Port of `cd_new_pwd(int func, LinkNode dir, int quiet)` from Src/builtin.c:1187.
@@ -1389,20 +1465,57 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {  // c
 /// caller writes PWD directly. This fn handles only the post-write
 /// side effects (chpwd hooks, dirstack size cap).
 /// WARNING: param names don't match C — Rust=(_func, _dir, _quiet) vs C=(func, dir, quiet)
-pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // c:1187
-    // c:1187-1273 — rolllist/remnode/getlinknode dispatch on BIN_PUSHD/
-    // BIN_POPD, stat-comparison + setsparam(PWD/OLDPWD), chpwd_functions.
-    // c:1238-1242 — PWD/OLDPWD write moved to caller (`bin_cd`) so
-    // the LOGICAL dest_path is preserved instead of being overwritten
-    // by `getcwd()` (which resolves symlinks, breaking parity).
-    let _old = crate::ported::params::getsparam("PWD");
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(s) = cwd.to_str() {
-            // PWD already set by caller; preserve OLDPWD write only if
-            // bin_cd's path is bypassed (legacy callers).
-            let _ = s;
+pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {                       // c:1187
+    use crate::ported::zsh_h::isset;
+    // c:1193-1194 — if (func == BIN_PUSHD) rolllist(dirstack, dir);
+    {
+        let mut ds = crate::ported::modules::parameter::DIRSTACK.lock().unwrap();
+        if func == BIN_PUSHD && !ds.is_empty() && dir < ds.len() {
+            let entry = ds.remove(dir);
+            ds.insert(0, entry);                                             // rotate selected to top
+        }
+        // c:1195 — new_pwd = remnode(dirstack, dir);
+        let _new_pwd = if dir < ds.len() { Some(ds.remove(dir)) } else { None };
+        // c:1197-1199 — if (BIN_POPD && nonempty) new_pwd = getlinknode(dirstack);
+        if func == BIN_POPD && !ds.is_empty() {
+            // pop_front equivalent — discard top after rotate above.
+            ds.remove(0);
+        } else if func == BIN_CD && !isset(crate::ported::options::optlookup("autopushd"))
+        {
+            // c:1200-1201 — getlinknode(dirstack) discards top
+            if !ds.is_empty() {
+                ds.remove(0);
+            }
+        }
+        // c:1210-1218 — PUSHDIGNOREDUPS: dedupe matching entry.
+        if isset(crate::ported::options::optlookup("pushdignoredups")) {
+            if let Some(cwd) = std::env::current_dir().ok().and_then(|p| p.to_str().map(String::from)) {
+                ds.retain(|d| *d != cwd);
+            }
         }
     }
+
+    // c:1236-1242 — shift PWD → OLDPWD, set new PWD.
+    if let Some(pwd) = crate::ported::params::getsparam("PWD") {
+        crate::ported::params::setsparam("OLDPWD", &pwd);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(s) = cwd.to_str() {
+            crate::ported::params::setsparam("PWD", s);
+        }
+    }
+
+    // c:1245-1252 — print dirstack on PUSHD/POPD (unless silent/quiet).
+    if quiet == 0 && func != BIN_CD
+        && isset(crate::ported::zsh_h::INTERACTIVE)
+        && !isset(crate::ported::options::optlookup("pushdsilent"))
+    {
+        printdirstack();
+    }
+
+    // c:1264 — runhookdef(GETCOLORATTR/chpwd) — fire chpwd hooks.
+    // Hook table integration not surfaced here; chpwd_functions array
+    // is populated via $hook_functions and read by the executor wrapper.
 }
 
 /// Port of `printdirstack()` from Src/builtin.c:1277.
@@ -6969,28 +7082,59 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
 
 /// Port of `findcmd(char *arg0, int docopy, int default_path)` from Src/exec.c:897. Walk `$PATH` for `name`,
 /// returning the matching path on success. `_docopy` is the C source's
-/// "duplicate the result" flag; Rust ownership covers it. `_default_path`
+/// "duplicate the result" flag; Rust ownership covers it. `default_path`
 /// = 1 forces the system default `/bin:/usr/bin:...` path search (used
-/// by `command -p`); not yet wired.
-/// WARNING: param names don't match C — Rust=(name, _docopy, _default_path) vs C=(errflag)
-pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> { // c:897
-    if name.contains('/') {
-        let p = std::path::Path::new(name);
-        return if p.is_file() { Some(name.to_string()) } else { None };
+/// by `command -p`).
+pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> { // c:897
+    // c:903-908 — if (default_path) { search_defpath; return; }
+    if default_path != 0 {
+        for dir in crate::ported::config_h::DEFAULT_PATH.split(':') {
+            if dir.is_empty() { continue; }
+            let candidate = format!("{}/{}", dir, arg0);
+            if std::path::Path::new(&candidate).is_file() {
+                return Some(candidate);
+            }
+        }
+        return None;                                                         // c:907
     }
-    // c:907-912 — walk `path[]` (the shell $path array). Read $PATH
-    //              from paramtab so shell-private PATH edits via
-    //              `path=(...)` show up; OS env-only PATH would miss
-    //              them in nested shells.
+    // c:912-913 — strlen(arg0) > PATH_MAX → NULL
+    if arg0.len() > libc::PATH_MAX as usize {
+        return None;
+    }
+    // c:914-920 — if path contains '/': only accept if not relative and PATHDIRS set.
+    if arg0.contains('/') {
+        // c:915 — RET_IF_COM(arg0) — accept if it's an existing executable.
+        let p = std::path::Path::new(arg0);
+        if p.is_file() {
+            // c:916-919 — reject if arg0 starts with '/' (absolute) OR
+            //              PATHDIRS unset OR begins with ./ ../
+            if arg0.starts_with('/') {
+                return Some(arg0.to_string());
+            }
+            // For relative + PATHDIRS set, fall through to PATH walk.
+            if !arg0.starts_with("./") && !arg0.starts_with("../")
+                && crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHDIRS)
+            {
+                // Fall through to PATH walk below.
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    // c:943-951 — walk `path[]` (the shell $path array). Read $PATH from
+    //              paramtab so shell-private PATH edits via path=(...) take
+    //              effect (vs OS env-only).
     let path = crate::ported::params::getsparam("PATH")?;
     for dir in path.split(':') {
         if dir.is_empty() { continue; }
-        let candidate = format!("{}/{}", dir, name);
+        let candidate = format!("{}/{}", dir, arg0);
         if std::path::Path::new(&candidate).is_file() {
             return Some(candidate);
         }
     }
-    None
+    None                                                                     // c:952
 }
 
 /// Port of `getsigidx(const char *s)` from Src/signals.c — return signal number for
@@ -7060,6 +7204,56 @@ pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<Stri
 mod tests {
     use crate::zsh_h::BINF_PREFIX;
     use super::*;
+
+    /// `findcmd` with an existing ABSOLUTE path bypasses the PATH
+    /// walk entirely (c:916 `if (arg0 == s || ...)` branch — `s` is
+    /// the result of `strchr(arg0, '/')`; when the first char IS
+    /// the slash, `arg0 == s` is true). The caller's `$PATH` is
+    /// irrelevant for an absolute path. A regression that always
+    /// walked $PATH would fail to find `/bin/sh` when $PATH was
+    /// empty, breaking command-name resolution for cron/init contexts
+    /// that explicitly pass absolute paths.
+    #[test]
+    fn findcmd_absolute_path_skips_path_walk() {
+        let _g = crate::test_util::global_state_lock();
+        // Empty $PATH to guarantee the walk would miss.
+        crate::ported::params::setsparam("PATH", "");
+        let resolved = findcmd("/bin/sh", 0, 0);
+        crate::ported::params::unsetparam("PATH");
+        assert_eq!(resolved.as_deref(), Some("/bin/sh"),
+            "c:914-919 — absolute path that exists must resolve to itself \
+             regardless of $PATH");
+    }
+
+    /// `findcmd` with `default_path != 0` MUST search the hardcoded
+    /// `DEFAULT_PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), NOT the
+    /// caller's `$PATH`. C body c:903-908. This is the `command -p`
+    /// security contract: scripts that need to invoke a sanitized
+    /// `awk`/`sed`/`grep` regardless of user-poisoned $PATH (e.g.
+    /// `command -p sh -c '...'` in a setuid wrapper) rely on the
+    /// fallback path. A regression that ignored `default_path` would
+    /// re-introduce the very PATH-injection vulnerability that
+    /// `command -p` exists to prevent.
+    ///
+    /// Pin: with $PATH set to a non-existent directory, `findcmd`
+    /// for a binary that ONLY lives in /bin or /usr/bin (e.g. `sh`)
+    /// must still resolve when `default_path=1`.
+    #[test]
+    fn findcmd_default_path_searches_hardcoded_dirs() {
+        let _g = crate::test_util::global_state_lock();
+        // Poison $PATH so the normal path-walk would miss.
+        crate::ported::params::setsparam("PATH", "/nonexistent/zshrs-test-poison");
+        // `sh` exists in /bin on every POSIX system.
+        let resolved = findcmd("sh", 0, 1);
+        crate::ported::params::unsetparam("PATH");
+        assert!(resolved.is_some(),
+            "c:903-908 — default_path must search DEFAULT_PATH regardless of $PATH");
+        let p = resolved.unwrap();
+        assert!(crate::ported::config_h::DEFAULT_PATH
+            .split(':')
+            .any(|d| p.starts_with(d)),
+            "resolved path must be under one of DEFAULT_PATH's dirs; got {:?}", p);
+    }
 
     /// c:7399 — `trap - <undefined>` MUST report failure (non-zero
     /// exit) so scripts can detect the bad signal name. The previous

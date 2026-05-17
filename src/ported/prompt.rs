@@ -2159,26 +2159,119 @@ color_from_name(&name) // c:336
 }
 
 /// Match a `%F`/`%K` argument as a colour spec.
-/// Port of `match_colour(const char **teststrp, int is_fg, int colour)` from Src/prompt.c:1957 — accepts
-/// named, numeric, and `#RRGGBB` truecolor forms.
-/// WARNING: param names don't match C — Rust=(spec, is_fg) vs C=(teststrp, is_fg, colour)
-pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
-    // Try named colour
-    if let Some(code) = match_named_colour(spec) {
-        return Some(output_colour(code, is_fg));
+/// Port of `zattr match_colour(const char **teststrp, int is_fg, int colour)` from `Src/prompt.c:1957`.
+/// Returns the encoded `zattr` (with TXTFGCOLOUR/TXTBGCOLOUR + 24bit
+/// flag + colour index packed in the appropriate shift) or `TXT_ERROR`
+/// on malformed input.
+///
+/// `cursor` is the by-ref parse cursor — advanced past the consumed
+/// chars on success, left in place on the fall-through `colour`
+/// argument path (when `teststrp == None`).
+pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour: i32) -> zattr { // c:1957
+    use crate::ported::zsh_h::{
+        TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_BG_COL_SHIFT,
+        TXT_ATTR_FG_24BIT, TXT_ATTR_BG_24BIT, TXT_ERROR,
+    };
+    // c:1962-1970 — pick fg vs bg constant set.
+    let (shft, on) = if is_fg {
+        (TXT_ATTR_FG_COL_SHIFT, TXTFGCOLOUR)                                 // c:1963-1965
+    } else {
+        (TXT_ATTR_BG_COL_SHIFT, TXTBGCOLOUR)                                 // c:1967-1969
+    };
+    let mut colour = colour;
+    // c:1971 — `if (teststrp)`. When None, jump to the numeric pack at
+    // the end.
+    if let Some(cursor) = cursor {
+        let pos = *cursor;
+        let rest = &spec[pos..];
+        // c:1972 — `if (**teststrp == '#' && isxdigit(...))`.
+        if rest.starts_with('#')
+            && rest.as_bytes().get(1).map(|b| b.is_ascii_hexdigit()).unwrap_or(false)
+        {
+            // Parse hex digits after the '#'.
+            let mut end = 1usize;
+            while end < rest.len() && rest.as_bytes()[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+            let hex_str = &rest[1..end];
+            let col = i64::from_str_radix(hex_str, 16).unwrap_or(-1);
+            if col < 0 {
+                return TXT_ERROR;
+            }
+            // c:1976-1986 — `#RGB` (3 chars) or `#RRGGBB` (6 chars).
+            let (r, g, b) = match end {
+                // c:1976 — `end - *teststrp == 4` (i.e. "#RGB" — 3 hex digits)
+                4 => {
+                    let r = ((col >> 8) | ((col >> 8) << 4)) as u8;          // c:1977
+                    let mut g = ((col & 0xf0) >> 4) as u8;                   // c:1978
+                    g |= g << 4;                                             // c:1979
+                    let mut b = (col & 0xf) as u8;                           // c:1980
+                    b |= b << 4;                                             // c:1981
+                    (r, g, b)
+                }
+                // c:1982 — `end - *teststrp == 7` ("#RRGGBB" — 6 hex digits)
+                7 => {
+                    let r = (col >> 16) as u8;                               // c:1983
+                    let g = ((col & 0xff00) >> 8) as u8;                     // c:1984
+                    let b = (col & 0xff) as u8;                              // c:1985
+                    (r, g, b)
+                }
+                _ => return TXT_ERROR,                                       // c:1987
+            };
+            // c:1988 — *teststrp = end;
+            *cursor += end;
+            // c:1989-1996 — runhookdef(GETCOLORATTR) then nearcolor;
+            //               on no-match → emit 24-bit form.
+            // GETCOLORATTR hook table isn't wired here; fall through to
+            // the truecolor encoding (matches C c:1993-1996 path).
+            let pixel = (((r as zattr) << 8) + g as zattr) << 8;
+            let pixel = pixel + b as zattr;
+            let bit24 = if is_fg { TXT_ATTR_FG_24BIT } else { TXT_ATTR_BG_24BIT };
+            return on | bit24 | (pixel << shft);
+        } else if rest.as_bytes().first().map(|b| b.is_ascii_alphabetic()).unwrap_or(false) {
+            // c:2000-2005 — named colour.
+            // match_named_colour is case-sensitive (per the existing
+            // port comment); the C source uses strncmp.
+            // Extract the bareword and look it up.
+            let end = rest
+                .find(|c: char| !c.is_ascii_alphabetic())
+                .unwrap_or(rest.len());
+            let name = &rest[..end];
+            match match_named_colour(name) {
+                Some(8) => {
+                    // c:2001 — match_named_colour advances teststrp past
+                    // the name BEFORE the c:2002-2003 zero-return runs.
+                    // Mirror that ordering: advance, then return.
+                    *cursor += end;
+                    return 0;                                                // c:2003
+                }
+                Some(c) => {
+                    *cursor += end;
+                    colour = c as i32;
+                }
+                None => return TXT_ERROR,                                    // c:2004-2005
+            }
+        } else {
+            // c:2008-2010 — numeric.
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            let digits = &rest[..end];
+            match digits.parse::<i32>() {
+                Ok(n) if (0..256).contains(&n) => {
+                    *cursor += end;
+                    colour = n;
+                }
+                _ => return TXT_ERROR,                                       // c:2009-2010
+            }
+        }
     }
-    // Try #RRGGBB
-    if spec.starts_with('#') && spec.len() == 7 {
-        let r = u8::from_str_radix(&spec[1..3], 16).ok()?;
-        let g = u8::from_str_radix(&spec[3..5], 16).ok()?;
-        let b = u8::from_str_radix(&spec[5..7], 16).ok()?;
-        return Some(output_truecolor(r, g, b, is_fg));
-    }
-    // Try number
-    if let Ok(n) = spec.parse::<u8>() {
-        return Some(output_colour(n, is_fg));
-    }
-    None
+    // c:2014-2018 — out-of-range termcap-colour check + pack.
+    //               tccolours / tccan(tc) — when the terminal advertises
+    //               N colours and we asked for >=N, error. Without live
+    //               termcap query, skip the bounds check (existing
+    //               behaviour) and trust the caller's clamp.
+    on | ((colour as zattr) << shft)                                         // c:2018
 }
 
 /// Match a highlight specification, returning attrs + mask.
@@ -2233,7 +2326,17 @@ pub fn set_default_colour_sequences() -> (String, String) {
 /// Port of `set_colour_code(char *str, char **var)` from Src/prompt.c:2353.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(str, var)
 pub fn set_colour_code(spec: &str) -> Option<String> {
-    match_colour(spec, true)
+    use crate::ported::zsh_h::{TXT_ERROR, TXTFGCOLOUR, TXT_ATTR_FG_COL_SHIFT};
+    let mut cur = 0usize;
+    let attr = match_colour(Some(&mut cur), spec, true, 0);
+    if attr == TXT_ERROR {
+        return None;
+    }
+    // Decode back into an output escape — match_colour returns the
+    // packed zattr; we extract the colour index and re-emit via
+    // output_colour for the high-level callers that want a string.
+    let colour = ((attr & !TXTFGCOLOUR) >> TXT_ATTR_FG_COL_SHIFT) as u8;
+    Some(output_colour(colour, true))
 }
 
 /// Port of `static struct colour_sequences { char *start; char *end;
@@ -2801,6 +2904,136 @@ mod tests {
                        "blue", "magenta", "cyan", "white", "default"] {
             assert!(match_named_colour(name).is_some(), "{name:?} must resolve");
         }
+    }
+
+    /// `match_colour` parses "red" → zattr with TXTFGCOLOUR + colour
+    /// index 1 shifted to the FG colour slot (c:2018).
+    #[test]
+    fn match_colour_named_red_fg() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "red", true, 0);
+        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(attr & TXTFGCOLOUR, TXTFGCOLOUR);
+        let idx = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xff;
+        assert_eq!(idx, 1, "red index 1");
+        assert_eq!(cur, 3, "consumed exactly 'red'");
+    }
+
+    /// `match_colour` named "default" → 0 (cleared), per c:2002-2003.
+    #[test]
+    fn match_colour_named_default_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "default", true, 0);
+        assert_eq!(attr, 0);
+    }
+
+    /// `match_colour` MUST advance the cursor past "default" even
+    /// though the return value is the zero short-circuit. In C
+    /// (c:2001) `match_named_colour(teststrp)` is what does the
+    /// advance — the c:2002-2003 `if (colour == 8) return 0;` runs
+    /// AFTER, so the cursor is already past the name. A Rust port
+    /// that early-returns before incrementing leaves the caller's
+    /// next dispatch re-parsing "default" forever.
+    #[test]
+    fn match_colour_named_default_advances_cursor() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "default", true, 0);
+        assert_eq!(attr, 0);
+        assert_eq!(cur, 7,
+            "c:2001 — match_named_colour advances teststrp past 'default'; \
+             return-zero branch must NOT skip the advance");
+    }
+
+    /// `match_colour` numeric "12" → zattr with index 12.
+    #[test]
+    fn match_colour_numeric() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "12", false, 0);
+        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(attr & TXTBGCOLOUR, TXTBGCOLOUR);
+        let idx = (attr >> crate::ported::zsh_h::TXT_ATTR_BG_COL_SHIFT) & 0xff;
+        assert_eq!(idx, 12);
+    }
+
+    /// `match_colour` rejects out-of-range numeric (>= 256) per c:2009-2010.
+    #[test]
+    fn match_colour_numeric_out_of_range_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        assert_eq!(
+            match_colour(Some(&mut cur), "500", true, 0),
+            crate::ported::zsh_h::TXT_ERROR
+        );
+    }
+
+    /// `match_colour` parses #RRGGBB truecolor → packs r/g/b into
+    /// the colour slot with the 24BIT bit set.
+    #[test]
+    fn match_colour_truecolor_six_digit() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "#ff8040", true, 0);
+        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(attr & TXTFGCOLOUR, TXTFGCOLOUR);
+        assert_eq!(
+            attr & crate::ported::zsh_h::TXT_ATTR_FG_24BIT,
+            crate::ported::zsh_h::TXT_ATTR_FG_24BIT
+        );
+        let pixel = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
+        assert_eq!(pixel, 0xff8040);
+        assert_eq!(cur, 7);
+    }
+
+    /// `match_colour` #RGB → expands each nibble (R becomes RR, etc.)
+    /// per c:1976-1981.
+    #[test]
+    fn match_colour_truecolor_three_digit_expands() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "#f8a", true, 0);
+        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        // #f8a → r=0xff, g=0x88, b=0xaa per the nibble-doubling C body.
+        let pixel = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
+        // c:1977 — r = (col>>8) | ((col>>8)<<4) where col=0xf8a, col>>8=0xf → r=0xff
+        // c:1978-1979 — g = ((col & 0xf0) >> 4); g |= g<<4 → g=0x88
+        // c:1980-1981 — b = col & 0xf; b |= b<<4 → b=0xaa
+        assert_eq!(pixel, 0xff_88_aa, "got pixel 0x{:06x}", pixel);
+    }
+
+    /// `match_colour` malformed `#` (no hex digits) returns TXT_ERROR.
+    #[test]
+    fn match_colour_hash_without_hex_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cur = 0usize;
+        // No hex after #, so the first branch returns TXT_ERROR... wait,
+        // the C path requires `isxdigit((unsigned char)teststrp[1])` to
+        // enter the hex branch. If false, we fall to the named-colour
+        // branch (which would also fail). For input "#x" we expect error.
+        let attr = match_colour(Some(&mut cur), "#x", true, 0);
+        assert_eq!(attr, crate::ported::zsh_h::TXT_ERROR);
+    }
+
+    /// `match_colour` cursor MUST NOT advance on TXT_ERROR — the C
+    /// body's c:1971 `teststrp = end` is INSIDE the success branch
+    /// of the hex match. A regression that advances on error would
+    /// leave subsequent parsing pointing into the middle of bad
+    /// input, cascading garbage attributes into the prompt.
+    #[test]
+    fn match_colour_does_not_advance_cursor_on_error() {
+        let _g = crate::test_util::global_state_lock();
+        // Numeric-out-of-range: returns TXT_ERROR after parsing "500"
+        // (3 digits). The cursor must stay at 0; the caller's next
+        // dispatch needs to see the original input position to emit
+        // a useful error.
+        let mut cur = 0usize;
+        let attr = match_colour(Some(&mut cur), "500extra", true, 0);
+        assert_eq!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(cur, 0,
+            "cursor must stay at 0 on TXT_ERROR; got {}", cur);
     }
 
     /// Unknown colour names MUST return None — silent fallback would

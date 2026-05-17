@@ -228,16 +228,42 @@ pub fn videlete() -> i32 {        // c:384
 }
 
 /// Port of `videletechar(char **args)` from Src/Zle/zle_vi.c:405.
-pub fn videletechar() -> i32 {    // c:405
-    // C body (c:406-433): `startvichange(-1); n = zmult; ... if (zlecs
-    //                     == zlell || zleline[zlecs] == '\\n') return 1;
-    //                     forekill(n, ...)`. Approximation: startvichange
-    //                     + deletechar with EOL check.
+pub fn videletechar() -> i32 {                                               // c:405
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_main::{ZLECS, ZLELL, ZLELINE, ZMOD};
+
+    // c:410 — startvichange(-1);
     startvichange(-1);
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
-        return 1;                                                            // c:421-422
+    // c:411 — n = zmult;
+    let mut n = ZMOD.lock().unwrap().mult;
+
+    // c:413-420 — if (n < 0) { zmult=-n; ret=vibackwarddeletechar(); zmult=n; return ret; }
+    if n < 0 {
+        let saved = n;
+        ZMOD.lock().unwrap().mult = -n;
+        let ret = vibackwarddeletechar();
+        ZMOD.lock().unwrap().mult = saved;
+        return ret;
     }
-    crate::ported::zle::zle_misc::deletechar()
+
+    // c:421-423 — if (zlecs == zlell || zleline[zlecs] == '\n') return 1;
+    let cs = ZLECS.load(Ordering::SeqCst);
+    let ll = ZLELL.load(Ordering::SeqCst);
+    if cs == ll || ZLELINE.lock().unwrap().get(cs) == Some(&'\n') {
+        return 1;
+    }
+
+    // c:427-433 — clamp n to (findeol() - zlecs), then forekill(n, ...)
+    let eol = crate::ported::zle::zle_utils::findeol();
+    let max_n = eol.saturating_sub(cs) as i32;
+    let flags = if n > max_n {
+        n = max_n;
+        crate::ported::zle::zle_h::CUT_RAW                                   // c:430
+    } else {
+        0                                                                    // c:432
+    };
+    crate::ported::zle::zle_utils::forekill(n, flags);
+    0                                                                        // c:434
 }
 
 /// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:455.
@@ -774,10 +800,59 @@ pub fn vikilleol() -> i32 {       // c:vikilleol
     0
 }
 
-/// Port of `vipoundinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:1072.
-pub fn vipoundinsert() -> i32 {   // c:vipoundinsert
-    // C body: same as poundinsert (toggle # comment) but in vi cmdmode.
-    crate::ported::zle::zle_misc::poundinsert()
+/// Port of `vipoundinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:1073.
+/// Single-line toggle of the leading `#` comment marker.
+pub fn vipoundinsert() -> i32 {                                              // c:1073
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_main::{VIINSBEGIN, ZLECS, ZLELINE, ZLELL, ZLE_RESET_NEEDED};
+
+    // c:1075 — int oldcs = zlecs;
+    let mut oldcs = ZLECS.load(Ordering::SeqCst);
+
+    // c:1077 — startvichange(-1);
+    startvichange(-1);
+    // c:1078 — vifirstnonblank(zlenoargs);
+    crate::ported::zle::zle_move::vifirstnonblank();
+
+    let cs = ZLECS.load(Ordering::SeqCst);
+    let is_pound = ZLELINE.lock().unwrap().get(cs).copied() == Some('#');
+
+    let mut viib = VIINSBEGIN.load(Ordering::SeqCst);
+
+    if !is_pound {                                                           // c:1079
+        // c:1080 — spaceinline(1);
+        crate::ported::zle::zle_utils::spaceinline(1);
+        // c:1081 — zleline[zlecs] = '#';
+        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs) {
+            *slot = '#';
+        }
+        // c:1082-1083 — if (zlecs <= viinsbegin) INCPOS(viinsbegin);
+        if cs <= viib {
+            viib = viib.saturating_add(1);
+        }
+        // c:1084-1085 — if (zlecs <= oldcs) INCPOS(oldcs);
+        if cs <= oldcs {
+            oldcs = oldcs.saturating_add(1);
+        }
+        // c:1086 — zlecs = oldcs;
+        ZLECS.store(oldcs.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
+    } else {                                                                 // c:1087
+        // c:1088 — foredel(1, 0);
+        crate::ported::zle::zle_utils::foredel(1, 0);
+        // c:1089-1090 — if (zlecs < viinsbegin) DECPOS(viinsbegin);
+        if cs < viib {
+            viib = viib.saturating_sub(1);
+        }
+        // c:1091-1092 — if (zlecs < oldcs) DECPOS(oldcs);
+        if cs < oldcs {
+            oldcs = oldcs.saturating_sub(1);
+        }
+        // c:1093 — zlecs = oldcs;
+        ZLECS.store(oldcs.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
+    }
+    VIINSBEGIN.store(viib, Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    0
 }
 
 /// Port of `viquotedinsert(char **args)` from Src/Zle/zle_vi.c:1099.

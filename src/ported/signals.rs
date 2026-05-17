@@ -732,16 +732,23 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     0                                                                         // c:759
 }
 
-/// Direct port of `mod_export void unsettrap(int sig)` from
-/// `Src/signals.c:759`. Wraps `removetrap(sig)`; the C source
-/// passes through `removetrap()` to clear the slot and snapshot
-/// the prior state into `SAVETRAPS` if `locallevel > 0`.
-pub fn unsettrap(sig: i32) {                                                 // c:759
+/// Direct port of `HashNode removetrap(int sig)` from `Src/signals.c:772`.
+/// Clears the trap slot for `sig`, snapshots the prior state into
+/// `SAVETRAPS` when `locallevel > 0` and the relevant option set
+/// (LOCALTRAPS for generic signals, !POSIXTRAPS for EXIT), then
+/// re-installs the appropriate per-signal disposition (intr for
+/// SIGINT-interactive, install_handler for SIGHUP/SIGPIPE,
+/// signal_default for everything else).
+///
+/// C returns the displaced HashNode for the caller (unsettrap) to
+/// free; Rust ownership covers the free automatically when the
+/// hashtable entry drops.
+pub fn removetrap(sig: i32) {                                                 // c:772
     let trapped = sigtrapped.lock()
         .ok()
         .and_then(|g| g.get(sig as usize).copied())
         .unwrap_or(0);
-    // c:765 — `if (sig == -1 || (jobbing && (SIGTTOU || SIGTSTP || SIGTTIN))) return NULL`.
+    // c:776-778 — `if (sig == -1 || (jobbing && (SIGTTOU || SIGTSTP || SIGTTIN))) return NULL`.
     // The Rust call sites already use sig in [0, SIGCOUNT]; sig == -1 is rare,
     // but jobbing+job-control reject mirrors C exactly.
     if sig == -1 { return; }
@@ -855,12 +862,16 @@ pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 /// special branches — `trap - INT` would default-reset SIGINT
 /// AFTER unsettrap had called intr(), losing the interactive
 /// interrupt path. Same for HUP/PIPE in interactive mode.
-pub fn removetrap(sig: i32) {                                                 // c:772
-    // c:759-768 (Src/signals.c) — `unsettrap` runs the full
-    // body: save-trap, clear slot, per-signal disposition reset.
-    // No extra SIG_DFL — `unsettrap` already chose the right
-    // disposition per signal.
-    unsettrap(sig);
+pub fn unsettrap(sig: i32) {                                                  // c:759
+    // c:763 — queue_signals();
+    queue_signals();
+    // c:764 — hn = removetrap(sig);
+    //         c:765-766 — if (hn) shfunctab->freenode(hn);
+    //         Rust ownership covers the freenode when the trap entry
+    //         is removed from sigfuncs / freed automatically.
+    removetrap(sig);
+    // c:767 — unqueue_signals();
+    unqueue_signals();
 }
 
 /// Direct port of `void starttrapscope(void)` from

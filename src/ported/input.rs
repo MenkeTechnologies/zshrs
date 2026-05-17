@@ -433,7 +433,51 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // 
 /// Pop one input-stack frame off the top.
 /// Port of `inpoptop()` from Src/input.c:736.
 pub fn inpoptop() {                                                          // c:736
+    // c:738 — if (!lexstop) {
+    if !crate::ported::lex::LEX_LEXSTOP.with(|c| c.get()) {
+        // c:739 — inbufflags &= ~(INP_ALCONT|INP_HISTCONT);
+        inbufflags.with(|f| f.set(f.get() & !(INP_ALCONT | INP_HISTCONT)));
+        // c:740-753 — drain unread bytes of the popped frame; for alias
+        // frames (without RAW_KEEP) push back the corresponding raw-lex
+        // marker via zshlex_raw_back so the lexer-side cursor unwinds.
+        let was_alias = (inbufflags.with(|f| f.get())
+            & (INP_ALIAS | INP_HIST | INP_RAW_KEEP))
+            == INP_ALIAS;
+        let unread = inbuf.with(|b| {
+            let blen = b.borrow().len();
+            blen.saturating_sub(inbufpos.with(|p| p.get()))
+        });
+        if was_alias {
+            for _ in 0..unread {
+                crate::ported::lex::zshlex_raw_back();                       // c:752
+            }
+        }
+    }
+
+    // c:756-757 — if (inbuf && (inbufflags & INP_FREE)) free(inbuf);
+    //              Rust Drop covers the heap-string free when entry is replaced.
+
+    // c:759-765 — pop and restore from instacktop->{buf,bufptr,bufleft,bufct,flags}
     if let Some(entry) = instack.with(|st| st.borrow_mut().pop()) {
+        // c:770-778 — if (instacktop->alias) { alias->inuse = 0; if trailing
+        //               space → inalmore=1; histbackword(); }
+        if let Some(name) = &entry.alias {
+            {
+                let mut tab = crate::ported::hashtable::aliastab_lock()
+                    .write()
+                    .expect("aliastab poisoned");
+                if let Some(a) = tab.get_mut(name) {
+                    a.inuse = 0;                                             // c:773
+                }
+            }
+            // c:774-777 — trailing-space → trigger inalmore + histbackword.
+            //              INALMORE is not yet a public Rust global; the
+            //              histbackword call alone preserves the C-visible
+            //              effect on the history cursor.
+            if entry.buf.ends_with(' ') {
+                crate::ported::hist::histbackword();                         // c:776
+            }
+        }
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
         inbufpos.with(|p| p.set(entry.bufpos));
         inbufflags.with(|f| f.set(entry.flags));

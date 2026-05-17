@@ -873,6 +873,26 @@ mod tests {
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 
+    /// `name_for_anonymous_function` with an EMPTY funcstack must
+    /// return `"name [:0]"` — empty filename + zero lineno — not
+    /// panic on the unwrap. The C body's `funcstack[0].flineno`
+    /// would segfault on an empty stack; the Rust port must defend
+    /// because nothing in zsh prevents the profiler from being
+    /// invoked before the first function frame is pushed (e.g.
+    /// during init scripts that contain anonymous functions at top
+    /// level).
+    #[test]
+    fn name_for_anonymous_function_empty_funcstack_defaults() {
+        let _g = crate::test_util::global_state_lock();
+        // Ensure stack is empty.
+        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        // No panic on first().unwrap() — the fn uses Option chains.
+        let s = std::panic::catch_unwind(|| name_for_anonymous_function("anon"))
+            .expect("must not panic on empty funcstack");
+        assert_eq!(s, "anon [:0]",
+            "empty funcstack → empty filename + 0 lineno; got {:?}", s);
+    }
+
     /// c:97 — `findpfunc` on an empty table returns None. A
     /// regression that returns 0 (a valid index!) would silently
     /// corrupt every subsequent per-function profile accumulation.

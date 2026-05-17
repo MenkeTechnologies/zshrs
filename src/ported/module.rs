@@ -308,15 +308,42 @@ pub fn deletehookfunc(hook: &str, func: &str) {                              // 
 /// the name (always errors). `PM_AUTOLOAD` set means the existing
 /// param is an autoload stub the C source unsets to make room.
 ///
-/// Static-link path: the param-table is `crate::ported::params::*`
-/// global. Stub returns 0 (no clash) until the params global-state
-/// port wires gethashnode2(paramtab, ...) in.
-#[allow(unused_variables)]
-pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
-    // c:1026 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
-    // Static-link: paramtab not yet hooked through; treat unknown.
-    let _ = nam;
-    let _ = opt_i;
+/// Checks for an existing param of the same name; if absent → 0
+/// (free to add). If present and not autoloadable → 1 (warn) or
+/// 2 (skip warning under `-i`). If present + autoload-marked →
+/// unset the existing entry and return 0.
+pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                         // c:1026
+    use crate::ported::zsh_h::PM_AUTOLOAD;
+    // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
+    let pm_clone = {
+        let tab = crate::ported::params::paramtab().read().expect("paramtab poisoned");
+        tab.get(nam).cloned()
+    };
+    let mut pm = match pm_clone {
+        Some(p) => p,
+        None => return 0,
+    };
+    // c:1033 — if (pm->level || !(pm->node.flags & PM_AUTOLOAD)) {
+    if pm.level != 0 || (pm.node.flags as u32 & PM_AUTOLOAD) == 0 {
+        // c:1042-1048 — if (!opt_i || pm->level) zwarn(...); return 1;
+        if opt_i == 0 || pm.level != 0 {
+            crate::ported::utils::zwarn(&format!(
+                "Can't add module parameter `{}': {}",
+                nam,
+                if pm.level != 0 {
+                    "local parameter exists"
+                } else {
+                    "parameter already exists"
+                }
+            ));
+            return 1;
+        }
+        // c:1049 — return 2;
+        return 2;
+    }
+    // c:1052 — unsetparam_pm(pm, 0, 1);
+    crate::ported::params::unsetparam_pm(&mut pm, 0, 1);
+    // c:1053 — return 0;
     0
 }
 

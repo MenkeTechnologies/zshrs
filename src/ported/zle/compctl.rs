@@ -3179,6 +3179,51 @@ mod tests {
         assert_eq!(p[0].0, "bar*");
     }
 
+    /// `delpatcomp` MUST remove only the FIRST match (c:1308 `break`)
+    /// when duplicate names exist. C uses the explicit `break` after
+    /// the first hit. A regression that switched to `Vec::retain`
+    /// would remove ALL matches — semantically different, observable
+    /// when users register multiple compctl entries under the same
+    /// pattern (`compctl -p 'foo*' ...` twice for layered configs).
+    /// `delpatcomp` MUST remove only the FIRST match (c:1308 `break`)
+    /// when duplicate names exist. C uses the explicit `break` after
+    /// the first hit. A regression that switched to `Vec::retain`
+    /// would remove ALL matches — semantically different, observable
+    /// when users register multiple compctl entries under the same
+    /// pattern (`compctl -p 'foo*' ...` twice for layered configs).
+    #[test]
+    fn delpatcomp_removes_only_first_match_when_duplicates() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Clear shared PATCOMPS state — other tests may have left
+        // entries that would interfere with the duplicate-count.
+        {
+            let mut p = PATCOMPS.write().unwrap();
+            p.clear();
+            // Three entries under the same pattern name — distinguishable
+            // by the embedded Compctl::keyvar (used as a tag).
+            for tag in ["a", "b", "c"] {
+                p.push(("dup*".to_string(), Arc::new(Compctl {
+                    keyvar: Some(tag.to_string()),
+                    ..Compctl::default()
+                })));
+            }
+        }
+
+        delpatcomp("dup*");
+
+        let p = PATCOMPS.read().unwrap();
+        assert_eq!(p.len(), 2,
+            "c:1308 — only ONE entry removed; got len={}", p.len());
+        // The remaining entries must be the 2nd and 3rd (b then c) —
+        // the first ("a") was the one removed.
+        assert_eq!(p[0].1.keyvar.as_deref(), Some("b"),
+            "remaining first entry must be the second-inserted (b)");
+        assert_eq!(p[1].1.keyvar.as_deref(), Some("c"),
+            "remaining second entry must be the third-inserted (c)");
+    }
+
     #[test]
     fn cc_assign_with_reass_command_target_uses_special_key() {
         let _g = crate::test_util::global_state_lock();

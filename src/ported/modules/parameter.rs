@@ -813,17 +813,45 @@ pub fn funcsourcetracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String>
 }
 
 /// Port of `funcfiletracegetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:711.
-/// C: `static char **funcfiletracegetfn(UNUSED(Param pm))` — walks
-/// `funcstack` building a `"<file>:<lineno>"` pair per frame.
+/// Walks `funcstack` building a `"<file>:<lineno>"` pair per frame.
+/// For function/eval frames the line number is computed against the
+/// parent frame's source-file line.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn funcfiletracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:711
-    // c:711-740 — walk funcstack, build colonpair "<filename>:<flineno>".
-    // Static-link path: FUNCSTACK is the live runtime call stack.
+    use crate::ported::zsh_h::{FS_SOURCE, FS_EVAL};
+    // c:717 — for (f = funcstack, num = 0; f; f = f->prev, num++);
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
-    stack.iter()
-        .map(|f| format!("{}:{}", f.filename.as_deref().unwrap_or(""), f.flineno))  // c:732
-        .collect()
+    let mut ret: Vec<String> = Vec::with_capacity(stack.len());
+    // c:721 — for (f = funcstack, p = ret; f; f = f->prev, p++)
+    for (i, f) in stack.iter().enumerate() {
+        // c:724 — if (!f->prev || f->prev->tp == FS_SOURCE) {
+        let parent_is_source = match stack.get(i + 1) {
+            None => true,                                                    // !f->prev
+            Some(prev) => prev.tp == FS_SOURCE,
+        };
+        if parent_is_source {
+            // c:731-737 — file context: "<caller>:<lineno>"
+            ret.push(format!(
+                "{}:{}",
+                f.caller.as_deref().unwrap_or(""),                           // c:734
+                f.lineno
+            ));
+        } else if let Some(prev) = stack.get(i + 1) {
+            // c:747 — zlong flineno = f->prev->flineno + f->lineno;
+            let mut flineno = prev.flineno + f.lineno;
+            // c:752-753 — if (f->prev->tp == FS_EVAL) flineno--;
+            if prev.tp == FS_EVAL {
+                flineno -= 1;
+            }
+            // c:754 — fname = f->prev->filename ? f->prev->filename : "";
+            let fname = prev.filename.as_deref().unwrap_or("");
+            // c:756-761 — sprintf colonpair "<fname>:<flineno>"
+            ret.push(format!("{}:{}", fname, flineno));
+        }
+    }
+    // c:766 — *p = NULL;  (Rust Vec uses len, no trailing NULL needed)
+    ret
 }
 
 /// Direct port of `getbuiltin(UNUSED(HashTable ht), const char *name, int dis)` from Src/Modules/parameter.c:775.
@@ -1420,12 +1448,42 @@ pub fn pmjobtext(_jtab: *mut std::ffi::c_void, job: i32) -> String {       // c:
     }
 }
 
-/// Port of `getpmjobtext(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1277. Same
-/// caveat as getpmjobdir.
+/// Port of `getpmjobtext(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1277.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1277
-    Some(make_empty_special_pm(name))
+pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {       // c:1277
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL, STAT_NOPRINT};
+    // c:1284-1287 — alloc PM_SCALAR|PM_READONLY param with name.
+    // c:1289 — selectjobtab(&jtab, &jmax);
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();
+    // c:1291 — job = strtod(name, &pend);
+    let (job, pend_nonempty) = match name.parse::<i32>() {
+        Ok(n) => (n, false),
+        Err(_) => (0, true),
+    };
+    // c:1293-1294 — if (*pend) job = getjob(name, NULL);
+    let job = if pend_nonempty {
+        crate::ported::jobs::getjob(name, "")
+    } else {
+        job
+    };
+    // c:1295-1298 — if (job >= 1 && job <= jmax && jtab[job].stat && jtab[job].procs && !STAT_NOPRINT)
+    //                  pm->u.str = pmjobtext(jtab, job);
+    if job >= 1 && (job as usize) <= jmax {
+        if let Some(j) = jtab.get(job as usize) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {
+                let text = pmjobtext(std::ptr::null_mut(), job);
+                let mut pm = make_empty_special_pm(name);
+                pm.node.flags = (PM_SCALAR | PM_READONLY) as i32;
+                pm.u_str = Some(text);
+                return Some(pm);
+            }
+        }
+    }
+    // c:1299-1302 — else { pm->u.str = ""; pm->node.flags |= PM_UNSET|PM_SPECIAL; }
+    let mut pm = make_empty_special_pm(name);
+    pm.node.flags = (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32;
+    Some(pm)
 }
 
 /// Port of `scanpmjobtexts(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1308.
@@ -1513,11 +1571,37 @@ pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {      // c:
 }
 
 /// Port of `getpmjobstate(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1385. Same
-/// caveat as getpmjobdir.
+/// Port of `getpmjobstate(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1385.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1385
-    Some(make_empty_special_pm(name))
+pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1385
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL, STAT_NOPRINT};
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();                  // c:1397
+    let (job, pend_nonempty) = match name.parse::<i32>() {                   // c:1399
+        Ok(n) => (n, false),
+        Err(_) => (0, true),
+    };
+    let job = if pend_nonempty {                                             // c:1400-1401
+        crate::ported::jobs::getjob(name, "")
+    } else {
+        job
+    };
+    // c:1402-1405 — if (job >= 1 && job <= jmax && jtab[job].stat && jtab[job].procs && !STAT_NOPRINT)
+    if job >= 1 && (job as usize) <= jmax {
+        if let Some(j) = jtab.get(job as usize) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {
+                let state = pmjobstate(std::ptr::null_mut(), job);
+                let mut pm = make_empty_special_pm(name);
+                pm.node.flags = (PM_SCALAR | PM_READONLY) as i32;
+                pm.u_str = Some(state);
+                return Some(pm);
+            }
+        }
+    }
+    // c:1406-1409 — else { u.str = ""; flags |= PM_UNSET|PM_SPECIAL; }
+    let mut pm = make_empty_special_pm(name);
+    pm.node.flags = (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32;
+    Some(pm)
 }
 
 /// Port of `scanpmjobstates(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1415.
@@ -1578,14 +1662,37 @@ pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {        // c:
 }
 
 /// Port of `getpmjobdir(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1457.
-/// Static-link path returns an empty PM_SPECIAL Param — the live
-/// job table lives on ShellExecutor (not reachable from src/ported);
-/// the executor-side caller fills `u.str` from `exec.jobs[id].pwd`
-/// before returning to the user.
+/// Port of `getpmjobdir(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1457.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {       // c:1457
-    Some(make_empty_special_pm(name))
+pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {        // c:1457
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL, STAT_NOPRINT};
+    let (jtab, jmax) = crate::ported::jobs::selectjobtab();                  // c:1469
+    let (job, pend_nonempty) = match name.parse::<i32>() {                   // c:1471
+        Ok(n) => (n, false),
+        Err(_) => (0, true),
+    };
+    let job = if pend_nonempty {                                             // c:1472-1473
+        crate::ported::jobs::getjob(name, "")
+    } else {
+        job
+    };
+    // c:1474-1477 — if (job >= 1 && job <= jmax && jtab[job].stat && jtab[job].procs && !STAT_NOPRINT)
+    if job >= 1 && (job as usize) <= jmax {
+        if let Some(j) = jtab.get(job as usize) {
+            if j.stat != 0 && !j.procs.is_empty() && (j.stat & STAT_NOPRINT) == 0 {
+                let dir = pmjobdir(std::ptr::null_mut(), job);
+                let mut pm = make_empty_special_pm(name);
+                pm.node.flags = (PM_SCALAR | PM_READONLY) as i32;
+                pm.u_str = Some(dir);
+                return Some(pm);
+            }
+        }
+    }
+    // c:1478-1481 — else { u.str = ""; flags |= PM_UNSET|PM_SPECIAL; }
+    let mut pm = make_empty_special_pm(name);
+    pm.node.flags = (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32;
+    Some(pm)
 }
 
 /// Port of `scanpmjobdirs(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1487.
