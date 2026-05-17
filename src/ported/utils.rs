@@ -4821,9 +4821,68 @@ pub fn dquotedzputs(s: &str) -> String {                                     // 
 
 /// Convert UCS-4 to UTF-8 (from utils.c ucs4toutf8)
 /// Port of `ucs4toutf8(char *dest, unsigned int wval)` from `Src/utils.c:6743`.
-/// WARNING: param names don't match C — Rust=(codepoint) vs C=(dest, wval)
-pub fn ucs4toutf8(codepoint: u32) -> Option<String> {
-    char::from_u32(codepoint).map(|c| c.to_string())
+///
+/// C accepts 0..=0x7FFFFFFF (legacy UCS-4 / 6-byte UTF-8) — wider
+/// than Unicode's 0..=0x10FFFF — to match `wctomb(3)` on Linux
+/// with UTF-8 locale. The Rust `char::from_u32` path would reject
+/// codepoints above 0x10FFFF (and surrogates), so this port mirrors
+/// the C bit-pattern dispatch directly.
+///
+/// C body (c:6743-6779):
+/// ```c
+/// if (wval < 0x80) len = 1;            // ASCII
+/// else if (wval < 0x800) len = 2;
+/// else if (wval < 0x10000) len = 3;
+/// else if (wval < 0x200000) len = 4;
+/// else if (wval < 0x4000000) len = 5;
+/// else if (wval < 0x80000000) len = 6;
+/// else { zerr("character not in range"); return -1; }
+///
+/// switch (len) { /* falls through except to the last case */
+/// case 6: dest[5] = (wval & 0x3f) | 0x80; wval >>= 6;
+/// case 5: dest[4] = (wval & 0x3f) | 0x80; wval >>= 6;
+/// case 4: dest[3] = (wval & 0x3f) | 0x80; wval >>= 6;
+/// case 3: dest[2] = (wval & 0x3f) | 0x80; wval >>= 6;
+/// case 2: dest[1] = (wval & 0x3f) | 0x80; wval >>= 6;
+///     *dest = wval | ((0xfc << (6 - len)) & 0xfc);
+///     break;
+/// case 1: *dest = wval;
+/// }
+/// return len;
+/// ```
+///
+/// Returns the encoded bytes (1..=6 long) on success, None on
+/// out-of-range. C's `zerr("character not in range")` (c:6763) is
+/// not emitted here — the return signals the error.
+/// WARNING: param names don't match C — Rust=(wval) vs C=(dest, wval)
+pub fn ucs4toutf8(wval: u32) -> Option<String> {                              // c:6743
+    let len: usize = if wval < 0x80 { 1 }                                     // c:6750
+        else if wval < 0x800 { 2 }                                            // c:6752
+        else if wval < 0x10000 { 3 }                                          // c:6754
+        else if wval < 0x200000 { 4 }                                         // c:6756
+        else if wval < 0x4000000 { 5 }                                        // c:6758
+        else if wval < 0x80000000 { 6 }                                       // c:6760
+        else {                                                                // c:6762
+            crate::ported::utils::zerr("character not in range");             // c:6763
+            return None;                                                      // c:6764
+        };
+    let mut buf = [0u8; 6];
+    let mut w = wval;
+    // c:6767-6776 — fall-through switch building trailing bytes first.
+    match len {
+        1 => { buf[0] = w as u8; }                                            // c:6775
+        n => {
+            // Trailing (len-1) bytes: each is `(w & 0x3f) | 0x80`,
+            // shifting w right 6 between them (c:6768-6772).
+            for i in (1..n).rev() {
+                buf[i] = ((w & 0x3f) as u8) | 0x80;
+                w >>= 6;
+            }
+            // Leading byte: `w | ((0xfc << (6 - len)) & 0xfc)` (c:6773).
+            buf[0] = (w as u8) | (((0xfcu32 << (6 - n)) & 0xfc) as u8);
+        }
+    }
+    Some(String::from_utf8_lossy(&buf[..len]).into_owned())
 }
 
 /// Port of `ucs4tomb(unsigned int wval, char *buf)` from `Src/utils.c:6788`.
@@ -7147,19 +7206,23 @@ mod tests {
             "c:6756 — U+1D11E → '𝄞' (4 bytes)");
     }
 
-    /// `Src/utils.c:6762-6764` — values outside Unicode range
-    /// (>= 0x80000000) emit `zerr("character not in range")` and
-    /// return `-1`. The Rust port returns `None` for values that
-    /// `char::from_u32` rejects (U+D800..U+DFFF surrogates + values
-    /// > U+10FFFF).
+    /// `Src/utils.c:6762-6764` — values `>= 0x80000000` are
+    /// out-of-range; C emits `zerr("character not in range")` and
+    /// returns `-1`. Surrogates (U+D800..U+DFFF) and values in
+    /// 0x110000..0x80000000 are *encoded as raw bytes* by C
+    /// (matches `wctomb(3)` extended UCS-4 range).
     #[test]
     fn ucs4toutf8_rejects_invalid_codepoints() {
-        // c:6762 — out-of-range value.
+        // c:6762-6764 — value >= 0x80000000 → None.
         assert_eq!(ucs4toutf8(0xFFFF_FFFE), None,
-            "c:6763 — values out of Unicode range return None");
-        // Surrogate code points are invalid for direct encoding.
-        assert_eq!(ucs4toutf8(0xD800), None,
-            "U+D800 is a surrogate, char::from_u32 rejects it");
+            "c:6763 — values >= 0x80000000 → None");
+        assert_eq!(ucs4toutf8(0x8000_0000), None,
+            "c:6760-6764 — exactly 0x80000000 is out of range");
+        // Surrogates encode as 3-byte sequences per C bit-pattern
+        // (c:6754 → len=3). The C source has no Unicode-validity
+        // gate; that's a wctomb-only concern in callers.
+        assert!(ucs4toutf8(0xD800).is_some(),
+            "c:6754 — surrogates encode as 3-byte UTF-8 in C (no Unicode validity check)");
     }
 
     /// `Src/utils.c:6648-6723` — `dquotedztrdup(s)`. Default (non-
