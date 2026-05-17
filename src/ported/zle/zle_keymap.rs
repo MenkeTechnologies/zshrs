@@ -1673,6 +1673,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         createkeymapnamtab();
         default_bindings();
@@ -1694,6 +1695,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         createkeymapnamtab();
         default_bindings();
@@ -1719,6 +1721,7 @@ mod tests {
 
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         createkeymapnamtab();
         default_bindings();
@@ -1752,6 +1755,7 @@ mod tests {
 
     #[test]
     fn viins_default_matches_viinsbind_table() {
+        let _g = crate::test_util::global_state_lock();
         // Test renamed + retargeted from the legacy
         // `viins_default_has_history_search_and_quoted_insert` which
         // asserted Rust-only emacs-flavored bindings (`^R` →
@@ -1780,6 +1784,7 @@ mod tests {
 
     #[test]
     fn refkeymap_increments_rc() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:470 — `km->rc++`. Default Keymap starts with rc=0.
         let mut km = Keymap::default();
@@ -1792,6 +1797,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_decrements_returns_new_count() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482 — `--km->rc`. With rc=3 → returns 2.
         let mut km = Keymap::default();
@@ -1805,6 +1811,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_returns_zero_at_last_ref() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482-484 — `if (!--km->rc) { deletekeymap(km); return 0; }`.
         // rc=1 → -- → 0 → returns 0 (deletion signal).
@@ -1822,6 +1829,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_empty_seq() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:687-688 — empty input → always prefix → 1.
         let km = Keymap::default();
@@ -1830,6 +1838,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_bound_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:689-692 — single byte that has a first[] binding is NOT
         // a prefix; it IS the binding.
@@ -1840,6 +1849,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_unbound() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — fall through to multi lookup; no match → 0.
         let km = Keymap::default();
@@ -1848,6 +1858,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_real_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — multi has prefixct > 0 → 1.
         // bind_seq("ab", X) marks "a" as a prefix (prefixct=1).
@@ -1859,6 +1870,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_complete_binding() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — when seq itself IS a binding (not a prefix),
         // multi[seq] has prefixct=0 → 0.
@@ -1870,6 +1882,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_meta_pair_decoded() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:690 — `seq[0]==Meta` (0x83) → use seq[1]^32 as single byte.
         // Bind 'A' (0x41) in first[]. Seq [0x83, 0x61] decodes to
@@ -1883,6 +1896,7 @@ mod tests {
 
     #[test]
     fn keybind_single_byte_returns_first_bound_thingy() {
+        let _g = crate::test_util::global_state_lock();
         // c:664-669 — `if (ztrlen(seq) == 1) { f = seq[0]; if (km->first[f])
         // return bind; }`. Bind 'q' in first[], call keybind with "q",
         // expect the Thingy back and no send-string.
@@ -1897,6 +1911,7 @@ mod tests {
 
     #[test]
     fn keybind_meta_pair_decodes_to_single_byte() {
+        let _g = crate::test_util::global_state_lock();
         // c:665 — `seq[0]==Meta ? seq[1]^32 : seq[0]`. [0x83, 0x61]
         // decodes to 0x41 = 'A'. Verify it lands on the first[] entry
         // for 'A' just like a literal 'A' byte would.
@@ -1909,6 +1924,7 @@ mod tests {
 
     #[test]
     fn keybind_unbound_byte_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         // c:670-671 — single-byte but km->first[f] is None, falls
         // through to the multi-byte lookup which also misses → (None, None).
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1920,6 +1936,7 @@ mod tests {
 
     #[test]
     fn keybind_multi_byte_sequence_via_multi_map() {
+        let _g = crate::test_util::global_state_lock();
         // c:670-674 — `k = km->multi->getnode(km->multi, seq)`. Bind
         // a multi-byte sequence in `multi`, expect the lookup to find it.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1935,6 +1952,7 @@ mod tests {
 
     #[test]
     fn keybind_returns_send_string_when_multi_entry_has_str() {
+        let _g = crate::test_util::global_state_lock();
         // c:673-674 — `*strp = k->str; return k->bind`. Send-string
         // entries (`bindkey -s`) have bind=None + str=Some.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1953,6 +1971,7 @@ mod tests {
 
     #[test]
     fn init_keymaps_seeds_keybuf_and_clears_lastnamed() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // After init: keybuf is allocated (non-empty Vec), lastnamed is None
         // (the `t_undefinedkey` sentinel in Rust convention).
@@ -1963,6 +1982,7 @@ mod tests {
 
     #[test]
     fn cleanup_keymaps_drains_namtab_and_keybuf() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         init_keymaps();
         assert!(!keybuf.lock().unwrap().is_empty());
@@ -1980,6 +2000,7 @@ mod tests {
     /// at zle_keymap.c:1649.
     #[test]
     fn addkeybuf_encodes_nul_byte_per_imeta() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
             .lock().unwrap_or_else(|e| e.into_inner());
@@ -2000,6 +2021,7 @@ mod tests {
     /// key-sequence parser that interprets 0x83 as a Meta-prefix.
     #[test]
     fn addkeybuf_encodes_meta_byte_itself() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
             .lock().unwrap_or_else(|e| e.into_inner());
@@ -2016,6 +2038,7 @@ mod tests {
     /// unencoded; the canonical port must Meta-encode it.
     #[test]
     fn addkeybuf_encodes_pound_token_byte() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
             .lock().unwrap_or_else(|e| e.into_inner());
@@ -2034,6 +2057,7 @@ mod tests {
     /// from a UTF-8 terminal that are NOT zsh's internal markers).
     #[test]
     fn addkeybuf_passes_through_non_imeta_high_byte() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
             .lock().unwrap_or_else(|e| e.into_inner());
@@ -2055,6 +2079,7 @@ mod tests {
     /// agrees with `imeta` for all ASCII.
     #[test]
     fn addkeybuf_ascii_passes_through_literally() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
             .lock().unwrap_or_else(|e| e.into_inner());

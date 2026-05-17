@@ -361,6 +361,7 @@ mod tests {
 
     #[test]
     fn test_make_autoclose_pipes() {
+        let _g = crate::test_util::global_state_lock();
         let pipes = make_autoclose_pipes().expect("Failed to create pipes");
 
         // Both fds should be in the high range
@@ -379,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_set_cloexec() {
+        let _g = crate::test_util::global_state_lock();
         let file = std::fs::File::open("/dev/null").unwrap();
         let fd = file.as_raw_fd();
 
@@ -395,6 +397,7 @@ mod tests {
 
     #[test]
     fn test_nonblocking() {
+        let _g = crate::test_util::global_state_lock();
         let file = std::fs::File::open("/dev/null").unwrap();
         let fd = file.as_raw_fd();
 
@@ -411,6 +414,7 @@ mod tests {
 
     #[test]
     fn test_borrowed_fd_file_does_not_close() {
+        let _g = crate::test_util::global_state_lock();
         let file = std::fs::File::open("/dev/null").unwrap();
         let fd = file.as_raw_fd();
 

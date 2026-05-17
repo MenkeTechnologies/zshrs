@@ -1301,6 +1301,7 @@ mod tests {
     /// flipping either silently disables half the shell.
     #[test]
     fn job_control_is_enabled() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(JOB_CONTROL,   1);
         assert_eq!(USE_SUSPENDED, 1);
     }
@@ -1309,6 +1310,7 @@ mod tests {
     /// $HOME from /etc/passwd. Hard-pins the POSIX-standard location.
     #[test]
     fn passwd_file_is_posix_standard_location() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PASSWD_FILE, "/etc/passwd");
     }
 
@@ -1318,6 +1320,7 @@ mod tests {
     /// changes user-facing behavior on a first-run shell.
     #[test]
     fn default_config_values_match_upstream_config_h() {
+        let _g = crate::test_util::global_state_lock();
         // config.h:13 — DEFAULT_HISTSIZE 30.
         assert_eq!(DEFAULT_HISTSIZE, 30,
             "configure.ac:2978 / config.h:13 — DEFAULT_HISTSIZE = 30");
@@ -1336,6 +1339,7 @@ mod tests {
     /// disable system-wide configuration.
     #[test]
     fn global_rc_paths_have_canonical_etc_zsh_prefix() {
+        let _g = crate::test_util::global_state_lock();
         for (name, path) in [
             ("GLOBAL_ZSHENV", GLOBAL_ZSHENV),
             ("GLOBAL_ZPROFILE", GLOBAL_ZPROFILE),
@@ -1358,6 +1362,7 @@ mod tests {
     /// drop one of the startup phases.
     #[test]
     fn global_rc_paths_are_all_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let all = [
             GLOBAL_ZSHENV, GLOBAL_ZPROFILE, GLOBAL_ZSHRC,
             GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT,
@@ -1374,6 +1379,7 @@ mod tests {
     /// empty as cwd-on-PATH, which is a 30-year security footgun).
     #[test]
     fn default_path_is_colon_separated_and_includes_bin_dirs() {
+        let _g = crate::test_util::global_state_lock();
         assert!(DEFAULT_PATH.contains("/bin"));
         assert!(DEFAULT_PATH.contains("/usr/bin"));
         assert!(!DEFAULT_PATH.ends_with(':'),
@@ -1392,6 +1398,7 @@ mod tests {
     /// can synthesize `<name>.<DL_EXT>` correctly.
     #[test]
     fn dl_ext_is_nonempty_extension_stem() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!DL_EXT.is_empty(), "DL_EXT must be set so zmodload can find .so files");
         assert!(!DL_EXT.starts_with('.'),
             "DL_EXT = {:?} starts with `.` — concatenation would produce `..so`",
@@ -1408,6 +1415,7 @@ mod tests {
     /// (datetime, mathfunc, pcre, regex, stat, etc.).
     #[test]
     fn dynamic_module_loading_is_enabled() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DYNAMIC, 1, "DYNAMIC=0 disables zmodload entirely");
         assert_eq!(DYNAMIC_NAME_CLASH_OK, 1,
             "DYNAMIC_NAME_CLASH_OK=0 forbids the same fn name across modules");
@@ -1419,6 +1427,7 @@ mod tests {
     /// fallbacks, arc4random_buf seeds $RANDOM in random_real.
     #[test]
     fn core_have_sentinels_match_runtime_capabilities() {
+        let _g = crate::test_util::global_state_lock();
         // clock_gettime is required for $EPOCHSECONDS / $EPOCHREALTIME
         // (Src/Modules/datetime.c). Disabled = the param is empty.
         assert_eq!(HAVE_CLOCK_GETTIME, 1,
@@ -1439,6 +1448,7 @@ mod tests {
     /// optimisation against a regen flip.
     #[test]
     fn cache_usernames_is_enabled_for_tilde_expansion_perf() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CACHE_USERNAMES, 1,
             "CACHE_USERNAMES drives ~user lookup table; 0 means fork-per-lookup");
     }
@@ -1449,6 +1459,7 @@ mod tests {
     /// Must be set so zshrs's character classifiers behave like zsh's.
     #[test]
     fn broken_isprint_workaround_is_active() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(BROKEN_ISPRINT, 1);
     }
 
@@ -1457,6 +1468,7 @@ mod tests {
     /// "" would silently break `fc -e ?` invocations.
     #[test]
     fn default_fcedit_resolves_to_a_present_editor_command() {
+        let _g = crate::test_util::global_state_lock();
         // We do NOT shell out to verify executability; just sanity-check
         // the name is a known editor stem (not "", "vim", or a path).
         assert!(matches!(DEFAULT_FCEDIT, "vi" | "ed"),
@@ -1472,6 +1484,7 @@ mod tests {
     /// be (a) absolute, (b) under a sticky-bit world-writable dir.
     #[test]
     fn default_tmpprefix_is_absolute_under_tmp() {
+        let _g = crate::test_util::global_state_lock();
         assert!(DEFAULT_TMPPREFIX.starts_with("/tmp/"),
             "DEFAULT_TMPPREFIX = {:?} must live under /tmp so it inherits sticky-bit",
             DEFAULT_TMPPREFIX);
@@ -1482,6 +1495,7 @@ mod tests {
     /// safe, but pin the upstream choice.
     #[test]
     fn default_readnullcmd_matches_upstream() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DEFAULT_READNULLCMD, "more",
             "config.h:85 — DEFAULT_READNULLCMD must remain `more` to match zsh");
     }
@@ -1492,6 +1506,7 @@ mod tests {
     /// hosts.
     #[test]
     fn passwd_map_is_canonical_nis_name() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PASSWD_MAP, "passwd.byname");
     }
 
@@ -1501,6 +1516,7 @@ mod tests {
     /// to the C locale (every CJK / European user breaks).
     #[test]
     fn config_locale_is_enabled() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CONFIG_LOCALE, 1,
             "CONFIG_LOCALE=0 silently disables every locale-aware code path");
     }
@@ -1512,6 +1528,7 @@ mod tests {
     /// and `getpgrp()` takes no arguments.
     #[test]
     fn getcwd_and_getpgrp_use_modern_signatures() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(GETCWD_CALLS_MALLOC, 1,
             "GETCWD_CALLS_MALLOC=0 means we'd pass a buffer — POSIX requires the NULL-arg form");
         assert_eq!(GETPGRP_VOID, 1,

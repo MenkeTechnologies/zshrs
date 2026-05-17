@@ -417,6 +417,7 @@ mod tests {
     /// Port of `bin_zselect(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zselect.c:65`.
     #[test]
     fn empty_args_with_zero_timeout_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         // C zsh body: with `-t 0` and no fds, select() returns 0
         // immediately and bin_zselect returns 1 (no-fds-ready
         // path). Without `-t`, the call blocks indefinitely (POSIX
@@ -429,6 +430,7 @@ mod tests {
 
     #[test]
     fn invalid_array_name_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
         let r = bin_zselect("zselect", &s(&["-a", "1bad"]), &ops, 0);
         assert_eq!(r, 1);
@@ -436,6 +438,7 @@ mod tests {
 
     #[test]
     fn timeout_garbage_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
         let r = bin_zselect("zselect", &s(&["-t", "100x"]), &ops, 0);
         assert_eq!(r, 1);
@@ -443,6 +446,7 @@ mod tests {
 
     #[test]
     fn no_arg_after_a_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
         let r = bin_zselect("zselect", &s(&["-a"]), &ops, 0);
         assert_eq!(r, 1);
@@ -451,6 +455,7 @@ mod tests {
     /// Port of `bin_zselect(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_invalid_input() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -461,6 +466,7 @@ mod tests {
     /// Port of `bin_zselect(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_sets_fd_and_fdmax() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -474,6 +480,7 @@ mod tests {
     /// "no stdin allowed" guard) gets caught.
     #[test]
     fn handle_digits_accepts_fd_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -488,6 +495,7 @@ mod tests {
     /// max) breaks across multiple fd additions.
     #[test]
     fn handle_digits_fdmax_tracks_highest_fd() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -508,6 +516,7 @@ mod tests {
     /// would set a wildly-out-of-range fd.
     #[test]
     fn handle_digits_rejects_negative() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -518,6 +527,7 @@ mod tests {
     /// c:40 — Empty string input is rejected.
     #[test]
     fn handle_digits_rejects_empty_string() {
+        let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
         unsafe { libc::FD_ZERO(&mut fdset); }
         let mut fdmax: libc::c_int = 0;
@@ -528,6 +538,7 @@ mod tests {
     /// c:288-325 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

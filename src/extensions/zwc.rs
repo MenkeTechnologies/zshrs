@@ -1577,18 +1577,21 @@ mod tests {
 
     #[test]
     fn test_wc_code() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wc_code(WC_LIST), WC_LIST);
         assert_eq!(wc_code(WC_SIMPLE | (5 << WC_CODEBITS)), WC_SIMPLE);
     }
 
     #[test]
     fn test_wc_data() {
+        let _g = crate::test_util::global_state_lock();
         let wc = WC_SIMPLE | (42 << WC_CODEBITS);
         assert_eq!(wc_data(wc), 42);
     }
 
     #[test]
     fn test_load_src_zwc() {
+        let _g = crate::test_util::global_state_lock();
         let path = "/Users/wizard/.zinit/plugins/MenkeTechnologies---zsh-more-completions/src.zwc";
         if !std::path::Path::new(path).exists() {
             eprintln!("Skipping test - {} not found", path);
@@ -1620,6 +1623,7 @@ mod tests {
 
     #[test]
     fn test_load_zshrc_zwc() {
+        let _g = crate::test_util::global_state_lock();
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{}/.zshrc.zwc", home);
         if !std::path::Path::new(&path).exists() {
@@ -1649,6 +1653,7 @@ mod tests {
 
     #[test]
     fn decoded_op_if_converts_to_compound_if() {
+        let _g = crate::test_util::global_state_lock();
         let cmd_a = DecodedOp::Simple {
             args: vec!["true".into()],
         };
@@ -1677,6 +1682,7 @@ mod tests {
 
     #[test]
     fn decoded_op_repeat_converts_with_count_and_body() {
+        let _g = crate::test_util::global_state_lock();
         let body = DecodedOp::Simple {
             args: vec!["echo".into(), "hi".into()],
         };
@@ -1695,6 +1701,7 @@ mod tests {
 
     #[test]
     fn decoded_op_case_converts_each_pattern_branch() {
+        let _g = crate::test_util::global_state_lock();
         let body_one = DecodedOp::Simple {
             args: vec!["echo".into(), "one".into()],
         };
@@ -1720,6 +1727,7 @@ mod tests {
 
     #[test]
     fn decoded_op_try_converts_both_arms() {
+        let _g = crate::test_util::global_state_lock();
         let try_arm = DecodedOp::Simple {
             args: vec!["false".into()],
         };
@@ -1744,6 +1752,7 @@ mod tests {
 
     #[test]
     fn test_load_zshenv_zwc() {
+        let _g = crate::test_util::global_state_lock();
         let home = std::env::var("HOME").unwrap_or_default();
         let path = format!("{}/.zshenv.zwc", home);
         if !std::path::Path::new(&path).exists() {

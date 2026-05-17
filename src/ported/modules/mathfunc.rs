@@ -442,6 +442,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_acos() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("acos", 1, &argv, MF_ACOS);
         assert!((r.type_ == MN_FLOAT));
@@ -451,6 +452,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_atan_two_args() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }, mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("atan", 2, &argv, MF_ATAN);
         assert!((r.type_ == MN_FLOAT));
@@ -460,6 +462,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_abs_int_preserves_type() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: -7, d: 0.0, type_: MN_INTEGER }];
         let r = math_func("abs", 1, &argv, MF_ABS | tflag(TF_NOCONV | TF_NOASS));
         assert!((r.type_ == MN_INTEGER));
@@ -469,6 +472,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_int_truncates() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
         let r = math_func("int", 1, &argv, MF_INT | tflag(TF_NOASS));
         assert!((r.type_ == MN_INTEGER));
@@ -478,6 +482,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_isnan() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT }];
         let r = math_func("isnan", 1, &argv, MF_ISNAN | tflag(TF_NOASS));
         assert_eq!(r.l, 1);
@@ -486,6 +491,7 @@ mod tests {
     /// Port of `math_string(UNUSED(char *name), char *arg, int id)` from `Src/Modules/mathfunc.c:439`.
     #[test]
     fn test_math_string_rand48_in_range() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_string("rand48", "", MS_RAND48);
         assert!((r.type_ == MN_FLOAT));
         assert!((0.0..1.0).contains(&r.d));
@@ -495,6 +501,7 @@ mod tests {
     /// pin; catches a regression that swaps cos/sin dispatch.
     #[test]
     fn math_func_cos_of_zero_is_one() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
         let r = math_func("cos", 1, &argv, MF_COS);
         assert_eq!(r.type_, MN_FLOAT);
@@ -505,6 +512,7 @@ mod tests {
     /// any libm aliasing would surface here.
     #[test]
     fn math_func_sin_of_zero_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
         let r = math_func("sin", 1, &argv, MF_SIN);
         assert_eq!(r.type_, MN_FLOAT);
@@ -515,6 +523,7 @@ mod tests {
     /// any regression in the int→float promotion before sqrt.
     #[test]
     fn math_func_sqrt_of_four_is_two() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 4.0, type_: MN_FLOAT }];
         let r = math_func("sqrt", 1, &argv, MF_SQRT);
         assert_eq!(r.type_, MN_FLOAT);
@@ -524,6 +533,7 @@ mod tests {
     /// c:173 — `MF_EXP` of 0 is 1.0 (e^0 identity).
     #[test]
     fn math_func_exp_of_zero_is_one() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 0.0, type_: MN_FLOAT }];
         let r = math_func("exp", 1, &argv, MF_EXP);
         assert_eq!(r.type_, MN_FLOAT);
@@ -533,6 +543,7 @@ mod tests {
     /// c:173 — `MF_LOG` of 1.0 is 0.0 (natural log identity).
     #[test]
     fn math_func_log_of_one_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("log", 1, &argv, MF_LOG);
         assert_eq!(r.type_, MN_FLOAT);
@@ -543,6 +554,7 @@ mod tests {
     /// because a regen could swap floor/ceil dispatch.
     #[test]
     fn math_func_floor_rounds_down() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
         let r = math_func("floor", 1, &argv, MF_FLOOR);
         assert_eq!(r.type_, MN_FLOAT);
@@ -552,6 +564,7 @@ mod tests {
     /// c:173 — `MF_CEIL` of 3.1 is 4.0. Symmetric to floor.
     #[test]
     fn math_func_ceil_rounds_up() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: 3.1, type_: MN_FLOAT }];
         let r = math_func("ceil", 1, &argv, MF_CEIL);
         assert_eq!(r.type_, MN_FLOAT);
@@ -563,6 +576,7 @@ mod tests {
     /// integer-typed `abs`).
     #[test]
     fn math_func_fabs_preserves_float_type() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 0, d: -2.5, type_: MN_FLOAT }];
         let r = math_func("fabs", 1, &argv, MF_FABS);
         assert_eq!(r.type_, MN_FLOAT);
@@ -575,6 +589,7 @@ mod tests {
     /// caught.
     #[test]
     fn math_func_isinf_classifies_correctly() {
+        let _g = crate::test_util::global_state_lock();
         let argv_inf = [mnumber { l: 0, d: f64::INFINITY, type_: MN_FLOAT }];
         let r_inf = math_func("isinf", 1, &argv_inf, MF_ISINF | tflag(TF_NOASS));
         assert_eq!(r_inf.l, 1, "isinf(+inf) must be 1");
@@ -589,12 +604,14 @@ mod tests {
     /// function must not crash.
     #[test]
     fn math_string_unknown_id_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _ = math_string("nope", "", 9999);
     }
 
     /// c:548-590 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

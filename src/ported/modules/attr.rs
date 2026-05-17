@@ -580,6 +580,7 @@ mod tests {
 
     #[test]
     fn xgetxattr_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 0];
         let r = xgetxattr("/nonexistent/path", "user.test", &mut buf, 0);
         assert!(r < 0);
@@ -587,12 +588,14 @@ mod tests {
 
     #[test]
     fn xsetxattr_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let r = xsetxattr("/nonexistent/path", "user.test", b"value", 0, 0);
         assert!(r < 0);
     }
 
     #[test]
     fn xlistxattr_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 0];
         let r = xlistxattr("/nonexistent/path", &mut buf, 0);
         assert!(r < 0);
@@ -600,12 +603,14 @@ mod tests {
 
     #[test]
     fn xremovexattr_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let r = xremovexattr("/nonexistent/path", "user.test", 0);
         assert!(r < 0);
     }
 
     #[test]
     fn bin_getattr_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv: Vec<String> = vec!["/nonexistent/path".into(), "user.test".into()];
         let rc = bin_getattr("zgetattr", &argv, &ops, 0);
@@ -614,6 +619,7 @@ mod tests {
 
     #[test]
     fn bin_setattr_nonexistent_path_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv: Vec<String> = vec!["/nonexistent/path".into(), "user.test".into(), "value".into()];
         let rc = bin_setattr("zsetattr", &argv, &ops, 0);
@@ -622,6 +628,7 @@ mod tests {
 
     #[test]
     fn module_loaders_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         let mut enables: Option<Vec<i32>> = None;
@@ -638,6 +645,7 @@ mod tests {
     /// least path + attr name). Pin the usage-error gate.
     #[test]
     fn bin_getattr_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let rc = bin_getattr("zgetattr", &[], &ops, 0);
         assert_ne!(rc, 0, "bin_getattr without args must error");
@@ -647,6 +655,7 @@ mod tests {
     /// returns nonzero. Pin the second-arg-required gate.
     #[test]
     fn bin_getattr_one_arg_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv = vec!["/tmp".to_string()];
         let rc = bin_getattr("zgetattr", &argv, &ops, 0);
@@ -663,6 +672,7 @@ mod tests {
     /// xsetxattr fails → return 1.
     #[test]
     fn bin_setattr_with_bogus_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv = vec!["/__definitely_not_a_path__".to_string(),
                         "user.test".to_string(),
@@ -675,6 +685,7 @@ mod tests {
     /// Pin the error-passthrough from removexattr's ENOENT.
     #[test]
     fn bin_delattr_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv = vec!["/__definitely_not_a_path__".to_string(),
                         "user.test".to_string()];
@@ -686,6 +697,7 @@ mod tests {
     /// Pin the listxattr error-surface contract.
     #[test]
     fn bin_listattr_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let argv = vec!["/__definitely_not_a_path__".to_string()];
         let rc = bin_listattr("zlistattr", &argv, &ops, 0);
@@ -696,6 +708,7 @@ mod tests {
     /// (errno = ENOENT). Pin the negative-return signal.
     #[test]
     fn xgetxattr_nonexistent_path_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 64];
         let r = xgetxattr("/__nonexistent__", "user.foo", &mut buf, 0);
         assert!(r < 0, "xgetxattr on bogus path must surface error");
@@ -704,6 +717,7 @@ mod tests {
     /// c:67 — `xsetxattr` on a nonexistent path returns nonzero.
     #[test]
     fn xsetxattr_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let r = xsetxattr("/__nonexistent__", "user.foo", b"v", 0, 0);
         assert_ne!(r, 0, "xsetxattr on bogus path must surface error");
     }

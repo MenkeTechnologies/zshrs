@@ -487,6 +487,7 @@ mod tests {
 
     #[test]
     fn config_setting_parses_common_aliases() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ConfigSetting::parse("auto"), Some(ConfigSetting::Auto));
         assert_eq!(ConfigSetting::parse(""), Some(ConfigSetting::Auto));
         assert_eq!(ConfigSetting::parse("off"), Some(ConfigSetting::Off));
@@ -501,6 +502,7 @@ mod tests {
 
     #[test]
     fn mode_round_trips_through_atomic() {
+        let _g = crate::test_util::global_state_lock();
         for m in [Mode::Unknown, Mode::Present, Mode::Absent, Mode::Disabled] {
             assert_eq!(Mode::from_u8(m as u8), m);
         }
@@ -508,6 +510,7 @@ mod tests {
 
     #[test]
     fn resolve_startup_config_path_absolute_trims() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             super::resolve_startup_config_path("  /tmp/x.zsh  "),
             PathBuf::from("/tmp/x.zsh")
@@ -516,6 +519,7 @@ mod tests {
 
     #[test]
     fn resolve_startup_config_path_tilde() {
+        let _g = crate::test_util::global_state_lock();
         let home = dirs::home_dir().expect("HOME");
         assert_eq!(
             super::resolve_startup_config_path("~/init.zsh"),
@@ -525,6 +529,7 @@ mod tests {
 
     #[test]
     fn read_config_full_startup_config_from_zshrs_home() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::Mutex;
         static ENV_LOCK: Mutex<()> = Mutex::new(());
         let _lock = ENV_LOCK.lock().expect("env test lock");

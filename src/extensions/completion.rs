@@ -358,6 +358,7 @@ mod tests {
 
     #[test]
     fn test_completion_engine() {
+        let _g = crate::test_util::global_state_lock();
         let engine = CompletionEngine::in_memory().unwrap();
 
         engine
@@ -380,6 +381,7 @@ mod tests {
 
     #[test]
     fn test_frequency_ranking() {
+        let _g = crate::test_util::global_state_lock();
         let engine = CompletionEngine::in_memory().unwrap();
 
         engine

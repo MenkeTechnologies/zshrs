@@ -1536,6 +1536,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_same() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:140-143 — both strings end together → 0.
         assert_eq!(zlinecmp("hello", "hello"), 0);
@@ -1543,6 +1544,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_input_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:146 — input runs out before hist → -1.
         assert_eq!(zlinecmp("hello world", "hello"), -1);
@@ -1550,6 +1552,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_lowercase_same() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:181 — case-fold walk: HELLO vs hello → 1.
         assert_eq!(zlinecmp("HELLO", "hello"), 1);
@@ -1557,6 +1560,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_lowercase_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:183 — input prefix of histp under case folding → 2.
         assert_eq!(zlinecmp("HELLO World", "hello"), 2);
@@ -1564,6 +1568,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_different() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:186 — totally different → 3.
         assert_eq!(zlinecmp("apple", "orange"), 3);
@@ -1571,6 +1576,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinecmp_empty_input() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:140-143 — empty input is a "prefix" → with non-empty hist → -1.
         assert_eq!(zlinecmp("foo", ""), -1);
@@ -1580,6 +1586,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinefind_forward_exact() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:208-213 — forward search; sens=0 means need zlinecmp < 0,
         // i.e. the needle must be a strict prefix at the position.
@@ -1588,6 +1595,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinefind_backward_exact() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:215-222 — backward search from end. sens=1 accepts both
         // 0 (exact) and -1 (prefix); sens=0 only accepts -1 (prefix).
@@ -1601,6 +1609,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinefind_not_found() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:224 — exhausted without match → None.
         assert_eq!(zlinefind("hello", 0, "xyz", 1, 0), None);
@@ -1608,6 +1617,7 @@ mod zlinecmp_zlinefind_tests {
 
     #[test]
     fn zlinefind_starts_at_pos() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:206 — search begins at `pos`, not at 0.
         // "abcabc" with needle "a" starting at pos=1 finds the
@@ -1622,6 +1632,7 @@ mod isearch_prompt_tests {
 
     #[test]
     fn bad_text_strings_are_seven_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(FAILING_TEXT.len(), BAD_TEXT_LEN);
         assert_eq!(INVALID_TEXT.len(), BAD_TEXT_LEN);
@@ -1629,6 +1640,7 @@ mod isearch_prompt_tests {
 
     #[test]
     fn norm_prompt_pos_after_bad_text_marker() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Column 8: skips "XXXXXXX " (BAD_TEXT_LEN + 1 trailing space).
         assert_eq!(NORM_PROMPT_POS, 8);
@@ -1636,6 +1648,7 @@ mod isearch_prompt_tests {
 
     #[test]
     fn first_search_char_after_isearch_label() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Column 22: NORM_PROMPT_POS (8) + 14 chars of "XXX-i-search: ".
         assert_eq!(FIRST_SEARCH_CHAR, 22);
@@ -1643,6 +1656,7 @@ mod isearch_prompt_tests {
 
     #[test]
     fn isearch_prompt_skeleton_has_correct_shape() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ISEARCH_PROMPT.starts_with("XXXXXXX "));
         assert!(ISEARCH_PROMPT.contains("XXX-i-search:"));
@@ -1688,6 +1702,7 @@ mod tests {
 
     #[test]
     fn uphistory_skips_consecutive_dupes_when_histignoredups_set() {
+        let _g = crate::test_util::global_state_lock();
         // c:235-237 — `nodups = isset(HISTIGNOREDUPS)` is passed
         //              through to zle_goto_hist as skipdups. With
         //              HISTIGNOREDUPS on and the current line equal
@@ -1717,6 +1732,7 @@ mod tests {
 
     #[test]
     fn uphistory_returns_1_on_exhaustion_when_histbeep_set() {
+        let _g = crate::test_util::global_state_lock();
         // c:236-237 — `if (!zle_goto_hist(...) && isset(HISTBEEP))
         //              return 1;`
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1733,6 +1749,7 @@ mod tests {
 
     #[test]
     fn uphistory_returns_0_on_exhaustion_without_histbeep() {
+        let _g = crate::test_util::global_state_lock();
         // c:236-237 — exhausted but no HISTBEEP → return 0.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _zle = zle_with_history(&["only"]);
@@ -1746,6 +1763,7 @@ mod tests {
 
     #[test]
     fn beginningofhistory_fills_buffer_from_oldest_entry() {
+        let _g = crate::test_util::global_state_lock();
         // c:584 — must drive cursor to entry 0 AND refill the buffer
         //          (was a fake that only set cursor=0 without buffer fill).
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1769,6 +1787,7 @@ mod tests {
 
     #[test]
     fn endofhistory_fills_buffer_with_saved_live_line() {
+        let _g = crate::test_util::global_state_lock();
         // c:604 — drives back to sentinel; saved_line (if any) restores.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _zle = zle_with_history(&["one", "two"]);
@@ -1799,6 +1818,7 @@ mod tests {
 
     #[test]
     fn zle_goto_hist_walks_backwards_then_forwards() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["echo a", "echo b", "echo c"]);
         // Sit on the live (sentinel) buffer.
@@ -1818,6 +1838,7 @@ mod tests {
 
     #[test]
     fn zle_goto_hist_restores_saved_line_when_returning_to_sentinel() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["one", "two"]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "draft".chars().collect();
@@ -1833,6 +1854,7 @@ mod tests {
 
     #[test]
     fn zle_goto_hist_skipdups_skips_consecutive_dupes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["dup", "dup", "uniq"]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "uniq".chars().collect();
@@ -1846,6 +1868,7 @@ mod tests {
 
     #[test]
     fn upline_in_single_line_buffer_returns_remaining_count() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
@@ -1857,6 +1880,7 @@ mod tests {
 
     #[test]
     fn upline_in_two_line_buffer_moves_cursor_to_first_line() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "first\nsecond".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
@@ -1869,6 +1893,7 @@ mod tests {
 
     #[test]
     fn up_line_or_history_falls_through_to_history_when_at_top() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["prev cmd"]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "current".chars().collect();
@@ -1882,6 +1907,7 @@ mod tests {
 
     #[test]
     fn undo_redo_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         setlastline();
         // Type "abc"
@@ -1900,6 +1926,7 @@ mod tests {
 
     #[test]
     fn undo_returns_one_when_stack_empty() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         setlastline();
         assert_eq!(undo_widget(), 1);
@@ -1907,6 +1934,7 @@ mod tests {
 
     #[test]
     fn push_line_pushes_buffer_and_clears_editor() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&[]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "in flight".chars().collect();
@@ -1925,6 +1953,7 @@ mod tests {
 
     #[test]
     fn push_line_with_count_pushes_extra_empty_strings() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&[]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "x".chars().collect();
@@ -1940,6 +1969,7 @@ mod tests {
 
     #[test]
     fn push_line_negative_count_is_no_op() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&[]);
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
@@ -1952,6 +1982,7 @@ mod tests {
 
     #[test]
     fn remember_edits_saves_original_then_forget_restores() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["echo a", "echo b"]);
         crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0;
@@ -1981,6 +2012,7 @@ mod tests {
 
     #[test]
     fn set_local_history_mult_sets_or_clears_foreign_skip() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&[]);
         let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
@@ -1994,6 +2026,7 @@ mod tests {
 
     #[test]
     fn set_local_history_no_mult_xor_toggles() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&[]);
         let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
@@ -2007,6 +2040,7 @@ mod tests {
 
     #[test]
     fn accept_line_and_down_history_pushes_next_entry_on_bufstack() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["one", "two", "three"]);
         crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0; // sitting on "one"

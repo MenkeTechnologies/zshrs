@@ -475,16 +475,19 @@ mod tests {
 
     #[test]
     fn ztgetflag_known_on_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztgetflag("am"), 1);
     }
 
     #[test]
     fn ztgetflag_unknown_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztgetflag("zz"), -1);
     }
 
     #[test]
     fn gettermcap_co_returns_columns() {
+        let _g = crate::test_util::global_state_lock();
         let v = gettermcap("co");
         assert!(v.is_some());
         let n: i32 = v.unwrap().parse().unwrap_or(0);
@@ -493,11 +496,13 @@ mod tests {
 
     #[test]
     fn gettermcap_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(gettermcap("zz_nonexistent").is_none());
     }
 
     #[test]
     fn scantermcap_emits_bool_caps() {
+        let _g = crate::test_util::global_state_lock();
         let v = scantermcap();
         assert!(v.iter().any(|(k, _)| k == "am"));
     }
@@ -507,6 +512,7 @@ mod tests {
     /// dereferences argv[0] on empty input.
     #[test]
     fn echotc_with_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let r = bin_echotc("echotc", &[], &[false; 256]);
         assert_eq!(r, 1, "echotc must report missing-arg error");
     }
@@ -517,6 +523,7 @@ mod tests {
     /// garbage to stdout.
     #[test]
     fn echotc_unknown_cap_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let r = bin_echotc("echotc", &["zz_definitely_not_a_cap"], &[false; 256]);
         assert_ne!(r, 0, "unknown cap must error");
     }
@@ -526,6 +533,7 @@ mod tests {
     /// must catch that and return -1.
     #[test]
     fn ztgetflag_rejects_embedded_nul() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztgetflag("a\0m"), -1,
             "embedded NUL must surface as -1, not panic or false-match");
     }
@@ -534,6 +542,7 @@ mod tests {
     /// neither the live termcap nor the boolcodes table).
     #[test]
     fn ztgetflag_empty_string_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztgetflag(""), -1);
     }
 
@@ -543,6 +552,7 @@ mod tests {
     /// two tables claim it.
     #[test]
     fn scantermcap_keys_are_unique() {
+        let _g = crate::test_util::global_state_lock();
         let v = scantermcap();
         let mut seen = std::collections::HashSet::new();
         for (k, _) in &v {
@@ -556,6 +566,7 @@ mod tests {
     /// which have non-empty names per the termcap spec).
     #[test]
     fn scantermcap_keys_are_nonempty() {
+        let _g = crate::test_util::global_state_lock();
         for (k, _) in scantermcap() {
             assert!(!k.is_empty(),
                 "scantermcap emitted empty key — null entry leak?");
@@ -567,6 +578,7 @@ mod tests {
     /// behavior protects scripts that grep for specific cap names.
     #[test]
     fn gettermcap_is_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         // "co" is the columns cap; "CO" is unknown.
         let r1 = gettermcap("co");
         let r2 = gettermcap("CO");
@@ -578,6 +590,7 @@ mod tests {
     /// c:323-365 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

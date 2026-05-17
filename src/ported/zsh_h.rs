@@ -3561,17 +3561,20 @@ mod tests {
 
     #[test]
     fn zlong_zulong_sizes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(std::mem::size_of::<zlong>(), 8);
         assert_eq!(std::mem::size_of::<zulong>(), 8);
     }
 
     #[test]
     fn meta_byte_value() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(META as u32, 0x83);
     }
 
     #[test]
     fn parser_tokens_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(Pound as u32, 0x84);
         assert_eq!(Bang as u32, 0x9c);
         assert_eq!(Snull as u32, 0x9d);
@@ -3584,12 +3587,14 @@ mod tests {
 
     #[test]
     fn pm_type_isolates_type_bits() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PM_TYPE(PM_INTEGER | PM_EXPORTED), PM_INTEGER);
         assert_eq!(PM_TYPE(PM_ARRAY | PM_READONLY), PM_ARRAY);
     }
 
     #[test]
     fn opt_isset_basic() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -3605,18 +3610,21 @@ mod tests {
 
     #[test]
     fn binf_constants_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(BINF_PREFIX, 1 << 5);
         assert_eq!(BINF_ASSIGN, 1 << 19);
     }
 
     #[test]
     fn cond_constants_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(COND_NOT, 0);
         assert_eq!(COND_MODI, 19);
     }
 
     #[test]
     fn fdt_constants_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(FDT_UNUSED, 0);
         assert_eq!(FDT_PROC_SUBST, 7);
         assert_eq!(FDT_TYPE_MASK, 15);
@@ -3624,6 +3632,7 @@ mod tests {
 
     #[test]
     fn redir_iswrite_classification() {
+        let _g = crate::test_util::global_state_lock();
         assert!(IS_WRITE_FILE(REDIR_WRITE));
         assert!(IS_WRITE_FILE(REDIR_READWRITE));
         assert!(!IS_WRITE_FILE(REDIR_READ));
@@ -3634,6 +3643,7 @@ mod tests {
 
     #[test]
     fn wc_macros_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let w = wc_bld(WC_LIST, 42);
         assert_eq!(wc_code(w), WC_LIST);
         assert_eq!(wc_data(w), 42);
@@ -3641,6 +3651,7 @@ mod tests {
 
     #[test]
     fn mb_metastrlen_counts_meta_pairs() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(MB_METASTRLEN("abc"), 3);
         // META is char 0x83, but in UTF-8 it encodes as 2 bytes
         // (0xC2 0x83). The byte-level metafied counter walks the
@@ -3651,12 +3662,14 @@ mod tests {
 
     #[test]
     fn mb_charlen_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(MB_CHARLEN(b"abc", 3), 1);
         assert_eq!(MB_CHARLEN(b"", 0), 0);
     }
 
     #[test]
     fn wcwidth_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(WCWIDTH('a'), 1);
         assert_eq!(WCWIDTH('\u{0007}'), 0); // BEL is control
         assert_eq!(WCWIDTH('\u{4E2D}'), 2); // CJK
@@ -3664,6 +3677,7 @@ mod tests {
 
     #[test]
     fn is_combining_zero_width() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!IS_COMBINING('a')); // width 1
         assert!(!IS_COMBINING('\u{0000}')); // null returns false per c:3343
                                             // Note: the WCWIDTH heuristic in this port doesn't recognise
@@ -3677,18 +3691,21 @@ mod tests {
 
     #[test]
     fn pat_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PAT_FILE, 0x0001);
         assert_eq!(PAT_LCMATCHUC, 0x1000);
     }
 
     #[test]
     fn sub_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(SUB_END, 0x0001);
         assert_eq!(SUB_EGLOB, 0x4000);
     }
 
     #[test]
     fn pp_constants_ordered() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PP_FIRST, PP_ALPHA);
         assert!(PP_LAST >= PP_ALPHA);
         assert!(PP_RANGE > PP_LAST);
@@ -3696,12 +3713,14 @@ mod tests {
 
     #[test]
     fn typeset_optstr_constants() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(TYPESET_OPTSTR, "aiEFALRZlurtxUhHT");
         assert_eq!(TYPESET_OPTNUM, "LRZiEF");
     }
 
     #[test]
     fn job_stat_flags_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let all = STAT_CHANGED
             | STAT_STOPPED
             | STAT_TIMED
@@ -3724,16 +3743,19 @@ mod tests {
 
     #[test]
     fn opt_size_at_186() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(OPT_SIZE, 186);
     }
 
     #[test]
     fn cs_count_is_32() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CS_COUNT, 32);
     }
 
     #[test]
     fn zwc_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZWC('a'), 'a');
     }
 
@@ -3743,6 +3765,7 @@ mod tests {
     /// either user-typed input OR pre-lexed cond expressions.
     #[test]
     fn is_dash_recognises_both_ascii_and_lexed_token() {
+        let _g = crate::test_util::global_state_lock();
         assert!(IS_DASH('-'),       "ASCII '-' is dash");
         assert!(IS_DASH('\u{9b}'),  "lexed Dash token is dash");
         assert!(!IS_DASH('+'),      "non-dash chars must NOT match");
@@ -3754,6 +3777,7 @@ mod tests {
     /// "false" for a set option, breaking every `-x` flag check.
     #[test]
     fn opt_isset_reads_ind_array_directly() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         assert!(!OPT_ISSET(&ops, b'x'));
         ops.ind[b'x' as usize] = 1;
@@ -3769,6 +3793,7 @@ mod tests {
     /// param introspection path.
     #[test]
     fn pm_type_strips_modifier_flags() {
+        let _g = crate::test_util::global_state_lock();
         let with_mods = PM_INTEGER | PM_READONLY | PM_EXPORTED;
         assert_eq!(PM_TYPE(with_mods), PM_INTEGER);
         let just_array = PM_TYPE(PM_ARRAY | PM_LEFT | PM_TIED);
@@ -3781,6 +3806,7 @@ mod tests {
     /// hash dumps) corrupts on the next read.
     #[test]
     fn pm_flags_match_c_zsh_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PM_SCALAR,         0,        "c:1878");
         assert_eq!(PM_ARRAY,          1 << 0,   "c:1879");
         assert_eq!(PM_INTEGER,        1 << 1,   "c:1880");
@@ -3813,6 +3839,7 @@ mod tests {
     /// expansion paths. Drift here mis-routes every hash scan.
     #[test]
     fn scanpm_flags_match_c_zsh_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(SCANPM_WANTVALS,   1 << 0, "c:1953");
         assert_eq!(SCANPM_WANTKEYS,   1 << 1, "c:1954");
         assert_eq!(SCANPM_WANTINDEX,  1 << 2, "c:1955");
@@ -3832,6 +3859,7 @@ mod tests {
     /// every parsed token.
     #[test]
     fn token_byte_values_match_c_zsh_h() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(META,        '\u{83}',  "c:144");
         assert_eq!(Pound,       '\u{84}',  "c:159");
         assert_eq!(Stringg,     '\u{85}',  "c:160");
@@ -3873,6 +3901,7 @@ mod tests {
     /// change which chars trigger quoting / pattern matching.
     #[test]
     fn specchars_patchars_match_c_zsh_h() {
+        let _g = crate::test_util::global_state_lock();
         // c:228 — `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`.
         assert_eq!(SPECCHARS, "#$^*()=|{}[]`<>?~;&\n\t \\\'\"",
             "c:228 — SPECCHARS literal must match C verbatim");
@@ -3888,6 +3917,7 @@ mod tests {
     /// `Src/zsh.h:149-153` — DEFAULT_IFS and DEFAULT_IFS_SH literals.
     #[test]
     fn default_ifs_strings_match_c_zsh_h() {
+        let _g = crate::test_util::global_state_lock();
         // c:149 — `DEFAULT_IFS " \t\n\203 "` (5 chars; \203 is Meta).
         assert_eq!(DEFAULT_IFS, " \t\n\u{83} ",
             "c:149 — DEFAULT_IFS = space + tab + newline + Meta + space");
@@ -3904,6 +3934,7 @@ mod tests {
     /// into the type space fails.
     #[test]
     fn pm_type_mask_excludes_modifier_flags() {
+        let _g = crate::test_util::global_state_lock();
         let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED;
         // Modifier flags MUST be outside the type-mask range.
         for modifier in &[PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER,
@@ -3920,6 +3951,7 @@ mod tests {
     /// every `>file` / `>>file` / `1>file` redirection emit.
     #[test]
     fn is_write_file_sweep_all_redir_types() {
+        let _g = crate::test_util::global_state_lock();
         // c:298-299 — write-file family: 0..=8 inclusive.
         for x in REDIR_WRITE..=REDIR_READWRITE {
             assert!(IS_WRITE_FILE(x),
@@ -3940,6 +3972,7 @@ mod tests {
     /// dispatches `>file` as `>>file`.
     #[test]
     fn is_append_redir_pins_bit_1() {
+        let _g = crate::test_util::global_state_lock();
         // c:303-304 — true ONLY for 2/3/6/7 in the write-file family.
         assert!(IS_APPEND_REDIR(REDIR_APP),         "REDIR_APP=2 is append");
         assert!(IS_APPEND_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is append");
@@ -3960,6 +3993,7 @@ mod tests {
     /// scripts that rely on NO_CLOBBER semantics.
     #[test]
     fn is_clobber_redir_pins_bit_0() {
+        let _g = crate::test_util::global_state_lock();
         // c:308-309 — true ONLY for 1/3/5/7 in the write-file family.
         assert!(IS_CLOBBER_REDIR(REDIR_WRITENOW),    "REDIR_WRITENOW=1 is clobber");
         assert!(IS_CLOBBER_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is clobber");
@@ -3977,6 +4011,7 @@ mod tests {
     /// flipping `<=` to `<` would silently exclude REDIR_ERRAPPNOW.
     #[test]
     fn is_error_redir_inclusive_range() {
+        let _g = crate::test_util::global_state_lock();
         // c:313-314 — true ONLY for 4..=7.
         for x in REDIR_ERRWRITE..=REDIR_ERRAPPNOW {
             assert!(IS_ERROR_REDIR(x),
@@ -3996,6 +4031,7 @@ mod tests {
     /// substitution `<(cmd)` redirections.
     #[test]
     fn is_readfd_range_plus_inpipe() {
+        let _g = crate::test_util::global_state_lock();
         // c:318-319 — true for 8..=13 INCLUSIVE plus INPIPE=16.
         for x in REDIR_READWRITE..=REDIR_MERGEIN {
             assert!(IS_READFD(x),
@@ -4016,6 +4052,7 @@ mod tests {
     /// append-vs-write classification across the parser + executor.
     #[test]
     fn redir_constants_have_exact_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(REDIR_WRITE,        0);
         assert_eq!(REDIR_WRITENOW,     1);
         assert_eq!(REDIR_APP,          2);
@@ -4043,6 +4080,7 @@ mod tests {
     /// 0x20/0x40 flag bits.
     #[test]
     fn redir_masks_have_no_overlap() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(REDIR_TYPE_MASK,         0x1f);
         assert_eq!(REDIR_VARID_MASK,        0x20);
         assert_eq!(REDIR_FROM_HEREDOC_MASK, 0x40);

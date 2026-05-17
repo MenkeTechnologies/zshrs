@@ -244,12 +244,14 @@ mod tests {
 
     #[test]
     fn test_job_table_new() {
+        let _g = crate::test_util::global_state_lock();
         let table = JobTable::new();
         assert!(table.is_empty());
     }
 
     #[test]
     fn test_job_state_enum() {
+        let _g = crate::test_util::global_state_lock();
         let state = JobState::Running;
         assert_eq!(state, JobState::Running);
         assert_ne!(state, JobState::Stopped);
@@ -258,6 +260,7 @@ mod tests {
 
     #[test]
     fn test_add_pid_job_assigns_id() {
+        let _g = crate::test_util::global_state_lock();
         let mut t = JobTable::new();
         let id1 = t.add_pid_job(1234, "cmd1".into(), JobState::Running);
         let id2 = t.add_pid_job(5678, "cmd2".into(), JobState::Running);
@@ -268,6 +271,7 @@ mod tests {
 
     #[test]
     fn test_remove_drops_current() {
+        let _g = crate::test_util::global_state_lock();
         let mut t = JobTable::new();
         let id = t.add_pid_job(99, "x".into(), JobState::Running);
         assert!(t.remove(id).is_some());

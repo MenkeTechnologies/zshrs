@@ -794,6 +794,7 @@ mod tests {
 
     #[test]
     fn list_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         assert_eq!(bin_sched("sched", &[], &ops, 0), 0);
@@ -801,6 +802,7 @@ mod tests {
 
     #[test]
     fn add_relative_seconds_pushes_one_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let args = vec![s("+60"), s("echo"), s("hello")];
@@ -812,6 +814,7 @@ mod tests {
 
     #[test]
     fn add_then_delete_first_clears_list() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         bin_sched("sched", &[s("+60"), s("echo"), s("hello")], &ops, 0);
@@ -822,6 +825,7 @@ mod tests {
 
     #[test]
     fn not_enough_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         assert_eq!(bin_sched("sched", &[s("+60")], &ops, 0), 1);
@@ -829,6 +833,7 @@ mod tests {
 
     #[test]
     fn dash_o_flag_sets_trash_zle() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let args = vec![s("-o"), s("+60"), s("cmd")];
@@ -839,6 +844,7 @@ mod tests {
 
     #[test]
     fn insert_keeps_time_order() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         bin_sched("sched", &[s("+200"), s("third")], &ops, 0);
@@ -856,6 +862,7 @@ mod tests {
 
     #[test]
     fn schedgetfn_serializes_entries() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let mut head = schedcmds_lock().lock().unwrap();
         *head = Some(Box::new(schedcmd {
@@ -882,6 +889,7 @@ mod tests {
     /// downstream is a bool gate.
     #[test]
     fn schedflag_trash_zle_is_bit_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(SCHEDFLAG_TRASH_ZLE, 1,
             "SCHEDFLAG_TRASH_ZLE must be bit 0 per c:40 enum");
     }
@@ -890,6 +898,7 @@ mod tests {
     /// Empty schedule → 0 return.
     #[test]
     fn bin_sched_no_args_with_empty_schedule_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let r = bin_sched("sched", &[], &ops, 0);
@@ -899,6 +908,7 @@ mod tests {
     /// c:148 — `bin_sched +N` (no command) returns 1 (usage).
     #[test]
     fn bin_sched_time_only_no_command_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let r = bin_sched("sched", &[s("+60")], &ops, 0);
@@ -909,6 +919,7 @@ mod tests {
     /// return.
     #[test]
     fn bin_sched_zero_offset_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let _r = bin_sched("sched", &[s("+0"), s("echo now")], &ops, 0);
@@ -918,6 +929,7 @@ mod tests {
     /// schedule, must surface an error.
     #[test]
     fn bin_sched_minus_removal_on_empty_schedule_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let r = bin_sched("sched", &[s("-1")], &ops, 0);
@@ -934,6 +946,7 @@ mod tests {
     /// (which would produce FIFO ordering) gets caught.
     #[test]
     fn insert_with_equal_times_lands_after_first_equal_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
         bin_sched("sched", &[s("+100"), s("first")], &ops, 0);
@@ -957,6 +970,7 @@ mod tests {
     /// c:396-450 — module-lifecycle stubs all return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const crate::ported::zsh_h::module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -969,6 +983,7 @@ mod tests {
     /// (single empty-string entry) gets caught.
     #[test]
     fn schedgetfn_empty_schedule_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         *schedcmds_lock().lock().unwrap() = None;
         let arr = schedgetfn(std::ptr::null());

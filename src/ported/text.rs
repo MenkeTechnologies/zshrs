@@ -1349,6 +1349,7 @@ mod tests {
 
     #[test]
     fn is_cond_binary_matches_zsh_set() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(is_cond_binary_op("="), 1);
         assert_eq!(is_cond_binary_op("-eq"), 1);
         assert_eq!(is_cond_binary_op("-nt"), 1);
@@ -1358,6 +1359,7 @@ mod tests {
 
     #[test]
     fn zoutputtab_honours_text_expand_tabs() {
+        let _g = crate::test_util::global_state_lock();
         TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());
         zoutputtab(&mut c).unwrap();
@@ -1377,6 +1379,7 @@ mod tests {
     /// from the conditional dispatch table.
     #[test]
     fn is_cond_binary_op_recognises_canonical_operators() {
+        let _g = crate::test_util::global_state_lock();
         for op in ["=", "==", "!=", "<", ">", "-eq", "-ne", "-lt", "-le", "-gt", "-ge"] {
             assert_eq!(is_cond_binary_op(op), 1, "{op:?} must be recognised");
         }
@@ -1385,6 +1388,7 @@ mod tests {
     /// Unknown / unary / nonsense operators return 0.
     #[test]
     fn is_cond_binary_op_rejects_unknown_operators() {
+        let _g = crate::test_util::global_state_lock();
         for op in ["?", "@", "", " ", "==="] {
             assert_eq!(is_cond_binary_op(op), 0, "{op:?} must NOT be recognised as binary");
         }
@@ -1399,6 +1403,7 @@ mod tests {
     /// Pin the exact array contents AND the exact length.
     #[test]
     fn cond_binary_ops_table_matches_c_source_exactly() {
+        let _g = crate::test_util::global_state_lock();
         // c:48-51 — verbatim list. Order is the contract.
         let expected = [
             "=", "==", "!=", "<", ">",
@@ -1420,6 +1425,7 @@ mod tests {
     /// The existing canonical-ops test misses these four.
     #[test]
     fn is_cond_binary_op_accepts_file_test_and_regex_ops() {
+        let _g = crate::test_util::global_state_lock();
         for op in ["-nt", "-ot", "-ef", "=~"] {
             assert_eq!(is_cond_binary_op(op), 1,
                 "c:63 — strcmp match must accept {:?}", op);
@@ -1429,6 +1435,7 @@ mod tests {
     /// `taddchr` + `taddstr` smoke — no panic, sanitises pending buffer.
     #[test]
     fn taddchr_taddstr_smoke_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         taddchr(b'x' as i32);
         taddstr("hello");
         tdopending();
@@ -1437,6 +1444,7 @@ mod tests {
     /// `taddpending` queues a deferred pair flushed via `tdopending`.
     #[test]
     fn taddpending_then_tdopending_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         taddpending("foo", "bar");
         tdopending();
     }
@@ -1444,6 +1452,7 @@ mod tests {
     /// `taddnl(no_semicolon)` two-mode path: 0 = `; \n`, 1 = `\n` only.
     #[test]
     fn taddnl_two_modes_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         taddnl(0);
         taddnl(1);
         tdopending();
@@ -1458,6 +1467,7 @@ mod tests {
     /// third `<` from herestring round-trips.
     #[test]
     fn fstr_table_matches_c_source_position_by_position() {
+        let _g = crate::test_util::global_state_lock();
         // c:1024-1026 — verbatim list (NULL at position 15 → ">&-" placeholder).
         let expected = [
             ">",   // REDIR_WRITE       = 0
@@ -1510,6 +1520,7 @@ mod tests {
     /// receives for the four boundary fds.
     #[test]
     fn getredirs_fd1_emits_single_byte_no_modulo() {
+        let _g = crate::test_util::global_state_lock();
         // The arithmetic the function performs: `'0' + fd1`.
         // For fd1 in 0..=9 it produces an ASCII digit.
         for fd in 0..=9i32 {
@@ -1532,6 +1543,7 @@ mod tests {
     /// the second entry unreachable.
     #[test]
     fn cond_binary_ops_has_no_duplicates() {
+        let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = COND_BINARY_OPS.iter().copied().collect();
         assert_eq!(unique.len(), COND_BINARY_OPS.len(),
             "duplicate entry in COND_BINARY_OPS");
@@ -1542,6 +1554,7 @@ mod tests {
     /// consistency: anything in the table → `is_cond_binary_op == 1`.
     #[test]
     fn every_cond_binary_op_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         for &op in COND_BINARY_OPS {
             assert_eq!(is_cond_binary_op(op), 1,
                 "{:?} is in COND_BINARY_OPS but is_cond_binary_op rejects it", op);
@@ -1552,6 +1565,7 @@ mod tests {
     /// query via `tdopending` (which drains the buffer).
     #[test]
     fn taddchr_appends_single_byte() {
+        let _g = crate::test_util::global_state_lock();
         // Smoke: must not panic with any byte value
         for c in [0i32, 32, 65, 127, 200, 255] {
             taddchr(c);
@@ -1562,6 +1576,7 @@ mod tests {
     /// no-panic over a variety of inputs.
     #[test]
     fn taddstr_appends_string_safely() {
+        let _g = crate::test_util::global_state_lock();
         taddstr("");
         taddstr("a");
         taddstr("hello world");
@@ -1574,6 +1589,7 @@ mod tests {
     /// every prompt's tab width.
     #[test]
     fn text_expand_tabs_default_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         // Reset to default
         TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
         let v = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
@@ -1586,6 +1602,7 @@ mod tests {
     /// it matters for `getjobtext` indentation.
     #[test]
     fn zoutputtab_emits_n_spaces_for_n_value() {
+        let _g = crate::test_util::global_state_lock();
         let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
         TEXT_EXPAND_TABS.store(8, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());
@@ -1599,6 +1616,7 @@ mod tests {
     /// literal tab. Pin the no-expand path.
     #[test]
     fn zoutputtab_zero_emits_literal_tab() {
+        let _g = crate::test_util::global_state_lock();
         let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
         TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());
@@ -1612,6 +1630,7 @@ mod tests {
     /// negative as 0 silently breaks `getpermtext` indent.
     #[test]
     fn zoutputtab_negative_emits_nothing() {
+        let _g = crate::test_util::global_state_lock();
         let saved = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
         TEXT_EXPAND_TABS.store(-1, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());

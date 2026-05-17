@@ -3206,6 +3206,7 @@ mod gs_tt_tests {
 
     #[test]
     fn gs_size_offset_matches_c() {
+        let _g = crate::test_util::global_state_lock();
         // c:83 — GS_SIZE = GS_SHIFT_BASE = 8.
         assert_eq!(GS_SIZE, 8);
         // c:84 — GS_ATIME = GS_SHIFT_BASE << 1 = 16.
@@ -3216,6 +3217,7 @@ mod gs_tt_tests {
 
     #[test]
     fn gs_normal_covers_all_size_keys() {
+        let _g = crate::test_util::global_state_lock();
         // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
         assert!(GS_NORMAL & GS_SIZE  != 0);
         assert!(GS_NORMAL & GS_ATIME != 0);
@@ -3226,6 +3228,7 @@ mod gs_tt_tests {
 
     #[test]
     fn tt_namespaces_share_indices() {
+        let _g = crate::test_util::global_state_lock();
         // c:121-126 vs c:128-133 — TT_DAYS == TT_BYTES == 0, etc.
         assert_eq!(TT_DAYS,    TT_BYTES);
         assert_eq!(TT_HOURS,   TT_POSIX_BLOCKS);
@@ -3237,6 +3240,7 @@ mod gs_tt_tests {
 
     #[test]
     fn max_sorts_is_12() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(MAX_SORTS, 12);
     }
 }
@@ -4448,6 +4452,7 @@ mod tests {
 
     #[test]
     fn test_haswilds() {
+        let _g = crate::test_util::global_state_lock();
         assert!(haswilds("*.txt"));
         assert!(haswilds("file?.txt"));
         assert!(haswilds("file[12].txt"));
@@ -4457,6 +4462,7 @@ mod tests {
 
     #[test]
     fn test_pattern_match() {
+        let _g = crate::test_util::global_state_lock();
         assert!(matchpat("*.txt", "file.txt", false, true));
         assert!(matchpat("file?.txt", "file1.txt", false, true));
         assert!(!matchpat("*.txt", "file.rs", false, true));
@@ -4466,6 +4472,7 @@ mod tests {
 
     #[test]
     fn test_brace_expansion() {
+        let _g = crate::test_util::global_state_lock();
         let result = xpandbraces("{a,b,c}", false);
         assert_eq!(result, vec!["a", "b", "c"]);
 
@@ -4481,6 +4488,7 @@ mod tests {
 
     #[test]
     fn test_glob_simple() {
+        let _g = crate::test_util::global_state_lock();
         let dir = setup_test_dir();
         let pattern = format!("{}/*.txt", dir.path().display());
 
@@ -4494,6 +4502,7 @@ mod tests {
 
     #[test]
     fn test_glob_hidden() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::opt_state_set;
         let dir = setup_test_dir();
         let pattern = format!("{}/*", dir.path().display());
@@ -4517,6 +4526,7 @@ mod tests {
 
     #[test]
     fn test_glob_emit_path_strips_read_dir_dot_slash() {
+        let _g = crate::test_util::global_state_lock();
         use std::path::Path;
         assert_eq!(glob_emit_path(Path::new("./sub")), "sub");
         assert_eq!(glob_emit_path(Path::new("sub/deeper")), "sub/deeper");
@@ -4526,6 +4536,7 @@ mod tests {
 
     #[test]
     fn test_file_type_char() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(file_type(libc::S_IFDIR as u32), '/');
         assert_eq!(file_type(libc::S_IFREG as u32), ' ');
         assert_eq!(file_type(libc::S_IFREG as u32 | 0o111), '*');
@@ -4540,6 +4551,7 @@ mod tests {
     /// Pin every branch by position.
     #[test]
     fn file_type_every_branch_matches_c_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(file_type(libc::S_IFBLK as u32),  '#',
             "c:2020 — S_ISBLK → '#'");
         assert_eq!(file_type(libc::S_IFCHR as u32),  '%',
@@ -4569,6 +4581,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_numeric() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::sort::zstrcmp;
         let n = crate::zsh_h::SORTIT_NUMERICALLY as u32;
         assert_eq!(zstrcmp("file1", "file2", n), Ordering::Less);
@@ -4583,6 +4596,7 @@ mod tests {
     /// bareglobqual=1 snapshot when another flips it off.
     #[test]
     fn glob_opts_snapshot_isolates_concurrent_setopt() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
         use crate::ported::zsh_h::BAREGLOBQUAL;
 
@@ -4611,6 +4625,7 @@ mod tests {
     /// After the scope guard drops, reads fall back to the live store.
     #[test]
     fn glob_opts_snapshot_clears_on_drop() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
         use crate::ported::zsh_h::NULLGLOB;
 
@@ -4635,6 +4650,7 @@ mod tests {
     /// re-capture or clear on its own Drop.
     #[test]
     fn glob_opts_snapshot_nested_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
         use crate::ported::zsh_h::EXTENDEDGLOB;
 
@@ -4666,6 +4682,7 @@ mod tests {
     /// single literal filename — wrong shell semantics.
     #[test]
     fn xpandredir_single_literal_filename_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
             typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
@@ -4686,6 +4703,7 @@ mod tests {
     /// which the executor would interpret as "merge with fd -1".
     #[test]
     fn xpandredir_dash_merge_collapses_to_close() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{redir, REDIR_MERGEOUT, REDIR_CLOSE};
         let mut fn_ = redir {
             typ: REDIR_MERGEOUT, flags: 0, fd1: 1, fd2: -1,
@@ -4701,6 +4719,7 @@ mod tests {
     /// regression that panics on `.as_deref().unwrap()` for absent name.
     #[test]
     fn xpandredir_with_no_name_returns_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
             typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
@@ -4717,6 +4736,7 @@ mod tests {
     /// expansions outside redirections.
     #[test]
     fn in_expandredir_flag_is_zero_at_rest() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(IN_EXPANDREDIR.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
@@ -4726,6 +4746,7 @@ mod tests {
     /// that quote literal stars.
     #[test]
     fn haswilds_respects_backslash_escape() {
+        let _g = crate::test_util::global_state_lock();
         assert!(haswilds("*.txt"),    "bare * is wild");
         assert!(!haswilds(r"\*.txt"), "escaped \\* is literal — NOT wild");
         assert!(!haswilds(r"\?.txt"), "escaped \\? is literal — NOT wild");
@@ -4737,6 +4758,7 @@ mod tests {
     /// to chdir to a literal `[`.
     #[test]
     fn haswilds_open_bracket_alone_is_a_wildcard() {
+        let _g = crate::test_util::global_state_lock();
         assert!(haswilds("[abc]"),  "char-class is wild");
         assert!(haswilds("foo["),   "even unterminated [ is wild");
     }
@@ -4749,6 +4771,7 @@ mod tests {
     /// flag.
     #[test]
     fn haswilds_extglob_chars_inside_bracket_dont_double_count() {
+        let _g = crate::test_util::global_state_lock();
         // Once `[` is seen, function returns true immediately, so the
         // post-bracket chars don't matter. But this docs the contract.
         assert!(haswilds("[*]"));
@@ -4759,6 +4782,7 @@ mod tests {
     /// by triggering glob expansion on a literal path).
     #[test]
     fn haswilds_plain_text_not_wild() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!haswilds("plain"));
         assert!(!haswilds(""));
         assert!(!haswilds("/usr/local/bin"));
@@ -4770,6 +4794,7 @@ mod tests {
     /// breaks every script using extended-glob.
     #[test]
     fn haswilds_extended_glob_chars_recognised() {
+        let _g = crate::test_util::global_state_lock();
         assert!(haswilds("foo#bar"),  "# is extglob wild");
         assert!(haswilds("foo^bar"),  "^ is extglob wild");
         assert!(haswilds("~/file"),   "~ is extglob wild");
@@ -4780,6 +4805,7 @@ mod tests {
     /// trivial pattern, runs it).
     #[test]
     fn matchpat_exact_literal_matches() {
+        let _g = crate::test_util::global_state_lock();
         assert!(matchpat("hello", "hello", false, true));
         assert!(!matchpat("hello", "world", false, true));
     }
@@ -4790,6 +4816,7 @@ mod tests {
     /// `[[ "$x" = (#i)foo ]]`-style match.
     #[test]
     fn matchpat_case_insensitive_when_flag_clear() {
+        let _g = crate::test_util::global_state_lock();
         assert!(matchpat("hello", "HELLO", false, false),
             "case-insensitive match must succeed across cases");
         assert!(matchpat("FoO",   "foo",   false, false));
@@ -4799,6 +4826,7 @@ mod tests {
     /// inputs. Pinning the contract.
     #[test]
     fn matchpat_case_sensitive_rejects_case_different() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!matchpat("hello", "HELLO", false, true),
             "case-sensitive default must reject HELLO != hello");
     }
@@ -4809,6 +4837,7 @@ mod tests {
     /// substring-globbing code.
     #[test]
     fn set_pat_start_handles_out_of_range_safely() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(set_pat_start("hello", 0),     "hello");
         assert_eq!(set_pat_start("hello", 100),   "hello");
         assert_eq!(set_pat_start("hello", 2),     "llo");
@@ -4820,6 +4849,7 @@ mod tests {
     /// the substring-globbing code.
     #[test]
     fn set_pat_end_handles_out_of_range_safely() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(set_pat_end("hello", 100),     "hello");
         assert_eq!(set_pat_end("hello", 3),       "hel");
         assert_eq!(set_pat_end("hello", 0),       "");
@@ -4830,6 +4860,7 @@ mod tests {
     /// None would crash every glob-replace path with no matches.
     #[test]
     fn freematchlist_handles_none_safely() {
+        let _g = crate::test_util::global_state_lock();
         freematchlist(None);
         // No assertion — survival is the test.
     }
@@ -4839,6 +4870,7 @@ mod tests {
     /// across calls.
     #[test]
     fn freematchlist_clears_provided_vec() {
+        let _g = crate::test_util::global_state_lock();
         let mut v = vec![(0, 5), (10, 15)];
         freematchlist(Some(&mut v));
         assert!(v.is_empty(), "freematchlist must clear the input vec");
@@ -4851,6 +4883,7 @@ mod tests {
     /// the canonical contract.
     #[test]
     fn hasbraces_matched_pair_with_comma_or_dotdot() {
+        let _g = crate::test_util::global_state_lock();
         // Matched + comma → true.
         assert!(hasbraces("a{b,c}d", false),
             "c:2127 — lbrace + comma + rbrace is a brace expansion");
@@ -4876,6 +4909,7 @@ mod tests {
     /// contains a comma. Empty pair is still not.
     #[test]
     fn hasbraces_brace_ccl_makes_any_pair_match() {
+        let _g = crate::test_util::global_state_lock();
         // c:2049 — BRACECCL: non-empty pair is enough.
         assert!(hasbraces("{abc}", true),
             "c:2049 — BRACECCL: non-empty pair is char-class set");
@@ -4895,6 +4929,7 @@ mod tests {
     /// (each with comma) DO trigger detection.
     #[test]
     fn hasbraces_depth_1_check_for_comma_dotdot() {
+        let _g = crate::test_util::global_state_lock();
         assert!(hasbraces("a{1,2}b{3,4}c", false),
             "two independent top-level pairs, first one matches at depth 1");
     }
@@ -4911,6 +4946,7 @@ mod tests {
     ///   - Empty post-strip → replaced with single Nularg.
     #[test]
     fn remnulargs_matches_c_inull_handling() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
 
         // Plain ASCII unchanged (no inulls).

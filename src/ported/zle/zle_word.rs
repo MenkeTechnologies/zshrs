@@ -984,6 +984,7 @@ mod tests {
     /// Verifies `wordclass` per c:74-78 dispatch table.
     #[test]
     fn wordclass_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(wordclass(' '), 0);
         assert_eq!(wordclass('a'), 1);
@@ -995,6 +996,7 @@ mod tests {
     /// Verifies `forwardword` skips iword then non-iword (c:56-63).
     #[test]
     fn forwardword_basic() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         forwardword(&[]);
@@ -1007,6 +1009,7 @@ mod tests {
     /// (c:251-265).
     #[test]
     fn backwardword_lands_at_word_start() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
@@ -1019,6 +1022,7 @@ mod tests {
     /// Verifies `upcaseword` mutates the next word in place (c:540-547).
     #[test]
     fn upcaseword_uppercases_next_word() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         upcaseword(&[]);
@@ -1030,6 +1034,7 @@ mod tests {
     /// Verifies `downcaseword` mutates next word in place (c:562-569).
     #[test]
     fn downcaseword_lowercases_next_word() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("FOO Bar");
         downcaseword(&[]);
@@ -1041,6 +1046,7 @@ mod tests {
     /// rest (c:584-595).
     #[test]
     fn capitalizeword_first_only() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         capitalizeword(&[]);
@@ -1055,6 +1061,7 @@ mod tests {
     /// and `foredel(3-0)` drops "foo" — leaving the leading space.
     #[test]
     fn deleteword_drops_next_word() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         deleteword(&[]);
@@ -1067,6 +1074,7 @@ mod tests {
     /// preceding word (c:684-734).
     #[test]
     fn transposewords_swaps_pair() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);  // mid-'bar'
@@ -1084,6 +1092,7 @@ mod tests {
     /// classifier — a regression in any branch breaks all of them.
     #[test]
     fn wordclass_iblank_branch_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         // c:76 — `ZC_iblank(x) ? 0`. After the wcsiblank fix
         // `Src/Zle/zle.h:62` → `Src/utils.c:4302-4307` the iblank arm
         // catches every iswspace-except-newline char.
@@ -1100,6 +1109,7 @@ mod tests {
     /// single word boundary.
     #[test]
     fn wordclass_alnum_and_underscore_branch_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         // Letters.
         assert_eq!(wordclass('a'), 1);
         assert_eq!(wordclass('Z'), 1);
@@ -1115,6 +1125,7 @@ mod tests {
     /// chunks separated by a class-2 char).
     #[test]
     fn wordclass_punctuation_branch_returns_two() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wordclass('.'), 2);
         assert_eq!(wordclass(','), 2);
         assert_eq!(wordclass(';'), 2);
@@ -1129,6 +1140,7 @@ mod tests {
     /// `iswpunct('\n')` is false → class 3.
     #[test]
     fn wordclass_other_branch_returns_three() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wordclass('\n'), 3, "newline excluded from iblank by wcsiblank");
     }
 
@@ -1136,6 +1148,7 @@ mod tests {
     /// Pin no-overlap across the four buckets.
     #[test]
     fn wordclass_returns_value_in_range_for_all_ascii() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for b in 0..=127u8 {
             let c = b as char;
@@ -1149,6 +1162,7 @@ mod tests {
     /// output, 1000 times.
     #[test]
     fn wordclass_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..1000 {
             assert_eq!(wordclass('a'), 1);
             assert_eq!(wordclass(' '), 0);
@@ -1161,6 +1175,7 @@ mod tests {
     /// per `wcsiblank` (`Src/utils.c:4304` — iswspace excluding `\n`).
     #[test]
     fn wordclass_tab_is_class_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wordclass('\t'), 0,
             "tab is iblank → class 0 per c:75 wcsiblank branch");
     }
@@ -1171,6 +1186,7 @@ mod tests {
     /// breaks vi `aw`/`iw` over CJK/Latin1 names.
     #[test]
     fn wordclass_non_ascii_letters_are_class_one() {
+        let _g = crate::test_util::global_state_lock();
         // These match iswalnum in most locales; the exact answer
         // depends on locale, but ASCII alpha+digit must be class 1
         // regardless.
@@ -1184,6 +1200,7 @@ mod tests {
     /// `n>0` loop has nothing to walk; cursor stays at 0.
     #[test]
     fn forwardword_on_empty_buffer_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         line("");
         let r = forwardword(&[]);
@@ -1198,6 +1215,7 @@ mod tests {
     /// stays at 0.
     #[test]
     fn backwardword_on_empty_buffer_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         line("");
         let r = backwardword(&[]);
@@ -1211,6 +1229,7 @@ mod tests {
     /// ZLELL, no movement, returns 0.
     #[test]
     fn forwardword_at_end_of_buffer_stays_at_zlell() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         line("foo");
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1224,6 +1243,7 @@ mod tests {
     /// c:240 — `backwardword` at start (ZLECS=0): no movement.
     #[test]
     fn backwardword_at_start_of_buffer_stays_at_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         line("foo bar");
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);

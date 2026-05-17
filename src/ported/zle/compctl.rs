@@ -2934,6 +2934,7 @@ mod tests {
 
     #[test]
     fn createcompctltable_initializes_table() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -2944,6 +2945,7 @@ mod tests {
 
     #[test]
     fn cc_assign_inserts_into_table() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -2958,6 +2960,7 @@ mod tests {
 
     #[test]
     fn freecompctlp_removes_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -2969,6 +2972,7 @@ mod tests {
 
     #[test]
     fn cc_flags_bit_layout_matches_c_compctlh() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Spot-check that the bit values match the C constants.
         assert_eq!(CC_FILES, 1);
@@ -2979,6 +2983,7 @@ mod tests {
 
     #[test]
     fn cct_constants_match_c_compctlh() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CCT_POS, 1);
         assert_eq!(CCT_CURPAT, 3);
@@ -2987,6 +2992,7 @@ mod tests {
 
     #[test]
     fn comp_op_special_combines_command_default_first() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(
             COMP_SPECIAL,
@@ -2996,6 +3002,7 @@ mod tests {
 
     #[test]
     fn cc_flags2_constants_match_c_compctlh() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CC_NOSORT, 1);
         assert_eq!(CC_CCCONT, 4);
@@ -3004,6 +3011,7 @@ mod tests {
 
     #[test]
     fn get_compctl_simple_flag_chars_set_mask() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // `compctl -fcv ls` — files + commpath + vars
         let mut argv = vec!["-fcv".to_string(), "ls".to_string()];
@@ -3019,6 +3027,7 @@ mod tests {
 
     #[test]
     fn get_compctl_combined_a_sets_alreg_and_alglob() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut argv = vec!["-a".to_string(), "ls".to_string()];
         let mut cc = Compctl::default();
@@ -3029,6 +3038,7 @@ mod tests {
 
     #[test]
     fn get_compctl_arg_taking_K_captures_function_name() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut argv = vec!["-K".to_string(), "_my_completer".to_string(), "myfunc".to_string()];
         let mut cc = Compctl::default();
@@ -3039,6 +3049,7 @@ mod tests {
 
     #[test]
     fn get_compctl_inline_arg_K_captures_function_name() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // `-K_my_func`  → the K flag char with inline arg
         let mut argv = vec!["-K_my_func".to_string(), "myfunc".to_string()];
@@ -3049,6 +3060,7 @@ mod tests {
 
     #[test]
     fn get_compctl_P_S_capture_prefix_suffix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut argv = vec![
             "-P".to_string(), "before-".to_string(),
@@ -3063,6 +3075,7 @@ mod tests {
 
     #[test]
     fn get_compctl_1_2_set_uniq_flags() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut argv = vec!["-1".to_string(), "ls".to_string()];
         let mut cc = Compctl::default();
@@ -3073,6 +3086,7 @@ mod tests {
 
     #[test]
     fn get_compctl_V_implies_NOSORT() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut argv = vec!["-V".to_string(), "mygroup".to_string(), "cmd".to_string()];
         let mut cc = Compctl::default();
@@ -3083,6 +3097,7 @@ mod tests {
 
     #[test]
     fn bin_compctl_install_then_lookup_via_table() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -3096,6 +3111,7 @@ mod tests {
 
     #[test]
     fn compctl_name_pat_detects_glob_wildcards() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Glob-meta chars present → pattern.
         let (is_pat, _) = compctl_name_pat("ls*");
@@ -3108,6 +3124,7 @@ mod tests {
 
     #[test]
     fn compctl_name_pat_strips_backslashes_from_literal() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (is_pat, out) = compctl_name_pat("\\$home");
         assert!(!is_pat);
@@ -3117,6 +3134,7 @@ mod tests {
 
     #[test]
     fn delpatcomp_removes_matching_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut p = PATCOMPS.write().unwrap();
@@ -3131,6 +3149,7 @@ mod tests {
 
     #[test]
     fn cc_assign_with_reass_command_target_uses_special_key() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -3148,6 +3167,7 @@ mod tests {
 
     #[test]
     fn cc_assign_with_reass_default_target_uses_special_key() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -3161,6 +3181,7 @@ mod tests {
 
     #[test]
     fn setup_initializes_special_targets_and_table() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         setup_();
@@ -3186,6 +3207,7 @@ mod tests {
 
     #[test]
     fn finish_tears_down_state() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         setup_();
@@ -3200,6 +3222,7 @@ mod tests {
 
     #[test]
     fn features_returns_two_builtins() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let f = features_();
         assert_eq!(f, vec!["b:compctl".to_string(), "b:compcall".to_string()]);
@@ -3207,6 +3230,7 @@ mod tests {
 
     #[test]
     fn enables_returns_two_enabled_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let e = enables_();
         assert_eq!(e, vec![1, 1]);
@@ -3214,6 +3238,7 @@ mod tests {
 
     #[test]
     fn bin_compcall_outside_compfunc_errors() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPFUNC.with(|c| c.set(0));
@@ -3223,6 +3248,7 @@ mod tests {
 
     #[test]
     fn bin_compcall_inside_compfunc_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPFUNC.with(|c| c.set(1));
@@ -3234,6 +3260,7 @@ mod tests {
 
     #[test]
     fn compctlread_outside_compctl_func_errors() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPCTLFUNC.with(|c| c.set(false));
@@ -3243,6 +3270,7 @@ mod tests {
 
     #[test]
     fn cccleanuphookfn_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Trivial — no state to verify, just that it doesn't panic.
         assert_eq!(cccleanuphookfn(()), 0);
@@ -3250,6 +3278,7 @@ mod tests {
 
     #[test]
     fn addmatch_rejects_unset_addwhat() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // C: c:2015 — `else` arm in addmatch falls through to drop the
         // match when addwhat is 0 (neither file-thread nor
@@ -3264,6 +3293,7 @@ mod tests {
 
     #[test]
     fn addmatch_accepts_files_kind() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3277,6 +3307,7 @@ mod tests {
 
     #[test]
     fn addmatch_accepts_param_kind() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3289,6 +3320,7 @@ mod tests {
 
     #[test]
     fn addmatch_accepts_cc_files_positive_mask() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3300,6 +3332,7 @@ mod tests {
 
     #[test]
     fn getcpat_finds_first_substring() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Search "abcabc" for "bc" first occurrence → position 3
         // (1-based, points past the matched substring).
@@ -3309,6 +3342,7 @@ mod tests {
 
     #[test]
     fn getcpat_finds_second_substring() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Search "abcabc" for the 2nd "bc" → position 6.
         let r = getcpat("abcabc", 2, "bc", 0);
@@ -3317,6 +3351,7 @@ mod tests {
 
     #[test]
     fn getcpat_negative_index_searches_backward() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Backward search "abcabc" for last "bc" → position 5.
         let r = getcpat("abcabc", -1, "bc", 0);
@@ -3325,6 +3360,7 @@ mod tests {
 
     #[test]
     fn getcpat_class_mode_matches_any_char_in_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Search "abcdef" for any of {b, d, f} — class mode.
         // First match at index 1 (b).
@@ -3334,6 +3370,7 @@ mod tests {
 
     #[test]
     fn getcpat_not_found_returns_negative_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = getcpat("hello", 1, "xyz", 0);
         assert_eq!(r, -1);
@@ -3341,6 +3378,7 @@ mod tests {
 
     #[test]
     fn getcpat_strips_backslashes_in_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // `\$` in pattern should be treated as literal `$`.
         let r = getcpat("foo$bar", 1, "\\$", 0);
@@ -3349,6 +3387,7 @@ mod tests {
 
     #[test]
     fn dumphashtable_calls_addmatch_per_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3360,6 +3399,7 @@ mod tests {
 
     #[test]
     fn addhnmatch_forwards_to_addmatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3372,6 +3412,7 @@ mod tests {
 
     #[test]
     fn makecomplistctl_recursion_guard() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Force depth to MAX
@@ -3384,6 +3425,7 @@ mod tests {
 
     #[test]
     fn makecomplistflags_cc_files_invokes_gen_matches() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3401,6 +3443,7 @@ mod tests {
 
     #[test]
     fn makecomplistflags_cc_str_expansion_emits_one_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3416,6 +3459,7 @@ mod tests {
 
     #[test]
     fn makecomplistor_walks_xor_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
@@ -3438,6 +3482,7 @@ mod tests {
 
     #[test]
     fn makecomplistcc_pushes_to_ccused() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         CCUSED.with(|r| r.borrow_mut().clear());
@@ -3449,6 +3494,7 @@ mod tests {
 
     #[test]
     fn makecomplistpc_iterates_patcomps() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Verify makecomplistpc returns 0 when cmdstr is unset
@@ -3461,6 +3507,7 @@ mod tests {
 
     #[test]
     fn findnode_returns_index_of_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let list = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         assert_eq!(findnode(&list, &"b".to_string()), Some(1));
@@ -3469,6 +3516,7 @@ mod tests {
 
     #[test]
     fn cc_assign_rejects_conflicting_special_targets() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -3484,6 +3532,7 @@ mod tests {
 
     #[test]
     fn compctl_process_cc_remove_deletes_named_entries() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
@@ -3501,6 +3550,7 @@ mod tests {
 
     #[test]
     fn sep_comp_string_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // C compctl.c:2806-3030 contract — sep_comp_string only returns
@@ -3511,6 +3561,7 @@ mod tests {
 
     #[test]
     fn sep_comp_string_round_trips_zle_state() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Pre-set zle_tricky.c globals; sep_comp_string must restore them
@@ -3542,6 +3593,7 @@ mod tests {
 
     #[test]
     fn inull_recognises_marker_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // C compctl.c:2917 — INULL macro recognises Snull/Dnull/Bnull
         // plus String/Qstring tokens for inull-walk.
@@ -3556,6 +3608,7 @@ mod tests {
 
     #[test]
     fn qt_constants_match_c_zsh_h() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // C: enum at Src/zsh.h:253-292 — QT_NONE / QT_BACKSLASH /
         // QT_SINGLE / QT_DOUBLE / QT_DOLLARS / QT_BACKTICK in that

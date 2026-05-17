@@ -160,6 +160,7 @@ mod tests {
     /// without a live tty + key reader thread.
     #[test]
     fn deltochar_returns_one_when_no_input_available() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(deltochar(), 1);
     }
@@ -174,6 +175,7 @@ mod tests {
     /// C `addzlefunction(...)` body and double-registering the widget.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         // c:90-93 — `setup_(UNUSED(Module m)) { return 0; }`.
         assert_eq!(setup_(),    0);
         // c:96-101 — features_ would call featuresarray; static-link → 0.

@@ -339,6 +339,7 @@ mod tests {
 
     #[test]
     fn test_flag_values_match_c_sortit() {
+        let _g = crate::test_util::global_state_lock();
         // Sanity-check that the flag constants match Src/zsh.h:2993.
         assert_eq!(SORTIT_ANYOLDHOW, 0);
         assert_eq!(SORTIT_IGNORING_CASE, 1);
@@ -351,6 +352,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrcmp("abc", "def", 0), Ordering::Less);
         assert_eq!(zstrcmp("def", "abc", 0), Ordering::Greater);
         assert_eq!(zstrcmp("abc", "abc", 0), Ordering::Equal);
@@ -358,6 +360,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_ignores_backwards_per_c() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zstrcmp("abc", "def", SORTIT_BACKWARDS as u32),
             zstrcmp("abc", "def", 0)
@@ -366,6 +369,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_ignores_case_flag_per_c() {
+        let _g = crate::test_util::global_state_lock();
         let with = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
         let without = zstrcmp("ABC", "abc", 0);
         assert_eq!(with, without);
@@ -373,6 +377,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_numeric() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zstrcmp("file2", "file10", SORTIT_NUMERICALLY as u32),
             Ordering::Less
@@ -386,6 +391,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_numeric_signed() {
+        let _g = crate::test_util::global_state_lock();
         let f = (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32;
         assert_eq!(zstrcmp("-5", "3", f), Ordering::Less);
         assert_eq!(zstrcmp("-10", "-2", f), Ordering::Less);
@@ -394,6 +400,7 @@ mod tests {
 
     #[test]
     fn test_natural_sort() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec![
             "file10".to_string(),
             "file2".to_string(),
@@ -406,6 +413,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec![
             "zebra".to_string(),
             "apple".to_string(),
@@ -417,6 +425,7 @@ mod tests {
 
     #[test]
     fn test_reverse_sort() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         strmetasort(&mut arr, SORTIT_BACKWARDS as u32, None);
         assert_eq!(arr, vec!["c", "b", "a"]);
@@ -424,6 +433,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_sort() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec![
             "Banana".to_string(),
             "apple".to_string(),
@@ -435,6 +445,7 @@ mod tests {
 
     #[test]
     fn test_no_backslash() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zstrcmp("a\\bc", "abc", SORTIT_IGNORING_BACKSLASHES as u32),
             Ordering::Equal
@@ -443,6 +454,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort_lowercases_via_ignoring_case() {
+        let _g = crate::test_util::global_state_lock();
         // Coverage for the case-fold transform inside `strmetasort`'s
         // build-elts pass (formerly `SortElt::with_transforms`).
         let mut arr = vec!["BANANA".to_string(), "apple".to_string()];
@@ -452,6 +464,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort_strips_backslashes_via_ignoring_bs() {
+        let _g = crate::test_util::global_state_lock();
         // Backslash-strip in cmp form lets `\\b` compare equal to `b`.
         let mut arr = vec!["a\\b".to_string(), "ab".to_string()];
         strmetasort(&mut arr, SORTIT_IGNORING_BACKSLASHES as u32, None);
@@ -462,6 +475,7 @@ mod tests {
 
     #[test]
     fn test_eltpcmp_embedded_null_shorter_sorts_below() {
+        let _g = crate::test_util::global_state_lock();
         // Two strings with the same prefix but different lengths.
         // C: "the string that's finished sorts below the other"
         // (sort.c:88-89). With len markers, prefix "abc" + 0 sorts
@@ -474,6 +488,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort_reorders_lens_in_lockstep() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec![
             "banana".to_string(),
             "apple".to_string(),
@@ -487,6 +502,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort_single_or_empty() {
+        let _g = crate::test_util::global_state_lock();
         let mut empty: Vec<String> = vec![];
         strmetasort(&mut empty, 0, None);
         assert!(empty.is_empty());

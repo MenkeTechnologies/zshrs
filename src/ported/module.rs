@@ -3278,6 +3278,7 @@ mod tests {
 
     #[test]
     fn test_module_table_new() {
+        let _g = crate::test_util::global_state_lock();
         let table = modulestab::new();
         assert!(table.is_loaded("zsh/complete"));
         assert!(table.is_loaded("zsh/datetime"));
@@ -3287,6 +3288,7 @@ mod tests {
 
     #[test]
     fn test_load_unload() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = modulestab::new();
         assert!(table.is_loaded("zsh/complete"));
 
@@ -3299,6 +3301,7 @@ mod tests {
 
     #[test]
     fn test_list_loaded() {
+        let _g = crate::test_util::global_state_lock();
         let table = modulestab::new();
         let loaded = table.list_loaded();
         assert!(loaded.len() > 20);
@@ -3307,6 +3310,7 @@ mod tests {
 
     #[test]
     fn test_hooks() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = modulestab::new();
         table.addhookdef("chpwd");
         table.addhookfunc("chpwd", "my_chpwd_handler");
@@ -3321,6 +3325,7 @@ mod tests {
 
     #[test]
     fn test_autoload() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = modulestab::new();
         table.add_autobin("my_cmd", "zsh/mymodule", 0);
         assert_eq!(
@@ -3332,6 +3337,7 @@ mod tests {
 
     #[test]
     fn test_features() {
+        let _g = crate::test_util::global_state_lock();
         // The per-module feature ledger has been deleted (canonical
         // C-tables track features in `BUILTINTAB`/`CONDTAB`/`PARAMTAB`).
         // `list_features` now returns an empty vec — `module_linked`
@@ -3344,6 +3350,7 @@ mod tests {
 
     #[test]
     fn test_module_linked() {
+        let _g = crate::test_util::global_state_lock();
         let table = modulestab::new();
         assert!(table.module_linked("zsh/complete"));
         assert!(table.module_linked("zsh/stat"));
@@ -3356,6 +3363,7 @@ mod tests {
 
     #[test]
     fn test_printmodulenode() {
+        let _g = crate::test_util::global_state_lock();
         let module = module::new("zsh/test");
         let output = printmodulenode("zsh/test", &module);
         assert!(output.contains("zsh/test"));
@@ -3379,6 +3387,7 @@ mod tests {
 
     #[test]
     fn addmathfunc_clash_returns_one_when_already_added() {
+        let _g = crate::test_util::global_state_lock();
         // C addmathfunc returns 1 when an existing entry has the same
         // name AND is non-autoloadable (no module set). Verifies the
         // "already in table" branch at module.c:1322-1330.
@@ -3391,6 +3400,7 @@ mod tests {
 
     #[test]
     fn addmathfunc_autoload_replace_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         // When existing entry IS autoloadable (module.is_some, no
         // MFF_USERFUNC), C removes-then-replaces. The new entry should
         // land at index 0 (prepend) per c:1334-1335.
@@ -3407,6 +3417,7 @@ mod tests {
 
     #[test]
     fn removemathfunc_returns_unit_and_drops() {
+        let _g = crate::test_util::global_state_lock();
         let f = mk_mf("zshrs_test_remove", false);
         assert_eq!(addmathfunc(f), 0);
         assert!(MATHFUNCS.lock().unwrap().iter().any(|m| m.name == "zshrs_test_remove"));
@@ -3416,6 +3427,7 @@ mod tests {
 
     #[test]
     fn deletemathfunc_returns_minus_one_on_miss() {
+        let _g = crate::test_util::global_state_lock();
         // C: returns -1 when no matching entry; verifies the c:1361 branch.
         let probe = mk_mf("zshrs_test_never_added_xyz", false);
         assert_eq!(deletemathfunc(&probe), -1);
@@ -3423,6 +3435,7 @@ mod tests {
 
     #[test]
     fn deletemathfunc_clears_added_flag_for_userfunc() {
+        let _g = crate::test_util::global_state_lock();
         // For non-module entries (`!f->module`), C clears the MFF_ADDED
         // flag instead of dropping the node (c:1357). Tests by adding
         // a user-defined mathfunc, flipping MFF_ADDED on, then deleting.
@@ -3459,6 +3472,7 @@ mod tests {
 
     #[test]
     fn addconddef_clash_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         // C addconddef: clash when existing has same name+infix AND is
         // not autoloadable, OR is already added (CONDF_ADDED flag).
         let c1 = mk_cd("zshrs_test_cond_clash", false, false);
@@ -3471,12 +3485,14 @@ mod tests {
 
     #[test]
     fn deleteconddef_returns_minus_one_on_miss() {
+        let _g = crate::test_util::global_state_lock();
         let probe = mk_cd("zshrs_test_cond_never_added", false, false);
         assert_eq!(deleteconddef(&probe), -1);
     }
 
     #[test]
     fn addconddef_distinguishes_infix_from_prefix() {
+        let _g = crate::test_util::global_state_lock();
         // CONDF_INFIX is part of the clash key — a prefix-form `-z` and
         // an infix-form `==` share neither name nor flag, so adding both
         // names with different infix bits should both succeed.
@@ -3493,6 +3509,7 @@ mod tests {
 
     #[test]
     fn setconddefs_bulk_add_then_bulk_delete_via_e_array() {
+        let _g = crate::test_util::global_state_lock();
         // C setconddefs: walks (c, e) pairs; e[i]!=0 → addconddef path,
         // e[i]==0 → deleteconddef path. Tests the round trip.
         let mut entries = vec![
@@ -3523,6 +3540,7 @@ mod tests {
 
     #[test]
     fn addbuiltin_clash_against_existing_builtintab_entry() {
+        let _g = crate::test_util::global_state_lock();
         // C addbuiltin: returns 1 when builtintab already has an entry
         // for the same name with BINF_ADDED set. The canonical Rust
         // builtintab is populated at startup via createbuiltintable;
@@ -3540,6 +3558,7 @@ mod tests {
 
     #[test]
     fn addbuiltins_skips_already_added_entries() {
+        let _g = crate::test_util::global_state_lock();
         // C addbuiltins (c:553): `if (b->node.flags & BINF_ADDED) continue`.
         // Pre-marking BINF_ADDED should skip both entries; ret stays 0.
         let mut b1 = mk_b("zshrs_test_already_added_1");
@@ -3562,6 +3581,7 @@ mod tests {
 
     #[test]
     fn addwrapper_then_deletewrapper_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let w = mk_w();
         assert_eq!(addwrapper("zsh/test", w), 0);
         let probe = mk_w();
@@ -3574,6 +3594,7 @@ mod tests {
 
     #[test]
     fn deletewrapper_returns_one_when_not_found() {
+        let _g = crate::test_util::global_state_lock();
         // Empty WRAPPERS means any probe misses. Take a snapshot of the
         // current state, drain WRAPPERS, run the test, restore.
         let snapshot: Vec<_> = WRAPPERS.lock().unwrap().drain(..).collect();
@@ -3594,6 +3615,7 @@ mod modname_tests {
     /// `zmodload zsh/datetime` invocation.
     #[test]
     fn modname_ok_accepts_canonical_zsh_module_paths() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modname_ok("zsh"),           1);
         assert_eq!(modname_ok("zsh/datetime"),  1);
         assert_eq!(modname_ok("zsh/zle"),       1);
@@ -3606,6 +3628,7 @@ mod modname_tests {
     /// install with names that no later `zmodload -u` could remove.
     #[test]
     fn modname_ok_rejects_special_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modname_ok("zsh space"),  0);
         assert_eq!(modname_ok("zsh-bad"),    0, "hyphen is not IIDENT");
         assert_eq!(modname_ok("zsh.foo"),    0, "dot is not IIDENT");
@@ -3617,6 +3640,7 @@ mod modname_tests {
     /// know the empty-string case maps to "trivially OK" not "error".
     #[test]
     fn modname_ok_treats_empty_as_trivially_ok() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modname_ok(""), 1);
     }
 
@@ -3625,6 +3649,7 @@ mod modname_tests {
     /// can't unload" (unless FEAT_IGNORE), 0 for success.
     #[test]
     fn del_autobin_unknown_name_returns_2_or_zero_per_feat_ignore() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // unknown name + no FEAT_IGNORE → 2
@@ -3638,6 +3663,7 @@ mod modname_tests {
     /// unless FEAT_IGNORE.
     #[test]
     fn del_autobin_registered_builtin_returns_3_or_zero_per_feat_ignore() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // "echo" is a static-linked builtin → can't unload → 3
@@ -3651,6 +3677,7 @@ mod modname_tests {
     /// path → return 0 + removes from autoload ledger.
     #[test]
     fn del_autobin_autoload_only_entry_removed() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // Seed an autoload entry not in the static builtintab.
@@ -3668,6 +3695,7 @@ mod modname_tests {
     /// for "no such", 0 for autoload-entry-removed.
     #[test]
     fn del_autocond_autoload_entry_removed_or_not_found() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // Not present → 2 / 0 per FEAT_IGNORE.
@@ -3685,6 +3713,7 @@ mod modname_tests {
     /// can't unload", 0 for success.
     #[test]
     fn del_autoparam_unknown_name_returns_2() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", 0), 2);
@@ -3695,6 +3724,7 @@ mod modname_tests {
     /// found, 0 on success.
     #[test]
     fn deletehookdef_returns_one_when_missing_zero_on_success() {
+        let _g = crate::test_util::global_state_lock();
         let mut t = modulestab::new();
         // Not present → 1.
         assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 1);

@@ -996,6 +996,7 @@ mod tests {
     /// existing-directory clobbering — a real safety regression.
     #[test]
     fn domkdir_fails_when_path_already_exists() {
+        let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         assert_ne!(domkdir("mkdir", tmp.to_str().unwrap(), 0o755, 0), 0);
     }
@@ -1005,6 +1006,7 @@ mod tests {
     /// mode silently falls through to the umask-derived default.
     #[test]
     fn mkdir_with_invalid_mode_short_circuits_before_filesystem_op() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'm' as usize] = (1 << 2) | 1;
         ops.args.push("not-octal".to_string());
@@ -1021,6 +1023,7 @@ mod tests {
     /// must NOT error.
     #[test]
     fn domkdir_with_p_flag_on_existing_dir_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/1);
         assert_eq!(r, 0, "mkdir -p /tmp must succeed when /tmp already exists");
@@ -1031,6 +1034,7 @@ mod tests {
     /// behavior pivots entirely on the `p` flag.
     #[test]
     fn domkdir_without_p_on_existing_dir_fails() {
+        let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/0);
         assert_ne!(r, 0, "mkdir (no -p) on existing dir must fail per POSIX");
@@ -1041,6 +1045,7 @@ mod tests {
     /// loop guard, not an early-error branch.
     #[test]
     fn bin_mkdir_with_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_mkdir("mkdir", &[], &ops, 0);
         assert_eq!(r, 0, "bin_mkdir on empty argv falls through the for loop");
@@ -1051,6 +1056,7 @@ mod tests {
     /// (c:88-101) leaves a parent half-created and reports failure.
     #[test]
     fn bin_mkdir_p_creates_nested_path() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'p' as usize] = (1 << 2) | 1;
         // Unique under /tmp to keep tests independent of one another
@@ -1071,6 +1077,7 @@ mod tests {
     /// path, even though the user supplied the trailing slash.
     #[test]
     fn bin_mkdir_strips_trailing_slashes() {
+        let _g = crate::test_util::global_state_lock();
         let pid = std::process::id();
         let target = format!("/tmp/zshrs_test_mkdir_trailing_{}/", pid);
         let _ = std::fs::remove_dir_all(target.trim_end_matches('/'));
@@ -1086,6 +1093,7 @@ mod tests {
     /// suppressing the per-arg error accumulator would mask this.
     #[test]
     fn bin_rmdir_on_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rmdir(
             "rmdir",
@@ -1098,6 +1106,7 @@ mod tests {
     /// c:150-200 — `bin_rmdir` with no args returns 0 (empty loop).
     #[test]
     fn bin_rmdir_with_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rmdir("rmdir", &[], &ops, 0);
         assert_eq!(r, 0);
@@ -1107,6 +1116,7 @@ mod tests {
     /// the rmdir(2) call is actually wired through.
     #[test]
     fn bin_rmdir_removes_an_empty_directory() {
+        let _g = crate::test_util::global_state_lock();
         let pid = std::process::id();
         let target = format!("/tmp/zshrs_test_rmdir_{}", pid);
         let _ = std::fs::remove_dir_all(&target);
@@ -1123,6 +1133,7 @@ mod tests {
     /// port must match.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let null_module = std::ptr::null();
         assert_eq!(setup_(null_module), 0);
         assert_eq!(boot_(null_module), 0);
@@ -1134,6 +1145,7 @@ mod tests {
     /// runs; ret stays at default).
     #[test]
     fn bin_rm_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rm("rm", &[], &ops, 0);
         assert_eq!(r, 0);
@@ -1142,6 +1154,7 @@ mod tests {
     /// c:616 — `bin_rm` on a nonexistent path returns nonzero.
     #[test]
     fn bin_rm_nonexistent_path_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rm("rm", &["/__zshrs_test_no_such_path__".to_string()], &ops, 0);
         assert_ne!(r, 0, "rm on nonexistent path must error");
@@ -1151,6 +1164,7 @@ mod tests {
     /// struct (c:475-480) matching the port signature.
     #[test]
     fn rm_leaf_removes_existing_file() {
+        let _g = crate::test_util::global_state_lock();
         let pid = std::process::id();
         let f = format!("/tmp/zshrs_test_rm_leaf_{}.txt", pid);
         let _ = std::fs::write(&f, "x");
@@ -1167,6 +1181,7 @@ mod tests {
     /// that ignores force flag silently errors on `rm -f /missing`.
     #[test]
     fn rm_leaf_force_silently_succeeds_on_missing() {
+        let _g = crate::test_util::global_state_lock();
         let rmm = rmmagic { nam: "rm", opt_force: 1, opt_interact: 0, opt_unlinkdir: 0 };
         let r = rm_leaf("/__never__", "/__never__", None, &rmm);
         assert_eq!(r, 0, "rm -f on missing path must succeed silently");
@@ -1177,6 +1192,7 @@ mod tests {
     /// error so a regen removing the guard silently mis-routes.
     #[test]
     fn bin_chmod_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_chmod("chmod", &[], &ops, 0);
         assert_eq!(r, 1, "missing mode must surface as error");
@@ -1185,6 +1201,7 @@ mod tests {
     /// c:725 — `bin_chown` with no args returns 1 (port arity guard).
     #[test]
     fn bin_chown_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_chown("chown", &[], &ops, 0);
         assert_eq!(r, 1, "missing owner must surface as error");
@@ -1193,6 +1210,7 @@ mod tests {
     /// c:200 — `bin_ln` with FEWER than 2 args is a usage error.
     #[test]
     fn bin_ln_one_arg_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_ln("ln", &["/tmp".to_string()], &ops, 0);
         assert_ne!(r, 0, "ln with <2 args must error");
@@ -1202,6 +1220,7 @@ mod tests {
     /// forget sync(2)).
     #[test]
     fn bin_sync_returns_zero_regardless_of_args() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_sync("sync", &[], &ops, 0), 0);
         assert_eq!(bin_sync("sync", &["ignored".to_string()], &ops, 0), 0);

@@ -402,6 +402,7 @@ mod tests {
 
     #[test]
     fn test_features_returns_bintab_names() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         let rc = features_(m, &mut features);
@@ -411,6 +412,7 @@ mod tests {
 
     #[test]
     fn test_enables_get_then_set() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut enables: Option<Vec<i32>> = None;
         let rc = enables_(m, &mut enables);
@@ -423,6 +425,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(cleanup_(m), 0);
     }
@@ -430,6 +433,7 @@ mod tests {
     #[test]
     #[cfg(not(all(target_os = "linux", feature = "libcap")))]
     fn test_bin_cap_unsupported_on_macos() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         // Without libcap, all three bin_* return 1 (notavail).
         assert_eq!(bin_cap("cap", &[], &ops, 0), 1);
@@ -446,6 +450,7 @@ mod tests {
     /// zsh/cap +cap` fail.
     #[test]
     fn features_all_use_b_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         features_(m, &mut features);
@@ -461,6 +466,7 @@ mod tests {
     /// bit.
     #[test]
     fn enables_vec_length_matches_features_count() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         features_(m, &mut features);
@@ -477,6 +483,7 @@ mod tests {
     /// status that would prevent module load.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -491,6 +498,7 @@ mod tests {
     #[test]
     #[cfg(not(all(target_os = "linux", feature = "libcap")))]
     fn bin_setcap_unavailable_check_fires_before_usage_check() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_setcap("setcap", &["cap_net_admin+ep".into()], &ops, 0);
         assert_eq!(r, 1, "notavail stub must return 1 regardless of arg count");

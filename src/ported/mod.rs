@@ -73,6 +73,7 @@ mod tests {
     /// drifts, lex/quote/unmeta semantics fracture across the codebase.
     #[test]
     fn meta_sentinel_consistent_across_modules() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(input::META as u8, zsh_h::META as u8);
         assert_eq!(utils::Meta,        zsh_h::META as u8);
         assert_eq!(input::META as u8, 0x83);

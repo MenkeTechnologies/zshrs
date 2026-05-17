@@ -499,6 +499,7 @@ mod tests {
     /// arrparam=["example","array"].
     #[test]
     fn boot_populates_demo_params() {
+        let _g = crate::test_util::global_state_lock();
         let _g = EXAMPLE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         boot_(std::ptr::null());
         assert_eq!(intparam.load(Ordering::SeqCst), 42);
@@ -513,6 +514,7 @@ mod tests {
     /// Verifies `cond_p_len`'s two arities — c:84/89.
     #[test]
     fn cond_p_len_arities() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(cond_p_len(&[s("hello"), s("5")], 0), 1);
         assert_eq!(cond_p_len(&[s("hello"), s("4")], 0), 0);
         assert_eq!(cond_p_len(&[s("")], 0), 1);
@@ -522,6 +524,7 @@ mod tests {
     /// Verifies `cond_i_ex` matches only the exact concat "example" — c:99.
     #[test]
     fn cond_i_ex_concat_matches_example() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(cond_i_ex(&[s("exam"), s("ple")], 0), 1);
         assert_eq!(cond_i_ex(&[s("example"), s("")], 0), 1);
         assert_eq!(cond_i_ex(&[s("example"), s("x")], 0), 0);
@@ -532,6 +535,7 @@ mod tests {
     /// promotes to float once a float arg appears — c:111/116/126.
     #[test]
     fn math_sum_int_then_float_promotion() {
+        let _g = crate::test_util::global_state_lock();
         let ints = [mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, mnumber { l: 2, d: 0.0, type_: MN_INTEGER }, mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 3, &ints, 0);
         assert_eq!(r.type_, MN_INTEGER);
@@ -546,6 +550,7 @@ mod tests {
     /// Verifies `math_length` returns string length as integer — c:138.
     #[test]
     fn math_length_returns_strlen() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_length("length", "hello", 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 5);
@@ -555,6 +560,7 @@ mod tests {
     /// and 0 (matched) for `example`-prefixed names — c:147/156.
     #[test]
     fn ex_wrapper_name_prefix_match() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "foo"), 1);
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "exampl"), 1);
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example"), 0);
@@ -566,6 +572,7 @@ mod tests {
     /// option letters — c:49-51.
     #[test]
     fn bin_example_returns_zero_and_assigns_state() {
+        let _g = crate::test_util::global_state_lock();
         let _g = EXAMPLE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let ops = empty_ops();
         let args = vec![s("hello"), s("world")];
@@ -582,6 +589,7 @@ mod tests {
     /// the empty-input arithmetic identity.
     #[test]
     fn math_sum_zero_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_sum("sum", 0, &[], 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 0, "sum of nothing must be 0");
@@ -590,6 +598,7 @@ mod tests {
     /// c:104 — `math_sum` with a single integer is identity.
     #[test]
     fn math_sum_single_int_arg_is_identity() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [mnumber { l: 42, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 1, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER);
@@ -601,6 +610,7 @@ mod tests {
     /// integer "for tidiness" would silently truncate fractions.
     #[test]
     fn math_sum_all_floats_preserves_float_type() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [
             mnumber { l: 0, d: 1.5, type_: MN_FLOAT },
             mnumber { l: 0, d: 2.5, type_: MN_FLOAT },
@@ -613,6 +623,7 @@ mod tests {
     /// c:104 — Negative integers preserved.
     #[test]
     fn math_sum_handles_negative_ints() {
+        let _g = crate::test_util::global_state_lock();
         let argv = [
             mnumber { l: -5, d: 0.0, type_: MN_INTEGER },
             mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
@@ -626,6 +637,7 @@ mod tests {
     /// regen that adds `+ 1` for a NUL terminator gets caught.
     #[test]
     fn math_length_empty_string_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_length("length", "", 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 0);
@@ -635,6 +647,7 @@ mod tests {
     /// (zsh's strlen semantics).
     #[test]
     fn math_length_multibyte_returns_byte_count() {
+        let _g = crate::test_util::global_state_lock();
         // "café" = "caf" + "é" (é = 2 bytes in UTF-8) = 5 bytes
         let r = math_length("length", "café", 0);
         assert_eq!(r.l, 5,
@@ -645,6 +658,7 @@ mod tests {
     /// regen that returns 1 (true) silently inverts every `[[ -i-ex ]]`.
     #[test]
     fn cond_i_ex_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = cond_i_ex(&[], 0);
         assert_eq!(r, 0,
             "cond_i_ex demo condition must return 0 (false)");
@@ -653,6 +667,7 @@ mod tests {
     /// c:286-335 — module-lifecycle stubs return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

@@ -44,6 +44,7 @@ mod tests {
 
     #[test]
     fn modentry_dispatches_setup_and_boot() {
+        let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(0, &mut m), 0);     // c:14 setup_
         assert!(!m.booted);
@@ -53,6 +54,7 @@ mod tests {
 
     #[test]
     fn modentry_unknown_op_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(6, &mut m), 1);     // c:38 default
         assert_eq!(modentry(-1, &mut m), 1);
@@ -62,6 +64,7 @@ mod tests {
     /// ModuleLifecycle::cleanup returns 0 unless overridden.
     #[test]
     fn modentry_cleanup_op_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(2, &mut m), 0);
     }
@@ -69,6 +72,7 @@ mod tests {
     /// c:26 — `finish_` op dispatches to module.finish().
     #[test]
     fn modentry_finish_op_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(3, &mut m), 0);
     }
@@ -78,6 +82,7 @@ mod tests {
     /// is canonicalised in modulestab, not in per-module hooks).
     #[test]
     fn modentry_features_enables_short_circuit_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(4, &mut m), 0);     // c:30 features_
         assert_eq!(modentry(5, &mut m), 0);     // c:34 enables_

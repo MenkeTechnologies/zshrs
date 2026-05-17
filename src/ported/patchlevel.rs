@@ -42,6 +42,7 @@ mod tests {
     /// on.
     #[test]
     fn patchlevel_value_and_git_describe_shape() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9-465-g6b9704e");
         assert!(ZSH_PATCHLEVEL.contains("-g"), "git-describe `-g<hash>` suffix is load-bearing");
     }
@@ -53,6 +54,7 @@ mod tests {
     /// the snapshot rolls forward.
     #[test]
     fn zsh_version_matches_upstream_config_version() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZSH_VERSION, "5.9.0.3-test");
         // Shape: MAJOR.MINOR[.PATCH[.SUB][-tag]]
         let major = ZSH_VERSION.split('.').next().unwrap_or("");

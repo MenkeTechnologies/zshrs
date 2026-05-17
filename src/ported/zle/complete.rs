@@ -1963,6 +1963,7 @@ mod tests {
 
     #[test]
     fn classes_basic_cclass() {
+        let _g = crate::test_util::global_state_lock();
         // c:485 — `[abc]` → CCLASS, str holds "abc".
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p = Cpattern::default();
@@ -1974,6 +1975,7 @@ mod tests {
 
     #[test]
     fn classes_negated_cclass_via_bang() {
+        let _g = crate::test_util::global_state_lock();
         // c:490 — `[!abc]` → NCLASS.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p = Cpattern::default();
@@ -1983,6 +1985,7 @@ mod tests {
 
     #[test]
     fn classes_negated_cclass_via_caret() {
+        let _g = crate::test_util::global_state_lock();
         // c:490 — `[^abc]` → NCLASS.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p = Cpattern::default();
@@ -1992,6 +1995,7 @@ mod tests {
 
     #[test]
     fn classes_equiv_braces() {
+        let _g = crate::test_util::global_state_lock();
         // c:498 — `{abc}` → EQUIV.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p = Cpattern::default();
@@ -2001,6 +2005,7 @@ mod tests {
 
     #[test]
     fn classes_range_consumes_input() {
+        let _g = crate::test_util::global_state_lock();
         // c:537 — `[a-z]rest` → parses 5 chars, returns "rest".
         //          The PP_RANGE-encoded body isn't directly checked
         //          here because Cpattern.str is currently
@@ -2018,6 +2023,7 @@ mod tests {
 
     #[test]
     fn cmatcher_empty_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         // c:249 — `if (!*s) return NULL;`
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(parse_cmatcher("", "").is_none());
@@ -2025,6 +2031,7 @@ mod tests {
 
     #[test]
     fn cmatcher_x_early_return() {
+        let _g = crate::test_util::global_state_lock();
         // c:294-303 — `x:` is the "match anything" sentinel; valid
         //              spec, returns the (currently empty) chain.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -2033,6 +2040,7 @@ mod tests {
 
     #[test]
     fn cmatcher_unknown_letter_errors() {
+        let _g = crate::test_util::global_state_lock();
         // c:280-283 — unknown rule-letter → return None (pcm_err).
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // "q" isn't in the dispatch table.
@@ -2041,6 +2049,7 @@ mod tests {
 
     #[test]
     fn cmatcher_missing_colon_errors() {
+        let _g = crate::test_util::global_state_lock();
         // c:288-291 — second char must be `:`.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(parse_cmatcher("", "rabc").is_none());
@@ -2048,6 +2057,7 @@ mod tests {
 
     #[test]
     fn cmatcher_x_with_trailing_pattern_errors() {
+        let _g = crate::test_util::global_state_lock();
         // c:296-301 — `x:foo` is malformed; `x:` must be alone.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(parse_cmatcher("", "x:foo").is_none());
@@ -2055,6 +2065,7 @@ mod tests {
 
     #[test]
     fn cmatcher_valid_letters_dont_panic() {
+        let _g = crate::test_util::global_state_lock();
         // All recognized letters parse through without panicking.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for c in ['b', 'l', 'e', 'r', 'm', 'B', 'L', 'E', 'R', 'M'] {
@@ -2065,6 +2076,7 @@ mod tests {
 
     #[test]
     fn cmatcher_m_rule_emits_cmatcher() {
+        let _g = crate::test_util::global_state_lock();
         // c:266 — `m:word=replacement` plain match.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "m:foo=bar");
@@ -2081,6 +2093,7 @@ mod tests {
 
     #[test]
     fn cmatcher_r_rule_emits_anchored_cmatcher() {
+        let _g = crate::test_util::global_state_lock();
         // c:265 — `r:left|right=word` with both anchors. The first
         //          pattern becomes the left anchor (promoted at
         //          c:341-346), the second the right anchor.
@@ -2099,6 +2112,7 @@ mod tests {
 
     #[test]
     fn cmatcher_l_rule_emits_left_anchor() {
+        let _g = crate::test_util::global_state_lock();
         // c:263 — `l:left|line=word` left anchor.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "l:ab|cd=ef");
@@ -2114,6 +2128,7 @@ mod tests {
 
     #[test]
     fn cmatcher_star_word_with_anchor() {
+        let _g = crate::test_util::global_state_lock();
         // c:359-370 — `r:|=*` matches any word, requires anchor.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "r:|=*");
@@ -2125,6 +2140,7 @@ mod tests {
 
     #[test]
     fn cmatcher_double_star_word() {
+        let _g = crate::test_util::global_state_lock();
         // c:366-368 — `r:|=**` matches any (greedy) word.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "r:|=**");
@@ -2135,6 +2151,7 @@ mod tests {
 
     #[test]
     fn cmatcher_star_without_anchor_errors() {
+        let _g = crate::test_util::global_state_lock();
         // c:360-364 — `m:=*` (no anchor) errors.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "m:=*");
@@ -2143,6 +2160,7 @@ mod tests {
 
     #[test]
     fn cmatcher_chain_multiple_rules() {
+        let _g = crate::test_util::global_state_lock();
         // c:251-401 — multiple rules separated by whitespace chain.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = parse_cmatcher("", "m:foo=bar m:baz=qux");
@@ -2153,6 +2171,7 @@ mod tests {
 
     #[test]
     fn pattern_single_char_emits_cpat_char() {
+        let _g = crate::test_util::global_state_lock();
         // c:451-461 — single non-special char → CPAT_CHAR node.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (chain, rest, len, err) = parse_pattern("", "abc", '\0');
@@ -2173,6 +2192,7 @@ mod tests {
 
     #[test]
     fn pattern_question_mark_is_cpat_any() {
+        let _g = crate::test_util::global_state_lock();
         // c:443 — `?` → CPAT_ANY.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (chain, _, len, err) = parse_pattern("", "?", '\0');
@@ -2184,6 +2204,7 @@ mod tests {
 
     #[test]
     fn pattern_invalid_chars_error() {
+        let _g = crate::test_util::global_state_lock();
         // c:446-449 — `*`/`(`/`)`/`=` → error.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for c in ['*', '(', ')', '='] {
@@ -2196,6 +2217,7 @@ mod tests {
 
     #[test]
     fn pattern_backslash_escapes_next() {
+        let _g = crate::test_util::global_state_lock();
         // c:452 — `\\X` consumes the backslash and emits X as CPAT_CHAR.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (chain, _, len, err) = parse_pattern("", r"\*", '\0');
@@ -2209,6 +2231,7 @@ mod tests {
 
     #[test]
     fn pattern_stops_at_end_char() {
+        let _g = crate::test_util::global_state_lock();
         // c:430 — `*s != e` gate.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (_, rest, len, err) = parse_pattern("", "ab=cd", '=');
@@ -2219,6 +2242,7 @@ mod tests {
 
     #[test]
     fn pattern_stops_at_whitespace_when_no_end_char() {
+        let _g = crate::test_util::global_state_lock();
         // c:430 — `e==0` → !inblank.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (_, rest, len, err) = parse_pattern("", "ab cd", '\0');
@@ -2229,6 +2253,7 @@ mod tests {
 
     #[test]
     fn pattern_bracket_class_routes_to_parse_class() {
+        let _g = crate::test_util::global_state_lock();
         // c:435 — `[abc]` dispatches to parse_class. With no end-char
         //          parse_pattern continues into the trailing chars as
         //          CPAT_CHAR nodes, so `[abc]xy` → class + x + y = 3.
@@ -2244,6 +2269,7 @@ mod tests {
 
     #[test]
     fn classes_unterminated_returns_eos() {
+        let _g = crate::test_util::global_state_lock();
         // c:504 — unterminated class → returns input-end.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p = Cpattern::default();

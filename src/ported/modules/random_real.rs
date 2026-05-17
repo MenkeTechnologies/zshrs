@@ -210,6 +210,7 @@ mod tests {
     /// both should agree per the C `#define` dispatch (c:43-46).
     #[test]
     fn clz64_matches_zclz64() {
+        let _g = crate::test_util::global_state_lock();
         for x in [0u64, 1, 0xff, 0xff00, u64::MAX, 0x8000_0000_0000_0000] {
             assert_eq!(clz64(x), _zclz64(x), "input 0x{:016x}", x);
         }
@@ -218,18 +219,21 @@ mod tests {
     /// Verifies `_zclz64(0)` returns 64 (c:53).
     #[test]
     fn zclz64_zero_is_64() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(_zclz64(0), 64);
     }
 
     /// Verifies `_zclz64(MSB-set)` returns 0.
     #[test]
     fn zclz64_msb_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(_zclz64(0x8000_0000_0000_0000), 0);
     }
 
     /// Verifies `random_real` lies in [0, 1) over many draws.
     #[test]
     fn random_real_in_range() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
             let r = random_real();
             assert!((0.0..1.0).contains(&r), "out of range: {}", r);
@@ -240,6 +244,7 @@ mod tests {
     /// almost never fail; sentinel return is 1).
     #[test]
     fn random_64bit_returns_value() {
+        let _g = crate::test_util::global_state_lock();
         let _ = random_64bit();
     }
 
@@ -250,6 +255,7 @@ mod tests {
     /// not two — easy to "correct").
     #[test]
     fn zclz64_lsb_only_is_63() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(_zclz64(1), 63);
     }
 
@@ -259,6 +265,7 @@ mod tests {
     /// binary-halving cascade is correct end-to-end.
     #[test]
     fn zclz64_matches_leading_zeros_across_all_single_bits() {
+        let _g = crate::test_util::global_state_lock();
         for bit in 0..64u32 {
             let x = 1u64 << bit;
             assert_eq!(_zclz64(x), x.leading_zeros() as i32,
@@ -272,6 +279,7 @@ mod tests {
     /// the failure surface.
     #[test]
     fn zclz64_low_bit_anchors_match_position() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(_zclz64(0b1),         63);  // bit 0
         assert_eq!(_zclz64(0b10),        62);  // bit 1 (was the bug case)
         assert_eq!(_zclz64(0b100),       61);  // bit 2
@@ -285,6 +293,7 @@ mod tests {
     /// before any shifting.
     #[test]
     fn zclz64_msb_only_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let x = 1u64 << 63;
         assert_eq!(_zclz64(x), 0);
         assert_eq!(clz64(x), 0);
@@ -297,6 +306,7 @@ mod tests {
     /// this catches it across the full input space.
     #[test]
     fn zclz64_matches_leading_zeros_across_diverse_inputs() {
+        let _g = crate::test_util::global_state_lock();
         for x in [
             0u64, 1, 2, 3, 0xff, 0x100, 0xff00, 0xffff,
             0x12345678_9abcdef0, 0xdeadbeef, 0xcafebabe_cafebabe,
@@ -315,6 +325,7 @@ mod tests {
     /// breaking `random_real`'s exponent accounting at c:158.
     #[test]
     fn clz64_zero_returns_64_not_undef() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(clz64(0), 64);
     }
 
@@ -324,6 +335,7 @@ mod tests {
     /// early and returns 0.0 unconditionally.
     #[test]
     fn random_real_produces_some_nonzero_values() {
+        let _g = crate::test_util::global_state_lock();
         let mut saw_nonzero = false;
         for _ in 0..50 {
             if random_real() != 0.0 {
@@ -340,6 +352,7 @@ mod tests {
     /// a regression that always returns the same constant.
     #[test]
     fn random_real_produces_distinct_outputs() {
+        let _g = crate::test_util::global_state_lock();
         use std::collections::HashSet;
         let mut seen: HashSet<u64> = HashSet::new();
         for _ in 0..100 {
@@ -356,6 +369,7 @@ mod tests {
     /// proves the entropy syscall actually fired.
     #[test]
     fn random_64bit_produces_non_sentinel_values() {
+        let _g = crate::test_util::global_state_lock();
         let mut saw_real = false;
         for _ in 0..20 {
             let r = random_64bit();

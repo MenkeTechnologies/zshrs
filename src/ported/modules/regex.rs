@@ -312,6 +312,7 @@ mod tests {
     /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
     #[test]
     fn match_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
         assert_eq!(r, 1);
         // Side-effect params (MATCH/MBEGIN/MEND) flow through
@@ -322,18 +323,21 @@ mod tests {
 
     #[test]
     fn captures_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let r = zcond_regex_match(&["foo=42", "([a-z]+)=([0-9]+)"], ZREGEX_EXTENDED);
         assert_eq!(r, 1);
     }
 
     #[test]
     fn no_match_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = zcond_regex_match(&["abc", "xyz"], ZREGEX_EXTENDED);
         assert_eq!(r, 0);
     }
 
     #[test]
     fn invalid_pattern_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zcond_regex_match(&["anything", "["], ZREGEX_EXTENDED),
             0
@@ -342,12 +346,14 @@ mod tests {
 
     #[test]
     fn missing_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
         assert_eq!(zcond_regex_match(&["only_lhs"], ZREGEX_EXTENDED), 0);
     }
 
     #[test]
     fn casematch_off_is_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         // c:74-76 — `casematch` flag drives whether REG_ICASE is OR'd
         // into the regcomp flags. `isset(CASEMATCH)` is the C-side
         // gate; the Rust port reads via `optlookup("casematch")`.
@@ -378,6 +384,7 @@ mod tests {
     /// both directions.
     #[test]
     fn casematch_unset_is_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::options::opt_state_get("casematch").unwrap_or(false);
         crate::ported::options::opt_state_set("casematch", false);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
@@ -390,6 +397,7 @@ mod tests {
     /// returning 0 on a real match would break every `=~` use.
     #[test]
     fn matching_pattern_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let r = zcond_regex_match(&["hello world", "world"], ZREGEX_EXTENDED);
         assert_eq!(r, 1);
     }
@@ -398,6 +406,7 @@ mod tests {
     /// semantics would silently accept `[[ "barfoo" =~ ^foo ]]`.
     #[test]
     fn anchor_caret_requires_match_at_start() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["foobar", "^foo"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["barfoo", "^foo"], ZREGEX_EXTENDED), 0);
     }
@@ -405,6 +414,7 @@ mod tests {
     /// c:54 — `$` requires match-at-end.
     #[test]
     fn anchor_dollar_requires_match_at_end() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["barfoo", "foo$"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["foobar", "foo$"], ZREGEX_EXTENDED), 0);
     }
@@ -413,6 +423,7 @@ mod tests {
     /// breaking it crashes every theme using `[[ $term =~ xterm|screen ]]`.
     #[test]
     fn alternation_matches_either_branch() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["xterm",  "xterm|screen"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["screen", "xterm|screen"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["bash",   "xterm|screen"], ZREGEX_EXTENDED), 0);
@@ -421,6 +432,7 @@ mod tests {
     /// c:54 — `.` matches any single char (POSIX).
     #[test]
     fn dot_matches_any_single_char() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["foo", "f.o"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["fXo", "f.o"], ZREGEX_EXTENDED), 1);
     }

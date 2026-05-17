@@ -277,6 +277,7 @@ mod tests {
 
     #[test]
     fn test_pool_executes_tasks() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::new(2);
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -297,6 +298,7 @@ mod tests {
 
     #[test]
     fn test_submit_with_result() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::new(2);
         let rx = pool.submit_with_result(|| 42);
         assert_eq!(rx.recv().unwrap(), 42);
@@ -304,6 +306,7 @@ mod tests {
 
     #[test]
     fn test_default_size() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::default_size();
         assert!(pool.size() >= 2);
         assert!(pool.size() <= 18);
@@ -311,6 +314,7 @@ mod tests {
 
     #[test]
     fn test_panic_does_not_kill_worker() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::new(2);
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -332,6 +336,7 @@ mod tests {
 
     #[test]
     fn test_cancel_skips_queued_tasks() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::new(1); // single worker to control ordering
         let barrier = Arc::new(std::sync::Barrier::new(2));
         // Signal the worker fires when it ENTERS the barrier task. Lets
@@ -411,6 +416,7 @@ mod tests {
 
     #[test]
     fn test_metrics() {
+        let _g = crate::test_util::global_state_lock();
         let pool = WorkerPool::new(2);
         assert_eq!(pool.completed(), 0);
 
@@ -425,6 +431,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_bounded() {
+        let _g = crate::test_util::global_state_lock();
         // Pool of 1 with capacity 4 — 5th submit blocks (back-pressure)
         // until the worker drains one. With 20 submits + 1 worker the
         // pool's submit() call blocks naturally; by the time the loop

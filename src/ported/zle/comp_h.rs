@@ -692,6 +692,7 @@ mod tests {
     /// Verifies CGF_* group flag values per c:85-95.
     #[test]
     fn cgf_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CGF_NOSORT, 1);
         assert_eq!(CGF_LINES, 2);
@@ -703,6 +704,7 @@ mod tests {
     /// per c:127-143.
     #[test]
     fn cmf_match_flags_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let all = CMF_FILE | CMF_REMOVE | CMF_ISPAR | CMF_PARBR
                 | CMF_PARNEST | CMF_NOLIST | CMF_DISPLINE | CMF_HIDE
@@ -715,6 +717,7 @@ mod tests {
     /// Verifies CMF_LINE/LEFT/RIGHT/INTER cmatcher flags per c:172-178.
     #[test]
     fn cmf_matcher_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CMF_LINE, 1);
         assert_eq!(CMF_LEFT, 2);
@@ -725,6 +728,7 @@ mod tests {
     /// Verifies CPAT_* enum values per c:184-190.
     #[test]
     fn cpat_enum_values_correct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CPAT_CCLASS, 0);
         assert_eq!(CPAT_NCLASS, 1);
@@ -736,6 +740,7 @@ mod tests {
     /// Verifies CP_REALPARAMS / CP_ALLREALS aggregate per c:385-386.
     #[test]
     fn cp_realparams_mask_covers_10_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CP_REALPARAMS, 10);
         assert_eq!(CP_ALLREALS, 0x3ff);
@@ -749,6 +754,7 @@ mod tests {
     /// Verifies CP_KEYPARAMS / CP_ALLKEYS aggregate per c:442-443.
     #[test]
     fn cp_keyparams_mask_covers_26_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CP_KEYPARAMS, 26);
         assert_eq!(CP_ALLKEYS, 0x3ffffff);
@@ -758,6 +764,7 @@ mod tests {
     /// Verifies CAF_* compadd flags per c:299-309.
     #[test]
     fn caf_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CAF_QUOTE, 1);
         assert_eq!(CAF_NOSORT, 2);
@@ -767,6 +774,7 @@ mod tests {
     /// Verifies hook offset constants per c:447-451.
     #[test]
     fn hook_offsets_sequential() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(INSERTMATCHHOOK_OFFSET, 0);
         assert_eq!(MENUSTARTHOOK_OFFSET, 1);
@@ -778,6 +786,7 @@ mod tests {
     /// Verifies CM_SPACE per c:474.
     #[test]
     fn cm_space_is_2() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CM_SPACE, 2);
     }
@@ -785,6 +794,7 @@ mod tests {
     /// Verifies the structs construct cleanly with `Default`.
     #[test]
     fn structs_default_construct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = Cexpl::default();
         let _ = Cmgroup::default();
@@ -804,6 +814,7 @@ mod tests {
     /// Pin every bit value vs the canonical C define.
     #[test]
     fn cgf_flags_match_c_comp_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CGF_NOSORT,  1,    "c:85");
         assert_eq!(CGF_LINES,   2,    "c:86");
         assert_eq!(CGF_HASDL,   4,    "c:87");
@@ -821,6 +832,7 @@ mod tests {
     /// (Cmatch struct, not Cmatcher). 17 flags total.
     #[test]
     fn cmf_match_flags_match_c_comp_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CMF_FILE,     1 << 0,  "c:127");
         assert_eq!(CMF_REMOVE,   1 << 1,  "c:128");
         assert_eq!(CMF_ISPAR,    1 << 2,  "c:129");
@@ -845,6 +857,7 @@ mod tests {
     /// shared `cgflags` field.
     #[test]
     fn cgf_group_flags_are_distinct_single_bits() {
+        let _g = crate::test_util::global_state_lock();
         let flags = [
             CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL, CGF_UNIQCON,
             CGF_PACKED, CGF_ROWS, CGF_FILES, CGF_MATSORT, CGF_NUMSORT,
@@ -867,6 +880,7 @@ mod tests {
     /// Pin no overlap across the 17 entries.
     #[test]
     fn cmf_match_flags_are_distinct_single_bits() {
+        let _g = crate::test_util::global_state_lock();
         let flags = [
             CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
             CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
@@ -892,6 +906,7 @@ mod tests {
     /// `nosort` early-exit branch.
     #[test]
     fn cgf_nosort_is_bit_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CGF_NOSORT, 1,
             "CGF_NOSORT must be bit 0 — the early-exit `!sort` test");
     }
@@ -901,6 +916,7 @@ mod tests {
     /// fast-path bit-test relies on bit 0.
     #[test]
     fn cmf_file_is_bit_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CMF_FILE, 1,
             "CMF_FILE must be bit 0 — the file-match fast-path");
     }
@@ -909,6 +925,7 @@ mod tests {
     /// declares. Spot-check the high end of the table.
     #[test]
     fn cgf_top_flags_match_canonical_high_bits() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CGF_PACKED,  32);
         assert_eq!(CGF_ROWS,    64);
         assert_eq!(CGF_FILES,   128);

@@ -1558,6 +1558,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_zstrtorlimt_unlimited() {
+        let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("unlimited", 10);
         assert_eq!(v, RLIM_INFINITY);
         assert_eq!(consumed, "unlimited".len());
@@ -1566,6 +1567,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_zstrtorlimt_decimal() {
+        let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("1234", 10);
         assert_eq!(v, 1234);
         assert_eq!(consumed, 4);
@@ -1574,6 +1576,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_zstrtorlimt_hex() {
+        let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("0xff", 0);
         assert_eq!(v, 255);
         assert_eq!(consumed, 4);
@@ -1582,6 +1585,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_find_resource() {
+        let _g = crate::test_util::global_state_lock();
         set_resinfo();
         assert!(find_resource('t') >= 0);
         assert!(find_resource('f') >= 0);
@@ -1591,6 +1595,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_set_resinfo_populates_table() {
+        let _g = crate::test_util::global_state_lock();
         set_resinfo();
         let lock = RESINFO.get().unwrap();
         let v = lock.lock().unwrap();
@@ -1603,6 +1608,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_zero_is_zero_with_one_consumed() {
+        let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("0", 10);
         assert_eq!(v, 0);
         assert_eq!(consumed, 1);
@@ -1614,6 +1620,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_empty_input_consumed_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         let (_v, consumed) = zstrtorlimt("", 10);
         assert_eq!(consumed, 0,
             "empty input must report 0 chars consumed");
@@ -1625,6 +1632,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_stops_at_non_digit() {
+        let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("42abc", 10);
         assert_eq!(v, 42);
         assert_eq!(consumed, 2,
@@ -1636,6 +1644,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_unlimited_ignores_base() {
+        let _g = crate::test_util::global_state_lock();
         for base in [0, 8, 10, 16] {
             let (v, consumed) = zstrtorlimt("unlimited", base);
             assert_eq!(v, RLIM_INFINITY,
@@ -1651,6 +1660,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_auto_base_octal_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let (v, _) = zstrtorlimt("0644", 0);
         assert_eq!(v, 0o644, "leading 0 must parse as octal in base=0");
     }
@@ -1660,6 +1670,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn find_resource_unknown_char_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         set_resinfo();
         assert!(find_resource('z') < 0,
             "unknown limit char must return < 0");
@@ -1672,6 +1683,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn find_resource_is_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         set_resinfo();
         let lower_t = find_resource('t');
         let upper_t = find_resource('T');
@@ -1687,6 +1699,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn set_resinfo_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         set_resinfo();
         let len_first = RESINFO.get().unwrap().lock().unwrap().len();
         set_resinfo();
@@ -1698,6 +1711,7 @@ mod tests {
     /// c:1235-1276 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -1710,6 +1724,7 @@ mod tests {
     /// the feature array must be non-empty.
     #[test]
     fn features_returns_nonempty_list() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         assert_eq!(features_(m, &mut features), 0);
@@ -1731,6 +1746,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn boot_cleanup_boot_cycle_repopulates_resinfo() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let _ = boot_(m);
         let after_first_boot = RESINFO.get().unwrap().lock().unwrap().len();
@@ -1755,6 +1771,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_unlimited_requires_exact_match() {
+        let _g = crate::test_util::global_state_lock();
         // c:277 — exact "unlimited" returns RLIM_INFINITY.
         let (v, n) = zstrtorlimt("unlimited", 10);
         assert_eq!(v, RLIM_INFINITY);
@@ -1781,6 +1798,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_empty_input_does_not_advance_pos() {
+        let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("", 0);
         assert_eq!(v, 0, "empty → no digits → 0");
         assert_eq!(n, 0,
@@ -1793,6 +1811,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_base_zero_detects_hex_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("0xff", 0);
         assert_eq!(v, 255, "c:288 — 0x → base 16");
         assert_eq!(n, 4);
@@ -1805,6 +1824,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_base_zero_leading_zero_is_octal() {
+        let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("0777", 0);
         assert_eq!(v, 511, "c:289 — leading 0 (no x) → base 8");
         assert_eq!(n, 4);
@@ -1822,6 +1842,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_base_2_only_accepts_binary_digits() {
+        let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("1010", 2);
         assert_eq!(v, 10);
         assert_eq!(n, 4);
@@ -1837,6 +1858,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_base_16_accepts_mixed_case_hex() {
+        let _g = crate::test_util::global_state_lock();
         let (v, _) = zstrtorlimt("DEADbeef", 16);
         assert_eq!(v, 0xDEADBEEF, "mixed case hex");
         // Char beyond 'f' / 'F' in base 16 stops parse.
@@ -1851,6 +1873,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn zstrtorlimt_non_digit_prefix_consumes_zero_bytes() {
+        let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("abc", 10);
         assert_eq!(v, 0);
         assert_eq!(n, 0);

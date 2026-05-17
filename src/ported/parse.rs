@@ -7987,6 +7987,7 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("echo hello world").unwrap();
         assert_eq!(prog.lists.len(), 1);
         match &prog.lists[0].sublist.pipe.cmd {
@@ -7999,6 +8000,7 @@ mod tests {
 
     #[test]
     fn test_pipeline() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("ls | grep foo | wc -l").unwrap();
         assert_eq!(prog.lists.len(), 1);
 
@@ -8011,6 +8013,7 @@ mod tests {
 
     #[test]
     fn test_and_or() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("cmd1 && cmd2 || cmd3").unwrap();
         let sublist = &prog.lists[0].sublist;
 
@@ -8021,6 +8024,7 @@ mod tests {
 
     #[test]
     fn test_if_then() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("if test -f foo; then echo yes; fi").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::If(_) => {}
@@ -8030,6 +8034,7 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("for i in a b c; do echo $i; done").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::For(f) => {
@@ -8045,6 +8050,7 @@ mod tests {
 
     #[test]
     fn test_case() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("case $x in a) echo a;; b) echo b;; esac").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::Case(c) => {
@@ -8056,6 +8062,7 @@ mod tests {
 
     #[test]
     fn test_function() {
+        let _g = crate::test_util::global_state_lock();
         // First test just parsing "function foo" to see what happens
         let prog = parse("function foo { }").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
@@ -8071,6 +8078,7 @@ mod tests {
 
     #[test]
     fn test_redirection() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("echo hello > file.txt").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::Simple(s) => {
@@ -8083,6 +8091,7 @@ mod tests {
 
     #[test]
     fn test_assignment() {
+        let _g = crate::test_util::global_state_lock();
         let prog = parse("FOO=bar echo $FOO").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::Simple(s) => {
@@ -8095,6 +8104,7 @@ mod tests {
 
     #[test]
     fn test_parse_completion_function() {
+        let _g = crate::test_util::global_state_lock();
         let input = r#"_2to3_fixes() {
   local -a fixes
   fixes=( ${${(M)${(f)"$(2to3 --list-fixes 2>/dev/null)"}:#*}//[[:space:]]/} )
@@ -8115,6 +8125,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_with_complex_elements() {
+        let _g = crate::test_util::global_state_lock();
         let input = r#"arguments=(
   '(- * :)'{-h,--help}'[show this help message and exit]'
   {-d,--doctests_only}'[fix up doctests only]'
@@ -8130,6 +8141,7 @@ mod tests {
 
     #[test]
     fn test_parse_full_completion_file() {
+        let _g = crate::test_util::global_state_lock();
         let input = r##"#compdef 2to3
 
 # zsh completions for '2to3'
@@ -8175,6 +8187,7 @@ _arguments -s -S $arguments
 
     #[test]
     fn test_parse_logs_sh() {
+        let _g = crate::test_util::global_state_lock();
         let input = r#"#!/usr/bin/env bash
 shopt -s globstar
 
@@ -8198,6 +8211,7 @@ fi
 
     #[test]
     fn test_parse_case_with_glob() {
+        let _g = crate::test_util::global_state_lock();
         let input = r#"case "$ZPWR_OS_TYPE" in
     darwin*)  open_cmd='open'
       ;;
@@ -8217,6 +8231,7 @@ esac"#;
 
     #[test]
     fn test_parse_case_with_nested_if() {
+        let _g = crate::test_util::global_state_lock();
         // Test case with nested if and glob patterns
         let input = r##"function zpwrGetOpenCommand(){
     local open_cmd
@@ -8236,6 +8251,7 @@ esac"#;
 
     #[test]
     fn test_parse_zpwr_scripts() {
+        let _g = crate::test_util::global_state_lock();
         let scripts_dir = Path::new("/Users/wizard/.zpwr/scripts");
         if !scripts_dir.exists() {
             eprintln!("Skipping test: scripts directory not found");
@@ -8410,6 +8426,7 @@ esac"#;
     /// would silently mis-dispatch `[[ a -eq b ]]` to a different op.
     #[test]
     fn get_cond_num_canonical_order_matches_dispatch_table() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_cond_num("nt"), 0);
         assert_eq!(get_cond_num("ot"), 1);
         assert_eq!(get_cond_num("ef"), 2);
@@ -8426,6 +8443,7 @@ esac"#;
     /// every unknown op to `-nt`, dispatching to the wrong handler.
     #[test]
     fn get_cond_num_unknown_operator_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_cond_num("xx"),     -1);
         assert_eq!(get_cond_num(""),       -1);
         assert_eq!(get_cond_num("eqnt"),   -1, "exact-match required");
@@ -8438,6 +8456,7 @@ esac"#;
     /// would dispatch `[[ "" string ]]` as a unary test.
     #[test]
     fn par_cond_double_rejects_short_or_non_dash_first_arg() {
+        let _g = crate::test_util::global_state_lock();
         // empty
         let _ = par_cond_double("", "b");
         // not-dash
@@ -8452,6 +8471,7 @@ esac"#;
     /// drops an entry would let `[[ a -ef b ]]` silently mis-dispatch.
     #[test]
     fn get_cond_num_round_trips_for_every_table_entry() {
+        let _g = crate::test_util::global_state_lock();
         for (i, op) in ["nt","ot","ef","eq","ne","lt","gt","le","ge"].iter().enumerate() {
             assert_eq!(get_cond_num(op) as usize, i,
                 "{op} must map to index {i}");
@@ -8463,6 +8483,7 @@ esac"#;
     /// regression using `starts_with` instead of equality.
     #[test]
     fn get_cond_num_partial_prefix_does_not_match() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_cond_num("e"),  -1);
         assert_eq!(get_cond_num("eq2"), -1);
         assert_eq!(get_cond_num("n"),  -1);
@@ -8475,6 +8496,7 @@ esac"#;
     /// would break every cond expression after lexing.
     #[test]
     fn par_cond_double_accepts_lexed_dash_sentinel() {
+        let _g = crate::test_util::global_state_lock();
         // First char being the Dash sentinel + valid unary letter
         // must NOT trigger the "condition expected" error path.
         // We can't easily probe the wordcode emission here, but
@@ -8489,6 +8511,7 @@ esac"#;
     /// case-insensitive lookup would silently accept it.
     #[test]
     fn get_cond_num_is_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_cond_num("EQ"), -1);
         assert_eq!(get_cond_num("Eq"), -1);
         assert_eq!(get_cond_num("eQ"), -1);
@@ -8512,6 +8535,7 @@ esac"#;
     ///   * pathological ("a", 0, "b")       → "a"   (NOT "ab")
     #[test]
     fn ecgetstr_inline_string_truncates_at_first_nul_like_c_strlen() {
+        let _g = crate::test_util::global_state_lock();
         // Build a wordcode word with `c & 2 != 0` (inline-string flag)
         // and the 3 bytes packed at offsets 3, 11, 19. `c & 1` is the
         // tokflag; clear it for this test.
@@ -8566,6 +8590,7 @@ esac"#;
     /// reset so a future regression that drops one is caught.
     #[test]
     fn init_parse_status_resets_all_lexer_parser_flags() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::lex::{
             incasepat, incond, incmdpos, infor, inrepeat, inredir,
             intypeset, set_incasepat, set_incond, set_incmdpos,

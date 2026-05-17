@@ -1001,6 +1001,7 @@ mod tests {
     /// circuit when -P is unset → bin_typeset returns 0).
     #[test]
     fn bin_private_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         let mut assigns: Vec<(String, String)> = Vec::new();
         assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
@@ -1011,6 +1012,7 @@ mod tests {
     /// queue_signals + bin_typeset path).
     #[test]
     fn bin_private_scalar_assign() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
         let mut assigns: Vec<(String, String)> = Vec::new();
@@ -1023,6 +1025,7 @@ mod tests {
     /// Verifies the -P -T combination is refused per c:231-233.
     #[test]
     fn bin_private_minus_p_minus_t_refused() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
         ops.ind[b'T' as usize] = 1;
@@ -1033,6 +1036,7 @@ mod tests {
     /// Verifies module loaders return 0.
     #[test]
     fn module_loaders_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         let mut enables: Option<Vec<i32>> = None;
@@ -1049,6 +1053,7 @@ mod tests {
     /// dereferences the null pointer would SIGSEGV here.
     #[test]
     fn is_private_on_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(is_private(std::ptr::null()), 0);
     }
 
@@ -1059,6 +1064,7 @@ mod tests {
     /// in the `typeset -p` listing.
     #[test]
     fn is_private_for_unregistered_param_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         // Build a minimal param with a name the registry doesn't know
         // about. `param` contains a `String` (`node.nam`) whose Vec
         // uses NonNull internally — `std::mem::zeroed()` is UB. Build
@@ -1084,6 +1090,7 @@ mod tests {
     /// the C-side rejection is faithfully ported.
     #[test]
     fn bin_private_minus_p_minus_t_currently_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
         ops.ind[b't' as usize] = 1;
@@ -1100,6 +1107,7 @@ mod tests {
     /// regression that dereferences the null pointer.
     #[test]
     fn makeprivate_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         // Should not panic / SIGSEGV.
         makeprivate(std::ptr::null_mut(), 0);
     }
@@ -1108,12 +1116,14 @@ mod tests {
     /// guard for the error-reporting path on unset params.
     #[test]
     fn setfn_error_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         setfn_error(std::ptr::null_mut());
     }
 
     /// c:287 — `pps_getfn` on NULL returns empty string.
     #[test]
     fn pps_getfn_on_null_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let r = pps_getfn(std::ptr::null_mut());
         assert_eq!(r, "", "pps_getfn(NULL) must return empty");
     }
@@ -1123,6 +1133,7 @@ mod tests {
     /// arithmetic param reads.
     #[test]
     fn ppi_getfn_on_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = ppi_getfn(std::ptr::null_mut());
         assert_eq!(r, 0, "ppi_getfn(NULL) must return 0");
     }
@@ -1130,6 +1141,7 @@ mod tests {
     /// c:368 — `ppf_getfn` on NULL returns 0.0.
     #[test]
     fn ppf_getfn_on_null_returns_zero_float() {
+        let _g = crate::test_util::global_state_lock();
         let r = ppf_getfn(std::ptr::null_mut());
         assert_eq!(r, 0.0, "ppf_getfn(NULL) must return 0.0");
     }
@@ -1137,6 +1149,7 @@ mod tests {
     /// c:408 — `ppa_getfn` on NULL returns an EMPTY Vec.
     #[test]
     fn ppa_getfn_on_null_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
         let r = ppa_getfn(std::ptr::null_mut());
         assert!(r.is_empty(), "ppa_getfn(NULL) must yield empty Vec");
     }
@@ -1145,6 +1158,7 @@ mod tests {
     /// without dereferencing. Pin the null-pointer guards.
     #[test]
     fn all_set_callbacks_accept_null_safely() {
+        let _g = crate::test_util::global_state_lock();
         pps_setfn(std::ptr::null_mut(), "value");
         ppi_setfn(std::ptr::null_mut(), 42);
         ppf_setfn(std::ptr::null_mut(), 3.14);
@@ -1156,6 +1170,7 @@ mod tests {
     /// whole unset-callback table.
     #[test]
     fn all_unset_callbacks_accept_null_safely() {
+        let _g = crate::test_util::global_state_lock();
         pps_unsetfn(std::ptr::null_mut(), 0);
         ppi_unsetfn(std::ptr::null_mut(), 0);
         ppf_unsetfn(std::ptr::null_mut(), 0);
@@ -1166,6 +1181,7 @@ mod tests {
     /// c:670-720 — module-lifecycle stubs all return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

@@ -65,6 +65,7 @@ mod tests {
     /// just within the overload family is the real invariant.
     #[test]
     fn overloaded_bin_ids_are_pairwise_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let ids = [
             BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
             BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
@@ -87,6 +88,7 @@ mod tests {
     /// BIN_LOGOUT=19). Pin every value so a reorder fails loudly.
     #[test]
     fn bin_constants_match_c_source_position_for_position() {
+        let _g = crate::test_util::global_state_lock();
         let table = [
             ("BIN_TYPESET",    BIN_TYPESET,    0),  // c:34
             ("BIN_BG",         BIN_BG,         1),  // c:35
@@ -136,6 +138,7 @@ mod tests {
     /// future "let's renumber" refactor surfaces the dependency.
     #[test]
     fn setopt_unsetopt_pin_to_zero_and_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(BIN_SETOPT, 0,
             "c:69 — BIN_SETOPT must be 0 (load-bearing per c:68 comment)");
         assert_eq!(BIN_UNSETOPT, 1,

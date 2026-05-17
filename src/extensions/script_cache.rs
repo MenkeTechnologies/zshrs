@@ -481,6 +481,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("scripts.rkyv");
         let cache = ScriptCache::open(&cache_path).unwrap();
@@ -503,6 +504,7 @@ mod tests {
 
     #[test]
     fn mtime_invalidation() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("scripts.rkyv");
         let cache = ScriptCache::open(&cache_path).unwrap();
@@ -519,6 +521,7 @@ mod tests {
 
     #[test]
     fn second_put_replaces_first() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("scripts.rkyv");
         let cache = ScriptCache::open(&cache_path).unwrap();
@@ -542,6 +545,7 @@ mod tests {
 
     #[test]
     fn corrupt_file_returns_no_mmap() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("scripts.rkyv");
         std::fs::write(&cache_path, b"this is not a valid rkyv archive").unwrap();
@@ -551,6 +555,7 @@ mod tests {
 
     #[test]
     fn clear_removes_file() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("scripts.rkyv");
         let cache = ScriptCache::open(&cache_path).unwrap();

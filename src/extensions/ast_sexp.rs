@@ -485,6 +485,7 @@ mod tests {
 
     #[test]
     fn simple_echo() {
+        let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("echo hello");
         assert!(s.starts_with("(Program (List Sync (Sublist ()"), "got: {}", s);
         assert!(s.contains(r#"(Words "echo" "hello")"#), "got: {}", s);
@@ -492,24 +493,28 @@ mod tests {
 
     #[test]
     fn pipe_two_stages() {
+        let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("echo hi | grep h");
         assert!(s.contains("Pipe (Pipe"), "got: {}", s);
     }
 
     #[test]
     fn assign_then_cmd() {
+        let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("FOO=bar echo $FOO");
         assert!(s.contains(r#"(Set "FOO" (Scalar "bar"))"#), "got: {}", s);
     }
 
     #[test]
     fn andand() {
+        let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("true && echo yes");
         assert!(s.contains(" And "), "got: {}", s);
     }
 
     #[test]
     fn empty_program() {
+        let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("");
         assert_eq!(s, "(Program)");
     }

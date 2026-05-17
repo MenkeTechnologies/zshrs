@@ -32,6 +32,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn libc_provides_every_legacy_fallback() {
+        let _g = crate::test_util::global_state_lock();
         let _: unsafe extern "C" fn() -> libc::pid_t = libc::getppid;
         let _: unsafe extern "C" fn(libc::c_int) -> *mut libc::c_char = libc::strerror;
     }

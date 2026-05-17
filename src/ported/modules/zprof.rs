@@ -751,6 +751,7 @@ mod tests {
     /// (name/calls/time/self/num at c:40-44).
     #[test]
     fn pfunc_default_zeros() {
+        let _g = crate::test_util::global_state_lock();
         let p = Pfunc::default();
         assert_eq!(p.name, "");
         assert_eq!(p.calls, 0);
@@ -762,6 +763,7 @@ mod tests {
     /// Verifies `freepfuncs` empties the table (c:78-82 zsfree+zfree).
     #[test]
     fn freepfuncs_clears() {
+        let _g = crate::test_util::global_state_lock();
         let mut v = vec![Pfunc { name: "a".into(), ..Default::default() }];
         freepfuncs(&mut v);
         assert!(v.is_empty());
@@ -770,6 +772,7 @@ mod tests {
     /// Verifies `findpfunc` linear-scan match (c:101-103).
     #[test]
     fn findpfunc_matches_by_name() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         CALLS.lock().unwrap().push(Pfunc { name: "alpha".into(), ..Default::default() });
@@ -783,6 +786,7 @@ mod tests {
     /// Verifies `findparc` matches (from, to) pair (c:113-115).
     #[test]
     fn findparc_matches_pair() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         ARCS.lock().unwrap().push(Parc { from: 0, to: 1, ..Default::default() });
@@ -796,6 +800,7 @@ mod tests {
     /// Verifies `cmpsfuncs` is descending (c:121-124).
     #[test]
     fn cmpsfuncs_descending() {
+        let _g = crate::test_util::global_state_lock();
         let a = Pfunc { self_time: 5.0, ..Default::default() };
         let b = Pfunc { self_time: 10.0, ..Default::default() };
         // descending: b should come before a → cmp(a, b) = Greater
@@ -806,6 +811,7 @@ mod tests {
     /// Verifies `bin_zprof -c` clears state (c:141-147).
     #[test]
     fn bin_zprof_clear_resets_tables() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         CALLS.lock().unwrap().push(Pfunc { name: "x".into(), ..Default::default() });
@@ -829,6 +835,7 @@ mod tests {
     /// path mirrors C's `return 0;` exit at c:311).
     #[test]
     fn zprof_wrapper_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo"),
             0,
@@ -839,6 +846,7 @@ mod tests {
     /// `name [filename:lineno]` per c:224-232.
     #[test]
     fn name_for_anonymous_function_format() {
+        let _g = crate::test_util::global_state_lock();
         let s = name_for_anonymous_function("anon", "/tmp/foo.zsh", 42);
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
@@ -848,6 +856,7 @@ mod tests {
     /// corrupt every subsequent per-function profile accumulation.
     #[test]
     fn findpfunc_empty_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         assert!(findpfunc("never-called").is_none());
@@ -858,6 +867,7 @@ mod tests {
     /// feeds back into CALLS[i].
     #[test]
     fn findpfunc_returns_correct_index_after_insert() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         CALLS.lock().unwrap().push(Pfunc { name: "alpha".into(), ..Default::default() });
@@ -870,6 +880,7 @@ mod tests {
     /// c:109 — `findparc(f, t)` on an empty arcs table → None.
     #[test]
     fn findparc_empty_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         assert!(findparc(0, 1).is_none());
@@ -879,6 +890,7 @@ mod tests {
     /// same `from`, different `to` is a different arc.
     #[test]
     fn findparc_distinguishes_to_field() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
         ARCS.lock().unwrap().push(Parc { from: 0, to: 1, ..Default::default() });
@@ -896,6 +908,7 @@ mod tests {
     /// invert the user-facing `zprof` output ordering.
     #[test]
     fn cmpsfuncs_compares_by_self_time_descending() {
+        let _g = crate::test_util::global_state_lock();
         let high = Pfunc { name: "_".into(), self_time: 100.0, ..Default::default() };
         let low  = Pfunc { name: "_".into(), self_time: 1.0,   ..Default::default() };
         // higher self_time sorts FIRST → Ordering::Less for (high, low)
@@ -907,6 +920,7 @@ mod tests {
     /// c:74 — `freepfuncs` empties the input vec.
     #[test]
     fn freepfuncs_empties_input_vec() {
+        let _g = crate::test_util::global_state_lock();
         let mut v = vec![
             Pfunc { name: "x".into(), ..Default::default() },
             Pfunc { name: "y".into(), ..Default::default() },
@@ -918,6 +932,7 @@ mod tests {
     /// c:86 — `freeparcs` empties the input arc vec.
     #[test]
     fn freeparcs_empties_input_vec() {
+        let _g = crate::test_util::global_state_lock();
         let mut v = vec![
             Parc { from: 0, to: 1, ..Default::default() },
             Parc { from: 2, to: 3, ..Default::default() },
@@ -933,6 +948,7 @@ mod tests {
     /// caught.
     #[test]
     fn cmpsfuncs_and_cmptfuncs_differ_when_fields_disagree() {
+        let _g = crate::test_util::global_state_lock();
         // `alpha` has high self_time but LOW cumulative time.
         // `beta`  has low self_time but HIGH cumulative time.
         let alpha = Pfunc { name: "_".into(), self_time: 100.0, time: 1.0,   ..Default::default() };

@@ -6391,6 +6391,7 @@ mod tests {
     /// just the getaparam plumbing.
     #[test]
     fn getaparam_reads_reply_from_paramtab_not_env() {
+        let _g = crate::test_util::global_state_lock();
         // Stash any prior `reply` value.
         let saved = crate::ported::params::getaparam("reply");
 
@@ -6423,6 +6424,7 @@ mod tests {
     /// `~`-abbreviation until the user re-exported HOME.
     #[test]
     fn finddir_uses_paramtab_home_not_env() {
+        let _g = crate::test_util::global_state_lock();
         // Stash and replace the canonical HOME via homesetfn — the
         // same code path PM_SPECIAL dispatch routes through.
         let saved = crate::ported::params::homegetfn();
@@ -6441,6 +6443,7 @@ mod tests {
 
     #[test]
     fn test_sepsplit() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sepsplit("a:b:c", Some(":"), false), vec!["a", "b", "c"]);
         assert_eq!(sepsplit("a::b", Some(":"), false), vec!["a", "b"]);
         assert_eq!(sepsplit("a::b", Some(":"), true), vec!["a", "", "b"]);
@@ -6448,6 +6451,7 @@ mod tests {
 
     #[test]
     fn test_unmetafy_no_meta_byte_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         // No Meta byte → buffer unchanged, length unchanged.
         let mut buf = b"hello".to_vec();
         let n = unmetafy(&mut buf);
@@ -6457,6 +6461,7 @@ mod tests {
 
     #[test]
     fn test_unmetafy_collapses_meta_escapes() {
+        let _g = crate::test_util::global_state_lock();
         // C: Meta byte (0x83) followed by `'a' ^ 32` (0x41 = 'A')
         // unmetafies to a single byte 'a' (0x61).
         // i.e. {0x83, 'a' ^ 32} → {'a'}.
@@ -6468,6 +6473,7 @@ mod tests {
 
     #[test]
     fn test_unmetafy_mixed_prefix_then_meta() {
+        let _g = crate::test_util::global_state_lock();
         // Plain prefix, then Meta-escaped 0xFF (0x83, 0xFF ^ 32 = 0xDF).
         let mut buf = vec![b'X', b'Y', 0x83, 0xFF ^ 32, b'Z'];
         let n = unmetafy(&mut buf);
@@ -6477,6 +6483,7 @@ mod tests {
 
     #[test]
     fn test_unmetafy_returns_self_value() {
+        let _g = crate::test_util::global_state_lock();
         // C returns `s` (the buffer) for chaining; Rust returns
         // the new length. Verify length matches a call that
         // collapses two Meta-escapes.
@@ -6493,6 +6500,7 @@ mod tests {
 
     #[test]
     fn test_imeta_byte_threshold() {
+        let _g = crate::test_util::global_state_lock();
         // Canonical IMETA per Src/utils.c:4195-4201:
         //   - 0x00 (c:4195)
         //   - 0x83..=0xa2 (Meta through Marker — c:4196-4200)
@@ -6517,6 +6525,7 @@ mod tests {
 
     #[test]
     fn test_meta_constant_value() {
+        let _g = crate::test_util::global_state_lock();
         // Locked at 0x83 by Src/zsh.h. If this test fails, zsh
         // bumped the Meta sentinel and the encoding mapping needs
         // a full audit.
@@ -6526,6 +6535,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_mode_to_octal_canonical_bits() {
+        let _g = crate::test_util::global_state_lock();
         use libc::{S_IRUSR, S_IWUSR, S_IXUSR};
         // rwx for owner = 0o700.
         let mode = (S_IRUSR | S_IWUSR | S_IXUSR) as u32;
@@ -6549,6 +6559,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_mode_to_octal_setuid_setgid_sticky() {
+        let _g = crate::test_util::global_state_lock();
         use libc::{S_ISGID, S_ISUID, S_ISVTX};
         assert_eq!(mode_to_octal(S_ISUID as u32), 0o4000);
         assert_eq!(mode_to_octal(S_ISGID as u32), 0o2000);
@@ -6561,6 +6572,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_mailstat_plain_file_returns_native_stat() {
+        let _g = crate::test_util::global_state_lock();
         use std::os::unix::fs::MetadataExt;
         // Plain file path → *st fields mirror native stat,
         // not the maildir aggregation.
@@ -6573,12 +6585,14 @@ mod tests {
 
     #[test]
     fn test_mailstat_nonexistent_returns_neg1() {
+        let _g = crate::test_util::global_state_lock();
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         assert_eq!(mailstat("/nonexistent/path/does/not/exist", &mut st), -1);
     }
 
     #[test]
     fn test_mailstat_directory_without_maildir_subdirs() {
+        let _g = crate::test_util::global_state_lock();
         // /tmp is a directory but not a maildir (no cur/tmp/new) —
         // returns the partial aggregate (top dir's atime/mtime,
         // size=0 since cur/ wasn't found before we'd start summing).
@@ -6598,6 +6612,7 @@ mod tests {
 
     #[test]
     fn test_dupstrpfx_byte_counted() {
+        let _g = crate::test_util::global_state_lock();
         // 5 bytes of ASCII = 5 chars, identical.
         assert_eq!(dupstrpfx("hello", 3), "hel");
         // Beyond length clamps.
@@ -6608,6 +6623,7 @@ mod tests {
 
     #[test]
     fn test_metafy_passes_through_ascii() {
+        let _g = crate::test_util::global_state_lock();
         // ASCII bytes (< 0x83) stay untouched.
         assert_eq!(metafy("hello"), "hello");
         assert_eq!(metafy(""), "");
@@ -6615,6 +6631,7 @@ mod tests {
 
     #[test]
     fn test_metafy_imeta_predicate_matches_c_macro() {
+        let _g = crate::test_util::global_state_lock();
         // Canonical C IMETA per Src/utils.c:4195-4201:
         //   - 0x00 (c:4195)
         //   - 0x83 (Meta, c:4196)
@@ -6657,6 +6674,7 @@ mod tests {
     /// continuation byte and lead byte that wasn't a token marker.
     #[test]
     fn metafy_preserves_utf8_high_bytes_outside_imeta_range() {
+        let _g = crate::test_util::global_state_lock();
         // 'é' = U+00E9 = UTF-8 0xc3 0xa9. Both bytes are >= 0x83 BUT
         // both are also > 0xa2, so they're NOT IMETA per the typtab.
         // C `metafy` passes them through unchanged.
@@ -6670,6 +6688,7 @@ mod tests {
 
     #[test]
     fn test_ztrcmp_meta_aware() {
+        let _g = crate::test_util::global_state_lock();
         // Two identical metafied strings → Equal.
         assert_eq!(ztrcmp("foo", "foo"), std::cmp::Ordering::Equal);
         // "foo" < "foz".
@@ -6685,6 +6704,7 @@ mod tests {
 
     #[test]
     fn test_skipwsep_skips_runs() {
+        let _g = crate::test_util::global_state_lock();
         // 3 spaces + 'x' → returns ("x", 3).
         let (rest, n) = skipwsep("   x");
         assert_eq!(rest, "x");
@@ -6701,6 +6721,7 @@ mod tests {
 
     #[test]
     fn test_imeta_macro_threshold() {
+        let _g = crate::test_util::global_state_lock();
         // C `imeta(c) == c >= Meta`. The previous Rust port had
         // a wrong predicate (control bytes); the C version is just
         // `>= 0x83`.
@@ -6713,6 +6734,7 @@ mod tests {
 
     #[test]
     fn test_unmeta_routes_through_unmetafy() {
+        let _g = crate::test_util::global_state_lock();
         // unmeta wraps the in-place unmetafy via a byte-vector
         // copy; the no-Meta fast path returns the source as-is.
         assert_eq!(unmeta("plain"), "plain");
@@ -6720,6 +6742,7 @@ mod tests {
 
     #[test]
     fn test_iwsep_includes_newline() {
+        let _g = crate::test_util::global_state_lock();
         // The previous port omitted '\n' which broke wordcount on
         // multi-line input.
         assert!(iwsep('\n'));
@@ -6730,6 +6753,7 @@ mod tests {
 
     #[test]
     fn test_mailstat_aggregates_maildir() {
+        let _g = crate::test_util::global_state_lock();
         // Create a temp maildir layout with 2 messages in new/ and 1
         // in cur/, verify the aggregate.
         use std::fs;
@@ -6758,12 +6782,14 @@ mod tests {
 
     #[test]
     fn test_spacesplit() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(spacesplit("a b c", false), vec!["a", "b", "c"]);
         assert_eq!(spacesplit("a  b", false), vec!["a", "b"]);
     }
 
     #[test]
     fn test_sepjoin() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             sepjoin(&["a".into(), "b".into(), "c".into()], Some(":")),
             "a:b:c"
@@ -6773,6 +6799,7 @@ mod tests {
 
     #[test]
     fn test_isident() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isident("foo"));
         assert!(isident("_bar"));
         assert!(isident("baz123"));
@@ -6782,6 +6809,7 @@ mod tests {
 
     #[test]
     fn test_nicechar() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(nicechar('\n'), "\\n");
         assert_eq!(nicechar('\t'), "\\t");
         assert_eq!(nicechar('a'), "a");
@@ -6789,6 +6817,7 @@ mod tests {
 
     #[test]
     fn test_quotedzputs_single_quote_wrap() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotedzputs("simple"), "simple");
         assert_eq!(quotedzputs("has space"), "'has space'");
         assert_eq!(quotedzputs("it's"), "'it'\\''s'");
@@ -6796,6 +6825,7 @@ mod tests {
 
     #[test]
     fn test_quotestring_backslash() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_BACKSLASH), "hello");
         assert_eq!(
             quotestring("has space", crate::ported::zsh_h::QT_BACKSLASH),
@@ -6814,6 +6844,7 @@ mod tests {
     /// `QT_BACKSLASH` (which prepends `\` before every ispecial char).
     #[test]
     fn quotestring_backslash_only_specchars_no_bang_in_default() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::QT_BACKSLASH;
         // `!` is NOT in canonical SPECCHARS — should NOT be backslashed
         // in default non-interactive mode (matches C).
@@ -6854,12 +6885,14 @@ mod tests {
 
     #[test]
     fn test_quotestring_single() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_SINGLE), "'hello'");
         assert_eq!(quotestring("it's", crate::ported::zsh_h::QT_SINGLE), "'it'\\''s'");
     }
 
     #[test]
     fn test_quotestring_double() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_DOUBLE), "\"hello\"");
         assert_eq!(
             quotestring("say \"hi\"", crate::ported::zsh_h::QT_DOUBLE),
@@ -6869,6 +6902,7 @@ mod tests {
 
     #[test]
     fn test_quotestring_dollars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_DOLLARS), "$'hello'");
         assert_eq!(
             quotestring("line\nbreak", crate::ported::zsh_h::QT_DOLLARS),
@@ -6882,6 +6916,7 @@ mod tests {
 
     #[test]
     fn test_quotestring_pattern() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotestring("*.txt", crate::ported::zsh_h::QT_BACKSLASH_PATTERN), "\\*.txt");
         assert_eq!(
             quotestring("file[1]", crate::ported::zsh_h::QT_BACKSLASH_PATTERN),
@@ -6891,6 +6926,7 @@ mod tests {
 
     #[test]
     fn test_quotetype_from_q_count() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(qflag_quotetype(1), crate::ported::zsh_h::QT_BACKSLASH);
         assert_eq!(qflag_quotetype(2), crate::ported::zsh_h::QT_SINGLE);
         assert_eq!(qflag_quotetype(3), crate::ported::zsh_h::QT_DOUBLE);
@@ -6899,6 +6935,7 @@ mod tests {
 
     #[test]
     fn test_tulower_tuupper() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(tulower('A'), 'a');
         assert_eq!(tuupper('a'), 'A');
         assert_eq!(tulower('1'), '1');
@@ -6906,6 +6943,7 @@ mod tests {
 
     #[test]
     fn test_wordcount_ifs_default() {
+        let _g = crate::test_util::global_state_lock();
         // C: wordcount("a b c", NULL, 0) -> 3
         assert_eq!(wordcount("a b c", None, 0), 3);
         // Leading/trailing whitespace coalesced when mul <= 0.
@@ -6918,6 +6956,7 @@ mod tests {
 
     #[test]
     fn test_wordcount_with_explicit_sep() {
+        let _g = crate::test_util::global_state_lock();
         // C: wordcount("a:b:c", ":", 0) -> 3 (3 fields, 2 separators)
         assert_eq!(wordcount("a:b:c", Some(":"), 0), 3);
         // Empty fields counted when mul != 0.
@@ -6930,6 +6969,7 @@ mod tests {
 
     #[test]
     fn test_ucs4tomb_ascii() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 8];
         // 'A' = 0x41, ASCII, single byte in any locale.
         let n = ucs4tomb('A' as u32, &mut buf);
@@ -6940,12 +6980,14 @@ mod tests {
 
     #[test]
     fn test_is_mb_niceformat_plain_ascii() {
+        let _g = crate::test_util::global_state_lock();
         // Plain printable ASCII — nothing needs nicechar escaping.
         assert!(!is_mb_niceformat("hello world"));
     }
 
     #[test]
     fn test_is_mb_niceformat_with_control_char() {
+        let _g = crate::test_util::global_state_lock();
         // Tab is control (< 0x20) — needs nice escaping.
         assert!(is_mb_niceformat("a\tb"));
         // Bell character.
@@ -6957,6 +6999,7 @@ mod tests {
     /// the lexer/param-subst pipeline produces.
     #[test]
     fn metafy_unmetafy_round_trips_for_ascii() {
+        let _g = crate::test_util::global_state_lock();
         let s = "hello world";
         let m = metafy(s);
         let mut buf = m.into_bytes();
@@ -6969,6 +7012,7 @@ mod tests {
     /// every fixed-width column path (printf %s).
     #[test]
     fn ztrlen_counts_ascii_one_per_byte() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrlen(""),     0);
         assert_eq!(ztrlen("a"),    1);
         assert_eq!(ztrlen("hello"), 5);
@@ -6979,6 +7023,7 @@ mod tests {
     /// `l` only once. Pin: a string with one Meta+X pair counts as 1.
     #[test]
     fn ztrlen_counts_meta_pair_as_one() {
+        let _g = crate::test_util::global_state_lock();
         // META (0x83) + 0x20 = unmetafies to one '\0' byte (or a NUL).
         let meta = char::from_u32(Meta as u32).unwrap();
         let s: String = [meta, '\x20'].iter().collect();
@@ -7004,6 +7049,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn setblock_fd_skips_regular_files_per_c_2599() {
+        let _g = crate::test_util::global_state_lock();
         use std::os::unix::io::AsRawFd;
         // Open a regular tempfile.
         let dir = tempfile::TempDir::new().unwrap();
@@ -7022,6 +7068,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn setblock_fd_clears_o_nonblock_on_pipe() {
+        let _g = crate::test_util::global_state_lock();
         // Create a pipe — non-regular fd.
         let mut pipefd: [libc::c_int; 2] = [0; 2];
         let r = unsafe { libc::pipe(pipefd.as_mut_ptr()) };
@@ -7054,6 +7101,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn setblock_stdin_enables_blocking_on_fd_zero() {
+        let _g = crate::test_util::global_state_lock();
         // Set stdin to NONBLOCKING first to verify the function
         // ACTUALLY switches it back to blocking. Skip if stdin is
         // not a normal fd (some CI configurations).
@@ -7082,6 +7130,7 @@ mod tests {
     /// Base-10 (explicit) parses canonical decimal.
     #[test]
     fn zstrtol_underscore_base_10_parses_decimal() {
+        let _g = crate::test_util::global_state_lock();
         let (v, rest) = zstrtol_underscore("12345", 10, false);
         assert_eq!(v, 12345, "c:2471 — decimal accumulator");
         assert_eq!(rest, "", "rest is empty after full consumption");
@@ -7098,6 +7147,7 @@ mod tests {
     /// OCTALZEROES — pure prefix detection.
     #[test]
     fn zstrtol_underscore_base_zero_autodetects_prefix() {
+        let _g = crate::test_util::global_state_lock();
         // Hex.
         assert_eq!(zstrtol_underscore("0xff", 0, false).0, 255,
             "c:2455 — 0x → base 16");
@@ -7116,6 +7166,7 @@ mod tests {
     /// negation at the end (c:2497-2498).
     #[test]
     fn zstrtol_underscore_handles_sign_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrtol_underscore("-42", 10, false).0, -42,
             "c:2447 — leading `-` → negate");
         assert_eq!(zstrtol_underscore("+42", 10, false).0, 42,
@@ -7130,6 +7181,7 @@ mod tests {
     /// Pin both upper- and lower-case.
     #[test]
     fn zstrtol_underscore_base_16_accepts_letters() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrtol_underscore("ff", 16, false).0, 255,
             "c:2485 — base-16 'ff' → 255");
         assert_eq!(zstrtol_underscore("FF", 16, false).0, 255,
@@ -7143,6 +7195,7 @@ mod tests {
     /// underscore=true, `_` is skipped (c:2469-2470).
     #[test]
     fn zstrtol_underscore_underscore_flag() {
+        let _g = crate::test_util::global_state_lock();
         // underscore=false: `_` terminates parse.
         let (v, rest) = zstrtol_underscore("1_000", 10, false);
         assert_eq!(v, 1,
@@ -7161,6 +7214,7 @@ mod tests {
     /// conventions: t2 after t1 → positive; t2 before t1 → negative.
     #[test]
     fn timespec_diff_us_sign_matches_c_t2_minus_t1() {
+        let _g = crate::test_util::global_state_lock();
         let t1 = std::time::Instant::now();
         std::thread::sleep(std::time::Duration::from_millis(2));
         let t2 = std::time::Instant::now();
@@ -7182,6 +7236,7 @@ mod tests {
     /// c:2752 — `timespec_diff_us(t, t)` is 0 (identical Instants).
     #[test]
     fn timespec_diff_us_same_instant_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let t = std::time::Instant::now();
         assert_eq!(timespec_diff_us(&t, &t), 0,
             "c:2752 — identical Instants → 0");
@@ -7192,6 +7247,7 @@ mod tests {
     /// 4-byte encodings.
     #[test]
     fn ucs4toutf8_encodes_canonical_lengths() {
+        let _g = crate::test_util::global_state_lock();
         // c:6750 — 1 byte: ASCII range [0, 0x80).
         assert_eq!(ucs4toutf8(0x41), Some("A".to_string()),
             "c:6750 — 0x41 → 'A' (1 byte)");
@@ -7213,6 +7269,7 @@ mod tests {
     /// (matches `wctomb(3)` extended UCS-4 range).
     #[test]
     fn ucs4toutf8_rejects_invalid_codepoints() {
+        let _g = crate::test_util::global_state_lock();
         // c:6762-6764 — value >= 0x80000000 → None.
         assert_eq!(ucs4toutf8(0xFFFF_FFFE), None,
             "c:6763 — values >= 0x80000000 → None");
@@ -7230,6 +7287,7 @@ mod tests {
     /// doubles, `"`/`$`/`` ` `` get escaped.
     #[test]
     fn dquotedztrdup_default_path_wraps_whole_string() {
+        let _g = crate::test_util::global_state_lock();
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
             return; // Default-only test.
         }
@@ -7251,6 +7309,7 @@ mod tests {
     /// (`"`/`$`/`` ` ``), OR at end-of-string before the closing `"`.
     #[test]
     fn dquotedztrdup_pending_backslash_only_doubles_when_needed() {
+        let _g = crate::test_util::global_state_lock();
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
             return;
         }
@@ -7272,6 +7331,7 @@ mod tests {
     /// Pin all three.
     #[test]
     fn quotedzputs_empty_string_returns_double_quotes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotedzputs(""), "''",
             "c:6470-6475 — empty input → ''");
     }
@@ -7280,6 +7340,7 @@ mod tests {
     /// escape embedded `'` as `'\''`.
     #[test]
     fn quotedzputs_wraps_specials_in_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         // Space is special → wrap.
         assert_eq!(quotedzputs("hello world"), "'hello world'");
@@ -7293,6 +7354,7 @@ mod tests {
     /// c:6512 — no specials → return unchanged.
     #[test]
     fn quotedzputs_plain_alnum_returns_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         assert_eq!(quotedzputs("hello"), "hello",
             "c:6512 — no specials, no wrap");
@@ -7305,6 +7367,7 @@ mod tests {
     /// Pin: empty input → no-op; non-empty input → append.
     #[test]
     fn strucpy_appends_t_to_dest() {
+        let _g = crate::test_util::global_state_lock();
         let mut dest = String::from("prefix-");
         strucpy(&mut dest, "suffix");
         assert_eq!(dest, "prefix-suffix",
@@ -7324,6 +7387,7 @@ mod tests {
     /// n >= len(t) appends all.
     #[test]
     fn struncpy_appends_up_to_n_bytes() {
+        let _g = crate::test_util::global_state_lock();
         // n < len(t).
         let mut dest = String::from("X");
         struncpy(&mut dest, "abcdef", 3);
@@ -7347,6 +7411,7 @@ mod tests {
     /// 0x9c, Nularg 0xa1) → true.
     #[test]
     fn has_token_detects_typtab_token_bytes() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         // c:2285 — pure ASCII has no token bytes.
         assert!(!has_token(""), "empty: no tokens");
@@ -7371,6 +7436,7 @@ mod tests {
     /// as a token byte. Now correctly excludes it.
     #[test]
     fn has_token_excludes_meta_byte() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         // 0x83 is Meta, NOT itok. Should return false.
         let s: String = std::iter::once(0x83u8 as char).collect();
@@ -7385,6 +7451,7 @@ mod tests {
     /// wrong convention.
     #[test]
     fn addunprintable_named_control_escapes() {
+        let _g = crate::test_util::global_state_lock();
         // c:6106-6112 — named-escape per byte.
         assert_eq!(addunprintable('\x07'), "\\a", "c:6106 — BEL → \\a");
         assert_eq!(addunprintable('\x08'), "\\b", "c:6107 — BS → \\b");
@@ -7400,6 +7467,7 @@ mod tests {
     /// so emits the short `\0` form.)
     #[test]
     fn addunprintable_nul_renders_as_backslash_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(addunprintable('\0'), "\\0",
             "c:6097-6098 — NUL → \\0");
     }
@@ -7409,6 +7477,7 @@ mod tests {
     /// (0-7), zero-padded to 3 positions.
     #[test]
     fn addunprintable_octal_fallback_for_unnamed_controls() {
+        let _g = crate::test_util::global_state_lock();
         // 0x01 (SOH) = 001 octal.
         assert_eq!(addunprintable('\x01'), "\\001",
             "c:6116-6118 — SOH → \\001");
@@ -7428,6 +7497,7 @@ mod tests {
     /// \`<>?~;&\\n\\t \\\\\\'\\"`.
     #[test]
     fn hasspecial_recognises_canonical_special_chars() {
+        let _g = crate::test_util::global_state_lock();
         // typtab access is read-only here (no flag mutation); concurrent
         // inittyptab() rebuilds are idempotent for the default flag set.
         crate::ported::utils::inittyptab();
@@ -7453,6 +7523,7 @@ mod tests {
     /// containing only Meta+'A' returns false.
     #[test]
     fn hasspecial_decodes_meta_byte_before_check() {
+        let _g = crate::test_util::global_state_lock();
         // Same as above — read-only after inittyptab.
         crate::ported::utils::inittyptab();
         // Meta + 0x41 ('A') → 'a' (0x61) → not special.
@@ -7466,6 +7537,7 @@ mod tests {
     /// printable passes through unchanged; controls escape.
     #[test]
     fn sb_niceformat_passes_printable_ascii() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sb_niceformat("hello"), "hello",
             "c:5886 — nicechar_sel passes printable through");
         assert_eq!(sb_niceformat(""), "");
@@ -7475,6 +7547,7 @@ mod tests {
     /// c:5886 — controls get `\n`/`\t`/`^X`/`^?` escapes via nicechar_sel.
     #[test]
     fn sb_niceformat_escapes_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sb_niceformat("a\nb"), "a\\nb",
             "c:5886 — newline → \\n");
         assert_eq!(sb_niceformat("a\tb"), "a\\tb");
@@ -7488,6 +7561,7 @@ mod tests {
     /// nicechar_sel.
     #[test]
     fn sb_niceformat_unmetafies_before_formatting() {
+        let _g = crate::test_util::global_state_lock();
         // META + 0x41 ('A') → decodes to 'a' (0x61). 'a' is printable
         // → passes through unchanged.
         let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
@@ -7506,6 +7580,7 @@ mod tests {
     /// if sb_niceformat would change the input.
     #[test]
     fn is_sb_niceformat_true_for_strings_with_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert!(is_sb_niceformat("\n"),
             "newline is nice");
         assert!(is_sb_niceformat("a\tb"));
@@ -7520,6 +7595,7 @@ mod tests {
     /// Pin both branches.
     #[test]
     fn metacharlenconv_plain_ascii_returns_one_byte() {
+        let _g = crate::test_util::global_state_lock();
         // c:5823-5825 — plain byte.
         let (n, c) = metacharlenconv("a");
         assert_eq!((n, c), (1, Some('a')),
@@ -7531,6 +7607,7 @@ mod tests {
     /// c:5818-5821 — Meta+X pair: `*c = x[1] ^ 32; return 2`.
     #[test]
     fn metacharlenconv_meta_pair_xor_decodes() {
+        let _g = crate::test_util::global_state_lock();
         // Meta + 0x41 ('A') → 'A' ^ 32 = 'a'.
         let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
@@ -7546,6 +7623,7 @@ mod tests {
     /// `(0, NUL)` when len=0, `(1, byte)` otherwise.
     #[test]
     fn charlenconv_zero_len_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         // c:5834 — `if (!len) { *c = '\0'; return 0; }`.
         let (n, c) = charlenconv("abc", 0);
         assert_eq!((n, c), (0, None),
@@ -7555,6 +7633,7 @@ mod tests {
     /// c:5840-5842 — non-zero len: read one byte, return (1, byte).
     #[test]
     fn charlenconv_returns_first_byte_for_nonzero_len() {
+        let _g = crate::test_util::global_state_lock();
         let (n, c) = charlenconv("abc", 3);
         assert_eq!((n, c), (1, Some('a')),
             "c:5841 — *c = *x; return 1");
@@ -7571,6 +7650,7 @@ mod tests {
     ///     since is_wcs_nicechar treats them as printable.
     #[test]
     fn is_mb_niceformat_false_for_pure_printable_ascii() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!is_mb_niceformat("hello"),
             "c:5509 — printable ASCII needs no nice-format");
         assert!(!is_mb_niceformat(""),
@@ -7582,6 +7662,7 @@ mod tests {
     /// the predicate.
     #[test]
     fn is_mb_niceformat_true_for_strings_with_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert!(is_mb_niceformat("a\nb"),
             "c:5509 — newline is nice");
         assert!(is_mb_niceformat("\t"));
@@ -7598,6 +7679,7 @@ mod tests {
     /// still escape.
     #[test]
     fn mb_niceformat_preserves_printable_wide_chars() {
+        let _g = crate::test_util::global_state_lock();
         // Pure ASCII printable: unchanged.
         assert_eq!(mb_niceformat("hello"), "hello",
             "c:5407 — printable ASCII passes through");
@@ -7615,6 +7697,7 @@ mod tests {
     /// multibyte variant.
     #[test]
     fn mb_niceformat_escapes_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mb_niceformat("\n"), "\\n",
             "c:5407 → wcs_nicechar c:625 — newline escapes");
         assert_eq!(mb_niceformat("\t"), "\\t",
@@ -7629,6 +7712,7 @@ mod tests {
     /// → 4 metafied bytes.
     #[test]
     fn metalen_returns_metafied_byte_count() {
+        let _g = crate::test_util::global_state_lock();
         // Pure ASCII: 5 chars → 5 bytes (no Meta encountered).
         assert_eq!(metalen("hello", 5), 5,
             "c:4972 — ASCII: metafied bytes == unmetafied chars");
@@ -7648,6 +7732,7 @@ mod tests {
     /// returns the input length unchanged). Pin len=0 and pure-ASCII.
     #[test]
     fn metalen_returns_input_for_no_meta_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(metalen("", 0), 0,
             "c:4974 — empty input returns 0");
         assert_eq!(metalen("abc", 3), 3,
@@ -7658,6 +7743,7 @@ mod tests {
     /// Empty input returns `('\0', 0)`. Pin: empty &str → 0 bytes consumed.
     #[test]
     fn unmeta_one_empty_input_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let (c, n) = unmeta_one("");
         assert_eq!(c, '\0',
             "c:5070 — empty input returns NUL char");
@@ -7668,6 +7754,7 @@ mod tests {
     /// `Src/utils.c:5081-5082` — Non-Meta byte: `*sz = 1; wc = byte`.
     #[test]
     fn unmeta_one_plain_ascii_consumes_one_byte() {
+        let _g = crate::test_util::global_state_lock();
         for c in "aA0!~".chars() {
             let s = c.to_string();
             let (got, n) = unmeta_one(&s);
@@ -7682,6 +7769,7 @@ mod tests {
     /// Pin via constructed Meta byte sequence.
     #[test]
     fn unmeta_one_meta_pair_decodes_xor_32() {
+        let _g = crate::test_util::global_state_lock();
         // META + 0x41 ('A') → 'A' ^ 32 = 0x61 ('a'). 2 bytes consumed.
         let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
@@ -7704,6 +7792,7 @@ mod tests {
     /// guard handles this by falling through to the non-Meta arm.
     #[test]
     fn unmeta_one_trailing_meta_byte_falls_through() {
+        let _g = crate::test_util::global_state_lock();
         let bytes: Vec<u8> = vec![Meta as u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let (_, n) = unmeta_one(s);
@@ -7718,6 +7807,7 @@ mod tests {
     /// Pin pure-ASCII subrange (no Meta) → returns end-start.
     #[test]
     fn ztrsub_ascii_no_meta_returns_byte_distance() {
+        let _g = crate::test_util::global_state_lock();
         // "hello world" — substring [0..5) → "hello" → 5 chars.
         assert_eq!(ztrsub("hello world", 0, 5), 5,
             "c:5189 — no Meta: returns t-s byte distance");
@@ -7732,6 +7822,7 @@ mod tests {
     /// one logical char). Pin via constructed Meta string.
     #[test]
     fn ztrsub_subtracts_one_per_meta_pair() {
+        let _g = crate::test_util::global_state_lock();
         // Build "a" + Meta + 0x20 + "b" = 4 bytes total.
         // Unmetafied: "a" + 1-char-from-meta + "b" = 3 chars.
         let meta_byte = Meta as u8;
@@ -7747,6 +7838,7 @@ mod tests {
     /// Rust port clamps via `start.min(end)`.
     #[test]
     fn ztrsub_clamps_inverted_range_to_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrsub("hello", 4, 2), 0,
             "inverted range start>end → 0 (defensive; not in C contract)");
         // Beyond-buffer end gets clamped.
@@ -7761,6 +7853,7 @@ mod tests {
     /// truncated input.
     #[test]
     fn ztrlen_handles_trailing_meta_byte_without_panic() {
+        let _g = crate::test_util::global_state_lock();
         let meta = char::from_u32(Meta as u32).unwrap();
         let trailing: String = ['a', meta].iter().collect();
         // c:5141-5149 — increment l, then encounter Meta, then loop
@@ -7775,6 +7868,7 @@ mod tests {
     /// a poisoned param that no later expansion can address.
     #[test]
     fn isident_rejects_digit_leading_names() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!isident("1foo"));
         assert!(!isident("99"));
         assert!(!isident(""));
@@ -7784,6 +7878,7 @@ mod tests {
     /// `_foo`, `Foo_BAR_42` are valid POSIX shell idents.
     #[test]
     fn isident_accepts_underscore_and_alpha_leading() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isident("foo"));
         assert!(isident("_foo"));
         assert!(isident("Foo_BAR_42"));
@@ -7795,6 +7890,7 @@ mod tests {
     /// subsequent lookup can address (`typeset 'foo bar'=baz`).
     #[test]
     fn isident_rejects_special_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!isident("foo bar"));
         assert!(!isident("foo-bar"));
         assert!(!isident("foo."));
@@ -7806,6 +7902,7 @@ mod tests {
     /// make `$(( 0 ))` print nothing.
     #[test]
     fn convbase_zero_renders_as_zero_literal() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convbase(0, 10), "0");
     }
 
@@ -7814,6 +7911,7 @@ mod tests {
     /// This is the format `printf "%X"` and `$(( ... ))` both produce.
     #[test]
     fn convbase_uses_base_prefix_syntax_for_non_decimal() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convbase(255, 16),  "16#FF");
         assert_eq!(convbase(8,   8),   "8#10");
         assert_eq!(convbase(5,   2),   "2#101");
@@ -7825,6 +7923,7 @@ mod tests {
     /// the sign would silently flip arithmetic semantics in `$((...))`.
     #[test]
     fn convbase_preserves_negative_sign() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convbase(-42, 10), "-42");
     }
 
@@ -7834,6 +7933,7 @@ mod tests {
     /// breaks every PATH-walking lookup.
     #[test]
     fn slashsplit_filters_empty_segments() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(slashsplit("/usr/local/bin"),
                    vec!["usr".to_string(), "local".to_string(), "bin".to_string()]);
         assert_eq!(slashsplit("//foo"),
@@ -7847,6 +7947,7 @@ mod tests {
     /// Trailing `/` produces no extra empty segment.
     #[test]
     fn slashsplit_relative_path_no_trailing_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(slashsplit("a/b/"),
                    vec!["a".to_string(), "b".to_string()]);
     }
@@ -7856,6 +7957,7 @@ mod tests {
     /// well-formed assignment would silently break every export/typeset.
     #[test]
     fn equalsplit_returns_first_equals_split() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(equalsplit("foo=bar"),
                    Some(("foo".to_string(), "bar".to_string())));
         assert_eq!(equalsplit("a=b=c"),
@@ -7868,6 +7970,7 @@ mod tests {
     /// names install with empty values silently.
     #[test]
     fn equalsplit_no_equals_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(equalsplit("foo"), None);
         assert_eq!(equalsplit(""),    None);
     }
@@ -7877,6 +7980,7 @@ mod tests {
     /// to a randomised hash-order would mis-sort `${(o)array}` output.
     #[test]
     fn ztrcmp_deterministic_and_lexicographic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrcmp("abc", "abc"), std::cmp::Ordering::Equal);
         assert_eq!(ztrcmp("abc", "abd"), std::cmp::Ordering::Less);
         assert_eq!(ztrcmp("abd", "abc"), std::cmp::Ordering::Greater);
@@ -7889,6 +7993,7 @@ mod tests {
     /// Catches a regression where length-then-content would mis-sort.
     #[test]
     fn ztrcmp_shorter_prefix_is_less() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrcmp("a",   "ab"),  std::cmp::Ordering::Less);
         assert_eq!(ztrcmp("foo", "foob"), std::cmp::Ordering::Less);
     }
@@ -7898,6 +8003,7 @@ mod tests {
     /// the metafied byte's decoded value compare correctly.
     #[test]
     fn ztrcmp_decodes_meta_byte_for_comparison() {
+        let _g = crate::test_util::global_state_lock();
         // META+0x21 ('!') = NUL? Let me use safer chars.
         // META+'A' (0x41) decodes to 'A' ^ 32 = 'a' (0x61).
         // So a "META a" pair represents the byte 'a' (0x61).
@@ -7920,6 +8026,7 @@ mod tests {
     /// Pin the three branches.
     #[test]
     fn is_nicechar_printable_ascii_is_not_nice() {
+        let _g = crate::test_util::global_state_lock();
         // c:534 — letters, digits, punctuation in 0x20-0x7e all NOT nice.
         for c in "abcXYZ012!?@~".chars() {
             assert!(!is_nicechar(c),
@@ -7932,6 +8039,7 @@ mod tests {
     /// c:538 — control chars (DEL, newline, tab, <0x20) ARE nice.
     #[test]
     fn is_nicechar_control_chars_are_nice() {
+        let _g = crate::test_util::global_state_lock();
         assert!(is_nicechar('\n'),   "c:538 — newline is nice");
         assert!(is_nicechar('\t'),   "c:538 — tab is nice");
         assert!(is_nicechar('\x7f'), "c:538 — DEL is nice");
@@ -7946,6 +8054,7 @@ mod tests {
     /// only when OCTALZEROES is set. Tests the default state.
     #[test]
     fn zstrtoul_underscore_recognises_hex_binary_decimal() {
+        let _g = crate::test_util::global_state_lock();
         // c:2538 — hex.
         assert_eq!(zstrtoul_underscore("0xff"),  Some(255));
         assert_eq!(zstrtoul_underscore("0XFF"),  Some(255));
@@ -7967,6 +8076,7 @@ mod tests {
     /// human-readable big numbers like `1_000_000`.
     #[test]
     fn zstrtoul_underscore_strips_underscores() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrtoul_underscore("1_000_000"), Some(1_000_000),
             "c:2547-2548 — `_` stripped from numeric input");
         assert_eq!(zstrtoul_underscore("0xff_ff"), Some(0xffff));
@@ -7978,6 +8088,7 @@ mod tests {
     /// handles negation at `zstrtol_underscore`).
     #[test]
     fn zstrtoul_underscore_consumes_leading_plus() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrtoul_underscore("+42"), Some(42));
         assert_eq!(zstrtoul_underscore("+0xff"), Some(255));
     }
@@ -7987,6 +8098,7 @@ mod tests {
     /// printable input → single-char output.
     #[test]
     fn nicechar_sel_passes_printable_ascii_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         for c in "aA0!~".chars() {
             assert_eq!(nicechar_sel(c, false), c.to_string(),
                 "c:467 — printable ASCII '{}' passes through", c);
@@ -7998,6 +8110,7 @@ mod tests {
     /// escapes.
     #[test]
     fn nicechar_sel_escapes_newline_and_tab() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(nicechar_sel('\n', false), "\\n",
             "c:487-489 — newline escape");
         assert_eq!(nicechar_sel('\t', false), "\\t",
@@ -8009,6 +8122,7 @@ mod tests {
     /// c:500 — `c += 0x40` adds 0x40 to map 0x01 → 0x41 ('A').
     #[test]
     fn nicechar_sel_control_chars_use_caret_or_c_prefix() {
+        let _g = crate::test_util::global_state_lock();
         // Non-quotable: ^A
         assert_eq!(nicechar_sel('\x01', false), "^A",
             "c:499-500 — \\x01 → ^A non-quotable");
@@ -8024,6 +8138,7 @@ mod tests {
     /// `Src/utils.c:479-486` — DEL (0x7f) renders as `^?` or `\C-?`.
     #[test]
     fn nicechar_sel_del_renders_as_caret_question() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(nicechar_sel('\x7f', false), "^?",
             "c:485-486 — DEL is `^?`");
         assert_eq!(nicechar_sel('\x7f', true), "\\C-?",
@@ -8036,6 +8151,7 @@ mod tests {
     /// the canonical 0xc1 → \M-A and 0xe1 → \M-a cases.
     #[test]
     fn nicechar_sel_highbit_uses_meta_prefix_when_printeightbit_off() {
+        let _g = crate::test_util::global_state_lock();
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT) {
             return; // Test only valid when PRINTEIGHTBIT off (default).
         }
@@ -8056,6 +8172,7 @@ mod tests {
     /// emerged mangled.
     #[test]
     fn wcs_nicechar_sel_printable_wide_emits_utf8() {
+        let _g = crate::test_util::global_state_lock();
         // c:644-678 — printable wide char emits raw UTF-8.
         assert_eq!(wcs_nicechar_sel('a', false),  "a", "ASCII printable");
         assert_eq!(wcs_nicechar_sel('é', false),  "é", "Latin-1 printable");
@@ -8065,6 +8182,7 @@ mod tests {
     /// c:625-630 — `\n` and `\t` escape (same as nicechar_sel for ASCII).
     #[test]
     fn wcs_nicechar_sel_escapes_newline_and_tab() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wcs_nicechar_sel('\n', false), "\\n");
         assert_eq!(wcs_nicechar_sel('\t', false), "\\t");
     }
@@ -8073,6 +8191,7 @@ mod tests {
     /// `\C-?` (quotable). Same as the byte version.
     #[test]
     fn wcs_nicechar_sel_del_uses_caret_question() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wcs_nicechar_sel('\x7f', false), "^?");
         assert_eq!(wcs_nicechar_sel('\x7f', true),  "\\C-?");
     }
@@ -8081,6 +8200,7 @@ mod tests {
     /// `^X` or `\C-X` with the +0x40 offset.
     #[test]
     fn wcs_nicechar_sel_control_chars_use_caret_prefix() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wcs_nicechar_sel('\x01', false), "^A");
         assert_eq!(wcs_nicechar_sel('\x07', false), "^G");
         assert_eq!(wcs_nicechar_sel('\x1b', false), "^[");
@@ -8094,6 +8214,7 @@ mod tests {
     /// like U+0085 NEXT LINE).
     #[test]
     fn wcs_nicechar_sel_large_nonprintable_uses_hex_escape() {
+        let _g = crate::test_util::global_state_lock();
         // U+0085 NEL — control in C1 range, not iswprint.
         let nel = char::from_u32(0x85).unwrap();
         // Since 0x85 < 0x100, falls into nicechar_sel fallback.
@@ -8118,6 +8239,7 @@ mod tests {
     /// `wcs_nicechar_sel(c, 0)`. Pin the parity with the 4-arg form.
     #[test]
     fn wcs_nicechar_matches_wcs_nicechar_sel_with_zero() {
+        let _g = crate::test_util::global_state_lock();
         for c in ['a', '\n', '\t', '\x7f', '\x01', 'é', '字'] {
             assert_eq!(wcs_nicechar(c), wcs_nicechar_sel(c, false),
                 "c:711 — `wcs_nicechar(c)` must equal `wcs_nicechar_sel(c, 0)` for {:?}", c);
@@ -8132,6 +8254,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn movefd_returns_minus_one_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         // c:1992 — `if (fd != -1 && fd < 10)` skipped for fd=-1.
         assert_eq!(movefd(-1), -1, "fd=-1 must be returned unchanged");
     }
@@ -8140,6 +8263,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn movefd_returns_high_fd_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         // Use a known-open fd. /dev/null open with fd guaranteed to be
         // <10 because new fds get the lowest free slot — but we can
         // dup it to 10 directly to test the early-return path.
@@ -8162,6 +8286,7 @@ mod tests {
     /// from C semantics.
     #[test]
     fn check_fd_table_is_noop_stub() {
+        let _g = crate::test_util::global_state_lock();
         // No-op port returns true for any input.
         assert!(check_fd_table(-1),  "stub returns true for any fd");
         assert!(check_fd_table(0));
@@ -8177,6 +8302,7 @@ mod tests {
     /// returns true for chars in the new set.
     #[test]
     fn wcsitype_iword_reads_from_canonical_wordchars_global() {
+        let _g = crate::test_util::global_state_lock();
         // Test only meaningful in MULTIBYTE mode for non-ASCII chars;
         // ASCII chars (< 0x80) route through TYPTAB directly.
         // Skip if MULTIBYTE off.
@@ -8204,6 +8330,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn addmodulefd_respects_fdt_parameter() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_MODULE};
         // Open a real fd to use.
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
@@ -8223,6 +8350,7 @@ mod tests {
     /// ignored (no fdtable update). Pin the guard.
     #[test]
     fn addmodulefd_ignores_negative_fd() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::FDT_MODULE;
         // Should not panic, no side effect.
         crate::ported::utils::addmodulefd(-1, FDT_MODULE);
@@ -8236,6 +8364,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn zcloselockfd_returns_minus_one_for_non_lock_fd() {
+        let _g = crate::test_util::global_state_lock();
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
         // No addlockfd call → fd is NOT in the flock table.
@@ -8251,6 +8380,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn zcloselockfd_returns_zero_for_flock_fd_then_closes() {
+        let _g = crate::test_util::global_state_lock();
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
         crate::ported::utils::addlockfd(fd, true);
@@ -8270,6 +8400,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fdtable_set_bumps_max_zsh_fd() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::FDT_FLOCK;
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
@@ -8291,6 +8422,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn addlockfd_selects_flock_category_per_cloexec_flag() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
@@ -8313,6 +8445,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn adduserdir_rejects_paths_at_or_above_path_max() {
+        let _g = crate::test_util::global_state_lock();
         if !crate::ported::zsh_h::interact() {
             // c:1193 — non-interactive shells skip the table entirely.
             // Test inactive in non-interactive contexts.
@@ -8342,6 +8475,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn pathprog_finds_non_executable_files() {
+        let _g = crate::test_util::global_state_lock();
         // Create a non-executable file in /tmp and add /tmp to PATH.
         let test_name = format!("zshrs_test_pathprog_{}", unsafe { libc::getpid() });
         let path = std::path::PathBuf::from("/tmp").join(&test_name);
@@ -8372,6 +8506,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn pathprog_skips_directories() {
+        let _g = crate::test_util::global_state_lock();
         let test_name = format!("zshrs_test_pathprog_dir_{}", unsafe { libc::getpid() });
         let path = std::path::PathBuf::from("/tmp").join(&test_name);
         if std::fs::create_dir(&path).is_err() {
@@ -8395,6 +8530,7 @@ mod tests {
     /// (added earlier this session). End-to-end pin.
     #[test]
     fn wcsitype_isep_reads_from_canonical_ifs_global() {
+        let _g = crate::test_util::global_state_lock();
         if !isset(crate::ported::zsh_h::MULTIBYTE) { return; }
         let saved = crate::ported::params::ifsgetfn();
         crate::ported::params::ifssetfn(":".to_string());
@@ -8410,6 +8546,7 @@ mod tests {
     /// a unit test due to opt-state global mutation.
     #[test]
     fn is_nicechar_highbit_is_nice_when_printeightbit_off() {
+        let _g = crate::test_util::global_state_lock();
         // Default state: PRINTEIGHTBIT is off → high-bit bytes are nice.
         // Use char with high-bit equivalent low byte.
         // 0xb5 (Meta+5 territory) — masked to 0xff → still 0xb5.
@@ -8430,6 +8567,7 @@ mod tests {
     /// "MAX_ZSH_FD >= fd" after the call.
     #[test]
     fn check_fd_table_grows_fdtable_and_bumps_max_zsh_fd() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         // Snapshot prior state so we don't poison other tests.
         let saved_max = MAX_ZSH_FD.load(Ordering::Relaxed);
@@ -8455,6 +8593,7 @@ mod tests {
     /// no-op.
     #[test]
     fn check_fd_table_small_fd_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         // Ensure max_zsh_fd is non-trivial.
         let _ = check_fd_table(100);
@@ -8469,6 +8608,7 @@ mod tests {
     /// (UB). Rust port should fail-soft.
     #[test]
     fn check_fd_table_negative_fd_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         // Should not panic; behavior beyond "no panic" is unspecified.
         let _ = check_fd_table(-1);
         let _ = check_fd_table(-100);

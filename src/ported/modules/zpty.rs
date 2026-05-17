@@ -797,6 +797,7 @@ mod tests {
 
     #[test]
     fn test_pty_cmds_manager() {
+        let _g = crate::test_util::global_state_lock();
         let mut cmds = HashMap::<String, ptycmd>::new();
         assert!(cmds.is_empty());
 
@@ -816,6 +817,7 @@ mod tests {
 
     #[test]
     fn test_pty_cmd_fields() {
+        let _g = crate::test_util::global_state_lock();
         let cmd = ptycmd::new(
             "mypty",
             vec!["bash".to_string(), "-c".to_string()],
@@ -846,6 +848,7 @@ mod tests {
     /// Mirrors Src/Modules/zpty.c:773 -L arm.
     #[test]
     fn test_builtin_zpty_list_empty() {
+        let _g = crate::test_util::global_state_lock();
         // Reset global PTYCMDS for test isolation.
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
         let status = bin_zpty("zpty", &[], &ops_with_flag(b'L'), 0);
@@ -856,6 +859,7 @@ mod tests {
     /// Mirrors Src/Modules/zpty.c:773 -d arm.
     #[test]
     fn test_builtin_zpty_delete_all() {
+        let _g = crate::test_util::global_state_lock();
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
         let status = bin_zpty("zpty", &[], &ops_with_flag(b'd'), 0);
         assert_eq!(status, 0);
@@ -864,6 +868,7 @@ mod tests {
     /// Verifies `-w` with no positional args returns 1 (needs name + data).
     #[test]
     fn test_builtin_zpty_write_no_args() {
+        let _g = crate::test_util::global_state_lock();
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
         let status = bin_zpty("zpty", &[], &ops_with_flag(b'w'), 0);
         assert_eq!(status, 1);
@@ -872,6 +877,7 @@ mod tests {
     /// Verifies `-t` with no positional args returns 1 (needs name).
     #[test]
     fn test_builtin_zpty_test_no_args() {
+        let _g = crate::test_util::global_state_lock();
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
         let status = bin_zpty("zpty", &[], &ops_with_flag(b't'), 0);
         assert_eq!(status, 1);
@@ -882,6 +888,7 @@ mod tests {
     /// a stale entry) gets caught.
     #[test]
     fn getptycmd_unknown_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let cmds: HashMap<String, ptycmd> = HashMap::new();
         assert!(getptycmd(&cmds, "never-created").is_none());
     }
@@ -889,6 +896,7 @@ mod tests {
     /// c:153 — `getptycmd` returns Some for a name in the map.
     #[test]
     fn getptycmd_returns_inserted_entry() {
+        let _g = crate::test_util::global_state_lock();
         let mut cmds: HashMap<String, ptycmd> = HashMap::new();
         let cmd = ptycmd::new("foo", vec!["x".to_string()], 3, 4, true, false);
         cmds.insert("foo".to_string(), cmd);
@@ -900,6 +908,7 @@ mod tests {
     /// c:490 — `deleteptycmd` on a missing name is a safe no-op.
     #[test]
     fn deleteptycmd_missing_name_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let mut cmds: HashMap<String, ptycmd> = HashMap::new();
         deleteptycmd(&mut cmds, "absent");
         assert!(cmds.is_empty());
@@ -915,6 +924,7 @@ mod tests {
     /// pgid so the kill becomes ESRCH/EPERM no-op.
     #[test]
     fn deleteptycmd_removes_only_named_entry() {
+        let _g = crate::test_util::global_state_lock();
         const SAFE_PID: i32 = i32::MAX - 1; // pgid that cannot exist
         let mut cmds: HashMap<String, ptycmd> = HashMap::new();
         cmds.insert("a".into(), ptycmd::new("a", vec![], -1, SAFE_PID, true, false));
@@ -933,6 +943,7 @@ mod tests {
     /// safety reason as `deleteptycmd_removes_only_named_entry`.
     #[test]
     fn deleteallptycmds_clears_all() {
+        let _g = crate::test_util::global_state_lock();
         const SAFE_PID: i32 = i32::MAX - 1;
         let mut cmds: HashMap<String, ptycmd> = HashMap::new();
         for n in ["a", "b", "c", "d"] {
@@ -947,6 +958,7 @@ mod tests {
     /// error (not panic) because fcntl(F_GETFL) returns -1 on EBADF.
     #[test]
     fn ptynonblock_on_bad_fd_returns_error() {
+        let _g = crate::test_util::global_state_lock();
         let r = ptynonblock(99999);
         assert!(r.is_err(), "ptynonblock on bad fd should be Err");
     }
@@ -957,6 +969,7 @@ mod tests {
     /// sentinel) silently passes garbage termios up the call chain.
     #[test]
     fn ptygettyinfo_on_bad_fd_returns_error_sentinel() {
+        let _g = crate::test_util::global_state_lock();
         let mut ti: libc::termios = unsafe { std::mem::zeroed() };
         let r = ptygettyinfo(99999, &mut ti);
         assert_ne!(r, 0, "ptygettyinfo on bad fd must NOT report success");
@@ -967,6 +980,7 @@ mod tests {
     /// session) returns nonzero. Pin missing-session lookup.
     #[test]
     fn bin_zpty_r_unknown_session_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
         let r = bin_zpty("zpty",
             &["unknown-pty".to_string()],

@@ -821,6 +821,7 @@ mod tests {
 
     #[test]
     fn zts_alloc_creates_session_with_default_fd() {
+        let _g = crate::test_util::global_state_lock();
         let _ = zts_alloc(ZTCP_LISTEN);
         ZTCP_SESSIONS.with(|s| {
             let sessions = s.borrow();
@@ -833,12 +834,14 @@ mod tests {
 
     #[test]
     fn inet_ntop_v4_works() {
+        let _g = crate::test_util::global_state_lock();
         let bytes = [127u8, 0, 0, 1];
         assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("127.0.0.1"));
     }
 
     #[test]
     fn inet_pton_v4_works() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 4];
         assert_eq!(zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut buf), 1);
         assert_eq!(buf, [127, 0, 0, 1]);
@@ -846,6 +849,7 @@ mod tests {
 
     #[test]
     fn inet_pton_invalid_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 4];
         assert_eq!(zsh_inet_pton(libc::AF_INET, "bad-ip", &mut buf), 0);
     }
@@ -855,6 +859,7 @@ mod tests {
     /// have historically rendered it as empty or "*".
     #[test]
     fn inet_ntop_wildcard_address_is_zero_dotted() {
+        let _g = crate::test_util::global_state_lock();
         let bytes = [0u8, 0, 0, 0];
         assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("0.0.0.0"));
     }
@@ -864,6 +869,7 @@ mod tests {
     /// formatting share the inner loop.
     #[test]
     fn inet_ntop_broadcast_address_is_all_255() {
+        let _g = crate::test_util::global_state_lock();
         let bytes = [255u8, 255, 255, 255];
         assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(),
                    Some("255.255.255.255"));
@@ -873,6 +879,7 @@ mod tests {
     /// sweep of typical addresses. Bidirectional contract pinned.
     #[test]
     fn inet_pton_ntop_round_trips_for_typical_addresses() {
+        let _g = crate::test_util::global_state_lock();
         for ip in &["192.168.1.1", "10.0.0.1", "172.16.254.1", "8.8.8.8"] {
             let mut buf = [0u8; 4];
             assert_eq!(zsh_inet_pton(libc::AF_INET, ip, &mut buf), 1,
@@ -886,6 +893,7 @@ mod tests {
     /// is the off-by-one to pin (0-255 valid; 256 invalid).
     #[test]
     fn inet_pton_rejects_octet_over_255() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 4];
         assert_eq!(zsh_inet_pton(libc::AF_INET, "256.0.0.0", &mut buf), 0);
     }
@@ -895,6 +903,7 @@ mod tests {
     /// regression could panic on the empty CString allocation.
     #[test]
     fn inet_pton_rejects_empty_string() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 4];
         assert_eq!(zsh_inet_pton(libc::AF_INET, "", &mut buf), 0);
     }
@@ -904,6 +913,7 @@ mod tests {
     /// bits OR'd in by the allocator).
     #[test]
     fn zts_alloc_flags_passthrough() {
+        let _g = crate::test_util::global_state_lock();
         let _ = zts_alloc(ZTCP_LISTEN);
         ZTCP_SESSIONS.with(|s| {
             let sessions = s.borrow();
@@ -917,6 +927,7 @@ mod tests {
     /// the session count does not change.
     #[test]
     fn zts_delete_unknown_fd_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let before = ZTCP_SESSIONS.with(|s| s.borrow().len());
         let _ = zts_delete(99999);
         let after = ZTCP_SESSIONS.with(|s| s.borrow().len());
@@ -927,6 +938,7 @@ mod tests {
     /// c:714-740 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

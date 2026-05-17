@@ -688,11 +688,13 @@ mod tests {
 
     #[test]
     fn statelts_count_matches_st_count() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(STATELTS.len() as i32, ST_COUNT);
     }
 
     #[test]
     fn statmodeprint_octal_only() {
+        let _g = crate::test_util::global_state_lock();
         let s = statmodeprint(0o100644, STF_RAW | STF_OCTAL);
         assert!(s.starts_with('0'));
         assert!(s.contains("644"));
@@ -700,6 +702,7 @@ mod tests {
 
     #[test]
     fn statmodeprint_string_only() {
+        let _g = crate::test_util::global_state_lock();
         let s = statmodeprint(0o100644, STF_STRING);
         assert_eq!(s.len(), 10);
         assert_eq!(&s[..1], "-");
@@ -707,17 +710,20 @@ mod tests {
 
     #[test]
     fn statmodeprint_directory() {
+        let _g = crate::test_util::global_state_lock();
         let s = statmodeprint(0o040755, STF_STRING);
         assert_eq!(&s[..1], "d");
     }
 
     #[test]
     fn statulprint_decimal() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(statulprint(12345), "12345");
     }
 
     #[test]
     fn statprint_size_via_index() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("x.txt");
         File::create(&path).unwrap().write_all(b"hello").unwrap();
@@ -732,6 +738,7 @@ mod tests {
     /// silently renders block devices as char devices.
     #[test]
     fn statmodeprint_file_type_chars_match_ls_output() {
+        let _g = crate::test_util::global_state_lock();
         // S_IFREG (regular file)
         assert_eq!(&statmodeprint(0o100_644, STF_STRING)[..1], "-");
         // S_IFDIR
@@ -754,6 +761,7 @@ mod tests {
     /// uppercase/lowercase dispatch gets caught.
     #[test]
     fn statmodeprint_setuid_setgid_sticky_render_correctly() {
+        let _g = crate::test_util::global_state_lock();
         // 4755 = setuid + executable → 's' in user slot
         let s = statmodeprint(0o104_755, STF_STRING);
         assert_eq!(s.chars().nth(3), Some('s'),
@@ -791,6 +799,7 @@ mod tests {
     /// to split the two halves.
     #[test]
     fn statmodeprint_raw_and_string_renders_with_parens() {
+        let _g = crate::test_util::global_state_lock();
         let s = statmodeprint(0o100_644, STF_RAW | STF_STRING);
         // Decimal raw form, space, paren, 10-char string, close paren
         assert!(s.contains(" ("), "missing ' (' separator: {}", s);
@@ -807,6 +816,7 @@ mod tests {
     /// a "no file-type" mode falls through to '?'.
     #[test]
     fn statmodeprint_zero_mode_renders_unknown_type_no_perms() {
+        let _g = crate::test_util::global_state_lock();
         let s = statmodeprint(0, STF_STRING);
         assert_eq!(s.len(), 10);
         assert_eq!(&s[..1], "?", "mode with no S_IFMT bits → unknown");
@@ -819,6 +829,7 @@ mod tests {
     /// renders octal silently breaks `${(t)f[uid]}`.
     #[test]
     fn statuidprint_raw_is_decimal() {
+        let _g = crate::test_util::global_state_lock();
         let s = statuidprint(1000, STF_RAW);
         assert_eq!(s, "1000");
     }
@@ -829,6 +840,7 @@ mod tests {
     /// fall back to numeric.
     #[test]
     fn statuidprint_uid_zero_resolves_to_root() {
+        let _g = crate::test_util::global_state_lock();
         let s = statuidprint(0, STF_STRING);
         // Some hardened systems map uid 0 to a different name, but
         // it MUST resolve to non-numeric.
@@ -840,6 +852,7 @@ mod tests {
     /// c:161 — `statgidprint` raw form is decimal.
     #[test]
     fn statgidprint_raw_is_decimal() {
+        let _g = crate::test_util::global_state_lock();
         let s = statgidprint(100, STF_RAW);
         assert_eq!(s, "100");
     }
@@ -849,6 +862,7 @@ mod tests {
     /// comparisons.
     #[test]
     fn statulprint_zero_renders_as_zero_digit() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(statulprint(0), "0");
     }
 
@@ -856,6 +870,7 @@ mod tests {
     /// digit string. Pin the no-overflow / no-truncation behavior.
     #[test]
     fn statulprint_u64_max_renders_full_digits() {
+        let _g = crate::test_util::global_state_lock();
         let s = statulprint(u64::MAX);
         assert_eq!(s, "18446744073709551615");
     }
@@ -866,6 +881,7 @@ mod tests {
     /// are AND-tested individually throughout statprint.
     #[test]
     fn stf_flag_values_are_distinct_single_bits() {
+        let _g = crate::test_util::global_state_lock();
         for f in [STF_NAME, STF_FILE, STF_STRING, STF_RAW,
                   STF_PICK, STF_ARRAY, STF_GMT, STF_HASH, STF_OCTAL] {
             assert!(f > 0, "STF_* flag {} must be positive", f);
@@ -887,6 +903,7 @@ mod tests {
     /// c:651-690 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

@@ -483,6 +483,7 @@ mod tests {
 
     #[test]
     fn test_zgettime() {
+        let _g = crate::test_util::global_state_lock();
         let mut ts: timespec = unsafe { std::mem::zeroed() };
         let r = zgettime(&mut ts);
         assert!(r >= 0);
@@ -491,6 +492,7 @@ mod tests {
 
     #[test]
     fn test_zgettime_monotonic() {
+        let _g = crate::test_util::global_state_lock();
         let mut t1: timespec = unsafe { std::mem::zeroed() };
         let mut t2: timespec = unsafe { std::mem::zeroed() };
         let r1 = zgettime_monotonic_if_available(&mut t1);
@@ -505,6 +507,7 @@ mod tests {
 
     #[test]
     fn test_zgetcwd() {
+        let _g = crate::test_util::global_state_lock();
         let cwd = zgetcwd();
         assert!(cwd.is_some());
         assert!(!cwd.unwrap().is_empty());
@@ -512,12 +515,14 @@ mod tests {
 
     #[test]
     fn test_zopenmax() {
+        let _g = crate::test_util::global_state_lock();
         let max = zopenmax();
         assert!(max > 0);
     }
 
     #[test]
     fn test_isprint_safe() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isprint_ascii('a'));
         assert!(isprint_ascii('Z'));
         assert!(isprint_ascii(' '));
@@ -527,6 +532,7 @@ mod tests {
 
     #[test]
     fn test_wcwidth() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(u9_wcwidth('a'), 1);
         assert_eq!(u9_wcwidth('中'), 2);
         assert!(u9_wcwidth('\x00') <= 0);
@@ -536,6 +542,7 @@ mod tests {
 
     #[test]
     fn strstr_substring_hit_returns_byte_offset() {
+        let _g = crate::test_util::global_state_lock();
         // C strstr returns pointer to the match (== bytes-from-start);
         // Rust port returns Option<usize> byte offset. Verify hits +
         // miss + edge cases (empty needle is documented to return 0).
@@ -549,6 +556,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn gettimeofday_returns_positive_secs() {
+        let _g = crate::test_util::global_state_lock();
         // C contract: always returns 0; tv_sec is unix-epoch seconds.
         // Anything past 2001-09-09 is > 1_000_000_000.
         let (sec, _usec) = gettimeofday();
@@ -557,6 +565,7 @@ mod tests {
 
     #[test]
     fn strtoul_parses_decimal() {
+        let _g = crate::test_util::global_state_lock();
         // Base 10: simple positive integer.
         let (v, n) = strtoul("12345", 10);
         assert_eq!(v, 12345);
@@ -565,6 +574,7 @@ mod tests {
 
     #[test]
     fn strtoul_parses_hex_with_0x_prefix_when_base_zero() {
+        let _g = crate::test_util::global_state_lock();
         // base==0 with `0x` prefix → C falls into base 16 (c:714-718).
         let (v, n) = strtoul("0xff", 0);
         assert_eq!(v, 255);
@@ -573,6 +583,7 @@ mod tests {
 
     #[test]
     fn strtoul_parses_octal_when_base_zero_with_leading_zero() {
+        let _g = crate::test_util::global_state_lock();
         // base==0 with leading '0' → C falls into base 8 (c:719-720).
         let (v, _n) = strtoul("0777", 0);
         assert_eq!(v, 511);
@@ -580,6 +591,7 @@ mod tests {
 
     #[test]
     fn strtoul_skips_leading_whitespace() {
+        let _g = crate::test_util::global_state_lock();
         // c:704 — `do { c = *s++; } while (isspace(c))`.
         let (v, _) = strtoul("   42", 10);
         assert_eq!(v, 42);
@@ -587,6 +599,7 @@ mod tests {
 
     #[test]
     fn strtoul_stops_at_first_non_digit() {
+        let _g = crate::test_util::global_state_lock();
         // Mixed input: parse stops when the digit run ends; bytes-consumed
         // reports where it stopped so a caller can pick up *endptr-style.
         let (v, n) = strtoul("100abc", 10);
@@ -600,6 +613,7 @@ mod tests {
     /// systems lacking `difftime(3)`.
     #[test]
     fn difftime_returns_signed_double_difference() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(difftime(1_700_000_010, 1_700_000_000),  10.0);
         assert_eq!(difftime(1_700_000_000, 1_700_000_010), -10.0,
             "c:178 — signed cast; t1 > t2 must be negative");
@@ -611,6 +625,7 @@ mod tests {
     /// (space through tilde), locale-independent.
     #[test]
     fn isprint_ascii_matches_strict_ascii_printable_range() {
+        let _g = crate::test_util::global_state_lock();
         // Boundaries.
         assert!(isprint_ascii(' '), "c:786 — 0x20 is printable");
         assert!(isprint_ascii('~'), "c:786 — 0x7e is printable");
@@ -635,6 +650,7 @@ mod tests {
     /// values (i64::MIN/MAX) and the sign handling.
     #[test]
     fn output64_formats_i64_boundaries_and_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(output64(0), "0");
         assert_eq!(output64(42), "42");
         assert_eq!(output64(-1), "-1");
@@ -647,6 +663,7 @@ mod tests {
     /// the canonical printable cases + control rejection.
     #[test]
     fn u9_iswprint_accepts_printable_rejects_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert!(u9_iswprint('a'));
         assert!(u9_iswprint(' '));
         assert!(u9_iswprint('é'),  "Latin-1 letter is printable");
@@ -667,6 +684,7 @@ mod tests {
     /// crate version mismatch surfaces.
     #[test]
     fn u9_wcwidth_returns_canonical_widths() {
+        let _g = crate::test_util::global_state_lock();
         // -1 for controls (locked at c:766 `is_control` branch in Rust).
         assert_eq!(u9_wcwidth('\x07'), -1);
         // 1 for ordinary ASCII.
@@ -685,6 +703,7 @@ mod tests {
     /// the API contract: non-empty for at least one known errno.
     #[test]
     fn strerror_returns_non_empty_string_for_known_errno() {
+        let _g = crate::test_util::global_state_lock();
         // ENOENT is "No such file or directory" on every Unix.
         let s = strerror(2 /* ENOENT */);
         assert!(!s.is_empty(), "c:194 — strerror must return non-empty for ENOENT");
@@ -704,6 +723,7 @@ mod tests {
     ///   2. `zopenmax()` never returns more than max(OPEN_MAX, fd in use).
     #[test]
     fn zopenmax_caps_within_canonical_ladder() {
+        let _g = crate::test_util::global_state_lock();
         // c:307 — canonical value.
         assert_eq!(crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX, 64,
             "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64");

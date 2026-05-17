@@ -413,6 +413,7 @@ mod tests {
     /// attribute table.
     #[test]
     fn convertattr_bold_escape() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convertattr("bold", false), "\x1b[1m");
     }
 
@@ -420,6 +421,7 @@ mod tests {
     /// `\e[Nm` escapes.
     #[test]
     fn convertattr_chained_escape() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("bold,underline", false);
         assert!(s.contains("\x1b[1m"));
         assert!(s.contains("\x1b[4m"));
@@ -428,6 +430,7 @@ mod tests {
     /// `convertattr("fg=red", false)` emits `\e[31m`.
     #[test]
     fn convertattr_fg_red_escape() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=red", false);
         assert!(s.contains("\x1b[31m"));
     }
@@ -435,6 +438,7 @@ mod tests {
     /// SGR-mode `convertattr("bold", true)` returns `"1"`.
     #[test]
     fn convertattr_sgr_bold() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convertattr("bold", true), "1");
     }
 
@@ -442,6 +446,7 @@ mod tests {
     /// `"1;4"`.
     #[test]
     fn convertattr_sgr_chain() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("bold,underline", true);
         assert!(s.contains('1'));
         assert!(s.contains('4'));
@@ -450,12 +455,14 @@ mod tests {
     /// SGR-mode empty input returns `"0"` per c:67-70 fallback.
     #[test]
     fn convertattr_sgr_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convertattr("", true), "0");
     }
 
     /// 256-colour spec `fg=196` emits `\e[38;5;196m`.
     #[test]
     fn convertattr_256_color() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=196", false);
         assert!(s.contains("\x1b[38;5;196m"));
     }
@@ -463,6 +470,7 @@ mod tests {
     /// Truecolor spec `fg=#ff0000` emits `\e[38;2;255;0;0m`.
     #[test]
     fn convertattr_truecolor() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=#ff0000", false);
         assert!(s.contains("\x1b[38;2;255;0;0m"));
     }
@@ -470,6 +478,7 @@ mod tests {
     /// SGR-mode 256-colour: `fg=196` → `38;5;196`.
     #[test]
     fn convertattr_sgr_256_color() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=196", true);
         assert!(s.contains("38;5;196"));
     }
@@ -477,6 +486,7 @@ mod tests {
     /// SGR-mode truecolor: `fg=#00ff00` → `38;2;0;255;0`.
     #[test]
     fn convertattr_sgr_truecolor() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=#00ff00", true);
         assert!(s.contains("38;2;0;255;0"));
     }
@@ -485,6 +495,7 @@ mod tests {
     /// wired (c:99-103 PM_UNSET branch).
     #[test]
     fn getgroup_returns_none_until_paramtable_wired() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getgroup("any", false), None);
         assert_eq!(getgroup("any", true), None);
     }
@@ -493,6 +504,7 @@ mod tests {
     /// (c:124-125 early exit).
     #[test]
     fn scangroup_returns_empty_until_paramtable_wired() {
+        let _g = crate::test_util::global_state_lock();
         assert!(scangroup(false).is_empty());
         assert!(scangroup(true).is_empty());
     }
@@ -500,6 +512,7 @@ mod tests {
     /// c:40 — `convertattr("")` (empty input). Defensive edge.
     #[test]
     fn convertattr_empty_input_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let _ = convertattr("", false);
         let _ = convertattr("", true);
     }
@@ -507,6 +520,7 @@ mod tests {
     /// c:40 — `convertattr("bold")` adds bold SGR (1).
     #[test]
     fn convertattr_bold_emits_sgr_bold() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("bold", false);
         assert!(s.contains("\x1b[1m") || s.contains("\x1b[1;"),
             "bold attr must emit SGR 1, got {:?}", s);
@@ -515,6 +529,7 @@ mod tests {
     /// c:40 — Unknown attr keyword does NOT panic.
     #[test]
     fn convertattr_unknown_attr_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let _ = convertattr("definitely_not_a_real_attr", false);
     }
 
@@ -522,6 +537,7 @@ mod tests {
     /// regen using i8 instead of u8 doesn't wrap to negative.
     #[test]
     fn convertattr_truecolor_max_rgb() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=#ffffff", false);
         assert!(s.contains("38;2;255;255;255"),
             "white truecolor must encode as 255;255;255, got {:?}", s);
@@ -530,6 +546,7 @@ mod tests {
     /// c:40 — 256-color upper boundary `fg=255`.
     #[test]
     fn convertattr_256_color_upper_boundary() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=255", false);
         assert!(s.contains("38;5;255"),
             "256-color upper boundary 255 must encode correctly, got {:?}", s);
@@ -538,6 +555,7 @@ mod tests {
     /// c:141 — `getpmesc` for empty/unknown name returns None.
     #[test]
     fn getpmesc_empty_or_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmesc("").is_none());
         assert!(getpmesc("definitely_not_in_table_xyzzy").is_none());
     }
@@ -545,6 +563,7 @@ mod tests {
     /// c:155 — `getpmsgr` symmetric with getpmesc; empty + unknown → None.
     #[test]
     fn getpmsgr_empty_or_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmsgr("").is_none());
         assert!(getpmsgr("definitely_not_in_table_xyzzy").is_none());
     }
@@ -553,6 +572,7 @@ mod tests {
     /// vec until paramtable wiring lands.
     #[test]
     fn scanpmesc_and_scanpmsgr_are_empty_until_wired() {
+        let _g = crate::test_util::global_state_lock();
         assert!(scanpmesc().is_empty());
         assert!(scanpmsgr().is_empty());
     }
@@ -560,6 +580,7 @@ mod tests {
     /// c:182-210 — module-lifecycle stubs return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         let mut features = Vec::new();
@@ -573,6 +594,7 @@ mod tests {
     /// bases would silently swap colors.
     #[test]
     fn convertattr_bg_color_uses_40_base() {
+        let _g = crate::test_util::global_state_lock();
         let s = convertattr("bg=blue", false);
         assert!(s.contains("\x1b[44m"),
             "c:40 — bg=blue → base 40 + 4 = 44 (got {:?})", s);
@@ -589,6 +611,7 @@ mod tests {
     /// (bright_base + 0..=7) for both fg and bg.
     #[test]
     fn convertattr_bright_prefix_uses_high_intensity_base() {
+        let _g = crate::test_util::global_state_lock();
         // fg=bright-red → 91
         let s = convertattr("fg=bright-red", false);
         assert!(s.contains("\x1b[91m"),
@@ -603,6 +626,7 @@ mod tests {
     /// `bright-`. Pin both prefix variants map to the same code.
     #[test]
     fn convertattr_light_prefix_is_alias_for_bright() {
+        let _g = crate::test_util::global_state_lock();
         let bright = convertattr("fg=bright-green", false);
         let light  = convertattr("fg=light-green",  false);
         assert_eq!(bright, light,
@@ -614,6 +638,7 @@ mod tests {
     /// `\e[` and `m`, no surrounding chars).
     #[test]
     fn convertattr_sgr_bg_color() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(convertattr("bg=blue", true), "44",
             "SGR mode strips ESC[/m wrapper → bare digit string");
         assert_eq!(convertattr("bg=red", true), "41");
@@ -624,6 +649,7 @@ mod tests {
     /// falls back to "0". Pin the defensive contract.
     #[test]
     fn convertattr_unknown_color_drops_silently() {
+        let _g = crate::test_util::global_state_lock();
         // Plain (escape) mode: empty output for unknown color alone.
         let s = convertattr("fg=not_a_real_color", false);
         assert_eq!(s, "",
@@ -637,6 +663,7 @@ mod tests {
     /// is silently dropped (only 6-hex-digit form recognized).
     #[test]
     fn convertattr_short_hex_dropped() {
+        let _g = crate::test_util::global_state_lock();
         // 3-digit form "#abc" not supported per the body's `hex.len() == 6` guard.
         let s = convertattr("fg=#abc", false);
         assert_eq!(s, "",
@@ -650,6 +677,7 @@ mod tests {
     /// SGR 2 in the C source's attribute table. Pin the alias.
     #[test]
     fn convertattr_dim_and_faint_are_aliases() {
+        let _g = crate::test_util::global_state_lock();
         let dim   = convertattr("dim", false);
         let faint = convertattr("faint", false);
         assert_eq!(dim, faint,
@@ -662,6 +690,7 @@ mod tests {
     /// silently changes the other.
     #[test]
     fn convertattr_reverse_and_inverse_are_aliases() {
+        let _g = crate::test_util::global_state_lock();
         let rev = convertattr("reverse", false);
         let inv = convertattr("inverse", false);
         assert_eq!(rev, inv);
@@ -672,6 +701,7 @@ mod tests {
     /// aliases. Same pattern as reverse/inverse.
     #[test]
     fn convertattr_hidden_and_invisible_are_aliases() {
+        let _g = crate::test_util::global_state_lock();
         let h = convertattr("hidden", false);
         let i = convertattr("invisible", false);
         assert_eq!(h, i);

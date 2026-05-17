@@ -1085,6 +1085,7 @@ mod tests {
     /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
     #[test]
     fn test_watch_initial_empty() {
+        let _g = crate::test_util::global_state_lock();
         // Fresh thread → thread_locals are zero-initialised; the `$watch`
         // list defaults to empty (mirrors C's `static char **watch = NULL`).
         WATCH.with(|w| assert!(w.borrow().is_empty()));
@@ -1092,6 +1093,7 @@ mod tests {
 
     #[test]
     fn test_glob_match() {
+        let _g = crate::test_util::global_state_lock();
         use crate::glob::matchpat;
         assert!(matchpat("*", "anything", false, true));
         assert!(matchpat("user*", "username", false, true));
@@ -1102,6 +1104,7 @@ mod tests {
 
     #[test]
     fn test_watch_match() {
+        let _g = crate::test_util::global_state_lock();
         assert!(watchlog_match("root", "root"));
         assert!(watchlog_match("*", "anyuser"));
         assert!(!watchlog_match("root", "admin"));
@@ -1109,6 +1112,7 @@ mod tests {
 
     #[test]
     fn test_format_watch_basic() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("testuser", "tty1", "localhost", 0, 1234, libc::USER_PROCESS as i16);
         let result = watch3ary(&entry, true, "%n has %a %l");
         assert!(result.contains("testuser"));
@@ -1121,6 +1125,7 @@ mod tests {
 
     #[test]
     fn test_format_watch_host() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("user", "pts/0", "host.example.com", 0, 1, libc::USER_PROCESS as i16);
         let result = watch3ary(&entry, true, "%m");
         assert_eq!(result, "host");
@@ -1131,6 +1136,7 @@ mod tests {
 
     #[test]
     fn test_check_watch_entry_all() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("anyone", "pts/0", "", 0, 1, libc::USER_PROCESS as i16);
         set_watch_list(vec!["all".to_string()]);
         assert!(check_entry(&entry, "me"));
@@ -1138,6 +1144,7 @@ mod tests {
 
     #[test]
     fn test_check_watch_entry_notme() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("me", "pts/0", "", 0, 1, libc::USER_PROCESS as i16);
         set_watch_list(vec!["notme".to_string()]);
         assert!(!check_entry(&entry, "me"));
@@ -1148,6 +1155,7 @@ mod tests {
 
     #[test]
     fn test_matches_watch_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("admin", "pts/0", "server.local", 0, 1, libc::USER_PROCESS as i16);
         set_watch_list(vec!["admin".to_string()]);
         assert!(check_entry(&entry, "me"));
@@ -1161,6 +1169,7 @@ mod tests {
 
     #[test]
     fn test_session_type() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("user", "pts/0", "", 0, 1, libc::USER_PROCESS as i16);
         assert!(utmp_is_active(&entry));
 
@@ -1171,6 +1180,7 @@ mod tests {
     /// c:434 — `watchlog_match` glob: literal `"*"` matches any.
     #[test]
     fn watchlog_match_asterisk_matches_anything() {
+        let _g = crate::test_util::global_state_lock();
         assert!(watchlog_match("*", ""));
         assert!(watchlog_match("*", "anything"));
         assert!(watchlog_match("*", "host.example.com"));
@@ -1179,6 +1189,7 @@ mod tests {
     /// c:434 — Exact-string match (no implicit prefix/suffix).
     #[test]
     fn watchlog_match_exact_string() {
+        let _g = crate::test_util::global_state_lock();
         assert!(watchlog_match("alice", "alice"));
         assert!(!watchlog_match("alice", "bob"));
         assert!(!watchlog_match("alice", "alice.local"),
@@ -1189,6 +1200,7 @@ mod tests {
     /// wildcard).
     #[test]
     fn watchlog_match_empty_pattern_only_matches_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert!(watchlog_match("", ""));
         assert!(!watchlog_match("", "x"));
     }
@@ -1196,6 +1208,7 @@ mod tests {
     /// c:527 — `ucmp` returns 0 on identical entries.
     #[test]
     fn ucmp_identical_entries_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         let b = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         assert_eq!(ucmp(&a, &b), 0,
@@ -1208,6 +1221,7 @@ mod tests {
     /// because the comparator feeds into a sorted utmp diff at c:600.
     #[test]
     fn ucmp_ignores_user_when_time_and_line_match() {
+        let _g = crate::test_util::global_state_lock();
         let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         let b = utmp_make("bob",   "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         assert_eq!(ucmp(&a, &b), 0,
@@ -1218,6 +1232,7 @@ mod tests {
     /// ordering.
     #[test]
     fn ucmp_different_times_are_unequal() {
+        let _g = crate::test_util::global_state_lock();
         let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         let b = utmp_make("alice", "pts/0", "h", 200, 1, libc::USER_PROCESS as i16);
         let r = ucmp(&a, &b);
@@ -1230,6 +1245,7 @@ mod tests {
     /// → non-zero.
     #[test]
     fn ucmp_different_lines_are_unequal() {
+        let _g = crate::test_util::global_state_lock();
         let a = utmp_make("alice", "pts/0", "h", 100, 1, libc::USER_PROCESS as i16);
         let b = utmp_make("alice", "pts/1", "h", 100, 1, libc::USER_PROCESS as i16);
         assert_ne!(ucmp(&a, &b), 0,
@@ -1239,6 +1255,7 @@ mod tests {
     /// c:458 — Empty watch list → no entry matches.
     #[test]
     fn check_entry_with_empty_watch_list_returns_false() {
+        let _g = crate::test_util::global_state_lock();
         let entry = utmp_make("anyone", "pts/0", "", 0, 1, libc::USER_PROCESS as i16);
         set_watch_list(vec![]);
         assert!(!check_entry(&entry, "me"),
@@ -1248,6 +1265,7 @@ mod tests {
     /// c:712-770 — module-lifecycle stubs all return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

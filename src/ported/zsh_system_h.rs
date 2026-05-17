@@ -434,18 +434,21 @@ mod tests {
     /// of `-9223372036854775808` + sign + null).
     #[test]
     fn digbufsize_i64_is_21() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DIGBUFSIZE, 21);
     }
 
     /// Verifies BDIGBUFSIZE for i64 is 68 (64 bits + 4 padding).
     #[test]
     fn bdigbufsize_i64_is_68() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(BDIGBUFSIZE, 68);
     }
 
     /// Verifies access mode constants match POSIX values.
     #[test]
     fn access_modes_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(F_OK, 0);
         assert_eq!(X_OK, 1);
         assert_eq!(W_OK, 2);
@@ -456,6 +459,7 @@ mod tests {
     /// per c:682-715.
     #[test]
     fn permission_bits_match_posix() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(S_ISUID, 0o4000);
         assert_eq!(S_ISGID, 0o2000);
         assert_eq!(S_ISVTX, 0o1000);
@@ -475,6 +479,7 @@ mod tests {
     /// Use a directory-typed mode word: 0o40755 on Linux/macOS.
     #[test]
     fn stat_predicates_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         let dir_mode  = libc::S_IFDIR  as u32 | 0o755;
         let file_mode = libc::S_IFREG  as u32 | 0o644;
         let link_mode = libc::S_IFLNK  as u32 | 0o777;
@@ -496,6 +501,7 @@ mod tests {
     /// Verifies the wait-status decoders per c:347-365.
     #[test]
     fn wait_decoders_normal_exit() {
+        let _g = crate::test_util::global_state_lock();
         // Normal exit with status 42: low byte 0, high byte 42.
         let status = 42 << 8;
         assert!(WIFEXITED(status));
@@ -506,6 +512,7 @@ mod tests {
 
     #[test]
     fn wait_decoders_killed_by_signal() {
+        let _g = crate::test_util::global_state_lock();
         // Killed by SIGTERM (15) without core dump: low byte = 15.
         let status = 15;
         assert!(!WIFEXITED(status));
@@ -517,6 +524,7 @@ mod tests {
 
     #[test]
     fn wait_decoders_killed_with_core() {
+        let _g = crate::test_util::global_state_lock();
         // Killed by SIGSEGV (11) with core dump bit set.
         let status = 11 | 0o200;
         assert!(WIFSIGNALED(status));
@@ -526,6 +534,7 @@ mod tests {
 
     #[test]
     fn wait_decoders_stopped() {
+        let _g = crate::test_util::global_state_lock();
         // Stopped by SIGTSTP (20): low byte = 0177, high byte = 20.
         let status = (20 << 8) | 0o177;
         assert!(!WIFEXITED(status));
@@ -537,6 +546,7 @@ mod tests {
     /// Verifies IS_DIRSEP only matches '/' on non-Cygwin hosts.
     #[test]
     fn is_dirsep_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert!(IS_DIRSEP('/'));
         assert!(!IS_DIRSEP('\\'));
         assert!(!IS_DIRSEP('a'));
@@ -546,18 +556,21 @@ mod tests {
     /// per c:427.
     #[test]
     fn default_wordchars_contents() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DEFAULT_WORDCHARS, "*?_-.[]~=/&;!#$%^(){}<>");
     }
 
     /// Verifies DEFAULT_TIMEFMT matches the canonical c:428 string.
     #[test]
     fn default_timefmt_contents() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DEFAULT_TIMEFMT, "%J  %U user %S system %P cpu %*E total");
     }
 
     /// Verifies ZSH_INITIAL_OPEN_MAX is 64 per c:307.
     #[test]
     fn zsh_initial_open_max_is_64() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZSH_INITIAL_OPEN_MAX, 64);
     }
 }

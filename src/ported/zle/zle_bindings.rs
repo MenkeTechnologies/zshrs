@@ -793,6 +793,7 @@ mod tests {
 
     #[test]
     fn bindkey_returns_false_for_unknown_keymap() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
@@ -801,6 +802,7 @@ mod tests {
 
     #[test]
     fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
@@ -835,6 +837,7 @@ mod tests {
     /// binding. Verify the common shorthand pairs.
     #[test]
     fn getkeystring_decodes_canonical_escapes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getkeystring("\\e"),  vec![0x1b]);                  // ESC
         assert_eq!(getkeystring("\\t"),  vec![0x09]);                  // TAB
         assert_eq!(getkeystring("\\n"),  vec![0x0a]);                  // LF
@@ -845,6 +848,7 @@ mod tests {
     /// ctrl-char) per the C decoder.
     #[test]
     fn getkeystring_decodes_control_prefix() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getkeystring("\\C-a"), vec![0x01]); // ctrl-a
         assert_eq!(getkeystring("\\C-c"), vec![0x03]); // ctrl-c
     }
@@ -853,6 +857,7 @@ mod tests {
     /// 0x80-bit-set byte depending on Meta-mode). Either way: non-empty.
     #[test]
     fn getkeystring_decodes_meta_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let b = getkeystring("\\M-a");
         assert!(!b.is_empty(), "\\M-a must decode to at least 1 byte");
     }
@@ -860,6 +865,7 @@ mod tests {
     /// Plain ASCII passes through verbatim.
     #[test]
     fn getkeystring_passes_plain_ascii_through() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getkeystring("abc"), b"abc".to_vec());
     }
 
@@ -868,12 +874,14 @@ mod tests {
     /// bound to it by default).
     #[test]
     fn iwidget_lookup_resolves_self_insert() {
+        let _g = crate::test_util::global_state_lock();
         assert!(iwidget_lookup("self-insert").is_some());
     }
 
     /// `iwidget_lookup` for unknown widget names returns None.
     #[test]
     fn iwidget_lookup_returns_none_for_unknown_name() {
+        let _g = crate::test_util::global_state_lock();
         assert!(iwidget_lookup("definitely-not-a-real-widget-zshrs").is_none());
     }
 
@@ -881,6 +889,7 @@ mod tests {
     /// safer than panicking when bindkey is queried before init.
     #[test]
     fn bindlistout_empty_for_unknown_keymap() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(bindlistout("does-not-exist").is_empty());
     }
@@ -890,6 +899,7 @@ mod tests {
     /// every `bindkey ""` invocation.
     #[test]
     fn getkeystring_empty_string_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getkeystring("").is_empty());
     }
 
@@ -898,6 +908,7 @@ mod tests {
     /// (0x7f) gets caught.
     #[test]
     fn getkeystring_decodes_backspace() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getkeystring("\\b"), vec![0x08]);
     }
 
@@ -905,6 +916,7 @@ mod tests {
     /// shortcuts are case-INsensitive per zsh convention).
     #[test]
     fn getkeystring_control_prefix_is_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let lower = getkeystring("\\C-a");
         let upper = getkeystring("\\C-A");
         assert_eq!(lower, upper,
@@ -917,6 +929,7 @@ mod tests {
     /// every zsh user depends on.
     #[test]
     fn iwidget_lookup_resolves_accept_line() {
+        let _g = crate::test_util::global_state_lock();
         assert!(iwidget_lookup("accept-line").is_some(),
             "accept-line is the canonical Enter-key widget; must resolve");
     }
@@ -925,6 +938,7 @@ mod tests {
     /// boundary.
     #[test]
     fn iwidget_lookup_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(iwidget_lookup("").is_none());
     }
 
@@ -935,6 +949,7 @@ mod tests {
     /// scripts that bind to widgets defined later in startup.
     #[test]
     fn bindkey_unknown_widget_binds_anyway_matching_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let ok = bindkey("main", "\\C-x", "user-widget-not-yet-defined");
         assert!(ok,

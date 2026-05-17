@@ -3911,6 +3911,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn s_replaces_first_occurrence() {
+        let _g = crate::test_util::global_state_lock();
         // c:3743 — `:s/old/new/` single substitution.
         assert_eq!(apply_history_modifiers("foo bar foo", ":s/foo/baz/"),
                    "baz bar foo");
@@ -3918,6 +3919,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn gs_replaces_all_occurrences() {
+        let _g = crate::test_util::global_state_lock();
         // c:3743 — `:gs/old/new/` global substitution.
         assert_eq!(apply_history_modifiers("foo bar foo", ":gs/foo/baz/"),
                    "baz bar baz");
@@ -3925,6 +3927,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn ampersand_repeats_last_subst() {
+        let _g = crate::test_util::global_state_lock();
         // c:3784 — `:&` repeats the cached last_str/last_rep pair.
         // First call caches old="x" new="y"; second `:&` reuses it.
         let first  = apply_history_modifiers("xxx", ":s/x/y/");
@@ -3935,6 +3938,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn g_ampersand_repeats_last_subst_globally() {
+        let _g = crate::test_util::global_state_lock();
         // c:3784 — `:g&` global form of `:&`.
         let _ = apply_history_modifiers("init", ":s/i/X/");
         // Now LAST_SUBST_OLD="i", LAST_SUBST_NEW="X". Global re-apply:
@@ -3943,6 +3947,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn s_alternate_delimiter() {
+        let _g = crate::test_util::global_state_lock();
         // c:3760 — first char after `s` is the delimiter; not bound
         //          to `/`.
         assert_eq!(apply_history_modifiers("a-b-c", ":s|-|+|"), "a+b-c");
@@ -3950,6 +3955,7 @@ mod subst_modifier_tests {
 
     #[test]
     fn s_escaped_delimiter_in_pattern() {
+        let _g = crate::test_util::global_state_lock();
         // c:3768 — `\/` inside the pattern emits a literal `/`.
         assert_eq!(apply_history_modifiers("a/b", r":s/\//#/"), "a#b");
     }
@@ -3960,6 +3966,7 @@ mod subst_modifier_tests {
     /// Some(0) would make the up-history widget enter a phantom entry.
     #[test]
     fn up_histent_on_empty_ring_is_none() {
+        let _g = crate::test_util::global_state_lock();
         let snapshot: Vec<_> = hist_ring.lock().unwrap().drain(..).collect();
         assert!(up_histent(1).is_none());
         assert!(down_histent(1).is_none());
@@ -3972,6 +3979,7 @@ mod subst_modifier_tests {
     /// None → return 1 BEFORE we try to read ptr1/ptr2.
     #[test]
     fn getsubsargs_returns_one_when_no_delimiter_available() {
+        let _g = crate::test_util::global_state_lock();
         let mut gbal = 0i32;
         let mut cflag = 0i32;
         // No input pre-seeded; ingetc returns None on the very first
@@ -3988,6 +3996,7 @@ mod subst_modifier_tests {
     /// whitespace.
     #[test]
     fn histreduceblanks_collapses_internal_runs() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(histreduceblanks("a    b"), "a b");
         assert_eq!(histreduceblanks("foo\t\tbar"), "foo bar");
         // Leading/trailing whitespace is left intact per the C body.
@@ -4001,6 +4010,7 @@ mod subst_modifier_tests {
     /// that legitimately contain those chars.
     #[test]
     fn histreduceblanks_uses_narrow_inblank_only() {
+        let _g = crate::test_util::global_state_lock();
         // Space and tab — collapsed.
         assert_eq!(histreduceblanks("a  b"), "a b");
         assert_eq!(histreduceblanks("a\t\tb"), "a b");
@@ -4030,6 +4040,7 @@ mod subst_modifier_tests {
     /// the digit count after the modifier letter.
     #[test]
     fn digitcount_streams_from_ingetc() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Push "42abc" into the input stream; digitcount() should
         // parse 42 and inungetc() the 'a'. Use inputsetline to
@@ -4055,6 +4066,7 @@ mod subst_modifier_tests {
     /// a single int; the Rust port preserves the bit-perfect contract.
     #[test]
     fn hist_in_word_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         hist_in_word(1);
         assert_eq!(hist_is_in_word(), 1);
         hist_in_word(0);
@@ -4067,6 +4079,7 @@ mod subst_modifier_tests {
     /// every filename-manipulation script.
     #[test]
     fn remtext_strips_extension_keeping_dirname() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remtext("path/file.ext"), "path/file");
         assert_eq!(remtext("file.ext"),      "file");
         assert_eq!(remtext("file"),          "file");
@@ -4085,6 +4098,7 @@ mod subst_modifier_tests {
     /// diverges from `${.bashrc:r}` in real zsh.
     #[test]
     fn remtext_strips_leading_dot_per_zsh_doc() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remtext(".bashrc"),      "",
             "$.bashrc:r is an extension per Doc/Zsh/expn.yo:303");
         assert_eq!(remtext("path/.bashrc"), "path/",
@@ -4096,6 +4110,7 @@ mod subst_modifier_tests {
     /// Regression returning the wrong slice would break `${file:e}`.
     #[test]
     fn rembutext_returns_extension_only() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(rembutext("path/file.ext"), "ext");
         assert_eq!(rembutext("file.tar.gz"),   "gz",
             "last `.` wins (extension-only is post-LAST-dot)");
@@ -4108,6 +4123,7 @@ mod subst_modifier_tests {
     /// that displays `${PWD:h}`.
     #[test]
     fn remtpath_count_zero_strips_last_component() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remtpath("/a/b/c", 0),  "/a/b");
         assert_eq!(remtpath("/a",     0),  "/");
         assert_eq!(remtpath("foo",    0),  ".",
@@ -4119,6 +4135,7 @@ mod subst_modifier_tests {
     /// → `"b/c"`. Drives `${PWD:t}` family.
     #[test]
     fn remlpaths_keeps_last_n_components() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remlpaths("/a/b/c", 1), "c");
         assert_eq!(remlpaths("/a/b/c", 2), "b/c");
         assert_eq!(remlpaths("/a/b/c", 3), "a/b/c");
@@ -4129,12 +4146,14 @@ mod subst_modifier_tests {
     /// `${(L)var}` user has.
     #[test]
     fn casemodify_lower_lowercases() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(casemodify("HELLO World", CASMOD_LOWER), "hello world");
     }
 
     /// c:2196 — `casemodify(s, CASMOD_UPPER)` uppercases.
     #[test]
     fn casemodify_upper_uppercases() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(casemodify("hello world", CASMOD_UPPER), "HELLO WORLD");
     }
 
@@ -4143,6 +4162,7 @@ mod subst_modifier_tests {
     /// non-alpha chars). `"hello world"` → `"Hello World"`.
     #[test]
     fn casemodify_caps_capitalises_word_starts() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
         assert_eq!(casemodify("FOO BAR",     CASMOD_CAPS), "Foo Bar",
             "non-first letters lowercased");
@@ -4155,6 +4175,7 @@ mod subst_modifier_tests {
     /// NBSP should NOT be broken out — they're not inblank.
     #[test]
     fn quote_breaks_only_narrow_inblank_chars() {
+        let _g = crate::test_util::global_state_lock();
         // c:2514 — close current quote, emit ` ` in its own pair, reopen.
         assert_eq!(quote("a b"), "'a' 'b'",
             "c:2514 — space broken out of single-quote span");
@@ -4173,6 +4194,7 @@ mod subst_modifier_tests {
     /// narrow-inblank behavior (no CR/FF/NBSP breaking).
     #[test]
     fn quotebreak_uses_narrow_inblank_set() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotebreak("a b"), "'a' 'b'");
         assert_eq!(quotebreak("a\tb"), "'a'\t'b'");
         assert_eq!(quotebreak("a\nb"), "'a'\n'b'");
@@ -4199,6 +4221,7 @@ mod subst_modifier_tests {
     /// gate firing must leave the file untouched.
     #[test]
     fn savehistfile_short_circuits_on_non_interactive() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::dosetopt;
         use crate::ported::zsh_h::INTERACTIVE;
         let dir = tempfile::tempdir().expect("tempdir");
@@ -4224,6 +4247,7 @@ mod subst_modifier_tests {
     /// empty or hptr is at the start (C returns NULL).
     #[test]
     fn hgetline_truncates_chline_and_resets_globals() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Save state.
@@ -4267,6 +4291,7 @@ mod subst_modifier_tests {
     /// Otherwise no-op.
     #[test]
     fn histbackword_rewinds_hptr_on_even_boundary() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Capture and reset state.
@@ -4318,6 +4343,7 @@ mod subst_modifier_tests {
     /// at the chline tail.
     #[test]
     fn ihwaddc_overwrites_at_hptr_not_append() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
@@ -4371,6 +4397,7 @@ mod subst_modifier_tests {
     /// to 0 no matter how many chars were appended.
     #[test]
     fn ihwaddc_advances_hptr_on_each_push() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
@@ -4443,6 +4470,7 @@ mod subst_modifier_tests {
     /// for the cursor.
     #[test]
     fn ihwend_uses_hptr_not_chline_len() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
@@ -4506,6 +4534,7 @@ mod subst_modifier_tests {
     /// HIST_OLD and missed real HIST_DUP entries.
     #[test]
     fn histremovedups_removes_flagged_entries_only() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_ring = {
             let r = hist_ring.lock().unwrap();
@@ -4579,6 +4608,7 @@ mod subst_modifier_tests {
     /// clamp to zlemetacs.
     #[test]
     fn iaddtoline_adjusts_excs_relative_to_zlemetacs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
@@ -4652,6 +4682,7 @@ mod subst_modifier_tests {
     /// wrong word offsets.
     #[test]
     fn ihwbegin_records_hptr_not_chline_len() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
@@ -4736,6 +4767,7 @@ mod subst_modifier_tests {
     /// per-word slicing, and signed-short overflow detection.
     #[test]
     fn getargs_handles_field_indexing_and_overflow() {
+        let _g = crate::test_util::global_state_lock();
         // Build a histent for "echo hello world" with 3 words.
         // C nwords=3, words=[0,4,5,10,11,16] (start/end pairs).
         let he = histent {
@@ -4826,6 +4858,7 @@ mod subst_modifier_tests {
     /// the match. The previous Rust port dropped marg entirely.
     #[test]
     fn hconsearch_returns_histnum_and_word_index() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save ring state.
         let saved_ring = {
@@ -4931,6 +4964,7 @@ mod subst_modifier_tests {
     /// `curline` untouched.
     #[test]
     fn checkcurline_flushes_to_curline_only_when_active_and_matching() {
+        let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_curhist = curhist.load(Ordering::SeqCst);
         let saved_active = histactive.load(Ordering::SeqCst);
@@ -5016,6 +5050,7 @@ mod subst_modifier_tests {
     /// `/` does NOT modify `*junkptr`.
     #[test]
     fn remlpaths_count_exceeds_components_preserves_leading_slash() {
+        let _g = crate::test_util::global_state_lock();
         // 4 > 3 components in "/a/b/c" → return whole string verbatim.
         assert_eq!(remlpaths("/a/b/c", 4),  "/a/b/c",
             "c:2172-2175 — count > components → preserve original (leading slash)");
@@ -5029,6 +5064,7 @@ mod subst_modifier_tests {
     /// slash) still returns `"c"`, not `""`.
     #[test]
     fn remlpaths_trims_trailing_slashes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remlpaths("/a/b/c/",   1),  "c",
             "c:2156-2161 — trailing slash trimmed before scan");
         assert_eq!(remlpaths("/a/b/c///", 1),  "c");
@@ -5043,6 +5079,7 @@ mod subst_modifier_tests {
     /// alias so `${PWD:t}` keeps the last component.
     #[test]
     fn remlpaths_count_zero_defaults_to_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(remlpaths("/a/b/c", 0), "c",
             "c:574 — count=0 from digitcount aliases to default 1");
         // Same as explicit count=1.

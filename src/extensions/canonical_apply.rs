@@ -372,6 +372,7 @@ mod tests {
 
     #[test]
     fn bindkey_value_parses_main_keymap_default() {
+        let _g = crate::test_util::global_state_lock();
         let (km, w) = parse_bindkey_value("history-search-backward");
         assert_eq!(km, "main");
         assert_eq!(w, "history-search-backward");
@@ -379,6 +380,7 @@ mod tests {
 
     #[test]
     fn bindkey_value_parses_explicit_keymap() {
+        let _g = crate::test_util::global_state_lock();
         let (km, w) = parse_bindkey_value("[viins] backward-delete-char");
         assert_eq!(km, "viins");
         assert_eq!(w, "backward-delete-char");
@@ -386,6 +388,7 @@ mod tests {
 
     #[test]
     fn bindkey_value_unknown_keymap_falls_back_to_main() {
+        let _g = crate::test_util::global_state_lock();
         let (km, w) = parse_bindkey_value("[totally-not-real] do-thing");
         // No longer falls back to "main" — the C `bindkey` builtin
         // forwards the literal name to keymapnamtab lookup, which
@@ -397,6 +400,7 @@ mod tests {
 
     #[test]
     fn bindkey_value_handles_extra_whitespace_after_close_bracket() {
+        let _g = crate::test_util::global_state_lock();
         let (km, w) = parse_bindkey_value("[vicmd]   forward-word");
         assert_eq!(km, "vicmd");
         assert_eq!(w, "forward-word");
