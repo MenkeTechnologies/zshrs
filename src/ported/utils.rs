@@ -1559,8 +1559,27 @@ pub static ADJUSTWINSIZE_GETWINSZ: std::sync::atomic::AtomicI32 =
 /// COMPLETELY DIFFERENT SEMANTICS from C (which doesn't validate
 /// the fd at all, just grows the table). Fixed to no-op + bool
 /// return for caller compatibility (no live callers).
-pub fn check_fd_table(_fd: i32) -> bool {
-    // c:1968-1983 — grow fdtable. No-op until fdtable global lands.
+pub fn check_fd_table(fd: i32) -> bool {                                     // c:1969
+    // c:1971-1972 — `if (fd <= max_zsh_fd) return;`
+    let cur_max = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);     // c:1971
+    if fd <= cur_max {                                                       // c:1971
+        return true;                                                          // c:1972 (return; in C)
+    }
+    if fd < 0 {                                                              // defensive — fdtable index must be ≥0
+        return false;
+    }
+    // c:1974-1981 — `if (fd >= fdtable_size) { while (fd >= fdtable_size)
+    //                fdtable_size *= 2; zrealloc; memset(new_slots, 0); }`.
+    // Rust Vec::resize handles the realloc + zero-fill in one call (the
+    // expansion bumps capacity geometrically too).
+    {
+        let mut g = fdtable_lock().lock().unwrap();
+        if (fd as usize) >= g.len() {
+            g.resize((fd as usize) + 1, crate::ported::zsh_h::FDT_UNUSED);    // c:1975-1979 grow
+        }
+    }
+    // c:1982 — `max_zsh_fd = fd;`.
+    MAX_ZSH_FD.store(fd, std::sync::atomic::Ordering::Relaxed);              // c:1982
     true
 }
 
@@ -8322,5 +8341,56 @@ mod tests {
                 "c:536 — high-bit byte 0x{:x} must be nice when PRINTEIGHTBIT off",
                 0xb5_u32);
         }
+    }
+
+    /// `Src/utils.c:1969-1983` — `check_fd_table(fd)` grows the
+    /// fdtable so it can index `fd` and bumps `max_zsh_fd`. The
+    /// previous Rust port was a no-op shim that always returned true;
+    /// real behavior is "fdtable.len() must be > fd" and
+    /// "MAX_ZSH_FD >= fd" after the call.
+    #[test]
+    fn check_fd_table_grows_fdtable_and_bumps_max_zsh_fd() {
+        use std::sync::atomic::Ordering;
+        // Snapshot prior state so we don't poison other tests.
+        let saved_max = MAX_ZSH_FD.load(Ordering::Relaxed);
+        // Pick a target fd well above the typical 0/1/2.
+        let target = saved_max.max(50) + 7;
+        check_fd_table(target);
+        let new_max = MAX_ZSH_FD.load(Ordering::Relaxed);
+        assert!(new_max >= target,
+            "c:1982 — max_zsh_fd must be >= target after grow (got {})",
+            new_max);
+        // Calling again with a lower fd MUST NOT shrink max_zsh_fd
+        // (c:1971-1972 early return).
+        check_fd_table(target - 3);
+        assert_eq!(MAX_ZSH_FD.load(Ordering::Relaxed), new_max,
+            "c:1971 — fd <= max_zsh_fd path must not change max");
+        // Restore approximately — best we can do without exposing
+        // fdtable internals; subsequent fdtable_set callers cope.
+        MAX_ZSH_FD.store(saved_max, Ordering::Relaxed);
+    }
+
+    /// `Src/utils.c:1971` — `if (fd <= max_zsh_fd) return;` early
+    /// exit. Calling with a small fd (<= current max) must be a
+    /// no-op.
+    #[test]
+    fn check_fd_table_small_fd_is_noop() {
+        use std::sync::atomic::Ordering;
+        // Ensure max_zsh_fd is non-trivial.
+        let _ = check_fd_table(100);
+        let max_before = MAX_ZSH_FD.load(Ordering::Relaxed);
+        check_fd_table(5);
+        assert_eq!(MAX_ZSH_FD.load(Ordering::Relaxed), max_before,
+            "c:1971 — small fd path must not touch max_zsh_fd");
+    }
+
+    /// `Src/utils.c:1969-1983` — defensive: negative fd shouldn't
+    /// panic. C-side would have indexed past the start of `fdtable`
+    /// (UB). Rust port should fail-soft.
+    #[test]
+    fn check_fd_table_negative_fd_does_not_panic() {
+        // Should not panic; behavior beyond "no panic" is unspecified.
+        let _ = check_fd_table(-1);
+        let _ = check_fd_table(-100);
     }
 }
