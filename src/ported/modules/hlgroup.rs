@@ -567,4 +567,114 @@ mod tests {
         let mut enables: Option<Vec<i32>> = None;
         assert_eq!(enables_(m, &mut enables), 0);
     }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `convertattr("bg=blue")` emits
+    /// SGR 44. Pin the bg-base (40) so a regression conflating fg/bg
+    /// bases would silently swap colors.
+    #[test]
+    fn convertattr_bg_color_uses_40_base() {
+        let s = convertattr("bg=blue", false);
+        assert!(s.contains("\x1b[44m"),
+            "c:40 — bg=blue → base 40 + 4 = 44 (got {:?})", s);
+        // bg=red → 41
+        let s = convertattr("bg=red", false);
+        assert!(s.contains("\x1b[41m"));
+        // bg=default → 49
+        let s = convertattr("bg=default", false);
+        assert!(s.contains("\x1b[49m"));
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `bright-` prefix maps to the
+    /// 90-99 (fg) / 100-107 (bg) range. Pin the offset arithmetic
+    /// (bright_base + 0..=7) for both fg and bg.
+    #[test]
+    fn convertattr_bright_prefix_uses_high_intensity_base() {
+        // fg=bright-red → 91
+        let s = convertattr("fg=bright-red", false);
+        assert!(s.contains("\x1b[91m"),
+            "fg=bright-red → 90+1=91 (got {:?})", s);
+        // bg=bright-cyan → 106
+        let s = convertattr("bg=bright-cyan", false);
+        assert!(s.contains("\x1b[106m"),
+            "bg=bright-cyan → 100+6=106 (got {:?})", s);
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `light-` is the alias for
+    /// `bright-`. Pin both prefix variants map to the same code.
+    #[test]
+    fn convertattr_light_prefix_is_alias_for_bright() {
+        let bright = convertattr("fg=bright-green", false);
+        let light  = convertattr("fg=light-green",  false);
+        assert_eq!(bright, light,
+            "c:40 — light- and bright- prefixes must produce identical SGR codes");
+    }
+
+    /// `Src/Modules/hlgroup.c:40-72` — SGR-mode bg color rendering.
+    /// `bg=blue` in SGR mode produces "44" (the digits between
+    /// `\e[` and `m`, no surrounding chars).
+    #[test]
+    fn convertattr_sgr_bg_color() {
+        assert_eq!(convertattr("bg=blue", true), "44",
+            "SGR mode strips ESC[/m wrapper → bare digit string");
+        assert_eq!(convertattr("bg=red", true), "41");
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — Invalid color spec (not in
+    /// named table, not numeric, not hex) emits NOTHING. SGR mode
+    /// falls back to "0". Pin the defensive contract.
+    #[test]
+    fn convertattr_unknown_color_drops_silently() {
+        // Plain (escape) mode: empty output for unknown color alone.
+        let s = convertattr("fg=not_a_real_color", false);
+        assert_eq!(s, "",
+            "unknown color → no escape emitted");
+        // SGR mode: empty output → "0" fallback per c:67-70.
+        let s = convertattr("fg=not_a_real_color", true);
+        assert_eq!(s, "0");
+    }
+
+    /// `Src/Modules/hlgroup.c:40` — Hex color with WRONG length
+    /// is silently dropped (only 6-hex-digit form recognized).
+    #[test]
+    fn convertattr_short_hex_dropped() {
+        // 3-digit form "#abc" not supported per the body's `hex.len() == 6` guard.
+        let s = convertattr("fg=#abc", false);
+        assert_eq!(s, "",
+            "3-digit hex must be rejected per c:40 6-digit check");
+        // 8-digit form also rejected
+        let s = convertattr("fg=#abcdef00", false);
+        assert_eq!(s, "");
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `dim`/`faint` are aliases for
+    /// SGR 2 in the C source's attribute table. Pin the alias.
+    #[test]
+    fn convertattr_dim_and_faint_are_aliases() {
+        let dim   = convertattr("dim", false);
+        let faint = convertattr("faint", false);
+        assert_eq!(dim, faint,
+            "dim and faint must produce identical SGR 2");
+        assert!(dim.contains("\x1b[2m"));
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `reverse`/`inverse` are SGR 7
+    /// aliases. Pin so a regen flipping one to a different code
+    /// silently changes the other.
+    #[test]
+    fn convertattr_reverse_and_inverse_are_aliases() {
+        let rev = convertattr("reverse", false);
+        let inv = convertattr("inverse", false);
+        assert_eq!(rev, inv);
+        assert!(rev.contains("\x1b[7m"));
+    }
+
+    /// `Src/Modules/hlgroup.c:40-44` — `hidden`/`invisible` are SGR 8
+    /// aliases. Same pattern as reverse/inverse.
+    #[test]
+    fn convertattr_hidden_and_invisible_are_aliases() {
+        let h = convertattr("hidden", false);
+        let i = convertattr("invisible", false);
+        assert_eq!(h, i);
+        assert!(h.contains("\x1b[8m"));
+    }
 }
