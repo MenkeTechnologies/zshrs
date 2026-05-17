@@ -1691,8 +1691,18 @@ pub fn movefd(fd: i32) -> i32 {
             fd = fe;                                                         // c:2005
         }
         // c:2007-2010 — `if (fd != -1) { check_fd_table(fd); fdtable[fd]
-        // = FDT_INTERNAL; }`. fdtable global not yet modeled in
-        // zshrs; the check_fd_table call would be a no-op anyway.
+        // = FDT_INTERNAL; }`. The fdtable global IS now modeled (port
+        // of utils.c:63 — `Vec<u8>` behind `fdtable_lock`). Mark the
+        // new fd as FDT_INTERNAL so the rest of the shell knows the
+        // shell is using it (a later `addmodulefd` / `addlockfd`
+        // upgrade may reclassify; raw external code shouldn't touch
+        // it). The previous port skipped this so internal-fd tracking
+        // (which `closeallelse` and forkexec rely on) silently
+        // never saw zshrs-internal fds.
+        if fd != -1 {                                                        // c:2007
+            check_fd_table(fd);                                              // c:2008
+            fdtable_set(fd, crate::ported::zsh_h::FDT_INTERNAL);             // c:2009
+        }
         fd
     }
     #[cfg(not(unix))]
@@ -9129,5 +9139,42 @@ mod tests {
             "c:2978 — SHTTY=-1 → read fails → return -1");
         // Restore.
         crate::ported::init::SHTTY.store(saved, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `Src/utils.c:1989-2012` — `movefd(fd)` dups fd to >= 10 (so it
+    /// stays out of the user fd range 0..=9), closes the original,
+    /// AND marks the new fd as `FDT_INTERNAL` in fdtable. Previous
+    /// Rust port omitted the fdtable_set call — internal-fd tracking
+    /// (`closeallelse`, forkexec) silently never saw zshrs-internal
+    /// fds. Pin: after movefd, fdtable[new_fd] == FDT_INTERNAL.
+    #[test]
+    #[cfg(unix)]
+    fn movefd_marks_fdtable_internal() {
+        let _g = crate::test_util::global_state_lock();
+        // Open /dev/null to get a small (< 10) fd...
+        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let fd = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0, "open /dev/null returned -1");
+        let new_fd = movefd(fd);
+        assert!(new_fd >= 10,
+            "c:1992-1994 — movefd dups to fd >= 10 (got {})", new_fd);
+        // c:2009 — fdtable[new_fd] := FDT_INTERNAL.
+        let entry = fdtable_get(new_fd);
+        assert_eq!(entry, crate::ported::zsh_h::FDT_INTERNAL,
+            "c:2009 — movefd must mark new_fd as FDT_INTERNAL (got {})", entry);
+        unsafe { libc::close(new_fd); }
+    }
+
+    /// `Src/utils.c:1989` — `movefd(-1)` is a defensive no-op: the
+    /// `fd != -1 && fd < 10` gate at c:1992 fails, the c:2007
+    /// `if (fd != -1)` post-check skips, and -1 is returned
+    /// unchanged. Pin so a refactor of the early-out doesn't
+    /// accidentally call fcntl(-1, ...).
+    #[test]
+    #[cfg(unix)]
+    fn movefd_minus_one_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(movefd(-1), -1,
+            "c:1992 — movefd(-1) bypasses both gates and returns -1");
     }
 }
