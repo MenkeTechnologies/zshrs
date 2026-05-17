@@ -83,9 +83,12 @@ class ZshrsLexer : LexerBase() {
                 tokenType = ZshrsTokenTypes.DOUBLE_SEMI
             }
             c == ';' && peek(1) == '|' -> emit(2, ZshrsTokenTypes.DOUBLE_SEMI)
-            c == '(' || c == ')' -> emit(1, ZshrsTokenTypes.PAREN)
-            c == '{' || c == '}' -> emit(1, ZshrsTokenTypes.BRACE)
-            c == '[' || c == ']' -> emit(1, ZshrsTokenTypes.BRACKET)
+            c == '(' -> emit(1, ZshrsTokenTypes.LPAREN)
+            c == ')' -> emit(1, ZshrsTokenTypes.RPAREN)
+            c == '{' -> emit(1, ZshrsTokenTypes.LBRACE)
+            c == '}' -> emit(1, ZshrsTokenTypes.RBRACE)
+            c == '[' -> emit(1, ZshrsTokenTypes.LBRACKET)
+            c == ']' -> emit(1, ZshrsTokenTypes.RBRACKET)
             c == ',' -> emit(1, ZshrsTokenTypes.COMMA)
             c == ';' -> emit(1, ZshrsTokenTypes.SEMICOLON)
             c == '*' || c == '?' -> emit(1, ZshrsTokenTypes.GLOB)

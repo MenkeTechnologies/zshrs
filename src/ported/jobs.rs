@@ -395,7 +395,7 @@ pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) -> i32 {   // 
                 let dead = libc::WIFEXITED(first_status) || libc::WIFSIGNALED(first_status);
                 let gleader_dead = dead
                     && unsafe { libc::killpg(jobtab[super_idx].gleader, 0) } == -1
-                    && unsafe { *libc::__error() } == libc::ESRCH;
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
                 cp = gleader_dead;
                 if cp {
                     if let Some(last) = jobtab[super_idx].procs.last() {

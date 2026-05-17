@@ -1139,7 +1139,7 @@ pub fn connectstates(
 
 /// Port of `static int rparseelt(RParseResult *result, jmp_buf *perr)`
 /// from `Src/Modules/zutil.c:1142`. Atom in the zregexparse grammar:
-///   `/pat/[+/-]` [`%lookahead%`] [`-guard`] [`:action`]    — pattern atom
+///   `/pat/[+/-]` \[`%lookahead%`\] \[`-guard`\] \[`:action`\]    — pattern atom
 ///   `(` ... `)`                                            — grouped alt
 pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // c:1142
     // c:1145 — s = *rparseargs;
