@@ -2391,13 +2391,40 @@ pub fn casemodify(s: &str, how: i32) -> String {                              //
     result
 }
 
-/// Port of `char *subst(...)` from Src/hist.c:2336.
-pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
+/// Port of `int subst(char **strptr, char *in, char *out, int gbal,
+/// int forcepat)` from `Src/hist.c:2336`.
+///
+/// C body excerpt (c:2349-2358):
+/// ```c
+/// if (*in == '#' || *in == Pound) {       // c:2349 — anchor-head
+///     fl |= SUB_START;
+///     in++;
+/// }
+/// if (*in == '%') {                       // c:2354 — anchor-tail
+///     in++;
+///     fl |= SUB_END;
+/// }
+/// ```
+///
+/// Previous Rust port checked only ASCII `'#'`. The C check covers
+/// BOTH the literal `'#'` byte AND the tokenized form `Pound`
+/// (0x84 / `\u{84}`) emitted by the lexer when `#` appears inside
+/// a parsed substitution body. A history-substitution like
+/// `:s/#foo/bar/` where the lexer has tokenized the `#` would
+/// silently miss the anchor-start in the Rust port — falling
+/// through to substring-match semantics.
+pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String { // c:2336
+    use crate::ported::zsh_h::Pound;                                          // c:2349
     if in_pattern.is_empty() { return s.to_string(); }
     let mut anchor_start = false;
     let mut anchor_end = false;
     let mut pat = in_pattern;
-    if let Some(rest) = pat.strip_prefix('#') { anchor_start = true; pat = rest; }
+    // c:2349 — `if (*in == '#' || *in == Pound)` — anchor-head matcher
+    // covers BOTH the literal char and the tokenized Pound byte.
+    if let Some(rest) = pat.strip_prefix('#').or_else(|| pat.strip_prefix(Pound)) {
+        anchor_start = true;                                                  // c:2351 SUB_START
+        pat = rest;                                                           // c:2352 in++
+    }
     if let Some(rest) = pat.strip_prefix('%') { anchor_end = true; pat = rest; }
     if pat.is_empty() { return s.to_string(); }
     let out_expanded = convamps(out_pattern, pat);
@@ -5188,5 +5215,38 @@ mod subst_modifier_tests {
         let expected = "A\u{0301}b";
         assert_eq!(got, expected,
             "c:2241-2242 — IS_COMBINING short-circuit must not break word boundary");
+    }
+
+    /// `Src/hist.c:2349` — anchor-head matcher checks BOTH ASCII `#`
+    /// AND the tokenized `Pound` byte (0x84). Previous Rust port
+    /// matched only `'#'`. Pin the Pound-token recognition.
+    #[test]
+    fn subst_anchor_head_recognises_pound_token() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::Pound;
+        // c:2349 — ASCII '#' anchor at head: matches only prefix.
+        assert_eq!(subst("foobar", "#foo", "baz", false), "bazbar",
+            "c:2349 ASCII '#' anchor — match at head");
+        // c:2349 — Pound token (0x84) anchor at head: same effect.
+        let pat = format!("{}foo", Pound);
+        assert_eq!(subst("foobar", &pat, "baz", false), "bazbar",
+            "c:2349 Pound token (0x84) anchor — match at head");
+        // Negative: anchored at head MUST NOT match mid-string.
+        let pat = format!("{}foo", Pound);
+        assert_eq!(subst("xfoo", &pat, "baz", false), "xfoo",
+            "c:2349 anchor-head rejects non-prefix");
+    }
+
+    /// `Src/hist.c:2354` — anchor-tail matcher checks `%` only
+    /// (no tokenized counterpart in C). Pin the basic semantics.
+    #[test]
+    fn subst_anchor_tail_matches_only_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        // c:2354 — `%foo` anchored at tail.
+        assert_eq!(subst("xxfoo", "%foo", "bar", false), "xxbar",
+            "c:2354 — '%' anchors at end of string");
+        // Non-suffix → no change.
+        assert_eq!(subst("foox", "%foo", "bar", false), "foox",
+            "c:2354 — '%foo' must not match unless `foo` is at end");
     }
 }
