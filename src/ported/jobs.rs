@@ -2412,19 +2412,45 @@ pub fn getsigname(sig: i32) -> String {
 /// SIGCHLD) when the canonical `TRAP<getsigname(sig)>` form
 /// isn't found.
 ///
-/// Now that `hashtable::shfunctab_lock` exists, the lookup is
-/// real. Returns the function body for the trap if defined.
-/// `ignoredisable` mirrors C: when 1, returns disabled entries
-/// too (used by `unsetfn` paths that need to remove disabled
-/// traps).
-/// WARNING: param names don't match C — Rust=(sig) vs C=(sig, ignoredisable)
-pub fn gettrapnode(sig: i32) -> Option<String> {
-    let name = format!("TRAP{}", getsigname(sig));
+/// Returns the matched node's NAME (mirroring C's `hn->nam`
+/// usage at every caller), or `None` if no trap is registered
+/// under any canonical or alt name for this signal.
+pub fn gettrapnode(sig: i32, ignoredisable: bool) -> Option<String> {        // c:3115
+    // c:3117 — char fname[20];
+    // c:3119 — HashNode (*getptr)(HashTable ht, const char *name);
+    // c:3121-3124 — getptr = ignoredisable ? getnode2 : getnode;
     let tab = crate::ported::hashtable::shfunctab_lock()
         .read()
         .expect("shfunctab poisoned");
-    tab.get_including_disabled(&name)
-        .and_then(|f| f.body.clone())
+    let getptr = |name: &str| -> Option<String> {
+        let hit = if ignoredisable {
+            tab.get_including_disabled(name)                                 // c:3122 getnode2
+        } else {
+            tab.get(name)                                                    // c:3124 getnode
+        };
+        hit.map(|f| f.node.nam.clone())
+    };
+    // c:3131 — sprintf(fname, "TRAP%s", sigs[sig]);
+    let fname = format!("TRAP{}", crate::ported::signals::getsigname(sig));
+    // c:3132 — if ((hn = getptr(shfunctab, fname))) return hn;
+    if let Some(n) = getptr(&fname) {
+        return Some(n);
+    }
+    // c:3142-3148 — for (i = 0; alt_sigs[i].name; i++)
+    //                 if (alt_sigs[i].num == sig) {
+    //                     sprintf(fname, "TRAP%s", alt_sigs[i].name);
+    //                     if ((hn = getptr(shfunctab, fname))) return hn;
+    //                 }
+    for (alt_name, alt_num) in crate::ported::signals_h::ALT_SIGS.iter() {
+        if *alt_num == sig {
+            let fname = format!("TRAP{}", alt_name);
+            if let Some(n) = getptr(&fname) {
+                return Some(n);
+            }
+        }
+    }
+    // c:3150 — return NULL;
+    None
 }
 
 /// Port of `removetrapnode(int sig)` from `Src/jobs.c:3157`.

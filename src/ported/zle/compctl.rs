@@ -1035,13 +1035,23 @@ pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
 }
 
 /// Delete a pattern compctl by name.
-/// Port of `delpatcomp(char *n)` from Src/Zle/compctl.c:1294. Walks the
-/// patcomps list, removes the entry matching `n`, frees the cc.
-/// Rust's Vec::retain handles the linked-list-style removal.
-/// WARNING: param names don't match C — Rust=() vs C=(n)
-pub(crate) fn delpatcomp(n: &str) {
-    let mut p = PATCOMPS.write().unwrap();
-    p.retain(|(pat, _)| pat != n);
+/// Port of `delpatcomp(char *n)` from Src/Zle/compctl.c:1294.
+pub(crate) fn delpatcomp(n: &str) {                                          // c:1294
+    let mut patcomps = PATCOMPS.write().unwrap();
+    // c:1296 — Patcomp p, q;
+    // c:1298 — for (q = 0, p = patcomps; p; q = p, p = p->next)
+    for i in 0..patcomps.len() {
+        // c:1299 — if (!strcmp(n, p->pat)) {
+        if patcomps[i].0 == n {
+            // c:1300-1303 — splice: if (q) q->next = p->next; else patcomps = p->next;
+            // c:1304 — zsfree(p->pat);     (Rust: Drop handles)
+            // c:1305 — freecompctl(p->cc); (Rust: Drop handles Arc<Compctl>)
+            // c:1306 — free(p);            (Rust: Vec::remove drops)
+            patcomps.remove(i);
+            // c:1308 — break;
+            break;
+        }
+    }
 }
 
 /// Process the parsed compctl into the table.
@@ -1793,14 +1803,36 @@ pub(crate) fn addhnmatch(name: &str, _flags: i32) {
 /// Rust: routes through `singsub` since that's the equivalent
 /// "expand a single word with errors swallowed". Returns owned
 /// String (vs C's heap-string-pointer).
-/// WARNING: param names don't match C — Rust=() vs C=(str)
-pub(crate) fn getreal(str_in: &str) -> String {
-    // C: c:2135 — `int ne = noerrs; noerrs = 2;`
-    // C: c:2138-2139 — `t = dupstring(str); singsub(&t);`
-    // C: c:2140 — `noerrs = ne;`
-    // C: c:2141-2143 — non-empty + first char non-empty → use it.
+/// WARNING: param names don't match C — Rust=(str_in) vs C=(str)
+pub(crate) fn getreal(str_in: &str) -> String {                              // c:2132
+    // c:2134 — LinkList l = newlinklist();
+    // c:2135 — int ne = noerrs;
+    let mut ne_guard = NOERRS.lock().expect("NOERRS poisoned");
+    let ne = *ne_guard;
+    // c:2137 — noerrs = 1;
+    *ne_guard = 1;
+    drop(ne_guard);
+    // c:2138 — addlinknode(l, dupstring(str));
+    // c:2139 — prefork(l, 0, NULL);
+    // singsub is the equivalent single-word expansion (prefork on a
+    // single-element list + extract the first elem) — keeps the
+    // expanded form when non-empty.
     let s = crate::ported::subst::singsub(str_in);
-    if !s.is_empty() { s } else { str_in.to_string() }
+    // c:2140 — noerrs = ne;
+    *NOERRS.lock().expect("NOERRS poisoned") = ne;
+    // c:2141-2143 — if (!errflag && nonempty(l) && first non-empty) → use expanded.
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) == 0
+        && !s.is_empty()
+    {
+        return s;
+    }
+    // c:2144 — errflag &= ~ERRFLAG_ERROR;
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::utils::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    // c:2146 — return dupstring(str);
+    str_in.to_string()
 }
 
 // (getreal port location; impl above already routes through singsub)

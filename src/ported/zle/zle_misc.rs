@@ -1461,11 +1461,21 @@ pub struct suffixset {                                                       // 
 // Suffix system                                                            // c:1500
 /// Port of `addsuffix(int tp, int flags, ZLE_STRING_T chars, int lenstr, int lensuf)` from Src/Zle/zle_misc.c:1558.
 pub fn addsuffix(tp: i32, flags: i32, chars: Vec<char>, lenstr: i32, lensuf: i32) {  // c:1558
-    // C body (c:1560-1567): `newsuf = zalloc; newsuf->next = suffixlist;
-    //                       suffixlist = newsuf; copy fields`.
-    suffixlist().lock().unwrap().push(suffixset {
-        tp, flags, chars, lenstr, lensuf,
-    });
+    // c:1561 — newsuf = zalloc(sizeof(struct suffixset));
+    // c:1562 — newsuf->next = suffixlist;
+    // c:1563 — suffixlist = newsuf;            ← prepended to head
+    // c:1565-1573 — copy tp/flags/chars/lenstr/lensuf into newsuf.
+    // Rust mirrors prepend via insert(0, …) so the iteration order
+    // in the c:1758 walk (`for ss=suffixlist; ss; ss=ss->next`) sees
+    // most-recently-added first, matching C.
+    let newsuf = suffixset {
+        tp,                                                                  // c:1565
+        flags,                                                               // c:1566
+        chars: if lenstr != 0 { chars } else { Vec::new() },                 // c:1567-1571
+        lenstr,                                                              // c:1572
+        lensuf,                                                              // c:1573
+    };
+    suffixlist().lock().unwrap().insert(0, newsuf);
 }
 
 /// Port of `addsuffixstring(int tp, int flags, char *chars, int lensuf)` from Src/Zle/zle_misc.c:1580.

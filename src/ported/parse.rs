@@ -3525,12 +3525,55 @@ pub fn try_dump_file(
 }
 
 /// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
-/// Tries `source <file>` then falls back to `source <file>.zwc`.
-/// Returns the resolved path on hit. Stub: returns None until the
-/// dump-cache port lands.
-pub fn try_source_file(_file: &str) -> Option<String> {
-    // c:3795
-    None
+/// Returns an Eprog (the wordcode dump body) if `<file>.zwc` exists
+/// and is newer than `<file>`, else None.
+pub fn try_source_file(file: &str) -> Option<String> {                       // c:3795
+    use std::fs;
+
+    // c:3802-3805 — if ((tail = strrchr(file, '/'))) tail++; else tail = file;
+    let tail = match file.rfind('/') {
+        Some(i) => &file[i + 1..],
+        None => file,
+    };
+
+    // c:3807-3812 — if (strsfx(FD_EXT, file)) { ... return check_dump_file(file, NULL, tail, NULL, 0); }
+    if file.ends_with(FD_EXT) {
+        crate::ported::signals::queue_signals();                             // c:3808
+        let meta = fs::metadata(file);
+        let prog = match meta {
+            Ok(m) => check_dump_file(file, &m, tail, false)
+                .map(|(_, _)| file.to_string()),                             // c:3809
+            Err(_) => None,
+        };
+        crate::ported::signals::unqueue_signals();                           // c:3810
+        return prog;
+    }
+
+    // c:3813 — wc = dyncat(file, FD_EXT);
+    let wc = format!("{}{}", file, FD_EXT);
+
+    // c:3815-3816 — rc = stat(wc, &stc); rn = stat(file, &stn);
+    let stc = fs::metadata(&wc);
+    let stn = fs::metadata(file);
+
+    crate::ported::signals::queue_signals();                                 // c:3818
+    // c:3819-3823 — if (!rc && (rn || stc.st_mtime >= stn.st_mtime) && (prog = check_dump_file(...))) return prog;
+    if let Ok(meta_c) = &stc {
+        let newer_than_src = match (&stc, &stn) {
+            (Ok(c), Ok(n)) => c.modified().ok() >= n.modified().ok(),
+            (Ok(_), Err(_)) => true,                                         // c:3819 — `rn` (src missing) ⇒ accept .zwc
+            _ => false,
+        };
+        if newer_than_src {
+            let prog = check_dump_file(&wc, meta_c, tail, false);            // c:3820
+            if prog.is_some() {
+                crate::ported::signals::unqueue_signals();                   // c:3821
+                return Some(wc);                                             // c:3822
+            }
+        }
+    }
+    crate::ported::signals::unqueue_signals();                               // c:3824
+    None                                                                     // c:3825
 }
 
 /// Port of `Eprog check_dump_file(char *file, struct stat *sbuf,

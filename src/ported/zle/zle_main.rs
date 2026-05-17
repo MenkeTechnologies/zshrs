@@ -984,23 +984,77 @@ pub fn recursiveedit() -> i32 {                                 // c:1974
 }
 
     /// Re-run prompt expansion against the saved templates.
-    /// Port of `reexpandprompt()` from Src/Zle/zle_main.c — used after
-    /// events that change values referenced by prompt escapes (PWD,
-    /// command status, jobs count, sigwinch). Re-expands `lprompt_raw`
-    /// and `rprompt_raw` via `prompt::expand_prompt` with a fresh
-    /// `PromptContext` so escapes pick up the latest env / state.
-    /// Rust idiom replacement: two `expand_prompt` calls cover the C
-    /// `promptexpand`+`free`+`promptexpand` pair; PromptContext drops
-    /// since expand_prompt reads env/state internally.
-    pub fn reexpandprompt() {
-        // PromptContext was removed from prompt.rs's public surface;
-        // expand_prompt() takes only the format string now and reads
-        // env/state internally.
-        let raw_lp = crate::ported::zle::zle_main::RAW_LP.lock().unwrap().clone();
-        let raw_rp = crate::ported::zle::zle_main::RAW_RP.lock().unwrap().clone();
-        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&raw_lp);
-        *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&raw_rp);
-        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    /// Port of `reexpandprompt()` from `Src/Zle/zle_main.c:2000`.
+    pub fn reexpandprompt() {                                                // c:2000
+        use std::sync::atomic::Ordering;
+        // c:2002 — static int reexpanding;
+        // c:2003 — static int looping;
+        // Per-thread recursion counter (bucket 1 — file-static in C).
+        thread_local! {
+            static REEXPANDING: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+            static LOOPING: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+        }
+        // c:2005 — if (!reexpanding++) {
+        let prev = REEXPANDING.with(|c| { let v = c.get(); c.set(v + 1); v });
+        if prev == 0 {
+            // c:2006 — const char **markers = prompt_markers();
+            //          (markers[0] = lprompt status, markers[2] = rprompt status —
+            //           Rust port doesn't surface markers yet, so they collapse.)
+            // c:2012 — int local_lastval = lastval;
+            let local_lastval = crate::ported::builtin::LASTVAL.load(Ordering::SeqCst);
+            // c:2013 — lastval = pre_zle_status;
+            let pre_zs = crate::ported::zle::zle_main::PRE_ZLE_STATUS.load(Ordering::SeqCst);
+            crate::ported::builtin::LASTVAL.store(pre_zs, Ordering::SeqCst);
+
+            // c:2015-2038 — do { ... } while (looping != reexpanding);
+            //               The loop guards against SIGWINCH-during-promptexpand.
+            //               Without the SIGWINCH/promptexpand interleave hook
+            //               wired into our expander, one pass suffices; mirror
+            //               the structure so a future SIGWINCH-aware expander
+            //               drops in via the LOOPING counter.
+            loop {
+                // c:2022 — looping = reexpanding;
+                let reexp = REEXPANDING.with(|c| c.get());
+                LOOPING.with(|c| c.set(reexp));
+
+                // c:2024 — txtcurrentattrs = txtpendingattrs = txtunknownattrs = 0;
+                crate::ported::prompt::txtunknownattrs.store(0, Ordering::Relaxed);
+
+                // c:2025 — new_lprompt = promptexpand(raw_lp ? *raw_lp : NULL, 1, markers[0], NULL, NULL);
+                let raw_lp = crate::ported::zle::zle_main::RAW_LP.lock().unwrap().clone();
+                let new_lp = crate::prompt::expand_prompt(&raw_lp);
+                // c:2026 — pmpt_attr = txtcurrentattrs;   (not yet ported)
+                // c:2027-2028 — free(lpromptbuf); lpromptbuf = new_lprompt;
+                *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = new_lp;
+
+                // c:2030-2031 — if (looping != reexpanding) continue;
+                if LOOPING.with(|c| c.get()) != REEXPANDING.with(|c| c.get()) {
+                    continue;
+                }
+
+                // c:2033 — new_rprompt = promptexpand(raw_rp ? *raw_rp : NULL, 1, markers[2], NULL, NULL);
+                let raw_rp = crate::ported::zle::zle_main::RAW_RP.lock().unwrap().clone();
+                let new_rp = crate::prompt::expand_prompt(&raw_rp);
+                // c:2034-2035 — rpmpt_attr / prompt_attr computation (not yet ported)
+                // c:2036-2037 — free(rpromptbuf); rpromptbuf = new_rprompt;
+                *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = new_rp;
+
+                // c:2038 — } while (looping != reexpanding);
+                if LOOPING.with(|c| c.get()) == REEXPANDING.with(|c| c.get()) {
+                    break;
+                }
+            }
+
+            // c:2040 — lastval = local_lastval;
+            crate::ported::builtin::LASTVAL.store(local_lastval, Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+        } else {
+            // c:2041-2042 — } else looping = reexpanding;
+            let reexp = REEXPANDING.with(|c| c.get());
+            LOOPING.with(|c| c.set(reexp));
+        }
+        // c:2043 — reexpanding--;
+        REEXPANDING.with(|c| c.set(c.get() - 1));
     }
 
     /// Mark the prompt as needing a re-expand on next refresh.

@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-17T00:22:36.330475+00:00
+Generated: 2026-05-17T03:49:46.683602+00:00
 
 ## Method
 
@@ -16,22 +16,23 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 4 stubs across 2 files
+## Summary: 5 stubs across 2 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
-| `src/ported/utils.rs` | 3 | `check_fd_table` (1 / 11) |
+| `src/ported/utils.rs` | 4 | `quotedzputs` (11 / 166) |
 | `src/ported/zle/zle_utils.rs` | 1 | `shiftchars` (14 / 64) |
 
 ## Per-file detail
 
-### `src/ported/utils.rs` — 3 stubs
+### `src/ported/utils.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1562 | `check_fd_table` | 1 | 11 | 9% |
-| 4342 | `sb_niceformat` | 8 | 58 | 13% |
-| 4365 | `is_sb_niceformat` | 4 | 15 | 26% |
+| 5028 | `quotedzputs` | 11 | 166 | 6% |
+| 4695 | `sb_niceformat` | 8 | 58 | 13% |
+| 4729 | `is_sb_niceformat` | 4 | 15 | 26% |
+| 4324 | `zreaddir` | 8 | 29 | 27% |
 
 ### `src/ported/zle/zle_utils.rs` — 1 stubs
 

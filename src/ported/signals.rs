@@ -1301,7 +1301,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
         // c:1133 incompfunc snapshot — not yet a public global; preserved
         // here as a local to mirror the C save/restore.
         let old_incompfunc: i32 = 0;
-        let hn = crate::ported::jobs::gettrapnode(sig);                      // c:1134
+        let hn = crate::ported::jobs::gettrapnode(sig, false);               // c:1134
 
         let mut args: Vec<String> = Vec::new();                              // c:1136 znewlinklist
         // c:1144-1149 — pick the right TRAPxxx name from the function table
