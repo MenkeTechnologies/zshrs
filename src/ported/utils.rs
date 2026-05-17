@@ -4359,9 +4359,20 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// bytes under PRINTEIGHTBIT-off (should have rendered `\M-X`).
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
 pub fn sb_niceformat(s: &str) -> String {                                    // c:5851
-    // c:5865-5872 — unmetafy first so we operate on raw bytes.
+    // c:5865-5872 — `ums = ztrdup(s); untokenize(ums); ptr =
+    // unmetafy(ums, &umlen);`. The C `untokenize` step converts ZSH
+    // internal token bytes (Star/Quest/Inbrack etc.) back to their
+    // canonical chars. The Rust `untokenize` lives in lex.rs but uses
+    // `chars()`-iteration which mangles raw metafied bytes (e.g.
+    // `Meta + X` pairs that aren't valid UTF-8 standalone). For
+    // sb_niceformat the caller path is "already-untokenized metafied
+    // bytes", so the untokenize step is a no-op for the common case
+    // and applying it via chars() would corrupt invalid-UTF-8
+    // metafied input. Skip the untokenize step — matches the
+    // tested call-site behavior.
     let mut bytes = s.as_bytes().to_vec();
-    let umlen = unmetafy(&mut bytes);
+    // c:5872 — `ptr = unmetafy(ums, &umlen);`.
+    let umlen = unmetafy(&mut bytes);                                        // c:5872
     bytes.truncate(umlen);
 
     let mut result = String::new();
@@ -4382,10 +4393,16 @@ pub fn sb_niceformat(s: &str) -> String {                                    // 
 /// missed high-bit bytes that need `\M-X` escaping under
 /// PRINTEIGHTBIT-off.
 pub fn is_sb_niceformat(s: &str) -> bool {                                   // c:5937
+    // c:5942-5944 — `ums = ztrdup(s); untokenize(ums); unmetafy(ums, &umlen);`.
+    // Three-step C body. Rust skips the untokenize step for the same
+    // reason as `sb_niceformat` above (chars()-iteration would mangle
+    // raw metafied bytes); callers pass already-untokenized input.
     let mut bytes = s.as_bytes().to_vec();
-    let umlen = unmetafy(&mut bytes);
+    let umlen = unmetafy(&mut bytes);                                        // c:5944
     bytes.truncate(umlen);
-    bytes.iter().any(|&b| is_nicechar(b as char))
+    // c:5946-5952 — `while (ptr < eptr) { if (is_nicechar(*ptr)) { ret = 1;
+    //                break; } ++ptr; }`. Any-byte short-circuit.
+    bytes.iter().any(|&b| is_nicechar(b as char))                            // c:5947
 }
 
 /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5975.
