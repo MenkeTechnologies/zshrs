@@ -2579,18 +2579,82 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {                 //
     }
 }
 
-/// Read a single character (from utils.c read1char)
-/// Port of `read1char(int echo)` from `Src/utils.c:2972`.
-/// WARNING: param names don't match C — Rust=() vs C=(echo)
-pub fn read1char() -> Option<char> {
+/// Read a single character (from utils.c read1char).
+///
+/// Port of `static int read1char(int echo)` from `Src/utils.c:2972`.
+///
+/// C body (c:2972-2988):
+/// ```c
+/// char c;
+/// int q = queue_signal_level();
+/// dont_queue_signals();
+/// while (read(SHTTY, &c, 1) != 1) {
+///     if (errno != EINTR || errflag || retflag || breaks || contflag) {
+///         restore_queue_signals(q);
+///         return -1;
+///     }
+/// }
+/// restore_queue_signals(q);
+/// if (echo) write_loop(SHTTY, &c, 1);
+/// return (unsigned char) c;
+/// ```
+///
+/// Returns the byte read (0..=255) on success, `-1` on error. Three
+/// divergences in the previous Rust port:
+///   1. **Read from stdin** instead of SHTTY (the tty fd). zsh reads
+///      single chars during `read -k`, `bindkey`, query prompts —
+///      always against the controlling terminal, not the standard
+///      input which may be a pipe.
+///   2. **No `echo` parameter.** When `echo=1` C writes the byte
+///      back to SHTTY so the user sees what they typed.
+///   3. **No `errflag` / `retflag` / `breaks` / `contflag` early-exit.**
+///      A SIGINT-driven errflag should abort the read; previous Rust
+///      port had no break path.
+/// WARNING: returns i32 not Option<char> to match C's signature
+/// (`(unsigned char) c` for success, `-1` for error).
+pub fn read1char(echo: i32) -> i32 {                                          // c:2972
     #[cfg(unix)]
     {
-        let mut buf = [0u8; 1];
-        if std::io::stdin().read_exact(&mut buf).is_ok() {
-            return Some(buf[0] as char);
+        let shtty = crate::ported::init::SHTTY
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if shtty < 0 {
+            return -1;
         }
+        let mut c: u8 = 0;
+        loop {
+            let rc = unsafe {
+                libc::read(shtty, &mut c as *mut u8 as *mut libc::c_void, 1)
+            };
+            if rc == 1 {                                                      // c:2978
+                break;
+            }
+            // c:2979 — `if (errno != EINTR || errflag || retflag || breaks
+            //              || contflag) return -1;`
+            let err = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(0);
+            if err != libc::EINTR {
+                return -1;
+            }
+            // Check errflag interrupt flag (the most observable of the
+            // four guards; retflag/breaks/contflag are control-flow
+            // states that don't apply outside the exec engine).
+            if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                return -1;
+            }
+        }
+        // c:2985-2986 — `if (echo) write_loop(SHTTY, &c, 1);`
+        if echo != 0 {                                                        // c:2985
+            let _ = write_loop(shtty, &[c]);                                  // c:2986
+        }
+        // c:2987 — `return (unsigned char) c;`
+        c as i32
     }
-    None
+    #[cfg(not(unix))]
+    {
+        let _ = echo;
+        -1
+    }
 }
 
 /// Port of `int noquery(int purge)` from Src/utils.c:2992.
@@ -9042,5 +9106,28 @@ mod tests {
         let r = read_loop(9999, &mut buf);
         assert!(r.is_err(),
             "c:2935 — invalid fd → io::Error (and zwarn to stderr)");
+    }
+
+    /// `Src/utils.c:2972-2988` — `read1char(echo)` reads from SHTTY,
+    /// not stdin. With SHTTY uninitialised (default -1 in test
+    /// environment), the function MUST return -1 immediately rather
+    /// than blocking on a stdin read. The previous Rust port read
+    /// from stdin and returned None — which in some test runners
+    /// would block waiting for input.
+    #[test]
+    #[cfg(unix)]
+    fn read1char_returns_minus_one_when_shtty_unset() {
+        let _g = crate::test_util::global_state_lock();
+        // Test environment: SHTTY is -1 (no controlling tty bound
+        // by the port). C-side would `read(-1, ...)` which fails;
+        // Rust port should fail-fast with -1.
+        let saved = crate::ported::init::SHTTY
+            .load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(-1, std::sync::atomic::Ordering::Relaxed);
+        let got = read1char(0);  // echo=0
+        assert_eq!(got, -1,
+            "c:2978 — SHTTY=-1 → read fails → return -1");
+        // Restore.
+        crate::ported::init::SHTTY.store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 }
