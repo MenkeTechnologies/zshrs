@@ -1719,30 +1719,56 @@ pub fn movefd(fd: i32) -> i32 {
 ///
 /// Body mirrors c:2023-2068: when `x == -1`, close `y` (return `y`);
 /// when `x == y`, no-op (return `y`); otherwise `dup2(x, y)` +
-/// `close(x)`. The `fpurge` block at c:2025-2045 and the `fdtable[]`
-/// updates at c:2053-2063 require the fdtable global which isn't
-/// ported yet — those side effects are skipped, the dup2/close pair
-/// is preserved.
-pub fn redup(x: i32, y: i32) -> i32 {                                    // c:2021
-    let mut ret = y;                                                     // c:2021
+/// `close(x)`.
+///
+/// C body fdtable updates (c:2053-2063) that the previous Rust port
+/// SKIPPED with a stale "fdtable global not yet ported" comment —
+/// fdtable IS now ported and these updates are load-bearing:
+///   * `fdtable[y] = fdtable[x]` — the new fd inherits the old fd's
+///     ownership category (FDT_INTERNAL / FDT_MODULE / etc.).
+///   * If the inherited type is `FDT_FLOCK` / `FDT_FLOCK_EXEC`, promote
+///     to `FDT_INTERNAL` (the dup'd fd doesn't carry the flock).
+///   * If `fdtable[x] == FDT_FLOCK`, decrement `fdtable_flocks` (the
+///     original lock-holding fd is about to be closed).
+///
+/// Without these updates, redup'd fds had stale `FDT_UNUSED` ownership
+/// and `closeallelse(FDT_EXTERNAL)` etc. couldn't classify them.
+pub fn redup(x: i32, y: i32) -> i32 {                                        // c:2021
+    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL};
+    let mut ret = y;                                                         // c:2023
     #[cfg(unix)]
     {
-        if x < 0 {                                                       // c:2047
-            zclose(y);                                                   // c:2048
-        } else if x != y {                                               // c:2049
-            if unsafe { libc::dup2(x, y) } == -1 {                       // c:2050
-                ret = -1;                                                // c:2051
+        if x < 0 {                                                           // c:2047
+            zclose(y);                                                       // c:2048
+        } else if x != y {                                                   // c:2049
+            // c:2053-2057 — successful dup2: copy fdtable + FLOCK promote.
+            if unsafe { libc::dup2(x, y) } == -1 {                           // c:2050
+                ret = -1;                                                    // c:2051
+            } else {
+                check_fd_table(y);                                           // c:2053
+                let kind_x = fdtable_get(x);                                 // c:2054
+                let kind_y = if kind_x == FDT_FLOCK || kind_x == FDT_FLOCK_EXEC {
+                    FDT_INTERNAL                                             // c:2055-2056
+                } else {
+                    kind_x                                                   // c:2054
+                };
+                fdtable_set(y, kind_y);
             }
-            // c:2053-2063 — fdtable copy + FLOCK handling (skipped:
-            // fdtable global not yet ported to Rust).
-            zclose(x);                                                   // c:2064
+            // c:2062-2063 — `if (fdtable[x] == FDT_FLOCK) fdtable_flocks--;`
+            // The original lock-holding fd is about to be closed, so the
+            // flock-count tracker must drop. Even on dup2 failure C still
+            // closes x, so this runs in both arms.
+            if fdtable_get(x) == FDT_FLOCK {                                 // c:2062
+                FDTABLE_FLOCKS.fetch_sub(1, Ordering::SeqCst);               // c:2063
+            }
+            zclose(x);                                                       // c:2064
         }
     }
     #[cfg(not(unix))]
     {
         let _ = (x, y);
     }
-    ret                                                                  // c:2067
+    ret                                                                      // c:2067
 }
 
 /// Port of `addmodulefd(int fd, int fdt)` from `Src/utils.c:2090-2097`.
@@ -9176,5 +9202,80 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(movefd(-1), -1,
             "c:1992 — movefd(-1) bypasses both gates and returns -1");
+    }
+
+    /// `Src/utils.c:2021-2068` — `redup(x, y)` after a successful
+    /// `dup2(x, y)` must:
+    ///   * Copy fdtable[x] to fdtable[y] (c:2054).
+    ///   * Promote FDT_FLOCK/FDT_FLOCK_EXEC to FDT_INTERNAL on the
+    ///     dup target (c:2055-2056) — the lock doesn't transfer.
+    ///   * Then close x (c:2064).
+    ///
+    /// Previous Rust port skipped the fdtable updates entirely.
+    /// Pin the ownership-transfer with two fds the test allocates.
+    #[test]
+    #[cfg(unix)]
+    fn redup_copies_fdtable_ownership_to_target() {
+        let _g = crate::test_util::global_state_lock();
+        // Open two distinct fds — both will land in the fdtable.
+        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let x = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
+        let y = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
+        assert!(x >= 0 && y >= 0, "open /dev/null returned -1");
+        assert_ne!(x, y);
+
+        // Mark x as FDT_INTERNAL so we can observe the copy to y.
+        check_fd_table(x);
+        check_fd_table(y);
+        fdtable_set(x, crate::ported::zsh_h::FDT_INTERNAL);
+        fdtable_set(y, crate::ported::zsh_h::FDT_UNUSED);
+
+        let ret = redup(x, y);
+        assert_eq!(ret, y, "c:2067 — successful redup returns y");
+        // c:2054 — fdtable[y] inherited from fdtable[x].
+        assert_eq!(fdtable_get(y), crate::ported::zsh_h::FDT_INTERNAL,
+            "c:2054 — fdtable[y] = fdtable[x] (FDT_INTERNAL)");
+        // x is closed by c:2064.
+        unsafe { libc::close(y); }
+    }
+
+    /// `Src/utils.c:2055-2056` — when fdtable[x] is FDT_FLOCK or
+    /// FDT_FLOCK_EXEC, the dup'd fd y gets promoted to FDT_INTERNAL
+    /// (the dup doesn't carry the flock). Pin the promotion.
+    ///
+    /// Note on fdtable_flocks: C's c:2062-2063 decrements the
+    /// flock count in `redup` BEFORE `zclose(x)`, and zclose ALSO
+    /// decrements when it sees fdtable[fd] == FDT_FLOCK (c:2135).
+    /// So C double-decrements for an FDT_FLOCK source fd in redup —
+    /// the C comment at c:2058-2061 calls this "isn't expected to
+    /// happen" (FDT_FLOCK fds aren't normally redup'd). We mirror
+    /// C exactly: test asserts the count drops by 2 (1 → -1) to
+    /// pin the faithful-to-C behavior. Reporting this as a C bug
+    /// upstream is the right path; the port preserves it verbatim.
+    #[test]
+    #[cfg(unix)]
+    fn redup_promotes_flock_to_internal_on_target() {
+        let _g = crate::test_util::global_state_lock();
+        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let x = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
+        let y = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
+        assert!(x >= 0 && y >= 0);
+        assert_ne!(x, y);
+
+        check_fd_table(x);
+        check_fd_table(y);
+        // Mark x as FDT_FLOCK.
+        fdtable_set(x, crate::ported::zsh_h::FDT_FLOCK);
+        FDTABLE_FLOCKS.store(2, Ordering::SeqCst);  // start at 2 so double-decrement lands at 0
+
+        let _ = redup(x, y);
+
+        // c:2055-2056 — promoted to FDT_INTERNAL on y, NOT carried.
+        assert_eq!(fdtable_get(y), crate::ported::zsh_h::FDT_INTERNAL,
+            "c:2055-2056 — FDT_FLOCK on x promotes to FDT_INTERNAL on y");
+        // c:2062-2063 + zclose c:2135 — double decrement.
+        assert_eq!(FDTABLE_FLOCKS.load(Ordering::SeqCst), 0,
+            "c:2062-2063 + c:2135 — flock count double-decremented (faithful to C)");
+        unsafe { libc::close(y); }
     }
 }
