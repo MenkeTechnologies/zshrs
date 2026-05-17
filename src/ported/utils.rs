@@ -2450,26 +2450,58 @@ pub fn checkrmall(s: &str) -> bool {
     }
 }
 
-/// Read/write loop wrappers (from utils.c read_loop/write_loop)
-/// Port of `read_loop(int fd, char *buf, size_t len)` from `Src/utils.c:2923`.
+/// Port of `ssize_t read_loop(int fd, char *buf, size_t len)` from
+/// `Src/utils.c:2923`.
+///
+/// C body (c:2923-2945):
+/// ```c
+/// while (1) {
+///     ssize_t ret = read(fd, buf, len);
+///     if (ret == len) break;
+///     if (ret <= 0) {
+///         if (ret < 0) {
+///             if (errno == EINTR) continue;          // c:2933
+///             if (fd != SHTTY)                       // c:2935
+///                 zwarn("read failed: %e", errno);   // c:2936
+///         }
+///         return ret;
+///     }
+///     buf += ret; len -= ret;
+/// }
+/// ```
+///
+/// The previous Rust port omitted the `zwarn("read failed: %e", errno)`
+/// emission at c:2935-2936. That's a real diagnostic divergence:
+/// any non-SHTTY read failure in zsh emits a stderr message; the
+/// Rust port silently propagated the io::Error to the caller, which
+/// in most call sites was discarded (`let _ = read_loop(...)`).
+/// Users debugging an interrupted file read (e.g. `< /broken/fd`)
+/// would see no error message at all.
 /// WARNING: param names don't match C — Rust=(fd, buf) vs C=(fd, buf, len)
-pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
+pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {              // c:2923
     #[cfg(unix)]
     {
         let mut total = 0;
         while total < buf.len() {
             let n = unsafe {
-                libc::read(
+                libc::read(                                                   // c:2928
                     fd,
                     buf[total..].as_mut_ptr() as *mut libc::c_void,
                     buf.len() - total,
                 )
             };
-            if n <= 0 {
+            if n <= 0 {                                                       // c:2931
                 if n < 0 {
                     let e = io::Error::last_os_error();
-                    if e.kind() == io::ErrorKind::Interrupted {
-                        continue;
+                    if e.kind() == io::ErrorKind::Interrupted {               // c:2933
+                        continue;                                             // c:2934
+                    }
+                    // c:2935-2936 — `if (fd != SHTTY) zwarn("read failed: %e", errno);`
+                    let shtty = crate::ported::init::SHTTY
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if fd != shtty {                                          // c:2935
+                        crate::ported::utils::zwarn(                          // c:2936
+                            &format!("read failed: {}", e));
                     }
                     return Err(e);
                 }
@@ -2486,15 +2518,34 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
     }
 }
 
-/// Port of `write_loop(int fd, const char *buf, size_t len)` from `Src/utils.c:2949`.
+/// Port of `ssize_t write_loop(int fd, const char *buf, size_t len)` from
+/// `Src/utils.c:2949`.
+///
+/// C body (c:2949-2970):
+/// ```c
+/// while (1) {
+///     ssize_t ret = write(fd, buf, len);
+///     if (ret == len) break;
+///     if (ret < 0) {
+///         if (errno == EINTR) continue;
+///         if (fd != SHTTY)                            // c:2960
+///             zwarn("write failed: %e", errno);       // c:2961
+///         return -1;
+///     }
+///     buf += ret; len -= ret;
+/// }
+/// ```
+///
+/// Same divergence as `read_loop`: previous Rust port omitted the
+/// `zwarn("write failed: %e", errno)` emission for non-SHTTY fds.
 /// WARNING: param names don't match C — Rust=(fd, buf) vs C=(fd, buf, len)
-pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
+pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {                 // c:2949
     #[cfg(unix)]
     {
         let mut total = 0;
         while total < buf.len() {
             let n = unsafe {
-                libc::write(
+                libc::write(                                                  // c:2954
                     fd,
                     buf[total..].as_ptr() as *const libc::c_void,
                     buf.len() - total,
@@ -2503,8 +2554,15 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
             if n <= 0 {
                 if n < 0 {
                     let e = io::Error::last_os_error();
-                    if e.kind() == io::ErrorKind::Interrupted {
-                        continue;
+                    if e.kind() == io::ErrorKind::Interrupted {               // c:2958
+                        continue;                                             // c:2959
+                    }
+                    // c:2960-2961 — `if (fd != SHTTY) zwarn("write failed: %e", errno);`
+                    let shtty = crate::ported::init::SHTTY
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if fd != shtty {                                          // c:2960
+                        crate::ported::utils::zwarn(                          // c:2961
+                            &format!("write failed: {}", e));
                     }
                     return Err(e);
                 }
@@ -8918,5 +8976,71 @@ mod tests {
         let r = quotedzputs("a'b");
         assert!(r.contains("'\\''"),
             "c:6573-6587 — embedded ' → '\\''  (got {:?})", r);
+    }
+
+    /// `Src/utils.c:2923-2945` — `read_loop` returns the requested
+    /// length on full read, or the partial count on EOF. Pin: writing
+    /// a known buffer to a pipe and reading it back returns the same
+    /// content + correct length. Drives the no-side-effect path that
+    /// the diagnostic-message fix doesn't touch.
+    #[test]
+    #[cfg(unix)]
+    fn read_loop_round_trips_pipe_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        // Create a pipe; write 16 bytes; read them back.
+        let mut fds: [libc::c_int; 2] = [0; 2];
+        unsafe { assert_eq!(libc::pipe(fds.as_mut_ptr()), 0, "pipe(2) ok"); }
+        let payload = b"hello-world-1234";
+        let written = unsafe {
+            libc::write(fds[1], payload.as_ptr() as *const libc::c_void, payload.len())
+        };
+        assert_eq!(written, payload.len() as isize, "write all 16 bytes");
+        unsafe { libc::close(fds[1]); }
+        let mut buf = [0u8; 16];
+        let got = read_loop(fds[0], &mut buf).expect("read_loop ok");
+        assert_eq!(got, payload.len(), "c:2929 — read_loop returns full length");
+        assert_eq!(&buf[..], &payload[..],
+            "c:2940-2941 — buffer copied verbatim");
+        unsafe { libc::close(fds[0]); }
+    }
+
+    /// `Src/utils.c:2949-2970` — `write_loop` returns the requested
+    /// length when the kernel accepts all bytes (the common case for
+    /// a pipe with room). Pin the no-side-effect happy path.
+    #[test]
+    #[cfg(unix)]
+    fn write_loop_writes_all_bytes_to_pipe() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fds: [libc::c_int; 2] = [0; 2];
+        unsafe { assert_eq!(libc::pipe(fds.as_mut_ptr()), 0, "pipe(2) ok"); }
+        let payload = b"abcdef";
+        let got = write_loop(fds[1], payload).expect("write_loop ok");
+        assert_eq!(got, payload.len(),
+            "c:2955-2956 — write_loop returns full length on accept");
+        // Read back to verify.
+        unsafe { libc::close(fds[1]); }
+        let mut buf = [0u8; 6];
+        let _ = unsafe {
+            libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+        };
+        assert_eq!(&buf[..], &payload[..]);
+        unsafe { libc::close(fds[0]); }
+    }
+
+    /// `Src/utils.c:2935-2936` — `read_loop` on a closed/invalid fd
+    /// returns an io::Error (the C path returns `ret` and emits the
+    /// `zwarn` to stderr). Pin the error propagation; the zwarn
+    /// emission is a stderr side-effect tested only by inspecting
+    /// log output (out of scope here).
+    #[test]
+    #[cfg(unix)]
+    fn read_loop_returns_error_on_invalid_fd() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 4];
+        // fd 9999 is essentially guaranteed-not-open in a test
+        // process; the canonical "bad fd" error path.
+        let r = read_loop(9999, &mut buf);
+        assert!(r.is_err(),
+            "c:2935 — invalid fd → io::Error (and zwarn to stderr)");
     }
 }
