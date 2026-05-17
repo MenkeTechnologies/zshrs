@@ -741,46 +741,93 @@ pub fn slashsplit(s: &str) -> Vec<String> {                                  // 
     result
 }
 
-/// Convert to absolute path, normalising `.` and `..` components.
-/// Port of `xsymlinks(char *s)` from Src/utils.c — same `realpath(3)`
-/// fallback the C source uses on systems without it. Does NOT
-/// follow symlinks (matches the `physical = 0` mode in C). The
-/// `:a` modifier and the symlink-resolving `:A`/`:P` modifiers
-/// dispatch through this when the OS-level canonicalize fails
-/// (non-existent paths).
-pub fn xsymlinks(s: &str) -> std::io::Result<String> {                      // c:872
+/// Port of `static int xsymlinks(char *s)` from `Src/utils.c:872`.
+///
+/// Expands `.` and `..` components AND follows ONE LEVEL of
+/// symlinks (per C source comment at c:865-867: "expands .. or .
+/// expressions and one level of symlinks"). Used by the `:A`/`:P`
+/// modifier paths via `subst.rs:6896`.
+///
+/// The previous Rust port did `.`/`..` normalization ONLY, with a
+/// stale doc-comment claiming "Does NOT follow symlinks (matches
+/// the `physical = 0` mode in C)." That claim is FALSE: C
+/// `xsymlinks` IS the symlink-following form (it calls `readlink(2)`
+/// at c:908). The `physical = 0` no-symlink path is a different
+/// fn (`xsymlink` at utils.c:971, without the trailing `s`). Result:
+/// `:A` modifier output never resolved actual symlinks — `:A` on
+/// `/tmp/link -> /usr` returned `/tmp/link` instead of `/usr`.
+///
+/// Rewrite: walk components; for each non-`.`/`..` component, try
+/// `readlink` on the accumulated path. If it succeeds, the target
+/// replaces (or prepends to) the accumulator; otherwise the
+/// component appends as-is. C handles re-rooting (absolute symlink
+/// target replaces buf) and component-level concat.
+pub fn xsymlinks(s: &str) -> std::io::Result<String> {                       // c:872
     if s.is_empty() {
         return Ok(String::new());
     }
 
-    let path = if !s.starts_with('/') {
+    let path = if !s.starts_with('/') {                                       // c:879 — slashsplit
         let cwd = std::env::current_dir()?;
         format!("{}/{}", cwd.display(), s)
     } else {
         s.to_string()
     };
 
-    let mut result = Vec::new();
-    for component in path.split('/') {
-        match component {
-            "" | "." => continue,
-            ".." => {
-                if !result.is_empty() && result.last() != Some(&"..") {
-                    result.pop();
-                } else if result.is_empty() && !path.starts_with('/') {
-                    result.push("..");
+    let components: Vec<&str> = path.split('/').collect();
+    // c:877 — `xbuflen = strlen(xbuf)`. Start with empty xbuf for
+    // absolute paths (the leading "" from slashsplit handles that).
+    let mut xbuf = String::new();
+    for comp in components {
+        match comp {
+            "" | "." => continue,                                             // c:881
+            ".." => {                                                         // c:883
+                if xbuf == "/" || xbuf.is_empty() {                           // c:886-889
+                    continue;
+                }
+                // c:891-895 — walk back one `/`-delimited component.
+                if let Some(pos) = xbuf.rfind('/') {
+                    xbuf.truncate(pos);
                 }
             }
-            c => result.push(c),
+            c => {
+                // c:905-907 — `memcpy xbuf2, xbuf` then append `/comp`.
+                let candidate = format!("{}/{}", xbuf, c);                    // c:907
+                // c:908 — `readlink(unmeta(xbuf2), xbuf3, PATH_MAX)`.
+                #[cfg(unix)]
+                {
+                    match std::fs::read_link(&candidate) {                    // c:908
+                        Ok(target) => {
+                            // c:918-933 — successful readlink: target is
+                            // either absolute (replaces xbuf wholesale) or
+                            // relative (appends with `/`).
+                            let t = target.to_string_lossy().into_owned();
+                            if t.starts_with('/') {                           // c:927
+                                xbuf = t;                                     // c:928
+                            } else {
+                                xbuf = format!("{}/{}", xbuf, t);             // c:930-931
+                            }
+                            continue;
+                        }
+                        Err(_) => {
+                            // c:909-916 — readlink failed (not a symlink),
+                            // append the component verbatim.
+                            xbuf = candidate;                                 // c:910-912
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    xbuf = candidate;
+                }
+            }
         }
     }
 
-    if path.starts_with('/') {
-        Ok(format!("/{}", result.join("/")))
-    } else if result.is_empty() {
-        Ok(".".to_string())
+    if xbuf.is_empty() {
+        Ok(if path.starts_with('/') { "/".to_string() } else { ".".to_string() })
     } else {
-        Ok(result.join("/"))
+        Ok(xbuf)
     }
 }
 
@@ -1789,9 +1836,11 @@ pub fn redup(x: i32, y: i32) -> i32 {                                        // 
 pub fn addmodulefd(fd: i32, fdt: i32) {                                      // c:2091
     // c:2093 — `if (fd >= 0)`.
     if fd >= 0 {
+        // c:2094 — `check_fd_table(fd)` — grow fdtable to cover fd.
+        check_fd_table(fd);                                                  // c:2094
         // c:2095 — `fdtable[fd] = fdt`. Routes through the canonical
-        // helper. `check_fd_table` is currently a no-op stub.
-        fdtable_set(fd, fdt);
+        // helper which mirrors C's direct `fdtable[fd] = fdt` write.
+        fdtable_set(fd, fdt);                                                // c:2095
     }
 }
 
@@ -9237,6 +9286,63 @@ mod tests {
             "c:2054 — fdtable[y] = fdtable[x] (FDT_INTERNAL)");
         // x is closed by c:2064.
         unsafe { libc::close(y); }
+    }
+
+    /// `Src/utils.c:872-908` — `xsymlinks(path)` resolves `.`/`..`
+    /// AND follows ONE LEVEL of symlinks via `readlink(2)`. Pin the
+    /// symlink-following behavior with a temp-dir-managed symlink
+    /// (the actual bug-fix pin — previous Rust port just normalised
+    /// `.`/`..` without ever calling readlink).
+    #[test]
+    #[cfg(unix)]
+    fn xsymlinks_follows_one_level_of_symlinks() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir();
+        let target = tmp.join(format!("zshrs_xsymlinks_target_{}", std::process::id()));
+        let link = tmp.join(format!("zshrs_xsymlinks_link_{}", std::process::id()));
+        // Create target as a regular dir to symlink to.
+        let _ = std::fs::create_dir(&target);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let got = xsymlinks(link.to_str().unwrap()).unwrap();
+        assert_eq!(got, target.to_string_lossy(),
+            "c:908 — xsymlinks must follow the symlink to its target");
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir(&target);
+    }
+
+    /// `Src/utils.c:881-882` — `.` components are skipped.
+    /// `Src/utils.c:883-896` — `..` components walk back one
+    /// `/`-segment of xbuf (unless xbuf is empty or `/`).
+    ///
+    /// Use a temp directory we create ourselves — we can't pin
+    /// `/tmp/...` literally because the macOS sandbox symlinks
+    /// `/tmp -> /private/tmp`, which `xsymlinks` correctly follows
+    /// (proving the bug-fix works). Test with a directory under
+    /// the env tempdir + a non-existent sub so readlink fails on
+    /// every component and the test exercises ONLY the c:881-896
+    /// `.` / `..` paths.
+    #[test]
+    #[cfg(unix)]
+    fn xsymlinks_normalises_dot_and_dotdot() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let base_dir = tmp.join(format!("zshrs_xs_norm_{}", std::process::id()));
+        let _ = std::fs::create_dir(&base_dir);
+        // `<base>/.` should be `<base>` (c:881 — `.` skipped).
+        let arg = format!("{}/./.", base_dir.display());
+        let got = xsymlinks(&arg).unwrap();
+        assert_eq!(got, base_dir.to_string_lossy(),
+            "c:881 — `.` segments collapse");
+        // `<base>/foo/..` should be `<base>` (c:891-895 — `..` walks back).
+        let arg = format!("{}/foo/..", base_dir.display());
+        let got = xsymlinks(&arg).unwrap();
+        assert_eq!(got, base_dir.to_string_lossy(),
+            "c:891-895 — `..` walks back one segment");
+        let _ = std::fs::remove_dir(&base_dir);
     }
 
     /// `Src/utils.c:2055-2056` — when fdtable[x] is FDT_FLOCK or
