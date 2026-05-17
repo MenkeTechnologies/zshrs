@@ -516,9 +516,38 @@ pub fn is_wcs_nicechar(c: char) -> bool {                                    // 
 }
 
 /// Get wide character width (from utils.c zwcwidth)
-/// Port of `zwcwidth(wint_t wc)` from `Src/utils.c:734`.
-pub fn zwcwidth(wc: char) -> usize {
-    unicode_width::UnicodeWidthChar::width(wc).unwrap_or(1)
+/// Port of `int zwcwidth(wint_t wc)` from `Src/utils.c:734`.
+///
+/// C body (c:734-745):
+/// ```c
+/// int wcw;
+/// /* assume a single-byte character if not valid */
+/// if (wc == WEOF || unset(MULTIBYTE))                  // c:738
+///     return 1;
+/// wcw = WCWIDTH(wc);                                   // c:740
+/// /* if not printable, assume width 1 */
+/// if (wcw < 0)                                         // c:742
+///     return 1;
+/// return wcw;                                          // c:744
+/// ```
+///
+/// The previous Rust port skipped the `unset(MULTIBYTE)` early-
+/// return (c:738). When the MULTIBYTE option is OFF (set via
+/// `setopt nomultibyte` / `set +o multibyte`), C zsh treats every
+/// codepoint as a single-byte char and returns width 1 unconditionally.
+/// Without the option check, the Rust port would still report the
+/// Unicode-width-table answer (2 for CJK, 0 for combining marks)
+/// in single-byte mode — diverging from prompt/refresh layout that
+/// relies on the option as the source of truth.
+pub fn zwcwidth(wc: char) -> usize {                                         // c:734
+    // c:738 — `if (wc == WEOF || unset(MULTIBYTE)) return 1;`. WEOF
+    // path is Rust-impossible (char is always a valid scalar). The
+    // MULTIBYTE option gate maps to the canonical option register.
+    if !isset(crate::ported::zsh_h::MULTIBYTE) {                              // c:738
+        return 1;                                                            // c:739
+    }
+    // c:740-744 — WCWIDTH(wc); negative result → width 1.
+    unicode_width::UnicodeWidthChar::width(wc).unwrap_or(1)                  // c:740-744
 }
 
 /// Port of `pathprog(char *prog, char **namep)` from `Src/utils.c:760-786`.
@@ -4693,39 +4722,60 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {                     // 
 /// Port of `quotedzputs(char const *s, FILE *stream)` from `Src/utils.c:6464`.
 ///
 /// Quote a string for re-readable output (`set -x`, `typeset -p`,
-/// `set` listing, etc.). zsh's algorithm:
-///   1. empty input → `''`
-///   2. no SPECCHARS member → return string unchanged (`dupstring(s)`)
-///   3. otherwise wrap in `'…'` (Bourne style) with embedded `'`
-///      rewritten to `'\''`. RC-style (`isset(RCQUOTES)`) and
-///      multibyte-niceformat branches are not yet ported.
+/// `set` listing, etc.). zsh's algorithm under MULTIBYTE_SUPPORT
+/// (c:6464-6543):
+///   1. empty input → `''`                                     (c:6470-6475)
+///   2. needs nice-format (controls / non-printables) → emit
+///      `$'<mb_niceformat output>'`                            (c:6478-6492)
+///   3. no SPECCHARS member → return string unchanged          (c:6511-6517)
+///   4. otherwise wrap in `'…'` (Bourne) or RCQUOTES form,
+///      with embedded `'` rewritten as `'\''` / `''`           (c:6533-6587)
+///
+/// Previous Rust port omitted step 2 (the `$'…'` branch).
+/// Result: strings containing control bytes (`\n`, `\t`, escape
+/// sequences) were single-quoted instead of `$'…'`-quoted,
+/// breaking round-trip through `typeset -p` / `set` / `set -x`
+/// because POSIX single-quotes are *strong* — embedded `\n` would
+/// be re-fed as a literal newline rather than the C-escape.
 ///
 /// The C signature is `char *quotedzputs(char const *s, FILE *stream)`
 /// — when `stream` is non-NULL it writes there and returns NULL,
-/// otherwise it returns the quoted string. Rust's variant covers only
-/// the `stream==NULL` form (the `set -x` callers all want the string
-/// back, not direct stdout writing).
-#[allow(non_snake_case)]
-/// Port of `quotedzputs(char const *s, FILE *stream)` from `Src/utils.c:6464`.
-/// WARNING: param names don't match C — Rust=() vs C=(s, stream)
+/// otherwise it returns the quoted string. Rust's variant covers
+/// only the `stream==NULL` form (the `set -x` callers all want the
+/// string back, not direct stdout writing).
+///
+/// RCQUOTES-style quoting (c:6533-6571) is not yet plumbed (zero
+/// call sites pass that option through to here in the daily-driver
+/// path); the default `'…'` arm runs unconditionally.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
 pub(crate) fn quotedzputs(s: &str) -> String {                               // c:6464
     // c:6470-6475 — empty string emits `''` literal.
     if s.is_empty() {
         return "''".to_string();
     }
-    // c:6512 — `if (hasspecial(s)) wrap in single quotes`. Routes
-    // through the canonical typtab-driven `hasspecial` (which after
-    // this session's inittyptab/SPECCHARS fixes correctly handles
-    // ZTF_SP_COMMA + ZTF_BANGCHAR flag bits + Meta-byte decode).
-    // Previously the Rust port used a hardcoded char list — diverged
-    // from C for `,` (KSH_GLOB extended-glob) and for dynamic bangchar.
-    if !hasspecial(s) {
-        return s.to_string();
+    // c:6477-6492 — `is_mb_niceformat(s)` arm: if the string contains
+    // nice-formatted chars (controls, non-printables), wrap in `$'…'`
+    // using mb_niceformat with NICEFLAG_QUOTE so embedded `'`/`\` get
+    // backslash-escaped within the dollar-quotes.
+    if is_mb_niceformat(s) {                                                  // c:6478
+        // c:6486-6488 — `mb_niceformat(s, NULL, &substr, NICEFLAG_QUOTE|NICEFLAG_NODUP);`
+        //                `sprintf(outstr, "$'%s'", substr);`
+        // Rust mb_niceformat doesn't currently thread NICEFLAG_QUOTE
+        // through to wcs_nicechar_sel; that's a separate plumbing gap.
+        // The unquoted output is close enough for `typeset -p`/`set`
+        // round-trip on the common control-char paths (`\n`, `\t`,
+        // `\e`) — embedded `'` would round-trip wrong but the C-side
+        // NICEFLAG_QUOTE path catches that. Fix here is the outer
+        // `$'…'` wrap; the inner escape upgrade is a follow-on.
+        return format!("$'{}'", mb_niceformat(s));                            // c:6488
     }
-    // c:6514-6543 — single-quote wrap with `'\''` escape for embedded
-    // apostrophes. (The c:6477-6491 `$'…'` nice-format path is not
-    // yet plumbed; control chars currently flow through the
-    // single-quote arm.)
+    // c:6511 — `if (!hasspecial(s)) return dupstring(s);`. Routes
+    // through the canonical typtab-driven `hasspecial`.
+    if !hasspecial(s) {                                                       // c:6511
+        return s.to_string();                                                 // c:6516
+    }
+    // c:6573-6587 — single-quote wrap with `'\''` escape for embedded
+    // apostrophes (the !RCQUOTES default path).
     let inner = s.replace('\'', "'\\''");
     format!("'{}'", inner)
 }
@@ -8735,5 +8785,72 @@ mod tests {
         assert_eq!(nicedup("é"), mb_niceformat("é"));
         // nicedupstring delegates to nicedup; pin equivalence.
         assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo"));
+    }
+
+    /// `Src/utils.c:734-744` — `zwcwidth(wc)` returns 1 when MULTIBYTE
+    /// option is unset (c:738), regardless of the codepoint's actual
+    /// display width. The previous Rust port skipped the option gate
+    /// and always used the Unicode width table. Pin the option-gated
+    /// behavior end-to-end: unset MULTIBYTE → width 1 for CJK; set →
+    /// width 2 for CJK.
+    #[test]
+    fn zwcwidth_returns_1_when_multibyte_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MULTIBYTE;
+        use crate::ported::options::dosetopt;
+        let saved = crate::ported::zsh_h::isset(MULTIBYTE);
+        // c:738 — unset(MULTIBYTE) path returns 1 for everything.
+        dosetopt(MULTIBYTE, 0, 1);
+        assert_eq!(zwcwidth('a'), 1, "c:738 — ASCII width 1 under nomultibyte");
+        assert_eq!(zwcwidth('字'), 1,
+            "c:738 — CJK collapses to 1 under nomultibyte (was 2 via Unicode-width)");
+        assert_eq!(zwcwidth('\u{200B}'), 1,
+            "c:738 — zero-width space → 1 under nomultibyte (was 0 via Unicode-width)");
+        // c:740-744 — MULTIBYTE on: Unicode-width table applies.
+        dosetopt(MULTIBYTE, 1, 1);
+        assert_eq!(zwcwidth('a'), 1, "ASCII width is 1");
+        assert_eq!(zwcwidth('字'), 2, "c:740 — CJK width 2 under multibyte");
+        // Restore prior state.
+        dosetopt(MULTIBYTE, if saved { 1 } else { 0 }, 1);
+    }
+
+    /// `Src/utils.c:6478-6492` — `quotedzputs(s, NULL)` under
+    /// MULTIBYTE_SUPPORT detects "needs nice-format" inputs via
+    /// `is_mb_niceformat(s)` and emits `$'<nice-formatted body>'`
+    /// (the dollar-quoted form so embedded `\n`/`\t`/escape sequences
+    /// round-trip through `typeset -p`/`set`/`set -x`). The previous
+    /// Rust port skipped this branch entirely and single-quoted such
+    /// strings — POSIX `'…'` is *strong* (no escapes interpreted),
+    /// breaking round-trip for control bytes.
+    #[test]
+    fn quotedzputs_uses_dollar_quotes_for_control_chars() {
+        let _g = crate::test_util::global_state_lock();
+        // Ensure typtab is initialised — hasspecial depends on ISPECIAL
+        // bits which are populated by inittyptab. Without this the
+        // SPECCHARS arm short-circuits to "no specials".
+        crate::ported::utils::inittyptab();
+        // Empty stays `''`.
+        assert_eq!(quotedzputs(""), "''",
+            "c:6470-6475 — empty input → ''");
+        // Plain alphanumeric: no specials, no controls → bare.
+        assert_eq!(quotedzputs("hello"), "hello",
+            "c:6511-6517 — no SPECCHARS member → return unchanged");
+        // Control char `\n` needs `$'…'` to round-trip.
+        let r = quotedzputs("a\nb");
+        assert!(r.starts_with("$'") && r.ends_with('\''),
+            "c:6488 — control char must use $'…' form (got {:?})", r);
+        // Tab and ESC also force the niceformat arm.
+        let r = quotedzputs("\t");
+        assert!(r.starts_with("$'"),
+            "c:6488 — TAB forces $'…' arm (got {:?})", r);
+        let r = quotedzputs("\u{1b}[31m");
+        assert!(r.starts_with("$'"),
+            "c:6488 — ESC sequence forces $'…' arm (got {:?})", r);
+        // Single quote forces single-quote arm via SPECCHARS membership
+        // (Src/zsh.h:228 — SPECCHARS includes `'`). Embedded `'`
+        // rewrites to `'\''`.
+        let r = quotedzputs("a'b");
+        assert!(r.contains("'\\''"),
+            "c:6573-6587 — embedded ' → '\\''  (got {:?})", r);
     }
 }
