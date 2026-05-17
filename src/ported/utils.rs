@@ -5942,14 +5942,29 @@ pub fn iwsep_byte(b: u8) -> bool {
     b == b' ' || b == b'\t' || b == b'\n'
 }
 
-/// Port of the `imeta()` macro from `Src/zsh.h`.
+/// Port of `imeta(X)` macro from `Src/ztype.h:60`.
 ///
-/// `#define imeta(c) ((c) >= Meta)` — true for any byte the
-/// metafy/unmetafy machinery treats as needing the Meta-escape.
-/// The previous Rust port had a wrong predicate (control bytes +
-/// 0x7f + Meta itself); the C macro is just `>= Meta`.
-pub fn imeta(c: char) -> bool {
-    (c as u32) >= Meta as u32
+/// C macro: `#define imeta(X) zistype(X, IMETA)` — consults the
+/// `typtab[256]` lookup. The doc-comment previously claimed
+/// `#define imeta(c) ((c) >= Meta)`; that's the **byte-range**
+/// approximation, NOT the actual C macro. Per `Src/utils.c:4195-4201`,
+/// IMETA gets set in typtab on these bytes:
+///   * NUL (`typtab['\0'] |= IMETA;`, c:4195)
+///   * `Meta` byte 0x83 (c:4196)
+///   * `Marker` byte 0xa2 (c:4197)
+///   * ITOK range Pound..Nularg = 0x84..=0xa2 (c:4199-4201)
+///
+/// The previous Rust port returned TRUE for every char ≥ 0x83 —
+/// over-reported for bytes 0xa3..=0xff (legit metafied output, e.g.
+/// high Latin / CJK lead bytes). Route through `imeta_byte` which
+/// has the canonical `NUL ∪ 0x83..=0xa2` set. Wide chars (>0xff)
+/// are out of the IMETA range entirely (the typtab is 256 bytes).
+pub fn imeta(c: char) -> bool {                                              // c:ztype.h:60
+    let code = c as u32;
+    if code > 0xff {
+        return false;
+    }
+    imeta_byte(code as u8)
 }
 
 /// Get hostname
@@ -5971,10 +5986,15 @@ pub fn gethostname() -> String {
         .unwrap_or_else(|| "localhost".to_string())
 }
 
-/// Get current working directory.
-/// C body (compat.c:559, 1 line): `return getcwd(NULL, 0);`
+/// Get current working directory — re-export of the canonical
+/// port at `compat::zgetcwd` (Src/compat.c:559).
+///
+/// Returns `Option<String>` for caller-API compatibility — C's
+/// `zgetcwd` returns a non-NULL `char*` (falls back to `"."`), so
+/// the Some-arm is always taken. `Option` is retained so call sites
+/// like `if let Some(cwd) = utils::zgetcwd()` continue to compile.
 pub fn zgetcwd() -> Option<String> {                                         // c:compat.c:559
-    crate::ported::compat::zgetcwd()
+    Some(crate::ported::compat::zgetcwd())
 }
 
 // `zchdir` duplicate deleted — canonical port at compat.rs:253
@@ -6750,14 +6770,27 @@ mod tests {
     #[test]
     fn test_imeta_macro_threshold() {
         let _g = crate::test_util::global_state_lock();
-        // C `imeta(c) == c >= Meta`. The previous Rust port had
-        // a wrong predicate (control bytes); the C version is just
-        // `>= 0x83`.
-        assert!(!imeta(0x82 as char));
-        assert!(imeta(Meta as char));
-        assert!(imeta(0xff as char));
-        assert!(!imeta(' '));
-        assert!(!imeta('A'));
+        // `Src/ztype.h:60` `imeta(X) zistype(X, IMETA)` — typtab-driven
+        // predicate. Per `Src/utils.c:4195-4201`, IMETA is set on:
+        // NUL, Meta=0x83, Marker=0xa2, and the Pound..Nularg ITOK range
+        // (0x84..=0xa2). The previous Rust port returned `c >= Meta`
+        // which over-reports bytes 0xa3..=0xff as IMETA. Pin the
+        // canonical set: in-range bytes are IMETA; high bytes (0xb0,
+        // 0xff, wide chars) are NOT IMETA.
+        assert!(imeta('\0'),         "c:4195 — NUL is IMETA");
+        assert!(imeta(Meta as char), "c:4196 — Meta (0x83) is IMETA");
+        assert!(imeta(0xa2 as char), "c:4197 — Marker (0xa2) is IMETA");
+        assert!(imeta(0x84 as char), "c:4199-4201 — Pound (0x84) is IMETA via ITOK range");
+        assert!(imeta(0x9b as char), "c:4199-4201 — Dash sentinel within ITOK range is IMETA");
+        // Bytes outside the typtab IMETA set:
+        assert!(!imeta(0x82 as char), "c:4170 — 0x82 is ICNTRL, not IMETA");
+        assert!(!imeta(0xa3 as char), "byte 0xa3 is past Marker — NOT IMETA");
+        assert!(!imeta(0xff as char), "byte 0xff is NOT IMETA (the prior `>= Meta` over-report)");
+        assert!(!imeta(' '),          "space is not IMETA");
+        assert!(!imeta('A'),          "'A' is not IMETA");
+        // Wide chars (>0xff) collapse to false — IMETA typtab is 256 bytes.
+        assert!(!imeta('é'),          "wide char 'é' not in 256-byte IMETA typtab");
+        assert!(!imeta('字'),         "wide CJK not in 256-byte IMETA typtab");
     }
 
     #[test]
