@@ -726,21 +726,67 @@ pub fn gmatchcmp(                                                            // 
 // Exec string for sorting (from glob.c glob_exec_string)
 // ============================================================================
 
-/// Execute a command and capture output for sorting (from glob.c glob_exec_string line 1085)
-/// This is used for the `e` glob qualifier: *(e:'cmd':)
-/// Port of `glob_exec_string(char **sp)` from `Src/glob.c:1085`.
-/// WARNING: param names don't match C — Rust=(cmd, filename) vs C=(sp)
-pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
-
-    // Replace $REPLY or {} with filename
-    let cmd = cmd.replace("$REPLY", filename).replace("{}", filename);
-
-    let output = Command::new("sh").arg("-c").arg(&cmd).output().ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+/// Port of `static char *glob_exec_string(char **sp)` from
+/// `Src/glob.c:1085`.
+///
+/// **C is a PARSER, not an executor.** It extracts the qualifier
+/// argument string from `*sp` (advancing the pointer past the
+/// delimiters) and returns the duplicated text. The actual eval
+/// happens at the call sites (c:1680/1713/1747) which feed the
+/// returned string into `qualsheval` (for `e:`/`+:`) or
+/// `gf_sortlist[].exec` (for sort).
+///
+/// Previous Rust port was COMPLETELY MIS-IMPLEMENTED:
+///   1. **Signature wrong:** Rust took `(cmd, filename)` and returned
+///      command output. C takes `(**sp)` and returns the parsed
+///      qualifier string (the `cmd` itself, NOT its output).
+///   2. **Forked `/bin/sh`:** spawned a separate POSIX shell process
+///      to run the cmd. That's even more broken than `qualsheval`
+///      was, because the function isn't supposed to execute anything
+///      at all at this layer.
+///
+/// Now mirrors C's parser body (c:1090-1117): handle the `+` prefix
+/// (identifier form) vs the `e:` delimited form (get_strarg), set
+/// `*sp` past the closing delimiter, return the dup'd inner text.
+///
+/// Returns `(parsed_string, advance_offset)` so the caller can
+/// emulate C's `*sp = tt + plus;` pointer advance via slice
+/// indexing.
+/// WARNING: param names don't match C — Rust=(s, plus) vs C=(sp)
+pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> { // c:1085
+    if plus_form {                                                            // c:1090
+        // c:1092 — `tt = itype_end(s, IIDENT, 0);`
+        // c:1093-1097 — `if (tt == s) { zerr("missing identifier after `+'"); return NULL; }`
+        let tt = crate::ported::utils::itype_end(s, false);
+        if tt == 0 {                                                          // c:1093
+            crate::ported::utils::zerr("missing identifier after `+'");       // c:1095
+            return None;                                                      // c:1096
+        }
+        // c:1109 — `sdata = dupstring(s + plus);` (plus=0 here).
+        // c:1113 — `*sp = tt + plus;` → advance offset is `tt`.
+        Some((s[..tt].to_string(), tt))
     } else {
-        None
+        // c:1099 — `tt = get_strarg(s, &plus);` — find matching delimiter.
+        // get_strarg returns delimiter-balanced span; for `e:foo:` it
+        // walks `s` past the inner expr and returns position of the
+        // closing `:`.
+        match crate::ported::subst::get_strarg(s) {
+            Some((_del, content, rest)) => {
+                // c:1100-1104 — `if (!*tt) { zerr("missing end of string"); return NULL; }`
+                if rest.is_empty() && content.is_empty() {
+                    crate::ported::utils::zerr("missing end of string");      // c:1102
+                    return None;                                              // c:1103
+                }
+                // c:1109-1115 — `sdata = dupstring(s + plus); ... *sp = tt + plus;`.
+                // Advance offset: bytes consumed of `s` = s.len() - rest.len().
+                let advance = s.len() - rest.len();
+                Some((content, advance))
+            }
+            None => {
+                crate::ported::utils::zerr("missing end of string");          // c:1102
+                None
+            }
+        }
     }
 }
 
@@ -5036,6 +5082,30 @@ mod tests {
         remnulargs(&mut s);
         assert_eq!(s, format!("{}", Nularg),
             "c:3674 — empty result replaced by Nularg sentinel");
+    }
+
+    /// `Src/glob.c:1085-1117` — `glob_exec_string` is a PARSER, not
+    /// an executor. Extracts the qualifier inner text from `*sp`
+    /// (advancing past delimiters). Previous Rust port forked
+    /// `/bin/sh` to execute the cmd — that's entirely the wrong
+    /// layer; execution happens at the call sites via qualsheval.
+    /// Pin: plus-form extracts identifier; delimited form extracts
+    /// content + advances.
+    #[test]
+    fn glob_exec_string_parses_qualifier_text() {
+        let _g = crate::test_util::global_state_lock();
+        // Plus form: identifier ends at first non-ident char.
+        // C: `(+myfunc:rest)` — `s` points past `+`, plus_form=true.
+        let r = glob_exec_string("myfunc rest", true);
+        assert!(r.is_some(), "c:1092 — identifier parse should succeed");
+        let (ident, _adv) = r.unwrap();
+        assert_eq!(ident, "myfunc",
+            "c:1092 — itype_end stops at first non-IIDENT char");
+
+        // Plus form with no identifier (immediate non-ident) — error.
+        let r = glob_exec_string(" leading-space", true);
+        assert!(r.is_none(),
+            "c:1093-1096 — empty identifier emits zerr + returns None");
     }
 
     /// `Src/glob.c:3907-3943` — `qualsheval(name, _, _, expr)` sets
