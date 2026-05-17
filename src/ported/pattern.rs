@@ -1479,8 +1479,8 @@ pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [        // 
 /// return disables;
 /// ```
 ///
-/// Encodes the current `zpc_disables[ZPC_COUNT]` byte-array as a u32
-/// bitmask (one bit per slot, low bit = zpc_disables[0]).
+/// Encodes the current `zpc_disables\[ZPC_COUNT\]` byte-array as a u32
+/// bitmask (one bit per slot, low bit = `zpc_disables\[0\]`).
 /// The previous Rust port returned a `Vec<String>` clone of
 /// `patterndisables` (a completely different data structure — names
 /// list, not the per-token byte array). `restorepatterndisables(u32)`
