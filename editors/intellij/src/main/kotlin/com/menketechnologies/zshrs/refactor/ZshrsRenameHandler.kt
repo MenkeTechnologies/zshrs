@@ -35,11 +35,14 @@ class ZshrsRenameHandler : RenameHandler {
     override fun isRenaming(dataContext: DataContext): Boolean = isAvailableOnDataContext(dataContext)
 
     override fun invoke(project: Project, editor: Editor?, file: PsiFile?, dataContext: DataContext?) {
-        if (editor == null || file == null) return
-        val virtualFile = file.virtualFile ?: return
+        dbg("invoked")
+        if (editor == null) { dbg("ABORT: no editor"); return }
+        if (file == null) { dbg("ABORT: no file"); return }
+        val virtualFile = file.virtualFile ?: run { dbg("ABORT: no virtualFile"); return }
         val server = LspServerManager.getInstance(project)
             .getServersForProvider(ZshrsLspServerSupportProvider::class.java)
-            .firstOrNull() ?: return
+            .firstOrNull()
+        if (server == null) { dbg("ABORT: no LSP server"); return }
 
         val offset = editor.caretModel.offset
         val doc = editor.document
@@ -48,6 +51,8 @@ class ZshrsRenameHandler : RenameHandler {
         val pos = Position(line, col)
 
         val identifier = identifierAt(doc.charsSequence, offset)
+        dbg("caret line=$line col=$col identifier='$identifier'")
+
         val newName = Messages.showInputDialog(
             project,
             "Rename '${identifier.ifEmpty { "<identifier>" }}' to:",
@@ -55,29 +60,67 @@ class ZshrsRenameHandler : RenameHandler {
             null,
             identifier,
             null,
-        ) ?: return
-        if (newName.isBlank() || newName == identifier) return
+        )
+        if (newName == null) { dbg("ABORT: user cancelled"); return }
+        if (newName.isBlank()) { dbg("ABORT: blank newName"); return }
+        if (newName == identifier) { dbg("ABORT: unchanged"); return }
+        dbg("newName='$newName'")
 
         val params = RenameParams(
             TextDocumentIdentifier(server.getDocumentIdentifier(virtualFile).uri),
             pos,
             newName,
         )
-        val edit: WorkspaceEdit? = server.sendRequestSync(
-            LspServer.DEFAULT_REQUEST_TIMEOUT_MS,
-        ) { lsp4j -> lsp4j.textDocumentService.rename(params) }
-
-        if (edit == null) return
-
-        val changes = edit.changes ?: emptyMap()
-        WriteCommandAction.runWriteCommandAction(project) {
-            for ((uri, edits) in changes) {
-                val vf = VirtualFileManager.getInstance().findFileByUrl(uri) ?: continue
-                val document = FileDocumentManager.getInstance().getDocument(vf) ?: continue
-                applyTextEdits(document, edits)
+        dbg("sending textDocument/rename uri=${params.textDocument.uri}")
+        val edit: WorkspaceEdit? = try {
+            server.sendRequestSync(LspServer.DEFAULT_REQUEST_TIMEOUT_MS) { lsp4j ->
+                lsp4j.textDocumentService.rename(params)
             }
+        } catch (t: Throwable) {
+            dbg("EXCEPTION sending rename: ${t::class.java.simpleName}: ${t.message}")
+            Messages.showErrorDialog(project, "LSP rename request failed: ${t.message}", "Rename")
+            return
+        }
+        if (edit == null) {
+            dbg("ABORT: LSP returned null WorkspaceEdit")
+            return
+        }
+        dbg("got WorkspaceEdit changes=${edit.changes?.size ?: 0} documentChanges=${edit.documentChanges?.size ?: 0}")
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            var totalEdits = 0
+            edit.changes?.forEach { (uri, edits) ->
+                val vf = VirtualFileManager.getInstance().findFileByUrl(uri)
+                if (vf == null) { dbg("no VirtualFile for uri=$uri"); return@forEach }
+                val document = FileDocumentManager.getInstance().getDocument(vf)
+                if (document == null) { dbg("no Document for $uri"); return@forEach }
+                dbg("applying ${edits.size} edits to $uri")
+                applyTextEdits(document, edits)
+                totalEdits += edits.size
+            }
+            edit.documentChanges?.forEach { dc ->
+                if (dc.isLeft) {
+                    val tde = dc.left ?: return@forEach
+                    val uri = tde.textDocument.uri
+                    val vf = VirtualFileManager.getInstance().findFileByUrl(uri)
+                    if (vf == null) { dbg("no VirtualFile for uri=$uri (docChanges)"); return@forEach }
+                    val document = FileDocumentManager.getInstance().getDocument(vf)
+                    if (document == null) { dbg("no Document for $uri (docChanges)"); return@forEach }
+                    dbg("applying ${tde.edits.size} edits to $uri (docChanges)")
+                    applyTextEdits(document, tde.edits)
+                    totalEdits += tde.edits.size
+                } else {
+                    dbg("skipping non-edit documentChange: ${dc.right?.javaClass?.simpleName}")
+                }
+            }
+            dbg("totalEdits applied = $totalEdits")
         }
         FileDocumentManager.getInstance().saveAllDocuments()
+        dbg("done")
+    }
+
+    private fun dbg(msg: String) {
+        com.menketechnologies.zshrs.ZshrsDebugLog.log("rename", msg)
     }
 
     override fun invoke(project: Project, elements: Array<PsiElement>, dataContext: DataContext?) {}
