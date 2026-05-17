@@ -831,9 +831,58 @@ impl modulestab {
     }
 
     // Remove an autoloaded added by add_autobin                             // c:464
-    /// Remove autoloading builtin (from module.c del_autobin)
-    pub fn del_autobin(&mut self, name: &str) {                             // c:464
-        self.autoload_builtins.remove(name);
+    /// Port of `static int del_autobin(const char *module, const char *bnam,
+    /// int flags)` from `Src/module.c:464`.
+    ///
+    /// C body (c:464-478):
+    /// ```c
+    /// Builtin bn = (Builtin) builtintab->getnode2(builtintab, bnam);
+    /// if (!bn) { if(!(flags & FEAT_IGNORE)) return 2; }
+    /// else if (bn->node.flags & BINF_ADDED) {
+    ///     if (!(flags & FEAT_IGNORE)) return 3;
+    /// } else deletebuiltin(bnam);
+    /// return 0;
+    /// ```
+    ///
+    /// 2 = "no such builtin", 3 = "real registered builtin (BINF_ADDED) —
+    /// can't unload", 0 = success (removed autoload entry).
+    /// FEAT_IGNORE masks both error returns.
+    ///
+    /// zshrs architecture: `builtintab` is static-linked at startup
+    /// (`createbuiltintable()` builds an immutable HashMap), so every
+    /// entry there is effectively BINF_ADDED. The autoload-only entries
+    /// live in `self.autoload_builtins`. The faithful mapping:
+    ///   * if name is in `builtintab` → BINF_ADDED → return 3 (or 0 with
+    ///     FEAT_IGNORE).
+    ///   * else if name is in `autoload_builtins` → remove it, return 0.
+    ///   * else → not present → return 2 (or 0 with FEAT_IGNORE).
+    /// WARNING: param names don't match C — Rust=(name, flags) vs C=(module, bnam, flags)
+    pub fn del_autobin(&mut self, name: &str, flags: i32) -> i32 {          // c:464
+        use crate::ported::module::FEAT_IGNORE;
+        // c:466 — `builtintab->getnode2(builtintab, bnam)`.
+        let bn = crate::ported::builtin::createbuiltintable().get(name);
+        if bn.is_none() {                                                    // c:467
+            // c:468-469 — `if(!(flags & FEAT_IGNORE)) return 2;`
+            // Static-linked entries always count as the builtintab — but
+            // a name that's neither there nor in autoload IS "no such".
+            if !self.autoload_builtins.contains_key(name) {
+                if (flags & FEAT_IGNORE as i32) == 0 {                       // c:468
+                    return 2;                                                // c:469
+                }
+                return 0;
+            }
+            // c:475 — `deletebuiltin(bnam);` Rust path: drop autoload entry.
+            self.autoload_builtins.remove(name);                             // c:475
+            return 0;                                                        // c:477
+        }
+        // c:470-473 — `if (bn->node.flags & BINF_ADDED) { if (!FEAT_IGNORE)
+        //               return 3; }` else deletebuiltin. zshrs's
+        // `builtintab` is static-linked so every entry there is
+        // semantically BINF_ADDED — can't unload a built-in builtin.
+        if (flags & FEAT_IGNORE as i32) == 0 {                               // c:471
+            return 3;                                                        // c:472
+        }
+        0                                                                    // c:477
     }
 
     /// Set/clear a slice of builtins per `e[]` mask.
@@ -1073,11 +1122,62 @@ impl modulestab {
         0                                                                    // c:1227,1233 ret=0
     }
 
-    /// Remove autoloading parameter (from module.c del_autoparam)
-/// Port of `del_autoparam(UNUSED(const char *modnam), const char *pnam, int flags)` from `Src/module.c:1235`.
-    /// WARNING: param names don't match C — Rust=(name) vs C=(modnam, pnam, flags)
-    pub fn del_autoparam(&mut self, name: &str) {
-        self.autoload_params.remove(name);
+    /// Port of `static int del_autoparam(const char *modnam, const char *pnam,
+    /// int flags)` from `Src/module.c:1240`.
+    ///
+    /// C body (c:1240-1255):
+    /// ```c
+    /// Param pm = (Param) gethashnode2(paramtab, pnam);
+    /// if (!pm) { if (!(flags & FEAT_IGNORE)) return 2; }
+    /// else if (!(pm->node.flags & PM_AUTOLOAD)) {
+    ///     if (!(flags & FEAT_IGNORE)) return 3;
+    /// } else unsetparam_pm(pm, 0, 1);
+    /// return 0;
+    /// ```
+    ///
+    /// 2 = "no such param", 3 = "real param (not autoload) — can't
+    /// unload", 0 = success. FEAT_IGNORE masks both error returns.
+    /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, pnam, flags)
+    pub fn del_autoparam(&mut self, name: &str, flags: i32) -> i32 {        // c:1240
+        use crate::ported::module::FEAT_IGNORE;
+        use crate::ported::zsh_h::PM_AUTOLOAD;
+        // c:1242 — `gethashnode2(paramtab, pnam)`. Rust paramtab lookup.
+        let pm_flags = crate::ported::params::paramtab().read().ok()
+            .and_then(|t| t.get(name).map(|p| p.node.flags));
+        match pm_flags {
+            None => {                                                        // c:1244 if (!pm)
+                // c:1245-1246 — `if (!(flags & FEAT_IGNORE)) return 2;`
+                // Also check autoload_params: a name only in the autoload
+                // ledger (no live Param entry yet) is the same as "not
+                // present" from C's perspective.
+                if !self.autoload_params.contains_key(name) {
+                    if (flags & FEAT_IGNORE as i32) == 0 {
+                        return 2;                                            // c:1246
+                    }
+                    return 0;
+                }
+                // Cleanup the autoload ledger entry.
+                self.autoload_params.remove(name);
+                0                                                            // c:1254
+            }
+            Some(f) if (f as u32 & PM_AUTOLOAD) == 0 => {                    // c:1247
+                // c:1248-1249 — real param, not just autoload → return 3.
+                if (flags & FEAT_IGNORE as i32) == 0 {                       // c:1248
+                    return 3;                                                // c:1249
+                }
+                0                                                            // c:1254
+            }
+            Some(_) => {
+                // c:1252 — `unsetparam_pm(pm, 0, 1);` — the param is
+                // marked PM_AUTOLOAD so just removing it from paramtab
+                // (the Rust analog of unsetparam_pm) is the right move.
+                if let Ok(mut t) = crate::ported::params::paramtab().write() {
+                    t.remove(name);                                          // c:1252
+                }
+                self.autoload_params.remove(name);
+                0                                                            // c:1254
+            }
+        }
     }
 
     // `addwrapper` / `deletewrapper` deleted — Rust-only stubs that
