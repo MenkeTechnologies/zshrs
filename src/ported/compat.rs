@@ -243,13 +243,42 @@ pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
 }
 
 /// Get the current working directory.
-/// Port of `zgetcwd()` from Src/compat.c:559 — wraps
-/// `getcwd(3)` with a long-path-tolerant fallback. Rust's
-/// `current_dir()` covers the same range.
-pub fn zgetcwd() -> Option<String> {                                        // c:559
-    env::current_dir()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
+/// Port of `char *zgetcwd(void)` from `Src/compat.c:559`.
+///
+/// C body (c:559-567):
+/// ```c
+/// char *ret = zgetdir(NULL);                  // c:561
+/// if (!ret)                                   // c:562
+///     ret = unmeta(pwd);                      // c:563
+/// if (!ret || *ret == '\0')                   // c:564
+///     ret = dupstring(".");                   // c:565
+/// return ret;                                 // c:566
+/// ```
+///
+/// Three-level fallback: real cwd via `zgetdir(NULL)`, then the
+/// shell's `$pwd` parameter (unmetafied), then literal `"."`. The
+/// previous Rust port only did the first level (`env::current_dir()`)
+/// and returned `None` on failure — dropping the documented fallback
+/// chain. Callers (`pwd` builtin, prompt expansion, etc.) reading
+/// `zgetcwd()` would get `None` instead of `"."` when the filesystem
+/// cwd became inaccessible (deleted dir, perm denied), diverging
+/// from zsh which always returns a non-empty string.
+pub fn zgetcwd() -> String {                                                 // c:559
+    // c:561 — `ret = zgetdir(NULL);`
+    if let Some(ret) = zgetdir(None) {                                       // c:561
+        if !ret.is_empty() {                                                 // c:564 — !*ret == '\0' check
+            return ret;
+        }
+    }
+    // c:562-563 — `if (!ret) ret = unmeta(pwd);` — fall back to shell $pwd.
+    if let Some(pwd) = crate::ported::params::getsparam("pwd") {             // c:563
+        let unmeta_pwd = crate::ported::utils::unmeta(&pwd);                 // c:563
+        if !unmeta_pwd.is_empty() {                                          // c:564
+            return unmeta_pwd;
+        }
+    }
+    // c:564-565 — `if (!ret || *ret == '\0') ret = dupstring(".");`.
+    ".".to_string()                                                          // c:565
 }
 
 /// Change directory with long-pathname support.
@@ -508,9 +537,10 @@ mod tests {
     #[test]
     fn test_zgetcwd() {
         let _g = crate::test_util::global_state_lock();
+        // c:559-566 — zgetcwd always returns a non-empty string (falls
+        // through to `dupstring(".")` if all higher paths fail).
         let cwd = zgetcwd();
-        assert!(cwd.is_some());
-        assert!(!cwd.unwrap().is_empty());
+        assert!(!cwd.is_empty(), "c:564-565 — zgetcwd never returns empty");
     }
 
     #[test]
@@ -731,5 +761,40 @@ mod tests {
         // host value (Linux: typically 1024, macOS: 10240).
         let m = zopenmax();
         assert!(m > 0, "c:307 — zopenmax must report a positive ceiling");
+    }
+
+    /// `Src/compat.c:559-567` — `zgetcwd()` C body falls through the
+    /// chain `zgetdir(NULL) || unmeta(pwd) || "."` and ALWAYS returns
+    /// a non-NULL, non-empty string. Pin the c:564-565 final fallback:
+    /// even when current_dir() succeeds, the returned string is
+    /// non-empty and starts with `/` (absolute on every Unix). And
+    /// pin the "." fallback by simulating both prior arms failing.
+    #[test]
+    fn zgetcwd_always_returns_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let cwd = zgetcwd();
+        assert!(!cwd.is_empty(),
+            "c:564-565 — zgetcwd must NEVER return empty (falls through to dupstring(\".\"))");
+        // First fallback (current_dir) succeeds in normal test env →
+        // expect an absolute path.
+        #[cfg(unix)]
+        {
+            assert!(cwd.starts_with('/') || cwd == ".",
+                "c:561 — zgetdir(NULL) returns absolute path, or c:565 fallback `.`");
+        }
+    }
+
+    /// `Src/compat.c:559-567` — the `utils.rs` re-export wraps the
+    /// canonical compat port in `Some(...)` for caller-API back-compat
+    /// (Option-returning shape). Pin the wrap: `utils::zgetcwd()`
+    /// returns Some(non-empty) iff `compat::zgetcwd()` returns non-empty.
+    #[test]
+    fn utils_zgetcwd_reexport_wraps_compat_in_some() {
+        let _g = crate::test_util::global_state_lock();
+        let from_utils = crate::ported::utils::zgetcwd();
+        assert!(from_utils.is_some(),
+            "utils::zgetcwd always Some — C zsh's zgetcwd is non-NULL");
+        assert_eq!(from_utils.unwrap(), zgetcwd(),
+            "utils re-export must match compat port byte-for-byte");
     }
 }
