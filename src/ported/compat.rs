@@ -282,45 +282,138 @@ pub fn zgetcwd() -> String {                                                 // 
 }
 
 /// Change directory with long-pathname support.
-/// Port of `zchdir(char *dir)` from Src/compat.c:579 — falls back to
-/// component-by-component descent when a single `chdir(2)` call
-/// fails (typically `ENAMETOOLONG`). Returns `0` on success,
-/// `-1` on normal failure, `-2` if the cwd was lost mid-walk.
-pub fn zchdir(dir: &str) -> i32 {                                           // c:579
-    if dir.is_empty() {
-        return 0;
-    }
-
-    // Try direct chdir first
-    if env::set_current_dir(dir).is_ok() {
-        return 0;
-    }
-
-    // For long paths, try changing incrementally
-    let path = Path::new(dir);
-    if !path.is_absolute() {
-        return -1;
-    }
-
-    // Save current directory
-    let saved_dir = env::current_dir().ok();
-
-    // Try to change directory component by component
-    let mut current = PathBuf::from("/");
-    for component in path.components().skip(1) {
-        current.push(component);
-        if env::set_current_dir(&current).is_err() {
-            // Try to restore
-            if let Some(ref saved) = saved_dir {
-                if env::set_current_dir(saved).is_err() {
-                    return -2; // Lost current directory
+/// Port of `int zchdir(char *dir)` from `Src/compat.c:579`.
+///
+/// chdir with arbitrary long pathname support. Returns:
+///   * `0`  — success
+///   * `-1` — normal `chdir(2)` failure (ENOENT, EACCES, etc.)
+///   * `-2` — current directory was lost mid-walk (saved fchdir failed)
+///
+/// C body (c:579-627):
+/// ```c
+/// for (;;) {
+///     if (!*dir || chdir(dir) == 0) {
+///         if (currdir >= 0) close(currdir);
+///         return 0;
+///     }
+///     if ((errno != ENAMETOOLONG && errno != ENOMEM) ||
+///         strlen(dir) < PATH_MAX)
+///         break;                                  // c:594 — give up
+///     for (s = dir + PATH_MAX - 1; s > dir && *s != '/'; s--)
+///         ;                                       // c:595 — find slash near boundary
+///     if (s == dir) break;
+///     if (currdir == -2) currdir = open(".", ...);
+///     *s = '\0';
+///     if (chdir(dir) < 0) { *s = '/'; break; }
+///     *s = '/';
+///     while (*++s == '/') ;
+///     dir = s;                                    // c:614 — recurse with tail
+/// }
+/// ```
+///
+/// Three divergences in the previous Rust port (now fixed):
+///   1. **Always entered fallback path on chdir failure.** C only
+///      tries the chunked descent when errno is `ENAMETOOLONG` /
+///      `ENOMEM` AND `strlen(dir) >= PATH_MAX` (c:592-593). For
+///      normal failures (ENOENT, EACCES) C returns -1 immediately;
+///      Rust would walk the path component-by-component, exposing
+///      partial-path side effects (e.g. successful descent into a
+///      readable parent before failing).
+///   2. **Did single-component descent instead of PATH_MAX chunking.**
+///      C splits at the last `/` before the PATH_MAX boundary
+///      (c:595), chdirs to that prefix, then loops with the tail.
+///      Rust pushed one component at a time which has different
+///      observable behaviour when components are themselves long.
+///   3. **Gated fallback on `path.is_absolute()`.** C doesn't —
+///      it walks any path that's long enough, relative or absolute.
+///
+/// Now mirrors C's algorithm: try direct chdir; on long-path errno
+/// + `len >= PATH_MAX`, find slash near boundary, chdir to prefix,
+/// continue with tail.
+pub fn zchdir(dir: &str) -> i32 {                                            // c:579
+    #[cfg(unix)]
+    {
+        let path_max: usize = libc::PATH_MAX as usize;
+        let mut remaining: Vec<u8> = dir.as_bytes().to_vec();
+        let mut saved_currdir: i32 = -2;                                    // c:582
+        loop {
+            // c:585 — `if (!*dir || chdir(dir) == 0) { close + return 0; }`
+            if remaining.is_empty() {
+                if saved_currdir >= 0 {
+                    unsafe { libc::close(saved_currdir); }
                 }
+                return 0;
             }
-            return -1;
+            let c_dir = match std::ffi::CString::new(remaining.clone()) {
+                Ok(c) => c,
+                Err(_) => return -1,  // NUL byte in path — chdir would fail anyway.
+            };
+            let rc = unsafe { libc::chdir(c_dir.as_ptr()) };
+            if rc == 0 {                                                    // c:585
+                if saved_currdir >= 0 {                                     // c:587
+                    unsafe { libc::close(saved_currdir); }                  // c:588
+                }
+                return 0;                                                   // c:590
+            }
+            // c:592-594 — only the ENAMETOOLONG/ENOMEM + long path arm
+            // attempts the chunked descent. Everything else gives up.
+            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let ok_errno = err == libc::ENAMETOOLONG || err == libc::ENOMEM;
+            if !ok_errno || remaining.len() < path_max {                    // c:592-594
+                break;
+            }
+            // c:595-596 — find last `/` strictly before PATH_MAX.
+            let mut s_idx: isize = (path_max - 1) as isize;
+            while s_idx > 0 && remaining.get(s_idx as usize) != Some(&b'/') {
+                s_idx -= 1;
+            }
+            if s_idx == 0 {                                                 // c:597 — no slash to split at
+                break;
+            }
+            // c:600-601 — first time we split, save the cwd via `open(".")`
+            // so we can restore on later failure.
+            if saved_currdir == -2 {                                        // c:600
+                let dot = std::ffi::CString::new(".").unwrap();
+                saved_currdir = unsafe {
+                    libc::open(dot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)
+                };
+            }
+            // c:603-606 — `*s = '\0'; chdir(dir); *s = '/';`. Try the prefix.
+            let prefix: Vec<u8> = remaining[..s_idx as usize].to_vec();
+            let c_prefix = match std::ffi::CString::new(prefix) {
+                Ok(c) => c,
+                Err(_) => break,
+            };
+            if unsafe { libc::chdir(c_prefix.as_ptr()) } < 0 {              // c:604
+                break;
+            }
+            // c:611-614 — `while (*++s == '/') ;` skip consecutive slashes,
+            // then `dir = s;` recurse with tail.
+            let mut tail_start = s_idx as usize + 1;
+            while tail_start < remaining.len() && remaining[tail_start] == b'/' {
+                tail_start += 1;
+            }
+            remaining = remaining[tail_start..].to_vec();
         }
+        // c:616-626 — restore on lost-cwd path; return -1 if restored,
+        // -2 if even the restore failed (cwd genuinely lost).
+        if saved_currdir >= 0 {                                             // c:617
+            let rc = unsafe { libc::fchdir(saved_currdir) };
+            unsafe { libc::close(saved_currdir); }                          // c:619 / c:622
+            if rc < 0 {                                                     // c:618
+                return -2;                                                  // c:620
+            }
+            return -1;                                                      // c:623
+        }
+        // c:626 — never entered the split path: it's a plain -1.
+        if saved_currdir == -2 { -1 } else { -2 }                           // c:626
     }
-
-    0
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, env::set_current_dir);
+        if dir.is_empty() { return 0; }
+        match env::set_current_dir(dir) { Ok(_) => 0, Err(_) => -1 }
+    }
 }
 
 /// Format a 64-bit signed integer for output.
@@ -796,5 +889,51 @@ mod tests {
             "utils::zgetcwd always Some — C zsh's zgetcwd is non-NULL");
         assert_eq!(from_utils.unwrap(), zgetcwd(),
             "utils re-export must match compat port byte-for-byte");
+    }
+
+    /// `Src/compat.c:579-590` — `zchdir("")` returns 0 immediately
+    /// (c:585 `if (!*dir || chdir(dir) == 0)`). Pins the empty-path
+    /// short-circuit so a refactor of the loop init doesn't break it.
+    #[test]
+    fn zchdir_empty_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zchdir(""), 0,
+            "c:585 — empty dir short-circuits to success");
+    }
+
+    /// `Src/compat.c:579-594` — direct `chdir(2)` success path: when
+    /// the input is a valid existing directory (no name-too-long
+    /// error), zchdir returns 0 without entering the chunked descent.
+    /// Pin a normal absolute path under the current cwd works.
+    #[test]
+    fn zchdir_existing_path_succeeds_without_fallback() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::current_dir().unwrap();
+        // c:585 — direct chdir success.
+        let rc = zchdir("/");
+        assert_eq!(rc, 0, "c:585 — zchdir(\"/\") direct success");
+        // Restore for downstream tests.
+        std::env::set_current_dir(&saved).unwrap();
+    }
+
+    /// `Src/compat.c:579-594` — direct chdir failure with a
+    /// non-name-too-long errno (ENOENT) MUST return -1 immediately,
+    /// NOT enter the chunked descent. The previous Rust port walked
+    /// the path component-by-component on any failure, exposing
+    /// partial side-effects (e.g. successful descent into a readable
+    /// parent before failing on the missing component).
+    #[test]
+    fn zchdir_nonexistent_path_returns_minus_one_without_fallback() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::current_dir().unwrap();
+        // Path that exists up to /tmp but not the last component →
+        // chdir fails with ENOENT. C returns -1 without trying the
+        // chunked descent (path < PATH_MAX so c:593 fails the gate).
+        let rc = zchdir("/tmp/this_zshrs_test_path_does_not_exist_xyz_abc");
+        assert_eq!(rc, -1,
+            "c:592-594 — non-ENAMETOOLONG failure breaks loop, returns -1");
+        // cwd unchanged.
+        assert_eq!(std::env::current_dir().unwrap(), saved,
+            "no chdir side-effect on non-recoverable failure");
     }
 }
