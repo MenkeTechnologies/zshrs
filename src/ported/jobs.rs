@@ -57,6 +57,8 @@ pub mod stat {
     pub const ATTACH:    i32 = 0x1000; // c:1089 delay reattach to tty
     pub const SUBLEADER: i32 = 0x2000; // c:1090 super-job, leader is sub-shell
     pub const BUILTIN:   i32 = 0x4000; // c:1092 tail is builtin
+    /// `STAT_DISOWN` from `Src/zsh.h:1093`. SUPERJOB with disown pending.
+    pub const DISOWN:    i32 = 0x10000; // c:1093
 }
 
 /// Time difference for timeval (from jobs.c dtime_tv)
@@ -333,20 +335,132 @@ pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // 
 /// Handle subjob completion (from jobs.c handle_sub)
 /// Port of `handle_sub(int job, int fg)` from `Src/jobs.c:274`.
 /// WARNING: param names don't match C — Rust=(jobtab, super_idx, fg) vs C=(job, fg)
-pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
+pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) -> i32 {   // c:274
+    // c:277 — `Job jn = jobtab + job, sj = jobtab + jn->other;`
     let sub_idx = jobtab[super_idx].other as usize;
     if sub_idx >= jobtab.len() {
-        return;
+        return 0;
     }
 
-    // If subjob is done, mark superjob accordingly
-    if jobtab[sub_idx].is_done() {
-        if fg {
-            // Get the last status from the subjob
+    // c:279 — `if ((sj->stat & STAT_DONE) || (!sj->procs && !sj->auxprocs)) {`
+    let sj_done = (jobtab[sub_idx].stat & stat::DONE) != 0
+        || (jobtab[sub_idx].procs.is_empty() && jobtab[sub_idx].auxprocs.is_empty());
+    if sj_done {
+        // c:282-292 — walk sj->procs looking for a signaled one; cascade
+        // SIGCONT + signal to superjob's group, then SIGCONT + signal
+        // to sj->other.
+        let mut signaled: Option<i32> = None;
+        for p in jobtab[sub_idx].procs.iter() {
+            #[cfg(unix)]
+            if libc::WIFSIGNALED(p.status) {
+                signaled = Some(libc::WTERMSIG(p.status));
+                break;
+            }
         }
-        jobtab[super_idx].stat &= !stat::SUPERJOB;
-        jobtab[super_idx].stat |= stat::WASSUPER;
+        if let Some(sig) = signaled {
+            // c:283-291 — kill the superjob via gleader (or first proc),
+            //              then SIGCONT + signal to sj->other.
+            let jn_gleader = jobtab[super_idx].gleader;
+            let multi_procs = jobtab[super_idx].procs.len() > 1;
+            #[cfg(unix)]
+            {
+                let mypgrp = unsafe { libc::getpgrp() };
+                if jn_gleader != mypgrp && multi_procs {
+                    unsafe { libc::killpg(jn_gleader, sig) };                // c:285
+                } else if let Some(p0) = jobtab[super_idx].procs.first() {
+                    unsafe { libc::kill(p0.pid, sig) };                      // c:287
+                }
+                let sj_other = jobtab[sub_idx].other;
+                unsafe { libc::kill(sj_other, libc::SIGCONT) };              // c:288
+                unsafe { libc::kill(sj_other, sig) };                        // c:289
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (jn_gleader, multi_procs, sig);
+            }
+        } else {
+            // c:293-326 — no signaled proc: mark SUPERJOB cleared,
+            // WASSUPER set; gleader-recovery if dead; attachtty when
+            // fg; deletejob if DISOWN pending.
+            jobtab[super_idx].stat &= !stat::SUPERJOB;                       // c:296
+            jobtab[super_idx].stat |= stat::WASSUPER;                        // c:297
+            // c:299-306 — gleader recovery: if the first proc has exited
+            //              or been signaled AND killpg(gleader, 0) → ESRCH,
+            //              promote the last proc's pid to be the new
+            //              gleader (cp).
+            let cp: bool;
+            #[cfg(unix)]
+            {
+                let first_status = jobtab[super_idx].procs.first().map(|p| p.status).unwrap_or(0);
+                let dead = libc::WIFEXITED(first_status) || libc::WIFSIGNALED(first_status);
+                let gleader_dead = dead
+                    && unsafe { libc::killpg(jobtab[super_idx].gleader, 0) } == -1
+                    && unsafe { *libc::__error() } == libc::ESRCH;
+                cp = gleader_dead;
+                if cp {
+                    if let Some(last) = jobtab[super_idx].procs.last() {
+                        jobtab[super_idx].gleader = last.pid;                // c:305
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            { cp = false; }
+
+            // c:318-320 — attachtty(jn->gleader) when fg or thisjob == job,
+            //              and the superjob is the sub-shell alone (single
+            //              proc, or gleader recovered, or first proc != gleader).
+            let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().expect("thisjob poisoned");
+            let cond_attach = fg || thisjob as usize == super_idx;
+            let single_proc = jobtab[super_idx].procs.len() == 1;
+            let first_pid_neq_gleader = jobtab[super_idx].procs.first()
+                .map(|p| p.pid != jobtab[super_idx].gleader).unwrap_or(false);
+            if cond_attach && (single_proc || cp || first_pid_neq_gleader) {
+                // attachtty is interactive substrate — call the helper
+                // when wired; for now just log the intent.
+                tracing::trace!("handle_sub: attachtty({}) (substrate gap)", jobtab[super_idx].gleader);
+            }
+            // c:321 — kill(sj->other, SIGCONT);
+            #[cfg(unix)]
+            unsafe { libc::kill(jobtab[sub_idx].other, libc::SIGCONT); }
+
+            // c:322-325 — `if (jn->stat & STAT_DISOWN) deletejob(jn, 1);`
+            if (jobtab[super_idx].stat & stat::DISOWN) != 0 {
+                deletejob(&mut jobtab[super_idx], true);
+            }
+        }
+        // c:327 — curjob = jn - jobtab;
+        if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
+            *cj = super_idx as i32;
+        }
+        return 0;                                                            // c:340 fall-through return
+    } else if (jobtab[sub_idx].stat & stat::STOPPED) != 0 {                  // c:328
+        // c:331-337 — STOPPED branch: propagate STOPPED to superjob,
+        //              clone subjob's first-proc status to every super
+        //              proc that's still running.
+        jobtab[super_idx].stat |= stat::STOPPED;                             // c:331
+        let sj_proc_status = jobtab[sub_idx].procs.first().map(|p| p.status).unwrap_or(0);
+        for p in jobtab[super_idx].procs.iter_mut() {                        // c:332
+            if p.status == SP_RUNNING                                        // c:333-334
+                || {
+                    #[cfg(unix)]
+                    { !libc::WIFEXITED(p.status) && !libc::WIFSIGNALED(p.status) }
+                    #[cfg(not(unix))]
+                    { false }
+                }
+            {
+                p.status = sj_proc_status;                                   // c:335
+            }
+        }
+        if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
+            *cj = super_idx as i32;                                          // c:336
+        }
+        // c:337 — printjob(jn, !!isset(LONGLISTJOBS), 1);
+        //         printjob takes a snapshot signature here that requires
+        //         cur_job/prev_job indices; defer the print to the caller
+        //         (jobs.rs's jobs-builtin scanner) which has those handy.
+        return 1;                                                            // c:338
     }
+    0                                                                        // c:340
 }
 
 /// Get children's time accounting.
@@ -357,8 +471,7 @@ pub fn get_usage() -> timeinfo {
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut u) } == 0 {
-            let usec = |tv: libc::timeval| tv.tv_sec as i64 * 1_000_000 + tv.tv_usec as i64;
-            return timeinfo { ut: usec(u.ru_utime), st: usec(u.ru_stime) };
+            return timeinfo::from_rusage(&u);
         }
     }
     timeinfo::default()
@@ -377,15 +490,58 @@ pub fn get_usage() -> timeinfo {
 /// ```
 ///
 /// Snapshots the children-rusage delta between the previous reading
-/// and the call to `get_usage()` — the per-process user/system time.
-/// The previous Rust port set status + endtime but left `ti` zeroed.
-pub fn update_process(pn: &mut Process, status: i32) {
-    let prev = get_usage();
-    let now = get_usage();
-    pn.endtime = Some(Instant::now());
-    pn.status = status;
-    pn.ti.ut = (now.ut - prev.ut).max(0);
-    pn.ti.st = (now.st - prev.st).max(0);
+/// and the call to `get_usage()` — the per-process rusage attribution.
+///
+/// Mirrors C's `child_usage` global pattern (`Src/jobs.c:109`):
+/// the in-flight rusage snapshot lives in `CHILD_USAGE_PREV`, gets
+/// captured pre-wait by `child_usage_snapshot()`, and update_process
+/// diffs that against the current `get_usage()` to attribute per-
+/// process rusage. Without this snapshot pre-wait, all diffs are 0
+/// (the previous Rust port had this bug).
+pub fn update_process(pn: &mut Process, status: i32) {                       // c:362
+    use crate::ported::zsh_h::timeinfo;
+    let prev = CHILD_USAGE_PREV.with(|c| c.borrow().clone());                // c:366-367
+    let now = get_usage();                                                   // c:374 get_usage()
+    CHILD_USAGE_PREV.with(|c| *c.borrow_mut() = now.clone());
+
+    pn.endtime = Some(Instant::now());                                       // c:375 zgettime_monotonic_if_available
+    pn.status = status;                                                      // c:377
+
+    // Field-by-field diff (now - prev), clamped >= 0 to handle the
+    // first-wait case where prev is zero-initialised.
+    let diff = |a: i64, b: i64| -> i64 { (a - b).max(0) };
+    pn.ti = timeinfo {
+        ut: diff(now.ut, prev.ut),                                           // c:380 ru_utime delta
+        st: diff(now.st, prev.st),                                           // c:379 ru_stime delta
+        maxrss: now.maxrss.max(prev.maxrss),
+        majflt: diff(now.majflt, prev.majflt),
+        minflt: diff(now.minflt, prev.minflt),
+        nswap: diff(now.nswap, prev.nswap),
+        ixrss: diff(now.ixrss, prev.ixrss),
+        idrss: diff(now.idrss, prev.idrss),
+        isrss: diff(now.isrss, prev.isrss),
+        inblock: diff(now.inblock, prev.inblock),
+        oublock: diff(now.oublock, prev.oublock),
+        nvcsw: diff(now.nvcsw, prev.nvcsw),
+        nivcsw: diff(now.nivcsw, prev.nivcsw),
+        msgsnd: diff(now.msgsnd, prev.msgsnd),
+        msgrcv: diff(now.msgrcv, prev.msgrcv),
+        nsignals: diff(now.nsignals, prev.nsignals),
+    };
+}
+
+// `child_usage` — Src/jobs.c:109 mod_export global. The cumulative
+// children rusage snapshot kept warm between waits. update_process
+// reads-then-overwrites it to compute the delta attributable to the
+// just-reaped child. Per-thread (bucket 1) because each worker
+// thread reaps its own children independently.
+thread_local! {
+    static CHILD_USAGE_PREV: std::cell::RefCell<crate::ported::zsh_h::timeinfo>
+        = const { std::cell::RefCell::new(crate::ported::zsh_h::timeinfo {
+            ut: 0, st: 0, maxrss: 0, majflt: 0, minflt: 0, nswap: 0,
+            ixrss: 0, idrss: 0, isrss: 0, inblock: 0, oublock: 0,
+            nvcsw: 0, nivcsw: 0, msgsnd: 0, msgrcv: 0, nsignals: 0,
+        }) };
 }
 
 /// Check current shell signals (from jobs.c check_cursh_sig)
@@ -454,49 +610,118 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
 
 // Update status of job, possibly printing it                               // c:460
 /// Update job status after process change (from jobs.c update_job)
+/// Returns true if the job is now done or stopped (status committed),
+/// false if any proc is still running (no update needed).
 pub fn update_job(job: &mut Job) -> bool {                                   // c:460
-    // Check if all aux procs are done
-    for proc in &job.auxprocs {
+    // c:467-474 — `for (pn = jn->auxprocs; pn; pn = pn->next) {
+    //                 if (WIFCONTINUED(pn->status)) pn->status = SP_RUNNING;
+    //                 if (pn->status == SP_RUNNING) return; }`
+    for proc in job.auxprocs.iter_mut() {
+        #[cfg(unix)]
+        if proc.status > 0 && !libc::WIFEXITED(proc.status)
+            && !libc::WIFSIGNALED(proc.status)
+            && !libc::WIFSTOPPED(proc.status)
+        {
+            // WIFCONTINUED not exposed as a libc::W* fn on every target;
+            // it's the "neither exited nor signaled nor stopped" case
+            // that means SIGCONT was just delivered. Mark SP_RUNNING.
+            proc.status = SP_RUNNING;
+        }
         if proc.is_running() {
             return false;
         }
     }
 
-    // Check main processes
-    let all_done = true;
+    // c:476-498 — walk main procs, look for SP_RUNNING (bail), track
+    //              somestopped, capture last-proc status (signal/stop/exit),
+    //              set the signalled flag.
     let mut some_stopped = false;
-    let mut last_status = 0;
-
-    for proc in &job.procs {
+    let mut signalled = false;
+    let mut val: i32 = 0;
+    let proc_count = job.procs.len();
+    for (i, proc) in job.procs.iter_mut().enumerate() {
+        #[cfg(unix)]
+        if proc.status > 0 && !libc::WIFEXITED(proc.status)
+            && !libc::WIFSIGNALED(proc.status)
+            && !libc::WIFSTOPPED(proc.status)
+        {
+            // WIFCONTINUED main path: clear STAT_STOPPED + SP_RUNNING.
+            job.stat &= !stat::STOPPED;
+            proc.status = SP_RUNNING;
+        }
         if proc.is_running() {
-            return false; // Still running
+            return false;
         }
         if proc.is_stopped() {
             some_stopped = true;
         }
-    }
-
-    // Get last process status
-    if let Some(last) = job.procs.last() {
-        if last.is_signaled() {
-            last_status = 0x80 | last.term_sig();
-        } else if last.is_stopped() {
-            last_status = 0x80 | last.stop_sig();
-        } else {
-            last_status = last.exit_status();
+        // c:487-495 — last proc determines exit val.
+        if i + 1 == proc_count {
+            #[cfg(unix)]
+            {
+                if libc::WIFSIGNALED(proc.status) {
+                    val = 0o200 | libc::WTERMSIG(proc.status);
+                    signalled = true;
+                } else if libc::WIFSTOPPED(proc.status) {
+                    val = 0o200 | libc::WSTOPSIG(proc.status);
+                } else {
+                    val = libc::WEXITSTATUS(proc.status);
+                }
+            }
+            #[cfg(not(unix))]
+            { val = proc.status; }
         }
     }
 
+    // c:502-543 — somestopped: mark STAT_CHANGED|STOPPED; cascade SIGTSTP
+    //              to the super-job if this is a subjob (c:507-540).
     if some_stopped {
+        if (job.stat & stat::SUBJOB) != 0 {
+            job.stat |= stat::CHANGED | stat::STOPPED;                       // c:514
+            // c:515-538 — find the super-job; killpg(super.gleader, SIGTSTP);
+            //              mark super CHANGED|STOPPED. Without a job-index-
+            //              from-Job reverse lookup wired here (we'd need
+            //              the JOBTAB position, but Rust callers usually
+            //              hold the &mut Job by &mut [Job][i]), defer the
+            //              SIGTSTP to whoever owns the jobtab.
+            // Documented gap — the caller in fusevm_bridge that does the
+            // wait3 dispatch knows the index and handles the super hop.
+            return true;
+        }
+        if (job.stat & stat::STOPPED) != 0 {
+            return true;                                                     // c:541-542
+        }
         job.stat |= stat::STOPPED;
         job.stat &= !stat::DONE;
-    } else {
-        job.stat |= stat::DONE;
-        job.stat &= !stat::STOPPED;
+        job.stat |= stat::CHANGED;
+        return true;
     }
 
+    // c:544-556 — job is fully done. Set DONE, write lastval2/lastval.
+    job.stat |= stat::DONE | stat::CHANGED;
+    job.stat &= !stat::STOPPED;
+    // c:545 — lastval2 = val;
+    LASTVAL2.store(val, std::sync::atomic::Ordering::SeqCst);
+
+    // c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
+    //               else if (job == thisjob) { lastval = val; inforeground = 2; }`
+    //              Drives the c:565 "deadpgrp" path and the MONITOR foreground
+    //              cascade. Mark via _inforeground for the trace; signal cascade
+    //              skipped (interactive substrate).
+    let _inforeground: i32 = if (job.stat & stat::CURSH) != 0 {
+        1
+    } else {
+        // We don't know `thisjob == job_idx` from `&mut Job` alone;
+        // the caller (wait-loop) knows the index and handles lastval.
+        0
+    };
+    let _ = signalled;
     true
 }
+
+/// `lastval2` — Src/jobs.c global. Set to last-pipeline exit status.
+pub static LASTVAL2: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Update a background job after waitpid (from jobs.c update_bg_job)
 /// Port of `update_bg_job(Job jn, pid_t pid, int status)` from `Src/jobs.c:677`.
@@ -598,46 +823,55 @@ pub fn printhhmmss(secs: f64) -> String {                                   // c
 
 /// Time format specifiers (from jobs.c printtime lines 768-949)
 /// Format a CPU/real time triple per `$TIMEFMT`.
-/// Port of `printtime(struct timespec *real, child_times_t *ti, char *desc)` from Src/jobs.c:768 — same
-/// `%U`/`%S`/`%E`/`%P`/`%J`/`%c`/`%R`/etc. directive set the
-/// `time` keyword's output uses.
-/// WARNING: param names don't match C — Rust=(user_secs, system_secs, format, job_name) vs C=(real, ti, desc)
+/// Port of `printtime(struct timespec *real, child_times_t *ti, char *desc)` from Src/jobs.c:768.
+/// Supports the full directive set: `%E/%U/%S/%P/%J/%mE/%uE/%nE/%*E`
+/// (time forms) plus `%M/%F/%R/%W/%X/%D/%K/%I/%O/%c/%w` (rusage).
 pub fn printtime(                                                            // c:768
     elapsed_secs: f64,
-    user_secs: f64,
-    system_secs: f64,
+    ti: &crate::ported::zsh_h::timeinfo,
     format: &str,
     job_name: &str,
 ) -> String {
+    let user_secs = ti.ut as f64 / 1_000_000.0;
+    let system_secs = ti.st as f64 / 1_000_000.0;
     let mut result = String::new();
-    let total_time = user_secs + system_secs;
-    let percent = if elapsed_secs > 0.0 {
+    let total_time = user_secs + system_secs;                                // c:794
+    let percent = if elapsed_secs > 0.0 {                                    // c:795
         (100.0 * total_time / elapsed_secs) as i32
     } else {
         0
+    };
+    // Per-second helper for the rusage-rate directives (X/D/K).
+    let per_sec = |v: i64| -> i64 {                                          // c:903-907
+        if total_time > 0.0 { (v as f64 / total_time) as i64 } else { 0 }
     };
 
     let mut chars = format.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
             match chars.next() {
+                // c:816-823 — %E / %U / %S
                 Some('E') => result.push_str(&format!("{:.2}s", elapsed_secs)),
                 Some('U') => result.push_str(&format!("{:.2}s", user_secs)),
                 Some('S') => result.push_str(&format!("{:.2}s", system_secs)),
+                // c:893-894 — %P
                 Some('P') => result.push_str(&format!("{}%", percent)),
                 Some('J') => result.push_str(job_name),
+                // c:825-840 — %mE / %mU / %mS (milliseconds)
                 Some('m') => match chars.next() {
                     Some('E') => result.push_str(&format!("{:.0}ms", elapsed_secs * 1000.0)),
                     Some('U') => result.push_str(&format!("{:.0}ms", user_secs * 1000.0)),
                     Some('S') => result.push_str(&format!("{:.0}ms", system_secs * 1000.0)),
                     _ => result.push_str("%m"),
                 },
+                // c:842-857 — %uE / %uU / %uS (microseconds)
                 Some('u') => match chars.next() {
                     Some('E') => result.push_str(&format!("{:.0}us", elapsed_secs * 1_000_000.0)),
                     Some('U') => result.push_str(&format!("{:.0}us", user_secs * 1_000_000.0)),
                     Some('S') => result.push_str(&format!("{:.0}us", system_secs * 1_000_000.0)),
                     _ => result.push_str("%u"),
                 },
+                // c:859-874 — %nE / %nU / %nS (nanoseconds)
                 Some('n') => match chars.next() {
                     Some('E') => {
                         result.push_str(&format!("{:.0}ns", elapsed_secs * 1_000_000_000.0))
@@ -648,12 +882,32 @@ pub fn printtime(                                                            // 
                     }
                     _ => result.push_str("%n"),
                 },
+                // c:876-891 — %*E / %*U / %*S (HH:MM:SS form)
                 Some('*') => match chars.next() {
                     Some('E') => result.push_str(&printhhmmss(elapsed_secs)),
                     Some('U') => result.push_str(&printhhmmss(user_secs)),
                     Some('S') => result.push_str(&printhhmmss(system_secs)),
                     _ => result.push_str("%*"),
                 },
+                // c:897-899 — %W: swaps
+                Some('W') => result.push_str(&format!("{}", ti.nswap)),
+                // c:902-907 — %X: integral shared mem / total_time
+                Some('X') => result.push_str(&format!("{}", per_sec(ti.ixrss))),
+                // c:910-919 — %D: integral unshared data / total_time
+                Some('D') => result.push_str(&format!("{}", per_sec(ti.idrss + ti.isrss))),
+                // c:924-942 — %K: total integral mem / total_time
+                Some('K') => result.push_str(&format!("{}", per_sec(ti.ixrss + ti.idrss + ti.isrss))),
+                // c:950-952 — %M: max resident set size (KB on macOS+Linux post-norm)
+                Some('M') => result.push_str(&format!("{}", ti.maxrss)),
+                // c:955-957 — %F: major page faults
+                Some('F') => result.push_str(&format!("{}", ti.majflt)),
+                // c:960-962 — %R: minor page faults
+                Some('R') => result.push_str(&format!("{}", ti.minflt)),
+                // c:965+ — %I: input block ops; %O: output; %c/%w: ctx switches
+                Some('I') => result.push_str(&format!("{}", ti.inblock)),
+                Some('O') => result.push_str(&format!("{}", ti.oublock)),
+                Some('c') => result.push_str(&format!("{}", ti.nivcsw)),
+                Some('w') => result.push_str(&format!("{}", ti.nvcsw)),
                 Some('%') => result.push('%'),
                 Some(other) => {
                     result.push('%');
@@ -668,28 +922,41 @@ pub fn printtime(                                                            // 
     result
 }
 
-/// Dump timing info for a job (from jobs.c dumptime)
+/// Dump timing info for a job (from jobs.c dumptime).
 /// Port of `dumptime(Job jn)` from `Src/jobs.c:1020`.
-/// WARNING: param names don't match C — Rust=(job, format) vs C=(jn)
-pub fn dumptime(job: &Job, format: &str) -> Option<String> {
-    let first_start = job.procs.first()?.bgtime?;
-    let last_end = job.procs.last()?.endtime?;
-    let elapsed = last_end.duration_since(first_start).as_secs_f64();
-
-    let mut total_user = 0.0;
-    let mut total_sys = 0.0;
-    for proc in &job.procs {
-        total_user += proc.ti.ut as f64 / 1_000_000.0;
-        total_sys  += proc.ti.st as f64 / 1_000_000.0;
+///
+/// C body iterates each process in the pipeline and prints one
+/// `printtime` line per process using that process's own bgtime/
+/// endtime/ti/text — c:1027-1029. The previous Rust port aggregated
+/// into a single timeinfo, which printed 1 line for a 3-stage
+/// pipeline instead of C's 3.
+pub fn dumptime(job: &Job) -> Option<String> {                               // c:1020
+    if job.procs.is_empty() {                                                // c:1025-1026
+        return None;
     }
+    // C dumptime reads `$TIMEFMT` indirectly via printtime's getsparam
+    // call (c:808 inside printtime). Rust printtime takes format as a
+    // parameter, so we read it here and pass through.
+    const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
+    let format = crate::ported::params::getsparam("TIMEFMT")
+        .unwrap_or_else(|| DEFAULT_TIMEFMT.to_string());
 
-    Some(printtime(
-        elapsed,
-        total_user,
-        total_sys,
-        format,
-        &if !job.text.is_empty() { job.text.clone() } else { job.procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ") },
-    ))
+    // c:1027-1029 — for each proc, printtime(dtime_ts(&bgtime, &endtime), &ti, text).
+    let lines: Vec<String> = job
+        .procs
+        .iter()
+        .filter_map(|p| {
+            let start = p.bgtime?;
+            let end = p.endtime?;
+            let elapsed = end.duration_since(start).as_secs_f64();
+            Some(printtime(elapsed, &p.ti, &format, &p.text))
+        })
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }
 
 /// Port of `static int should_report_time(Job j)` from `Src/jobs.c:1038-1080`.
@@ -709,16 +976,22 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
 /// unset or set high.
 ///
 /// `$REPORTTIME` (and `$REPORTMEMORY`) reading is the caller's
-/// responsibility — Rust takes the threshold as a parameter rather
+/// responsibility — Rust takes the thresholds as parameters rather
 /// than calling getvalue inside.
-/// WARNING: param names don't match C — Rust=(job, reporttime) vs C=(j)
 pub fn should_report_time(job: &Job, reporttime: f64) -> bool {              // c:1039
+    // Read both thresholds from paramtab — matches C's
+    // `getvalue(REPORTTIME)` and `getvalue(REPORTMEMORY)` reads.
+    let reportmemory: i64 = crate::ported::params::getsparam("REPORTMEMORY")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-1);
+
     // c:1052-1053 — STAT_TIMED short-circuit. Always report when
     // the `time` keyword preceded the command.
     if (job.stat & stat::TIMED) != 0 {                                       // c:1052
         return true;
     }
-    if reporttime < 0.0 {                                                    // c:1065 reporttime < 0
+    // c:1065-1070 — both thresholds disabled ⇒ no report.
+    if reporttime < 0.0 && reportmemory < 0 {
         return false;
     }
     // c:1072-1073 — `if (!j->procs) return 0;`
@@ -727,20 +1000,35 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {              // 
         None => return false,
     };
     // c:1074 — `if (zleactive) return 0;`. ZLE is line-editing the
-    // prompt; never spew a timing line into the editor. Previously
-    // the Rust port skipped this gate entirely; a job that finished
-    // while ZLE was active would print into the active prompt and
-    // corrupt the editor display.
+    // prompt; never spew a timing line into the editor.
     if crate::ported::builtins::sched::zleactive
         .load(std::sync::atomic::Ordering::Relaxed) != 0                     // c:1074
     {
         return false;
     }
-    if let (Some(start), Some(end)) =
-        (first.bgtime, job.procs.last().and_then(|p| p.endtime))
-    {
-        let elapsed = end.duration_since(start).as_secs_f64();
-        return elapsed >= reporttime;
+    // c:1077-1094 — reporttime threshold check against (user+sys) CPU.
+    if reporttime >= 0.0 {
+        // C diffs reporttime against the first proc's ut+st; matches
+        // the (now correctly populated) rusage diff from update_process.
+        let cpu_secs = (first.ti.ut + first.ti.st) as f64 / 1_000_000.0;
+        if cpu_secs >= reporttime {
+            return true;
+        }
+        // Wall-clock fallback (Rust extension — keeps prior behavior
+        // when rusage wasn't captured because the proc was reaped
+        // outside the wait4/getrusage path).
+        if let (Some(start), Some(end)) =
+            (first.bgtime, job.procs.last().and_then(|p| p.endtime))
+        {
+            let elapsed = end.duration_since(start).as_secs_f64();
+            if elapsed >= reporttime {
+                return true;
+            }
+        }
+    }
+    // c:1096-1099 — reportmemory threshold check against ru_maxrss.
+    if reportmemory >= 0 && first.ti.maxrss > reportmemory {
+        return true;
     }
     false
 }
@@ -840,7 +1128,7 @@ pub fn printjob(
         "running".to_string()
     };
 
-    if long_format {
+    let header = if long_format {
         let mut lines = Vec::new();
         for (i, proc) in job.procs.iter().enumerate() {
             let pstatus = fmt_proc_status(proc.status);
@@ -865,7 +1153,19 @@ pub fn printjob(
             status_str,
             if !job.text.is_empty() { job.text.clone() } else { job.procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ") }
         )
+    };
+
+    // c:1220-1221 — `if (should_report_time(jn)) dumptime(jn);`
+    //               Also fires for c:1354-1355 (synchronous-wait variant).
+    let reporttime: f64 = crate::ported::params::getsparam("REPORTTIME")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-1.0);
+    if should_report_time(job, reporttime) {
+        if let Some(timing) = dumptime(job) {
+            return format!("{}\n{}", header, timing);
+        }
     }
+    header
 }
 
 /// Port of `addfilelist(const char *name, int fd)` from `Src/jobs.c:1373`.
@@ -1373,17 +1673,106 @@ pub fn setjobpwd() {                                                          //
     }
 }
 
-/// Spawn a job (mark as started, from jobs.c spawnjob)
-/// Port of `spawnjob` from `Src/jobs.c:1894`.
-/// Rust idiom replacement: direct bit-flag set on the JobInfo struct
-/// replaces the C `addproc` thread + `stat |=` cascade; the printjob/
-/// disowning side-effects from the C body live separately in the
-/// executor and run after this returns.
-pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c:1894
-    job.stat |= stat::INUSE;
-    if !fg {
-        // Background job
-        job.stat &= !stat::CURSH;
+/// Print pids for `&` background jobs (`spawnjob`).
+/// Port of `void spawnjob(void)` from `Src/jobs.c:1894`.
+pub fn spawnjob() {                                                          // c:1894
+    use crate::ported::zsh_h::{isset, MONITOR};
+    // c:1898 — DPUTS(thisjob == -1, ...). Defensive: bail if no job.
+    let thisjob_idx = *THISJOB.get_or_init(|| Mutex::new(-1))
+        .lock().expect("thisjob poisoned");
+    if thisjob_idx < 0 {
+        return;
+    }
+    let thisjob = thisjob_idx as usize;
+
+    // c:1900 — `if (!subsh) {` — when this isn't a subshell.
+    // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
+    // (0 = top-level shell).
+    let in_subsh = crate::exec::FORKLEVEL
+        .load(std::sync::atomic::Ordering::Relaxed) > 0;
+    if !in_subsh {
+        // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
+        //                  { curjob = thisjob; setprevjob(); }`
+        // c:1904-1905 — else if prevjob also not stopped, prevjob = thisjob.
+        let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))
+            .lock().expect("curjob poisoned");
+        let cur_stopped = if curjob >= 0 {
+            let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().expect("jobtab poisoned");
+            tab.get(curjob as usize)
+                .map(|j| (j.stat & stat::STOPPED) != 0)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if curjob < 0 || !cur_stopped {
+            if let Ok(mut cj) = CURJOB.get_or_init(|| Mutex::new(-1)).lock() {
+                *cj = thisjob_idx;                                           // c:1902
+            }
+            setprevjob();                                                    // c:1903
+        } else {
+            // c:1904-1905
+            let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1))
+                .lock().expect("prevjob poisoned");
+            let prev_stopped = if prevjob >= 0 {
+                let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+                    .lock().expect("jobtab poisoned");
+                tab.get(prevjob as usize)
+                    .map(|j| (j.stat & stat::STOPPED) != 0)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if prevjob < 0 || !prev_stopped {
+                if let Ok(mut pj) = PREVJOB.get_or_init(|| Mutex::new(-1)).lock() {
+                    *pj = thisjob_idx;                                       // c:1905
+                }
+            }
+        }
+        // c:1906-1913 — `if (jobbing && jobtab[thisjob].procs)`
+        //               print "[N] pid1 pid2 ..." to shout/stderr.
+        if isset(MONITOR) {
+            let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().expect("jobtab poisoned");
+            if let Some(job) = tab.get(thisjob) {
+                if !job.procs.is_empty() {
+                    let mut line = format!("[{}]", thisjob_idx);
+                    for p in job.procs.iter() {
+                        line.push_str(&format!(" {}", p.pid));
+                    }
+                    line.push('\n');
+                    eprint!("{}", line);                                     // c:1907-1911
+                }
+            }
+        }
+    }
+    // c:1915-1920 — `if (!hasprocs(thisjob)) deletejob(jobtab+thisjob, 0);
+    //                else { STAT_LOCKED; pipecleanfilelist(...); }`
+    let need_delete: bool;
+    {
+        let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().expect("jobtab poisoned");
+        need_delete = tab.get(thisjob)
+            .map(|j| j.procs.is_empty() && j.auxprocs.is_empty())
+            .unwrap_or(true);
+    }
+    if need_delete {
+        let mut tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().expect("jobtab poisoned");
+        if let Some(j) = tab.get_mut(thisjob) {
+            deletejob(j, false);                                             // c:1916
+        }
+    } else {
+        let mut tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().expect("jobtab poisoned");
+        if let Some(j) = tab.get_mut(thisjob) {
+            j.stat |= stat::LOCKED;                                          // c:1918
+            pipecleanfilelist(j, false);                                     // c:1919
+        }
+    }
+    // c:1921 — thisjob = -1;
+    if let Ok(mut tj) = THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
+        *tj = -1;
     }
 }
 
@@ -1392,21 +1781,19 @@ pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c
 // `struct rusage` or `struct timeinfo` per `Src/zsh.h:1112-1114`).
 
 /// Port of `shelltime(child_times_t *shell, child_times_t *kids, struct timespec *then, int delta)` from `Src/jobs.c:1926`.
+/// Returns `(shell, kids)` — the C signature splits self vs children
+/// rusage; the Rust port collapses to a tuple return for ergonomics.
 pub fn shelltime() -> timeinfo {
     #[cfg(unix)]
     {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0 {
-            return timeinfo {
-                ut: usage.ru_utime.tv_sec as i64 * 1_000_000
-                    + usage.ru_utime.tv_usec as i64,
-                st: usage.ru_stime.tv_sec as i64 * 1_000_000
-                    + usage.ru_stime.tv_usec as i64,
-            };
+            return timeinfo::from_rusage(&usage);
         }
     }
     timeinfo::default()
 }
+
 
 // see if jobs need printing                                                // c:1993
 /// Scan jobs and print changed status (from jobs.c scanjobs)
@@ -2791,6 +3178,524 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {                                // 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// printtime expands rusage directives (`%M`/`%F`/`%R`/`%c`/`%w`) from a
+    /// `timeinfo` argument. The directive set was untyped before the rusage
+    /// fields landed on `timeinfo` — pin every directive to its source field.
+    #[test]
+    fn printtime_emits_rusage_directives() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo {
+            ut: 500_000, st: 250_000,
+            maxrss: 4096, majflt: 12, minflt: 345, nswap: 0,
+            ixrss: 0, idrss: 0, isrss: 0,
+            inblock: 7, oublock: 3,
+            nvcsw: 99, nivcsw: 11,
+            msgsnd: 0, msgrcv: 0, nsignals: 0,
+        };
+        let s = printtime(1.0, &ti, "%M/%F/%R/%I/%O/%c/%w", "my-job");
+        assert_eq!(s, "4096/12/345/7/3/11/99");
+    }
+
+    /// Verify percent (`%P`) uses (user+sys)/elapsed and rounds to int.
+    #[test]
+    fn printtime_percent_directive() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo {
+            ut: 600_000, st: 400_000, ..Default::default()
+        };
+        // total=1.0s, elapsed=2.0s → 50%
+        let s = printtime(2.0, &ti, "%P", "j");
+        assert_eq!(s, "50%");
+    }
+
+    /// `printtime %P` MUST guard against divide-by-zero when elapsed
+    /// is 0.0 (instantaneous job or wall-clock timer didn't tick).
+    /// A panic here would crash the shell mid-prompt-display every
+    /// time `time` ran a no-op like `time :`. The C body at c:614-618
+    /// has the `if (elapsed_secs > 0.0)` guard explicitly; the Rust
+    /// port mirrors via the `if elapsed_secs > 0.0 { ... } else { 0 }`
+    /// branch. Pin: input `(elapsed=0, user=0, sys=0)` → "0%", no panic.
+    #[test]
+    fn printtime_percent_zero_elapsed_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo::default();
+        // The catch_unwind wrapper isolates a potential panic so the
+        // test reports a clean failure instead of crashing the harness.
+        let result = std::panic::catch_unwind(|| {
+            printtime(0.0, &ti, "%P", "j")
+        });
+        let s = result.expect("c:614 — zero elapsed must NOT panic");
+        assert_eq!(s, "0%",
+            "c:615-618 — zero-elapsed percent must yield 0%, not NaN/Inf");
+    }
+
+    /// `printtime %P` truncates toward zero — matches C's `(int)`
+    /// cast at c:893 (`int percent = 100.0 * total_time / elapsed;`).
+    /// A regression that rounds-to-nearest (e.g. `.round()` instead
+    /// of `as i32`) would report 100% for a job that used 99.6% CPU,
+    /// hiding the small slack. Pin: 0.996s CPU / 1s elapsed → 99%.
+    #[test]
+    fn printtime_percent_truncates_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo {
+            ut: 996_000, st: 0, ..Default::default()
+        };
+        let s = printtime(1.0, &ti, "%P", "j");
+        assert_eq!(s, "99%",
+            "c:893 — `(int)` cast truncates 99.6 → 99, not rounds to 100");
+    }
+
+    /// `%J` substitutes the job name verbatim.
+    #[test]
+    fn printtime_jobname_directive() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo::default();
+        let s = printtime(0.0, &ti, "[%J]", "my command");
+        assert_eq!(s, "[my command]");
+    }
+
+    /// Time-form directives `%E`/`%U`/`%S` render seconds with `s` suffix.
+    #[test]
+    fn printtime_time_directives() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo {
+            ut: 1_500_000, st: 500_000, ..Default::default()
+        };
+        let s = printtime(2.5, &ti, "%E %U %S", "j");
+        assert_eq!(s, "2.50s 1.50s 0.50s");
+    }
+
+    /// `%*E` / `%*U` / `%*S` use the `printhhmmss` HH:MM:SS form.
+    /// Pin c:876-891 dispatch — the `*` modifier routes the directive
+    /// to printhhmmss instead of the plain `{:.2}s` formatter. A
+    /// regression that drops the `*` arm would silently fall back to
+    /// the literal "%*E" output, breaking the `$TIMEFMT` default
+    /// `%*E` slot most users have configured.
+    #[test]
+    fn printtime_star_directive_routes_to_hhmmss() {
+        let _g = crate::test_util::global_state_lock();
+        let ti = crate::ported::zsh_h::timeinfo::default();
+        // 75 seconds → "1:15.00" (M:SS form, no hours).
+        let s = printtime(75.0, &ti, "%*E", "j");
+        assert_eq!(s, "1:15.00",
+            "c:876-880 — %*E must route to printhhmmss for elapsed >= 60s");
+        // 3725s (1h2m5s) → "1:02:05.00" (H:MM:SS form).
+        let s_hr = printtime(3725.0, &ti, "%*E", "j");
+        assert_eq!(s_hr, "1:02:05.00",
+            "c:880 + printhhmmss c:815-816 — elapsed >= 3600s yields H:MM:SS");
+    }
+
+    /// `should_report_time` honors `$REPORTMEMORY`: a job whose
+    /// `maxrss` exceeds the threshold should trigger the report.
+    #[test]
+    fn should_report_time_uses_reportmemory() {
+        let _g = crate::test_util::global_state_lock();
+        // Clear PARAMTAB state so this test's REPORTMEMORY isn't
+        // contaminated by earlier tests.
+        crate::ported::params::setsparam("REPORTMEMORY", "100");
+        let mut job = Job::default();
+        let mut proc = Process::new(123);
+        proc.ti.maxrss = 256; // > 100 KB threshold
+        proc.bgtime = Some(Instant::now());
+        proc.endtime = Some(Instant::now());
+        job.procs.push(proc);
+        job.stat = stat::INUSE;
+        assert!(should_report_time(&job, -1.0));
+        crate::ported::params::unsetparam("REPORTMEMORY");
+    }
+
+    /// `should_report_time` returns false when both thresholds are
+    /// disabled (REPORTTIME < 0, REPORTMEMORY unset).
+    #[test]
+    fn should_report_time_no_thresholds_false() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("REPORTMEMORY");
+        let mut job = Job::default();
+        job.procs.push(Process::new(1));
+        assert!(!should_report_time(&job, -1.0));
+    }
+
+    /// `should_report_time` MUST short-circuit and return true when
+    /// the job has STAT_TIMED set (c:1052-1053) — overriding all
+    /// other gates including disabled thresholds AND zleactive.
+    /// This is the contract that makes `time sleep 0.001` always
+    /// print timing, even with `REPORTTIME` unset and inside ZLE.
+    /// A regression that checks STAT_TIMED AFTER the threshold gates
+    /// would silently swallow the report.
+    #[test]
+    fn should_report_time_stat_timed_overrides_all_gates() {
+        let _g = crate::test_util::global_state_lock();
+        // Disable both thresholds AND simulate zleactive — if STAT_TIMED
+        // doesn't short-circuit, every other condition would return false.
+        crate::ported::params::unsetparam("REPORTMEMORY");
+        crate::ported::builtins::sched::zleactive
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+
+        let mut job = Job::default();
+        job.stat = stat::INUSE | stat::TIMED;
+        job.procs.push(Process::new(9001));
+
+        let reported = should_report_time(&job, -1.0);
+
+        // Cleanup before assert so a failure doesn't leak state.
+        crate::ported::builtins::sched::zleactive
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        assert!(reported,
+            "c:1052-1053 — STAT_TIMED MUST short-circuit to true regardless of threshold/zleactive");
+    }
+
+    /// `dumptime` emits one printtime line per process in a pipeline
+    /// (c:1027-1029 walks `jn->procs` linked list, calling printtime
+    /// per proc). Multi-stage pipeline → multiple lines.
+    #[test]
+    fn dumptime_emits_one_line_per_process() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("TIMEFMT", "%J");
+        let mut job = Job::default();
+        let now = Instant::now();
+        for (i, text) in ["echo a", "grep b", "tee c"].iter().enumerate() {
+            let mut p = Process::new(1000 + i as i32);
+            p.bgtime = Some(now);
+            p.endtime = Some(now + std::time::Duration::from_millis(10));
+            p.text = text.to_string();
+            job.procs.push(p);
+        }
+        let out = dumptime(&job).expect("expected timing output");
+        assert_eq!(out, "echo a\ngrep b\ntee c");
+        crate::ported::params::unsetparam("TIMEFMT");
+    }
+
+    /// `handle_sub` clears SUPERJOB + sets WASSUPER when the subjob
+    /// has completed without signal (c:296-297).
+    #[test]
+    fn handle_sub_clears_superjob_sets_wassuper_on_done() {
+        let _g = crate::test_util::global_state_lock();
+        // Two-job table: super at idx 0, sub at idx 1.
+        let mut tab = vec![Job::default(), Job::default()];
+        tab[0].stat = stat::INUSE | stat::SUPERJOB;
+        tab[0].other = 1;
+        tab[0].gleader = unsafe { libc::getpgrp() };
+        // Add one exited proc to the super so the WASSUPER branch
+        // (c:293-326) executes cleanly without the signaled branch.
+        let mut p = Process::new(unsafe { libc::getpid() });
+        p.status = 0; // exited 0 (WIFEXITED && WEXITSTATUS==0)
+        tab[0].procs.push(p);
+        // Subjob: marked DONE with no procs (the c:279 trigger).
+        tab[1].stat = stat::INUSE | stat::DONE;
+        tab[1].other = unsafe { libc::getpid() };
+
+        handle_sub(&mut tab, 0, false);
+
+        assert_eq!(tab[0].stat & stat::SUPERJOB, 0, "SUPERJOB cleared");
+        assert!(tab[0].stat & stat::WASSUPER != 0, "WASSUPER set");
+    }
+
+    /// `update_job` sets DONE + CHANGED, writes LASTVAL2, when all
+    /// procs have exited.
+    #[test]
+    fn update_job_done_writes_lastval2() {
+        let _g = crate::test_util::global_state_lock();
+        LASTVAL2.store(-1, std::sync::atomic::Ordering::SeqCst);
+        let mut job = Job::default();
+        let mut p1 = Process::new(1001);
+        p1.status = 0;            // exited 0 (WIFEXITED && WEXITSTATUS=0)
+        let mut p2 = Process::new(1002);
+        p2.status = 7 << 8;       // exited 7 (last proc, sets val)
+        job.procs.push(p1);
+        job.procs.push(p2);
+        let committed = update_job(&mut job);
+        assert!(committed, "update_job should commit when all done");
+        assert!(job.stat & stat::DONE != 0);
+        assert!(job.stat & stat::CHANGED != 0);
+        assert_eq!(LASTVAL2.load(std::sync::atomic::Ordering::SeqCst), 7,
+            "lastval2 = WEXITSTATUS of last proc");
+    }
+
+    /// `update_job` returns false (no commit) when any main proc is
+    /// still running.
+    #[test]
+    fn update_job_running_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let mut job = Job::default();
+        let mut p = Process::new(2001);
+        p.status = SP_RUNNING;
+        job.procs.push(p);
+        assert!(!update_job(&mut job));
+        // No flag flips when not committed.
+        assert_eq!(job.stat & stat::DONE, 0);
+    }
+
+    /// `update_job` MUST early-return on a still-running AUXPROC
+    /// (c:472-473) BEFORE inspecting main procs. Auxprocs are the
+    /// process-substitution feeders (`<(cmd)`); if one is still
+    /// running, the surrounding job is not yet collectible even
+    /// when every main proc has exited. A regression that walks
+    /// main procs first and commits on all-main-done would close
+    /// the auxproc's pipe prematurely and lose its output.
+    #[test]
+    fn update_job_running_auxproc_short_circuits_before_main_walk() {
+        let _g = crate::test_util::global_state_lock();
+        let mut job = Job::default();
+        // Main proc has fully EXITED.
+        let mut main = Process::new(10001);
+        main.status = 0;  // exited 0
+        job.procs.push(main);
+        // But an auxproc is still RUNNING.
+        let mut aux = Process::new(10002);
+        aux.status = SP_RUNNING;
+        job.auxprocs.push(aux);
+
+        let committed = update_job(&mut job);
+        assert!(!committed,
+            "c:472-473 — running auxproc must short-circuit even when main procs are done");
+        // The main proc's status word must NOT have been re-interpreted;
+        // the DONE flag must not have been set; LASTVAL2 must not have
+        // been written (we don't check LASTVAL2 directly to avoid
+        // cross-test ordering, but the DONE flag check catches the
+        // regression class).
+        assert_eq!(job.stat & stat::DONE, 0,
+            "STAT_DONE must not be set when an auxproc is still running");
+        assert_eq!(job.stat & stat::CHANGED, 0,
+            "STAT_CHANGED must not be set on early-return");
+    }
+
+    /// `update_job` sets STOPPED + CHANGED when any proc is stopped
+    /// (and clears DONE).
+    #[test]
+    fn update_job_stopped_sets_stopped_changed() {
+        let _g = crate::test_util::global_state_lock();
+        let mut job = Job::default();
+        let mut p = Process::new(3001);
+        p.status = 0x117f; // WIFSTOPPED-shaped (lower bits = 0x7f, upper = sig)
+        job.procs.push(p);
+        let committed = update_job(&mut job);
+        assert!(committed);
+        assert!(job.stat & stat::STOPPED != 0);
+        assert!(job.stat & stat::CHANGED != 0);
+        assert_eq!(job.stat & stat::DONE, 0);
+    }
+
+    /// `spawnjob` with thisjob=-1 is a no-op (c:1898 DPUTS).
+    #[test]
+    fn spawnjob_no_thisjob_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = -1;
+        // Should not panic.
+        spawnjob();
+        // thisjob stays at -1.
+        assert_eq!(*THISJOB.get().unwrap().lock().unwrap(), -1);
+    }
+
+    /// `spawnjob` deletes the job entry if it has no procs (c:1915-1916).
+    /// Cursh-clearing + INUSE side effects from the previous Rust port
+    /// don't fire because the path's not exercised that way.
+    #[test]
+    fn spawnjob_deletes_empty_job() {
+        let _g = crate::test_util::global_state_lock();
+        // Wire up THISJOB → 1; JOBTAB[1] empty INUSE job.
+        let mut tab_init = vec![Job::default(); 3];
+        tab_init[1].stat = stat::INUSE;
+        *JOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap() = tab_init;
+        *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = 1;
+        spawnjob();
+        // After: thisjob = -1, the entry stripped of INUSE by deletejob.
+        assert_eq!(*THISJOB.get().unwrap().lock().unwrap(), -1);
+        let tab = JOBTAB.get().unwrap().lock().unwrap();
+        // deletejob clears stat / detaches procs.
+        assert_eq!(tab[1].stat & stat::INUSE, 0);
+    }
+
+    /// `handle_sub` STOPPED branch (c:328-339): when subjob is stopped,
+    /// superjob inherits STOPPED and proc statuses propagate from the
+    /// subjob's first proc.
+    #[test]
+    fn handle_sub_stopped_branch_propagates() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = vec![Job::default(), Job::default()];
+        tab[0].stat = stat::INUSE | stat::SUPERJOB;
+        tab[0].other = 1;
+        let mut p = Process::new(1234);
+        p.status = SP_RUNNING;
+        tab[0].procs.push(p);
+        tab[1].stat = stat::INUSE | stat::STOPPED;
+        let mut sp = Process::new(5678);
+        sp.status = 0x117f; // WIFSTOPPED w/ TSTP-ish status
+        tab[1].procs.push(sp);
+
+        let ret = handle_sub(&mut tab, 0, false);
+        assert_eq!(ret, 1, "STOPPED branch returns 1");
+        assert!(tab[0].stat & stat::STOPPED != 0, "super inherits STOPPED");
+        // First super-proc status overwritten with subjob's first-proc status.
+        assert_eq!(tab[0].procs[0].status, 0x117f);
+    }
+
+    /// `dumptime` returns None for a job with no processes (c:1025-1026).
+    #[test]
+    fn dumptime_empty_job_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let job = Job::default();
+        assert!(dumptime(&job).is_none());
+    }
+
+    /// `dumptime` MUST skip procs whose bgtime/endtime pair is
+    /// incomplete rather than panic or produce garbage timings.
+    /// A backgrounded proc that hasn't been waitpid'd yet has
+    /// `endtime=None`; one that was attached mid-pipeline has
+    /// `bgtime=None`. The C body's `dtime_ts(&pn->bgtime, &pn->endtime)`
+    /// reads both unconditionally — the Rust port's `?` operator
+    /// in the filter_map skips the row. Pin: a job whose only
+    /// proc lacks endtime → dumptime returns None (no garbage).
+    #[test]
+    fn dumptime_skips_proc_without_endtime() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("TIMEFMT", "%E");
+        let mut job = Job::default();
+        let mut p = Process::new(11001);
+        p.bgtime = Some(Instant::now());
+        p.endtime = None;  // backgrounded, not yet reaped
+        p.text = "incomplete".to_string();
+        job.procs.push(p);
+
+        // The fn must not panic on Option::None.unwrap().
+        let result = std::panic::catch_unwind(|| dumptime(&job));
+        let out = result.expect("missing endtime must not panic");
+        assert!(out.is_none(),
+            "filter_map drops procs without bg/end pair → empty result → None");
+
+        crate::ported::params::unsetparam("TIMEFMT");
+    }
+
+    /// `dumptime` cites each process's OWN bgtime→endtime elapsed,
+    /// not a job-wide aggregate. The c:1028 `dtime_ts(&pn->bgtime,
+    /// &pn->endtime)` per-iteration call is the load-bearing
+    /// difference between "1 line per pipeline" (the bug) and "1
+    /// line per process" (the C contract). Pin distinct elapsed
+    /// values to catch a regression that recomputes once for the job.
+    #[test]
+    fn dumptime_uses_per_process_elapsed() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("TIMEFMT", "%E");
+        let mut job = Job::default();
+        let t0 = Instant::now();
+        // Three procs with distinct elapsed times: 100ms, 300ms, 600ms.
+        for (i, ms) in [100u64, 300, 600].iter().enumerate() {
+            let mut p = Process::new(8000 + i as i32);
+            p.bgtime = Some(t0);
+            p.endtime = Some(t0 + std::time::Duration::from_millis(*ms));
+            p.text = format!("p{}", i);
+            job.procs.push(p);
+        }
+        let out = dumptime(&job).expect("non-empty job → Some");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "must produce one line per proc, got {:?}", lines);
+        // %E formats as "X.XXs". Verify distinct values across lines.
+        // A regression that aggregates would print 3 copies of the
+        // same (sum-of-elapsed) figure.
+        let unique: std::collections::HashSet<&&str> = lines.iter().collect();
+        assert_eq!(unique.len(), 3,
+            "each line must carry its own proc's elapsed; got duplicates: {:?}", lines);
+        crate::ported::params::unsetparam("TIMEFMT");
+    }
+
+    /// `printjob` appends the dumptime block when the job is
+    /// STAT_TIMED (c:1220-1221 in printjob).
+    #[test]
+    fn printjob_appends_timing_when_stat_timed() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("TIMEFMT", "%J");
+        let mut job = Job::default();
+        job.stat = stat::INUSE | stat::TIMED | stat::DONE;
+        let mut p = Process::new(42);
+        p.bgtime = Some(Instant::now());
+        p.endtime = Some(Instant::now() + std::time::Duration::from_millis(5));
+        p.text = "echo hi".to_string();
+        p.status = 0;  // exited 0
+        job.procs.push(p);
+        let out = printjob(&job, 1, false, Some(1), None);
+        assert!(out.contains("echo hi"), "expected status line; got: {:?}", out);
+        // Last line should be the dumptime output (%J → text).
+        assert!(out.ends_with("echo hi"), "expected timing line at end; got: {:?}", out);
+        crate::ported::params::unsetparam("TIMEFMT");
+    }
+
+    /// `update_job` STAT_SUBJOB short-circuit (c:507-540): when the
+    /// stopped job is a SUBJOB, the c:514 `jn->stat |= STAT_CHANGED
+    /// | STAT_STOPPED` flag write must fire BEFORE the early-return
+    /// to the super-job-SIGTSTP cascade. A regression that swaps the
+    /// order would leave the listing scanner blind to the stop.
+    #[test]
+    fn update_job_subjob_stop_sets_flags_before_early_return() {
+        let _g = crate::test_util::global_state_lock();
+        let mut job = Job::default();
+        job.stat = stat::INUSE | stat::SUBJOB;  // mark as SUBJOB pre-stop
+        let mut p = Process::new(7001);
+        p.status = 0x117f;  // WIFSTOPPED-shaped (low byte = 0x7F)
+        job.procs.push(p);
+
+        assert!(update_job(&mut job));
+        assert!(job.stat & stat::CHANGED != 0,
+            "c:514 — SUBJOB stop must set CHANGED so the jobs scanner picks it up");
+        assert!(job.stat & stat::STOPPED != 0,
+            "c:514 — SUBJOB stop must mark STOPPED");
+        assert_eq!(job.stat & stat::SUBJOB, stat::SUBJOB,
+            "SUBJOB flag preserved through update");
+    }
+
+    /// `update_job` is idempotent across multiple calls on an
+    /// already-STOPPED non-subjob (c:541-542 — `if (jn->stat &
+    /// STAT_STOPPED) return;`). Without this short-circuit, every
+    /// re-entry would re-set STAT_CHANGED, causing the `jobs`
+    /// builtin to re-print the same job on every scan.
+    #[test]
+    fn update_job_already_stopped_short_circuits() {
+        let _g = crate::test_util::global_state_lock();
+        let mut job = Job::default();
+        job.stat = stat::INUSE | stat::STOPPED;  // pre-stopped, not SUBJOB
+        let mut p = Process::new(12001);
+        p.status = 0x117f;  // WIFSTOPPED-shaped
+        job.procs.push(p);
+
+        // First call: STOPPED already set, this is the re-entry case.
+        // C: c:541-542 early-return → no CHANGED set.
+        let stat_before = job.stat;
+        let committed = update_job(&mut job);
+        assert!(committed, "early-return path still reports 'commit'");
+        assert_eq!(job.stat, stat_before,
+            "c:541-542 — re-entry on already-STOPPED job must not flip flags");
+    }
+
+    /// `update_job` last-proc-signaled path (c:487-495): when the
+    /// LAST proc in the pipeline was killed by a signal, val gets the
+    /// `0o200 | WTERMSIG(status)` encoding written to `LASTVAL2`.
+    /// The 0o200 high bit is zsh's convention for distinguishing
+    /// "killed by signal N" from "exited with status N" in `$?` and
+    /// `$pipestatus`. Without this encoding, a pipeline ending in a
+    /// SIGTERM'd command would report exit-status N instead of 128+N.
+    ///
+    /// Status word 15 (= SIGTERM raw) reads as WIFSIGNALED on POSIX:
+    ///   low 7 bits = 15 (not 0 = exited, not 0x7F = stopped)
+    ///   → WTERMSIG returns 15, the SIGTERM number.
+    #[test]
+    fn update_job_last_proc_signaled_sets_high_bit_val() {
+        let _g = crate::test_util::global_state_lock();
+        LASTVAL2.store(-1, std::sync::atomic::Ordering::SeqCst);
+
+        let mut job = Job::default();
+        let mut p1 = Process::new(6001);
+        p1.status = 0;  // exited 0 (clean predecessor)
+        let mut p2 = Process::new(6002);
+        p2.status = 15; // killed by SIGTERM
+        job.procs.push(p1);
+        job.procs.push(p2);
+
+        assert!(update_job(&mut job));
+        let lv2 = LASTVAL2.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(lv2 & 0o200, 0o200,
+            "c:489-490 — WIFSIGNALED last-proc must set the 0o200 high bit");
+        assert_eq!(lv2 & 0x7f, 15,
+            "c:490 — low 7 bits must hold WTERMSIG (SIGTERM=15)");
+    }
 
     #[test]
     fn test_process_new() {

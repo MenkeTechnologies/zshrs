@@ -688,31 +688,85 @@ pub fn init_signals() {                                                      // 
 }
 
 /// Port of `void run_init_scripts(void)` from Src/init.c:1445.
-/// Rust idiom replacement: emulation flag check + `source` calls
-/// cover the C ifdef cascade for KSH/SH vs zsh init paths; the
-/// `noerrexit` state-machine bit fiddling is handled at the
-/// executor level rather than threaded through here.
+/// Runs the standard zsh init scripts (or KSH/SH-compat scripts when
+/// emulating). Each guard mirrors the C predicate set: islogin, RCS,
+/// GLOBALRCS, PRIVILEGED, INTERACTIVE.
 pub fn run_init_scripts() {                                                  // c:1445
-    // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1445
+    use crate::ported::zsh_h::{
+        isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, INTERACTIVE, PRIVILEGED, RCS,
+    };
+    use crate::ported::zsh_h::islogin;
 
-    // if (EMULATION(KSH|SH)) { ... } else { ... zsh paths ... }             // c:1449
+    // c:1447 — noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;
+    //          (noerrexit global not surfaced; the C bits are
+    //          consulted by the script-source path internally.)
+
+    // c:1449 — if (EMULATION(EMULATE_KSH|EMULATE_SH)) { ... }
     let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
-    let is_posix = (emul & 6) != 0; /* EMULATE_KSH=2 | EMULATE_SH=4 */
+    let is_posix = (emul & (EMULATE_KSH | EMULATE_SH) as i32) != 0;
+
+    let is_login = islogin();
+    let interact = isset(INTERACTIVE);
+    let privileged = isset(PRIVILEGED);
 
     if is_posix {
-        // if (islogin) source("/etc/profile");                              // c:1450-1451
-        // if (unset(PRIVILEGED)) { sourcehome(".profile"); ... ENV ... }    // c:1452-1469
+        // c:1450-1451 — if (islogin) source("/etc/profile");
+        if is_login {
+            let _ = source("/etc/profile");
+        }
+        if !privileged {                                                     // c:1452
+            // c:1454 — if (islogin) sourcehome(".profile");
+            if is_login {
+                sourcehome(".profile");
+            }
+            // c:1456-1468 — if (interact) { … getsparam("ENV"); source(s); }
+            if interact {
+                if let Some(s) = crate::ported::params::getsparam("ENV") {
+                    let _ = source(&s);
+                }
+            }
+        } else {
+            // c:1470 — source("/etc/suid_profile");
+            let _ = source("/etc/suid_profile");
+        }
     } else {
-        // source(GLOBAL_ZSHENV);                                            // c:1473
+        // c:1473 — source(GLOBAL_ZSHENV);
         let _ = source(crate::ported::config_h::GLOBAL_ZSHENV);
-        // if (isset(RCS) && unset(PRIVILEGED)) sourcehome(".zshenv");       // c:1476-1490
-        sourcehome(".zshenv");
-        // if (islogin) { ... .zprofile ... }                                // c:1491-1498
-        // if (interact) { ... .zshrc ... }                                  // c:1499-1506
-        sourcehome(".zshrc");
-        // if (islogin) { ... .zlogin ... }                                  // c:1524-1514
+
+        // c:1476-1490 — if (isset(RCS) && unset(PRIVILEGED))
+        //                  { newuser-probe; sourcehome(".zshenv"); }
+        if isset(RCS) && !privileged {
+            sourcehome(".zshenv");
+        }
+        // c:1491-1498 — if (islogin) { GLOBAL_ZPROFILE? + .zprofile }
+        if is_login {
+            if isset(RCS) && isset(GLOBALRCS) {
+                let _ = source(crate::ported::config_h::GLOBAL_ZPROFILE);
+            }
+            if isset(RCS) && !privileged {
+                sourcehome(".zprofile");
+            }
+        }
+        // c:1499-1506 — if (interact) { GLOBAL_ZSHRC? + .zshrc }
+        if interact {
+            if isset(RCS) && isset(GLOBALRCS) {
+                let _ = source(crate::ported::config_h::GLOBAL_ZSHRC);
+            }
+            if isset(RCS) && !privileged {
+                sourcehome(".zshrc");
+            }
+        }
+        // c:1507-1514 — if (islogin) { GLOBAL_ZLOGIN? + .zlogin }
+        if is_login {
+            if isset(RCS) && isset(GLOBALRCS) {
+                let _ = source(crate::ported::config_h::GLOBAL_ZLOGIN);
+            }
+            if isset(RCS) && !privileged {
+                sourcehome(".zlogin");
+            }
+        }
     }
-    // noerrexit = 0; nohistsave = 0;                                        // c:1524-1517
+    // c:1516-1517 — noerrexit = 0; nohistsave = 0; (not surfaced)
 }
 
 /// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1524.

@@ -3745,6 +3745,22 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
+            // c:2358-2369 — getstrvalue dispatches by PM_TYPE.
+            //   PM_SCALAR/PM_NAMEREF → pm.u_str
+            //   PM_INTEGER           → convbase(u_val, base) per c:2364
+            //   PM_EFLOAT/PM_FFLOAT  → convfloat(u_dval) per c:2367-2368
+            //   PM_ARRAY             → sepjoin(arr)
+            // Previously fell through PM_INTEGER → env-var fallback
+            // which always missed → `read REPLY` after `(( REPLY=42 ))`
+            // got nothing.
+            let t = PM_TYPE(pm.node.flags as u32);
+            if t == PM_INTEGER {
+                let base = if pm.base > 0 { pm.base as u32 } else { 10 };
+                return Some(convbase(pm.u_val, base));
+            }
+            if t == PM_EFLOAT || t == PM_FFLOAT {
+                return Some(convfloat_underscore(pm.u_dval, pm.width));
+            }
             if let Some(s) = pm.u_str.as_ref() {
                 return Some(s.clone());
             }
@@ -4284,10 +4300,43 @@ pub fn assignaparam(
     val: Vec<String>,
     flags: i32,
 ) -> Option<crate::ported::zsh_h::Param> {                                   // c:3357
+    use crate::ported::utils::ERRFLAG_ERROR;
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
+        errflag.fetch_or(ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
         return None;
+    }
+
+    // c:3375 — `if ((ss = strchr(s, '['))) { ... slice path ... }`
+    //          Extract the base name when there's a subscript and
+    //          dispatch to the slice-rejection / slice-write path.
+    if let Some(_bracket) = name.find('[') {
+        let base = name.split('[').next().unwrap_or(name);
+        // c:3384-3391 — slice into a HASHED → zerr.
+        let is_hashed = {
+            let tab = paramtab().read().unwrap();
+            tab.get(base)
+                .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
+                .unwrap_or(false)
+        };
+        if is_hashed {
+            crate::ported::utils::zerr(&format!(
+                "{}: attempt to set slice of associative array",
+                base
+            ));
+            errflag.fetch_or(ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        // Slice into a non-existent param → create as PM_ARRAY (c:3377-3382).
+        let exists = paramtab().read().unwrap().contains_key(base);
+        if !exists {
+            createparam(base, PM_ARRAY as i32)?;
+        }
+        // Subscript-write itself (a[k]=v) is handled at the caller's
+        // SubscriptArith dispatch; reaching here means the slice
+        // pre-check has passed and the param exists.
+        return paramtab().read().unwrap().get(base).cloned();
     }
 
     // c:3391-3394 — fetchvalue / createparam(PM_ARRAY) if missing.
@@ -4298,6 +4347,14 @@ pub fn assignaparam(
             None => (false, None, 0),
         }
     };
+    // c:3397-3400 — PM_NAMEREF: can't change type of a named reference.
+    if existed && (prior_flags as u32 & PM_NAMEREF) != 0 {
+        crate::ported::utils::zwarn(&format!(
+            "{}: can't change type of a named reference",
+            name
+        ));
+        return None;
+    }
     if !existed {
         createparam(name, PM_ARRAY as i32)?;
     }
@@ -6948,13 +7005,26 @@ pub fn startparamscope(_table: &mut crate::ported::zsh_h::HashTable) {
 /// exceeds the new `locallevel`. Operates on the global `paramtab`
 /// just like C — no parameter, no fake injection wrapper.
 pub fn endparamscope() {
+    use crate::ported::zsh_h::{PM_NAMEREF, PM_UNSET, PM_UPPER};
     queue_signals();
-    crate::ported::utils::dec_locallevel();                                  // c:5861 locallevel--
-    // c:5863 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
+    // c:5861 — `LinkList refs = locallevel < scoperefs_num ? scoperefs[locallevel] : NULL;`
+    //          Snapshot the refs at the OLD locallevel BEFORE decrementing.
+    let old_ll = crate::ported::utils::locallevel();
+    let refs_snapshot: Vec<String> = SCOPEREFS.with(|sr| {
+        let sr = sr.borrow();
+        if (old_ll as usize) < sr.len() {
+            sr[old_ll as usize].clone()
+        } else {
+            Vec::new()
+        }
+    });
+
+    crate::ported::utils::dec_locallevel();                                  // c:5863 locallevel--
+    // c:5865 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
     // all stack entries with locallevel > current.
     crate::ported::hist::saveandpophiststack(0, crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
     let ll = crate::ported::utils::locallevel();
-    // c:5867 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
+    // c:5869 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
     // the live paramtab (HashMap-backed until the hashtable.c vtable
     // is wired) and apply scanendscope's `pm->level > locallevel`
     // filter, restoring the `pm.old` chain or removing the entry.
@@ -6973,6 +7043,40 @@ pub fn endparamscope() {
             }
         }
     }
+
+    // c:5890-5894 — `for (Param pm; refs && (pm = getlinknode(refs));) {
+    //                   if ((pm->flags & PM_NAMEREF) && !(pm->flags & PM_UNSET) &&
+    //                       !(pm->flags & PM_UPPER) && pm->base > locallevel) {
+    //                       pm->base = 0; setscope(pm); } }`
+    //               Reset PM_NAMEREF refs whose base was above the popped scope.
+    if !refs_snapshot.is_empty() {
+        if let Ok(mut tab) = paramtab().write() {
+            for name in refs_snapshot.iter() {
+                if let Some(pm) = tab.get_mut(name) {
+                    let f = pm.node.flags as u32;
+                    if (f & PM_NAMEREF) != 0
+                        && (f & PM_UNSET) == 0
+                        && (f & PM_UPPER) == 0
+                        && pm.base > ll
+                    {
+                        pm.base = 0;                                         // c:5893
+                        // c:5894 setscope(pm) — would recursively call
+                        // setscope_base(pm, 0); with base=0 and pm.level>=0
+                        // the guard at setscope_base c:6440 fails so it's
+                        // a no-op write. Skip the recursive call to avoid
+                        // re-borrowing paramtab.
+                    }
+                }
+            }
+        }
+    }
+    // c:5896 — clear out the now-popped scope's refs list.
+    SCOPEREFS.with(|sr| {
+        let mut sr = sr.borrow_mut();
+        if (old_ll as usize) < sr.len() {
+            sr[old_ll as usize].clear();
+        }
+    });
     unqueue_signals();
 }
 
@@ -7472,15 +7576,40 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
 /// ```
 /// Records `pm` on the per-scope reference list so a future
 /// scope-pop can resolve nameref/upper bindings. Rust port
-/// stores `base` on the param; the global `scoperefs` LinkList
-/// table is not yet ported, so the bookkeeping push is described
-/// here as architectural intent rather than executed.
-/// Port of `setscope_base(Param pm, int base)` from `Src/params.c:6436`.
-pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {
+/// records the param's name on `SCOPEREFS[base]` so a future
+/// scope-pop can resolve upper/nameref references.
+/// Port of `setscope_base(Param pm, int base)` from `Src/params.c:6438`.
+pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {       // c:6438
+    // c:6440 — `if ((pm->base = base) > pm->level) {`
     pm.base = base;
     if base > pm.level {
-        // scoperefs[base] push of pm — needs LinkList global.
+        SCOPEREFS.with(|sr| {
+            let mut sr = sr.borrow_mut();
+            // c:6442-6447 — `if (base >= scoperefs_num) { ... grow ... }`
+            //               Rust Vec grows on demand via resize; mirrors
+            //               the C double-and-zero-init pattern via the
+            //               max(8, 2*base) growth heuristic.
+            if (base as usize) >= sr.len() {
+                let new_num = (2 * base as usize).max(8);
+                sr.resize(new_num, Vec::new());
+            }
+            // c:6448-6451 — `refs = scoperefs[base]; if (!refs)
+            //                  refs = scoperefs[base] = znewlinklist();
+            //                zpushnode(refs, pm);`
+            //               Rust pushes the param NAME (Vec<String>),
+            //               not a raw pointer — borrow-safe and the
+            //               name is the canonical key for upscope walks.
+            sr[base as usize].insert(0, pm.node.nam.clone());                // c:6451
+        });
     }
+}
+
+/// `scoperefs` — port of `static LinkList *scoperefs` from `Src/params.c:503`.
+/// One Vec<String> (param names) per scope index. Per-evaluator (bucket 1)
+/// because each worker thread has its own nameref-resolution context.
+thread_local! {
+    pub static SCOPEREFS: std::cell::RefCell<Vec<Vec<String>>>
+        = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Port of `upscope(Param pm, const Param ref)` from `Src/params.c:6455`. C body:
@@ -8463,6 +8592,364 @@ fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `setscope_base` pushes the param name onto `SCOPEREFS[base]`
+    /// when `base > pm.level` (c:6440). Grows the SCOPEREFS Vec as
+    /// needed (c:6442-6447).
+    #[test]
+    fn setscope_base_pushes_name_when_base_above_level() {
+        let _g = crate::test_util::global_state_lock();
+        SCOPEREFS.with(|s| s.borrow_mut().clear());
+        let mut pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "foo".to_string(),
+                flags: 0,
+            },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 2,
+        };
+        setscope_base(&mut pm, 5);
+        assert_eq!(pm.base, 5);
+        SCOPEREFS.with(|s| {
+            let s = s.borrow();
+            assert!(s.len() >= 6, "SCOPEREFS grew to fit index 5");
+            assert_eq!(s[5], vec!["foo".to_string()]);
+        });
+    }
+
+    /// `assignaparam` rejects slice into PM_HASHED with the canonical
+    /// "attempt to set slice of associative array" zerr (c:3386-3390).
+    #[test]
+    fn assignaparam_rejects_slice_into_hashed() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("aa_h");
+        // Create a hashed param.
+        sethparam("aa_h", vec!["k".to_string(), "v".to_string()]);
+        let before = paramtab().read().unwrap().contains_key("aa_h");
+        assert!(before);
+        // Slice write should be rejected.
+        let result = assignaparam("aa_h[idx]", vec!["x".to_string()], 0);
+        assert!(result.is_none(), "slice into hashed must return None");
+        unsetparam("aa_h");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `assignaparam` rejects type change of a PM_NAMEREF param
+    /// (c:3397-3400). The nameref's value can be reassigned in-place
+    /// but its TYPE can't flip to array.
+    #[test]
+    fn assignaparam_rejects_nameref_type_change() {
+        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR};
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("aa_nr");
+        // Insert a PM_NAMEREF param directly.
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "aa_nr".to_string(),
+                flags: (PM_NAMEREF | PM_SCALAR) as i32,
+            },
+            u_data: 0, u_arr: None, u_str: Some("target".to_string()),
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        paramtab().write().unwrap().insert("aa_nr".to_string(), Box::new(pm));
+
+        let result = assignaparam("aa_nr", vec!["a".to_string(), "b".to_string()], 0);
+        assert!(result.is_none(), "nameref type change must return None");
+
+        // PM_NAMEREF flag should still be present (not stripped).
+        let pm = paramtab().read().unwrap().get("aa_nr").cloned().unwrap();
+        assert!(pm.node.flags as u32 & PM_NAMEREF != 0, "PM_NAMEREF preserved");
+
+        unsetparam("aa_nr");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `assignaparam` with ASSPM_AUGMENT against a scalar param must
+    /// prepend the previous scalar value as `val[0]` of the new array
+    /// (c:3404-3412). Implements `a=x; a+=(y z)` → `a=(x y z)`. A
+    /// regression that drops the prepend would yield `a=(y z)` and
+    /// silently lose the original scalar — invisible at write time,
+    /// surfaces only when the caller reads `${a[1]}`.
+    #[test]
+    fn assignaparam_augment_prepends_old_scalar() {
+        use crate::ported::zsh_h::ASSPM_AUGMENT;
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("aa_aug");
+        // Seed a scalar.
+        setsparam("aa_aug", "old");
+        // Augment with two new values.
+        let pm = assignaparam(
+            "aa_aug",
+            vec!["new1".to_string(), "new2".to_string()],
+            ASSPM_AUGMENT,
+        ).expect("augment should succeed");
+        let arr = pm.u_arr.expect("ASSPM_AUGMENT must produce u_arr");
+        assert_eq!(arr, vec!["old".to_string(), "new1".to_string(), "new2".to_string()],
+            "c:3408-3411 — scalar prepended at index 0, then new values follow");
+        unsetparam("aa_aug");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `assignaparam` against a PM_UNIQUE-flagged target dedupes
+    /// the value array (c:3401 + arrsetfn's uniqarray). Implements
+    /// `typeset -U arr; arr=(a b a c b)` → `arr=(a b c)`. A
+    /// regression that drops the uniqarray call would let duplicates
+    /// linger — invisible until a downstream `[[ -n ${arr[(r)b]} ]]`
+    /// check counts more matches than expected, or `$path` grows
+    /// unbounded with repeated directory entries.
+    #[test]
+    fn assignaparam_unique_flag_dedupes_values() {
+        use crate::ported::zsh_h::PM_UNIQUE;
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("aa_uniq");
+        // Seed an empty PM_ARRAY|PM_UNIQUE.
+        setaparam("aa_uniq", vec![]);
+        {
+            let mut tab = paramtab().write().unwrap();
+            let pm = tab.get_mut("aa_uniq").expect("aa_uniq must exist");
+            pm.node.flags |= PM_UNIQUE as i32;
+        }
+        // Now write duplicates; PM_UNIQUE must collapse them.
+        let pm = assignaparam(
+            "aa_uniq",
+            vec!["a".into(), "b".into(), "a".into(), "c".into(), "b".into()],
+            0,
+        ).expect("assignment succeeds");
+        let arr = pm.u_arr.expect("u_arr populated");
+        assert_eq!(arr, vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            "c:3401 — PM_UNIQUE collapses duplicates, keeping first occurrence");
+        // The PM_UNIQUE flag must persist through the assignment.
+        let pm_check = paramtab().read().unwrap().get("aa_uniq").cloned().unwrap();
+        assert!(pm_check.node.flags as u32 & PM_UNIQUE != 0,
+            "PM_UNIQUE flag preserved across assignment");
+        unsetparam("aa_uniq");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `getsparam` reads PM_INTEGER params via convbase, not via
+    /// `u_str` (which is None for typed integers). Pins the latent
+    /// bug fix that made `read REPLY` after `(( REPLY=42 ))` return
+    /// nothing — every numeric param read used to fall through to
+    /// the OS env-var fallback.
+    #[test]
+    fn getsparam_returns_integer_via_convbase() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("gs_int");
+        setiparam("gs_int", 999);
+        assert_eq!(getsparam("gs_int").as_deref(), Some("999"));
+        unsetparam("gs_int");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `getsparam` reads PM_FFLOAT params via convfloat. Same fix
+    /// shape as the PM_INTEGER path.
+    #[test]
+    fn getsparam_returns_float_via_convfloat() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("gs_f");
+        // Stash a float via the setnumvalue / setnparam path.
+        let v = crate::ported::math::mnumber { l: 0, d: 2.5, type_: crate::ported::math::MN_FLOAT };
+        setnparam("gs_f", v);
+        let s = getsparam("gs_f").expect("PM_FFLOAT should serialize");
+        // convfloat formats with default precision; just check it's
+        // not empty and parses back.
+        assert!(s.parse::<f64>().map(|f| (f - 2.5).abs() < 1e-6).unwrap_or(false),
+            "expected ~2.5 round-trip, got {:?}", s);
+        unsetparam("gs_f");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `getsparam` against a non-default `pm.base` integer param must
+    /// render using that base via `convbase`. The c:2364 dispatch
+    /// passes `pm.base` (or 10) to convbase; a regression that
+    /// hardcodes base=10 would silently break `typeset -i 16 hex=255`
+    /// readers (would see "255" instead of the C-faithful "16#FF").
+    #[test]
+    fn getsparam_integer_honors_pm_base() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("exec", true);
+        unsetparam("hex_param");
+        // Manually insert a PM_INTEGER param with base=16.
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "hex_param".to_string(),
+                flags: crate::ported::zsh_h::PM_INTEGER as i32,
+            },
+            u_data: 0, u_arr: None, u_str: None,
+            u_val: 255, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 16, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        paramtab().write().unwrap().insert("hex_param".to_string(), Box::new(pm));
+
+        let s = getsparam("hex_param").expect("PM_INTEGER must serialize");
+        // convbase emits "16#FF" form for base 16.
+        assert!(s.contains("FF") || s.contains("ff"),
+            "c:2364 — base-16 must render hex digits; got {:?}", s);
+
+        unsetparam("hex_param");
+        crate::ported::options::opt_state_set("exec", false);
+    }
+
+    /// `endparamscope` clears `SCOPEREFS[old_locallevel]` and resets
+    /// nameref params' base when their base exceeds the new locallevel.
+    /// End-to-end of the setscope_base writer + endparamscope reader.
+    #[test]
+    fn endparamscope_resets_scoperefs_and_nameref_base() {
+        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR};
+        let _g = crate::test_util::global_state_lock();
+        SCOPEREFS.with(|s| s.borrow_mut().clear());
+
+        // Set up: locallevel = 3, push a PM_NAMEREF param with base=5 onto SCOPEREFS[3].
+        crate::ported::utils::set_locallevel(3);
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "ref1".to_string(),
+                flags: (PM_NAMEREF | PM_SCALAR) as i32,
+            },
+            u_data: 0, u_arr: None, u_str: Some(String::new()), u_val: 0,
+            u_dval: 0.0, u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None,
+            gsu_a: None, gsu_h: None, base: 5, width: 0, env: None,
+            ename: None, old: None, level: 0,
+        };
+        paramtab().write().unwrap().insert("ref1".to_string(), Box::new(pm));
+        // Populate SCOPEREFS[3] manually with "ref1".
+        SCOPEREFS.with(|sr| {
+            let mut sr = sr.borrow_mut();
+            sr.resize(8, Vec::new());
+            sr[3].push("ref1".to_string());
+        });
+
+        endparamscope();
+
+        // After endparamscope: locallevel decremented to 2; "ref1"'s
+        // base reset to 0 (was 5 > new ll=2). SCOPEREFS[3] cleared.
+        let pm_after = paramtab().read().unwrap().get("ref1").cloned();
+        assert!(pm_after.is_some(), "ref1 should still exist (level=0)");
+        assert_eq!(pm_after.unwrap().base, 0, "PM_NAMEREF.base reset to 0");
+        SCOPEREFS.with(|sr| {
+            assert!(sr.borrow()[3].is_empty(), "SCOPEREFS[3] cleared");
+        });
+
+        // Cleanup
+        paramtab().write().unwrap().remove("ref1");
+        crate::ported::utils::set_locallevel(0);
+    }
+
+    /// `endparamscope` MUST NOT reset `base` on PM_UPPER namerefs
+    /// (c:5891 — the `!(pm->node.flags & PM_UPPER)` clause guards
+    /// the reset). PM_UPPER namerefs point UPWARD in the scope chain
+    /// (e.g. `typeset -n -u up=outer` from inside a function) and
+    /// their base must persist across scope pops so the upward
+    /// resolution keeps working. A regression that drops the PM_UPPER
+    /// guard would silently degrade upward namerefs into local ones
+    /// after the first function return.
+    #[test]
+    fn endparamscope_preserves_pm_upper_nameref_base() {
+        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR, PM_UPPER};
+        let _g = crate::test_util::global_state_lock();
+        SCOPEREFS.with(|s| s.borrow_mut().clear());
+
+        crate::ported::utils::set_locallevel(3);
+        let pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "up_ref".to_string(),
+                flags: (PM_NAMEREF | PM_SCALAR | PM_UPPER) as i32,
+            },
+            u_data: 0, u_arr: None, u_str: Some(String::new()),
+            u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 5, width: 0, env: None, ename: None, old: None, level: 0,
+        };
+        paramtab().write().unwrap().insert("up_ref".to_string(), Box::new(pm));
+        SCOPEREFS.with(|sr| {
+            let mut sr = sr.borrow_mut();
+            sr.resize(8, Vec::new());
+            sr[3].push("up_ref".to_string());
+        });
+
+        endparamscope();
+
+        let pm_after = paramtab().read().unwrap().get("up_ref").cloned()
+            .expect("up_ref must survive scope pop");
+        assert_eq!(pm_after.base, 5,
+            "c:5891 — PM_UPPER nameref base MUST be preserved (was 5, must stay 5)");
+        assert!(pm_after.node.flags as u32 & PM_UPPER != 0,
+            "PM_UPPER flag itself must persist");
+
+        paramtab().write().unwrap().remove("up_ref");
+        crate::ported::utils::set_locallevel(0);
+    }
+
+    /// `setscope_base` does NOT push when `base <= pm.level` (the C
+    /// `if ((pm->base = base) > pm->level)` guard at c:6440 fails).
+    #[test]
+    fn setscope_base_no_push_when_base_below_level() {
+        let _g = crate::test_util::global_state_lock();
+        SCOPEREFS.with(|s| s.borrow_mut().clear());
+        let mut pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "bar".to_string(),
+                flags: 0,
+            },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 10,
+        };
+        setscope_base(&mut pm, 3);  // 3 <= 10 → no push
+        assert_eq!(pm.base, 3);
+        SCOPEREFS.with(|s| {
+            // No push happened; SCOPEREFS stays empty.
+            assert!(s.borrow().is_empty() || s.borrow().iter().all(|v| v.is_empty()));
+        });
+    }
+
+    /// `setscope_base` boundary: `base == pm.level` must NOT push.
+    /// The C guard c:6440 is strictly `>` (`> pm->level`, not `>=`).
+    /// A regression that uses `>=` would push every assignment at
+    /// the current scope into SCOPEREFS, causing endparamscope to
+    /// re-process every same-scope param on every function return —
+    /// O(n) extra work per call PLUS spurious base resets.
+    #[test]
+    fn setscope_base_equal_level_does_not_push() {
+        let _g = crate::test_util::global_state_lock();
+        SCOPEREFS.with(|s| s.borrow_mut().clear());
+        let mut pm = crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "edge".to_string(),
+                flags: 0,
+            },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 5,
+        };
+        setscope_base(&mut pm, 5);  // base == level → strict `>` fails
+        assert_eq!(pm.base, 5, "base assignment always happens");
+        SCOPEREFS.with(|sr| {
+            let any_push = sr.borrow().iter().any(|v| !v.is_empty());
+            assert!(!any_push,
+                "c:6440 — `base > pm->level` is STRICT; equal must not push");
+        });
+    }
 
     // test_param_value_conversions removed: tested deleted fake
     // `ParamValue::Scalar` constructor. C uses union access on

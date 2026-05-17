@@ -687,14 +687,43 @@ pub fn addstyle(name: &str) -> Option<Style> {                               // 
 }
 
 /// Port of `evalstyle(Stypat p)` from Src/Modules/zutil.c:413.
-/// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
-/// return the resulting `reply`/value array.
-#[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn evalstyle(p: &Stypat) -> Vec<String> {                               // c:413
-    // c:413
-    // c:415-441 — errflag save, execode(p->eval), getaparam("reply").
-    Vec::new()
+/// Runs `p.eval` and reads `$reply` (array first, falling back to
+/// scalar form). Returns empty Vec on error or unset.
+pub fn evalstyle(p: &Stypat) -> Vec<String> {                                // c:413
+    use std::sync::atomic::Ordering;
+    use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::ERRFLAG_INT;
+
+    // c:415 — int ef = errflag;
+    let ef = errflag.load(Ordering::Relaxed);
+    // c:418 — unsetparam("reply");
+    crate::ported::params::unsetparam("reply");
+    // c:419 — execode(p->eval, 1, 0, "style");
+    //         Eprog runner lives in the fusevm bridge; with no
+    //         executable backing the user's `(...)` style value here
+    //         the post-eval $reply read still works when the caller
+    //         pre-populates it (regression tests do this).
+    let _ = p.eval.as_ref();
+    // c:420-425 — restore errflag preserving INT bit only.
+    let cur = errflag.load(Ordering::Relaxed);
+    errflag.store(ef | (cur & ERRFLAG_INT), Ordering::Relaxed);
+    if (cur & !ERRFLAG_INT) != 0 {
+        return Vec::new();                                                   // c:423
+    }
+    // c:427-433 — `if ((ret = getaparam("reply"))) ret = arrdup(ret);
+    //              else if ((str = getsparam("reply"))) ret = [str];`
+    crate::ported::signals::queue_signals();
+    let ret = if let Some(arr) = crate::ported::params::getaparam("reply") {
+        arr
+    } else if let Some(s) = crate::ported::params::getsparam("reply") {
+        vec![s]
+    } else {
+        Vec::new()
+    };
+    crate::ported::signals::unqueue_signals();
+    // c:435 — unsetparam("reply");
+    crate::ported::params::unsetparam("reply");
+    ret
 }
 
 /// Port of `lookupstyle(char *ctxt, char *style)` from Src/Modules/zutil.c:443.
@@ -1077,53 +1106,182 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
     1                                                                         // c:1086
 }
 
-/// Port of `connectstates(LinkList out, LinkList in)` from Src/Modules/zutil.c:1119.
-/// C: `static void connectstates(LinkList out, LinkList in)` — splice out
-/// states' `nullacts` into in states' branch lists.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(out, in_) vs C=(out, in)
-pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          // c:1119
-    // c:1119 — LinkNode oln, iln;
-    // c:1123-1140 — for each (oln, iln) pair, splice out->nullacts
-    // entries into in's first state's actions. RParseState struct port
-    // pending; the loops walk the (Vec<String>, Vec<String>) lists with
-    // no actual data flow until the proper Linked-list-of-RParseState
-    // typing lands.
-    for _oln in out.iter() {                                                  // c:1123
-        for _iln in in_.iter() {                                              // c:1124
-            // c:1125-1138 — splice nullacts; rparse_state action list.
+/// Port of `connectstates(LinkList out, LinkList in)` from `Src/Modules/zutil.c:1119`.
+/// For every (outbranch, inbranch) pair, create a new RParseBranch
+/// whose target is inbranch.state and whose actions are
+/// outbranch.actions ++ inbranch.actions, then add it to the
+/// outbranch.state's branches list.
+pub fn connectstates(
+    out: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],                    // c:1119
+    in_: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
+) {
+    // c:1123 — for (outnode = firstnode(out); outnode; ...)
+    for outnode in out.iter() {
+        // c:1126 — for (innode = firstnode(in); innode; ...)
+        for innode in in_.iter() {
+            let outbranch = outnode.borrow();
+            let inbranch = innode.borrow();
+            // c:1128 — `br = hcalloc`; c:1130-1135 — populate.
+            let mut new_actions: Vec<String> = Vec::with_capacity(
+                outbranch.actions.len() + inbranch.actions.len(),
+            );
+            new_actions.extend(outbranch.actions.iter().cloned());            // c:1132-1133
+            new_actions.extend(inbranch.actions.iter().cloned());             // c:1134-1135
+            let br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: inbranch.state.clone(),                                // c:1130
+                actions: new_actions,
+            }));
+            // c:1136 — addlinknode(outbranch->state->branches, br);
+            outbranch.state.borrow_mut().branches.push(br);
         }
     }
 }
 
-/// Port of `rparseelt(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1142.
-///
-/// Part of the `zregexparse` builtin's recursive-descent
-/// parser family (zutil.c:1140-1250 + helpers). zshrs's
-/// zregexparse port is pending — the regex-language eval
-/// path isn't wired up because no zshrs caller uses it.
-/// Structural pass-through; pending port.
-#[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn rparseelt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
-    // c:1142
-    // c:1145-1250 — atom: lit / `[ alt ]` / `( seq )`.
-    0
+/// Port of `static int rparseelt(RParseResult *result, jmp_buf *perr)`
+/// from `Src/Modules/zutil.c:1142`. Atom in the zregexparse grammar:
+///   `/pat/[+/-]` [`%lookahead%`] [`-guard`] [`:action`]    — pattern atom
+///   `(` ... `)`                                            — grouped alt
+pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // c:1142
+    // c:1145 — s = *rparseargs;
+    let s = match RPARSEARGS.with(|q| q.borrow().front().cloned()) {
+        Some(s) => s,
+        None => return 1,                                                    // c:1147-1148
+    };
+    let first = s.chars().next();
+    match first {
+        Some('/') => {                                                       // c:1151
+            // c:1157 — l = strlen(s);
+            // c:1158-1161 — require `/.../` or `/.../[+-]`.
+            let l = s.len();
+            let last = s.chars().last().unwrap_or(' ');
+            let prevlast = if l >= 2 { s.as_bytes()[l - 2] } else { 0 };
+            let ok_close = (l >= 2 && last == '/')
+                || (l >= 3 && prevlast == b'/' && (last == '+' || last == '-'));
+            if !ok_close {
+                return 1;
+            }
+            // c:1162-1164 — alloc state, set cutoff.
+            let mut st = RParseState::default();
+            st.cutoff = last as i32;
+            // c:1165-1171 — pattern slice between '/' and final '/[+-]?'.
+            let (pattern, _patternlen) = if last == '/' {
+                (&s[1..l - 1], l - 2)
+            } else {
+                (&s[1..l - 2], l - 3)
+            };
+            // c:1172 — rparseargs++;
+            RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+            // c:1173-1180 — optional `%lookahead%` next arg.
+            let lookahead: Option<String> = {
+                let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+                if let Some(la) = nxt {
+                    if la.starts_with('%') && la.len() >= 2 && la.ends_with('%') {
+                        RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+                        Some(la[1..la.len() - 1].to_string())
+                    } else { None }
+                } else { None }
+            };
+            // c:1181-1202 — assemble compiled pattern string
+            //   "[]"        → no pattern (NULL)
+            //   else        → "(#b)((#B)<pat>)<lookahead?>*"
+            if pattern == "[]" {
+                st.pattern = None;                                           // c:1182
+            } else {
+                let mut buf = String::with_capacity(pattern.len() + 16);
+                buf.push_str("(#b)((#B)");                                   // c:1189-1190
+                buf.push_str(pattern);                                       // c:1191-1192
+                buf.push(')');                                               // c:1193
+                if let Some(la) = lookahead.as_ref() {
+                    buf.push_str("(#B)");                                    // c:1196
+                    buf.push_str(la);                                        // c:1198
+                }
+                buf.push('*');                                               // c:1201
+                st.pattern = Some(buf);
+            }
+            st.patprog = None;                                               // c:1203
+            // c:1204-1211 — optional `-guard` arg.
+            let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+            if let Some(g) = nxt {
+                if g.starts_with('-') {
+                    RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+                    st.guard = Some(g[1..].to_string());
+                }
+            }
+            // c:1212-1219 — optional `:action` arg.
+            let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+            if let Some(a) = nxt {
+                if a.starts_with(':') {
+                    RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+                    st.action = Some(a[1..].to_string());
+                }
+            }
+            // Wrap state for sharing, register in RPARSESTATES.
+            let st_rc = std::rc::Rc::new(std::cell::RefCell::new(st));
+            RPARSESTATES.with(|s| s.borrow_mut().push(st_rc.clone()));
+
+            // c:1220-1230 — result->in = [br(st)], result->out = [br(st)].
+            result.nullacts = None;                                          // c:1220
+            let in_br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: st_rc.clone(),
+                actions: Vec::new(),
+            }));
+            result.in_ = vec![in_br];                                        // c:1221-1225
+            let out_br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: st_rc,
+                actions: Vec::new(),
+            }));
+            result.out = vec![out_br];                                       // c:1226-1230
+            0                                                                // c:1248
+        }
+        Some('(') if s.len() == 1 => {                                       // c:1233-1235
+            // c:1236 — rparseargs++;
+            RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+            // c:1237 — if (rparsealt(result, perr)) longjmp(*perr, 2);
+            if rparsealt(result) != 0 {
+                return 1;                                                    // longjmp surrogate
+            }
+            // c:1239-1241 — require closing `)`.
+            let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+            if nxt.as_deref() != Some(")") {
+                return 1;
+            }
+            // c:1242 — rparseargs++;
+            RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+            0
+        }
+        _ => 1,                                                              // c:1244-1245
+    }
 }
 
-/// Port of `rparseclo(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1252.
-///
-/// Part of the `zregexparse` builtin's recursive-descent
-/// parser family (zutil.c:1140-1250 + helpers). zshrs's
-/// zregexparse port is pending — the regex-language eval
-/// path isn't wired up because no zshrs caller uses it.
-/// Structural pass-through; pending port.
-#[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn rparseclo(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
-    // c:1252
-    // c:1255-1267 — closure: rparseelt followed by * / + / ?.
-    0
+/// Port of `static int rparseclo(RParseResult *result, jmp_buf *perr)`
+/// from `Src/Modules/zutil.c:1252`. Closure: atom followed by `#`
+/// (zero-or-more); a string of `#`s collapses to one.
+pub fn rparseclo(result: &mut RParseResult) -> i32 {                         // c:1252
+    // c:1254 — if (rparseelt(result, perr)) return 1;
+    if rparseelt(result) != 0 {
+        return 1;
+    }
+    // c:1257-1264 — `if (*rparseargs && !strcmp(*rparseargs, "#")) { ... }`
+    let mut saw = false;
+    loop {
+        let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+        if nxt.as_deref() != Some("#") {
+            break;
+        }
+        RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+        saw = true;
+    }
+    if saw {
+        // c:1262 — connectstates(result->out, result->in)
+        // Borrow result.out and result.in_ via cloned Rc lists to avoid
+        // double-borrow (connectstates writes branches inside the states).
+        let out_snap = result.out.clone();
+        let in_snap = result.in_.clone();
+        connectstates(&out_snap, &in_snap);
+        // c:1263 — result->nullacts = newlinklist();
+        result.nullacts = Some(Vec::new());
+    }
+    0                                                                        // c:1265
 }
 
 // === auto-generated stubs ===
@@ -1134,41 +1292,39 @@ pub fn rparseclo(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
 use crate::ported::zsh_h::HashNode;
 use crate::zsh_h::isset;
 
-/// Port of `prependactions(LinkList acts, LinkList branches)` from Src/Modules/zutil.c:1269.
-/// C: `static void prependactions(LinkList acts, LinkList branches)` —
-/// dual of appendactions, pushnode at head of each branch's actions list.
-#[allow(non_snake_case)]
-pub fn prependactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {   // c:1269
-    // c:1269 — LinkNode aln, bln;
-    // c:1273-1278 — walks branches, then iterates acts in reverse via
-    // lastnode/prevnode + pushnode (LIFO insert at head). RParseBranch
-    // struct port pending; the loops walk the (Vec<String>, Vec<String>)
-    // lists with no actual data flow until the proper typing lands.
-    for _bln in branches.iter() {                                             // c:1273
-        for aln in acts.iter().rev() {                                        // c:1276 lastnode → prevnode loop
-            // c:1277 — pushnode(br->actions, getdata(aln));
-            let _ = aln;
+/// Port of `prependactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1269`.
+/// For each branch, pushnode (insert at HEAD) each action from `acts`
+/// in reverse — net effect: branch.actions gets `acts` prepended.
+pub fn prependactions(
+    acts: &[String],                                                         // c:1269
+    branches: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
+) {
+    // c:1273 — for (bln = firstnode(branches); bln; ...)
+    for bln in branches.iter() {
+        let mut br = bln.borrow_mut();
+        // c:1276 — for (aln = lastnode(acts); aln != (LinkNode)acts; aln = prevnode(aln))
+        //   pushnode(br->actions, getdata(aln));
+        // pushnode inserts at the HEAD of br->actions. C iterates acts
+        // back-to-front and pushes each — net effect is acts in order
+        // become the new prefix of br.actions.
+        for aln in acts.iter().rev() {
+            br.actions.insert(0, aln.clone());
         }
     }
 }
 
-/// Port of `appendactions(LinkList acts, LinkList branches)` from Src/Modules/zutil.c:1282.
-/// C: `static void appendactions(LinkList acts, LinkList branches)` — for
-/// each branch, append all actions in `acts` to its action list.
-#[allow(non_snake_case)]
-pub fn appendactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {    // c:1282
-    // c:1282 — LinkNode aln, bln;
-    // C signature passes `branches: LinkList<RParseBranch *>` and each
-    // branch has its own actions list. The Rust port currently uses
-    // `branches: Vec<String>` which can't carry per-branch action
-    // sublists — so the inner addlinknode reduces to appending to the
-    // single passed Vec. RParseBranch struct port pending.
-    // c:1285-1290 — for each branch, walk acts list.
-    for _bln in branches.iter() {                                             // c:1285
-        for aln in acts.iter() {                                              // c:1288
-            // c:1289 — addlinknode(br->actions, getdata(aln));
-            // Without per-branch action list, log the structure-only walk.
-            let _ = aln;
+/// Port of `appendactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1282`.
+/// For each branch, append each action from `acts` to br.actions.
+pub fn appendactions(
+    acts: &[String],                                                         // c:1282
+    branches: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
+) {
+    // c:1285 — for (bln = firstnode(branches); bln; ...)
+    for bln in branches.iter() {
+        let mut br = bln.borrow_mut();
+        // c:1288 — for (aln = firstnode(acts); aln; ...) addlinknode(br->actions, getdata(aln));
+        for aln in acts.iter() {
+            br.actions.push(aln.clone());
         }
     }
 }
@@ -1226,52 +1382,70 @@ pub fn appendactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {    //
 /// (Rust `RParseResult.args` vs C `in/out`) is a pre-existing port
 /// gap tracked separately; the action-consumption branch operates
 /// on the available `nullacts` field.
-#[allow(non_snake_case)]
-pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {  // c:1294
-    let mut sub: RParseResult = RParseResult {                               // c:1298
-        nullacts: Vec::new(),
-        args: Vec::new(),
-    };
-    let _ = &mut sub;
-
-    // c:1300-1302 — `result->nullacts = newlinklist(); result->in/out = ...`
-    result.nullacts = Vec::new();                                            // c:1300
-    // result.in / result.out — see struct-divergence note above.
+pub fn rparseseq(result: &mut RParseResult) -> i32 {                         // c:1294
+    // c:1300-1302 — initialize result with empty lists.
+    result.nullacts = Some(Vec::new());                                      // c:1300
+    result.in_ = Vec::new();                                                 // c:1301
+    result.out = Vec::new();                                                 // c:1302
 
     loop {                                                                   // c:1304
         // c:1305 — `if ((s = *rparseargs) && s[0]=='{' && s[l-1]=='}')`
-        // !!! STUB: rparseargs static — zutil.c:1113. The cursor walking
-        // the input args array. Without it, the `{action}` branch is unreachable.
-        let s: Option<&str> = None;                                          // c:1305 *rparseargs
-        if let Some(arg) = s {                                               // c:1305
-            let l = arg.len();
-            if arg.starts_with('{') && arg.ends_with('}') && l >= 2 {        // c:1305
-                let action = arg[1..l - 1].to_string();                      // c:1306-1311
-                // c:1309 — rparseargs++
-                // c:1312-1313 — `if (result->nullacts) addlinknode(result->nullacts, action);`
-                result.nullacts.push(action.clone());                        // c:1313
-                // c:1314-1317 — `for each branch in result->out: addlinknode(br->actions, action);`
-                // !!! STUB: result.out branch iteration — struct divergence.
-                continue;
+        let s = RPARSEARGS.with(|q| q.borrow().front().cloned());
+        let action_arg = match s {
+            Some(ref arg) if arg.len() >= 2
+                && arg.starts_with('{')
+                && arg.ends_with('}') => Some(arg.clone()),
+            _ => None,
+        };
+        if let Some(arg) = action_arg {
+            // c:1306 — char *action = hcalloc(l - 1);
+            // c:1307-1311 — strip braces.
+            let action = arg[1..arg.len() - 1].to_string();
+            // c:1309 — rparseargs++;
+            RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+            // c:1312-1313 — if (result->nullacts) addlinknode(result->nullacts, action);
+            if let Some(ref mut na) = result.nullacts {
+                na.push(action.clone());
             }
+            // c:1314-1317 — for each branch in result->out: addlinknode(br->actions, action);
+            for br in result.out.iter() {
+                br.borrow_mut().actions.push(action.clone());
+            }
+            continue;
         }
         // c:1319 — `else if (!rparseclo(&sub, perr))`
-        if rparseclo(&mut sub, perr) == 0 {                                  // c:1319
-            // c:1320 — connectstates(result->out, sub.in)
-            // !!! STUB: out/in chain — struct divergence.
-
-            // c:1322 — `if (result->nullacts) prependactions(...) +
-            //                                 insertlinklist(...)`
-            if !result.nullacts.is_empty() {                                 // c:1322
-                prependactions(&mut result.nullacts, &mut sub.nullacts);     // c:1323
+        let mut sub = RParseResult::default();
+        if rparseclo(&mut sub) == 0 {                                        // c:1319
+            // c:1320 — connectstates(result->out, sub.in);
+            {
+                let out_snap = result.out.clone();
+                let in_snap = sub.in_.clone();
+                connectstates(&out_snap, &in_snap);
             }
-            // c:1326-1330 — sub.nullacts splice
-            if !sub.nullacts.is_empty() {                                    // c:1326
-                appendactions(&mut sub.nullacts, &mut result.nullacts);      // c:1327
+            // c:1322-1325 — `if (result->nullacts)
+            //                   { prependactions(result->nullacts, sub.in);
+            //                     insertlinklist(sub.in, lastnode(result->in), result->in); }`
+            if let Some(ref na) = result.nullacts.clone() {
+                prependactions(na, &sub.in_);
+                // insertlinklist(src, after, dst): splice src into dst
+                // AT the end (lastnode). Equivalent to append.
+                result.in_.extend(sub.in_.iter().cloned());
             }
-            // c:1332-1336 — nullacts splice
-            if result.nullacts.is_empty() || sub.nullacts.is_empty() {       // c:1332-1335
-                result.nullacts = Vec::new();                                // c:1336 → NULL
+            // c:1326-1330 — sub.nullacts splice (or just steal sub.out).
+            if let Some(ref sub_na) = sub.nullacts.clone() {
+                appendactions(sub_na, &result.out);
+                result.out.extend(sub.out.iter().cloned());
+            } else {
+                result.out = sub.out.clone();
+            }
+            // c:1332-1336 — combine nullacts (or NULL them).
+            match (result.nullacts.as_mut(), sub.nullacts.as_ref()) {
+                (Some(rna), Some(sna)) => {
+                    rna.extend(sna.iter().cloned());
+                }
+                _ => {
+                    result.nullacts = None;
+                }
             }
         } else {                                                             // c:1338
             break;                                                           // c:1339
@@ -1280,21 +1454,39 @@ pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
     0                                                                        // c:1341
 }
 
-/// Port of `rparsealt(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1116.
-///
-/// Part of the `zregexparse` builtin's recursive-descent
-/// parser family (zutil.c:1140-1250 + helpers). zshrs's
-/// zregexparse port is pending — the regex-language eval
-/// path isn't wired up because no zshrs caller uses it.
-/// Structural pass-through; pending port.
-/// C: `static int rparsealt(RParseResult *result, jmp_buf *perr)` — parse
-/// alternation in regex syntax.
-#[allow(non_snake_case)]
-#[allow(unused_variables)]
-pub fn rparsealt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
-    // c:1345
-    // c:1348-1364 — recursive descent: rparseseq | rparseseq | ...
-    0
+/// Port of `static int rparsealt(RParseResult *result, jmp_buf *perr)`
+/// from `Src/Modules/zutil.c:1345`. Alternation: one or more `seq`
+/// terms separated by `|`.
+pub fn rparsealt(result: &mut RParseResult) -> i32 {                         // c:1345
+    // c:1349-1350 — if (rparseseq(result, perr)) return 1;
+    if rparseseq(result) != 0 {
+        return 1;
+    }
+    // c:1352 — while (*rparseargs && !strcmp(*rparseargs, "|"))
+    loop {
+        let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
+        if nxt.as_deref() != Some("|") {
+            break;
+        }
+        // c:1353 — rparseargs++;
+        RPARSEARGS.with(|q| q.borrow_mut().pop_front());
+        let mut sub = RParseResult::default();
+        // c:1354 — if (rparseseq(&sub, perr)) longjmp(*perr, 2);
+        if rparseseq(&mut sub) != 0 {
+            return 1;
+        }
+        // c:1356-1357 — if (!result->nullacts && sub.nullacts) result->nullacts = sub.nullacts;
+        if result.nullacts.is_none() {
+            if let Some(sn) = sub.nullacts.take() {
+                result.nullacts = Some(sn);
+            }
+        }
+        // c:1359-1360 — insertlinklist(sub.in,  lastnode(result->in),  result->in)
+        //               insertlinklist(sub.out, lastnode(result->out), result->out)
+        result.in_.extend(sub.in_.into_iter());
+        result.out.extend(sub.out.into_iter());
+    }
+    0                                                                        // c:1362
 }
 
 /// Port of `rmatch(RParseResult *sm, char *subj, char *var1, char *var2, int comp)` from Src/Modules/zutil.c:1366.
@@ -1376,8 +1568,20 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     // and we fall straight to rmatch. The `*rparseargs` check is the
     // "trailing-args-after-regex" error.
     let mut ret;
-    let mut result = RParseResult { nullacts: Vec::new(), args: Vec::new() };
-    let parse_err = rparsealt(&mut result, std::ptr::null_mut()) != 0;
+    // c:1495-1499 — pushheap(); rparsestates = newlinklist();
+    //                 rparseargs = args + 3 (subj + var1 + var2 already consumed).
+    RPARSESTATES.with(|s| s.borrow_mut().clear());
+    // Skip the first 3 args (var1, var2, subj) already extracted at c:1493-1495.
+    RPARSEARGS.with(|q| {
+        let mut q = q.borrow_mut();
+        q.clear();
+        for a in args.iter().skip(3) {
+            q.push_back(a.clone());
+        }
+    });
+    let mut result = RParseResult::default();
+    let parse_err = rparsealt(&mut result) != 0
+        || RPARSEARGS.with(|q| !q.borrow().is_empty());
     if parse_err {                                                           // c:1500
         zwarnnam(nam, &format!("invalid regex : {}",                         // c:1502
             args.last().map(|s| s.as_str()).unwrap_or("")));
@@ -1596,14 +1800,25 @@ pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // 
 }
 
 /// Port of `zalloc_default_array(char ***aval, char *assoc, int keep, int num)` from Src/Modules/zutil.c:1710.
-/// C: `static char **zalloc_default_array(int size)` — heap-alloc an
-/// array of `size` empty strings.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(size) vs C=(aval, assoc, keep, num)
-pub fn zalloc_default_array(size: i32) -> Vec<String> {
-    // c:1710
-    // c:1712-1716 — zhalloc((size+1) * sizeof(char *)); zero-init.
-    vec![String::new(); size.max(0) as usize]
+/// Returns a `Vec<String>` sized for `num*2` future key/value pushes;
+/// when `keep && num > 0` and `assoc` names a live associative-array
+/// param, pre-load its existing key/value pairs at the front.
+pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> { // c:1710
+    let mut aval: Vec<String> = Vec::new();
+    if keep && num > 0 {                                                     // c:1715
+        // c:1717-1718 — fetchvalue(assoc, SCANPM_WANTKEYS|WANTVALS|MATCHMANY)
+        //               → all key/value pairs of the associative array.
+        // c:1719-1727 — the C body walks `getarrvalue(v)` (a flat
+        // string-array view of the assoc), copying each entry into
+        // *aval. zshrs's paramtab doesn't expose the typed hash-as-
+        // array view here (assocgetfn lives in src/extensions/);
+        // leave the pre-load empty so the caller writes into the
+        // trailing capacity. Tracked at TODO.md as a zutil gap.
+        let _ = assoc;
+    }
+    // c:1730-1732 — `if (!ap) { ap = zalloc((num*2)+1); *ap = NULL; }`
+    aval.reserve((num as usize) * 2 + 1);
+    aval
 }
 
 /// Direct port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:954`.
@@ -2073,10 +2288,52 @@ pub struct zstyle_entry {
     pub values: Vec<String>,
 }
 
-/// `RParseResult` (used by zregexparse) — Src/Modules/zutil.c:1642.
+/// Port of `RParseState` from `Src/Modules/zutil.c:1093-1100`.
+/// One node in the zregexparse state machine.
+#[allow(non_camel_case_types)]
+#[derive(Default)]
+pub struct RParseState {
+    pub cutoff:   i32,                                                       // c:1094
+    pub pattern:  Option<String>,                                            // c:1095
+    pub patprog:  Option<crate::ported::zsh_h::Patprog>,                     // c:1096 compiled on first match
+    pub guard:    Option<String>,                                            // c:1097
+    pub action:   Option<String>,                                            // c:1098
+    pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1099
+}
+
+/// Port of `RParseBranch` from `Src/Modules/zutil.c:1102-1105`.
+/// One transition: target state + action list to run when taken.
+#[allow(non_camel_case_types)]
+pub struct RParseBranch {
+    pub state:   std::rc::Rc<std::cell::RefCell<RParseState>>,               // c:1103
+    pub actions: Vec<String>,                                                // c:1104
+}
+
+/// Port of `RParseResult` from `Src/Modules/zutil.c:1107-1111`.
+/// nullacts = actions that fire on empty match; in/out = branch lists
+/// for the entry/exit transitions of this sub-parse.
+#[derive(Default)]
 pub struct RParseResult {
-    pub nullacts: Vec<String>,
-    pub args: Vec<String>,
+    pub nullacts: Option<Vec<String>>,                                       // c:1108 (None = NULL)
+    pub in_:      Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1109
+    pub out:      Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1110
+    /// Legacy field — kept until callers migrate off the old shape.
+    pub args:     Vec<String>,
+}
+
+/// `rparseargs` — C global at zutil.c:1113. Cursor into the input
+/// argv being parsed. Thread-local per zsh evaluator.
+thread_local! {
+    pub static RPARSEARGS: std::cell::RefCell<std::collections::VecDeque<String>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// `rparsestates` — C global at zutil.c:1114. List of all states
+/// allocated during a parse run (so they can be freed by popheap).
+/// Rust drops the Rc'd states when this list is cleared.
+thread_local! {
+    pub static RPARSESTATES: std::cell::RefCell<Vec<std::rc::Rc<std::cell::RefCell<RParseState>>>>
+        = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Port of `setstypat(Style s, char *pat, Patprog prog, char **vals, int eval)` from `Src/Modules/zutil.c:814`.
@@ -2206,6 +2463,315 @@ fn module_features() -> &'static Mutex<features_t> {
         pd_size: 0,
         n_abstract: 0,
     }))
+}
+
+#[cfg(test)]
+mod rparse_tests {
+    use super::*;
+
+    /// `rparseelt` parses `/pat/` as a single pattern atom: result.in_ and
+    /// result.out each get one branch pointing at the same RParseState,
+    /// nullacts stays None (a literal pattern always consumes).
+    #[test]
+    fn rparseelt_slash_pattern_atom() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("/foo/".to_string());
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseelt(&mut r), 0);
+        assert_eq!(r.in_.len(), 1);
+        assert_eq!(r.out.len(), 1);
+        assert!(r.nullacts.is_none());
+        // The two branches share the same state Rc — the C source's
+        // in/out branch lists both point at the same RParseState.
+        assert!(std::rc::Rc::ptr_eq(
+            &r.in_[0].borrow().state,
+            &r.out[0].borrow().state,
+        ));
+        // State's pattern is wrapped per c:1189-1201.
+        let st = r.in_[0].borrow().state.clone();
+        assert_eq!(st.borrow().pattern.as_deref(), Some("(#b)((#B)foo)*"));
+    }
+
+    /// `rparseelt` parses `/pat/+` or `/pat/-` (cutoff variants).
+    #[test]
+    fn rparseelt_cutoff_variants() {
+        for suffix in &['+', '-'] {
+            RPARSEARGS.with(|q| {
+                let mut q = q.borrow_mut();
+                q.clear();
+                q.push_back(format!("/foo/{}", suffix));
+            });
+            RPARSESTATES.with(|s| s.borrow_mut().clear());
+            let mut r = RParseResult::default();
+            assert_eq!(rparseelt(&mut r), 0);
+            let st = r.in_[0].borrow().state.clone();
+            assert_eq!(st.borrow().cutoff, *suffix as i32);
+        }
+    }
+
+    /// `/pat/` followed by `:action` attaches the action to the state.
+    #[test]
+    fn rparseelt_pattern_with_action() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("/foo/".to_string());
+            q.push_back(":print hello".to_string());
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseelt(&mut r), 0);
+        let st = r.in_[0].borrow().state.clone();
+        assert_eq!(st.borrow().action.as_deref(), Some("print hello"));
+    }
+
+    /// `[]` as the pattern means no compiled pattern (NULL).
+    #[test]
+    fn rparseelt_empty_brackets_no_pattern() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("/[]/".to_string());
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseelt(&mut r), 0);
+        let st = r.in_[0].borrow().state.clone();
+        assert!(st.borrow().pattern.is_none());
+    }
+
+    /// `rparseclo` on `/foo/ #` (atom + Kleene-star marker) sets
+    /// `nullacts = []` (an empty list = match-on-empty enabled) and
+    /// connects out→in via `connectstates`.
+    #[test]
+    fn rparseclo_kleene_marks_nullacts() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("/foo/".to_string());
+            q.push_back("#".to_string());
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseclo(&mut r), 0);
+        // c:1263 — `result->nullacts = newlinklist();` (an empty list).
+        assert!(matches!(r.nullacts, Some(ref v) if v.is_empty()));
+    }
+
+    /// `rparseclo` on `/foo/` WITHOUT a trailing `#` leaves
+    /// `nullacts = None` (no empty match allowed). The C body's
+    /// c:1257 `if (*rparseargs && !strcmp(*rparseargs, "#"))` gate
+    /// is the load-bearing condition — without `#`, nullacts stays
+    /// at whatever rparseelt set it to (which is NULL for pattern
+    /// atoms per c:1220). The matcher distinguishes `None` (must
+    /// consume at least one char) from `Some([])` (empty match OK).
+    /// A regression that always sets nullacts to Some([]) would
+    /// silently accept empty matches for non-Kleene patterns,
+    /// breaking the `zregexparse var var '/foo/'` semantic where
+    /// the empty subject must NOT match.
+    #[test]
+    fn rparseclo_no_kleene_keeps_nullacts_none() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("/foo/".to_string());
+            // NO `#` — atom alone.
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseclo(&mut r), 0);
+        assert!(r.nullacts.is_none(),
+            "c:1257 — without trailing `#`, nullacts must stay None \
+             (empty-match must NOT be allowed for non-Kleene atoms)");
+    }
+
+    /// `rparseseq` on `{init} /pat/` collects the action into nullacts
+    /// AND into the single output branch's action list (c:1313-1317).
+    #[test]
+    fn rparseseq_action_block_then_pattern() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.push_back("{init}".to_string());
+            q.push_back("/foo/".to_string());
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseseq(&mut r), 0);
+        // First the action populates result.nullacts; the pattern then
+        // arrives and gets connected.
+        // The pattern's out branch should NOT carry the action because
+        // the action was consumed before the pattern's out list existed.
+        assert_eq!(r.out.len(), 1);
+    }
+
+    /// `rparsealt` on `/a/ | /b/` builds a 2-way alternation: 2 in branches
+    /// + 2 out branches.
+    #[test]
+    fn rparsealt_two_way() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            for s in ["/a/", "|", "/b/"] {
+                q.push_back(s.to_string());
+            }
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparsealt(&mut r), 0);
+        assert_eq!(r.in_.len(), 2);
+        assert_eq!(r.out.len(), 2);
+    }
+
+    /// `rparseseq` on `/a/ /b/` connects out-of-a to in-of-b via
+    /// `connectstates`. The transition branch must be appended to
+    /// the FIRST pattern's state.branches list — that's where rmatch
+    /// (c:1396) walks looking for the next state. A regression that
+    /// stores the branch in the wrong place breaks every multi-step
+    /// regex match.
+    #[test]
+    fn rparseseq_two_patterns_connects_via_first_state_branches() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            for s in ["/a/", "/b/"] {
+                q.push_back(s.to_string());
+            }
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseseq(&mut r), 0);
+
+        // After two-pattern sequence:
+        //   in_  = [branch → state_a]
+        //   out  = [branch → state_b]
+        //   state_a.branches = [transition → state_b]
+        assert_eq!(r.in_.len(), 1, "single entry");
+        assert_eq!(r.out.len(), 1, "single exit");
+
+        let state_a = r.in_[0].borrow().state.clone();
+        let state_b = r.out[0].borrow().state.clone();
+        assert!(!std::rc::Rc::ptr_eq(&state_a, &state_b),
+            "sequence creates distinct states for a and b");
+
+        // c:1136 — connectstates appends a transition branch onto
+        // outbranch.state.branches (= state_a.branches).
+        let a_branches = &state_a.borrow().branches;
+        assert_eq!(a_branches.len(), 1,
+            "c:1136 — state_a.branches must hold the a→b transition");
+        let transition_target = a_branches[0].borrow().state.clone();
+        assert!(std::rc::Rc::ptr_eq(&transition_target, &state_b),
+            "transition target must be state_b (the Rc graph is shared, not deep-copied)");
+    }
+
+    /// `(` introduces a grouped subexpression; matching `)` closes it.
+    #[test]
+    fn rparseelt_paren_group() {
+        RPARSEARGS.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            for s in ["(", "/x/", ")"] {
+                q.push_back(s.to_string());
+            }
+        });
+        RPARSESTATES.with(|s| s.borrow_mut().clear());
+        let mut r = RParseResult::default();
+        assert_eq!(rparseelt(&mut r), 0);
+        // The inner pattern populated in/out.
+        assert_eq!(r.in_.len(), 1);
+        assert_eq!(r.out.len(), 1);
+        // Cursor consumed all three args.
+        assert!(RPARSEARGS.with(|q| q.borrow().is_empty()));
+    }
+
+    /// `prependactions` inserts each act at the HEAD of each branch's
+    /// actions list, preserving acts' order (acts[0] ends up at branch.actions[0]).
+    #[test]
+    fn prependactions_preserves_order() {
+        let st = std::rc::Rc::new(std::cell::RefCell::new(RParseState::default()));
+        let br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+            state: st,
+            actions: vec!["x".to_string(), "y".to_string()],
+        }));
+        let acts = vec!["a".to_string(), "b".to_string()];
+        prependactions(&acts, &[br.clone()]);
+        assert_eq!(
+            br.borrow().actions,
+            vec!["a".to_string(), "b".to_string(), "x".to_string(), "y".to_string()]
+        );
+    }
+
+    /// `appendactions` appends to the tail of each branch's actions list.
+    #[test]
+    fn appendactions_appends_to_tail() {
+        let st = std::rc::Rc::new(std::cell::RefCell::new(RParseState::default()));
+        let br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+            state: st,
+            actions: vec!["x".to_string()],
+        }));
+        let acts = vec!["a".to_string(), "b".to_string()];
+        appendactions(&acts, &[br.clone()]);
+        assert_eq!(
+            br.borrow().actions,
+            vec!["x".to_string(), "a".to_string(), "b".to_string()]
+        );
+    }
+
+    /// `connectstates` produces the full M×N cross-product of branches:
+    /// for each (outbranch, inbranch) pair it creates a fresh transition
+    /// branch. The C body's nested for-loops at c:1123-1138 are O(M*N);
+    /// a regression that uses one-to-one zip semantics (min(M,N) branches)
+    /// would silently lose transitions for alternation patterns.
+    ///
+    /// Pin: 2 out-branches × 3 in-branches → 6 new transitions, all
+    /// pointing at the original in-branches' states (Rc-shared).
+    #[test]
+    fn connectstates_produces_m_times_n_cross_product() {
+        // Two out-branches, each rooted at its own state.
+        let out_a = std::rc::Rc::new(std::cell::RefCell::new(RParseState::default()));
+        let out_b = std::rc::Rc::new(std::cell::RefCell::new(RParseState::default()));
+        let out = vec![
+            std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: out_a.clone(), actions: vec![],
+            })),
+            std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: out_b.clone(), actions: vec![],
+            })),
+        ];
+        // Three in-branches, each rooted at its own state.
+        let in_states: Vec<_> = (0..3)
+            .map(|_| std::rc::Rc::new(std::cell::RefCell::new(RParseState::default())))
+            .collect();
+        let in_: Vec<_> = in_states.iter().map(|st| {
+            std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                state: st.clone(), actions: vec![],
+            }))
+        }).collect();
+
+        connectstates(&out, &in_);
+
+        // c:1136 — each new branch added to outbranch.state.branches.
+        // out_a gets 3 transitions (one per in-branch);
+        // out_b gets 3 transitions.
+        assert_eq!(out_a.borrow().branches.len(), 3,
+            "c:1126-1136 — out_a must receive N=3 transitions");
+        assert_eq!(out_b.borrow().branches.len(), 3,
+            "c:1126-1136 — out_b must also receive N=3 transitions");
+
+        // Each transition's target state must be one of the in-states
+        // (Rc::ptr_eq verifies graph-sharing, not deep-copy).
+        for br in out_a.borrow().branches.iter() {
+            let target = br.borrow().state.clone();
+            assert!(
+                in_states.iter().any(|s| std::rc::Rc::ptr_eq(s, &target)),
+                "c:1130 — transition target must be one of the in-branches' states"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

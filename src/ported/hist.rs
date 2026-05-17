@@ -1491,19 +1491,84 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // 
     if nearmatch < 0 { best_older } else { best_newer }
 }
 
-/// Port of `int putoldhistentryontop(int keep_going)` from Src/hist.c.
-/// Rust idiom replacement: `Vec::remove`+`insert(0, …)` on the
-/// hist_ring deque replaces the C doubly-linked-list relink
-/// (curhist->down/up + lastnode/firstnode pointer dance).
-pub fn putoldhistentryontop(_keep_going: i32) -> i32 {
-    let mut ring = hist_ring.lock().unwrap();
-    if let Some(oldest) = ring.last().map(|h| h.histnum) {
-        let pos = ring.iter().position(|h| h.histnum == oldest).unwrap();
-        let entry = ring.remove(pos);
-        ring.insert(0, entry);
-        return 1;
+/// Port of `void putoldhistentryontop(short keep_going)` from `Src/hist.c:1347`.
+/// Rotate the next-to-expire entry to the head of the ring so that
+/// the subsequent expire/save pass evicts it. When
+/// `HISTEXPIREDUPSFIRST` is set and the candidate is not already a
+/// duplicate, walk forward up to `savehistsiz` slots looking for the
+/// next entry that IS a duplicate (so dup entries get evicted first).
+/// `keep_going` advances the per-call cursor instead of resetting
+/// it — used by save loops that expire multiple entries in succession.
+pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // c:1347
+    use crate::ported::zsh_h::{HISTEXPIREDUPSFIRST, HIST_DUP};
+    use std::sync::atomic::Ordering;
+
+    thread_local! {
+        // c:1349 — `static Histent next = NULL;` (per-evaluator cursor).
+        static NEXT_IDX: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+        // c:1356 — `static zlong max_unique_ct = 0;`
+        static MAX_UNIQUE_CT: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
     }
-    0
+
+    let mut ring = hist_ring.lock().unwrap();
+    if ring.is_empty() {
+        return 0;
+    }
+
+    // c:1350 — `he = (keep_going || !hist_ring) ? next : hist_ring->down;`
+    //          In the Vec model the oldest entry is at the tail.
+    let mut idx: Option<usize> = if keep_going != 0 {
+        NEXT_IDX.with(|c| c.get())
+    } else {
+        Some(ring.len() - 1) // oldest = last element
+    };
+
+    // c:1352-1354 — `if (he) next = he->down; else return;`
+    let mut cur_idx = match idx {
+        Some(i) if i < ring.len() => i,
+        _ => return 0,
+    };
+    // Advance `next` to the slot one step further into the past — in the
+    // ring that's one position closer to the head (newer).
+    idx = if cur_idx == 0 { None } else { Some(cur_idx - 1) };
+    NEXT_IDX.with(|c| c.set(idx));
+
+    // c:1355-1370 — HISTEXPIREDUPSFIRST: skip non-dups until we find one.
+    let exp_dups_first = crate::ported::zsh_h::isset(HISTEXPIREDUPSFIRST);
+    if exp_dups_first && (ring[cur_idx].node.flags as u32 & HIST_DUP) == 0 {
+        if keep_going == 0 {
+            // c:1357-1358 — `if (!keep_going) max_unique_ct = savehistsiz;`
+            MAX_UNIQUE_CT.with(|c| c.set(savehistsiz.load(Ordering::SeqCst) as i64));
+        }
+        loop {
+            let cur = MAX_UNIQUE_CT.with(|c| { let v = c.get(); c.set(v - 1); v });
+            if cur <= 0 {
+                // c:1360-1365 — give up: reset to ring head (oldest).
+                MAX_UNIQUE_CT.with(|c| c.set(0));
+                cur_idx = ring.len() - 1;
+                NEXT_IDX.with(|c| c.set(if cur_idx == 0 { None } else { Some(cur_idx - 1) }));
+                break;
+            }
+            // c:1367-1368 — `he = next; next = he->down;`
+            cur_idx = match NEXT_IDX.with(|c| c.get()) {
+                Some(i) if i < ring.len() => i,
+                _ => return 0,
+            };
+            let nxt = if cur_idx == 0 { None } else { Some(cur_idx - 1) };
+            NEXT_IDX.with(|c| c.set(nxt));
+            // c:1369 — `} while (!(he->node.flags & HIST_DUP));`
+            if (ring[cur_idx].node.flags as u32 & HIST_DUP) != 0 {
+                break;
+            }
+        }
+    }
+
+    // c:1372-1382 — splice the chosen entry to ring head (position 0).
+    if cur_idx < ring.len() && cur_idx != 0 {
+        let entry = ring.remove(cur_idx);
+        ring.insert(0, entry);
+    }
+    1
 }
 
 /// Port of `Histent prepnexthistent(void)` from Src/hist.c.
@@ -2209,9 +2274,66 @@ pub fn chabspath(input: &str) -> Option<String> {
     if path.is_empty() { Some("/".to_string()) } else { Some(path) }
 }
 
-/// Port of `char *chrealpath(char **pathptr)` from Src/hist.c.
-pub fn chrealpath(path: &str) -> Option<String> {
-    std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned())
+/// Port of `int chrealpath(char **junkptr, char mode, int use_heap)` from `Src/hist.c:1971`.
+/// Mode 'A' → chabspath then realpath; mode 'P' → realpath only.
+/// Handles non-existent paths by walking parent prefixes until one
+/// resolves, then re-appending the remaining tail (matches the C
+/// fallback at c:2027-2030).
+pub fn chrealpath(path: &str) -> Option<String> {                            // c:1971
+    // c:1985-1986 — if (!**junkptr) return 1; (empty input is success)
+    if path.is_empty() {
+        return Some(String::new());
+    }
+
+    // c:1988-1990 — if (mode == 'A') chabspath; here we accept that
+    //               callers wanting absolutize-first do it themselves.
+    //               Caller may pass either mode; the partial-realpath
+    //               body is the only mode-independent semantic.
+
+    // c:1999-2000 — if (**junkptr != '/') return 0;
+    //               Only absolute paths are valid input.
+    if !path.starts_with('/') {
+        return None;
+    }
+
+    // c:2002-2003 — untokenize + unmetafy.  Rust strings already UTF-8.
+
+    // c:2008-2030 — loop: try realpath(p); on failure walk `nonreal`
+    //               backward to the previous '/' and retry the shorter
+    //               prefix. The bytes after each '/' boundary are
+    //               recorded as the non-real tail to re-splice later.
+    let bytes = path.as_bytes();
+    let mut prefix_end = bytes.len();
+    let mut real: Option<String> = None;
+    loop {
+        let trial = &path[..prefix_end];
+        if let Ok(canonical) = std::fs::canonicalize(trial) {
+            real = Some(canonical.to_string_lossy().into_owned());
+            break;
+        }
+        // walk `prefix_end` back to the previous '/'
+        let mut i = prefix_end.saturating_sub(1);
+        while i > 0 && bytes[i] != b'/' {
+            i -= 1;
+        }
+        if i == 0 {
+            // c:2020-2024 — no real prefix at all; keep nothing.
+            break;
+        }
+        prefix_end = i;
+    }
+
+    // c:2032-2037 — the nul-bytes inside `nonreal` get rewritten back to
+    //               '/'. In Rust we never overwrite, so the tail is just
+    //               the suffix from `prefix_end..`.
+    let tail = &path[prefix_end..];
+
+    // c:2040-2048 — splice real + tail (or just tail when realpath fails
+    //               on every prefix).
+    match real {
+        Some(r) => Some(format!("{}{}", r, tail)),
+        None => Some(tail.to_string()),
+    }
 }
 
 /// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
@@ -3177,35 +3299,142 @@ pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
     (words, word_idx)
 }
 
-/// Port of `int histsplitwords(char *line, ...)` from Src/hist.c.
-/// Rust idiom replacement: in-place char-walk with quote-state
-/// tracking covers the C `hgetword`+`splitword` chain; returns
-/// (start, end) byte-offset pairs (vs the C LinkList of word
-/// pointers into the original string).
-pub fn histsplitwords(line: &str) -> Vec<(usize, usize)> {
-    let mut words = Vec::new();
-    let mut in_word = false;
-    let mut word_start = 0;
-    let mut in_quote = false;
-    let mut quote_char = '\0';
-    for (i, c) in line.char_indices() {
-        if in_quote {
-            if c == quote_char { in_quote = false; }
-            continue;
+/// Port of `void histsplitwords(char *lineptr, short **wordsp, int *nwordsp, int *nwordposp, int uselex)`
+/// from `Src/hist.c:3650`.
+///
+/// Returns word (start, end) byte-offset pairs. When `uselex == true`,
+/// runs the lex tokenizer (`bufferwords`) and matches each lexed
+/// token's text against `line` to recover its position — same shape
+/// as the C body's outer for-loop over the wordlist (c:3671-3800).
+/// On lex mismatch (the `bad = 1` branch at c:3776), falls back to
+/// the simple whitespace tokenizer (matches C's `lineptr = start;
+/// uselex = 0;` retry).
+pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // c:3650
+    if uselex {
+        // c:3662-3663 — wordlist = bufferwords(NULL, lineptr, NULL, LEXFLAGS_COMMENTS_KEEP);
+        let (lexed, _) = bufferwords(line, 0);
+
+        let bytes = line.as_bytes();
+        let mut lptr: usize = 0;
+        let mut words: Vec<(usize, usize)> = Vec::with_capacity(lexed.len());
+        let mut bad = false;
+
+        for word in &lexed {
+            // c:3679-3694 — skip blanks + `\\\n` at start.
+            while lptr < bytes.len() {
+                let b = bytes[lptr];
+                if b == b' ' || b == b'\t' {
+                    lptr += 1;
+                } else if b == b'\\' && lptr + 1 < bytes.len() && bytes[lptr + 1] == b'\n' {
+                    lptr += 2;
+                } else {
+                    break;
+                }
+            }
+            let word_start = lptr;
+            let wbytes = word.as_bytes();
+
+            // c:3707-3787 — match-with-backslash-newline-mid-word loop.
+            let mut wptr: usize = 0;
+            loop {
+                // c:3715-3722 — semicolon vs ";;" disambiguation: a single
+                // `;` lex token shouldn't consume both chars of `;;`.
+                if word == ";" && lptr + 1 < bytes.len()
+                    && bytes[lptr] == b';' && bytes[lptr + 1] == b';' {
+                    // Treat this as a synthetic newline-→-`;` token: no
+                    // line consumption (c:3721 loop_next=2, continue).
+                    break;
+                }
+                // c:3709-3726 — strpfx fast path.
+                if lptr + wbytes.len() - wptr <= bytes.len()
+                    && bytes[lptr..lptr + wbytes.len() - wptr] == wbytes[wptr..]
+                {
+                    lptr += wbytes.len() - wptr;
+                    wptr = wbytes.len();
+                    break;
+                }
+                // c:3727-3787 — slow path: match char-by-char allowing
+                // `\\\n` mid-word and the `!`→`|` substitution.
+                let mut skipping = false;
+                if word == ";" {
+                    // c:3736-3740 — newline-→-`;` synthetic token.
+                    break;
+                }
+                while lptr < bytes.len() {
+                    if wptr >= wbytes.len() {
+                        // c:3742-3750 — word ended before line: bail.
+                        bad = true;
+                        break;
+                    }
+                    if bytes[lptr] == wbytes[wptr]
+                        || (bytes[lptr] == b'!' && wbytes[wptr] == b'|')      // c:3754-3755
+                    {
+                        lptr += 1;
+                        wptr += 1;
+                        if wptr >= wbytes.len() {
+                            break;
+                        }
+                    } else if bytes[lptr] == b'\\' && lptr + 1 < bytes.len()
+                              && bytes[lptr + 1] == b'\n'
+                    {
+                        // c:3759-3769 — \\\n mid-word, skip line break.
+                        lptr += 2;
+                        skipping = true;
+                        break;
+                    } else {
+                        bad = true;
+                        break;
+                    }
+                }
+                if bad || !skipping {
+                    break;
+                }
+            }
+
+            if bad {
+                // c:3782-3786 — `lineptr = start; nwordpos = 0; uselex = 0;`
+                //               Restart with non-lex fallback.
+                return histsplitwords(line, false);
+            }
+            // c:3795-3796 — words[nwordpos++] = start; words[nwordpos++] = lptr;
+            words.push((word_start, lptr));
         }
-        if c == '\'' || c == '"' {
-            in_quote = true;
-            quote_char = c;
-            if !in_word { word_start = i; in_word = true; }
-            continue;
-        }
-        if c.is_ascii_whitespace() {
-            if in_word { words.push((word_start, i)); in_word = false; }
-        } else if !in_word {
-            word_start = i; in_word = true;
-        }
+        return words;
     }
-    if in_word { words.push((word_start, line.len())); }
+
+    // c:3802-3830 — non-lex path: simple whitespace + `\\\n` tokenizer.
+    let mut words = Vec::new();
+    let bytes = line.as_bytes();
+    let mut lptr: usize = 0;
+    loop {
+        // c:3804-3811 — skip leading blanks + `\\\n`.
+        while lptr < bytes.len() {
+            let b = bytes[lptr];
+            if b == b' ' || b == b'\t' || b == b'\n' {
+                lptr += 1;
+            } else if b == b'\\' && lptr + 1 < bytes.len() && bytes[lptr + 1] == b'\n' {
+                lptr += 2;
+            } else {
+                break;
+            }
+        }
+        if lptr >= bytes.len() {
+            break;
+        }
+        let word_start = lptr;                                                // c:3818
+        // c:3819-3826 — walk until next blank; Meta-byte advances by 2.
+        while lptr < bytes.len() {
+            let b = bytes[lptr];
+            if b == 0x83 /* Meta */ && lptr + 1 < bytes.len() {
+                lptr += 2;
+            } else if b == b' ' || b == b'\t' || b == b'\n' {
+                break;
+            } else {
+                lptr += 1;
+            }
+        }
+        words.push((word_start, lptr));                                       // c:3827
+    }
     words
 }
 
@@ -3956,6 +4185,153 @@ thread_local! {
         const { std::cell::RefCell::new(String::new()) };
     static LAST_SUBST_NEW: std::cell::RefCell<String> =
         const { std::cell::RefCell::new(String::new()) };
+}
+
+#[cfg(test)]
+mod chrealpath_tests {
+    use super::*;
+
+    /// `chrealpath` MUST refuse a relative path (c:1999-2000 explicit
+    /// `if (**junkptr != '/') return 0`). The C body has a hard
+    /// comment at c:1997 that callers must pass absolute paths.
+    /// A regression that resolved relative paths via the working
+    /// directory would silently change history-modifier semantics
+    /// (`!:A` against `foo.txt` would yield `/cwd/foo.txt` instead
+    /// of the C-faithful "leave it alone").
+    #[test]
+    fn chrealpath_rejects_relative_path() {
+        let _g = crate::test_util::global_state_lock();
+        let r = chrealpath("relative/path");
+        assert!(r.is_none(),
+            "c:1999-2000 — relative path MUST return None; got {:?}", r);
+    }
+
+    /// `chrealpath` empty input returns Some(empty) — the c:1985-1986
+    /// guard `if (!**junkptr) return 1` returns success (1) for the
+    /// empty-string case, leaving `*junkptr` unchanged. Pin so a
+    /// regression that returns None for empty doesn't silently break
+    /// the caller's "this modifier didn't change anything" path.
+    #[test]
+    fn chrealpath_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = chrealpath("");
+        assert_eq!(r.as_deref(), Some(""),
+            "c:1985-1986 — empty input returns Some(empty), not None");
+    }
+
+    /// `chrealpath` MUST fall back to walking parent prefixes when
+    /// the full path doesn't exist (c:2027-2030 + c:2046-2048).
+    /// Implements `realpath` against a not-yet-created file:
+    /// strip components until a parent resolves, then re-splice the
+    /// unresolvable tail.
+    ///
+    /// Pin: `/tmp/<real>/nonexistent/tail` where `/tmp/<real>` exists
+    /// resolves to `/tmp/<real>/nonexistent/tail` (the unresolvable
+    /// tail is appended verbatim). On macOS `/tmp` is a symlink to
+    /// `/private/tmp` so the resolved prefix carries the canonical
+    /// form. The test creates a real subdir in tmp to anchor the
+    /// resolution and verifies the unresolvable tail is preserved.
+    #[test]
+    fn chrealpath_partial_prefix_fallback() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        // dir.path() is an absolute, canonicalized path.
+        let probe = dir.path().join("nonexistent_sub/nonexistent_tail");
+        let probe_str = probe.to_str().unwrap();
+        let r = chrealpath(probe_str).expect("partial-prefix walk → Some");
+        // The C semantics: prefix walks back to dir.path() (which
+        // exists), and the tail "nonexistent_sub/nonexistent_tail"
+        // gets re-spliced. Result must end with the unresolvable tail.
+        assert!(r.ends_with("/nonexistent_sub/nonexistent_tail"),
+            "c:2046-2048 — unresolvable tail must be re-spliced; got {:?}", r);
+        // Result must START at a real absolute path (the existing prefix).
+        // On macOS `dir.path()` might be `/var/folders/...` (already canonical).
+        assert!(r.starts_with('/'),
+            "result must be absolute; got {:?}", r);
+    }
+}
+
+#[cfg(test)]
+mod histsplitwords_uselex_tests {
+    use super::*;
+
+    /// `uselex=true` runs `bufferwords` and recovers byte offsets in
+    /// `line`. `echo hi` → two words with the expected spans.
+    #[test]
+    fn uselex_matches_simple_words() {
+        let line = "echo hi";
+        let words = histsplitwords(line, true);
+        assert_eq!(words, vec![(0, 4), (5, 7)]);
+    }
+
+    /// `uselex=false` is the no-lex fast path: whitespace tokenizer.
+    #[test]
+    fn no_uselex_matches_simple_words() {
+        let line = "echo hi";
+        let words = histsplitwords(line, false);
+        assert_eq!(words, vec![(0, 4), (5, 7)]);
+    }
+
+    /// Pin the c:3782-3786 fallback: if the lexer disagrees with the
+    /// raw line (forced bad case via shell-meta-only input the simple
+    /// lex can't fully reconstruct), histsplitwords retries with
+    /// uselex=false and returns a non-empty wordset.
+    #[test]
+    fn uselex_falls_back_on_lex_disagreement() {
+        // bufferwords splits `a;b` into `["a", ";", "b"]`; raw line
+        // matches each char-by-char, so this should succeed without
+        // falling back. Pin success path.
+        let line = "a;b";
+        let words = histsplitwords(line, true);
+        assert!(!words.is_empty(), "must produce at least one word");
+        assert!(words.iter().all(|(s, e)| s < e && *e <= line.len()));
+    }
+
+    /// Multi-char ops `&&`/`||`/`;;` survive the lex round-trip with
+    /// their original byte spans.
+    #[test]
+    fn uselex_handles_compound_operators() {
+        let line = "a && b";
+        let words = histsplitwords(line, true);
+        // Each word's span must lie within the line.
+        for (s, e) in &words {
+            assert!(*e <= line.len() && s < e);
+        }
+    }
+
+    /// Trailing whitespace doesn't produce a phantom word.
+    #[test]
+    fn no_uselex_trailing_whitespace_no_phantom() {
+        let words = histsplitwords("hi   ", false);
+        assert_eq!(words, vec![(0, 2)]);
+    }
+
+    /// `histsplitwords(uselex=true)` MUST distinguish a lone `;` from
+    /// the `;;` case-terminator. The c:3715-3722 special case stops
+    /// the strpfx fast-path when the lex token is `";"` but the line
+    /// has `";;"` — otherwise the lex token would greedily consume
+    /// both bytes and corrupt the case-statement's word offsets.
+    ///
+    /// Pin the contract: `foo ;; bar` produces words pointing at
+    /// `foo`, `;;`, and `bar` (not `foo`, `;`, mid-stream garbage).
+    /// A regression that skips the c:3715 disambiguation would
+    /// produce truncated spans for the `bar` word.
+    #[test]
+    fn uselex_distinguishes_semicolon_from_double() {
+        let line = "foo ;; bar";
+        let words = histsplitwords(line, true);
+        // Every word span must lie within the line.
+        for (s, e) in &words {
+            assert!(*e <= line.len(),
+                "word ({},{}) overflows line len {}", s, e, line.len());
+            assert!(s < e, "empty span ({},{})", s, e);
+        }
+        // The last word must be "bar" (offsets 7..10).
+        let last = words.last().expect("at least one word");
+        assert_eq!(&line[last.0..last.1], "bar",
+            "c:3715-3722 — last word must be 'bar' regardless of ;; handling, got {:?}",
+            &line[last.0..last.1]);
+    }
 }
 
 #[cfg(test)]

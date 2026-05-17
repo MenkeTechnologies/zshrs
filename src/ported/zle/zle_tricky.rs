@@ -1105,12 +1105,33 @@ pub fn expandorcompleteprefix() -> i32 { // c:3041
 }
 
 /// Port of `endoflist(UNUSED(char **args))` from Src/Zle/zle_tricky.c:3055.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
+/// "Clear the displayed completion list" widget — returns 0 on
+/// success (had a list to clear), 1 otherwise.
 pub fn endoflist() -> i32 {                                                  // c:3055
-    // C body c:3057-3070 — `if (lastlistlen > 0) { clearflag = 0;
-    //                       trashzle(); for (i...) putc('\n'); ... }`.
-    // Without the live curses substrate we no-op and report success.
-    0
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_refresh::{LASTLISTLEN, CLEARFLAG, SHOWINGLIST};
+    // c:3057 — if (lastlistlen > 0) {
+    let n = LASTLISTLEN.load(Ordering::SeqCst);
+    if n > 0 {
+        // c:3060 — clearflag = 0;
+        CLEARFLAG.store(0, Ordering::SeqCst);
+        // c:3061 — trashzle();
+        crate::ported::zle::zle_main::trashzle();
+        // c:3063-3064 — for (i = lastlistlen; i > 0; i--) putc('\n', shout);
+        //               Without a live shout pipe, log the request rather
+        //               than emit raw '\n' to stdout.
+        for _ in 0..n {
+            tracing::trace!("endoflist: putc('\\n', shout)");
+        }
+        // c:3066 — showinglist = lastlistlen = 0;
+        SHOWINGLIST.store(0, Ordering::SeqCst);
+        LASTLISTLEN.store(0, Ordering::SeqCst);
+        // c:3068-3069 — if (sfcontext) zrefresh();
+        //               SFCONTEXT not surfaced as global yet; the live
+        //               widget tick triggers zrefresh on its own.
+        return 0;                                                            // c:3071
+    }
+    1                                                                        // c:3073
 }
 
 pub static USEMENU: AtomicI32 = AtomicI32::new(0);                           // c:96

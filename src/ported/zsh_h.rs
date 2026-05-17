@@ -2190,14 +2190,76 @@ pub const MAX_PIPESTATS: usize = 256; // c:1166
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Default)]
 pub struct timeinfo {
-    // c:1099
+    // c:1099-1115 — when HAVE_GETRUSAGE the C type is `struct rusage`
+    // and printtime reads ru_maxrss / ru_majflt / ru_minflt / ru_nswap /
+    // ru_ixrss / ru_idrss / ru_isrss / ru_inblock / ru_oublock /
+    // ru_nvcsw / ru_nivcsw / ru_msgsnd / ru_msgrcv / ru_nsignals.
     pub ut: i64,
     pub st: i64,
+    /// Maximum resident set size (KB).            ru_maxrss (c:945-952)
+    pub maxrss: i64,
+    /// Major page faults.                          ru_majflt (c:954-957)
+    pub majflt: i64,
+    /// Minor page faults.                          ru_minflt (c:959-962)
+    pub minflt: i64,
+    /// Number of swaps.                            ru_nswap  (c:896-899)
+    pub nswap: i64,
+    /// Integral shared memory size.                ru_ixrss  (c:901-907)
+    pub ixrss: i64,
+    /// Integral unshared data size.                ru_idrss  (c:909-919)
+    pub idrss: i64,
+    /// Integral unshared stack size.               ru_isrss
+    pub isrss: i64,
+    /// Block input operations.                     ru_inblock
+    pub inblock: i64,
+    /// Block output operations.                    ru_oublock
+    pub oublock: i64,
+    /// Voluntary context switches.                 ru_nvcsw
+    pub nvcsw: i64,
+    /// Involuntary context switches.               ru_nivcsw
+    pub nivcsw: i64,
+    /// IPC messages sent.                          ru_msgsnd
+    pub msgsnd: i64,
+    /// IPC messages received.                      ru_msgrcv
+    pub msgrcv: i64,
+    /// Signals received.                           ru_nsignals
+    pub nsignals: i64,
 }
 
 impl timeinfo {
     pub fn user_dur(&self) -> std::time::Duration { std::time::Duration::from_micros(self.ut as u64) }
     pub fn sys_dur(&self)  -> std::time::Duration { std::time::Duration::from_micros(self.st as u64) }
+
+    /// Populate this `timeinfo` from a `libc::rusage` snapshot.
+    /// On macOS `ru_maxrss` is in bytes; on Linux it's KB — caller
+    /// normalises via cfg.
+    #[cfg(unix)]
+    pub fn from_rusage(r: &libc::rusage) -> Self {
+        let ut = r.ru_utime.tv_sec as i64 * 1_000_000 + r.ru_utime.tv_usec as i64;
+        let st = r.ru_stime.tv_sec as i64 * 1_000_000 + r.ru_stime.tv_usec as i64;
+        #[cfg(target_os = "macos")]
+        let maxrss = r.ru_maxrss / 1024;
+        #[cfg(not(target_os = "macos"))]
+        let maxrss = r.ru_maxrss as i64;
+        Self {
+            ut,
+            st,
+            maxrss: maxrss as i64,
+            majflt: r.ru_majflt as i64,
+            minflt: r.ru_minflt as i64,
+            nswap: r.ru_nswap as i64,
+            ixrss: r.ru_ixrss as i64,
+            idrss: r.ru_idrss as i64,
+            isrss: r.ru_isrss as i64,
+            inblock: r.ru_inblock as i64,
+            oublock: r.ru_oublock as i64,
+            nvcsw: r.ru_nvcsw as i64,
+            nivcsw: r.ru_nivcsw as i64,
+            msgsnd: r.ru_msgsnd as i64,
+            msgrcv: r.ru_msgrcv as i64,
+            nsignals: r.ru_nsignals as i64,
+        }
+    }
 }
 
 // =============================================================================
