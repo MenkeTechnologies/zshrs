@@ -4076,35 +4076,63 @@ pub fn zputs(s: &str) -> std::io::Result<()> {                               // 
     std::io::stdout().lock().write_all(out.as_bytes())                       // c:5278
 }
 
-/// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289` (single-byte build) and
-/// `Src/utils.c:5289` (multibyte build). C body:
+/// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289`
+/// (single-byte build) and `Src/utils.c:5530` (multibyte build).
+///
+/// C bodies:
 /// ```c
+/// /* Src/utils.c:5289 — !MULTIBYTE_SUPPORT */
 /// char *retstr;
 /// (void)sb_niceformat(s, NULL, &retstr, heap ? NICEFLAG_HEAP : 0);
 /// return retstr;
+///
+/// /* Src/utils.c:5530 — MULTIBYTE_SUPPORT */
+/// char *retstr;
+/// (void)mb_niceformat(s, NULL, &retstr, heap ? NICEFLAG_HEAP : 0);
+/// return retstr;
 /// ```
-/// Both C variants delegate to `sb_niceformat` (single-byte) or
-/// `mb_niceformat` (multibyte) — the wrapper is identical shape, so
-/// the Rust port is a direct call into [`sb_niceformat`]. The `heap`
-/// arg is dropped because Rust ownership tracks lifetime; the C
-/// `NICEFLAG_HEAP` only controls which allocator zalloc-vs-zhalloc
-/// is used, which has no Rust analog.
-pub fn nicedup(s: &str) -> String {
-    sb_niceformat(s)
+///
+/// zshrs targets MULTIBYTE_SUPPORT (matches every modern zsh
+/// build) — route through `mb_niceformat`. Previous Rust port
+/// went through `sb_niceformat`, which is the !MULTIBYTE path —
+/// strips wide-char handling and corrupts non-ASCII via byte-mask
+/// `nicechar(c & 0xff)`.
+///
+/// The `heap` arg drops: Rust ownership replaces NICEFLAG_HEAP's
+/// zalloc-vs-zhalloc choice.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, heap)
+pub fn nicedup(s: &str) -> String {                                          // c:5530
+    mb_niceformat(s)                                                         // c:5534
 }
 
-/// Nice-format and duplicate string (from utils.c nicedupstring)
+/// Nice-format and duplicate string.
 /// Port of `nicedupstring(char const *s)` from `Src/utils.c:5301`.
-pub fn nicedupstring(s: &str) -> String {
-    sb_niceformat(s)
+/// C body: `return nicedup(s, 1);` — heap-arena allocation form.
+pub fn nicedupstring(s: &str) -> String {                                    // c:5301
+    nicedup(s)                                                               // c:5303
 }
 
 /// Nicely format a string
-/// Render an entire string with `nicechar()` for every byte.
-/// Port of `nicezputs(char const *s, FILE *stream)` from Src/utils.c.
+/// Port of `nicezputs(char const *s, FILE *stream)` from `Src/utils.c`.
+///
+/// Under `MULTIBYTE_SUPPORT` (the daily-driver path), C defines
+/// `nicezputs(str, outs)` as a macro at zsh.h:3274:
+///   `(void)mb_niceformat((str), (outs), NULL, 0)`.
+/// Without MULTIBYTE (c:5313): `sb_niceformat(s, stream, NULL, 0)`.
+///
+/// The previous Rust impl was `s.chars().map(nicechar).collect()` —
+/// wrong on every front:
+///   1. No unmetafy step (Meta-byte pairs surfaced as `\M-…` mangled).
+///   2. `nicechar` is byte-based (`c & 0xff`), corrupting non-ASCII
+///      multibyte codepoints into spurious `\M-X` escapes.
+///   3. No `itok` ZSH-token-byte handling.
+///
+/// Route through `mb_niceformat` to match the C macro under
+/// MULTIBYTE — which itself unmetafies and uses `wcs_nicechar` for
+/// proper wide-char handling.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
-pub fn nicezputs(s: &str) -> String {                                       // c:5313
-    s.chars().map(nicechar).collect()
+pub fn nicezputs(s: &str) -> String {                                        // c:5313 / zsh.h:3274
+    mb_niceformat(s)
 }
 
 /// Port of `niceztrlen(char const *s)` from `Src/utils.c:5324`.
@@ -8279,18 +8307,39 @@ mod tests {
     }
 
     /// `Src/utils.c:1968-1983` — `check_fd_table(fd)`. Grows the
-    /// fdtable global (not yet modeled). The Rust port is currently
-    /// a no-op stub returning true; pin that contract so a future
-    /// "real" port doesn't accidentally re-introduce the old
-    /// `fcntl(F_GETFD)` validity check that completely diverged
-    /// from C semantics.
+    /// fdtable Vec to `fd+1` slots (filling new entries with
+    /// FDT_UNUSED) and bumps `MAX_ZSH_FD` to `fd`. Pin: a small
+    /// fd grows the table to `fd+1` length; MAX_ZSH_FD reflects it.
+    /// fd ≤ cur_max early-returns without growing (c:1971-1972).
     #[test]
-    fn check_fd_table_is_noop_stub() {
+    fn check_fd_table_grows_to_fd_plus_one() {
         let _g = crate::test_util::global_state_lock();
-        // No-op port returns true for any input.
-        assert!(check_fd_table(-1),  "stub returns true for any fd");
-        assert!(check_fd_table(0));
-        assert!(check_fd_table(99999));
+        // Reset globals so the test is deterministic regardless
+        // of prior ordering — other tests may have grown the
+        // table or bumped MAX_ZSH_FD.
+        MAX_ZSH_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
+        {
+            let mut g = fdtable_lock().lock().unwrap();
+            g.clear();
+        }
+
+        // c:1971-1972 — fd ≤ cur_max is the early-return path.
+        // With cur_max=-1, fd=-1 hits `fd <= cur_max` → true.
+        assert!(check_fd_table(-1));
+        assert_eq!(MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed), -1,
+                   "fd ≤ cur_max early-returns; MAX_ZSH_FD untouched");
+
+        // c:1974-1981 — fd > cur_max grows fdtable to fd+1 slots.
+        assert!(check_fd_table(7));
+        assert_eq!(MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed), 7,
+                   "c:1982 — MAX_ZSH_FD := fd");
+        let len = { let g = fdtable_lock().lock().unwrap(); g.len() };
+        assert!(len >= 8, "c:1975-1979 — fdtable grew to ≥ fd+1 = 8 slots, got {}", len);
+
+        // Idempotence under fd ≤ cur_max.
+        assert!(check_fd_table(3));
+        assert_eq!(MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed), 7,
+                   "fd ≤ cur_max keeps MAX_ZSH_FD at 7");
     }
 
     /// `Src/utils.c:4364,4367` — `wcsitype(c, IWORD/ISEP)` reads
@@ -8612,5 +8661,46 @@ mod tests {
         // Should not panic; behavior beyond "no panic" is unspecified.
         let _ = check_fd_table(-1);
         let _ = check_fd_table(-100);
+    }
+
+    /// `Src/zsh.h:3274` — under MULTIBYTE_SUPPORT, the C source
+    /// defines `nicezputs(str, outs)` as a macro:
+    ///   `(void)mb_niceformat((str), (outs), NULL, 0)`.
+    /// So Rust `nicezputs(s)` must equal `mb_niceformat(s)` for
+    /// every input. Pins the macro-equivalence after fixing the
+    /// previous `chars().map(nicechar)` impl (which corrupted
+    /// non-ASCII multibyte codepoints into `\M-X` mangle).
+    #[test]
+    fn nicezputs_matches_mb_niceformat_under_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        // ASCII printable: both produce the same passthrough.
+        assert_eq!(nicezputs("hello"), mb_niceformat("hello"));
+        // ASCII control: \n must be `\n` (literal backslash + n).
+        assert_eq!(nicezputs("a\nb"), mb_niceformat("a\nb"));
+        assert!(nicezputs("a\nb").contains("\\n"),
+                "nicechar/wcs_nicechar emit `\\n` (not raw 0x0a)");
+        // Multibyte: previous chars()+nicechar would have mangled
+        // é into `\M-…`. mb_niceformat preserves printable wides.
+        assert_eq!(nicezputs("é"), mb_niceformat("é"));
+        // Empty: both empty.
+        assert_eq!(nicezputs(""), String::new());
+    }
+
+    /// `Src/utils.c:5530` — under MULTIBYTE_SUPPORT, `nicedup(s, heap)`
+    /// body is `(void)mb_niceformat(s, NULL, &retstr, …); return retstr;`
+    /// so the returned string MUST equal mb_niceformat output. Previous
+    /// Rust port routed through `sb_niceformat` (the !MULTIBYTE path),
+    /// dropping wide-char handling and mangling non-ASCII into `\M-X`.
+    #[test]
+    fn nicedup_matches_mb_niceformat_under_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicedup("hello"), mb_niceformat("hello"));
+        assert_eq!(nicedup("a\nb"), mb_niceformat("a\nb"));
+        // Wide-char printable: the bug was here — sb_niceformat byte-
+        // masks `c & 0xff` so `é` (0xC3 0xA9 UTF-8) emerged as
+        // two `\M-…` escapes. mb_niceformat preserves it.
+        assert_eq!(nicedup("é"), mb_niceformat("é"));
+        // nicedupstring delegates to nicedup; pin equivalence.
+        assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo"));
     }
 }
