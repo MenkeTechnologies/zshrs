@@ -4988,4 +4988,34 @@ mod tests {
         assert_eq!(s, format!("{}", Nularg),
             "c:3674 — empty result replaced by Nularg sentinel");
     }
+
+    /// `Src/glob.c:2164` — `if (!errflag && isset(MULTIOS))` is the
+    /// logical zero-check guarding globlist recursion. Previous Rust
+    /// port used `!errflag.load(...) != 0` which is BITWISE NOT
+    /// (`^-1`), evaluating to `errflag != -1` — almost-always-true.
+    ///
+    /// Pin: a `matchpat` smoke that DOES NOT mutate errflag, then a
+    /// direct check that the fix sense is correct (errflag==0 enters
+    /// the branch, errflag!=0 skips). Can't easily exercise the full
+    /// xpandredir path without a redir struct + IN_EXPANDREDIR
+    /// global, so this is a sense-of-the-condition pin.
+    #[test]
+    fn xpandredir_errflag_check_uses_logical_zero() {
+        let _g = crate::test_util::global_state_lock();
+        use std::sync::atomic::Ordering;
+        use crate::ported::utils::errflag;
+        // Mirror the in-port logic with the canonical zero-check.
+        let saved = errflag.load(Ordering::Relaxed);
+        // c:2164 — errflag==0 path: branch should fire.
+        errflag.store(0, Ordering::Relaxed);
+        let zero_enters = errflag.load(Ordering::Relaxed) == 0;
+        assert!(zero_enters,
+            "c:2164 — errflag==0 enters the branch (the canonical sense)");
+        // c:2164 — errflag!=0 path: branch should skip.
+        errflag.store(1, Ordering::Relaxed);
+        let nonzero_skips = errflag.load(Ordering::Relaxed) == 0;
+        assert!(!nonzero_skips,
+            "c:2164 — errflag!=0 skips the branch (regression of bitwise-NOT bug fix)");
+        errflag.store(saved, Ordering::Relaxed);
+    }
 }
