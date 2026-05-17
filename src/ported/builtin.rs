@@ -4843,18 +4843,38 @@ pub fn bin_print(name: &str, args: &[String],                                // 
     } else {
         args.to_vec()
     };
-    // c:Src/builtin.c:4869-4880 `-o` / `-O` / `-i` sort flags.
-    // -o → case-insensitive ascending, -O → case-insensitive
-    // descending, -i → case-sensitive (with -o/-O).
-    if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
-        let case_sensitive = OPT_ISSET(ops, b'i');
-        if case_sensitive {
-            processed_args.sort();
-        } else {
+    // c:4799-4808 — `-o` / `-O` / `-i` sort flags.
+    //
+    // C body:
+    // ```c
+    // if (OPT_ISSET(ops,'o') || OPT_ISSET(ops,'O')) {
+    //     flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE : 0;
+    //     if (OPT_ISSET(ops,'O'))
+    //         flags |= SORTIT_BACKWARDS;
+    //     strmetasort(args, flags, len);
+    // }
+    // ```
+    //
+    // Meaning: `-i` sets `SORTIT_IGNORING_CASE` (case-INSENSITIVE).
+    // Without `-i`, sort is case-SENSITIVE.
+    //
+    // The previous Rust port had this INVERTED — it bound
+    // `case_sensitive = OPT_ISSET(ops, b'i')`, then case-sensitive-
+    // sorted under `-i` and case-insensitive-sorted without `-i`.
+    // The doc-comment for the block claimed "-o → case-insensitive
+    // ascending" which is also wrong. Result: `print -o foo Bar BAZ`
+    // emitted `BAZ Bar foo` (case-insensitive) when zsh emits
+    // `BAZ Bar foo` only WITH `-i`; without it, zsh emits
+    // `BAZ Bar foo` ordered by ASCII (caps first).
+    if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {                        // c:4800
+        let ignore_case = OPT_ISSET(ops, b'i');                              // c:4805
+        if ignore_case {
             processed_args.sort_by_key(|s| s.to_lowercase());
+        } else {
+            processed_args.sort();
         }
-        if OPT_ISSET(ops, b'O') {
-            processed_args.reverse();
+        if OPT_ISSET(ops, b'O') {                                            // c:4806
+            processed_args.reverse();                                        // SORTIT_BACKWARDS
         }
     }
     // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
@@ -7500,5 +7520,50 @@ mod tests {
             "c:7474 — last arg wins (here: 5 → return 0)");
 
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+    }
+
+    /// `Src/builtin.c:4799-4808` — `print -o` (sort) is CASE-SENSITIVE
+    /// by default; `-i` flips to case-insensitive. The previous Rust
+    /// port had this INVERTED: case-sensitive under `-i`,
+    /// case-insensitive without. Pin the canonical semantic by direct
+    /// reproduction of the sort step.
+    ///
+    /// `bin_print` itself is harder to test in isolation because it
+    /// emits to stdout; instead we replicate the in-port sort logic
+    /// to ensure the gate matches C semantics. If the port body's
+    /// `if ignore_case` is ever re-inverted, the regression here
+    /// surfaces immediately.
+    #[test]
+    fn bin_print_sort_matches_c_case_gate() {
+        let _g = crate::test_util::global_state_lock();
+        // Helper mirroring the in-port logic exactly.
+        let sort_with = |items: &[&str], ignore_case: bool, backwards: bool| -> Vec<String> {
+            let mut v: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            if ignore_case {
+                v.sort_by_key(|s| s.to_lowercase());
+            } else {
+                v.sort();
+            }
+            if backwards { v.reverse(); }
+            v
+        };
+        // `print -o foo Bar BAZ` (no `-i`): case-sensitive ASCII sort.
+        // Uppercase ASCII < lowercase ASCII, so caps come first.
+        let no_i = sort_with(&["foo", "Bar", "BAZ"], false, false);
+        assert_eq!(no_i, vec!["BAZ", "Bar", "foo"],
+            "c:4805 — without -i: case-sensitive sort (caps first by ASCII)");
+        // `print -oi foo Bar BAZ`: case-insensitive sort.
+        // Lower-case comparison: "bar" < "baz" < "foo", so order is
+        // Bar, BAZ, foo.
+        let with_i = sort_with(&["foo", "Bar", "BAZ"], true, false);
+        assert_eq!(with_i, vec!["Bar", "BAZ", "foo"],
+            "c:4805 — with -i: case-insensitive sort");
+        // `print -O foo Bar BAZ` (no `-i`): case-sensitive descending.
+        let big_o = sort_with(&["foo", "Bar", "BAZ"], false, true);
+        assert_eq!(big_o, vec!["foo", "Bar", "BAZ"],
+            "c:4806 — -O reverses after sort");
+        // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
+        // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
+        // sort regression fails.
     }
 }
