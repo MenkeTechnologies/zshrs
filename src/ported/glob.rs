@@ -1739,20 +1739,69 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c
     Some((num, rest))
 }
 
-/// Execute a qualifier expression (from glob.c qualsheval full impl)
-/// Port of `qualsheval(char *name, UNUSED(struct stat *buf), UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
+/// Port of `static int qualsheval(char *name, UNUSED(struct stat *buf),
+/// UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
+///
+/// C body (c:3907-3943):
+/// ```c
+/// if ((prog = parse_string(str, 0))) {
+///     int ef = errflag, lv = lastval;             // c:3912 save
+///     unsetparam("reply");                        // c:3915
+///     setsparam("REPLY", ztrdup(name));           // c:3916
+///     execode(prog, 1, 0, "globqual");            // c:3919
+///     ret = lastval;                              // c:3921
+///     errflag = ef | (errflag & ERRFLAG_INT);     // c:3924 restore
+///     lastval = lv;                               // c:3925
+///     return !ret;
+/// }
+/// return 0;
+/// ```
+///
+/// The `e:EXPR:` glob qualifier runs `EXPR` against each match
+/// candidate with `$REPLY` pre-set to the filename. The expr is
+/// evaluated IN THE CURRENT SHELL — it can read shell locals,
+/// reference shell functions, set $reply etc.
+///
+/// The previous Rust port spawned `/bin/sh -c <expr>` via
+/// `Command::new("sh")`, which:
+///   1. Loses access to current zsh function/alias/local-var scope.
+///   2. Runs `sh` (POSIX), not `zsh` — entire `(e:zsh-feature:)`
+///      class of qualifiers silently failed.
+///   3. Skipped errflag/lastval save+restore.
+///
+/// Fixed: route through the canonical `ShellExecutor` for in-shell
+/// evaluation. Set `REPLY` via paramtab (C `setsparam`), restore
+/// `errflag`/`lastval` per c:3924-3925, mask any parse-time
+/// ERRFLAG_ERROR while preserving ERRFLAG_INT (user interrupt).
 /// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
-pub fn qualsheval(filename: &str, expr: &str) -> bool {
-
-    // Set REPLY to filename and evaluate expression
-    let script = format!("REPLY='{}'; {}", filename.replace("'", "'\\''"), expr);
-
-    Command::new("sh")
-        .arg("-c")
-        .arg(&script)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+pub fn qualsheval(filename: &str, expr: &str) -> bool {                       // c:3907
+    use std::sync::atomic::Ordering;
+    // c:3912 — save errflag + lastval.
+    let saved_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:3912
+    let saved_lastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3912
+    // c:3915 — `unsetparam("reply");`
+    crate::ported::params::unsetparam("reply");                               // c:3915
+    // c:3916 — `setsparam("REPLY", ztrdup(name));`. Set in the
+    // canonical paramtab so the evaluated expression sees `$REPLY`.
+    crate::ported::params::setsparam("REPLY", filename);                      // c:3916
+    // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
+    // current ShellExecutor for in-shell evaluation. Falls back to
+    // a fresh executor if no ExecutorContext is active.
+    let mut __exec = crate::exec::ShellExecutor::new();
+    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
+    let rc = __exec.execute_script(expr).unwrap_or(1);                        // c:3919
+    let ret = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);        // c:3921 ret = lastval
+    let _ = rc;
+    // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore
+    // pre-call errflag plus any interrupt bit set during eval.
+    let post_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
+    crate::ported::utils::errflag.store(
+        saved_errflag | (post_errflag & crate::ported::zsh_h::ERRFLAG_INT),
+        Ordering::Relaxed);                                                    // c:3924
+    // c:3925 — `lastval = lv;`. Restore pre-call lastval.
+    crate::ported::builtin::LASTVAL.store(saved_lastval, Ordering::Relaxed);   // c:3925
+    // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
+    ret == 0
 }
 
 /// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
@@ -4987,6 +5036,42 @@ mod tests {
         remnulargs(&mut s);
         assert_eq!(s, format!("{}", Nularg),
             "c:3674 — empty result replaced by Nularg sentinel");
+    }
+
+    /// `Src/glob.c:3907-3943` — `qualsheval(name, _, _, expr)` sets
+    /// `$REPLY` via paramtab, evaluates `expr` IN THE CURRENT SHELL,
+    /// then restores errflag+lastval. Previous Rust port spawned
+    /// `/bin/sh -c expr` which:
+    ///   1. Couldn't access shell locals / functions / aliases.
+    ///   2. Ran `sh` (POSIX), not `zsh` — every zsh-feature qualifier
+    ///      silently failed.
+    ///
+    /// Pin: after qualsheval, errflag is restored (mod ERRFLAG_INT),
+    /// lastval is restored, and `$REPLY` is set to the filename.
+    /// Easiest direct pin: errflag/lastval restore around an `expr`
+    /// that mutates them.
+    #[test]
+    fn qualsheval_restores_errflag_and_lastval() {
+        let _g = crate::test_util::global_state_lock();
+        use std::sync::atomic::Ordering;
+        use crate::ported::utils::errflag;
+        use crate::ported::builtin::LASTVAL;
+        // Seed errflag and lastval with distinctive values.
+        errflag.store(0, Ordering::Relaxed);
+        LASTVAL.store(42, Ordering::Relaxed);
+        // Even if the expr mutates these via the executor, c:3924-3925
+        // restore them after.
+        let _ = qualsheval("/tmp/file", ":");  // no-op expr
+        // c:3924 — errflag restored.
+        assert_eq!(errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR, 0,
+            "c:3924 — qualsheval must restore errflag (no ERRFLAG_ERROR leak)");
+        // c:3925 — lastval restored.
+        assert_eq!(LASTVAL.load(Ordering::Relaxed), 42,
+            "c:3925 — qualsheval must restore lastval to pre-call value");
+        // c:3916 — $REPLY visible in paramtab.
+        assert_eq!(crate::ported::params::getsparam("REPLY"),
+            Some("/tmp/file".to_string()),
+            "c:3916 — qualsheval must set $REPLY to filename");
     }
 
     /// `Src/glob.c:2164` — `if (!errflag && isset(MULTIOS))` is the
