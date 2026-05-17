@@ -270,8 +270,13 @@ pub fn zgetcwd() -> String {                                                 // 
             return ret;
         }
     }
-    // c:562-563 — `if (!ret) ret = unmeta(pwd);` — fall back to shell $pwd.
-    if let Some(pwd) = crate::ported::params::getsparam("pwd") {             // c:563
+    // c:562-563 — `if (!ret) ret = unmeta(pwd);`. C reads the
+    // `pwd` file-scope static (Src/params.c:108). In zshrs the
+    // equivalent is the `$PWD` shell parameter, looked up via
+    // the canonical paramtab accessor (uppercase — that's the
+    // export name; the lowercase `pwd` is a C-internal symbol
+    // with no Rust-side counterpart in paramtab).
+    if let Some(pwd) = crate::ported::params::getsparam("PWD") {             // c:563
         let unmeta_pwd = crate::ported::utils::unmeta(&pwd);                 // c:563
         if !unmeta_pwd.is_empty() {                                          // c:564
             return unmeta_pwd;

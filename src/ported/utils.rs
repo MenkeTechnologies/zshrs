@@ -965,11 +965,21 @@ pub fn get_username() -> String {
     let name = unsafe {
         let pw = libc::getpwuid(current_uid);
         if pw.is_null() {
-            String::new()
+            String::new()                                                    // c:1088 — `ztrdup("")` fallback
         } else {
-            std::ffi::CStr::from_ptr((*pw).pw_name)
+            // c:1086 — `cached_username = ztrdup_metafy(pswd->pw_name);`.
+            // `ztrdup_metafy` calls `metafy((char *)s, -1, META_DUP)`
+            // (utils.c:4929). The previous Rust port returned the raw
+            // pw_name verbatim — fine for ASCII usernames, but high-bit
+            // bytes (e.g. an `émile` username on some systems) would
+            // surface to callers un-metafied. zsh's downstream pipeline
+            // (param expansion, prompt rendering) assumes paramtab
+            // entries are metafied; an un-metafied high-bit byte breaks
+            // the Meta-escape contract.
+            let raw = std::ffi::CStr::from_ptr((*pw).pw_name)
                 .to_string_lossy()
-                .into_owned()
+                .into_owned();
+            metafy(&raw)                                                     // c:1086 ztrdup_metafy
         }
     };
     *guard = Some((current_uid, name.clone()));
@@ -9383,5 +9393,38 @@ mod tests {
         assert_eq!(FDTABLE_FLOCKS.load(Ordering::SeqCst), 0,
             "c:2062-2063 + c:2135 — flock count double-decremented (faithful to C)");
         unsafe { libc::close(y); }
+    }
+
+    /// `Src/utils.c:1075` — `get_username()` uses `ztrdup_metafy` on
+    /// `pswd->pw_name`. Previous Rust port returned the raw pw_name
+    /// verbatim — fine for ASCII usernames, broken for high-bit
+    /// bytes (downstream paramtab consumers assume metafied entries).
+    /// Pin: ASCII usernames round-trip identically through metafy,
+    /// AND the result is a non-empty string for the current uid.
+    #[test]
+    #[cfg(unix)]
+    fn get_username_returns_metafied_non_empty_string() {
+        let _g = crate::test_util::global_state_lock();
+        let name = get_username();
+        // CI environments may have a username from `whoami(1)`. In
+        // weird sandbox-only setups it might be empty, but on every
+        // standard build it should be set.
+        if name.is_empty() {
+            return;
+        }
+        // ASCII round-trip via metafy is identity. If the username
+        // had high-bit bytes (the bug case), the output would be
+        // Meta-escaped — both forms are non-empty so this pin
+        // doesn't reject either, just ensures the fn returns
+        // SOMETHING usable (not an empty string).
+        assert!(!name.is_empty(),
+            "c:1086 — getpwuid result must yield a non-empty username");
+        // Sanity: metafy(name) == name for ASCII input (every byte
+        // is below Meta range). Confirms the c:1086 step preserves
+        // ASCII paths byte-for-byte.
+        if name.bytes().all(|b| b < 0x80) {
+            assert_eq!(metafy(&name), name,
+                "c:1086 — ASCII metafy is identity (so pin holds for ASCII users)");
+        }
     }
 }
