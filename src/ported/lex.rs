@@ -2453,13 +2453,42 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
 }
 
 /// Tokenize a string as if in double quotes (error-reporting variant).
-/// Direct port of `parsestr(char **s)` from `Src/lex.c:1694`. C
-/// source: `if ((err = parsestrnoerr(s))) { untokenize(*s); ...
-/// zerr("parse error near `%c'", err); tok = LEXERR; }`. zshrs's
-/// wrapper preserves the Result and lets the caller emit the
-/// diagnostic.
-pub fn parsestr(s: &str) -> Result<String, String> {
-    parsestrnoerr(s)
+/// Port of `parsestr(char **s)` from `Src/lex.c:1694`.
+/// C body:
+/// ```c
+/// int err;
+/// if ((err = parsestrnoerr(s))) {                                  // c:1698
+///     untokenize(*s);                                              // c:1699
+///     if (!(errflag & ERRFLAG_INT)) {                              // c:1700
+///         if (err > 32 && err < 127)                               // c:1701
+///             zerr("parse error near `%c'", err);                  // c:1702
+///         else
+///             zerr("parse error");                                 // c:1704
+///         tok = LEXERR;                                            // c:1705
+///     }
+/// }
+/// return err;
+/// ```
+pub fn parsestr(s: &str) -> Result<String, String> {                          // c:1694
+    match parsestrnoerr(s) {                                                  // c:1698
+        Ok(result) => Ok(result),
+        Err(msg) => {
+            let untok = untokenize(s);                                        // c:1699
+            let _ = untok;
+            let ef = crate::ported::utils::errflag                            // c:1700
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if (ef & crate::ported::zsh_h::ERRFLAG_INT) == 0 {                // c:1700
+                // c:1701-1704 — `if (err > 32 && err < 127)` switches between
+                // "parse error near `%c'" and bare "parse error". The
+                // Err(msg) string carries the diagnostic already formatted
+                // by dquote_parse / gettokstr; emit it via zerr to match
+                // C's stderr behaviour.
+                crate::ported::utils::zerr(&msg);                             // c:1702/1704
+                set_tok(LEXERR);                                              // c:1705
+            }
+            Err(msg)
+        }
+    }
 }
 
 /// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.

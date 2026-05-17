@@ -518,11 +518,27 @@ pub fn zarrdup(s: &[String]) -> Vec<String> {                             // c:4
     s.to_vec()
 }
 
-/// Duplicate an array up to a maximum length.
-/// zshrs-original convenience — closest C analog is the bounded
-/// loops Src/utils.c uses around `zarrdup` when the max is known.
-pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
-    arr.iter().take(max).cloned().collect()
+/// Port of `arrdup_max(char **s, unsigned max)` from `Src/utils.c:4508`.
+///
+/// C body:
+/// ```c
+/// int len = 0;
+/// if (max) len = arrlen(s);            // c:4513-4514
+/// if (max > len) max = len;            // c:4517-4518 — clamp
+/// y = x = zhalloc(sizeof(char*) * (max + 1));
+/// send = s + max;                      // c:4522
+/// while (s < send) *x++ = dupstring(*s++);  // c:4523-4524
+/// *x = NULL;                           // c:4525
+/// return y;
+/// ```
+///
+/// Rust port: `iter().take(max).cloned().collect()` is the
+/// same `min(len, max)` clamp + element-wise copy that C does
+/// across the `s < send` loop. `Vec<String>` replaces the
+/// `char**` heap array; Drop replaces the explicit `NULL`
+/// terminator.
+pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {              // c:4508
+    arr.iter().take(max).cloned().collect()                                 // c:4517-4524
 }
 
 /// Get array length.
