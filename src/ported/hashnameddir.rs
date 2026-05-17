@@ -238,6 +238,7 @@ mod tests {
 
     #[test]
     fn addnameddirnode_sets_diff_and_inserts() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:125 — `nd->diff = strlen(nd->dir) - strlen(nam);`
         fresh_table();
@@ -252,6 +253,7 @@ mod tests {
 
     #[test]
     fn removenameddirnode_returns_node_and_clears_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:137-141 — removehashnode + finddir(NULL).
         fresh_table();
@@ -265,6 +267,7 @@ mod tests {
 
     #[test]
     fn removenameddirnode_missing_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:139 — `if(hn) finddir(NULL);` only fires when a node
         // was actually present; the function still returns NULL
@@ -275,6 +278,7 @@ mod tests {
 
     #[test]
     fn emptynameddirtable_clears_and_resets_allusersadded() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:86-87 — emptyhashtable + allusersadded = 0.
         fresh_table();
@@ -288,6 +292,7 @@ mod tests {
 
     #[test]
     fn createnameddirtable_resets_allusersadded() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // c:76 — `allusersadded = 0;`
         allusersadded.store(1, Ordering::Relaxed);
@@ -297,6 +302,7 @@ mod tests {
 
     #[test]
     fn nd_username_value_matches_zsh_h() {
+        let _g = crate::test_util::global_state_lock();
         // Src/zsh.h:2157 — `#define ND_USERNAME (1<<1)`.
         assert_eq!(ND_USERNAME, 1 << 1);
     }
@@ -312,6 +318,7 @@ mod tests {
     /// runs inside the c:98 conditional.
     #[test]
     fn fillnameddirtable_short_circuits_when_allusersadded_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         allusersadded.store(1, Ordering::Relaxed);
         fillnameddirtable();
@@ -325,6 +332,7 @@ mod tests {
     /// would underflow on a `hash -d short=/x` style entry.
     #[test]
     fn addnameddirnode_diff_can_be_negative() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // name "longname" (8) longer than dir "/x" (2) → diff = -6.
         fresh_table();
@@ -343,6 +351,7 @@ mod tests {
     /// stale `diff` field.
     #[test]
     fn addnameddirnode_overwrites_existing_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("p", make_nd("p", "/old", 0));
@@ -361,6 +370,7 @@ mod tests {
     /// `~name` prefix matching for this case.
     #[test]
     fn addnameddirnode_diff_zero_when_lengths_equal() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("abcde", make_nd("abcde", "/etc/", 0));
@@ -376,6 +386,7 @@ mod tests {
     /// re-scan on next access.
     #[test]
     fn emptynameddirtable_resets_table_and_flag() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("a", make_nd("a", "/x", 0));
@@ -392,6 +403,7 @@ mod tests {
     /// (Some), or None for an absent name. Pin both branches.
     #[test]
     fn removenameddirnode_returns_some_for_present_and_none_for_absent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("here", make_nd("here", "/tmp/here", 0));
@@ -409,6 +421,7 @@ mod tests {
     /// from the table (followup state check).
     #[test]
     fn removenameddirnode_actually_removes_from_table() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         addnameddirnode("a", make_nd("a", "/a", 0));
@@ -426,6 +439,7 @@ mod tests {
     /// safety since `init_misc` and `fillnameddirtable` both call it.
     #[test]
     fn createnameddirtable_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
         createnameddirtable();
@@ -440,6 +454,7 @@ mod tests {
     /// it (drops the String fields). Smoke test for the destructor.
     #[test]
     fn freenameddirnode_consumes_node() {
+        let _g = crate::test_util::global_state_lock();
         let nd = make_nd("doomed", "/tmp", 0);
         freenameddirnode(nd);
         // No panic = pass. Caller's `nd` is moved.

@@ -643,6 +643,7 @@ mod tests {
     /// (c:149-150) when `emulation` global is 0 (default).
     #[test]
     fn ksh93_wrapper_returns_one_when_not_emulate_ksh() {
+        let _g = crate::test_util::global_state_lock();
         emulation.store(0, Ordering::SeqCst);
         let rc = ksh93_wrapper(
             std::ptr::null(),
@@ -659,6 +660,7 @@ mod tests {
     /// terminate.
     #[test]
     fn ksh93_wrapper_runs_full_body_under_emulate_ksh() {
+        let _g = crate::test_util::global_state_lock();
         let saved = emulation.load(Ordering::SeqCst);
         emulation.store(EMULATE_KSH, Ordering::SeqCst);
         let rc = ksh93_wrapper(
@@ -676,6 +678,7 @@ mod tests {
     /// unset and KSHARRAYS is off (c:86 NULL branch).
     #[test]
     fn matchgetfn_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let v = matchgetfn(std::ptr::null_mut());
         assert!(v.is_empty());
     }
@@ -683,12 +686,14 @@ mod tests {
     /// Verifies `edcharsetfn` is a no-op (c:56 `;`).
     #[test]
     fn edcharsetfn_noop() {
+        let _g = crate::test_util::global_state_lock();
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     /// Verifies all module loaders return 0.
     #[test]
     fn module_loaders_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         let mut features = Vec::new();
@@ -705,6 +710,7 @@ mod tests {
     /// (sh_unsetval-equivalent) at module-load.
     #[test]
     fn statics_default_to_unsetval() {
+        let _g = crate::test_util::global_state_lock();
         sh_name.lock().unwrap().clear();
         sh_subscript.lock().unwrap().clear();
         sh_edchar.lock().unwrap().clear();
@@ -720,6 +726,7 @@ mod tests {
     /// Verifies `LOCAL_NAMEREF` matches the C `#define` at c:158.
     #[test]
     fn local_nameref_matches_c_define() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(LOCAL_NAMEREF, PM_LOCAL | PM_UNSET | PM_NAMEREF);
     }
 
@@ -729,6 +736,7 @@ mod tests {
     /// branch — a regression that adds `.unwrap()` would SIGSEGV.
     #[test]
     fn matchgetfn_with_param_no_array_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode};
         let mut pm = param {
             node: hashnode { next: None, nam: "match".to_string(), flags: 0 },
@@ -747,6 +755,7 @@ mod tests {
     /// PM_READONLY silently changes the unset semantics.
     #[test]
     fn local_nameref_has_exactly_three_component_flags() {
+        let _g = crate::test_util::global_state_lock();
         let expected = PM_LOCAL | PM_UNSET | PM_NAMEREF;
         assert_eq!(LOCAL_NAMEREF, expected);
         // Subtracting each in turn yields the other two
@@ -761,6 +770,7 @@ mod tests {
     /// at every shXgetfn call site.
     #[test]
     fn sh_unsetval_is_two_zero_bytes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sh_unsetval, [0u8, 0u8],
             "sh_unsetval must be the C-canonical [0,0] sentinel");
     }
@@ -770,6 +780,7 @@ mod tests {
     /// guard SIGSEGVs the test instead of shipping.
     #[test]
     fn matchgetfn_null_pointer_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let _ = matchgetfn(std::ptr::null_mut());
     }
 
@@ -778,6 +789,7 @@ mod tests {
     /// stub must mirror that no-op + re-entry safety.
     #[test]
     fn edcharsetfn_double_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
     }

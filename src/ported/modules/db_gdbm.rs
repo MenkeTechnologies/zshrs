@@ -1175,6 +1175,7 @@ mod tests {
     #[test]
     #[cfg(feature = "gdbm")]
     fn test_gdbm_basic_operations() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.gdbm");
 
@@ -1212,6 +1213,7 @@ mod tests {
     #[test]
     #[cfg(feature = "gdbm")]
     fn test_tied_param() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("tied.gdbm");
 
@@ -1236,12 +1238,14 @@ mod tests {
     /// the alias so a regen of zsh_h doesn't silently shift the bit.
     #[test]
     fn pm_uptodate_aliases_pm_dontimport_suid() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(PM_UPTODATE, crate::ported::zsh_h::PM_DONTIMPORT_SUID);
     }
 
     /// Module entry points return 0 per C (db_gdbm.c:613-651).
     #[test]
     fn module_entry_points_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(setup_(std::ptr::null()),   0);
         assert_eq!(boot_(std::ptr::null()),    0);
         assert_eq!(cleanup_(std::ptr::null()), 0);
@@ -1251,6 +1255,7 @@ mod tests {
     /// c:109 — `ztie` with no args returns 1 (usage error).
     #[test]
     fn ztie_with_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_ztie("ztie", &[], &ops, 0), 1);
     }
@@ -1259,6 +1264,7 @@ mod tests {
     /// never runs, ret stays 0. Verifies no segfault on the empty path.
     #[test]
     fn zuntie_with_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_zuntie("zuntie", &[], &ops, 0), 0);
     }
@@ -1267,6 +1273,7 @@ mod tests {
     /// "cannot untie X" via zwarnnam and continues with ret=1.
     #[test]
     fn zuntie_unknown_param_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_zuntie("zuntie", &["zshrs_test_not_tied".to_string()], &ops, 0);
         assert_eq!(r, 1);
@@ -1276,12 +1283,14 @@ mod tests {
     /// segfault, no panic — graceful miss).
     #[test]
     fn gdbmgetfn_unknown_db_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(gdbmgetfn("zshrs_test_no_such_db_xyz", "key"), "");
     }
 
     /// c:407 — `getgdbmnode` on unknown DB returns false.
     #[test]
     fn getgdbmnode_unknown_returns_false() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!getgdbmnode("zshrs_test_no_such_db_xyz", "key"));
     }
 
@@ -1289,24 +1298,28 @@ mod tests {
     /// Defensive safety contract.
     #[test]
     fn gdbmsetfn_unknown_db_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         gdbmsetfn("zshrs_test_no_such_db_setfn", "key", Some("value"));
     }
 
     /// c:399 — `gdbmunsetfn` on an unknown DB must NOT panic.
     #[test]
     fn gdbmunsetfn_unknown_db_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         gdbmunsetfn("zshrs_test_no_such_db_unsetfn", "key", 0);
     }
 
     /// c:555 — `gdbmuntie` on an unknown param name is a safe no-op.
     #[test]
     fn gdbmuntie_unknown_param_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         gdbmuntie("zshrs_test_no_such_param_untie");
     }
 
     /// c:581 — `gdbmhashunsetfn` on unknown param is a safe no-op.
     #[test]
     fn gdbmhashunsetfn_unknown_param_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         gdbmhashunsetfn("zshrs_test_no_such_param_hash_unset");
     }
 
@@ -1314,6 +1327,7 @@ mod tests {
     /// ZERO times.
     #[test]
     fn scangdbmkeys_unknown_db_yields_no_entries() {
+        let _g = crate::test_util::global_state_lock();
         let mut count = 0;
         scangdbmkeys("zshrs_test_no_such_db_scan",
             |_k, _v, _f| count += 1, 0);
@@ -1324,12 +1338,14 @@ mod tests {
     /// is a safe no-op.
     #[test]
     fn gdbmhashsetfn_unknown_param_empty_entries_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         gdbmhashsetfn("zshrs_test_no_such_param_hashset", &[]);
     }
 
     /// c:236 — `bin_zgdbmpath` with no args returns nonzero (usage).
     #[test]
     fn bin_zgdbmpath_with_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_zgdbmpath("zgdbmpath", &[], &ops, 0);
         assert_ne!(r, 0, "zgdbmpath with no args must error");
@@ -1339,6 +1355,7 @@ mod tests {
     /// tied).
     #[test]
     fn bin_zgdbmpath_unknown_param_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_zgdbmpath("zgdbmpath",
             &["zshrs_test_not_a_tied_param".to_string()], &ops, 0);

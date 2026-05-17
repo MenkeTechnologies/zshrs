@@ -728,6 +728,7 @@ mod tests {
     /// (port of Src/Modules/pcre.c:70-107).
     #[test]
     fn test_pcre_compile_simple() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let ops = empty_ops();
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("hello")], &ops, 0), 0);
@@ -737,6 +738,7 @@ mod tests {
     /// Verifies invalid pattern → status 1 (Src/Modules/pcre.c:99-105).
     #[test]
     fn test_pcre_compile_invalid() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let ops = empty_ops();
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("[invalid")], &ops, 0), 1);
@@ -745,6 +747,7 @@ mod tests {
     /// Verifies `-i` flag triggers caseless match (Src/Modules/pcre.c:79).
     #[test]
     fn test_pcre_compile_caseless() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let ops = ops_with(&[b'i']);
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("hello")], &ops, 0), 0);
@@ -757,6 +760,7 @@ mod tests {
     /// (Src/Modules/pcre.c:115-117).
     #[test]
     fn test_pcre_study_no_pattern() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         assert_eq!(bin_pcre_study("pcre_study", &[], &empty_ops(), 0), 1);
     }
@@ -765,6 +769,7 @@ mod tests {
     /// (Src/Modules/pcre.c:112+ no-pat guard taken vs not taken).
     #[test]
     fn test_pcre_study_with_pattern() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let ops = empty_ops();
         bin_pcre_compile("pcre_compile", &[s("hello")], &ops, 0);
@@ -775,6 +780,7 @@ mod tests {
     /// (Src/Modules/pcre.c:392-401).
     #[test]
     fn test_pcre_match_simple() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s("hello")], &empty_ops(), 0);
         let (status, full, _) = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
@@ -785,6 +791,7 @@ mod tests {
     /// Verifies no-match returns status 1 (Src/Modules/pcre.c:399 NOMATCH).
     #[test]
     fn test_pcre_match_no_match() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s("hello")], &empty_ops(), 0);
         let (status, _, _) = bin_pcre_match("pcre_match", &[s("goodbye world")], &empty_ops(), 0);
@@ -795,6 +802,7 @@ mod tests {
     /// (Src/Modules/pcre.c:401 zpcre_get_substrings ovector loop).
     #[test]
     fn test_pcre_match_captures() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s(r"(\w+) (\w+)")], &empty_ops(), 0);
         let (status, _, caps) = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
@@ -808,6 +816,7 @@ mod tests {
     /// (Src/Modules/pcre.c:422 + caseless via inline `(?i)` flag).
     #[test]
     fn test_cond_pcre_match() {
+        let _g = crate::test_util::global_state_lock();
         let (m, _, _) = cond_pcre_match(&[s("hello world"), s("hello")], 0);
         assert_eq!(m, 1);
         let (m, _, _) = cond_pcre_match(&[s("hello world"), s("(?i)HELLO")], 0);
@@ -821,6 +830,7 @@ mod tests {
     /// (Src/Modules/pcre.c first-arg ztrdup falls back to empty target).
     #[test]
     fn test_builtin_pcre_compile_no_args() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         // Empty pattern + no caseless succeeds in the regex crate (matches empty);
         // we instead verify a syntactically-invalid pattern fails.
@@ -831,6 +841,7 @@ mod tests {
     /// (Src/Modules/pcre.c:343-345).
     #[test]
     fn test_builtin_pcre_match_no_pattern() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let (status, _, _) = bin_pcre_match("pcre_match", &[s("test")], &empty_ops(), 0);
         assert_eq!(status, 1);
@@ -839,6 +850,7 @@ mod tests {
     /// c:312 — `getposint` parses a non-negative integer.
     #[test]
     fn getposint_parses_positive_decimal() {
+        let _g = crate::test_util::global_state_lock();
         let r = getposint("42", "test");
         assert_eq!(r, 42);
     }
@@ -848,6 +860,7 @@ mod tests {
     /// `pcre_match -a vec` call sites.
     #[test]
     fn getposint_zero_is_valid() {
+        let _g = crate::test_util::global_state_lock();
         let r = getposint("0", "test");
         assert_eq!(r, 0);
     }
@@ -856,6 +869,7 @@ mod tests {
     /// (negative return per the C zwarnnam + -1 pattern).
     #[test]
     fn getposint_non_numeric_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
         let r = getposint("abc", "test");
         assert!(r < 0, "non-numeric must return negative sentinel, got {}", r);
     }
@@ -869,6 +883,7 @@ mod tests {
     /// guard (deviation from C) gets caught.
     #[test]
     fn bin_pcre_compile_no_args_compiles_empty_pattern() {
+        let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let r = bin_pcre_compile("pcre_compile", &[], &empty_ops(), 0);
         assert_eq!(r, 0, "C body has no arity check; empty pattern compiles");
@@ -878,6 +893,7 @@ mod tests {
     /// least the subject string).
     #[test]
     fn bin_pcre_match_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         bin_pcre_compile("pcre_compile", &[s("x")], &empty_ops(), 0);
         let (status, _, _) = bin_pcre_match("pcre_match", &[], &empty_ops(), 0);
         assert_eq!(status, 1, "no subject must surface as error");
@@ -888,6 +904,7 @@ mod tests {
     /// "no match" rather than panicking.
     #[test]
     fn cond_pcre_match_malformed_pattern_returns_no_match() {
+        let _g = crate::test_util::global_state_lock();
         let (m, _, _) = cond_pcre_match(&[s("anything"), s("[")], 0);
         assert_eq!(m, 0, "malformed regex must fail-soft to no-match");
     }
@@ -896,6 +913,7 @@ mod tests {
     /// "bar foo". Pin anchor semantics.
     #[test]
     fn cond_pcre_match_caret_anchor_requires_start() {
+        let _g = crate::test_util::global_state_lock();
         let (m, _, _) = cond_pcre_match(&[s("foo bar"), s("^foo")], 0);
         assert_eq!(m, 1, "caret matches at start");
         let (m, _, _) = cond_pcre_match(&[s("bar foo"), s("^foo")], 0);
@@ -905,6 +923,7 @@ mod tests {
     /// c:542-580 — module-lifecycle stubs all return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -921,6 +940,7 @@ mod tests {
     /// (where the old port silently accepted via trim).
     #[test]
     fn getposint_rejects_trailing_garbage() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("42abc", "test"), -1,
             "c:317 — *eptr='a' truthy → error");
         assert_eq!(getposint("100x", "test"), -1,
@@ -932,6 +952,7 @@ mod tests {
     /// sister `system.rs::getposint`).
     #[test]
     fn getposint_rejects_trailing_whitespace() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("42 ", "test"), -1,
             "c:317 — trailing space → *eptr=' ' → error");
         assert_eq!(getposint("42\t", "test"), -1,
@@ -943,6 +964,7 @@ mod tests {
     /// ws skip wouldn't break `pcre_match -n 42` style invocations.
     #[test]
     fn getposint_skips_leading_whitespace() {
+        let _g = crate::test_util::global_state_lock();
         // C zstrtol skips spaces/tabs at the front per Src/utils.c:2444-2445.
         assert_eq!(getposint("  42", "test"), 42,
             "c:312 — zstrtol skips leading whitespace");
@@ -952,6 +974,7 @@ mod tests {
     /// `zstrtol("-1", &eptr, 10)` returns -1 (signed); `ret < 0` fires.
     #[test]
     fn getposint_rejects_negative() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("-1", "test"), -1,
             "c:317 — `ret < 0` branch fires for negative input");
         assert_eq!(getposint("-100", "test"), -1);
@@ -963,6 +986,7 @@ mod tests {
     /// returns 0. Pin the empty-input contract.
     #[test]
     fn getposint_empty_input_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         // C: zstrtol("") returns 0, eptr is the same empty pointer.
         // *eptr is '\0' (falsy), ret=0 (not <0) → no error.
         assert_eq!(getposint("", "test"), 0,

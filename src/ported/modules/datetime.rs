@@ -436,12 +436,14 @@ mod tests {
 
     #[test]
     fn test_epoch_seconds() {
+        let _g = crate::test_util::global_state_lock();
         let secs = getcurrentsecs();
         assert!(secs > 1700000000);
     }
 
     #[test]
     fn test_epoch_realtime() {
+        let _g = crate::test_util::global_state_lock();
         let rt = getcurrentrealtime();
         assert!(rt > 1700000000.0);
         let (secs, _) = getcurrenttime();
@@ -450,6 +452,7 @@ mod tests {
 
     #[test]
     fn test_epoch_time() {
+        let _g = crate::test_util::global_state_lock();
         let (secs, nanos) = getcurrenttime();
         assert!(secs > 1700000000);
         assert!((0..1_000_000_000).contains(&nanos));
@@ -481,6 +484,7 @@ mod tests {
 
     #[test]
     fn test_output_strftime_nanoseconds() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[b'n'], Some("OUT"));
         let r = output_strftime("strftime",
             &["%9N", "1700000000", "123456789"], &ops, 0);
@@ -494,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_output_strftime_to_scalar() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[b'n'], Some("OUT2"));
         let r = output_strftime("strftime", &["%s", "1700000000"], &ops, 0);
         assert_eq!(r, 0);
@@ -502,6 +507,7 @@ mod tests {
 
     #[test]
     fn test_output_strftime_format_required() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[], None);
         let r = output_strftime("strftime", &[], &ops, 0);
         assert_eq!(r, 1);
@@ -512,6 +518,7 @@ mod tests {
     /// offset (timezone, monotonic-vs-realtime confusion) gets caught.
     #[test]
     fn getcurrentsecs_matches_libc_time() {
+        let _g = crate::test_util::global_state_lock();
         let libc_now = unsafe { libc::time(std::ptr::null_mut()) } as i64;
         let our_now = getcurrentsecs();
         assert!((our_now - libc_now).abs() <= 1,
@@ -523,6 +530,7 @@ mod tests {
     /// that truncates to whole seconds (e.g. wrong tv_nsec scaling).
     #[test]
     fn getcurrentrealtime_carries_subsecond_precision() {
+        let _g = crate::test_util::global_state_lock();
         let mut saw_fractional = false;
         for _ in 0..10 {
             let rt = getcurrentrealtime();
@@ -541,6 +549,7 @@ mod tests {
     /// time-spec value without modulo.
     #[test]
     fn getcurrenttime_nanos_under_one_billion() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..5 {
             let (_secs, nanos) = getcurrenttime();
             assert!(nanos < 1_000_000_000,
@@ -554,6 +563,7 @@ mod tests {
     /// regression that would break `$EPOCHREALTIME` script timing.
     #[test]
     fn getcurrentrealtime_advances_forward() {
+        let _g = crate::test_util::global_state_lock();
         let a = getcurrentrealtime();
         std::thread::sleep(std::time::Duration::from_millis(10));
         let b = getcurrentrealtime();
@@ -565,6 +575,7 @@ mod tests {
     /// Same as above but for the integer-second accessor.
     #[test]
     fn getcurrentsecs_advances_or_stays_equal() {
+        let _g = crate::test_util::global_state_lock();
         let a = getcurrentsecs();
         std::thread::sleep(std::time::Duration::from_millis(20));
         let b = getcurrentsecs();
@@ -577,6 +588,7 @@ mod tests {
     /// `-n` (no-newline) shortcut.
     #[test]
     fn output_strftime_percent_s_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[b'n'], Some("EPOCH_ROUND_TRIP"));
         let r = output_strftime("strftime", &["%s", "1234567890"], &ops, 0);
         assert_eq!(r, 0);
@@ -588,6 +600,7 @@ mod tests {
     /// produces "Wed Dec 31 ..." (epoch 0) on garbage input.
     #[test]
     fn output_strftime_invalid_epoch_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_for(&[b'n'], Some("BAD"));
         let r = output_strftime("strftime", &["%s", "not-a-number"], &ops, 0);
         assert_ne!(r, 0, "garbage epoch must be rejected");
@@ -596,6 +609,7 @@ mod tests {
     /// c:270-307 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -609,6 +623,7 @@ mod tests {
     /// would silently disable strftime.
     #[test]
     fn enables_populates_some_vec() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         let mut enables: Option<Vec<i32>> = None;
         assert_eq!(enables_(m, &mut enables), 0);

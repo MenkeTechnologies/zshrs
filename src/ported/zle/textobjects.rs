@@ -363,6 +363,7 @@ mod tests {
     /// selectword/selectargument iterate against.
     #[test]
     fn blankwordclass_classifies_whitespace_vs_word_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass(' '),  0, "space is iblank");
         assert_eq!(blankwordclass('\t'), 0, "tab is iblank");
         assert_eq!(blankwordclass('a'),  1, "letter is not iblank");
@@ -379,6 +380,7 @@ mod tests {
     /// non-iblank branch (return 1).
     #[test]
     fn blankwordclass_non_ascii_letters_are_not_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('é'),  1, "Latin-1 letter: not iswspace");
         assert_eq!(blankwordclass('字'), 1, "CJK ideograph: not iswspace");
         assert_eq!(blankwordclass('α'),  1, "Greek letter: not iswspace");
@@ -392,6 +394,7 @@ mod tests {
     /// on non-ASCII whitespace in vi `aW`/`iW` selections).
     #[test]
     fn blankwordclass_wide_whitespace_classes_are_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('\r'),       0, "CR is iblank per wcsiblank");
         assert_eq!(blankwordclass('\x0c'),     0, "FF is iblank per wcsiblank");
         assert_eq!(blankwordclass('\x0b'),     0, "VT is iblank per wcsiblank");
@@ -406,6 +409,7 @@ mod tests {
     /// vi `iw`/`aw` over an empty prompt.
     #[test]
     fn selectargument_returns_one_on_empty_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(selectargument(), 1, "c:225 — empty buffer fails 2*n > zlell+1");
     }
@@ -415,6 +419,7 @@ mod tests {
     /// status is locale-dependent and a regression could change it.
     #[test]
     fn blankwordclass_digits_and_underscore_are_word_chars() {
+        let _g = crate::test_util::global_state_lock();
         for d in '0'..='9' {
             assert_eq!(blankwordclass(d), 1, "digit {:?} must NOT be iblank", d);
         }
@@ -427,6 +432,7 @@ mod tests {
     /// selection at the buffer boundary.
     #[test]
     fn blankwordclass_nul_is_not_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('\0'), 1,
             "NUL byte must classify as non-iblank per wcsiblank semantics");
     }
@@ -437,6 +443,7 @@ mod tests {
     /// silently into the wrong vi word group.
     #[test]
     fn blankwordclass_non_bmp_chars_are_word_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('\u{1F600}'), 1, "emoji is non-iblank");
         assert_eq!(blankwordclass('\u{2603}'),  1, "snowman is non-iblank");
     }
@@ -447,6 +454,7 @@ mod tests {
     /// guard check.
     #[test]
     fn selectargument_empty_buffer_leaves_mark_and_zlecs_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::MARK.store(42, Ordering::SeqCst);
@@ -465,6 +473,7 @@ mod tests {
     /// just the size check gets caught.
     #[test]
     fn selectargument_zero_mult_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
@@ -482,6 +491,7 @@ mod tests {
     /// rejection.
     #[test]
     fn selectargument_negative_mult_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
@@ -499,6 +509,7 @@ mod tests {
     /// not '\n'. ASCII space is iswspace AND not '\n' → iblank → 0.
     #[test]
     fn blankwordclass_pure_space_is_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass(' '), 0,
             "space MUST be iblank (class 0)");
     }
@@ -506,6 +517,7 @@ mod tests {
     /// c:36 — `\t` (tab) is iblank.
     #[test]
     fn blankwordclass_tab_is_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('\t'), 0,
             "tab MUST be iblank (class 0)");
     }
@@ -517,6 +529,7 @@ mod tests {
     /// break vi `aW` word selection across line boundaries.
     #[test]
     fn blankwordclass_newline_is_NOT_iblank() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(blankwordclass('\n'), 1,
             "newline must NOT be iblank per wcsiblank's explicit exclusion");
     }
@@ -526,6 +539,7 @@ mod tests {
     /// 1000 times with the same input.
     #[test]
     fn blankwordclass_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..1000 {
             assert_eq!(blankwordclass('a'), 1);
             assert_eq!(blankwordclass(' '), 0);
@@ -539,6 +553,7 @@ mod tests {
     /// and the function walks the buffer.
     #[test]
     fn selectargument_whitespace_only_buffer_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "   ".chars().collect();

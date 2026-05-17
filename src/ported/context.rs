@@ -111,6 +111,7 @@ mod tests {
 
     #[test]
     fn save_restore_balances_stack() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         zcontext_save();
@@ -121,6 +122,7 @@ mod tests {
 
     #[test]
     fn nested_saves_pop_lifo() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         zcontext_save();
@@ -133,6 +135,7 @@ mod tests {
 
     #[test]
     fn restore_without_save_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         zcontext_restore();
@@ -141,6 +144,7 @@ mod tests {
 
     #[test]
     fn lex_save_restore_roundtrips_state() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("echo hello");
         crate::ported::lex::LEX_DBPARENS.set(true);
@@ -161,6 +165,7 @@ mod tests {
     /// every nested context (heredoc-inside-eval, `read -E`, …).
     #[test]
     fn zcontext_flag_bits_are_distinct_and_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
         // Pin the exact C constants from Src/zsh.h:491-495.
         assert_eq!(ZCONTEXT_HIST,  1 << 0);
@@ -180,6 +185,7 @@ mod tests {
     /// mask would mis-balance the stack for any such caller.
     #[test]
     fn zcontext_save_partial_with_zero_mask_still_pushes_frame() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         zcontext_save_partial(0);
@@ -199,6 +205,7 @@ mod tests {
     /// restore calls.
     #[test]
     fn zcontext_restore_partial_on_empty_stack_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         zcontext_restore_partial(0);
         zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
@@ -211,6 +218,7 @@ mod tests {
     /// linked stack would surface on the third+ push.
     #[test]
     fn deep_save_restore_lifo_drains_to_empty() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         for _ in 0..5 { zcontext_save(); }
@@ -230,6 +238,7 @@ mod tests {
     /// yields the same final state as save→restore.
     #[test]
     fn zcontext_save_equals_save_partial_full_mask() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
         let full = ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE;
 
@@ -255,6 +264,7 @@ mod tests {
     /// rewinds may skip restores.
     #[test]
     fn many_saves_without_restore_grow_stack_safely() {
+        let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
         for _ in 0..20 { zcontext_save(); }

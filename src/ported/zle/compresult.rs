@@ -1569,6 +1569,7 @@ mod tests {
 
     #[test]
     fn test_unambig_data() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(unambig_data(&["foobar".into(), "foobaz".into()]), "fooba");
         assert_eq!(unambig_data(&["abc".into()]), "abc");
@@ -1577,6 +1578,7 @@ mod tests {
 
     #[test]
     fn cline_str_none_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         // c:165 — null Cline → empty string.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(cline_str(None), "");
@@ -1584,6 +1586,7 @@ mod tests {
 
     #[test]
     fn cline_str_emits_word_anchor() {
+        let _g = crate::test_util::global_state_lock();
         // c:282 — non-CLF_LINE node emits `word`.
         use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1595,6 +1598,7 @@ mod tests {
 
     #[test]
     fn cline_str_emits_line_anchor_when_clf_line_set() {
+        let _g = crate::test_util::global_state_lock();
         // c:282 — CLF_LINE node emits `line` instead of `word`.
         use crate::ported::zle::comp_h::{Cline, CLF_LINE};
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1607,6 +1611,7 @@ mod tests {
 
     #[test]
     fn cline_str_emits_orig_when_olen_set_and_no_prefix() {
+        let _g = crate::test_util::global_state_lock();
         // c:214 — olen!=0 && !CLF_SUF && !prefix → emit `orig` (not
         //          the prefix-walk + word path).
         use crate::ported::zle::comp_h::Cline;
@@ -1621,6 +1626,7 @@ mod tests {
 
     #[test]
     fn cline_str_walks_prefix_chain() {
+        let _g = crate::test_util::global_state_lock();
         // c:219-235 — prefix sub-list walked when olen==0 or
         //              CLF_SUF set.
         use crate::ported::zle::comp_h::Cline;
@@ -1638,6 +1644,7 @@ mod tests {
 
     #[test]
     fn cline_str_walks_next_chain() {
+        let _g = crate::test_util::global_state_lock();
         // c:165 — top-level walk via `l = l->next`.
         use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1651,6 +1658,7 @@ mod tests {
 
     #[test]
     fn test_instmatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (result, cursor) = instmatch("git co", 6, 4, 6, "commit");
         assert_eq!(result, "git commit");
@@ -1659,6 +1667,7 @@ mod tests {
 
     #[test]
     fn test_do_single() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (result, cursor) = do_single("git co", 6, 4, 6, "commit", true);
         assert_eq!(result, "git commit ");
@@ -1667,6 +1676,7 @@ mod tests {
 
     #[test]
     fn test_do_menucmp() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let matches = vec!["commit".into(), "checkout".into(), "cherry-pick".into()];
         let (next, word) = do_menucmp(&matches, 0, true);
@@ -1680,6 +1690,7 @@ mod tests {
 
     #[test]
     fn test_valid_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(valid_match("foobar", "foo", ""));
         assert!(valid_match("foobar", "foo", "bar"));
@@ -1688,6 +1699,7 @@ mod tests {
 
     #[test]
     fn test_build_pos_string() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(build_pos_string(0, 10), "1/10");
         assert_eq!(build_pos_string(9, 10), "10/10");
@@ -1695,6 +1707,7 @@ mod tests {
 
     #[test]
     fn test_list_lines() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(list_lines(&vec!["a".into(); 10], 3), 4);
         assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
@@ -1702,6 +1715,7 @@ mod tests {
 
     #[test]
     fn comp_mod_positive() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366-1369 — positive: decrement then % m.
         assert_eq!(comp_mod(1, 5), 0);   // (1-1) % 5 = 0
@@ -1712,6 +1726,7 @@ mod tests {
 
     #[test]
     fn comp_mod_zero_branches_negative() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366 — `if (v >= 0) v--;` so 0 → -1 → falls into else.
         // c:1370-1373 — wrap by adding m until non-negative.
@@ -1723,6 +1738,7 @@ mod tests {
 
     #[test]
     fn comp_list_sets_onlyexpl() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
         use crate::ported::zle::compcore::onlyexpl;
@@ -1741,6 +1757,7 @@ mod tests {
 
     #[test]
     fn skipnolist_skips_hide_and_nolist() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_HIDE, CMF_NOLIST};
         let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
@@ -1753,6 +1770,7 @@ mod tests {
 
     #[test]
     fn skipnolist_showall_keeps_nolist() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_NOLIST};
         let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
@@ -1763,6 +1781,7 @@ mod tests {
 
     #[test]
     fn skipnolist_skips_disp_displine() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_DISPLINE};
         let mut a = Cmatch::default();

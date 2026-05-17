@@ -88,6 +88,7 @@ mod tests {
     /// keymap starts with random state.
     #[test]
     fn empty_keymap_has_all_unbound_first_slots() {
+        let _g = crate::test_util::global_state_lock();
         let km = zle_keymap::Keymap::default();
         assert!(km.first.iter().all(|t| t.is_none()), "all 256 slots None");
         assert!(km.multi.is_empty(), "no multi-byte bindings yet");
@@ -99,6 +100,7 @@ mod tests {
     /// pipeline (refthingy / unrefthingy) is allowed to assume.
     #[test]
     fn freshly_minted_thingy_has_rc_one_and_no_widget() {
+        let _g = crate::test_util::global_state_lock();
         let t = zle_thingy::Thingy::new("test-widget");
         assert_eq!(t.rc, 1);
         assert!(t.widget.is_none());

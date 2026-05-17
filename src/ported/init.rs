@@ -1206,6 +1206,7 @@ mod tests {
     /// happened when nothing did (silent data corruption in completion).
     #[test]
     fn fallback_compctlread_signals_failure() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fallback_compctlread("test"), 1);
     }
 
@@ -1214,6 +1215,7 @@ mod tests {
     /// that doesn't advance idx would loop forever or skip args.
     #[test]
     fn parseopts_dash_c_captures_command_string() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv = vec!["-c".to_string(), "echo hi".to_string()];
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1229,6 +1231,7 @@ mod tests {
     /// silently consume the script name as an option.
     #[test]
     fn parseopts_stops_at_first_positional() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv = vec!["script.sh".to_string(), "arg1".to_string()];
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1242,6 +1245,7 @@ mod tests {
     /// startup with weird args.
     #[test]
     fn parseopts_empty_argv_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv: Vec<String> = Vec::new();
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1256,6 +1260,7 @@ mod tests {
     /// would crash the prompt subsystem on tiny terminals.
     #[test]
     fn tccap_get_name_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         // index 9999 is well past the cap table (~39 entries per
         // init.c:75). Must return safely.
         let n = tccap_get_name(9999);
@@ -1268,6 +1273,7 @@ mod tests {
     /// last arg.
     #[test]
     fn parseopts_dash_x_is_single_slot_flag() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv = vec!["-x".to_string()];
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1282,6 +1288,7 @@ mod tests {
     /// surface a usage error.
     #[test]
     fn parseopts_dash_c_without_argument_does_not_capture_command() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv = vec!["-c".to_string()];
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1295,6 +1302,7 @@ mod tests {
     /// first flag silently drops -v.
     #[test]
     fn parseopts_consumes_multiple_flags() {
+        let _g = crate::test_util::global_state_lock();
         let mut argv = vec!["-x".to_string(), "-v".to_string()];
         let mut idx = 0usize;
         let mut cmd: Option<String> = None;
@@ -1309,6 +1317,7 @@ mod tests {
     /// slot 0" mistake gets caught.
     #[test]
     fn tccap_get_name_index_zero_is_nonempty() {
+        let _g = crate::test_util::global_state_lock();
         let n = tccap_get_name(0);
         assert!(!n.is_empty(),
             "index 0 must yield a real cap name; got {:?}", n);
@@ -1323,6 +1332,7 @@ mod tests {
     /// catches a regen that adds stateful side-effects.
     #[test]
     fn noop_function_is_safe_to_call_multiple_times() {
+        let _g = crate::test_util::global_state_lock();
         noop_function();
         noop_function();
         noop_function();
@@ -1332,6 +1342,7 @@ mod tests {
     /// the full i32 range. Pin no-side-effect contract.
     #[test]
     fn noop_function_int_ignores_argument() {
+        let _g = crate::test_util::global_state_lock();
         noop_function_int(0);
         noop_function_int(42);
         noop_function_int(-1);
@@ -1344,6 +1355,7 @@ mod tests {
     /// assumes None means "no ZLE active".
     #[test]
     fn zleentry_unknown_command_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(zleentry(99999).is_none(),
             "unknown zle command must return None, not a default string");
     }
@@ -1352,6 +1364,7 @@ mod tests {
     /// C source opens("") which fails with ENOENT, returning non-0.
     #[test]
     fn source_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let r = source("");
         assert_ne!(r, 0, "source of empty path must report failure");
     }

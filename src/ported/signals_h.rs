@@ -465,6 +465,7 @@ mod tests {
     /// Verifies the pseudo-signal index ladder per c:34-46.
     #[test]
     fn pseudo_signal_indexes_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(SIGEXIT, 0);
         assert_eq!(SIGZERR, SIGCOUNT + 1);
         assert_eq!(SIGDEBUG, SIGCOUNT + 2);
@@ -476,12 +477,14 @@ mod tests {
     /// > when RT signals are available).
     #[test]
     fn trapcount_at_least_vsigcount() {
+        let _g = crate::test_util::global_state_lock();
         assert!(TRAPCOUNT >= VSIGCOUNT);
     }
 
     /// Verifies SIGNUM round-trips through SIGIDX for a non-RT signal.
     #[test]
     fn signum_sigidx_round_trip_for_normal_signal() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(SIGNUM(libc::SIGINT), libc::SIGINT);
         assert_eq!(SIGIDX(libc::SIGINT), libc::SIGINT);
     }
@@ -489,12 +492,14 @@ mod tests {
     /// Verifies MAX_QUEUE_SIZE per c:76.
     #[test]
     fn max_queue_size_is_128() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(MAX_QUEUE_SIZE, 128);
     }
 
     /// Verifies queue_signals / unqueue_signals balance the counter.
     #[test]
     fn queue_unqueue_balance() {
+        let _g = crate::test_util::global_state_lock();
         let initial = queue_signal_level();
         queue_signals();
         assert_eq!(queue_signal_level(), initial + 1);
@@ -509,6 +514,7 @@ mod tests {
     /// Verifies dont_queue_signals zeroes the counter.
     #[test]
     fn dont_queue_signals_zeros_counter() {
+        let _g = crate::test_util::global_state_lock();
         queue_signals();
         queue_signals();
         queue_signals();
@@ -519,6 +525,7 @@ mod tests {
     /// Verifies restore_queue_signals sets the counter exactly.
     #[test]
     fn restore_queue_signals_sets_counter() {
+        let _g = crate::test_util::global_state_lock();
         restore_queue_signals(0);
         restore_queue_signals(5);
         assert_eq!(queue_signal_level(), 5);
@@ -536,6 +543,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_ignore_returns_previous_handler() {
+        let _g = crate::test_util::global_state_lock();
         // Reset SIGUSR2 to default.
         let _ = signal_default(libc::SIGUSR2);
         // Install SIG_IGN — returns SIG_DFL (was reset above).
@@ -556,6 +564,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_default_returns_previous_handler() {
+        let _g = crate::test_util::global_state_lock();
         let _ = signal_default(libc::SIGUSR2);
         let _ = signal_ignore(libc::SIGUSR2);
         let prev = signal_default(libc::SIGUSR2);
@@ -573,6 +582,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signum_sigidx_round_trip_full_range() {
+        let _g = crate::test_util::global_state_lock();
         for s in 1..VSIGCOUNT {
             let n = SIGNUM(s);
             let back = SIGIDX(n);
@@ -588,6 +598,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sigs_name_pseudo_signal_exit() {
+        let _g = crate::test_util::global_state_lock();
         let n = sigs_name(SIGEXIT);
         assert!(n.is_some(), "SIGEXIT (index 0) must have a name");
         // Conventionally "EXIT", but accept any non-numeric stem
@@ -601,6 +612,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sigs_name_sigint_resolves() {
+        let _g = crate::test_util::global_state_lock();
         let n = sigs_name(libc::SIGINT);
         // SIGIDX(SIGINT) may differ from libc::SIGINT depending on
         // mapping; try direct + idx.
@@ -614,6 +626,7 @@ mod tests {
     /// an OOB index into the table.
     #[test]
     fn sigs_name_out_of_range_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(sigs_name(-1).is_none());
         assert!(sigs_name(99999).is_none());
         assert!(sigs_name(TRAPCOUNT + 100).is_none());
@@ -624,6 +637,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sigs_number_resolves_canonical_short_name() {
+        let _g = crate::test_util::global_state_lock();
         assert!(sigs_number("INT").is_some(),
             "sigs_number(INT) must resolve");
         assert!(sigs_number("TERM").is_some());
@@ -635,6 +649,7 @@ mod tests {
     /// Pin defensive miss; user `kill -BOGUS` must fail-soft.
     #[test]
     fn sigs_number_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(sigs_number("ZZBOGUSXX").is_none());
         assert!(sigs_number("").is_none());
         assert!(sigs_number("not_a_signal").is_none());
@@ -645,6 +660,7 @@ mod tests {
     /// no-op path.
     #[test]
     fn run_queued_signals_with_empty_queue_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         // Reset: ensure nothing queued.
         dont_queue_signals();
         run_queued_signals();
@@ -657,6 +673,7 @@ mod tests {
     /// crash on weird input.
     #[test]
     fn restore_queue_signals_negative_value_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let saved = queue_signal_level();
         restore_queue_signals(-1);
         // Most impls clamp; just ensure no panic
@@ -670,6 +687,7 @@ mod tests {
     /// libc signal numbers, which are bounded by SIGCOUNT.
     #[test]
     fn pseudo_signals_above_libc_signal_range() {
+        let _g = crate::test_util::global_state_lock();
         assert!(SIGZERR > SIGCOUNT,
             "SIGZERR ({}) must be > SIGCOUNT ({}) to avoid libc collision",
             SIGZERR, SIGCOUNT);

@@ -264,6 +264,7 @@ mod tests {
 
     #[test]
     fn test_selectlist_returns_zero_when_full_fits() {
+        let _g = crate::test_util::global_state_lock();
         let items = ["one", "two", "three"];
         let r = selectlist(&items, 0);
         assert!(r < items.len() || r == 0);
@@ -302,6 +303,7 @@ mod tests {
     /// Empty list to selectlist: nothing to draw, returns 0.
     #[test]
     fn selectlist_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(selectlist(&[], 0), 0);
     }
 }

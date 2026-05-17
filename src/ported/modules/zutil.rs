@@ -2198,6 +2198,7 @@ mod tests {
     /// weight ordering — most specific pattern appears first).
     #[test]
     fn test_style_pattern_weight() {
+        let _g = crate::test_util::global_state_lock();
         let mut t = style_table::new();
         t.set("*",                  "s", vec!["broad".to_string()], false);
         t.set(":completion:*",      "s", vec!["mid".to_string()],   false);
@@ -2211,6 +2212,7 @@ mod tests {
     /// Port of `bin_zparseopts(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:1738`.
     #[test]
     fn zof_flags_are_distinct_powers_of_two() {
+        let _g = crate::test_util::global_state_lock();
         // c:1531-1538 — ZOF_* are independent bits in a single u8 field.
         let all = [ZOF_ARG, ZOF_OPT, ZOF_MULT, ZOF_SAME, ZOF_MAP, ZOF_CYC, ZOF_GNUS, ZOF_GNUL];
         let xor: i32 = all.iter().fold(0, |acc, &x| acc | x);
@@ -2227,6 +2229,7 @@ mod tests {
     /// first weight-sorted match.
     #[test]
     fn test_style_pattern_matches() {
+        let _g = crate::test_util::global_state_lock();
         let mut t = style_table::new();
         t.set(":completion:*", "s1", vec!["v".to_string()], false);
         assert!(t.get(":completion:zsh:complete", "s1").is_some());
@@ -2239,6 +2242,7 @@ mod tests {
 
     #[test]
     fn test_style_table_set_get() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
         table.set(":completion:*", "verbose", vec!["yes".to_string()], false);
 
@@ -2251,6 +2255,7 @@ mod tests {
 
     #[test]
     fn test_style_table_priority() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
         table.set("*", "menu", vec!["no".to_string()], false);
         table.set(":completion:*", "menu", vec!["yes".to_string()], false);
@@ -2261,6 +2266,7 @@ mod tests {
 
     #[test]
     fn test_style_table_delete() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
         table.set("*", "style1", vec!["val".to_string()], false);
         table.set("*", "style2", vec!["val".to_string()], false);
@@ -2272,6 +2278,7 @@ mod tests {
 
     #[test]
     fn test_style_test_bool() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
         table.set("*", "enabled", vec!["yes".to_string()], false);
         table.set("*", "disabled", vec!["no".to_string()], false);
@@ -2294,6 +2301,7 @@ mod tests {
     /// `bin_zstyle` relies on (Src/Modules/zutil.c:209).
     #[test]
     fn test_global_zstyletab_set_and_lookup() {
+        let _g = crate::test_util::global_state_lock();
         let key_style = "test_zutil_global_marker_style";
         let key_pat = "test_zutil_global_marker_*";
         {
@@ -2314,6 +2322,7 @@ mod tests {
 
     #[test]
     fn test_zformat_basic() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "test".to_string());
         specs.insert('v', "42".to_string());
@@ -2324,6 +2333,7 @@ mod tests {
 
     #[test]
     fn test_zformat_padding() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "hi".to_string());
 
@@ -2336,6 +2346,7 @@ mod tests {
 
     #[test]
     fn test_zformat_truncate() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "hello world".to_string());
 
@@ -2345,6 +2356,7 @@ mod tests {
 
     #[test]
     fn test_zformat_escape() {
+        let _g = crate::test_util::global_state_lock();
         let specs = HashMap::new();
         let result = zformat_substring("100%%", &specs, false);
         assert_eq!(result, "100%");
@@ -2356,6 +2368,7 @@ mod tests {
     /// silently swallow `%z` when only `%n` was registered.
     #[test]
     fn zformat_unknown_spec_emits_literal_percent_x() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "hello".to_string());
         // %z is unknown; must round-trip
@@ -2370,6 +2383,7 @@ mod tests {
     /// silently invert every zformat-prompted output.
     #[test]
     fn zformat_right_align_with_min_width() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "ab".to_string());
         // Left-align (default): pad on RIGHT
@@ -2383,6 +2397,7 @@ mod tests {
     /// "hello world" (11 chars), max=10 truncates to "hello worl".
     #[test]
     fn zformat_min_max_combined() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "hello world".to_string());
         // max=10 truncates the 11-char value
@@ -2400,6 +2415,7 @@ mod tests {
     /// string. Pin the alias.
     #[test]
     fn zformat_close_paren_escape() {
+        let _g = crate::test_util::global_state_lock();
         let specs = HashMap::new();
         let r = zformat_substring("a%)b", &specs, false);
         assert_eq!(r, "a)b", "c:975-976 — `%)` emits literal `)`");
@@ -2413,6 +2429,7 @@ mod tests {
     /// emit true-text.
     #[test]
     fn zformat_ternary_presence_mode_spec_set() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('s', "anything".to_string());
         // presence=true: spec exists → TRUE branch (first text).
@@ -2427,6 +2444,7 @@ mod tests {
     /// output, otherwise false-text."
     #[test]
     fn zformat_ternary_presence_mode_spec_unset() {
+        let _g = crate::test_util::global_state_lock();
         let specs = HashMap::new();
         let r = zformat_substring("%(s.yes.no)", &specs, true);
         assert_eq!(r, "no",
@@ -2437,6 +2455,7 @@ mod tests {
     /// specs emit verbatim. Pin the simplest no-spec passthrough.
     #[test]
     fn zformat_literal_text_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         let specs = HashMap::new();
         let r = zformat_substring("hello, world", &specs, false);
         assert_eq!(r, "hello, world");
@@ -2450,6 +2469,7 @@ mod tests {
     /// that pins the order: truncate-then-pad, not pad-then-truncate.
     #[test]
     fn zformat_max_zero_truncates_to_empty_but_keeps_min_pad() {
+        let _g = crate::test_util::global_state_lock();
         let mut specs = HashMap::new();
         specs.insert('n', "abc".to_string());
         let r = zformat_substring("[%3.0n]", &specs, false);

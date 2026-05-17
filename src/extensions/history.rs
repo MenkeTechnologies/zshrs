@@ -722,6 +722,7 @@ mod tests {
 
     #[test]
     fn test_add_and_search() {
+        let _g = crate::test_util::global_state_lock();
         let engine = HistoryEngine::in_memory().unwrap();
 
         engine.add("ls -la", Some("/home/user")).unwrap();
@@ -736,6 +737,7 @@ mod tests {
 
     #[test]
     fn test_frequency_tracking() {
+        let _g = crate::test_util::global_state_lock();
         let engine = HistoryEngine::in_memory().unwrap();
 
         engine.add("git status", None).unwrap();
@@ -749,6 +751,7 @@ mod tests {
 
     #[test]
     fn test_prefix_search() {
+        let _g = crate::test_util::global_state_lock();
         let engine = HistoryEngine::in_memory().unwrap();
 
         engine.add("git status", None).unwrap();
@@ -761,6 +764,7 @@ mod tests {
 
     #[test]
     fn test_directory_history() {
+        let _g = crate::test_util::global_state_lock();
         let engine = HistoryEngine::in_memory().unwrap();
 
         engine.add("make build", Some("/project")).unwrap();

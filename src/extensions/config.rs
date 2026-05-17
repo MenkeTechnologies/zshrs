@@ -194,6 +194,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
+        let _g = crate::test_util::global_state_lock();
         let config = ZshrsConfig::default();
         assert_eq!(config.worker_pool.size, 0);
         assert_eq!(config.completion.max_matches, 1000);
@@ -206,6 +207,7 @@ mod tests {
 
     #[test]
     fn test_parse_toml() {
+        let _g = crate::test_util::global_state_lock();
         let toml = r#"
 [worker_pool]
 size = 4
@@ -229,6 +231,7 @@ parallel_threshold = 64
 
     #[test]
     fn test_resolve_pool_size() {
+        let _g = crate::test_util::global_state_lock();
         let auto = WorkerPoolConfig { size: 0 };
         let resolved = resolve_pool_size(&auto);
         assert!((2..=18).contains(&resolved));
@@ -242,6 +245,7 @@ parallel_threshold = 64
 
     #[test]
     fn test_missing_file_returns_defaults() {
+        let _g = crate::test_util::global_state_lock();
         let config = load_from(Path::new("/nonexistent/config.toml"));
         assert_eq!(config.worker_pool.size, 0);
     }

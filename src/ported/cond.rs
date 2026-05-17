@@ -616,6 +616,7 @@ mod tests {
 
     #[test]
     fn test_string_empty() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["-z", ""], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true), 1);
@@ -625,6 +626,7 @@ mod tests {
 
     #[test]
     fn test_string_compare() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true), 0);
@@ -634,6 +636,7 @@ mod tests {
 
     #[test]
     fn test_numeric_compare() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true), 0);
@@ -645,6 +648,7 @@ mod tests {
 
     #[test]
     fn test_file_exists() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("testfile");
         File::create(&file_path).unwrap();
@@ -657,6 +661,7 @@ mod tests {
 
     #[test]
     fn test_directory() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
         let path_str = dir.path().to_str().unwrap();
@@ -666,6 +671,7 @@ mod tests {
 
     #[test]
     fn test_logical_not() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true), 0);
@@ -673,6 +679,7 @@ mod tests {
 
     #[test]
     fn test_logical_and() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true), 1);
@@ -680,6 +687,7 @@ mod tests {
 
     #[test]
     fn test_logical_or() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true), 1);
@@ -687,6 +695,7 @@ mod tests {
 
     #[test]
     fn test_variable_exists() {
+        let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let mut vars = HashMap::new();
         vars.insert("MYVAR".to_string(), "value".to_string());
@@ -698,6 +707,7 @@ mod tests {
     /// AND `st_size > 0`. Empty file → false; non-empty → true; missing → false.
     #[test]
     fn test_minus_s_size_gt_zero() {
+        let _g = crate::test_util::global_state_lock();
         use std::io::Write;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
@@ -725,6 +735,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_minus_h_minus_L_detect_symlink_via_lstat() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
 
@@ -748,6 +759,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_dash_ef_same_inode() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
 
@@ -772,6 +784,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_dash_nt_dash_ot_compare_mtime() {
+        let _g = crate::test_util::global_state_lock();
         use std::io::Write;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
@@ -799,6 +812,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_dash_r_dash_w_access_check() {
+        let _g = crate::test_util::global_state_lock();
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
@@ -826,6 +840,7 @@ mod tests {
     /// at the COND_NOT recursion level. `!` parses right-associative.
     #[test]
     fn test_double_negation_cancels() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["!", "!", "-n", "x"], &opts, &vars, true), 0);
         assert_eq!(evalcond(&["!", "!", "-z", "x"], &opts, &vars, true), 1);
@@ -835,6 +850,7 @@ mod tests {
     /// is the same as `[[ -n foo ]]`. Empty bare arg → false.
     #[test]
     fn test_implicit_minus_n_for_bare_arg() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["foo"], &opts, &vars, true), 0,
             "non-empty bare arg → true (implicit -n)");
@@ -846,6 +862,7 @@ mod tests {
     /// at `num` after singsub. Out-of-bounds → empty string (no panic).
     #[test]
     fn test_cond_str_index_lookup() {
+        let _g = crate::test_util::global_state_lock();
         let args = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         assert_eq!(cond_str(&args, 0, false), "alpha");
         assert_eq!(cond_str(&args, 2, false), "gamma");
@@ -857,6 +874,7 @@ mod tests {
     /// Non-numeric → 0. Trimmed whitespace allowed.
     #[test]
     fn test_cond_val_int_coerce() {
+        let _g = crate::test_util::global_state_lock();
         let args = vec!["42".to_string(), "  -7 ".to_string(), "abc".to_string()];
         assert_eq!(cond_val(&args, 0), 42);
         assert_eq!(cond_val(&args, 1), -7,
@@ -871,6 +889,7 @@ mod tests {
     /// Both must accept the same input.
     #[test]
     fn test_dash_a_dash_e_aliases() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("f");
         File::create(&file).unwrap();
@@ -885,6 +904,7 @@ mod tests {
     /// non-numeric operands: `[[ abc -eq 5 ]]` should return error (2).
     #[test]
     fn test_minus_eq_non_numeric_returns_error() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // Both posix and non-posix modes route through parse_num; if
         // either side fails to parse → return 2 (cond error).
@@ -896,6 +916,7 @@ mod tests {
     /// `expr` in isolation. Missing closing paren → return 2 (error).
     #[test]
     fn test_paren_grouping_and_error_on_missing_close() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // Balanced: ! ( -z "" )  →  ! true → false (1)
         assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true), 1);
@@ -911,6 +932,7 @@ mod tests {
     /// contract (existence check on `/`).
     #[test]
     fn getstat_resolves_regular_path() {
+        let _g = crate::test_util::global_state_lock();
         // Regular path: root exists, must return Some.
         assert!(getstat("/").is_some(),
             "c:466 — stat('/') must succeed");
@@ -927,6 +949,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn getstat_dev_fd_path_doesnt_dup_bad_fds() {
+        let _g = crate::test_util::global_state_lock();
         // /dev/fd/99 is almost certainly an invalid fd in test env.
         // Pre-fix behavior: would dup it (succeeds or fails), then
         // File::from_raw_fd(<bad fd>), then metadata fails. Net result
@@ -953,6 +976,7 @@ mod tests {
     /// strings go through singsub + (unless raw) untokenize.
     #[test]
     fn cond_str_passes_through_when_no_tokens() {
+        let _g = crate::test_util::global_state_lock();
         let args = vec!["hello".to_string()];
         // c:529 — has_token false → return as-is.
         assert_eq!(cond_str(&args, 0, false), "hello",
@@ -967,6 +991,7 @@ mod tests {
 
     #[test]
     fn cond_match_runs_matchpat_through_args_indirection() {
+        let _g = crate::test_util::global_state_lock();
         // Literal equality always matches regardless of options.
         let args = vec!["hello".to_string()];
         assert!(cond_match(&args, 0, "hello"),
@@ -1003,6 +1028,7 @@ mod tests {
     /// `[[ N -eq M+0 ]]`-style asserts in user scripts.
     #[test]
     fn cond_val_routes_through_mathevali() {
+        let _g = crate::test_util::global_state_lock();
         let args = vec![
             "1+2".to_string(),
             "10/2".to_string(),
@@ -1027,6 +1053,7 @@ mod tests {
     /// Boundary cases — empty string, negative numbers, plain digits.
     #[test]
     fn cond_val_plain_integers() {
+        let _g = crate::test_util::global_state_lock();
         let args = vec![
             "0".to_string(),
             "-42".to_string(),
@@ -1055,6 +1082,7 @@ mod tests {
     /// `.parse()` would have returned 2 (syntax error) for `1+0`.
     #[test]
     fn evalcond_dash_t_accepts_arithmetic_per_cond_c() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // c:330 — `[[ -t 1+0 ]]`. Should evaluate to 0 or 1 (tty
         // check), NOT 2 (syntax error). The previous Rust port
@@ -1075,6 +1103,7 @@ mod tests {
     /// LHS to 3.
     #[test]
     fn evalcond_int_compare_routes_through_mathevali() {
+        let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // c:415 — `[[ 1+2 -eq 3 ]]` evaluates LHS via mathevali.
         // Should return 0 (true).

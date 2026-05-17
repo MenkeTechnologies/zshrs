@@ -768,6 +768,7 @@ mod tests {
 
     #[test]
     fn test_highlight_command() {
+        let _g = crate::test_util::global_state_lock();
         let line = "ls -la /tmp";
         let colors = highlight_shell(line);
         assert!(!colors.is_empty());
@@ -775,6 +776,7 @@ mod tests {
 
     #[test]
     fn test_abbreviation() {
+        let _g = crate::test_util::global_state_lock();
         with_abbrs_mut(|set| {
             set.add(Abbreviation::new("g", "g", "git", AbbrPosition::Command));
             set.add(Abbreviation::new(
@@ -793,6 +795,7 @@ mod tests {
 
     #[test]
     fn test_autosuggestion() {
+        let _g = crate::test_util::global_state_lock();
         let history = vec![
             "ls -la".to_string(),
             "git status".to_string(),
@@ -806,6 +809,7 @@ mod tests {
 
     #[test]
     fn test_killring() {
+        let _g = crate::test_util::global_state_lock();
         kill_add("first".to_string());
         kill_add("second".to_string());
 
@@ -815,6 +819,7 @@ mod tests {
 
     #[test]
     fn test_validation() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(validate_command("echo hello"), ValidationStatus::Valid);
         assert_eq!(
             validate_command("echo \"unclosed"),

@@ -921,6 +921,7 @@ mod term_pat_tag_tests {
 
     #[test]
     fn tag_high_bit_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(TAG, 0x80);
         assert_eq!(SEQ, 0xc0);
@@ -928,6 +929,7 @@ mod term_pat_tag_tests {
 
     #[test]
     fn t_constants_have_high_bit_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
                     T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
@@ -937,12 +939,14 @@ mod term_pat_tag_tests {
 
     #[test]
     fn timeout_sentinel_negative() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(TIMEOUT, -51);
     }
 
     #[test]
     fn t_repeat_in_seq_range() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:42-48 — T_BEGIN..=T_HEXCH all in 0x80..=0x86, all have TAG bit.
         assert!((T_BEGIN..=T_HEXCH).contains(&T_REPEAT));
@@ -955,6 +959,7 @@ mod tests {
 
     #[test]
     fn test_url_encode() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(url_encode("/home/user"), "/home/user");
         assert_eq!(url_encode("/path with spaces"), "/path%20with%20spaces");
@@ -963,6 +968,7 @@ mod tests {
 
     #[test]
     fn curf_constants_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:488-491 — CURF_DEFAULT/UNDERLINE/Bar/BLOCK occupy the
         // low 2 bits per Src/Zle/zle.h.
@@ -976,6 +982,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_shapes_set_low_two_bits() {
+        let _g = crate::test_util::global_state_lock();
         // c:801-804 — shape names land in CURF_SHAPE_MASK (bits 0-1).
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(match_cursorform("underline"), CURF_UNDERLINE as u32);
@@ -986,6 +993,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_blink_steady_clear_each_other() {
+        let _g = crate::test_util::global_state_lock();
         // c:805-806 — blink masks out steady and vice versa.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(
@@ -1002,6 +1010,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_shape_plus_blink_compose() {
+        let _g = crate::test_util::global_state_lock();
         // c:801-806 — different masks → bits OR together.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let v = match_cursorform("bar,blink");
@@ -1010,6 +1019,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_hidden_does_not_clobber_shape() {
+        let _g = crate::test_util::global_state_lock();
         // c:807 — hidden has mask=0, so it ORs in.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let v = match_cursorform("block,hidden");
@@ -1018,6 +1028,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_color_4digit_nibble_form() {
+        let _g = crate::test_util::global_state_lock();
         // c:822-832 — 4-hex-char "short" form. zstrtol consumes 4 hex
         //              digits; the low 12 bits become R/G/B nibbles
         //              that get splatted into bytes via `n<<4 | n`.
@@ -1034,6 +1045,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_color_6digit_left_shifts_by_8() {
+        let _g = crate::test_util::global_state_lock();
         // c:833-836 — #RRGGBB pattern: (col << 8) | CURF_COLOR.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let v = match_cursorform("color=#abcdef");
@@ -1042,6 +1054,7 @@ mod tests {
 
     #[test]
     fn match_cursorform_unknown_component_skips_to_next_comma() {
+        let _g = crate::test_util::global_state_lock();
         // c:850-852 — unknown skipped, parsing continues.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let v = match_cursorform("garbage,bar");
@@ -1050,6 +1063,7 @@ mod tests {
 
     #[test]
     fn free_cursor_forms_nulls_storage_only() {
+        let _g = crate::test_util::global_state_lock();
         // c:904-908 — only `cursor_forms` is nulled; `setup` and
         //              `cursor_enabled_mask` MUST persist so the
         //              extension-probe gate doesn't re-run.
@@ -1076,6 +1090,7 @@ mod tests {
 
     #[test]
     fn prompt_markers_computes_aid_and_splices_into_pre_buffer() {
+        let _g = crate::test_util::global_state_lock();
         // c:744-752 — first-call AID computation: hasher(HOST) ^ pid,
         //              base64-encoded 4 bytes (8 chars), first 6
         //              spliced into pre[13..19].
@@ -1111,6 +1126,7 @@ mod tests {
 
     #[test]
     fn prompt_markers_aid_collision_guard() {
+        let _g = crate::test_util::global_state_lock();
         // c:748 — `if (!aid) aid = 1;` — when hash^pid happens to be
         //          0, AID is forced to 1 so the !aid gate stays open.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1131,6 +1147,7 @@ mod tests {
 
     #[test]
     fn prompt_markers_shape_when_default_enabled() {
+        let _g = crate::test_util::global_state_lock();
         // c:741 — extension_enabled defaults to true when nothing in
         //          .term.extensions disables it. With no entry, the
         //          three FinalTerm escapes come through.
@@ -1143,6 +1160,7 @@ mod tests {
 
     #[test]
     fn extension_enabled_matches_whole_class() {
+        let _g = crate::test_util::global_state_lock();
         // c:686-690 — `-integration` disables the whole class.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::params::setaparam(
@@ -1156,6 +1174,7 @@ mod tests {
 
     #[test]
     fn extension_enabled_matches_specific_ext() {
+        let _g = crate::test_util::global_state_lock();
         // c:690 — `-integration:pwd` only disables `pwd`, not `prompt`.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::params::setaparam(
@@ -1169,6 +1188,7 @@ mod tests {
 
     #[test]
     fn extension_enabled_respects_default() {
+        let _g = crate::test_util::global_state_lock();
         // c:694 — nothing matches → return def.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::params::setaparam(".term.extensions", vec![]);
@@ -1178,6 +1198,7 @@ mod tests {
 
     #[test]
     fn zle_set_cursorform_seeds_default_slots() {
+        let _g = crate::test_util::global_state_lock();
         // c:879-880 — defaults: insert=BAR, pending=UNDERLINE; all
         //              other slots zero in the absence of $zle_cursorform.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1193,6 +1214,7 @@ mod tests {
 
     #[test]
     fn test_base64_encode() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b""), "");
@@ -1203,6 +1225,7 @@ mod tests {
 
     #[test]
     fn base64_decode_round_trip_with_encode() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Encode then decode round-trip to verify C-faithful semantics.
         // c:579 — stops at '=' (the standard base64 terminator).
@@ -1213,6 +1236,7 @@ mod tests {
 
     #[test]
     fn base64_decode_well_known() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:580-584 — verify character-class table.
         // 'TWFu' → 'Man' (RFC 4648 example).
@@ -1221,6 +1245,7 @@ mod tests {
 
     #[test]
     fn base64_decode_with_padding() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // 'YQ==' → 'a'
         assert_eq!(base64_decode("YQ=="), b"a");
@@ -1232,6 +1257,7 @@ mod tests {
 
     #[test]
     fn base64_decode_handles_plus_slash() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:583-584 — '+' = 62, '/' = 63.
         // 4 base64 chars → 24 bits → 3 bytes.
@@ -1245,6 +1271,7 @@ mod tests {
 
     #[test]
     fn base64_decode_empty_input() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:579 — `len && ...` guards against zero-length input.
         assert_eq!(base64_decode(""), Vec::<u8>::new());

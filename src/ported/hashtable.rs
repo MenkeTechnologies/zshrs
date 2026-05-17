@@ -2212,6 +2212,7 @@ mod tests {
 
     #[test]
     fn test_hasher() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher(""), 0);
         assert!(hasher("test") != 0);
         assert_eq!(hasher("test"), hasher("test"));
@@ -2224,6 +2225,7 @@ mod tests {
     /// sorts Meta-encoded keys incorrectly.
     #[test]
     fn hnamcmp_uses_ztrcmp_meta_aware_compare() {
+        let _g = crate::test_util::global_state_lock();
         use std::cmp::Ordering;
         // Plain ASCII: same as str::cmp.
         assert_eq!(hnamcmp("apple", "banana"), Ordering::Less);
@@ -2255,6 +2257,7 @@ mod tests {
 
     #[test]
     fn test_histhasher() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(histhasher("  hello  world  "), histhasher("hello world"));
         assert_ne!(histhasher("hello world"), histhasher("helloworld"));
     }
@@ -2269,6 +2272,7 @@ mod tests {
     ///   * NBSP / CR are NOT treated as inblank.
     #[test]
     fn histhasher_inblank_is_narrow_space_tab_only() {
+        let _g = crate::test_util::global_state_lock();
         // c:1369 — leading inblank stripped; multiple equivalent forms hash same.
         assert_eq!(histhasher("\t  hello"), histhasher("hello"),
             "c:1369 — leading space+tab stripped before mixing");
@@ -2290,6 +2294,7 @@ mod tests {
 
     #[test]
     fn test_histstrcmp() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             histstrcmp("  hello  world  ", "hello world", false),
             std::cmp::Ordering::Equal
@@ -2307,6 +2312,7 @@ mod tests {
     /// Pin narrow-inblank semantics.
     #[test]
     fn histstrcmp_inblank_is_narrow_space_tab_only() {
+        let _g = crate::test_util::global_state_lock();
         use std::cmp::Ordering;
         // c:1411-1413 — runs of inblank collapse to a single boundary.
         assert_eq!(
@@ -2349,6 +2355,7 @@ mod tests {
     /// Equal via the (Some, None) inblank-collapse branch.
     #[test]
     fn histstrcmp_strips_leading_and_trailing_inblank() {
+        let _g = crate::test_util::global_state_lock();
         use std::cmp::Ordering;
         assert_eq!(histstrcmp("  cmd", "\tcmd", false), Ordering::Equal,
             "c:1398-1399 — leading inblank skipped (both kinds)");
@@ -2360,6 +2367,7 @@ mod tests {
 
     #[test]
     fn test_cmdnam_table() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = cmdnam_table::new();
         table.add(cmdnam_hashed("ls", "/bin/ls"));
 
@@ -2373,6 +2381,7 @@ mod tests {
 
     #[test]
     fn test_shfunc_table() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = shfunc_table::new();
         table.add(shfunc_with_body("myfunc", "echo hello"));
         table.add(shfunc_autoload("lazy"));
@@ -2395,6 +2404,7 @@ mod tests {
 
     #[test]
     fn test_reswd_table() {
+        let _g = crate::test_util::global_state_lock();
         let table = reswd_table::new();
 
         assert!(table.is_reserved("if"));
@@ -2408,6 +2418,7 @@ mod tests {
 
     #[test]
     fn test_alias_table() {
+        let _g = crate::test_util::global_state_lock();
         let mut table = alias_table::with_defaults();
 
         assert!(table.get("run-help").is_some());
@@ -2427,6 +2438,7 @@ mod tests {
 
     #[test]
     fn test_dir_cache() {
+        let _g = crate::test_util::global_state_lock();
         // Smoke-test the canonical `dircache` file-static at
         // hashtable.c:1517 — the cache lives in a global Mutex
         // matching C semantics. Each test gets a fresh slice via
@@ -2446,6 +2458,7 @@ mod tests {
 
     #[test]
     fn test_format_alias() {
+        let _g = crate::test_util::global_state_lock();
         let alias = createaliasnode("ll", "ls -l", 0);
         let output = format_alias(&alias, print_flags::WHENCE_VERBOSE);
         assert!(output.contains("is an alias for"));
@@ -2457,6 +2470,7 @@ mod tests {
 
     #[test]
     fn test_format_reswd() {
+        let _g = crate::test_util::global_state_lock();
         let table = reswd_table::new();
         let if_rw = table.get("if").unwrap();
 
@@ -2483,6 +2497,7 @@ mod tests {
 
     #[test]
     fn test_createshfunctable_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         createshfunctable();
         createshfunctable();
@@ -2494,6 +2509,7 @@ mod tests {
 
     #[test]
     fn test_shfunctab_add_get_remove() {
+        let _g = crate::test_util::global_state_lock();
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
@@ -2515,6 +2531,7 @@ mod tests {
 
     #[test]
     fn test_shfunctab_disable_enable() {
+        let _g = crate::test_util::global_state_lock();
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
@@ -2535,6 +2552,7 @@ mod tests {
 
     #[test]
     fn test_simple_glob_match() {
+        let _g = crate::test_util::global_state_lock();
         assert!(simple_glob_match("foo", "foo"));
         assert!(!simple_glob_match("foo", "bar"));
         assert!(simple_glob_match("f*", "foo"));
@@ -2548,6 +2566,7 @@ mod tests {
 
     #[test]
     fn test_scanmatchshfunc_matches_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
@@ -2569,6 +2588,7 @@ mod tests {
 
     #[test]
     fn test_getshfuncfile_returns_filename() {
+        let _g = crate::test_util::global_state_lock();
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
@@ -2588,6 +2608,7 @@ mod tests {
 
     #[test]
     fn test_generic_addhashnode_displaces_old() {
+        let _g = crate::test_util::global_state_lock();
         let mut ht: HashMap<String, Alias> = HashMap::new();
         addhashnode(&mut ht, "x", createaliasnode("x", "echo a", 0));
         let old = addhashnode2(&mut ht, "x", createaliasnode("x", "echo b", 0));
@@ -2598,6 +2619,7 @@ mod tests {
 
     #[test]
     fn test_generic_disable_filters_get() {
+        let _g = crate::test_util::global_state_lock();
         let mut ht: HashMap<String, Alias> = HashMap::new();
         ht.insert("a".to_string(), createaliasnode("a", "1", 0));
         assert!(gethashnode(&ht, "a").is_some());
@@ -2611,6 +2633,7 @@ mod tests {
 
     #[test]
     fn test_scanmatchtable_pattern_and_count() {
+        let _g = crate::test_util::global_state_lock();
         let mut ht: HashMap<String, Alias> = HashMap::new();
         ht.insert("foo".to_string(), createaliasnode("foo", "1", 0));
         ht.insert("foobar".to_string(), createaliasnode("foobar", "2", 0));
@@ -2626,6 +2649,7 @@ mod tests {
 
     #[test]
     fn test_emptyhashtable_clears() {
+        let _g = crate::test_util::global_state_lock();
         let mut ht: HashMap<String, Alias> = HashMap::new();
         ht.insert("a".to_string(), createaliasnode("a", "1", 0));
         ht.insert("b".to_string(), createaliasnode("b", "2", 0));
@@ -2636,6 +2660,7 @@ mod tests {
 
     #[test]
     fn test_resizehashtable_reserves_capacity() {
+        let _g = crate::test_util::global_state_lock();
         let mut ht: HashMap<String, i32> = HashMap::new();
         let initial_cap = ht.capacity();
         resizehashtable(&mut ht, 200);
@@ -2645,6 +2670,7 @@ mod tests {
 
     #[test]
     fn test_aliastab_singleton_has_defaults() {
+        let _g = crate::test_util::global_state_lock();
         let tab = aliastab_lock().read().unwrap();
         // createaliastables seeds run-help and which-command.
         assert!(tab.get_including_disabled("run-help").is_some());
@@ -2653,6 +2679,7 @@ mod tests {
 
     #[test]
     fn test_createaliasnode_sets_flags() {
+        let _g = crate::test_util::global_state_lock();
         let a = createaliasnode("foo", "echo bar", ALIAS_GLOBAL as u32);
         assert_eq!(a.node.nam, "foo");
         assert_eq!(a.text, "echo bar");
@@ -2661,6 +2688,7 @@ mod tests {
 
     #[test]
     fn test_printaliasnode_formats() {
+        let _g = crate::test_util::global_state_lock();
         let a = createaliasnode("ll", "ls -la", 0);
         let out = printaliasnode(&a, print_flags::WHENCE_VERBOSE);
         assert!(out.contains("ll is an alias for ls -la"));
@@ -2671,6 +2699,7 @@ mod tests {
 
     #[test]
     fn test_printreswdnode_formats() {
+        let _g = crate::test_util::global_state_lock();
         let out = printreswdnode("if", print_flags::WHENCE_WORD);
         assert_eq!(out, "if: reserved");
         let v = printreswdnode("if", print_flags::WHENCE_VERBOSE);
@@ -2679,6 +2708,7 @@ mod tests {
 
     #[test]
     fn test_addhistnode_displaces_old() {
+        let _g = crate::test_util::global_state_lock();
         emptyhisttable();
         assert_eq!(addhistnode("ls -la", 1), None);
         let old = addhistnode("ls -la", 5);
@@ -2688,6 +2718,7 @@ mod tests {
 
     #[test]
     fn test_freecmdnamnode_removes() {
+        let _g = crate::test_util::global_state_lock();
         emptycmdnamtable();
         {
             let mut tab = cmdnamtab_lock().write().unwrap();
@@ -2700,6 +2731,7 @@ mod tests {
 
     #[test]
     fn test_dircache_set_refcounts() {
+        let _g = crate::test_util::global_state_lock();
         // Refcount add → entries grow.
         let mut k: Option<String> = None;
         dircache_set(&mut k, Some("/usr/bin"));
@@ -2714,6 +2746,7 @@ mod tests {
     /// would silently install aliases that expand to nothing.
     #[test]
     fn createaliasnode_round_trips_name_and_text() {
+        let _g = crate::test_util::global_state_lock();
         let a = createaliasnode("ls-color", "ls --color=auto", 0);
         assert_eq!(a.text, "ls --color=auto");
         assert_eq!(a.node.nam, "ls-color");
@@ -2725,6 +2758,7 @@ mod tests {
     /// where `run-help` resolves to `man` after `autoload -U run-help`.
     #[test]
     fn aliastab_seeds_run_help_and_which_command_defaults() {
+        let _g = crate::test_util::global_state_lock();
         createaliastables();
         let tab = aliastab_lock().read().expect("aliastab poisoned");
         assert!(tab.get("run-help").is_some(),    "run-help default missing");
@@ -2738,6 +2772,7 @@ mod tests {
     /// the impl makes this a Bernstein-style hash; verify it's stable.
     #[test]
     fn hasher_is_deterministic_across_calls() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher("foo"), hasher("foo"));
         assert_eq!(hasher(""),    hasher(""));
         // Common shell names should not collide trivially.
@@ -2750,6 +2785,7 @@ mod tests {
     /// silent rebuild storms in the cache layer.
     #[test]
     fn hasher_empty_string_hashes_to_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher(""), 0);
     }
 
@@ -2758,6 +2794,7 @@ mod tests {
     /// canonical first-iteration formula.
     #[test]
     fn hasher_single_byte_equals_byte_value() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher("a"), b'a' as u32);
         assert_eq!(hasher("Z"), b'Z' as u32);
         assert_eq!(hasher("0"), b'0' as u32);
@@ -2771,6 +2808,7 @@ mod tests {
     /// digest stored on disk.
     #[test]
     fn hasher_two_byte_matches_bernstein_polynomial() {
+        let _g = crate::test_util::global_state_lock();
         // For "ab": h0=0; h1 = 0 + (0<<5) + 'a' = 97; h2 = 97 + (97<<5) + 'b' = 97 + 3104 + 98 = 3299.
         assert_eq!(hasher("ab"), 97u32.wrapping_add(97u32.wrapping_shl(5)).wrapping_add(b'b' as u32));
         assert_eq!(hasher("ab"), 3299);
@@ -2792,6 +2830,7 @@ mod tests {
     /// bytes into one codepoint) fails.
     #[test]
     fn hasher_processes_utf8_bytes_not_codepoints() {
+        let _g = crate::test_util::global_state_lock();
         // 'é' UTF-8 = 0xC3 0xA9 — two bytes.
         let expected = {
             let mut h: u32 = 0;
@@ -2810,6 +2849,7 @@ mod tests {
     /// table lookup.
     #[test]
     fn addhashnode_then_gethashnode2_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
         addhashnode(&mut h, "key1", 42);
         assert_eq!(gethashnode2(&h, "key1"), Some(&42));
@@ -2822,6 +2862,7 @@ mod tests {
     /// removed when they actually didn't.
     #[test]
     fn removehashnode_returns_value_and_drops_entry() {
+        let _g = crate::test_util::global_state_lock();
         let mut h: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         addhashnode(&mut h, "key1", "val".to_string());
         let removed = removehashnode(&mut h, "key1");
@@ -2836,6 +2877,7 @@ mod tests {
     /// supposed to fail-soft).
     #[test]
     fn removehashnode_missing_key_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
         addhashnode(&mut h, "k1", 1);
         let len_before = h.len();

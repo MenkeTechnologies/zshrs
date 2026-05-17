@@ -2760,6 +2760,7 @@ mod tests {
     /// `$ind` should produce a diagnostic rather than silently index 0.
     #[test]
     fn mathevalarg_empty_emits_error_and_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         // Empty input → returns 0 with error message emitted.
         let r = mathevalarg("");
         assert_eq!(r, 0, "c:1532 — empty input returns 0");
@@ -2787,6 +2788,7 @@ mod tests {
     /// input MUST be skipped before the empty check.
     #[test]
     fn matheval_empty_input_returns_zero_int() {
+        let _g = crate::test_util::global_state_lock();
         // Empty string → MN_INTEGER 0 (c:1491-1494).
         let r = matheval("").expect("empty string must return 0, not error");
         assert_eq!(r.type_, MN_INTEGER,
@@ -2814,6 +2816,7 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 + 2").unwrap(), 3);
         assert_eq!(mathevali("10 - 3").unwrap(), 7);
         assert_eq!(mathevali("4 * 5").unwrap(), 20);
@@ -2823,6 +2826,7 @@ mod tests {
 
     #[test]
     fn test_precedence() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("2 + 3 * 4").unwrap(), 14);
         assert_eq!(mathevali("(2 + 3) * 4").unwrap(), 20);
         assert_eq!(mathevali("2 ** 3 ** 2").unwrap(), 512); // Right associative
@@ -2830,6 +2834,7 @@ mod tests {
 
     #[test]
     fn test_comparison() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("5 > 3").unwrap(), 1);
         assert_eq!(mathevali("5 < 3").unwrap(), 0);
         assert_eq!(mathevali("5 == 5").unwrap(), 1);
@@ -2840,6 +2845,7 @@ mod tests {
 
     #[test]
     fn test_logical() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 && 1").unwrap(), 1);
         assert_eq!(mathevali("1 && 0").unwrap(), 0);
         assert_eq!(mathevali("1 || 0").unwrap(), 1);
@@ -2850,6 +2856,7 @@ mod tests {
 
     #[test]
     fn test_bitwise() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("5 & 3").unwrap(), 1);
         assert_eq!(mathevali("5 | 3").unwrap(), 7);
         assert_eq!(mathevali("5 ^ 3").unwrap(), 6);
@@ -2860,6 +2867,7 @@ mod tests {
 
     #[test]
     fn test_ternary() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 ? 10 : 20").unwrap(), 10);
         assert_eq!(mathevali("0 ? 10 : 20").unwrap(), 20);
         assert_eq!(mathevali("(5 > 3) ? 100 : 200").unwrap(), 100);
@@ -2867,6 +2875,7 @@ mod tests {
 
     #[test]
     fn test_power() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("2 ** 10").unwrap(), 1024);
         assert_eq!(mathevali("3 ** 3").unwrap(), 27);
         assert!((matheval("2.0 ** 0.5").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
@@ -2874,12 +2883,14 @@ mod tests {
 
     #[test]
     fn test_float() {
+        let _g = crate::test_util::global_state_lock();
         assert!((matheval("3.14 + 0.01").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.15).abs() < 0.0001);
         assert!((matheval("1.5 * 2.0").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
     }
 
     #[test]
     fn test_unary() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("-5").unwrap(), -5);
         assert_eq!(mathevali("- -5").unwrap(), 5); // space needed to avoid --
         assert_eq!(mathevali("+5").unwrap(), 5);
@@ -2888,6 +2899,7 @@ mod tests {
 
     #[test]
     fn test_base() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("0xFF").unwrap(), 255);
         assert_eq!(mathevali("0b1010").unwrap(), 10);
         assert_eq!(mathevali("16#FF").unwrap(), 255);
@@ -2897,6 +2909,7 @@ mod tests {
 
     #[test]
     fn test_variables() {
+        let _g = crate::test_util::global_state_lock();
         let mut vars = HashMap::new();
         vars.insert("x".to_string(), mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
         vars.insert("y".to_string(), mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
@@ -2908,6 +2921,7 @@ mod tests {
 
     #[test]
     fn test_assignment() {
+        let _g = crate::test_util::global_state_lock();
         new("x = 5");
         mathevall().unwrap();
         assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
@@ -2919,6 +2933,7 @@ mod tests {
 
     #[test]
     fn test_increment() {
+        let _g = crate::test_util::global_state_lock();
         let mut vars = HashMap::new();
         vars.insert("x".to_string(), mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
 
@@ -2935,6 +2950,7 @@ mod tests {
 
     #[test]
     fn test_functions() {
+        let _g = crate::test_util::global_state_lock();
         assert!((matheval("sqrt(4)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 2.0).abs() < 0.0001);
         assert!((matheval("sin(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap()).abs() < 0.0001);
         assert!((matheval("cos(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 1.0).abs() < 0.0001);
@@ -2945,12 +2961,14 @@ mod tests {
 
     #[test]
     fn test_special_values() {
+        let _g = crate::test_util::global_state_lock();
         assert!(matheval("Inf").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_infinite());
         assert!(matheval("NaN").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_nan());
     }
 
     #[test]
     fn test_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(matheval("1 / 0").is_err());
         assert!(matheval("1 +").is_err());
         // Empty arith expression is a parse error in zsh:
@@ -2963,12 +2981,14 @@ mod tests {
 
     #[test]
     fn test_underscore_in_numbers() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1_000_000").unwrap(), 1000000);
         assert_eq!(mathevali("0xFF_FF").unwrap(), 65535);
     }
 
     #[test]
     fn test_comma_operator() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1, 2, 3").unwrap(), 3);
         assert_eq!(mathevali("(x = 1, y = 2, x + y)").unwrap(), 3);
     }
@@ -2977,6 +2997,7 @@ mod tests {
     /// A regression returning 0 silently masks programmer errors.
     #[test]
     fn mathevali_divide_by_zero_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(mathevali("1/0").is_err());
         assert!(mathevali("5/(2-2)").is_err());
     }
@@ -2988,6 +3009,7 @@ mod tests {
     /// misclassifies any composite MN_FLOAT|MN_X bitfield.
     #[test]
     fn mathevali_truncates_float_via_bitmask_not_strict_eq() {
+        let _g = crate::test_util::global_state_lock();
         // Float expression → truncated toward zero (3.7 → 3, -3.7 → -3).
         assert_eq!(mathevali("3.7").unwrap(),    3);
         assert_eq!(mathevali("-3.7").unwrap(),  -3);
@@ -2998,6 +3020,7 @@ mod tests {
     /// c:1480 — mod-by-zero is also an error (matches POSIX).
     #[test]
     fn mathevali_mod_by_zero_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(mathevali("5 % 0").is_err());
     }
 
@@ -3006,6 +3029,7 @@ mod tests {
     /// `$(( a + b * c ))` users compute.
     #[test]
     fn mathevali_respects_multiplicative_over_additive_precedence() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 + 2 * 3").unwrap(),  7);
         assert_eq!(mathevali("(1 + 2) * 3").unwrap(), 9);
         assert_eq!(mathevali("10 - 2 * 3").unwrap(), 4);
@@ -3015,6 +3039,7 @@ mod tests {
     /// dropping them breaks any hex-mask / bit-pack computation.
     #[test]
     fn mathevali_bitshift_operators() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 << 4").unwrap(),  16);
         assert_eq!(mathevali("256 >> 3").unwrap(), 32);
     }
@@ -3024,6 +3049,7 @@ mod tests {
     /// by-zero) the user expected NOT to fire.
     #[test]
     fn mathevali_logical_and_short_circuits_on_zero_lhs() {
+        let _g = crate::test_util::global_state_lock();
         // If RHS evaluated, `1/0` would error. Short-circuit must skip.
         assert_eq!(mathevali("0 && 1/0").unwrap(), 0);
     }
@@ -3031,6 +3057,7 @@ mod tests {
     /// c:1505 — `||` short-circuits on non-zero LHS. Same rationale.
     #[test]
     fn mathevali_logical_or_short_circuits_on_nonzero_lhs() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 || 1/0").unwrap(), 1);
     }
 
@@ -3039,6 +3066,7 @@ mod tests {
     /// in the unused branch.
     #[test]
     fn mathevali_ternary_evaluates_only_selected_branch() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 ? 42 : 1/0").unwrap(), 42);
         assert_eq!(mathevali("0 ? 1/0 : 42").unwrap(), 42);
     }
@@ -3051,6 +3079,7 @@ mod tests {
     /// for leading-zero.
     #[test]
     fn mathevali_parses_hex_and_binary_literals() {
+        let _g = crate::test_util::global_state_lock();
         // Hex literals at c:471 (lowchar 'x').
         assert_eq!(mathevali("0xff").unwrap(),  255);
         assert_eq!(mathevali("0x10").unwrap(),  16);
@@ -3069,6 +3098,7 @@ mod tests {
     /// b | c ))` (must be `(a&b) | c`, not `a & (b|c)`).
     #[test]
     fn mathevali_bitwise_operators_and_or_xor() {
+        let _g = crate::test_util::global_state_lock();
         // Boolean truth-table cases.
         assert_eq!(mathevali("12 & 10").unwrap(), 8,   "1100 & 1010 = 1000");
         assert_eq!(mathevali("12 | 10").unwrap(), 14,  "1100 | 1010 = 1110");
@@ -3082,6 +3112,7 @@ mod tests {
     /// Pin all six relational ops.
     #[test]
     fn mathevali_comparison_operators_return_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("1 < 2").unwrap(),  1);
         assert_eq!(mathevali("2 < 1").unwrap(),  0);
         assert_eq!(mathevali("2 > 1").unwrap(),  1);
@@ -3096,6 +3127,7 @@ mod tests {
     /// distinguish `1 - 2` (binary) from `1 + -2` (unary).
     #[test]
     fn mathevali_unary_minus_and_bitwise_not() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("-5").unwrap(), -5);
         assert_eq!(mathevali("-(2 + 3)").unwrap(), -5);
         assert_eq!(mathevali("1 + -2").unwrap(), -1);
@@ -3107,6 +3139,7 @@ mod tests {
     /// c:1505 — logical NOT operator `!`. Maps 0 → 1, anything-else → 0.
     #[test]
     fn mathevali_logical_not() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("!0").unwrap(),  1);
         assert_eq!(mathevali("!1").unwrap(),  0);
         assert_eq!(mathevali("!42").unwrap(), 0);
@@ -3125,6 +3158,7 @@ mod tests {
     /// the C-source casing rule.
     #[test]
     fn math_token_ids_match_c_source_position_for_position() {
+        let _g = crate::test_util::global_state_lock();
         let table = [
             ("M_INPAR",    M_INPAR,    0),
             ("M_OUTPAR",   M_OUTPAR,   1),
@@ -3200,6 +3234,7 @@ mod tests {
     /// without table updates fails immediately.
     #[test]
     fn math_dispatch_tables_match_tokcount() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(Z_PREC.len(), TOKCOUNT,
             "Z_PREC must have one slot per math token");
         assert_eq!(C_PREC.len(), TOKCOUNT,

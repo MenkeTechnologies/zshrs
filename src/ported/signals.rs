@@ -1770,6 +1770,7 @@ mod tests {
 
     #[test]
     fn test_sig_by_name() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigidx("INT"), Some(libc::SIGINT));
         assert_eq!(getsigidx("SIGINT"), Some(libc::SIGINT));
         assert_eq!(getsigidx("int"), Some(libc::SIGINT));
@@ -1781,6 +1782,7 @@ mod tests {
 
     #[test]
     fn test_getsigname() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigname(libc::SIGINT), "INT");
         assert_eq!(getsigname(libc::SIGHUP), "HUP");
         assert_eq!(getsigname(SIGEXIT), "EXIT");
@@ -1788,6 +1790,7 @@ mod tests {
 
     #[test]
     fn test_signal_queue() {
+        let _g = crate::test_util::global_state_lock();
         let before = queueing_enabled.load(Ordering::SeqCst);
         queue_signals();
         assert_eq!(queueing_enabled.load(Ordering::SeqCst), before + 1);
@@ -1797,6 +1800,7 @@ mod tests {
 
     #[test]
     fn test_signal_mask_zero_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         // C: `if (sig) sigaddset(&set, sig);` — sig==0 yields empty set.
         let s = signal_mask(0);
         let r = unsafe { libc::sigismember(&s, libc::SIGINT) };
@@ -1805,6 +1809,7 @@ mod tests {
 
     #[test]
     fn test_signal_mask_includes_only_specified() {
+        let _g = crate::test_util::global_state_lock();
         let s = signal_mask(libc::SIGUSR1);
         assert_eq!(unsafe { libc::sigismember(&s, libc::SIGUSR1) }, 1);
         assert_eq!(unsafe { libc::sigismember(&s, libc::SIGUSR2) }, 0);
@@ -1812,6 +1817,7 @@ mod tests {
 
     #[test]
     fn test_interact_flag_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let prev = is_interact();
         set_interact(true);
         assert!(is_interact());
@@ -1822,6 +1828,7 @@ mod tests {
 
     #[test]
     fn test_signal_block_returns_old_mask() {
+        let _g = crate::test_util::global_state_lock();
         let prev = is_interact();
         set_interact(false); // ensure no test side-effects from interactive paths
         let mask = signal_mask(libc::SIGUSR2);
@@ -1841,6 +1848,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_mask_includes_only_requested_signal() {
+        let _g = crate::test_util::global_state_lock();
         let m = signal_mask(libc::SIGUSR1);
         // c:166 — `sigaddset(&set, sig)` for the requested signal.
         assert_eq!(unsafe { libc::sigismember(&m, libc::SIGUSR1) }, 1,
@@ -1858,6 +1866,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_mask_with_zero_returns_empty_set() {
+        let _g = crate::test_util::global_state_lock();
         let m = signal_mask(0);
         // Every signal must be NOT a member of an empty set.
         for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1, libc::SIGUSR2] {
@@ -1875,6 +1884,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn rtsigno_parses_rt_signal_names() {
+        let _g = crate::test_util::global_state_lock();
         let sigrtmin = libc::SIGRTMIN();
         let sigrtmax = libc::SIGRTMAX();
         // Bare RTMIN / RTMAX (no offset).
@@ -1907,6 +1917,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn rtsigname_picks_shorter_form_between_rtmin_rtmax() {
+        let _g = crate::test_util::global_state_lock();
         let sigrtmin = libc::SIGRTMIN();
         let sigrtmax = libc::SIGRTMAX();
         // SIGRTMIN itself → "RTMIN" (offset 0; trailing '+' dropped).
@@ -1937,6 +1948,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn wait_for_processes_uses_canonical_waitpid_flags() {
+        let _g = crate::test_util::global_state_lock();
         // We can't easily intercept libc::waitpid from a test, so pin
         // the canonical flags directly via libc constants — if a
         // future regression drops WCONTINUED, the const assertion
@@ -1973,6 +1985,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn queue_traps_respects_trapsasync_and_wait_cmd() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::dosetopt;
         use crate::ported::zsh_h::TRAPSASYNC;
         let saved = crate::ported::zsh_h::isset(TRAPSASYNC);
@@ -2013,6 +2026,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn settrap_rejects_job_control_signals_when_monitor_set() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MONITOR;
         use crate::ported::options::dosetopt;
         // Save current MONITOR state; restore at end.
@@ -2048,6 +2062,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn killrunjobs_short_circuits_when_hup_unset() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::dosetopt;
         use crate::ported::zsh_h::HUP;
         let saved = crate::ported::zsh_h::isset(HUP);

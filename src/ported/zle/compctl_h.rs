@@ -280,6 +280,7 @@ mod tests {
     /// Verifies CCT_* values per c:76-89.
     #[test]
     fn cct_constants_correct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CCT_UNUSED, 0);
         assert_eq!(CCT_POS, 1);
@@ -291,6 +292,7 @@ mod tests {
     /// non-overlapping.
     #[test]
     fn cc_primary_mask_bits_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let all = CC_FILES | CC_COMMPATH | CC_REMOVE | CC_OPTIONS
                 | CC_VARS | CC_BINDINGS | CC_ARRAYS | CC_INTVARS
@@ -306,6 +308,7 @@ mod tests {
     /// Verifies the secondary mask values per c:152-158.
     #[test]
     fn cc_secondary_mask_values() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CC_NOSORT, 1);
         assert_eq!(CC_XORCONT, 2);
@@ -316,6 +319,7 @@ mod tests {
     /// the C convention of `(Compctl) calloc(1, sizeof(...))`.
     #[test]
     fn compctl_default_zeros_fields() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let cc = Compctl::default();
         assert_eq!(cc.refc, 0);
@@ -331,6 +335,7 @@ mod tests {
     /// Verifies Compcond Default starts in CCT_UNUSED state.
     #[test]
     fn compcond_default_is_unused() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let c = Compcond::default();
         assert_eq!(c.typ, CCT_UNUSED);
@@ -341,6 +346,7 @@ mod tests {
     /// dispatch per c:58-73.
     #[test]
     fn compcond_data_variants() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = CompcondData::R { a: vec![0, 1], b: vec![2, 3] };
         if let CompcondData::R { a, b } = r {
@@ -361,6 +367,7 @@ mod tests {
     /// completion-condition kinds through the same dispatch arm).
     #[test]
     fn cct_constants_are_unique() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let all = [
             CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT,
@@ -382,6 +389,7 @@ mod tests {
     /// CCT_POS by accident.
     #[test]
     fn cct_unused_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CCT_UNUSED, 0, "CCT_UNUSED must be the zero-init sentinel");
     }
 
@@ -391,6 +399,7 @@ mod tests {
     /// bits all being non-overlapping.
     #[test]
     fn cc_primary_mask_bits_are_distinct_singletons() {
+        let _g = crate::test_util::global_state_lock();
         let primary = [
             CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS,
             CC_VARS, CC_BINDINGS, CC_ARRAYS, CC_INTVARS,
@@ -412,6 +421,7 @@ mod tests {
     /// write, the other fields must remain at their zero-init values.
     #[test]
     fn compctl_default_partial_population_doesnt_clobber_other_fields() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut cc = Compctl::default();
         cc.mask = CC_FILES;
@@ -431,6 +441,7 @@ mod tests {
     /// with Unused data) gets caught.
     #[test]
     fn compcond_default_typ_and_data_are_consistent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let c = Compcond::default();
         assert_eq!(c.typ, CCT_UNUSED, "tag must be UNUSED");
@@ -443,6 +454,7 @@ mod tests {
     /// renumbers two flags to the same shift.
     #[test]
     fn cc_primary_mask_full_sweep_no_overlap() {
+        let _g = crate::test_util::global_state_lock();
         let primary = [
             CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
             CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
@@ -469,6 +481,7 @@ mod tests {
     /// every subsequent flag.
     #[test]
     fn cc_expandexpl_at_bit_30_skips_bit_29() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CC_EXPANDEXPL, 1 << 30,
             "c:148 — CC_EXPANDEXPL must be at bit 30 (bit 29 is the gap)");
         // Verify nothing else IS bit 29
@@ -492,6 +505,7 @@ mod tests {
     /// confusion) gets caught.
     #[test]
     fn cc_reserved_is_bit_31() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(CC_RESERVED, 1u64 << 31);
     }
 
@@ -501,6 +515,7 @@ mod tests {
     /// routes via the mask vs mask2 field.
     #[test]
     fn secondary_mask_collides_with_primary_by_design() {
+        let _g = crate::test_util::global_state_lock();
         // CC_NOSORT (mask2 bit 0) and CC_FILES (mask bit 0) both = 1
         assert_eq!(CC_NOSORT, CC_FILES,
             "collision is intentional — different mask fields");
@@ -526,6 +541,7 @@ mod tests {
     /// breaks the dispatcher's `(type - CCT_POS)` subtraction.
     #[test]
     fn cct_values_are_sequential_zero_through_thirteen() {
+        let _g = crate::test_util::global_state_lock();
         let in_order = [
             CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT, CCT_WORDSTR,
             CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE, CCT_CURSUB, CCT_CURSUBC,

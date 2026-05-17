@@ -226,6 +226,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresgid_rejects_split_real_saved() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let r = setresgid(1, 2, 3);
             assert_eq!(r, -1);
@@ -237,6 +238,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresuid_rejects_split_real_saved() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let r = setresuid(1, 2, 3);
             assert_eq!(r, -1);
@@ -250,6 +252,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresuid_noop_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let me = libc::getuid();
             let r = setresuid(me, me, me);
@@ -260,6 +263,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresgid_noop_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let me = libc::getgid();
             let r = setresgid(me, me, me);
@@ -274,6 +278,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresgid_noop_does_not_clobber_existing_errno() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             // Seed errno with a sentinel that won't naturally collide.
             errno_set(libc::EILSEQ);
@@ -292,6 +297,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresgid_real_matches_effective_but_saved_differs() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let me = libc::getgid();
             let other: libc::gid_t = if me == 0 { 1 } else { 0 };
@@ -310,6 +316,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn setresuid_effective_differs_from_saved_does_not_get_enosys() {
+        let _g = crate::test_util::global_state_lock();
         unsafe {
             let me = libc::getuid();
             // Skip on root since seteuid(other) would succeed.
@@ -328,6 +335,7 @@ mod tests {
     /// callers don't print "{}" literal.
     #[test]
     fn errno_str_returns_nonempty_for_zero() {
+        let _g = crate::test_util::global_state_lock();
         let s = errno_str(0);
         assert!(!s.is_empty(), "errno_str(0) returned empty string");
     }
@@ -337,6 +345,7 @@ mod tests {
     /// "{}" or the integer instead of the strerror(3) text.
     #[test]
     fn errno_str_for_einval_contains_recognizable_phrase() {
+        let _g = crate::test_util::global_state_lock();
         let s = errno_str(libc::EINVAL);
         let l = s.to_lowercase();
         assert!(l.contains("invalid") || l.contains("argument") || l.contains("inval"),

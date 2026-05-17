@@ -1223,6 +1223,7 @@ mod tests {
     /// negatives + trailing garbage per c:51.
     #[test]
     fn getposint_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("42", "test"), 42);
         assert_eq!(getposint("0", "test"), 0);
         assert_eq!(getposint("-1", "test"), -1);    // negative → -1
@@ -1233,6 +1234,7 @@ mod tests {
     /// Verifies `bin_zsystem_supports` per c:794-800.
     #[test]
     fn bin_zsystem_supports_self() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_zsystem_supports("zsystem",
             &["supports".to_string()], &ops, 0), 0);
@@ -1246,6 +1248,7 @@ mod tests {
     /// Verifies `bin_zsystem_supports` arg-count guards (c:784-791).
     #[test]
     fn bin_zsystem_supports_arg_count() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_zsystem_supports("zsystem", &[], &ops, 0), 255);
         assert_eq!(bin_zsystem_supports("zsystem",
@@ -1256,6 +1259,7 @@ mod tests {
     /// (c:809/811/814).
     #[test]
     fn bin_zsystem_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_zsystem("zsystem",
             &["supports".to_string(), "supports".to_string()], &ops, 0), 0);
@@ -1267,6 +1271,7 @@ mod tests {
     /// Verifies `errnosgetfn` returns the dup'd table (c:835).
     #[test]
     fn errnosgetfn_returns_table() {
+        let _g = crate::test_util::global_state_lock();
         let names = errnosgetfn();
         assert!(names.contains(&"EPERM".to_string()));
         assert!(names.contains(&"ENOENT".to_string()));
@@ -1278,6 +1283,7 @@ mod tests {
     /// (c:854-862) and PM_UNSET fallback (c:861-863).
     #[test]
     fn fillpmsysparams_keys() {
+        let _g = crate::test_util::global_state_lock();
         assert!(fillpmsysparams("pid").is_some());
         assert!(fillpmsysparams("ppid").is_some());
         assert!(fillpmsysparams("procsubstpid").is_some());
@@ -1288,6 +1294,7 @@ mod tests {
     /// (c:878).
     #[test]
     fn getpmsysparams_pid_set() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmsysparams("pid").is_some());
         assert!(getpmsysparams("nonsense").is_none());
     }
@@ -1296,6 +1303,7 @@ mod tests {
     /// (c:889-894).
     #[test]
     fn scanpmsysparams_three_entries() {
+        let _g = crate::test_util::global_state_lock();
         let entries = scanpmsysparams();
         let names: Vec<&str> = entries.iter().map(|(n,_)| n.as_str()).collect();
         assert!(names.contains(&"pid"));
@@ -1328,6 +1336,7 @@ mod tests {
     /// (c:533-536).
     #[test]
     fn bin_syserror_to_errvar_with_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_with(&[(b'e', "myerr"), (b'p', "PFX:")]);
         let r = bin_syserror("syserror",
             &["ENOENT".to_string()], &ops, 0);
@@ -1343,6 +1352,7 @@ mod tests {
     /// (c:527-528).
     #[test]
     fn bin_syserror_unknown_name_returns_2() {
+        let _g = crate::test_util::global_state_lock();
         let ops = ops_with(&[(b'e', "myerr2")]);
         assert_eq!(bin_syserror("syserror",
             &["ENOTAREALERROR".to_string()], &ops, 0), 2);
@@ -1354,6 +1364,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_sysopen_writes_fd_to_var() {
+        let _g = crate::test_util::global_state_lock();
         // `assignnparam` (params.rs:4464) short-circuits with
         // `if unset(EXECOPT) { return None; }`. The Rust options table
         // doesn't pre-populate EXECOPT=true the way C's
@@ -1390,6 +1401,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_sysseek_basic() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("b.txt");
         {
@@ -1412,6 +1424,7 @@ mod tests {
     /// the params.rs internal tests at 8212/8547/9392).
     #[test]
     fn setiparam_writes_integer_to_paramtab() {
+        let _g = crate::test_util::global_state_lock();
         let saved_exec = crate::ported::options::opt_state_get("exec").unwrap_or(false);
         crate::ported::options::opt_state_set("exec", true);
         let name = "ZSHRS_TEST_SETIPARAM_FD_INT";
@@ -1427,6 +1440,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn math_systell_returns_lseek_cur() {
+        let _g = crate::test_util::global_state_lock();
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("c.txt");
         {

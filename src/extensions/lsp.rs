@@ -1120,6 +1120,7 @@ mod tests {
 
     #[test]
     fn word_at_middle_of_identifier() {
+        let _g = crate::test_util::global_state_lock();
         let src = "cd /tmp\nlocal x=1\n";
         assert_eq!(word_at(src, 0, 1), Some("cd".into()));
         // Past the identifier, still inside `cd`
@@ -1128,12 +1129,14 @@ mod tests {
 
     #[test]
     fn word_at_includes_dollar_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let src = "echo $HOME\n";
         assert_eq!(word_at(src, 0, 6), Some("$HOME".into()));
     }
 
     #[test]
     fn word_at_returns_none_off_word() {
+        let _g = crate::test_util::global_state_lock();
         let src = "echo  hi\n";
         // Position on the double-space gap
         assert!(matches!(word_at(src, 0, 5), None | Some(_)));
@@ -1145,6 +1148,7 @@ mod tests {
 
     #[test]
     fn scan_symbols_finds_function_keyword_form() {
+        let _g = crate::test_util::global_state_lock();
         let src = "function greet {\n  print hi\n}\n";
         let s = scan_symbols(src);
         assert!(s.iter().any(|(n, k, _)| n == "greet" && *k == "function"));
@@ -1152,6 +1156,7 @@ mod tests {
 
     #[test]
     fn scan_symbols_finds_paren_form() {
+        let _g = crate::test_util::global_state_lock();
         let src = "foo() {\n  :\n}\n";
         let s = scan_symbols(src);
         assert!(s.iter().any(|(n, k, _)| n == "foo" && *k == "function"));
@@ -1159,6 +1164,7 @@ mod tests {
 
     #[test]
     fn scan_symbols_finds_locals_and_aliases() {
+        let _g = crate::test_util::global_state_lock();
         let src = "local x=1\nalias ll='ls -la'\nexport PATH=/bin\n";
         let s = scan_symbols(src);
         assert!(s.iter().any(|(n, k, _)| n == "x" && *k == "variable"));
@@ -1168,6 +1174,7 @@ mod tests {
 
     #[test]
     fn scan_symbols_ignores_comments() {
+        let _g = crate::test_util::global_state_lock();
         let src = "# function fake { }\n# alias evil=rm\n: real\n";
         let s = scan_symbols(src);
         assert!(s.is_empty(), "scan_symbols leaked comment content: {:?}", s);
@@ -1177,6 +1184,7 @@ mod tests {
 
     #[test]
     fn lookup_doc_returns_markdown_for_known_builtin() {
+        let _g = crate::test_util::global_state_lock();
         let doc = lookup_doc("cd");
         assert!(doc.starts_with("**cd**"), "got: {}", doc);
         assert!(doc.contains("working directory"));
@@ -1184,12 +1192,14 @@ mod tests {
 
     #[test]
     fn lookup_doc_handles_keywords_and_special_vars() {
+        let _g = crate::test_util::global_state_lock();
         assert!(lookup_doc("if").contains("Conditional"));
         assert!(lookup_doc("$?").contains("Exit status"));
     }
 
     #[test]
     fn lookup_doc_empty_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(lookup_doc("definitely_not_a_zsh_thing_xx"), "");
     }
 
@@ -1197,6 +1207,7 @@ mod tests {
 
     #[test]
     fn diagnose_clean_file_returns_no_diagnostics() {
+        let _g = crate::test_util::global_state_lock();
         let src = "if [[ -d /tmp ]]; then\n  echo ok\nfi\n";
         let d = diagnose(src);
         assert!(d.is_empty(), "diagnose flagged clean file: {:?}", d);
@@ -1204,6 +1215,7 @@ mod tests {
 
     #[test]
     fn diagnose_flags_unmatched_brace() {
+        let _g = crate::test_util::global_state_lock();
         let src = "function broken {\n  echo missing close\n";
         let d = diagnose(src);
         assert!(
@@ -1214,6 +1226,7 @@ mod tests {
 
     #[test]
     fn diagnose_flags_unclosed_if_block() {
+        let _g = crate::test_util::global_state_lock();
         let src = "if true\nthen\necho\n";
         let d = diagnose(src);
         assert!(
@@ -1224,6 +1237,7 @@ mod tests {
 
     #[test]
     fn diagnose_ignores_braces_inside_strings() {
+        let _g = crate::test_util::global_state_lock();
         let src = "echo \"a } b\" '{ }' \n";
         let d = diagnose(src);
         assert!(d.is_empty(), "string-internal braces tripped diagnose: {:?}", d);
@@ -1233,6 +1247,7 @@ mod tests {
 
     #[test]
     fn simple_format_strips_trailing_whitespace() {
+        let _g = crate::test_util::global_state_lock();
         let src = "echo hi   \n  echo bye\t\n";
         let out = simple_format(src, 4, true);
         assert_eq!(out, "echo hi\n  echo bye\n");
@@ -1240,6 +1255,7 @@ mod tests {
 
     #[test]
     fn simple_format_ensures_trailing_newline() {
+        let _g = crate::test_util::global_state_lock();
         let src = "echo hi";
         let out = simple_format(src, 4, true);
         assert!(out.ends_with('\n'));
@@ -1249,6 +1265,7 @@ mod tests {
 
     #[test]
     fn dump_reflection_json_is_valid_and_has_builtins() {
+        let _g = crate::test_util::global_state_lock();
         let s = dump_reflection_json();
         let v: Value = serde_json::from_str(&s).expect("valid JSON");
         assert!(v["builtins"].is_object());
@@ -1266,6 +1283,7 @@ mod tests {
 
     #[test]
     fn completion_offers_builtins_for_short_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         state.docs.insert("file:///t.zsh".into(), "cd".into());
         let params = json!({
@@ -1281,6 +1299,7 @@ mod tests {
 
     #[test]
     fn folding_ranges_finds_brace_and_do_blocks() {
+        let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         state.docs.insert(
             "file:///t.zsh".into(),
@@ -1304,6 +1323,7 @@ mod tests {
 
     #[test]
     fn references_returns_call_sites() {
+        let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         state.docs.insert(
             "file:///t.zsh".into(),

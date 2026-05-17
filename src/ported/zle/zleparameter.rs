@@ -351,6 +351,7 @@ mod tests {
 
     #[test]
     fn test_widgetstr() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(widgetstr("self-insert", false, false), "builtin");
         assert_eq!(widgetstr("my-widget", true, false), "user:my-widget");
@@ -359,6 +360,7 @@ mod tests {
 
     #[test]
     fn test_getpmwidgets() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let user = HashMap::new();
         let comp = HashMap::new();
@@ -369,6 +371,7 @@ mod tests {
 
     #[test]
     fn test_keymapsgetfn() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let keymaps = keymapsgetfn(DEFAULT_KEYMAPS);
         assert!(keymaps.contains(&"emacs".to_string()));
@@ -377,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_builtin_widget_count() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // zsh has ~160 builtin widgets
         assert!(BUILTIN_WIDGETS.len() > 150);
@@ -388,6 +392,7 @@ mod tests {
     /// function-name part (which scripts grep for to bind to widgets).
     #[test]
     fn widgetstr_user_form_carries_function_name_after_colon() {
+        let _g = crate::test_util::global_state_lock();
         let s = widgetstr("a-fn", true, false);
         let (kind, rest) = s.split_once(':').expect("missing colon");
         assert_eq!(kind, "user");
@@ -401,6 +406,7 @@ mod tests {
     /// the type label for completion widgets).
     #[test]
     fn widgetstr_completion_wins_over_user_when_both_true() {
+        let _g = crate::test_util::global_state_lock();
         let s = widgetstr("foo", true, true);
         assert!(s.starts_with("completion:"),
             "is_completion must dominate is_user, got: {}", s);
@@ -414,6 +420,7 @@ mod tests {
     /// `${widgets[x]}` reports.
     #[test]
     fn getpmwidgets_user_overrides_builtin_on_name_collision() {
+        let _g = crate::test_util::global_state_lock();
         let mut user = HashMap::new();
         user.insert("accept-line".to_string(), "my-fn".to_string());
         let comp = HashMap::new();
@@ -430,6 +437,7 @@ mod tests {
     /// skipped.
     #[test]
     fn scanpmwidgets_callback_fires_for_every_bucket() {
+        let _g = crate::test_util::global_state_lock();
         let mut user = HashMap::new();
         user.insert("u-widget".to_string(), "u-fn".to_string());
         let mut comp = HashMap::new();
@@ -456,6 +464,7 @@ mod tests {
     /// preserve that.
     #[test]
     fn keymapsgetfn_returns_independent_copies() {
+        let _g = crate::test_util::global_state_lock();
         let input: &[&str] = &["a", "b", "c"];
         let mut out = keymapsgetfn(input);
         out.push("d".to_string());
@@ -469,6 +478,7 @@ mod tests {
     /// Rust hardcoded list must do the same proactively.
     #[test]
     fn builtin_widgets_has_no_duplicates() {
+        let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = BUILTIN_WIDGETS.iter().copied().collect();
         assert_eq!(unique.len(), BUILTIN_WIDGETS.len(),
             "duplicate widget name in BUILTIN_WIDGETS — would corrupt $widgets");
@@ -480,6 +490,7 @@ mod tests {
     /// which couldn't be bound via `bindkey` without quoting.
     #[test]
     fn builtin_widgets_entries_are_kebab_case() {
+        let _g = crate::test_util::global_state_lock();
         for w in BUILTIN_WIDGETS {
             assert!(!w.is_empty(), "empty widget name");
             for c in w.chars() {
@@ -498,6 +509,7 @@ mod tests {
     /// would silently break every user's `bindkey -A main`.
     #[test]
     fn default_keymaps_includes_required_names() {
+        let _g = crate::test_util::global_state_lock();
         for required in ["emacs", "viins", "vicmd", "main"] {
             assert!(DEFAULT_KEYMAPS.contains(&required),
                 "DEFAULT_KEYMAPS missing required name: {}", required);
@@ -507,6 +519,7 @@ mod tests {
     /// c:147-183 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(setup_(), 0);
         assert_eq!(boot_(), 0);
         assert_eq!(cleanup_(), 0);

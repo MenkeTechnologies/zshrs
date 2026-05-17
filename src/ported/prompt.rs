@@ -2735,6 +2735,7 @@ mod tests {
     /// report disabled regardless of COLORTERM/TERM env.
     #[test]
     fn truecolor_terminal_routes_through_term_extensions_array() {
+        let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::params::getaparam(".term.extensions");
 
         // Empty / unset → false (c:1944).
@@ -2765,6 +2766,7 @@ mod tests {
     /// prefix-match falls back to the unchanged absolute path silently.
     #[test]
     fn promptpath_substitutes_home_prefix_with_tilde() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/home/user/project", 0, true, "/home/user");
         assert!(r.starts_with('~'), "home-prefix must collapse to ~ (got {r:?})");
     }
@@ -2774,6 +2776,7 @@ mod tests {
     /// regressions silently render full paths in cramped prompts.
     #[test]
     fn promptpath_npath_one_keeps_only_last_component() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/a/b/c/d", 1, false, "");
         assert!(!r.contains("a/b") && r.ends_with("d"), "got {r:?}");
     }
@@ -2783,6 +2786,7 @@ mod tests {
     /// bold escape in user's `zle_highlight=(...)` array.
     #[test]
     fn parsehighlight_bold_sets_bold_bit() {
+        let _g = crate::test_util::global_state_lock();
         assert_ne!(parsehighlight("bold") & TXTBOLDFACE, 0);
     }
 
@@ -2792,6 +2796,7 @@ mod tests {
     /// users rely on every keystroke.
     #[test]
     fn match_named_colour_covers_full_ansi_palette_and_default() {
+        let _g = crate::test_util::global_state_lock();
         for &name in &["black", "red", "green", "yellow",
                        "blue", "magenta", "cyan", "white", "default"] {
             assert!(match_named_colour(name).is_some(), "{name:?} must resolve");
@@ -2802,6 +2807,7 @@ mod tests {
     /// mask theme typos that users would otherwise see immediately.
     #[test]
     fn match_named_colour_returns_none_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
         assert!(match_named_colour("definitely_not_a_color_zshrs").is_none());
     }
 
@@ -2815,6 +2821,7 @@ mod tests {
     /// (1 visible column).
     #[test]
     fn countprompt_recognises_canonical_inpar_outpar_nularg_bytes() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{Inpar, Outpar, Nularg};
         let mut w = 0i32;
         let mut h = 0i32;
@@ -2841,6 +2848,7 @@ mod tests {
     /// `%/` literal-path renders.
     #[test]
     fn promptpath_without_tilde_keeps_absolute_path() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/home/user/project", 0, /*tilde=*/false, "/home/user");
         assert!(r.starts_with("/home/user"),
             "tilde=false must NOT collapse to ~; got {r:?}");
@@ -2852,6 +2860,7 @@ mod tests {
     /// just `~`. Edge case the prefix-collapse logic must handle.
     #[test]
     fn promptpath_path_exactly_home_renders_as_tilde_only() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/home/user", 0, true, "/home/user");
         assert_eq!(r, "~",
             "path == home must render as plain '~'; got {r:?}");
@@ -2861,6 +2870,7 @@ mod tests {
     /// regardless of tilde flag.
     #[test]
     fn promptpath_unrelated_path_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/etc/zshrc", 0, true, "/home/user");
         assert_eq!(r, "/etc/zshrc",
             "non-home path must pass through unchanged");
@@ -2869,6 +2879,7 @@ mod tests {
     /// c:134 — npath=0 means "no truncation": the full path renders.
     #[test]
     fn promptpath_npath_zero_means_no_truncation() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/a/b/c/d/e", 0, false, "");
         assert_eq!(r, "/a/b/c/d/e", "npath=0 must keep full path");
     }
@@ -2878,6 +2889,7 @@ mod tests {
     /// — a regen that does `>= 0` would keep one extra.
     #[test]
     fn promptpath_npath_two_keeps_last_two_components() {
+        let _g = crate::test_util::global_state_lock();
         let r = promptpath("/a/b/c/d", 2, false, "");
         assert!(r.contains("c") && r.contains("d"),
             "npath=2 must include last 2 components; got {r:?}");
@@ -2889,6 +2901,7 @@ mod tests {
     /// Pin the keyword that explicitly clears all attribute bits.
     #[test]
     fn parsehighlight_none_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = parsehighlight("none");
         assert_eq!(r, 0, "'none' must yield zero attrs; got {:#x}", r);
     }
@@ -2897,6 +2910,7 @@ mod tests {
     /// Test the other attribute keywords separately from `bold`.
     #[test]
     fn parsehighlight_underline_sets_underline_bit() {
+        let _g = crate::test_util::global_state_lock();
         let r = parsehighlight("underline");
         assert_ne!(r, 0, "underline must set at least one bit");
     }
@@ -2906,6 +2920,7 @@ mod tests {
     /// keywords; the C source skips unknowns rather than erroring.
     #[test]
     fn parsehighlight_unknown_keyword_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = parsehighlight("definitely_not_a_real_attr");
         assert_eq!(r, 0, "unknown attr must be silently ignored");
     }
@@ -2916,6 +2931,7 @@ mod tests {
     /// names that the C source rejects.
     #[test]
     fn match_named_colour_is_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         assert!(match_named_colour("red").is_some());
         assert!(match_named_colour("RED").is_none(),
             "uppercase color must NOT resolve per C source's strcmp");
@@ -2925,12 +2941,14 @@ mod tests {
     /// c:1915 — Empty string returns None. Defensive boundary.
     #[test]
     fn match_named_colour_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(match_named_colour("").is_none());
     }
 
     /// c:1276 — `cmdpush`/`cmdpop` round-trip. Pin the LIFO balance.
     #[test]
     fn cmdpush_cmdpop_round_trip_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         // Just verifies safe push/pop balance for several tokens.
         cmdpush(0);
         cmdpush(1);
@@ -2946,6 +2964,7 @@ mod tests {
     /// Pin the no-buffering / immediate-append contract.
     #[test]
     fn pputc_appends_char_to_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = String::new();
         pputc(&mut buf, 'X');
         assert_eq!(buf, "X");
@@ -2956,6 +2975,7 @@ mod tests {
     /// c:1016 — `stradd` appends a string slice to the buffer.
     #[test]
     fn stradd_appends_string_to_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = String::from("pre/");
         stradd(&mut buf, "post");
         assert_eq!(buf, "pre/post");
@@ -2967,6 +2987,7 @@ mod tests {
     /// `txtpendingattrs` and wholesale-replaces FG/BG mask bits.
     #[test]
     fn tsetattrs_updates_pending_attrs_non_color() {
+        let _g = crate::test_util::global_state_lock();
         set_pending_text_attrs(0);
         let _ = tsetattrs(TXTBOLDFACE);
         let p = *pending_attrs_lock().lock().unwrap();
@@ -2976,6 +2997,7 @@ mod tests {
     /// c:1743-1746 — TXTFGCOLOUR replaces the FG mask wholesale, not ORs.
     #[test]
     fn tsetattrs_fg_color_replaces_fg_mask() {
+        let _g = crate::test_util::global_state_lock();
         let palette_idx_5: zattr = (5u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
             & crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK;
         let palette_idx_2: zattr = (2u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)

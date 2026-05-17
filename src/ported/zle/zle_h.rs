@@ -916,6 +916,7 @@ mod tests {
 
     #[test]
     fn zs_strlen_stops_at_nul() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strlen(&['a', 'b', 'c']), 3);
         assert_eq!(ZS_strlen(&['a', '\0', 'c']), 1);
@@ -924,6 +925,7 @@ mod tests {
 
     #[test]
     fn zs_memcpy_first_n_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = ['x'; 5];
         let src = ['a', 'b', 'c', 'd', 'e'];
@@ -933,6 +935,7 @@ mod tests {
 
     #[test]
     fn zs_memmove_handles_self_copy() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = ['a', 'b', 'c', 'd', 'e'];
         let src: Vec<char> = buf[1..4].to_vec();
@@ -942,6 +945,7 @@ mod tests {
 
     #[test]
     fn zs_memset_fills_n() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = ['x'; 5];
         ZS_memset(&mut dst, 'z', 3);
@@ -950,6 +954,7 @@ mod tests {
 
     #[test]
     fn zs_memcmp_ordering() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
         assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
@@ -957,6 +962,7 @@ mod tests {
 
     #[test]
     fn zs_strncmp_terminates_at_nul() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
         assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
@@ -965,6 +971,7 @@ mod tests {
 
     #[test]
     fn zs_strchr_returns_first_index() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'b'), Some(1));
         assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'z'), None);
@@ -977,6 +984,7 @@ mod tests {
     /// Newline is the only iswspace char explicitly excluded.
     #[test]
     fn zc_iblank_matches_wcsiblank_semantics() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Canonical ASCII blanks.
         assert!(ZC_iblank(' '),  "space is iblank");
@@ -1001,6 +1009,7 @@ mod tests {
     /// fails this test.
     #[test]
     fn zc_inblank_matches_iswspace_semantics() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ZC_inblank('\n'), "newline IS iswspace");
         assert!(ZC_inblank(' '));
@@ -1015,6 +1024,7 @@ mod tests {
 
     #[test]
     fn zc_iword_includes_underscore() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ZC_iword('a'));
         assert!(ZC_iword('1'));
@@ -1024,6 +1034,7 @@ mod tests {
 
     #[test]
     fn zc_iident_matches_iword() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for c in ['a', 'A', '0', '_'] {
             assert_eq!(ZC_iident(c), ZC_iword(c));
@@ -1032,6 +1043,7 @@ mod tests {
 
     #[test]
     fn zc_tolower_toupper_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZC_tolower('A'), 'a');
         assert_eq!(ZC_toupper('a'), 'A');
@@ -1040,6 +1052,7 @@ mod tests {
 
     #[test]
     fn invicmdmode_only_true_for_vicmd() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(invicmdmode("vicmd"));
         assert!(!invicmdmode("main"));
@@ -1049,6 +1062,7 @@ mod tests {
 
     #[test]
     fn th_out_of_range_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:316 — Th(X) is `&thingies[X]`. Out-of-bounds index has no
         // C analog (would be UB); the Rust port returns None.
@@ -1058,6 +1072,7 @@ mod tests {
 
     #[test]
     fn th_in_range_looks_up_thingytab() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:316 — Th(X) returns &thingies[X]. With an empty thingytab
         // the lookup misses, with a registered widget it hits.
@@ -1078,6 +1093,7 @@ mod tests {
     /// dispatch).
     #[test]
     fn zle_widget_flags_match_c_zle_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZLE_MENUCMP,    1 << 2,  "c:207");
         assert_eq!(ZLE_YANKAFTER,  1 << 3,  "c:208");
         assert_eq!(ZLE_YANKBEFORE, 1 << 4,  "c:209");

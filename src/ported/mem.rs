@@ -699,6 +699,7 @@ mod tests {
 
     #[test]
     fn test_heap_push_pop() {
+        let _g = crate::test_util::global_state_lock();
         let mut arena = heap_arena::new();
         assert_eq!(arena.depth(), 1);
 
@@ -713,6 +714,7 @@ mod tests {
 
     #[test]
     fn test_heap_free_current() {
+        let _g = crate::test_util::global_state_lock();
         let mut arena = heap_arena::new();
 
         arena.alloc_string("test1".to_string());
@@ -725,6 +727,7 @@ mod tests {
 
     #[test]
     fn test_nested_generations() {
+        let _g = crate::test_util::global_state_lock();
         let mut arena = heap_arena::new();
 
         arena.alloc_string("level1".to_string());
@@ -746,18 +749,21 @@ mod tests {
 
     #[test]
     fn test_dupstring() {
+        let _g = crate::test_util::global_state_lock();
         let s = dupstring("hello");
         assert_eq!(s, "hello");
     }
 
     #[test]
     fn test_dupstring_wlen() {
+        let _g = crate::test_util::global_state_lock();
         let s = dupstring_wlen("hello world", 5);
         assert_eq!(s, "hello");
     }
 
     #[test]
     fn test_global_heap() {
+        let _g = crate::test_util::global_state_lock();
         pushheap();
         pushheap();
         popheap();
@@ -770,6 +776,7 @@ mod tests {
     /// or doubling it would silently mangle every joined-array path.
     #[test]
     fn sepjoin_with_explicit_separator() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("-")), "a-b-c");
         assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("")),  "abc");
     }
@@ -778,6 +785,7 @@ mod tests {
     /// C's `s ? s : " "` pattern).
     #[test]
     fn sepjoin_none_defaults_to_space() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sepjoin(&["a".into(), "b".into()], None), "a b");
     }
 
@@ -785,6 +793,7 @@ mod tests {
     /// Catches a regression that returns the separator alone.
     #[test]
     fn sepjoin_empty_array_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(sepjoin(&[], Some("-")), "");
         assert_eq!(sepjoin(&[], None),      "");
     }
@@ -794,6 +803,7 @@ mod tests {
     /// the splitter would yield the whole string as one element.
     #[test]
     fn sepsplit_canonical_path_split() {
+        let _g = crate::test_util::global_state_lock();
         let r = sepsplit("a/b/c", "/", false);
         assert_eq!(r, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     }
@@ -803,6 +813,7 @@ mod tests {
     /// where `//` should not yield `""`.
     #[test]
     fn sepsplit_filters_empty_segments_when_disallowed() {
+        let _g = crate::test_util::global_state_lock();
         let r = sepsplit("a//b", "/", false);
         assert_eq!(r, vec!["a".to_string(), "b".to_string()]);
     }
@@ -812,6 +823,7 @@ mod tests {
     /// run of separators counts as one boundary.
     #[test]
     fn sepsplit_preserves_empty_segments_when_allowed() {
+        let _g = crate::test_util::global_state_lock();
         let r = sepsplit("a//b", "/", true);
         assert_eq!(r.len(), 3, "consecutive sep yields empty middle entry");
         assert_eq!(r[1], "");
@@ -822,6 +834,7 @@ mod tests {
     /// resets or wraps unexpectedly (would alias unrelated heaps).
     #[test]
     fn new_heap_id_is_monotonically_increasing() {
+        let _g = crate::test_util::global_state_lock();
         let a = new_heap_id();
         let b = new_heap_id();
         let c = new_heap_id();
@@ -835,6 +848,7 @@ mod tests {
     /// across function boundaries.
     #[test]
     fn pushheap_popheap_balance_two_levels() {
+        let _g = crate::test_util::global_state_lock();
         pushheap();
         pushheap();
         popheap();
@@ -848,6 +862,7 @@ mod tests {
     /// disturb the surrounding push/pop bracket.
     #[test]
     fn freeheap_does_not_pop_levels() {
+        let _g = crate::test_util::global_state_lock();
         pushheap();
         freeheap();
         freeheap();
@@ -861,6 +876,7 @@ mod tests {
     /// a regression that crashes on accidental over-pop in error paths.
     #[test]
     fn popheap_without_push_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
         popheap();
         // No assertion — survival is the contract.
     }
@@ -871,6 +887,7 @@ mod tests {
     /// Pin: `dupstring_wlen("café", 5)` must copy 5 bytes, NOT 5 chars.
     #[test]
     fn dupstring_wlen_is_byte_counted_not_char_counted() {
+        let _g = crate::test_util::global_state_lock();
         // "café" = `c-a-f-é` where é is 2 bytes (0xC3 0xA9) → 5 bytes total.
         // Byte-count 5 → exactly "café" (whole string).
         assert_eq!(dupstring_wlen("café", 5), "café",
@@ -895,6 +912,7 @@ mod tests {
     /// `chars().take(len)` diverging on multibyte input.
     #[test]
     fn ztrduppfx_is_byte_counted_not_char_counted() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrduppfx("café", 5), "café",
             "c:175 — 5 bytes copies whole 'café' (é=2 bytes)");
         assert_eq!(ztrduppfx("hello", 3), "hel");
@@ -909,6 +927,7 @@ mod tests {
     /// owned copy. Source modifications must not affect the dup.
     #[test]
     fn dupstring_yields_independent_copy() {
+        let _g = crate::test_util::global_state_lock();
         let mut src = String::from("original");
         let dup = dupstring(&src);
         src.clear();
@@ -922,6 +941,7 @@ mod tests {
     /// strings, independent storage.
     #[test]
     fn zarrdup_clones_array_independent() {
+        let _g = crate::test_util::global_state_lock();
         let src = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let dup = zarrdup(&src);
         assert_eq!(dup, src);
@@ -935,6 +955,7 @@ mod tests {
     /// `zarrdup` of an empty array returns an empty Vec.
     #[test]
     fn zarrdup_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let src: Vec<String> = Vec::new();
         let dup = zarrdup(&src);
         assert!(dup.is_empty());
@@ -944,6 +965,7 @@ mod tests {
     /// truncate. Pin both the truncation and the no-grow path.
     #[test]
     fn arrdup_max_truncates_at_bound() {
+        let _g = crate::test_util::global_state_lock();
         let src = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
         // Truncate.
         let r = arrdup_max(&src, 2);
@@ -965,6 +987,7 @@ mod tests {
     /// (e.g. counting NULL terminator) gets caught.
     #[test]
     fn arrlen_matches_slice_len() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["one".into(), "two".into(), "three".into()];
         assert_eq!(arrlen(&arr), 3);
         let empty: Vec<String> = vec![];
@@ -976,6 +999,7 @@ mod tests {
     /// boundaries (equal, less, greater).
     #[test]
     fn arrlen_lt_boundary_semantics() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
         assert!(arrlen_lt(&arr, 4),   "3 < 4");
         assert!(!arrlen_lt(&arr, 3),  "3 < 3 is false (strict)");
@@ -988,6 +1012,7 @@ mod tests {
     /// matter for callers that pre-check max capacity.
     #[test]
     fn arrlen_le_boundary_semantics() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
         assert!(arrlen_le(&arr, 4),   "3 <= 4");
         assert!(arrlen_le(&arr, 3),   "3 <= 3 is TRUE (non-strict)");
@@ -1001,6 +1026,7 @@ mod tests {
     /// adds/strips a trailing byte.
     #[test]
     fn dupstring_and_dupstring_wlen_agree_on_ascii() {
+        let _g = crate::test_util::global_state_lock();
         let a = dupstring("hello");
         let b = dupstring_wlen("hello", 5);
         assert_eq!(a, b);

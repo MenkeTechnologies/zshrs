@@ -477,6 +477,7 @@ mod tests {
 
     #[test]
     fn round_trip_one() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
@@ -487,6 +488,7 @@ mod tests {
 
     #[test]
     fn replace_all_overwrites() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
@@ -508,6 +510,7 @@ mod tests {
 
     #[test]
     fn cached_names_returns_keys() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();
@@ -521,6 +524,7 @@ mod tests {
 
     #[test]
     fn corrupt_shard_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         std::fs::write(&cache_path, b"garbage").unwrap();
@@ -531,6 +535,7 @@ mod tests {
 
     #[test]
     fn clear_removes_file() {
+        let _g = crate::test_util::global_state_lock();
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("autoloads.rkyv");
         let cache = AutoloadCache::open(&cache_path).unwrap();

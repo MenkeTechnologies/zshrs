@@ -7048,6 +7048,7 @@ mod tests {
     /// when the loop broke on an undefined signal.
     #[test]
     fn bin_trap_clear_undefined_signal_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let empty = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
@@ -7070,6 +7071,7 @@ mod tests {
     /// names + their first-char-overlap aliases.
     #[test]
     fn bin_emulate_dispatches_on_first_char_per_c537() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_KSH, EMULATE_SH};
         let empty = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
@@ -7107,6 +7109,7 @@ mod tests {
     /// when the trap was never set (remove is a no-op).
     #[test]
     fn bin_trap_clear_valid_signal_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let empty = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
@@ -7120,6 +7123,7 @@ mod tests {
 
     #[test]
     fn registration_table_matches_c_count() {
+        let _g = crate::test_util::global_state_lock();
         // Src/builtin.c:40-137 has 79 rows total (5 BIN_PREFIX + 71
         // BUILTIN + 3 debug-only BUILTIN). The Rust port bundles
         // additional builtins eagerly that C would load via zmodload:
@@ -7145,6 +7149,7 @@ mod tests {
     /// from BUILTINS. Names extracted from upstream zsh `Src/builtin.c`.
     #[test]
     fn registration_table_contains_all_c_builtins() {
+        let _g = crate::test_util::global_state_lock();
         // Canonical 79 names from Src/builtin.c:40-137 (verbatim).
         let c_names: &[&str] = &[
             "-", ".", ":", "[",
@@ -7174,6 +7179,7 @@ mod tests {
 
     #[test]
     fn lookup_finds_known_builtins() {
+        let _g = crate::test_util::global_state_lock();
         for name in ["cd", "echo", "print", "fg", "bg", "jobs", "wait", "typeset", "test", "[", "."] {
             assert!(createbuiltintable().get(name).copied().is_some(), "missing: {name}");
         }
@@ -7181,11 +7187,13 @@ mod tests {
 
     #[test]
     fn lookup_misses_unknown() {
+        let _g = crate::test_util::global_state_lock();
         assert!(createbuiltintable().get("not-a-builtin-zZz").copied().is_none());
     }
 
     #[test]
     fn prefix_entries_have_prefix_flag() {
+        let _g = crate::test_util::global_state_lock();
         for name in ["-", "builtin", "command", "exec", "noglob"] {
             let b = createbuiltintable().get(name).copied().unwrap();
             assert!(b.node.flags as u32 & BINF_PREFIX != 0, "{name} missing BINF_PREFIX");
@@ -7194,6 +7202,7 @@ mod tests {
 
     #[test]
     fn fixdir_canonicalizes_absolute_paths() {
+        let _g = crate::test_util::global_state_lock();
         // c:1297 — collapse `//`, drop `./`, pop `..`.
         assert_eq!(fixdir("/tmp/./foo"), "/tmp/foo");
         assert_eq!(fixdir("/tmp//foo"), "/tmp/foo");
@@ -7203,6 +7212,7 @@ mod tests {
 
     #[test]
     fn fixdir_drops_dotdot_past_root() {
+        let _g = crate::test_util::global_state_lock();
         // c:1372 — absolute path, `..` past `/` is dropped.
         assert_eq!(fixdir("/.."), "/");
         assert_eq!(fixdir("/../.."), "/");
@@ -7211,6 +7221,7 @@ mod tests {
 
     #[test]
     fn fixdir_relative_keeps_leading_dotdot() {
+        let _g = crate::test_util::global_state_lock();
         // c:1367 — relative path: `..` past start stays as `..`.
         assert_eq!(fixdir("../foo"), "../foo");
         assert_eq!(fixdir("../../foo"), "../../foo");
@@ -7219,6 +7230,7 @@ mod tests {
 
     #[test]
     fn fixdir_empty_collapses_to_dot() {
+        let _g = crate::test_util::global_state_lock();
         // Relative path that collapses fully → "."
         assert_eq!(fixdir("./"), ".");
         assert_eq!(fixdir("foo/.."), ".");
@@ -7226,11 +7238,13 @@ mod tests {
 
     #[test]
     fn fixdir_empty_input_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir(""), "");
     }
 
     #[test]
     fn fg_dispatch_id_distinguishes_aliases() {
+        let _g = crate::test_util::global_state_lock();
         // bin_fg covers fg, bg, jobs, wait, disown — same handler,
         // different funcid. Mirrors Src/builtin.c:52,61,75,88,131.
         assert_eq!(createbuiltintable().get("fg").copied().unwrap().funcid, BIN_FG);
@@ -7247,6 +7261,7 @@ mod tests {
     /// report `/a/b/../c` literally on `cd /a/b/../c`.
     #[test]
     fn fixdir_pops_dotdot_against_previous_component() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("/a/b/../c"),  "/a/c");
         assert_eq!(fixdir("/a/b/../../c"), "/c");
         assert_eq!(fixdir("/foo/.."),    "/");
@@ -7255,6 +7270,7 @@ mod tests {
     /// c:1352 — `./` collapses to nothing.  `/a/./b` must equal `/a/b`.
     #[test]
     fn fixdir_drops_dot_components() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("/a/./b"),     "/a/b");
         assert_eq!(fixdir("./a"),        "a");
         assert_eq!(fixdir("./."),        ".");
@@ -7264,6 +7280,7 @@ mod tests {
     /// implementation-defined `//` semantics, which zsh doesn't honour).
     #[test]
     fn fixdir_collapses_consecutive_slashes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("/a//b"),      "/a/b");
         assert_eq!(fixdir("/a///b/c"),   "/a/b/c");
     }
@@ -7273,6 +7290,7 @@ mod tests {
     /// emits `..` literally.
     #[test]
     fn fixdir_dotdot_past_root_clamps_to_root() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("/.."),        "/");
         assert_eq!(fixdir("/../../a"),   "/a");
     }
@@ -7282,6 +7300,7 @@ mod tests {
     /// which must NOT resolve `..` lexically.
     #[test]
     fn fixdir_relative_leading_dotdot_is_preserved() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("../foo"),     "../foo");
         assert_eq!(fixdir("../../foo"),  "../../foo");
     }
@@ -7292,6 +7311,7 @@ mod tests {
     /// non-numeric input should fall through to hcomsearch instead.
     #[test]
     fn fcgetcomm_numeric_zero_only_for_literal_zero_prefix() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fcgetcomm("0"),       0, "literal `0` is event 0");
         assert_eq!(fcgetcomm("42"),     42);
         // Non-numeric falls through to hcomsearch (no hist match → -1).
@@ -7304,6 +7324,7 @@ mod tests {
     /// silently `cd $HOME` even when the user disabled CDABLEVARS.
     #[test]
     fn cd_able_vars_returns_none_without_cdablevars_option() {
+        let _g = crate::test_util::global_state_lock();
         // CDABLEVARS is not set by default → must return None.
         // We don't fight the option state here; just verify the
         // off-state default short-circuits before paramtab lookup.
@@ -7322,6 +7343,7 @@ mod tests {
     /// every call would balloon memory + break dispatch lookups.
     #[test]
     fn init_builtins_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         init_builtins();
         let count1 = createbuiltintable().len();
         init_builtins();
@@ -7335,6 +7357,7 @@ mod tests {
     /// applied would silently break `fc -s old=new`.
     #[test]
     fn fcsubs_applies_each_substitution_in_order() {
+        let _g = crate::test_util::global_state_lock();
         let mut s = "echo foo bar foo".to_string();
         let n = fcsubs(&mut s, &[("foo".to_string(), "FOO".to_string())]);
         assert_eq!(s, "echo FOO bar FOO");
@@ -7346,6 +7369,7 @@ mod tests {
     /// would hang or silently corrupt every fc invocation.
     #[test]
     fn fcsubs_skips_empty_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let mut s = "anything".to_string();
         let n = fcsubs(&mut s, &[("".to_string(), "X".to_string())]);
         assert_eq!(s, "anything", "empty pattern must be skipped");
@@ -7357,6 +7381,7 @@ mod tests {
     /// `[(a→b), (b→c)]` over `a` yields `c`.
     #[test]
     fn fcsubs_chains_substitutions_left_to_right() {
+        let _g = crate::test_util::global_state_lock();
         let mut s = "a".to_string();
         let n = fcsubs(&mut s, &[
             ("a".to_string(), "b".to_string()),
@@ -7371,6 +7396,7 @@ mod tests {
     /// fc output for events containing none of the requested patterns.
     #[test]
     fn fcsubs_no_match_returns_zero_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         let mut s = "hello world".to_string();
         let n = fcsubs(&mut s, &[("xyz".to_string(), "abc".to_string())]);
         assert_eq!(s, "hello world", "no match → unchanged");
@@ -7382,6 +7408,7 @@ mod tests {
     /// here would break `cd subdir`.
     #[test]
     fn fixdir_plain_relative_path_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir("subdir"),  "subdir");
         assert_eq!(fixdir("a/b/c"),   "a/b/c");
         assert_eq!(fixdir("."),       ".");
@@ -7400,6 +7427,7 @@ mod tests {
     /// contract.
     #[test]
     fn bin_let_clears_errflag_on_math_error() {
+        let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
@@ -7449,6 +7477,7 @@ mod tests {
     /// of two non-zero exprs returns 0 even if both are evaluated.
     #[test]
     fn bin_let_walks_all_argv_last_wins() {
+        let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;

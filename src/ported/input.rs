@@ -537,6 +537,7 @@ mod tests {
 
     #[test]
     fn test_input_buffer_basic() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("hello", 0);
         assert_eq!(ingetc(), Some('h'));
@@ -549,6 +550,7 @@ mod tests {
 
     #[test]
     fn test_input_ungetc() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("abc", 0);
         assert_eq!(ingetc(), Some('a'));
@@ -560,6 +562,7 @@ mod tests {
 
     #[test]
     fn test_input_stack() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("outer", 0);
         assert_eq!(ingetc(), Some('o'));
@@ -575,6 +578,7 @@ mod tests {
 
     #[test]
     fn test_line_number_tracking() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("a\nb\nc", INP_LINENO);
         assert_eq!(lineno.with(|l| l.get()), 1);
@@ -599,6 +603,7 @@ mod tests {
     /// previous Rust port spuriously Meta-encoded them).
     #[test]
     fn test_meta_encoding() {
+        let _g = crate::test_util::global_state_lock();
         // Tests must initialise the typtab — without `inittyptab()`
         // every byte's IMETA bit reads as 0. Serialise against other
         // typtab-mutating tests via the canonical lock.
@@ -645,6 +650,7 @@ mod tests {
 
     #[test]
     fn test_ingetptr() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("hello world", 0);
         ingetc(); // h
@@ -657,6 +663,7 @@ mod tests {
 
     #[test]
     fn test_inerrflush() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         inputsetline("remaining input", 0);
         ingetc();
@@ -671,6 +678,7 @@ mod tests {
     /// Pin both: post-condition is empty buffer + pos==0.
     #[test]
     fn shinbufreset_clears_buffer_and_zeros_pos() {
+        let _g = crate::test_util::global_state_lock();
         super::shinbuffer.with(|b| {
             *b.borrow_mut() = "leftover".to_string();
         });
@@ -692,6 +700,7 @@ mod tests {
     /// hint set.
     #[test]
     fn shinbufalloc_resets_and_capacity_hints() {
+        let _g = crate::test_util::global_state_lock();
         super::shinbuffer.with(|b| {
             *b.borrow_mut() = "stale".to_string();
         });
@@ -714,6 +723,7 @@ mod tests {
     /// `shinbufrestore` restores the saved state.
     #[test]
     fn shinbufsave_restore_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         // Clear stack from any prior test.
         super::shinsavestack.with(|s| s.borrow_mut().clear());
         super::shinbuffer.with(|b| *b.borrow_mut() = "abc".to_string());
@@ -740,6 +750,7 @@ mod tests {
     /// Pin the no-op so a regression doesn't add a panic.
     #[test]
     fn shinbufrestore_on_empty_stack_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         super::shinsavestack.with(|s| s.borrow_mut().clear());
         // Pre-seed a non-empty buffer.
         super::shinbuffer.with(|b| *b.borrow_mut() = "persist".to_string());
@@ -763,6 +774,7 @@ mod tests {
     ///   * 0xa1 (Nularg) — ITOK, must be skipped.
     #[test]
     fn ingetc_skips_token_bytes_via_itok_predicate() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         // Make sure typtab is populated (without this the per-thread
         // typtab default may have ITOK bits unset).
@@ -793,6 +805,7 @@ mod tests {
     /// `Src/utils.c:4197` (`typtab[Marker] |= IMETA`, NOT ITOK).
     #[test]
     fn ingetc_does_not_skip_imeta_only_bytes() {
+        let _g = crate::test_util::global_state_lock();
         reset_input();
         crate::ported::utils::inittyptab();
         let meta: char = '\u{0083}';   // Meta lead byte — IMETA only

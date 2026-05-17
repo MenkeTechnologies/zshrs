@@ -535,6 +535,7 @@ mod tests {
     /// the cap is unknown) leaks through as a valid pointer.
     #[test]
     fn getterminfo_unknown_cap_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getterminfo("definitely_not_a_real_cap_name_zshrs").is_none());
     }
 
@@ -543,6 +544,7 @@ mod tests {
     /// do, and silent success would mask a usage bug.
     #[test]
     fn echoti_with_no_args_is_usage_error() {
+        let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(), argscount: 0, argsalloc: 0,
@@ -555,6 +557,7 @@ mod tests {
     /// `tigetstr(cap) == 0 / (char *)-1`.
     #[test]
     fn echoti_unknown_capability_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(), argscount: 0, argsalloc: 0,
@@ -570,6 +573,7 @@ mod tests {
     /// acceptable; panic is not.
     #[test]
     fn scanterminfo_does_not_panic_for_dumb_term() {
+        let _g = crate::test_util::global_state_lock();
         // SAFETY: env mutation is process-global. Snapshot + restore.
         let old = std::env::var_os("TERM");
         unsafe { std::env::set_var("TERM", "dumb"); }
@@ -583,6 +587,7 @@ mod tests {
     /// c:316-360 — module-lifecycle stubs return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -594,6 +599,7 @@ mod tests {
     /// returns 0. Must be callable without panicking.
     #[test]
     fn features_returns_success() {
+        let _g = crate::test_util::global_state_lock();
         let mut features = Vec::new();
         assert_eq!(features_(std::ptr::null(), &mut features), 0);
     }
@@ -603,6 +609,7 @@ mod tests {
     /// success contract.
     #[test]
     fn enables_returns_success_with_none_arg() {
+        let _g = crate::test_util::global_state_lock();
         let mut enables: Option<Vec<i32>> = None;
         assert_eq!(enables_(std::ptr::null(), &mut enables), 0);
     }

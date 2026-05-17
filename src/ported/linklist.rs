@@ -398,6 +398,7 @@ mod tests {
 
     #[test]
     fn test_new_list() {
+        let _g = crate::test_util::global_state_lock();
         let list: LinkList<i32> = LinkList::new();
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
@@ -410,6 +411,7 @@ mod tests {
     /// The previous Rust port returned an empty list, ignoring `size`.
     #[test]
     fn newsizedlist_preallocates_n_slots() {
+        let _g = crate::test_util::global_state_lock();
         let list: LinkList<i32> = newsizedlist(5);
         assert_eq!(list.len(), 5,
             "c:339-341 — newsizedlist(5) must pre-allocate 5 nodes");
@@ -425,6 +427,7 @@ mod tests {
 
     #[test]
     fn test_push_front_back() {
+        let _g = crate::test_util::global_state_lock();
         let mut list = LinkList::new();
         list.push_back(1);
         list.push_back(2);
@@ -436,6 +439,7 @@ mod tests {
 
     #[test]
     fn test_pop_front_back() {
+        let _g = crate::test_util::global_state_lock();
         let mut list = LinkList::new();
         list.push_back(1);
         list.push_back(2);
@@ -448,6 +452,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
+        let _g = crate::test_util::global_state_lock();
         let mut list = LinkList::new();
         list.push_back(1);
         list.push_back(2);
@@ -458,6 +463,7 @@ mod tests {
 
     #[test]
     fn test_macro_methods() {
+        let _g = crate::test_util::global_state_lock();
         let mut list: LinkList<String> = LinkList::new();
         list.push_back("a".to_string());
         list.push_back("b".to_string());
@@ -479,6 +485,7 @@ mod tests {
 
     #[test]
     fn test_append() {
+        let _g = crate::test_util::global_state_lock();
         let mut a: LinkList<i32> = vec![1, 2].into_iter().collect();
         let mut b: LinkList<i32> = vec![3, 4].into_iter().collect();
         a.append(&mut b);
@@ -488,6 +495,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
+        let _g = crate::test_util::global_state_lock();
         let mut list: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         list.clear();
         assert!(list.is_empty());
@@ -495,6 +503,7 @@ mod tests {
 
     #[test]
     fn test_uinsertlinknode_dedups() {
+        let _g = crate::test_util::global_state_lock();
         let mut list: LinkList<String> = LinkList::new();
         list.push_back("a".to_string());
         assert!(uinsertlinknode(&mut list, 0, "b".to_string()).is_some());
@@ -507,6 +516,7 @@ mod tests {
     /// isn't drained would let the caller iterate doubled entries.
     #[test]
     fn joinlists_drains_second_into_first() {
+        let _g = crate::test_util::global_state_lock();
         let mut a: LinkList<i32> = vec![1, 2].into_iter().collect();
         let mut b: LinkList<i32> = vec![3, 4, 5].into_iter().collect();
         joinlists(&mut a, &mut b);
@@ -518,6 +528,7 @@ mod tests {
     /// regression that adds phantom empty sentinels.
     #[test]
     fn joinlists_empty_second_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         let mut a: LinkList<i32> = vec![1, 2].into_iter().collect();
         let mut b: LinkList<i32> = LinkList::new();
         joinlists(&mut a, &mut b);
@@ -530,6 +541,7 @@ mod tests {
     /// dedicated branch — regression there would lose the data.
     #[test]
     fn joinlists_empty_first_receives_all_of_second() {
+        let _g = crate::test_util::global_state_lock();
         let mut a: LinkList<i32> = LinkList::new();
         let mut b: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         joinlists(&mut a, &mut b);
@@ -541,6 +553,7 @@ mod tests {
     /// matching entry, None for miss. Used by `unhash -d` lookups.
     #[test]
     fn linknodebydatum_finds_first_match() {
+        let _g = crate::test_util::global_state_lock();
         let list: LinkList<i32> = vec![10, 20, 30, 20].into_iter().collect();
         assert_eq!(linknodebydatum(&list, &20), Some(1),
             "must return FIRST match index");
@@ -551,6 +564,7 @@ mod tests {
     /// Verifies same FIRST-match contract for the alias-table walks.
     #[test]
     fn linknodebystring_finds_first_match() {
+        let _g = crate::test_util::global_state_lock();
         let list: LinkList<String> = vec!["a".into(), "b".into(), "a".into()].into_iter().collect();
         assert_eq!(linknodebystring(&list, "a"), Some(0));
         assert_eq!(linknodebystring(&list, "b"), Some(1));
@@ -561,6 +575,7 @@ mod tests {
     /// Used by `${(@k)hash}` array materialisation.
     #[test]
     fn hlinklist2array_preserves_order() {
+        let _g = crate::test_util::global_state_lock();
         let list: LinkList<String> = vec!["a".into(), "b".into(), "c".into()].into_iter().collect();
         let arr = hlinklist2array(&list);
         assert_eq!(arr, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
@@ -570,6 +585,7 @@ mod tests {
     /// `next` chain incrementing a counter. Empty list → 0.
     #[test]
     fn countlinknodes_returns_len_for_arbitrary_lists() {
+        let _g = crate::test_util::global_state_lock();
         let empty: LinkList<i32> = LinkList::new();
         assert_eq!(countlinknodes(&empty), 0,
             "c:309 — empty list traversal yields 0");
@@ -585,6 +601,7 @@ mod tests {
     /// front; rotate-by-0 is a no-op, rotate-by-N wraps via modulo.
     #[test]
     fn rolllist_rotates_to_index() {
+        let _g = crate::test_util::global_state_lock();
         // c:319-324 — rotate so nd-th element becomes first.
         let mut list: LinkList<i32> = vec![10, 20, 30, 40].into_iter().collect();
         rolllist(&mut list, 2);
@@ -596,6 +613,7 @@ mod tests {
     /// regression doesn't silently rotate every caller by 1.
     #[test]
     fn rolllist_zero_index_is_identity() {
+        let _g = crate::test_util::global_state_lock();
         let mut list: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         rolllist(&mut list, 0);
         assert_eq!(list.to_vec(), vec![1, 2, 3]);
@@ -606,6 +624,7 @@ mod tests {
     /// Rust port chose modulo defensively).
     #[test]
     fn rolllist_wraps_index_modulo_length() {
+        let _g = crate::test_util::global_state_lock();
         let mut list: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         // index 4 mod 3 == 1 → rotate by 1.
         rolllist(&mut list, 4);
@@ -624,6 +643,7 @@ mod tests {
     /// inserted in the right span and in source order.
     #[test]
     fn insertlinklist_splices_source_into_dest_after_position() {
+        let _g = crate::test_util::global_state_lock();
         // dest: [10, 20, 30], source: [A, B, C], where=0 (after first).
         // Expected: [10, A, B, C, 20, 30] — source appears AFTER 10.
         let source: LinkList<i32> = vec![100, 200, 300].into_iter().collect();
@@ -640,6 +660,7 @@ mod tests {
     /// insert a phantom sentinel.
     #[test]
     fn insertlinklist_empty_source_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         let source: LinkList<i32> = LinkList::new();
         let mut dest: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         insertlinklist(&source, 1, &mut dest);
@@ -654,6 +675,7 @@ mod tests {
     /// inserts after the last node, producing dest++source.
     #[test]
     fn insertlinklist_lastnode_append_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let source: LinkList<&str> = vec!["x", "y"].into_iter().collect();
         let mut dest: LinkList<&str> = vec!["a", "b", "c"].into_iter().collect();
         let last = dest.len() - 1;

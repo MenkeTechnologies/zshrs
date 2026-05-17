@@ -2618,6 +2618,7 @@ mod tests {
 
     #[test]
     fn test_simple_echo() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("true").unwrap();
         assert_eq!(status, 0);
@@ -2625,6 +2626,7 @@ mod tests {
 
     #[test]
     fn test_if_true() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("if true; then true; fi").unwrap();
         assert_eq!(status, 0);
@@ -2632,6 +2634,7 @@ mod tests {
 
     #[test]
     fn test_if_false() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let status = exec
             .execute_script("if false; then true; else false; fi")
@@ -2641,6 +2644,7 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         exec.execute_script("for i in a b c; do true; done")
             .unwrap();
@@ -2649,6 +2653,7 @@ mod tests {
 
     #[test]
     fn test_and_list() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("true && true").unwrap();
         assert_eq!(status, 0);
@@ -2659,6 +2664,7 @@ mod tests {
 
     #[test]
     fn test_or_list() {
+        let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("false || true").unwrap();
         assert_eq!(status, 0);
@@ -2673,6 +2679,7 @@ mod tests {
     /// it back to distinguish the top-level shell from a subshell.
     #[test]
     fn test_forklevel_default_zero_and_roundtrip() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let prev = FORKLEVEL.load(Ordering::Relaxed);
         // Default state at process start: zero (matches C's BSS init

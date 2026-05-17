@@ -462,6 +462,7 @@ mod tests {
 
     #[test]
     fn test_random_state() {
+        let _g = crate::test_util::global_state_lock();
         
         let r1 = get_srandom();
         let r2 = get_srandom();
@@ -471,6 +472,7 @@ mod tests {
 
     #[test]
     fn test_get_random_u32() {
+        let _g = crate::test_util::global_state_lock();
         let r1 = random_u32();
         let r2 = random_u32();
         let r3 = random_u32();
@@ -479,6 +481,7 @@ mod tests {
 
     #[test]
     fn test_get_random_u64() {
+        let _g = crate::test_util::global_state_lock();
         let r1 = random_u64();
         let r2 = random_u64();
         assert_ne!(r1, r2);
@@ -486,6 +489,7 @@ mod tests {
 
     #[test]
     fn test_bounded_random() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
             let r = bounded(10);
             assert!(r < 10);
@@ -494,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_bounded_random_one() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..10 {
             let r = bounded(1);
             assert_eq!(r, 0);
@@ -502,6 +507,7 @@ mod tests {
 
     #[test]
     fn test_zrand_int() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_zrand_int(Some(100), Some(50), false).unwrap();
         assert!((50..100).contains(&r));
 
@@ -511,18 +517,21 @@ mod tests {
 
     #[test]
     fn test_zrand_int_no_args() {
+        let _g = crate::test_util::global_state_lock();
         let r = math_zrand_int(None, None, false).unwrap();
         assert!(r >= 0);
     }
 
     #[test]
     fn test_zrand_int_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(math_zrand_int(Some(50), Some(100), false).is_err());
         assert!(math_zrand_int(Some(-1), None, false).is_err());
     }
 
     #[test]
     fn test_zrand_float() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
             let r = math_zrand_float();
             assert!((0.0..1.0).contains(&r));
@@ -531,6 +540,7 @@ mod tests {
 
     #[test]
     fn test_random_real() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
             let r = random_real();
             assert!((0.0..1.0).contains(&r));
@@ -539,6 +549,7 @@ mod tests {
 
     #[test]
     fn test_shuffle() {
+        let _g = crate::test_util::global_state_lock();
         // Fisher–Yates shuffle, inlined here since the helper is gone.
         let mut arr = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let original = arr.clone();
@@ -553,6 +564,7 @@ mod tests {
 
     #[test]
     fn test_fill_random_bytes() {
+        let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 32];
         getrandom_buffer(&mut buf).unwrap();
         assert!(!buf.iter().all(|&b| b == 0));
@@ -564,6 +576,7 @@ mod tests {
     /// bounds values would silently corrupt arithmetic-driven scripts.
     #[test]
     fn math_zrand_int_inclusive_range_respects_bounds() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_int(Some(10), Some(5), true).unwrap();
             assert!((5..=10).contains(&v),
@@ -575,6 +588,7 @@ mod tests {
     /// must NEVER return 10 in this mode.
     #[test]
     fn math_zrand_int_exclusive_excludes_upper_bound() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_int(Some(10), Some(5), false).unwrap();
             assert!((5..10).contains(&v),
@@ -587,6 +601,7 @@ mod tests {
     /// layer on top.
     #[test]
     fn math_zrand_float_in_unit_interval() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_float();
             assert!((0.0..1.0).contains(&v),
@@ -598,6 +613,7 @@ mod tests {
     /// calls. Catches a regression where the RNG is fixed-seeded.
     #[test]
     fn getrandom_buffer_two_calls_differ() {
+        let _g = crate::test_util::global_state_lock();
         let mut a = [0u8; 32];
         let mut b = [0u8; 32];
         getrandom_buffer(&mut a).unwrap();

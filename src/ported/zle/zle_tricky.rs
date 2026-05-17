@@ -1206,6 +1206,7 @@ mod tests {
 
     #[test]
     fn test_pfxlen() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(pfxlen("hello", "help"), 3);
         assert_eq!(pfxlen("abc", "xyz"), 0);
@@ -1214,6 +1215,7 @@ mod tests {
 
     #[test]
     fn test_sfxlen() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(sfxlen("testing", "running"), 3);
         assert_eq!(sfxlen("abc", "xyz"), 0);
@@ -1221,6 +1223,7 @@ mod tests {
 
     #[test]
     fn addx_skips_when_cursor_in_middle_of_word() {
+        let _g = crate::test_util::global_state_lock();
         // c:949-952 — when the char at cursor is a normal word-char
         //              (not separator/quote/blank/eol), addx must NOT
         //              insert anything; addedx → 0, *ptmp → NULL.
@@ -1250,6 +1253,7 @@ mod tests {
 
     #[test]
     fn addx_inserts_at_end_of_line() {
+        let _g = crate::test_util::global_state_lock();
         // c:937-947 — cursor at end-of-line → insert 'x', addedx=1.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
@@ -1275,6 +1279,7 @@ mod tests {
 
     #[test]
     fn addx_inserts_x_space_when_comppref_on_nonblank() {
+        let _g = crate::test_util::global_state_lock();
         // c:936 + c:945-946 — comppref + non-blank at cursor →
         //                      insert "x ", addedx=2.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1298,6 +1303,7 @@ mod tests {
 
     #[test]
     fn addx_inserts_when_cursor_on_separator() {
+        let _g = crate::test_util::global_state_lock();
         // c:929-933 — ')' / '|' / '&' / '>' / '<' etc. → insert.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
@@ -1316,6 +1322,7 @@ mod tests {
 
     #[test]
     fn checkparams_hascompmod_gate() {
+        let _g = crate::test_util::global_state_lock();
         // c:447-448 — `!menucmp && exact && (!hascompmod || RECEXACT)`.
         //              When hascompmod is true and RECEXACT is unset,
         //              the function must return 0 even on an exact
@@ -1348,6 +1355,7 @@ mod tests {
 
     #[test]
     fn test_has_real_token() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(has_real_token("$HOME"));
         assert!(has_real_token("*.txt"));
@@ -1359,6 +1367,7 @@ mod tests {
 
     #[test]
     fn dupstrspace_appends_space() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:954 — len + 1 + 1 NUL: "hello" → "hello "
         assert_eq!(dupstrspace("hello"), "hello ");
@@ -1366,6 +1375,7 @@ mod tests {
 
     #[test]
     fn dupstrspace_empty_input() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:954 — empty input → just a single space
         assert_eq!(dupstrspace(""), " ");
@@ -1373,6 +1383,7 @@ mod tests {
 
     #[test]
     fn freebrinfo_drops_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::zle_h::brinfo;
         // c:1015 — Box drop cascades through `next`.
@@ -1397,6 +1408,7 @@ mod tests {
 
     #[test]
     fn dupbrinfo_clones_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::zle_h::brinfo;
         // Build a 3-node chain: A → B → C.
@@ -1441,6 +1453,7 @@ mod tests {
 
     #[test]
     fn dupbrinfo_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1037 — `while (p)` never enters; ret stays NULL.
         let (head, last) = dupbrinfo(None);
@@ -1450,6 +1463,7 @@ mod tests {
 
     #[test]
     fn spellword_zeroes_globals_returns_docomplete() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
         // Pre-set non-zero so the c:263 reset is observable.

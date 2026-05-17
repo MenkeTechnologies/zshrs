@@ -3534,6 +3534,7 @@ mod tests {
 
     #[test]
     fn test_pattern_match_equivalence_case_cross() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
         use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
@@ -3567,6 +3568,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_chr_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('a' as u32);
@@ -3576,6 +3578,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_chr_mismatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('b' as u32);
@@ -3585,6 +3588,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_tp_mismatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = Cpattern {
@@ -3598,6 +3602,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_class_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_class("a-z");
         let b = cpat_class("a-z");
@@ -3607,6 +3612,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_length_mismatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         // a chained to a second pattern; b has only one.
@@ -3619,6 +3625,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_both_empty() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:46 — both NULL → loop never enters, return !b == true.
         assert!(cpatterns_same(None, None));
@@ -3626,6 +3633,7 @@ mod tests {
 
     #[test]
     fn cmatchers_same_pointer_eq() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = Cmatcher::default();
         // c:86 — `a == b` short-circuit.
@@ -3634,6 +3642,7 @@ mod tests {
 
     #[test]
     fn cmatchers_same_flags_diff() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = Cmatcher { flags: 0, ..Default::default() };
         let b = Cmatcher { flags: 1, ..Default::default() };
@@ -3643,6 +3652,7 @@ mod tests {
 
     #[test]
     fn cmatchers_same_anchor_lengths() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // CMF_LEFT path: anchor length difference matters.
         let a = Cmatcher {
@@ -3674,6 +3684,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_simple() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let l = Cline {
             flags: CLF_LINE,
@@ -3687,6 +3698,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_with_olen() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let l = Cline {
             flags: 0,
@@ -3701,6 +3713,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_with_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let pre = Cline {
             flags: CLF_LINE,
@@ -3720,6 +3733,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_clf_suf() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let suf = Cline {
             flags: CLF_LINE,
@@ -3741,6 +3755,7 @@ mod tests {
 
     #[test]
     fn cline_setlens_propagates() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             flags: CLF_LINE,
@@ -3764,6 +3779,7 @@ mod tests {
 
     #[test]
     fn cline_matched_sets_flag_recursively() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             prefix: Some(Box::new(Cline::default())),
@@ -3785,6 +3801,7 @@ mod tests {
 
     #[test]
     fn revert_cline_reverses_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let head = Some(Box::new(Cline {
             llen: 1,
@@ -3811,6 +3828,7 @@ mod tests {
 
     #[test]
     fn cp_cline_shallow() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let src = Cline {
             llen: 7,
@@ -3831,6 +3849,7 @@ mod tests {
 
     #[test]
     fn start_match_clears_globals() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Pre-populate to ensure start_match resets.
         MATCHBUF
@@ -3850,6 +3869,7 @@ mod tests {
 
     #[test]
     fn abort_match_drops_lists() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *MATCHPARTS
             .get_or_init(|| Mutex::new(None))
@@ -3871,6 +3891,7 @@ mod tests {
     /// (0x80 + PP_LOWER) so the byte walk hits the marker at idx 0.
     #[test]
     fn pattern_match_equivalence_upper_to_lower() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
         use crate::ported::zle::comp_h::CPAT_EQUIV;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -3891,6 +3912,7 @@ mod tests {
     /// pattern's literal char. wlen=1.
     #[test]
     fn bld_line_cpat_char_emits_literal() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = Cmatcher {
             line: Some(Box::new(cpat_char('x' as u32))),
@@ -3906,6 +3928,7 @@ mod tests {
     /// corresponding char from `word`.
     #[test]
     fn bld_line_cpat_any_emits_word_char() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::comp_h::CPAT_ANY;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = Cmatcher {
@@ -3926,6 +3949,7 @@ mod tests {
     /// of length N, returns iw = N.
     #[test]
     fn match_str_exact_char_skip_full_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = match_str("abc", "abc", None, 0, None, 0, 0, 0);
         assert_eq!(r, 3, "full literal match returns iw=3");
@@ -3936,6 +3960,7 @@ mod tests {
     /// full match (c:1046 `return (part || !ll)`).
     #[test]
     fn match_parts_truncates_and_matches() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         if let Ok(mut g) = crate::ported::zle::compcore::mstack
             .get_or_init(|| std::sync::Mutex::new(None))
@@ -3951,6 +3976,7 @@ mod tests {
     /// Empty sfx, qu=0 (no quoting needed), no Patprog.
     #[test]
     fn comp_match_exact_prefix_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         if let Ok(mut g) = crate::ported::zle::compcore::mstack
             .get_or_init(|| std::sync::Mutex::new(None))
@@ -3970,6 +3996,7 @@ mod tests {
     /// mstack is empty (no matcher to bridge the gap).
     #[test]
     fn match_str_diverging_returns_neg_one_with_empty_mstack() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Clear mstack to guarantee the empty-stack code path.
         if let Ok(mut g) = crate::ported::zle::compcore::mstack
@@ -3990,6 +4017,7 @@ mod tests {
     /// misses → bmatchers should end up None.
     #[test]
     fn update_bmatchers_with_empty_mstack_trims_all_entries() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::comp_h::{Cmlist, Cmatcher};
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Seed bmatchers with one entry.
@@ -4022,6 +4050,7 @@ mod tests {
     /// `update_bmatchers`-triggered O(N*M) scan into O(N*M*F).
     #[test]
     fn cmatchers_same_pointer_identity_short_circuits() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::comp_h::Cmatcher;
         let m = Cmatcher {
             refc: 1, next: None, flags: 0, line: None, llen: 0,
@@ -4036,6 +4065,7 @@ mod tests {
     /// CMF_LEFT and CMF_RIGHT matchers compare equal silently.
     #[test]
     fn cmatchers_same_different_flags_compare_unequal() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::comp_h::Cmatcher;
         let a = Cmatcher {
             refc: 1, next: None, flags: 0, line: None, llen: 0,
@@ -4055,6 +4085,7 @@ mod tests {
     /// regression dropping them would conflate distinct matchers.
     #[test]
     fn cmatchers_same_different_lengths_compare_unequal() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::comp_h::Cmatcher;
         let a = Cmatcher {
             refc: 1, next: None, flags: 0, line: None, llen: 1,

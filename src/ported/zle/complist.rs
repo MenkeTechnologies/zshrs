@@ -2602,6 +2602,7 @@ mod tests {
 
     #[test]
     fn test_compprintfmt() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1072 — compprintfmt now matches C: returns the visible
         // width (cc) consumed when rendering the format. Calling with
@@ -2615,6 +2616,7 @@ mod tests {
 
     #[test]
     fn col_indices_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:167-191 — exact integer indices used by mcolors.files[i].
         assert_eq!(COL_NO, 0);
@@ -2627,6 +2629,7 @@ mod tests {
 
     #[test]
     fn num_cols_matches_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:193 — must match the colnames[] / defcols[] array length.
         assert_eq!(NUM_COLS, 25);
@@ -2636,6 +2639,7 @@ mod tests {
 
     #[test]
     fn colnames_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:197-201 — two-letter LS_COLORS keys.
         assert_eq!(COLNAMES[COL_NO], "no");
@@ -2647,6 +2651,7 @@ mod tests {
 
     #[test]
     fn defcols_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:205-209 — default ANSI codes.
         assert_eq!(DEFCOLS[COL_NO], Some("0"));
@@ -2660,6 +2665,7 @@ mod tests {
 
     #[test]
     fn filecol_allocates_with_defaults() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
         let fc = filecol("0;32");
@@ -2670,6 +2676,7 @@ mod tests {
 
     #[test]
     fn filecol_empty_string() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // The "no LS_COLORS set" path at c:515-516 calls filecol("")
         // for every slot.
@@ -2685,6 +2692,7 @@ mod tests {
     /// Names match upstream zsh `complist.c:167-191` verbatim.
     #[test]
     fn col_indices_full_set_matches_c_layout() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(COL_FI, 1);
         assert_eq!(COL_LN, 3);
         assert_eq!(COL_PI, 4);
@@ -2713,6 +2721,7 @@ mod tests {
     /// entry would mismatch the C-side `len=2` walk.
     #[test]
     fn colnames_entries_are_two_lowercase_letters() {
+        let _g = crate::test_util::global_state_lock();
         for (i, &name) in COLNAMES.iter().enumerate() {
             assert_eq!(name.len(), 2,
                 "COLNAMES[{}] = {:?} must be exactly 2 chars", i, name);
@@ -2729,6 +2738,7 @@ mod tests {
     /// would silently make later entries unreachable.
     #[test]
     fn colnames_has_no_duplicates() {
+        let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = COLNAMES.iter().copied().collect();
         assert_eq!(unique.len(), COLNAMES.len(),
             "duplicate entry in COLNAMES");
@@ -2739,6 +2749,7 @@ mod tests {
     /// the `getcoldef` path relies on at c:330.
     #[test]
     fn defcols_and_colnames_have_equal_lengths() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(DEFCOLS.len(), COLNAMES.len(),
             "DEFCOLS and COLNAMES must have parallel indices");
         assert_eq!(NUM_COLS, COLNAMES.len(),
@@ -2749,6 +2760,7 @@ mod tests {
     /// owned (independent of caller). Pin the Cow / clone contract.
     #[test]
     fn filecol_owns_its_col_string() {
+        let _g = crate::test_util::global_state_lock();
         let original = "0;31".to_string();
         let fc = filecol(&original);
         // Even if the caller mutates the original, fc.col stays
@@ -2761,6 +2773,7 @@ mod tests {
     /// Pin the no-shared-mutation contract.
     #[test]
     fn filecol_distinct_calls_produce_independent_nodes() {
+        let _g = crate::test_util::global_state_lock();
         let a = filecol("red");
         let b = filecol("blue");
         assert_eq!(a.col, "red");
@@ -2773,6 +2786,7 @@ mod tests {
     /// edge case so a regen panicking on empty input gets caught.
     #[test]
     fn getcolval_empty_input_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let r = getcolval("", 0);
         assert_eq!(r, "");
     }
@@ -2781,6 +2795,7 @@ mod tests {
     /// state set up. Pin no-panic contract.
     #[test]
     fn compprintnl_does_not_panic_outside_zle() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = compprintnl(0);
     }

@@ -4528,6 +4528,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cao_values_match_c_source() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:941-945 — sequential 1..=5.
         assert_eq!(CAO_NEXT, 1);
@@ -4539,6 +4540,7 @@ mod cao_caa_tests {
 
     #[test]
     fn caa_values_match_c_source() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:964-968 — sequential 1..=5.
         assert_eq!(CAA_NORMAL, 1);
@@ -4550,6 +4552,7 @@ mod cao_caa_tests {
 
     #[test]
     fn crt_values_match_c_source() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:79-83 — sequential 0..=4.
         assert_eq!(CRT_SIMPLE, 0);
@@ -4561,6 +4564,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cvv_values_match_c_source() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2949-2951 — sequential 0..=2.
         assert_eq!(CVV_NOARG, 0);
@@ -4570,6 +4574,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cache_sizes_are_8() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:972 + c:2955 — both LRU caches are 8 entries.
         assert_eq!(MAX_CACACHE, 8);
@@ -4578,12 +4583,14 @@ mod cao_caa_tests {
 
     #[test]
     fn max_tags_is_256() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(MAX_TAGS, 256);
     }
 
     #[test]
     fn path_max2_is_8192() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(PATH_MAX2, 8192);
     }
@@ -7254,6 +7261,7 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — `\:` two-byte sequence drops the backslash.
         assert_eq!(rembslashcolon("a\\:b\\:c"), "a:b:c");
@@ -7261,6 +7269,7 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon_lone_backslash_kept() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — `\X` (X != ':') keeps the backslash.
         assert_eq!(rembslashcolon("a\\nb"), "a\\nb");
@@ -7268,6 +7277,7 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon_trailing_backslash() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — trailing `\` with no follow-up keeps the `\`.
         assert_eq!(rembslashcolon("a\\"), "a\\");
@@ -7275,6 +7285,7 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon_unescaped_colon_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — bare `:` (no preceding `\`) is kept.
         assert_eq!(rembslashcolon("a:b"), "a:b");
@@ -7282,6 +7293,7 @@ mod tests {
 
     #[test]
     fn test_bslashcolon() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1073 — every `:` gets `\` prepended.
         assert_eq!(bslashcolon("a:b:c"), "a\\:b\\:c");
@@ -7289,6 +7301,7 @@ mod tests {
 
     #[test]
     fn test_bslashcolon_no_colons() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1072 — non-colon bytes pass through unchanged.
         assert_eq!(bslashcolon("hello"), "hello");
@@ -7296,6 +7309,7 @@ mod tests {
 
     #[test]
     fn test_bslashcolon_already_escaped_doubled() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1073-1074 — C doesn't track previous backslash, so an
         // already-escaped `\:` becomes `\\:` (the `\` passes
@@ -7305,6 +7319,7 @@ mod tests {
 
     #[test]
     fn test_single_index_dash_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1094 — `pre == '-'` → offset = -0x21.
         // For opt='a' (0x61): 0x61 + -0x21 = 0x40 = 64.
@@ -7319,6 +7334,7 @@ mod tests {
 
     #[test]
     fn test_single_index_plus_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1094 — `pre == '+'` → offset = 94 - 0x21 = 61.
         // For opt='a' (0x61): 0x61 + 61 = 158.
@@ -7331,6 +7347,7 @@ mod tests {
 
     #[test]
     fn test_single_index_out_of_range() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1091-1092 — opt <= 0x20 OR opt > 0x7e returns -1.
         assert_eq!(single_index(b'-', 0x20), -1);     // space (0x20) excluded
@@ -7345,6 +7362,7 @@ mod tests {
 
     #[test]
     fn caarg_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:949-962 — fresh caarg: every field zero / None.
         let a = caarg::default();
@@ -7358,6 +7376,7 @@ mod tests {
 
     #[test]
     fn caopt_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:928-939 — fresh caopt: zero / None across all fields.
         let o = caopt::default();
@@ -7371,6 +7390,7 @@ mod tests {
 
     #[test]
     fn cadef_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:905-922 — fresh cadef: zero / None across all fields.
         let d = cadef::default();
@@ -7383,6 +7403,7 @@ mod tests {
 
     #[test]
     fn freecaargs_walks_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:996-1010 — freecaargs walks `next` chain freeing each
         // entry. After call, the chain owner observes no remaining
@@ -7399,6 +7420,7 @@ mod tests {
 
     #[test]
     fn cao_caa_constants_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:941-945 and c:964-968 — sequential 1..=5.
         assert_eq!(CAO_NEXT,    1);
@@ -7415,6 +7437,7 @@ mod tests {
 
     #[test]
     fn cdf_max_cacache_constants_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:924 — CDF_SEP = 1; c:972 — MAX_CACACHE = 8.
         assert_eq!(CDF_SEP, 1);
@@ -7423,6 +7446,7 @@ mod tests {
 
     #[test]
     fn crt_constants_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:79-83 — sequential 0..=4.
         assert_eq!(CRT_SIMPLE, 0);
@@ -7434,6 +7458,7 @@ mod tests {
 
     #[test]
     fn cdstr_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:58-70 — fresh cdstr: zero/None across all fields.
         let s = cdstr::default();
@@ -7448,6 +7473,7 @@ mod tests {
 
     #[test]
     fn cdrun_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:72-77 — fresh cdrun: zero/None.
         let r = cdrun::default();
@@ -7459,6 +7485,7 @@ mod tests {
 
     #[test]
     fn cdset_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:85-91 — fresh cdset: zero/None.
         let s = cdset::default();
@@ -7471,6 +7498,7 @@ mod tests {
 
     #[test]
     fn cdstate_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:40-56 — fresh cdstate: zero/None.
         let st = cdstate::default();
@@ -7482,6 +7510,7 @@ mod tests {
 
     #[test]
     fn freecdsets_walks_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:96-122 — freecdsets walks `next` chain freeing each set
         // and its strs sub-chain.
@@ -7507,6 +7536,7 @@ mod tests {
 
     #[test]
     fn castate_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1928-1953 — fresh castate: zero/None.
         let s = castate::default();
@@ -7520,6 +7550,7 @@ mod tests {
 
     #[test]
     fn cvdef_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2924-2935 — fresh cvdef: zero/None.
         let d = cvdef::default();
@@ -7532,6 +7563,7 @@ mod tests {
 
     #[test]
     fn cvval_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2939-2947 — fresh cvval: zero/None.
         let v = cvval::default();
@@ -7544,6 +7576,7 @@ mod tests {
 
     #[test]
     fn cvstate_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3222-3227 — fresh cvstate: None across all 4 fields.
         let s = cvstate::default();
@@ -7555,6 +7588,7 @@ mod tests {
 
     #[test]
     fn ctags_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3737-3742 — fresh ctags: zero/None.
         let t = ctags::default();
@@ -7566,6 +7600,7 @@ mod tests {
 
     #[test]
     fn ctset_default_zero_initialized() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3746-3751 — fresh ctset: zero/None.
         let s = ctset::default();
@@ -7577,6 +7612,7 @@ mod tests {
 
     #[test]
     fn cvv_constants_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2949-2951 — sequential 0..=2.
         assert_eq!(CVV_NOARG, 0);
@@ -7586,6 +7622,7 @@ mod tests {
 
     #[test]
     fn max_tags_cvcache_match_c() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3755 — MAX_TAGS = 256; c:2955 — MAX_CVCACHE = 8.
         assert_eq!(MAX_TAGS, 256);
@@ -7594,6 +7631,7 @@ mod tests {
 
     #[test]
     fn freectset_walks_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3762-3777 — freectset walks `next` chain freeing each
         // ctset's tags/tag fields.
@@ -7605,6 +7643,7 @@ mod tests {
 
     #[test]
     fn freectags_drops_one_node() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3779-3789 — freectags releases all/context/sets on one ctags.
         let t = ctags {
@@ -7617,6 +7656,7 @@ mod tests {
 
     #[test]
     fn freecvdef_walks_vals_chain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2960-2981 — freecvdef walks vals freeing each cvval.
         let v_tail = cvval { name: Some("opt2".into()), ..Default::default() };
@@ -7636,6 +7676,7 @@ mod tests {
     /// the rest arg lands on `rest` with type CAA_REST.
     #[test]
     fn parse_cadef_simple_opt_and_rest() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7663,6 +7704,7 @@ mod tests {
     /// then `arg->num = anum - 1`).
     #[test]
     fn parse_cadef_numbered_positional_arg() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7682,6 +7724,7 @@ mod tests {
     /// return None (the cadef cache miss path picks this up).
     #[test]
     fn parse_cadef_doubled_arg_errors() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7698,6 +7741,7 @@ mod tests {
     /// added at the end via c:1462-1468).
     #[test]
     fn parse_cadef_xor_list_populated() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7717,6 +7761,7 @@ mod tests {
     /// `comptags[0]` with context="ctx", all=["tag1","tag2"], init=1.
     #[test]
     fn settags_populates_slot() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Clear slot to make test order-independent.
         if let Ok(mut tab) = comptags.lock() {
@@ -7742,6 +7787,7 @@ mod tests {
     /// pointing past the option name.
     #[test]
     fn ca_get_opt_exact_match() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7766,6 +7812,7 @@ mod tests {
     /// returning the first matching arg unconditionally.
     #[test]
     fn ca_get_arg_argsactive_zero_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7781,6 +7828,7 @@ mod tests {
     /// `n` inside `[min, num]` returns the matching node.
     #[test]
     fn ca_get_arg_in_range_active() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7801,6 +7849,7 @@ mod tests {
     /// with sep=',', descr="descr", vals chain of two cvvals.
     #[test]
     fn parse_cvdef_sep_and_two_vals() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let args = vec![
@@ -7829,6 +7878,7 @@ mod tests {
     /// sets in the snext chain are scanned.
     #[test]
     fn ca_foreign_opt_finds_in_other_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let other = cadef {
@@ -7858,6 +7908,7 @@ mod tests {
     /// position, the function returns without mutating any active flag.
     #[test]
     fn ca_inactive_guard_noop_keeps_active() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let mut d = cadef {
@@ -7875,6 +7926,7 @@ mod tests {
     /// c:1881 — with `opts=1`, every option's `active` clears.
     #[test]
     fn ca_inactive_opts_flag_deactivates_options() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
@@ -7909,6 +7961,7 @@ mod tests {
     /// Then `-T` reports empty sets (`1`), `-C` reads context.
     #[test]
     fn bin_comptags_init_and_context() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
@@ -7950,6 +8003,7 @@ mod tests {
     /// c:3178-3186 — cv_get_val finds a value by name; missing returns None.
     #[test]
     fn cv_get_val_hits_and_misses() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let d = cvdef {
             vals: Some(Box::new(cvval {
@@ -7975,6 +8029,7 @@ mod tests {
     /// call setup_ and verify they're cleared.
     #[test]
     fn setup_clears_all_caches() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Pre-fill.
@@ -8007,6 +8062,7 @@ mod tests {
     /// differs in not zeroing lasttaglevel.
     #[test]
     fn finish_frees_all_caches() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         if let Ok(mut cache) = cadef_cache.lock() {
             cache[1] = Some(Box::new(cadef::default()));
@@ -8037,6 +8093,7 @@ mod tests {
     /// rejected and returns add untouched.
     #[test]
     fn cfp_matcher_pats_left_anchor_zero_lalen_returns_empty_via_invalid_spec() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         // A malformed matcher should fall through parse_cmatcher's
@@ -8052,6 +8109,7 @@ mod tests {
     /// errors with "no tags registered".
     #[test]
     fn bin_comptry_no_taglevel_errors() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
         let saved_lvl = lasttaglevel.load(std::sync::atomic::Ordering::Relaxed);
@@ -8072,6 +8130,7 @@ mod tests {
     /// surviving tags.
     #[test]
     fn bin_comptry_plain_adds_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
         let saved_lvl = lasttaglevel.load(std::sync::atomic::Ordering::Relaxed);
@@ -8112,6 +8171,7 @@ mod tests {
     /// spec is empty (parse_cmatcher returns None).
     #[test]
     fn cfp_matcher_pats_empty_matcher_passthrough() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let r = cfp_matcher_pats("", "abc");
@@ -8122,6 +8182,7 @@ mod tests {
     /// each char verbatim.
     #[test]
     fn cfp_matcher_range_no_matchers_verbatim() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let ms: Vec<Option<Box<crate::ported::zle::comp_h::Cmatcher>>> =
             vec![None, None, None];
@@ -8135,6 +8196,7 @@ mod tests {
     /// CRT_EXPL header.
     #[test]
     fn cd_prep_groups_emits_expl_and_spec_runs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Seed cd_state: one set with two kind=0+desc entries.
         {
@@ -8184,6 +8246,7 @@ mod tests {
     /// With one name "dir" and pats ["*.c"], produces ["dir*.c"].
     #[test]
     fn cfp_bld_pats_concatenates_skipped_and_pat() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let out = cfp_bld_pats(0,
             &["dir".to_string()],
@@ -8196,6 +8259,7 @@ mod tests {
     /// add a dot-prefixed variant of each non-`.`-leading pattern.
     #[test]
     fn cfp_bld_pats_globdots_variant() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Seed COMPPREFIX with a leading dot.
         let m = crate::ported::zle::complete::COMPPREFIX
@@ -8216,6 +8280,7 @@ mod tests {
     /// c:4625 — cfp_opt_pats with empty compprefix passes pats through.
     #[test]
     fn cfp_opt_pats_passthrough_empty_compprefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = crate::ported::zle::complete::COMPPREFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()));
@@ -8229,6 +8294,7 @@ mod tests {
     /// compsuffix are empty (no anchoring context).
     #[test]
     fn cfp_test_exact_no_anchor_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let pm = crate::ported::zle::complete::COMPPREFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()));
@@ -8245,6 +8311,7 @@ mod tests {
     /// Sanity test: returns 0 on the empty-args path (no-op).
     #[test]
     fn bin_compgroups_empty_args_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let saved = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
         INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
@@ -8261,6 +8328,7 @@ mod tests {
     /// opts contains `-V`, 1 when `-J` (or default).
     #[test]
     fn cd_groups_want_sorting_respects_opts() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Default (no sets) → 1 (sorted).
         {
@@ -8284,6 +8352,7 @@ mod tests {
     /// c:233 — cd_sort compares Cdstr.sortstr lexically.
     #[test]
     fn cd_sort_orders_by_sortstr() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cdstr {
             sortstr: Some("apple".into()), ..Default::default()
@@ -8300,6 +8369,7 @@ mod tests {
     /// non-empty set with the str chain mirrored via `.run` links.
     #[test]
     fn cd_prep_default_builds_simple_run_per_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Seed cd_state with 2 sets, each 1 match.
         {
@@ -8342,6 +8412,7 @@ mod tests {
     /// c:846-895 — bin_compdescribe with invalid option returns 1.
     #[test]
     fn bin_compdescribe_rejects_bad_option() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
         INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
@@ -8360,6 +8431,7 @@ mod tests {
     /// only names starting with "dir/" and clears `amb`.
     #[test]
     fn cf_remove_other_filters_by_dir_head() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let names = vec![
             "dir/a".to_string(),
@@ -8377,6 +8449,7 @@ mod tests {
     /// returns None.
     #[test]
     fn cf_remove_other_no_slash_diverge_sets_amb() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let names = vec!["a".to_string(), "b".to_string()];
         let mut amb = 0;
@@ -8389,6 +8462,7 @@ mod tests {
     /// without touching `ign`.
     #[test]
     fn cf_ignore_no_style_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut ign: Vec<String> = vec!["x".into()];
         cf_ignore(&["/tmp".into()], &mut ign, "", "/tmp/foo");
@@ -8399,6 +8473,7 @@ mod tests {
     /// c:3691 — empty compqstack short-circuits bin_compquote to 0.
     #[test]
     fn bin_compquote_returns_zero_when_qstack_empty() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
         INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
@@ -8423,6 +8498,7 @@ mod tests {
     /// after parse_subst_string strips the quoting.
     #[test]
     fn cv_quote_get_val_unquotes_then_lookup() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let d = cvdef {
@@ -8442,6 +8518,7 @@ mod tests {
     /// c:3211-3217 — cv_inactive clears active for each name in xor.
     #[test]
     fn cv_inactive_clears_named_vals() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut d = cvdef {
             vals: Some(Box::new(cvval {

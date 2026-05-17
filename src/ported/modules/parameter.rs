@@ -132,6 +132,7 @@ mod paramtypestr_tests {
     /// `PM_TYPE(pm->node.flags)` then dyncat'd modifier chain.
     #[test]
     fn paramtypestr_matches_c_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         // c:53 — plain scalar.
         assert_eq!(paramtypestr(&make_pm(PM_SCALAR, 0)), "scalar");
         // c:55,63-64,81-82 — array + level=1 + PM_EXPORTED.
@@ -2664,6 +2665,7 @@ mod scan_callback_tests {
     /// callback fires exactly once with the right name.
     #[test]
     fn scanpmparameters_invokes_func_per_param() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode, PM_SCALAR};
         reset_counters();
         // Seed realparamtab.
@@ -2689,6 +2691,7 @@ mod scan_callback_tests {
     /// a spurious extra entry; this test catches it.
     #[test]
     fn scanpmhistory_empty_ring_invokes_zero_callbacks() {
+        let _g = crate::test_util::global_state_lock();
         reset_counters();
         let snapshot: Vec<_> = crate::ported::hist::hist_ring.lock().unwrap().drain(..).collect();
         scanpmhistory(std::ptr::null_mut(), Some(counting_func), 0);
@@ -2703,6 +2706,7 @@ mod scan_callback_tests {
     /// every `${jobtexts[1]}` query users hit.
     #[test]
     fn pmjobtext_empty_jobtab_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let s = pmjobtext(std::ptr::null_mut(), 1);
         assert_eq!(s, "");
     }
@@ -2712,6 +2716,7 @@ mod scan_callback_tests {
     /// out-of-range queries.
     #[test]
     fn pmjobstate_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         let s = pmjobstate(std::ptr::null_mut(), 9999);
         assert_eq!(s, "");
     }
@@ -2721,6 +2726,7 @@ mod scan_callback_tests {
     /// path string.
     #[test]
     fn pmjobdir_missing_job_falls_back_to_cwd() {
+        let _g = crate::test_util::global_state_lock();
         let s = pmjobdir(std::ptr::null_mut(), 9999);
         assert!(!s.is_empty(), "fallback to cwd must produce a non-empty path");
         assert!(s.starts_with('/') || s == "" || cfg!(not(unix)),
@@ -2733,6 +2739,7 @@ mod scan_callback_tests {
     /// silently lie about which modules are loaded.
     #[test]
     fn getpmmodule_unknown_module_marks_unset() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{PM_UNSET, PM_SPECIAL};
         let pm = getpmmodule(std::ptr::null_mut(), "definitely_not_a_loaded_module_xyz")
             .expect("must return Some");
@@ -2755,6 +2762,7 @@ mod setalias_tests {
     /// alias with the given value.
     #[test]
     fn setalias_inserts_entry_into_aliastab() {
+        let _g = crate::test_util::global_state_lock();
         let pm = param {
             node: hashnode { next: None, nam: "zshrs_test_alias_x".to_string(), flags: PM_SCALAR as i32 },
             u_data: 0, u_arr: None, u_str: None,
@@ -2797,26 +2805,31 @@ mod paramtypestr_table_tests {
     /// script (many shell scripts grep for "array"/"integer" output).
     #[test]
     fn integer_param_renders_as_integer() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_INTEGER)), "integer");
     }
 
     #[test]
     fn float_e_param_renders_as_float() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_EFLOAT)), "float");
     }
 
     #[test]
     fn float_f_param_renders_as_float() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_FFLOAT)), "float");
     }
 
     #[test]
     fn array_param_renders_as_array() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_ARRAY)), "array");
     }
 
     #[test]
     fn hashed_param_renders_as_association() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_HASHED)), "association");
     }
 
@@ -2826,6 +2839,7 @@ mod paramtypestr_table_tests {
     /// parsing in user scripts.
     #[test]
     fn readonly_modifier_appears_after_type_name() {
+        let _g = crate::test_util::global_state_lock();
         let s = paramtypestr(&pm(PM_INTEGER | PM_READONLY));
         assert!(s.contains("readonly"),
             "PM_READONLY must appear in type-string (got {s:?})");
@@ -2836,6 +2850,7 @@ mod paramtypestr_table_tests {
     /// regression where the suffix changes spelling.
     #[test]
     fn exported_modifier_renders_as_export_suffix() {
+        let _g = crate::test_util::global_state_lock();
         let s = paramtypestr(&pm(PM_INTEGER | PM_EXPORTED));
         assert!(s.contains("-export"),
             "PM_EXPORTED must produce '-export' suffix (got {s:?})");
@@ -2847,6 +2862,7 @@ mod paramtypestr_table_tests {
     /// break `local foo` reporting in nested function scopes.
     #[test]
     fn local_modifier_renders_when_level_nonzero() {
+        let _g = crate::test_util::global_state_lock();
         let mut p = pm(PM_INTEGER);
         p.level = 1;
         let s = paramtypestr(&p);
@@ -2860,6 +2876,7 @@ mod paramtypestr_table_tests {
     /// `${(t)varname}` for never-assigned params.
     #[test]
     fn unset_param_renders_as_empty_string() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UNSET;
         // Even with type + modifier flags set, PM_UNSET wins.
         let s = paramtypestr(&pm(PM_INTEGER | PM_UNSET | PM_READONLY));
@@ -2872,6 +2889,7 @@ mod paramtypestr_table_tests {
     /// exact string and the precedence over PM_INTEGER etc.
     #[test]
     fn autoload_param_renders_as_undefined() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_AUTOLOAD;
         assert_eq!(paramtypestr(&pm(PM_AUTOLOAD)), "undefined",
             "c:49-50 — PM_AUTOLOAD → 'undefined'");
@@ -2887,6 +2905,7 @@ mod paramtypestr_table_tests {
     /// the zero-type case breaks the most-common `${(t)foo}` path.
     #[test]
     fn scalar_param_renders_as_scalar() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&pm(PM_SCALAR)), "scalar",
             "c:53 — bare PM_SCALAR (zero type bits) → 'scalar'");
     }
@@ -2896,6 +2915,7 @@ mod paramtypestr_table_tests {
     /// nameref support in 5.10+).
     #[test]
     fn nameref_param_renders_as_nameref() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_NAMEREF;
         assert_eq!(paramtypestr(&pm(PM_NAMEREF)), "nameref",
             "c:54 — PM_NAMEREF → 'nameref'");
@@ -2908,6 +2928,7 @@ mod paramtypestr_table_tests {
     /// output for that flag.
     #[test]
     fn left_modifier_renders_dash_left_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_LEFT;
         let s = paramtypestr(&pm(PM_SCALAR | PM_LEFT));
         assert!(s.contains("-left"), "c:65-66 — PM_LEFT → '-left' (got {s:?})");
@@ -2915,6 +2936,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn right_b_modifier_renders_dash_right_blanks_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_RIGHT_B;
         let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_B));
         assert!(s.contains("-right_blanks"),
@@ -2923,6 +2945,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn right_z_modifier_renders_dash_right_zeros_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_RIGHT_Z;
         let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_Z));
         assert!(s.contains("-right_zeros"),
@@ -2931,6 +2954,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn lower_modifier_renders_dash_lower_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_LOWER;
         let s = paramtypestr(&pm(PM_SCALAR | PM_LOWER));
         assert!(s.contains("-lower"),
@@ -2939,6 +2963,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn upper_modifier_renders_dash_upper_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UPPER;
         let s = paramtypestr(&pm(PM_SCALAR | PM_UPPER));
         assert!(s.contains("-upper"),
@@ -2947,6 +2972,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn tagged_modifier_renders_dash_tag_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_TAGGED;
         let s = paramtypestr(&pm(PM_SCALAR | PM_TAGGED));
         assert!(s.contains("-tag"),
@@ -2955,6 +2981,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn tied_modifier_renders_dash_tied_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_TIED;
         let s = paramtypestr(&pm(PM_SCALAR | PM_TIED));
         assert!(s.contains("-tied"),
@@ -2963,6 +2990,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn unique_modifier_renders_dash_unique_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UNIQUE;
         let s = paramtypestr(&pm(PM_SCALAR | PM_UNIQUE));
         assert!(s.contains("-unique"),
@@ -2971,6 +2999,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn hide_modifier_renders_dash_hide_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_HIDE;
         let s = paramtypestr(&pm(PM_SCALAR | PM_HIDE));
         assert!(s.contains("-hide"),
@@ -2979,6 +3008,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn hideval_modifier_renders_dash_hideval_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_HIDEVAL;
         let s = paramtypestr(&pm(PM_SCALAR | PM_HIDEVAL));
         assert!(s.contains("-hideval"),
@@ -2987,6 +3017,7 @@ mod paramtypestr_table_tests {
 
     #[test]
     fn special_modifier_renders_dash_special_suffix() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_SPECIAL;
         let s = paramtypestr(&pm(PM_SCALAR | PM_SPECIAL));
         assert!(s.contains("-special"),
@@ -3001,6 +3032,7 @@ mod paramtypestr_table_tests {
     /// ecosystem.
     #[test]
     fn multiple_modifiers_concatenate_in_c_source_order() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{PM_LEFT, PM_READONLY, PM_EXPORTED};
         let mut p = pm(PM_INTEGER | PM_LEFT | PM_READONLY | PM_EXPORTED);
         p.level = 1;

@@ -2016,6 +2016,7 @@ mod tests {
     /// Port of `zcurses_strerror(int err)` from `Src/Modules/curses.c:233`.
     #[test]
     fn test_zcurses_strerror_table() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcurses_strerror(0), "unknown error");
         assert_eq!(zcurses_strerror(1), "window name invalid");
         assert_eq!(zcurses_strerror(2), "window already defined");
@@ -2025,6 +2026,7 @@ mod tests {
 
     #[test]
     fn test_zcurses_color_lookup() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zcurses_color("red"), COLOR_RED);
         assert_eq!(zcurses_color("default"), -1);
         assert_eq!(zcurses_color("magenta"), COLOR_MAGENTA);
@@ -2033,6 +2035,7 @@ mod tests {
 
     #[test]
     fn test_zcurses_validate_window_invalid_name() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         assert!(!zcurses_validate_window("", ZCURSES_UNUSED));
         assert_eq!(zc_errno_get(), ZCURSES_EINVALID);
@@ -2040,6 +2043,7 @@ mod tests {
 
     #[test]
     fn test_zcurses_validate_window_unused_when_already_defined() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         windows_lock().lock().unwrap().insert(
             "win1".into(),
@@ -2051,6 +2055,7 @@ mod tests {
 
     #[test]
     fn test_zcurses_validate_window_used_when_undefined() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         assert!(!zcurses_validate_window("nope", ZCURSES_USED));
         assert_eq!(zc_errno_get(), ZCURSES_EUNDEFINED);
@@ -2059,6 +2064,7 @@ mod tests {
     /// Port of `zccmd_delwin(const char *nam, char **args)` from `Src/Modules/curses.c:564`.
     #[test]
     fn test_zcurses_validate_window_success_used() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         windows_lock().lock().unwrap().insert(
             "stdscr".into(),
@@ -2070,6 +2076,7 @@ mod tests {
 
     #[test]
     fn test_zcurses_attrget_lookup() {
+        let _g = crate::test_util::global_state_lock();
         let w = zc_win::new("test", 5, 10, 0, 0);
         let bold = zcurses_attrget(&w, "bold").expect("bold should resolve");
         assert_eq!(bold.number, A_BOLD);
@@ -2078,6 +2085,7 @@ mod tests {
 
     #[test]
     fn test_features_returns_bintab_names() {
+        let _g = crate::test_util::global_state_lock();
         let mut features: Vec<String> = Vec::new();
         let rc = features_(std::ptr::null(), &mut features);
         assert_eq!(rc, 0);
@@ -2086,12 +2094,14 @@ mod tests {
 
     #[test]
     fn test_cleanup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(cleanup_(std::ptr::null()), 0);
     }
 
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_bin_zcurses_init_then_addwin_then_delwin() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         let init_args: Vec<String> = vec!["init".into()];
         assert_eq!(bin_zcurses("zcurses", &init_args, &_test_ops_, 0), 0);
@@ -2113,6 +2123,7 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_addwin_before_init_rejected() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         let add_args: Vec<String> = vec![
             "addwin".into(),
@@ -2127,6 +2138,7 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_addwin_duplicate_rejected() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add_args: Vec<String> = vec![
@@ -2146,6 +2158,7 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_delwin_undefined_rejected() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let del_args: Vec<String> = vec!["delwin".into(), "ghost".into()];
@@ -2156,6 +2169,7 @@ mod tests {
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_bin_zcurses_delwin_stdscr_rejected() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let del_args: Vec<String> = vec!["delwin".into(), "stdscr".into()];
@@ -2164,6 +2178,7 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_too_few_args() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         // addwin needs 5 args but we only give 2.
@@ -2173,6 +2188,7 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_unknown_subcommand() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         assert_eq!(
             bin_zcurses("zcurses", &["nope".into()], &_test_ops_, 0),
@@ -2182,12 +2198,14 @@ mod tests {
 
     #[test]
     fn test_bin_zcurses_no_args() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         assert_eq!(bin_zcurses("zcurses", &[], &_test_ops_, 0), 1);
     }
 
     #[test]
     fn test_zccmd_char_writes_into_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2205,6 +2223,7 @@ mod tests {
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_zccmd_border_draws_box() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2229,6 +2248,7 @@ mod tests {
     /// Port of `zccmd_scroll(const char *nam, char **args)` from `Src/Modules/curses.c:986`.
     #[test]
     fn test_zccmd_scroll_on_off() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2253,6 +2273,7 @@ mod tests {
     /// Port of `zccmd_resize(const char *nam, char **args)` from `Src/Modules/curses.c:1494`.
     #[test]
     fn test_zccmd_scroll_integer_advances_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2272,6 +2293,7 @@ mod tests {
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_zccmd_timeout_stores_value() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2291,6 +2313,7 @@ mod tests {
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_zccmd_touch_validates_each() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let touch_ok: Vec<String> = vec!["touch".into(), "stdscr".into()];
@@ -2303,6 +2326,7 @@ mod tests {
     /// Port of `bin_zcurses(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/curses.c:1568`.
     #[test]
     fn test_zccmd_resize_changes_stdscr() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let rs: Vec<String> = vec!["resize".into(), "30".into(), "100".into()];
@@ -2317,6 +2341,7 @@ mod tests {
 
     #[test]
     fn test_zccmd_resize_bad_third_arg() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let rs: Vec<String> = vec![
@@ -2331,6 +2356,7 @@ mod tests {
     /// Port of `zccmd_input(const char *nam, char **args)` from `Src/Modules/curses.c:1029`.
     #[test]
     fn test_zccmd_mouse_motion_toggle() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         // Default mask should not have REPORT_MOUSE_POSITION.
@@ -2350,6 +2376,7 @@ mod tests {
 
     #[test]
     fn test_zccmd_bg_with_color_pair() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
@@ -2369,6 +2396,7 @@ mod tests {
     /// Port of `zccmd_delwin(const char *nam, char **args)` from `Src/Modules/curses.c:564`.
     #[test]
     fn test_addwin_with_parent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = reset();
         bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let parent_args: Vec<String> = vec![

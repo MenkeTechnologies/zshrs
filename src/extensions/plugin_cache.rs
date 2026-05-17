@@ -781,6 +781,7 @@ mod migration_tests {
 
     #[test]
     fn opening_an_existing_db_drops_legacy_script_bytecode_table() {
+        let _g = crate::test_util::global_state_lock();
         // Simulate a pre-migration DB: open with an old schema that still
         // had script_bytecode, insert a row, close, then re-open via the
         // current `PluginCache::open` path. The migration in `init_schema`

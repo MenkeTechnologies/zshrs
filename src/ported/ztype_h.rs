@@ -212,6 +212,7 @@ mod tests {
     /// values per c:30-45. INAMESPC is u32-only (overflows u16).
     #[test]
     fn type_bits_are_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let all_u16: u16 = IDIGIT | IALNUM | IBLANK | INBLANK | ITOK
                          | ISEP | IALPHA | IIDENT | IUSER | ICNTRL
                          | IWORD | ISPECIAL | IMETA | IWSEP | INULL
@@ -223,6 +224,7 @@ mod tests {
     /// Verifies ZTF_* flag values per c:69-72.
     #[test]
     fn ztf_flags_correct() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZTF_INIT, 0x0001);
         assert_eq!(ZTF_INTERACT, 0x0002);
         assert_eq!(ZTF_SP_COMMA, 0x0004);
@@ -232,6 +234,7 @@ mod tests {
     /// Verifies `zistype` consults TYPTAB and masks (c:47).
     #[test]
     fn zistype_reads_typtab() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = TYPTAB.lock().unwrap()[b'X' as usize];
         TYPTAB.lock().unwrap()[b'X' as usize] = (IDIGIT | IALNUM) as u32;
@@ -244,6 +247,7 @@ mod tests {
     /// Verifies the predicate fns dispatch through zistype.
     #[test]
     fn idigit_dispatches_through_typtab() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = TYPTAB.lock().unwrap()[b'7' as usize];
         TYPTAB.lock().unwrap()[b'7' as usize] = IDIGIT as u32;
@@ -256,6 +260,7 @@ mod tests {
     /// non-ASCII input (c:75 multibyte branch).
     #[test]
     fn wc_zistype_falls_back_to_unicode_for_high_code_points() {
+        let _g = crate::test_util::global_state_lock();
         assert!(WC_ZISTYPE('é', IALPHA as u32));
         assert!(WC_ZISTYPE('é', IALNUM as u32));
         assert!(WC_ZISTYPE('é', IWORD as u32));
@@ -269,6 +274,7 @@ mod tests {
     /// Verifies `wc_isprint` rejects controls per c:79.
     #[test]
     fn wc_isprint_rejects_controls() {
+        let _g = crate::test_util::global_state_lock();
         assert!(WC_ISPRINT('a'));
         assert!(WC_ISPRINT(' '));
         assert!(WC_ISPRINT('é'));
@@ -279,6 +285,7 @@ mod tests {
     /// Verifies `zisprint` accepts space + graphic ASCII per c:89.
     #[test]
     fn zisprint_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert!(ZISPRINT(b' '));
         assert!(ZISPRINT(b'a'));
         assert!(ZISPRINT(b'~'));
@@ -293,6 +300,7 @@ mod tests {
     /// other iswspace chars) fails immediately.
     #[test]
     fn iblank_matches_ascii_typtab_set() {
+        let _g = crate::test_util::global_state_lock();
         // Ensure typtab is initialised — running another test first
         // wins the race; if it hasn't run we seed it explicitly.
         crate::ported::utils::inittyptab();
@@ -310,6 +318,7 @@ mod tests {
     /// tab, AND newline. Pin all three.
     #[test]
     fn inblank_matches_ascii_typtab_set() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         assert!(inblank(b' '),  "c:4192 — space");
         assert!(inblank(b'\t'), "c:4193 — tab");
@@ -326,6 +335,7 @@ mod tests {
     /// cases.
     #[test]
     fn idigit_covers_all_decimal_digits() {
+        let _g = crate::test_util::global_state_lock();
         crate::ported::utils::inittyptab();
         for d in b'0'..=b'9' {
             assert!(idigit(d), "'{}' must be IDIGIT", d as char);
@@ -346,6 +356,7 @@ mod tests {
     /// default IFS.
     #[test]
     fn isep_includes_default_ifs_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         assert!(isep(b' '),  "c:4216 — IFS contains space");
@@ -362,6 +373,7 @@ mod tests {
     /// `inblank()` returns true for at the c:4224 check.
     #[test]
     fn iwsep_subset_of_isep_for_inblank_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         assert!(iwsep(b' '),  "c:4228 — space is inblank → IWSEP");
@@ -379,6 +391,7 @@ mod tests {
     /// becomes true and old separator chars are dropped.
     #[test]
     fn ifssetfn_rebuilds_isep_typtab_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         let saved = crate::ported::params::ifsgetfn();
@@ -398,6 +411,7 @@ mod tests {
     /// the fix fails.
     #[test]
     fn iuser_includes_dash_dot_and_dash_token() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         assert!(iuser(b'-'), "c:4191 — '-' is IUSER");
@@ -417,6 +431,7 @@ mod tests {
     /// consults IWORD silently fell through to "non-word".
     #[test]
     fn iword_includes_default_wordchars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         // Default WORDCHARS chars (DEFAULT_WORDCHARS) all → IWORD.
@@ -441,6 +456,7 @@ mod tests {
     /// in pattern compilation.
     #[test]
     fn ispecial_includes_specchars_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         // Sample of SPECCHARS = "#$^*()=|{}[]`<>?~;&\n\t \\\'\"".
@@ -462,6 +478,7 @@ mod tests {
     /// Used by pattern compilation to detect glob metachars.
     #[test]
     fn ipattern_includes_patchars_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         // Every char in PATCHARS = "#^*()|[]<>?~\\".
@@ -484,6 +501,7 @@ mod tests {
     /// `iword(':')` becomes true and old WORDCHAR chars are dropped.
     #[test]
     fn wordcharssetfn_rebuilds_iword_typtab_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         let saved = crate::ported::params::wordcharsgetfn();
@@ -509,6 +527,7 @@ mod tests {
     /// Pin the round-trip: enable → re-init → comma is ISPECIAL.
     #[test]
     fn inittyptab_honours_ztf_sp_comma_flag() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Start clean.
         crate::ported::utils::inittyptab();
@@ -535,6 +554,7 @@ mod tests {
     /// reassigned later in the init.
     #[test]
     fn icntrl_covers_c0_controls_and_del() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         for b in 0u8..32u8 {

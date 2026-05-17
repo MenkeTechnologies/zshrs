@@ -1303,6 +1303,7 @@ mod tests {
 
     #[test]
     fn rthingy_creates_then_refs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1316,6 +1317,7 @@ mod tests {
 
     #[test]
     fn refthingy_unrefthingy_roundtrip() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1333,6 +1335,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_returns_false_for_missing() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1343,6 +1346,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_refs_existing() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1357,6 +1361,7 @@ mod tests {
     /// catches a regression that resets the global on every call.
     #[test]
     fn createthingytab_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1379,6 +1384,7 @@ mod tests {
     /// destroys widget bindings unexpectedly.
     #[test]
     fn emptythingytab_skips_disabled_rthingy_entries() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1399,6 +1405,7 @@ mod tests {
     /// unwrap()s the table.get would crash the shell on widget unbind.
     #[test]
     fn freethingynode_on_missing_name_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1410,6 +1417,7 @@ mod tests {
     /// leaves a dangling rc=0 entry in the table.
     #[test]
     fn unrefthingy_at_rc_one_frees_entry() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1426,6 +1434,7 @@ mod tests {
     /// panic on already-freed entries.
     #[test]
     fn unrefthingy_on_missing_is_safe() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1438,6 +1447,7 @@ mod tests {
     /// caught immediately.
     #[test]
     fn makethingynode_starts_at_rc_zero_with_disabled_flag() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let n = makethingynode();
         assert_eq!(n.rc, 0, "fresh node must have rc=0");
@@ -1449,6 +1459,7 @@ mod tests {
     /// does NOT create a second entry. Pin the dedup-by-name property.
     #[test]
     fn rthingy_same_name_twice_only_increments_refcount() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
@@ -1466,6 +1477,7 @@ mod tests {
     /// only shows under multiple inserts/removes.
     #[test]
     fn many_rthingy_unref_cycles_leave_no_residue() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();

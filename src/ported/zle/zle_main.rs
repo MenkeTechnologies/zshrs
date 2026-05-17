@@ -1660,6 +1660,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn ztmouttp_discriminant_values() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:401-428 — sequential 0..=3.
         assert_eq!(ztmouttp::ZTM_NONE as i32, 0);
@@ -1670,6 +1671,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn ztmout_default_carries_none_type() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let t = ztmout { tp: ztmouttp::ZTM_NONE, exp100ths: 0 };
         assert_eq!(t.tp, ztmouttp::ZTM_NONE);
@@ -1677,6 +1679,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn findfunc_default_is_empty() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1927 — fresh state: no func, zero hits, no msg.
         let f = findfunc::default();
@@ -1687,6 +1690,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn findfunc_can_accumulate_message() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut f = findfunc { func: Some(42), found: 0, msg: String::new() };
         f.found += 1;
@@ -2287,6 +2291,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 7;
@@ -2300,6 +2305,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_resets_modifier_when_prefixflag_cleared() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 9;
@@ -2312,6 +2318,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_single_byte_binding() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
@@ -2321,6 +2328,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_multi_byte_sequence() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
@@ -2337,6 +2345,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_returns_none_on_eof() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
@@ -2353,6 +2362,7 @@ mod tests {
 
     #[test]
     fn handle_undo_snapshots_line_for_subsequent_diff() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2365,6 +2375,7 @@ mod tests {
 
     #[test]
     fn in_vi_cmd_mode_reflects_active_keymap_name() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_keymap::curkeymapname() = "emacs".to_string();
         assert!(!in_vi_cmd_mode());
@@ -2376,6 +2387,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_plain_bytes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:375 — non-Meta bytes pushed back in reverse.
         crate::ported::zle::zle_main::zle_reset();
@@ -2391,6 +2403,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_decodes_meta_pair() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:370-373 — `\x83 X` decodes to (X XOR 0x20). Meta = 0x83.
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
@@ -2404,6 +2417,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_mixed_meta_and_plain() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
@@ -2418,6 +2432,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_empty_input() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"");

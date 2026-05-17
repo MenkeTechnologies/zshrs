@@ -1094,6 +1094,7 @@ mod tests {
 
     #[test]
     fn loads_simple_echo() {
+        let _g = crate::test_util::global_state_lock();
         let (_tmp, zwc) = compile_via_zsh("echo hello\n").expect("compile");
         let prog = decode_zwc_first(&zwc)
             .expect("load")

@@ -18,6 +18,7 @@ mod tests {
     /// panic — both regressions zsh users would hit immediately.
     #[test]
     fn ulimit_with_no_args_succeeds() {
+        let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(), argscount: 0, argsalloc: 0,

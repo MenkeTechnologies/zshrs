@@ -2181,6 +2181,7 @@ mod tests {
 
     #[test]
     fn acceptline_sets_done() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:401-404 — `done = 1; return 0`.
         DONE.store(0, Ordering::SeqCst);
@@ -2191,6 +2192,7 @@ mod tests {
 
     #[test]
     fn undefinedkey_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:892-894 — single `return 1` body.
         assert_eq!(undefinedkey(), 1);
@@ -2198,6 +2200,7 @@ mod tests {
 
     #[test]
     fn sendbreak_sets_errflag_and_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
         use std::sync::atomic::Ordering;
@@ -2216,6 +2219,7 @@ mod tests {
 
     #[test]
     fn sendbreak_preserves_existing_errflag_bits() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
         // c:1146 — `errflag |= ...` (OR-equal, not assign).
@@ -2234,6 +2238,7 @@ mod tests {
 
     #[test]
     fn negargument_sets_tmult_neg_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:976-981 — sets tmult=-1 + TMULT|NEG flags + prefixflag.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
@@ -2252,6 +2257,7 @@ mod tests {
 
     #[test]
     fn negargument_refuses_when_tmult_in_flight() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:976-977 — if MOD_TMULT already set → return 1.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
@@ -2266,6 +2272,7 @@ mod tests {
 
     #[test]
     fn overwritemode_toggles_insmode() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:845 — `insmode ^= 1`.
         crate::ported::zle::zle_main::zle_reset();
@@ -2280,6 +2287,7 @@ mod tests {
 
     #[test]
     fn argumentbase_with_arg_sets_base() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1043 — parse arg, c:1050 set zmod.base.
         crate::ported::zle::zle_main::zle_reset();
@@ -2295,6 +2303,7 @@ mod tests {
 
     #[test]
     fn argumentbase_no_arg_uses_zmod_mult() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1045 — fallback to zmod.mult when no arg.
         crate::ported::zle::zle_main::zle_reset();
@@ -2305,6 +2314,7 @@ mod tests {
 
     #[test]
     fn argumentbase_rejects_below_two() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1047-1048 — base < 2 → return 1, state unchanged.
         crate::ported::zle::zle_main::zle_reset();
@@ -2316,6 +2326,7 @@ mod tests {
 
     #[test]
     fn argumentbase_rejects_above_36() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1047-1048 — base > 36 → return 1.
         crate::ported::zle::zle_main::zle_reset();
@@ -2327,6 +2338,7 @@ mod tests {
 
     #[test]
     fn argumentbase_hex_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1043 — `zstrtol(s, NULL, 0)`: '0x10' → 16.
         crate::ported::zle::zle_main::zle_reset();
@@ -2336,6 +2348,7 @@ mod tests {
 
     #[test]
     fn argumentbase_octal_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1043 — '010' → octal 8.
         crate::ported::zle::zle_main::zle_reset();
@@ -2347,6 +2360,7 @@ mod tests {
 
     #[test]
     fn parsedigit_decimal_base() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1092 — base=10, '0'..'9' → 0..9.
         crate::ported::zle::zle_main::zle_reset();
@@ -2360,6 +2374,7 @@ mod tests {
 
     #[test]
     fn parsedigit_octal_base() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1092 — base=8, '0'..'7'.
         crate::ported::zle::zle_main::zle_reset();
@@ -2371,6 +2386,7 @@ mod tests {
 
     #[test]
     fn parsedigit_hex_lowercase() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1083 — base=16, 'a'..'f' → 10..15.
         crate::ported::zle::zle_main::zle_reset();
@@ -2383,6 +2399,7 @@ mod tests {
 
     #[test]
     fn parsedigit_hex_uppercase() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1085 — base=16, 'A'..'F' → 10..15.
         crate::ported::zle::zle_main::zle_reset();
@@ -2393,6 +2410,7 @@ mod tests {
 
     #[test]
     fn parsedigit_hex_digits_still_work() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1087 — base > 10 still accepts '0'..'9' via idigit branch.
         crate::ported::zle::zle_main::zle_reset();
@@ -2402,6 +2420,7 @@ mod tests {
 
     #[test]
     fn parsedigit_strips_meta_bit() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1077 — `inkey &= 0x7f`. 0xb5 = '5' | 0x80 → strips to '5'.
         crate::ported::zle::zle_main::zle_reset();
@@ -2413,6 +2432,7 @@ mod tests {
 
     #[test]
     fn digitargument_first_digit_no_tmult() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1050-1051 — `if (!TMULT) tmult = 0`. First digit: tmult=0
         // then tmult = 0*10 + 1*5 = 5.
@@ -2431,6 +2451,7 @@ mod tests {
 
     #[test]
     fn digitargument_second_digit_accumulates() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1058 — second digit: tmult = 5*10 + 1*7 = 57.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
@@ -2446,6 +2467,7 @@ mod tests {
 
     #[test]
     fn digitargument_invalid_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1047-1048 — parsedigit < 0 → return 1.
         crate::ported::zle::zle_main::zle_reset();
@@ -2456,6 +2478,7 @@ mod tests {
 
     #[test]
     fn digitargument_neg_flag_replaces_tmult() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054-1056 — MOD_NEG: tmult = sign * newdigit, NEG cleared.
         // sign = -1 (zmult<0); first digit '3' → tmult = -1*3 = -3.
@@ -2477,6 +2500,7 @@ mod tests {
 
     #[test]
     fn transpose_swap_equal_halves() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:254 — swap two equal-length adjacent slices.
         crate::ported::zle::zle_main::zle_reset();
@@ -2490,6 +2514,7 @@ mod tests {
 
     #[test]
     fn transpose_swap_unequal_halves() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // First chunk len 1, second len 3.
         crate::ported::zle::zle_main::zle_reset();
@@ -2503,6 +2528,7 @@ mod tests {
 
     #[test]
     fn transpose_swap_first_longer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // First chunk len 3, second len 1.
         crate::ported::zle::zle_main::zle_reset();
@@ -2516,6 +2542,7 @@ mod tests {
 
     #[test]
     fn transpose_swap_mid_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Swap not at the start.
         crate::ported::zle::zle_main::zle_reset();
@@ -2531,6 +2558,7 @@ mod tests {
 
     #[test]
     fn fixunmeta_strips_meta_and_normalizes_cr() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::compcore::LASTCHAR.store((0x80 | b'a' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         fixunmeta();
@@ -2542,6 +2570,7 @@ mod tests {
 
     #[test]
     fn selfinsert_inserts_lastchar() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2555,6 +2584,7 @@ mod tests {
 
     #[test]
     fn selfinsertunmeta_chains_fixunmeta_and_selfinsert() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -2568,6 +2598,7 @@ mod tests {
 
     #[test]
     fn deletechar_removes_n_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -2581,6 +2612,7 @@ mod tests {
 
     #[test]
     fn deletechar_returns_one_at_eol() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -2591,6 +2623,7 @@ mod tests {
 
     #[test]
     fn backwarddeletechar_clamps_to_zlecs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2604,6 +2637,7 @@ mod tests {
 
     #[test]
     fn killline_kills_to_eol_and_pushes_killring() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
@@ -2619,6 +2653,7 @@ mod tests {
 
     #[test]
     fn killbuffer_clears_and_pushes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2633,6 +2668,7 @@ mod tests {
 
     #[test]
     fn killwholeline_drops_one_line() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
@@ -2645,6 +2681,7 @@ mod tests {
 
     #[test]
     fn copyregionaskill_copies_between_point_mark() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -2660,6 +2697,7 @@ mod tests {
 
     #[test]
     fn regionlines_returns_bol_eol_around_region() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
@@ -2673,6 +2711,7 @@ mod tests {
 
     #[test]
     fn killregion_drains_between_mark_and_cursor() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
@@ -2687,6 +2726,7 @@ mod tests {
 
     #[test]
     fn quoteline_wraps_in_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2697,6 +2737,7 @@ mod tests {
 
     #[test]
     fn quoteline_escapes_internal_quote() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "it's".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
@@ -2707,6 +2748,7 @@ mod tests {
 
     #[test]
     fn makequote_handles_no_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let s: Vec<char> = "abc".chars().collect();
         let q = makequote(&s);
@@ -2715,6 +2757,7 @@ mod tests {
 
     #[test]
     fn makequote_escapes_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let s: Vec<char> = "a'b".chars().collect();
         let q = makequote(&s);
@@ -2723,6 +2766,7 @@ mod tests {
 
     #[test]
     fn pastebuf_inserts_at_cursor_position_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2735,6 +2779,7 @@ mod tests {
 
     #[test]
     fn pastebuf_inserts_after_cursor_position_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -2748,6 +2793,7 @@ mod tests {
 
     #[test]
     fn yankpop_returns_one_when_lastcmd_not_yank() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Default lastcmd = empty (no YANK flag).
         assert_eq!(yankpop(), 1);
@@ -2755,6 +2801,7 @@ mod tests {
 
     #[test]
     fn zle_usable_when_active_and_no_compfunc() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::builtins::sched::zleactive;
         use crate::ported::zle::complete::INCOMPFUNC;
@@ -2776,6 +2823,7 @@ mod tests {
     /// hits the c:943 path `if (inkey >= '0' && inkey < '0' + zmod.base)`.
     #[test]
     fn parsedigit_decimal_recognises_zero_through_nine() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 10);
         for d in 0..=9 {
@@ -2790,6 +2838,7 @@ mod tests {
     /// so 'g'/'G' fall through to `return -1` at c:941.
     #[test]
     fn parsedigit_hex_recognises_full_alphabet() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 16;
         assert_eq!(parsedigit(b'a' as i32), 10);
@@ -2807,6 +2856,7 @@ mod tests {
     /// '8' and '9', which fall through to `return -1` at c:945.
     #[test]
     fn parsedigit_octal_rejects_eight_and_nine() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 8;
         assert_eq!(parsedigit(b'0' as i32), 0);
@@ -2819,6 +2869,7 @@ mod tests {
     /// path.
     #[test]
     fn parsedigit_rejects_non_digit_inputs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(parsedigit(b' '  as i32), -1);
         assert_eq!(parsedigit(b'.'  as i32), -1);
@@ -2834,6 +2885,7 @@ mod tests {
     /// as 5.
     #[test]
     fn parsedigit_strips_meta_bit_before_classification() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         for d in 0..=9 {
             let meta = (b'0' as i32 + d) | 0x80;
@@ -2850,6 +2902,7 @@ mod tests {
     /// char.
     #[test]
     fn makequote_wraps_plain_input_in_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let out: String = makequote(&"hello".chars().collect::<Vec<_>>()).iter().collect();
         assert_eq!(out, "'hello'");
     }
@@ -2858,6 +2911,7 @@ mod tests {
     /// `'\''`: close-quote, backslash, literal quote, re-open.
     #[test]
     fn makequote_escapes_embedded_single_quote() {
+        let _g = crate::test_util::global_state_lock();
         let out: String = makequote(&"it's".chars().collect::<Vec<_>>()).iter().collect();
         assert_eq!(out, r#"'it'\''s'"#);
     }
@@ -2866,6 +2920,7 @@ mod tests {
     /// drive output length to `4 + 2 + 6 = 12` chars.
     #[test]
     fn makequote_handles_consecutive_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let out: String = makequote(&"a''b".chars().collect::<Vec<_>>()).iter().collect();
         assert_eq!(out, r#"'a'\'''\''b'"#);
         assert_eq!(out.len(), 12);
@@ -2876,6 +2931,7 @@ mod tests {
     /// iterations). Output is the 2-char string `''`.
     #[test]
     fn makequote_empty_input_returns_pair_of_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let out: String = makequote(&[]).iter().collect();
         assert_eq!(out, "''", "c:1213+c:1222 — quotes fire unconditionally");
     }
@@ -2887,6 +2943,7 @@ mod tests {
     /// after it.
     #[test]
     fn transpose_swap_rotates_two_adjacent_slices() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         {
             let mut z = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
@@ -2906,6 +2963,7 @@ mod tests {
     /// pair this with the asymmetric test above to catch it.
     #[test]
     fn transpose_swap_equal_length_halves() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         {
             let mut z = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();

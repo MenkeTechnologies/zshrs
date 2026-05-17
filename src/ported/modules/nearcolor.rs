@@ -470,6 +470,7 @@ mod tests {
     /// (L≈0, a≈0, b≈0) — port of c:50 with red=green=blue=0.
     #[test]
     fn rgb_to_lab_black_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut lab = cielab::default();
         RGBtoLAB(0, 0, 0, &mut lab);
         assert!(lab.L.abs() < 0.5);
@@ -481,6 +482,7 @@ mod tests {
     /// invariant when `lab1 == lab2`.
     #[test]
     fn deltae_self_is_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut lab = cielab::default();
         RGBtoLAB(123, 45, 67, &mut lab);
         assert!(deltae(&lab, &lab).abs() < 1e-9);
@@ -490,6 +492,7 @@ mod tests {
     /// palette (>= 15) — sanity-check on the c:142-143 final-index formula.
     #[test]
     fn map_rgb_to_256_white_is_15_or_higher() {
+        let _g = crate::test_util::global_state_lock();
         let idx = mapRGBto256(0xff, 0xff, 0xff);
         assert!(idx >= 15);
     }
@@ -498,6 +501,7 @@ mod tests {
     /// c:102-103 final-index formula.
     #[test]
     fn map_rgb_to_88_white_is_in_range() {
+        let _g = crate::test_util::global_state_lock();
         let idx = mapRGBto88(0xff, 0xff, 0xff);
         assert!((16..=87).contains(&idx) || idx >= 77);
     }
@@ -507,6 +511,7 @@ mod tests {
     /// per c:152-156: 256→`mapRGBto256+1`, 88→`mapRGBto88+1`, otherwise -1.
     #[test]
     fn getnearestcolor_dispatches_on_tccolours() {
+        let _g = crate::test_util::global_state_lock();
         let saved = tccolours.load(Ordering::SeqCst);
         let col = color_rgb { red: 0xff, green: 0xff, blue: 0xff };
 
@@ -532,6 +537,7 @@ mod tests {
     /// into a multiply with a sign drift).
     #[test]
     fn deltae_is_symmetric() {
+        let _g = crate::test_util::global_state_lock();
         let mut a = cielab::default();
         let mut b = cielab::default();
         RGBtoLAB(200, 50, 25, &mut a);
@@ -546,6 +552,7 @@ mod tests {
     /// returns 0 (or NaN) for unequal inputs fails loudly.
     #[test]
     fn deltae_distinct_colors_is_positive() {
+        let _g = crate::test_util::global_state_lock();
         let mut white = cielab::default();
         let mut black = cielab::default();
         RGBtoLAB(0xff, 0xff, 0xff, &mut white);
@@ -562,6 +569,7 @@ mod tests {
     /// resolve to exactly 0 for black.
     #[test]
     fn rgb_to_lab_pure_black_yields_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut lab = cielab::default();
         RGBtoLAB(0, 0, 0, &mut lab);
         assert!(lab.L.abs() < 1e-9, "L for black = {}; should be 0", lab.L);
@@ -574,6 +582,7 @@ mod tests {
     /// wrong D65 whitepoint scaling factor at c:60-62.
     #[test]
     fn rgb_to_lab_pure_white_has_lightness_near_100() {
+        let _g = crate::test_util::global_state_lock();
         let mut lab = cielab::default();
         RGBtoLAB(0xff, 0xff, 0xff, &mut lab);
         assert!((lab.L - 100.0).abs() < 1.0,
@@ -585,6 +594,7 @@ mod tests {
     /// (`16 + 0*36 + 0*6 + 0`).
     #[test]
     fn map_rgb_to_256_black_is_16() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto256(0, 0, 0), 16);
     }
 
@@ -592,6 +602,7 @@ mod tests {
     /// of the cube at r=5, g=0, b=0 → `16 + 5*36 = 196`.
     #[test]
     fn map_rgb_to_256_pure_red_is_196() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto256(0xff, 0, 0), 196);
     }
 
@@ -599,6 +610,7 @@ mod tests {
     /// → `16 + 0 + 5*6 + 0 = 46`.
     #[test]
     fn map_rgb_to_256_pure_green_is_46() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto256(0, 0xff, 0), 46);
     }
 
@@ -606,6 +618,7 @@ mod tests {
     /// → `16 + 0 + 0 + 5 = 21`.
     #[test]
     fn map_rgb_to_256_pure_blue_is_21() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto256(0, 0, 0xff), 21);
     }
 
@@ -613,6 +626,7 @@ mod tests {
     /// → `16 + 0 + 0 + 0 = 16`. Symmetry with the 256-colour case.
     #[test]
     fn map_rgb_to_88_black_is_16() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto88(0, 0, 0), 16);
     }
 
@@ -620,6 +634,7 @@ mod tests {
     /// the 4-level RGB ramp at c:76), g=b=0 → `16 + 3*16 + 0 + 0 = 64`.
     #[test]
     fn map_rgb_to_88_pure_red_is_64() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mapRGBto88(0xff, 0, 0), 64);
     }
 
@@ -629,6 +644,7 @@ mod tests {
     /// invokes `mapRGBto256` regardless of palette size.
     #[test]
     fn getnearestcolor_unknown_palette_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
         let saved = tccolours.load(Ordering::SeqCst);
         tccolours.store(0, Ordering::SeqCst);
         let col = color_rgb { red: 100, green: 100, blue: 100 };
@@ -640,6 +656,7 @@ mod tests {
     /// c:169-220 — module lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

@@ -159,6 +159,7 @@ mod tests {
     /// Test against a known-existing file and a known-missing file.
     #[test]
     fn check_dotfile_returns_zero_when_file_exists() {
+        let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         let p = tmp.join("zshrs_test_dotfile_exists");
         fs::write(&p, "").expect("write tmp");
@@ -168,6 +169,7 @@ mod tests {
 
     #[test]
     fn check_dotfile_returns_minus_one_when_missing() {
+        let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         // Use a name guaranteed not to exist.
         assert_eq!(check_dotfile(tmp.to_str().unwrap(), "zshrs_test_definitely_nothere_xyz"), -1);
@@ -176,6 +178,7 @@ mod tests {
     /// Module entry points all return 0 per `Src/Modules/newuser.c:37-116`.
     #[test]
     fn module_entry_points_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(setup_(std::ptr::null()),   0);
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()),  0);

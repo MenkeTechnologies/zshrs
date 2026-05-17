@@ -294,35 +294,41 @@ mod tests {
 
     #[test]
     fn test_dupstring() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstring("hello"), "hello");
         assert_eq!(dupstring(""), "");
     }
 
     #[test]
     fn test_dupstring_wlen() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstring_wlen("hello", 3), "hel");
         assert_eq!(dupstring_wlen("hi", 10), "hi");
     }
 
     #[test]
     fn test_tricat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(tricat("a", "b", "c"), "abc");
         assert_eq!(tricat("hello", " ", "world"), "hello world");
     }
 
     #[test]
     fn test_bicat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(bicat("hello", "world"), "helloworld");
     }
 
     #[test]
     fn test_strend() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strend("hello"), Some('o'));
         assert_eq!(strend(""), None);
     }
 
     #[test]
     fn test_zstrcmp_basic() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zstrcmp("abc", "abc", 0), Ordering::Equal);
         assert_eq!(zstrcmp("abc", "abd", 0), Ordering::Less);
         assert_eq!(zstrcmp("abd", "abc", 0), Ordering::Greater);
@@ -330,6 +336,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let flags = sort_flags::SORTIT_IGNORING_CASE;
         assert_eq!(zstrcmp("ABC", "abc", flags), Ordering::Equal);
         assert_eq!(zstrcmp("ABC", "ABD", flags), Ordering::Less);
@@ -337,12 +344,14 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_ignore_backslash() {
+        let _g = crate::test_util::global_state_lock();
         let flags = sort_flags::SORTIT_IGNORING_BACKSLASHES;
         assert_eq!(zstrcmp("a\\bc", "abc", flags), Ordering::Equal);
     }
 
     #[test]
     fn test_zstrcmp_numeric() {
+        let _g = crate::test_util::global_state_lock();
         let flags = sort_flags::SORTIT_NUMERICALLY;
         assert_eq!(zstrcmp("file2", "file10", flags), Ordering::Less);
         assert_eq!(zstrcmp("file10", "file2", flags), Ordering::Greater);
@@ -351,6 +360,7 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_numeric_signed() {
+        let _g = crate::test_util::global_state_lock();
         let flags = sort_flags::SORTIT_NUMERICALLY_SIGNED;
         assert_eq!(zstrcmp("-5", "3", flags), Ordering::Less);
         assert_eq!(zstrcmp("-10", "-2", flags), Ordering::Less);
@@ -358,6 +368,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec![
             "file10".to_string(),
             "file2".to_string(),
@@ -369,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_strmetasort_backwards() {
+        let _g = crate::test_util::global_state_lock();
         let mut arr = vec!["a".to_string(), "c".to_string(), "b".to_string()];
         strmetasort(&mut arr, sort_flags::SORTIT_BACKWARDS);
         assert_eq!(arr, vec!["c", "b", "a"]);
@@ -376,23 +388,27 @@ mod tests {
 
     #[test]
     fn test_natural_cmp() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(natural_cmp("item2", "item10"), Ordering::Less);
     }
 
     #[test]
     fn test_strcasecmp() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strcasecmp("Hello", "HELLO"), Ordering::Equal);
         assert_eq!(strcasecmp("abc", "ABD"), Ordering::Less);
     }
 
     #[test]
     fn test_strstr() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strstr("hello world", "world"), Some(6));
         assert_eq!(strstr("hello", "xyz"), None);
     }
 
     #[test]
     fn test_strprefix_suffix() {
+        let _g = crate::test_util::global_state_lock();
         assert!(strprefix("hello", "hel"));
         assert!(!strprefix("hello", "ell"));
         assert!(strsuffix("hello", "llo"));
@@ -401,22 +417,26 @@ mod tests {
 
     #[test]
     fn test_strjoin() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strjoin(["a", "b", "c"], ","), "a,b,c");
         assert_eq!(strjoin(Vec::<&str>::new(), ","), "");
     }
 
     #[test]
     fn test_strsplit() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strsplit("a,b,c", ','), vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_strtrim() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strtrim("  hello  "), "hello");
     }
 
     #[test]
     fn test_case_conversion() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strlower("HeLLo"), "hello");
         assert_eq!(strupper("HeLLo"), "HELLO");
     }

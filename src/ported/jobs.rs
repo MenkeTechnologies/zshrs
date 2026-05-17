@@ -2768,6 +2768,7 @@ mod tests {
 
     #[test]
     fn test_process_new() {
+        let _g = crate::test_util::global_state_lock();
         let proc = Process::new(1234);
         assert_eq!(proc.pid, 1234);
         assert!(proc.is_running());
@@ -2775,6 +2776,7 @@ mod tests {
 
     #[test]
     fn test_job_new() {
+        let _g = crate::test_util::global_state_lock();
         let job = Job::new();
         assert_eq!(job.stat, 0);
         assert!(!job.is_done());
@@ -2786,6 +2788,7 @@ mod tests {
 
     #[test]
     fn test_job_make_running() {
+        let _g = crate::test_util::global_state_lock();
         let mut job = Job::new();
         job.stat |= stat::STOPPED;
         job.procs.push(Process {
@@ -2800,6 +2803,7 @@ mod tests {
 
     #[test]
     fn test_format_job() {
+        let _g = crate::test_util::global_state_lock();
         let mut job = Job::new();
         job.text = "vim file.txt".to_string();
         job.stat |= stat::STOPPED;
@@ -2822,6 +2826,7 @@ mod tests {
 
     #[test]
     fn test_isanum_handles_minus() {
+        let _g = crate::test_util::global_state_lock();
         // C: while (*s == '-' || idigit(*s)) s++; return *s == '\0';
         assert!(isanum("123"));
         assert!(isanum("-1"));      // previous job spec
@@ -2834,6 +2839,7 @@ mod tests {
 
     #[test]
     fn test_havefiles_walks_table() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab = vec![Job::new(), Job::new(), Job::new()];
         tab[1].stat = stat::INUSE;
         tab[1].filelist = vec!["/tmp/foo".to_string()];
@@ -2849,6 +2855,7 @@ mod tests {
 
     #[test]
     fn test_storepipestats_decodes_status() {
+        let _g = crate::test_util::global_state_lock();
         let mut job = Job::new();
         // Process 1: exit 0
         let mut p1 = Process::new(100);
@@ -2870,6 +2877,7 @@ mod tests {
 
     #[test]
     fn test_expandjobtab_respects_max() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab = vec![Job::new(); 950];
         // 950 + 50 = 1000 ≤ MAX_MAXJOBS, OK.
         assert!(expandjobtab(&mut tab, 0));
@@ -2881,6 +2889,7 @@ mod tests {
 
     #[test]
     fn test_addfilelist_fd_vs_name() {
+        let _g = crate::test_util::global_state_lock();
         let mut job = Job::new();
         addfilelist(&mut job, Some("/tmp/zshrs-test.X"), -1);
         addfilelist(&mut job, None, 7);
@@ -2891,6 +2900,7 @@ mod tests {
 
     #[test]
     fn test_hasprocs_index_bounded() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab = vec![Job::new(), Job::new()];
         tab[0].procs.push(Process::new(1));
         assert!(hasprocs(&tab, 0));
@@ -2901,6 +2911,7 @@ mod tests {
 
     #[test]
     fn test_makerunning_clears_stopped() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab = vec![Job::new(), Job::new()];
         tab[0].stat = stat::STOPPED;
         let mut p = Process::new(42);
@@ -2915,6 +2926,7 @@ mod tests {
 
     #[test]
     fn sigmsg_known_signals_render_canonical_text() {
+        let _g = crate::test_util::global_state_lock();
         // Verifies the SIG_MSG lookup table matches C's sig_msg[] for
         // the signals that exist on every Unix. These strings are part
         // of the user-visible output of `jobs -l` / signal-death
@@ -2932,6 +2944,7 @@ mod tests {
 
     #[test]
     fn sigmsg_unknown_signal_returns_default() {
+        let _g = crate::test_util::global_state_lock();
         // c:1118 — `sig <= SIGCOUNT ? sig_msg[sig] : unknown`. Pick a
         // signal number outside the standard set (libc gives no
         // SIGCOUNT abstraction, so use a deliberately-high number).
@@ -2945,6 +2958,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn get_usage_returns_non_negative_times() {
+        let _g = crate::test_util::global_state_lock();
         // C: getrusage(RUSAGE_CHILDREN, &child_usage). Even without
         // children, both fields must be >= 0 — the closure that maps
         // (tv_sec, tv_usec) → microseconds shouldn't underflow.
@@ -2958,6 +2972,7 @@ mod tests {
     /// dropping them breaks every time-output parser in user scripts.
     #[test]
     fn printhhmmss_formats_with_colons_and_dot() {
+        let _g = crate::test_util::global_state_lock();
         let s = printhhmmss(3661.5);
         assert!(s.contains(':'));
         assert!(s.contains('.'), "millis must be present after dot (got {s:?})");
@@ -2966,6 +2981,7 @@ mod tests {
     /// c:752 — zero seconds renders cleanly (no `-0` artifact).
     #[test]
     fn printhhmmss_zero_seconds_well_formed() {
+        let _g = crate::test_util::global_state_lock();
         let s = printhhmmss(0.0);
         assert!(!s.starts_with('-'),
             "zero must not render with leading minus (got {s:?})");
@@ -2977,6 +2993,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn get_clktck_returns_positive_value() {
+        let _g = crate::test_util::global_state_lock();
         assert!(get_clktck() > 0, "_SC_CLK_TCK must be positive");
     }
 
@@ -2985,6 +3002,7 @@ mod tests {
     /// Regression that retains entries on disown would leak them.
     #[test]
     fn deletefilelist_disown_clears_all_entries() {
+        let _g = crate::test_util::global_state_lock();
         let mut j = Job::new();
         addfilelist(&mut j, Some("/tmp/a"), -1);
         addfilelist(&mut j, None, 7);
@@ -2999,6 +3017,7 @@ mod tests {
     /// SIGCHLD reaping with phantom job lookups.
     #[test]
     fn super_job_returns_none_for_top_level_job() {
+        let _g = crate::test_util::global_state_lock();
         let tab = vec![Job::new()];
         assert!(super_job(&tab, 0).is_none());
     }
@@ -3010,6 +3029,7 @@ mod tests {
     /// flag.
     #[test]
     fn stat_flags_match_c_zsh_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(stat::CHANGED,   0x0001, "Src/zsh.h:1073");
         assert_eq!(stat::STOPPED,   0x0002, "Src/zsh.h:1074");
         assert_eq!(stat::TIMED,     0x0004, "Src/zsh.h:1075");
@@ -3032,6 +3052,7 @@ mod tests {
     /// equality so the two definitions can't drift independently.
     #[test]
     fn stat_flags_match_zsh_h_module_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(stat::CHANGED,   crate::ported::zsh_h::STAT_CHANGED);
         assert_eq!(stat::STOPPED,   crate::ported::zsh_h::STAT_STOPPED);
         assert_eq!(stat::TIMED,     crate::ported::zsh_h::STAT_TIMED);
@@ -3049,6 +3070,7 @@ mod tests {
     /// stayed populated across slot reuse.
     #[test]
     fn deletejob_calls_freejob_to_clear_all_state() {
+        let _g = crate::test_util::global_state_lock();
         let mut jn = Job::new();
         jn.pwd = Some("/tmp/deletejob-pwd".to_string());
         jn.other = 42;
@@ -3072,6 +3094,7 @@ mod tests {
     /// freejob, verify ALL reset to zero/empty/None.
     #[test]
     fn freejob_resets_all_per_job_state_fields() {
+        let _g = crate::test_util::global_state_lock();
         let mut jn = Job::new();
         // Pre-populate every freejob-reset field.
         jn.pwd = Some("/tmp/saved-pwd".to_string());
@@ -3109,6 +3132,7 @@ mod tests {
     /// returned as the super-job.
     #[test]
     fn super_job_requires_nonzero_gleader() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab = vec![Job::new(), Job::new(), Job::new()];
         // Job 2 is a super-job of sub-job 1 BUT no gleader yet.
         tab[2].stat |= stat::SUPERJOB;
@@ -3127,6 +3151,7 @@ mod tests {
     /// a phantom job.
     #[test]
     fn findproc_unknown_pid_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         let tab: Vec<Job> = vec![Job::new(), Job::new()];
         assert!(findproc(&tab, 99999, false).is_none());
         assert!(findproc(&tab, 99999, true).is_none());
@@ -3137,6 +3162,7 @@ mod tests {
     /// search doesn't traverse a job's procs vec.
     #[test]
     fn findproc_known_pid_returns_correct_indices() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab: Vec<Job> = vec![Job::new(), Job::new()];
         tab[1].stat = stat::INUSE;
         let mut p = Process::new(12345);
@@ -3161,6 +3187,7 @@ mod tests {
     /// reaped the wrong job.
     #[test]
     fn findproc_skips_stat_done_jobs() {
+        let _g = crate::test_util::global_state_lock();
         let mut tab: Vec<Job> = vec![Job::new(), Job::new(), Job::new()];
         // Job 1: STAT_DONE with pid 7777 — must be skipped.
         tab[1].stat = stat::DONE | stat::INUSE;
@@ -3186,6 +3213,7 @@ mod tests {
     /// Pin each branch.
     #[test]
     fn printhhmmss_three_branch_format_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         // c:763 — sub-minute uses `%.3f` format.
         assert_eq!(printhhmmss(0.5),    "0.500");
         assert_eq!(printhhmmss(12.345), "12.345");
@@ -3207,6 +3235,7 @@ mod tests {
     /// default "unknown signal" message.
     #[test]
     fn sigmsg_returns_canonical_messages_for_standard_signals() {
+        let _g = crate::test_util::global_state_lock();
         // SIGINT/SIGTERM are universal POSIX signals — pin their
         // message text exists (non-empty).
         let int_msg  = sigmsg(libc::SIGINT);
@@ -3225,6 +3254,7 @@ mod tests {
     /// including out-of-range values like 9999 (where C returns -1).
     #[test]
     fn getsigidx_rejects_out_of_range_numeric() {
+        let _g = crate::test_util::global_state_lock();
         // In-range numeric → Some.
         assert_eq!(getsigidx("0"), Some(0),
             "EXIT pseudo-signal index 0");
@@ -3242,6 +3272,7 @@ mod tests {
     /// match any signal name → None.
     #[test]
     fn getsigidx_non_digit_unknown_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigidx("DEFINITELYNOTASIGNAL"), None);
         assert_eq!(getsigidx(""), None,
             "empty string → None");
@@ -3254,6 +3285,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn getsigname_emits_rt_form_for_rt_signal_range() {
+        let _g = crate::test_util::global_state_lock();
         let sigrtmin = libc::SIGRTMIN();
         let sigrtmax = libc::SIGRTMAX();
         // SIGRTMIN → "RTMIN".
@@ -3272,6 +3304,7 @@ mod tests {
     /// the new RT-signal branch didn't break the canonical table.
     #[test]
     fn getsigname_standard_signals_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigname(libc::SIGINT),  "INT");
         assert_eq!(getsigname(libc::SIGHUP),  "HUP");
         assert_eq!(getsigname(libc::SIGCHLD), "CHLD");
@@ -3289,6 +3322,7 @@ mod tests {
     /// the zleactive gate, so explicit `time foo` always reports.
     #[test]
     fn should_report_time_stat_timed_overrides_zleactive() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let prev = crate::ported::builtins::sched::zleactive
@@ -3307,6 +3341,7 @@ mod tests {
     /// timing line corrupts the active prompt.
     #[test]
     fn should_report_time_zleactive_suppresses() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let prev = crate::ported::builtins::sched::zleactive
@@ -3334,6 +3369,7 @@ mod tests {
     /// no timing line is reported.
     #[test]
     fn should_report_time_negative_threshold_suppresses() {
+        let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let mut job = Job::new();
         let now = std::time::Instant::now();
@@ -3348,6 +3384,7 @@ mod tests {
     /// (`if (!j->procs) return 0`).
     #[test]
     fn should_report_time_no_procs_returns_false() {
+        let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let job = Job::new(); // no procs, no STAT_TIMED
         assert!(!should_report_time(&job, 0.0));
@@ -3363,6 +3400,7 @@ mod tests {
     /// `cd` left in-flight jobs with no pwd.
     #[test]
     fn setjobpwd_stamps_pwd_on_inuse_jobs_without_one() {
+        let _g = crate::test_util::global_state_lock();
         let _g = JOBPWD_TEST_LOCK.lock().unwrap();
         // Set PWD via the canonical paramtab path.
         crate::ported::params::assignsparam("PWD", "/tmp/test_setjobpwd", 0);

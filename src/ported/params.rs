@@ -8071,6 +8071,7 @@ mod gsu_tests {
 
     #[test]
     fn test_libc_id_callbacks_match_libc() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(uidgetfn(), unsafe { libc::getuid() } as i64);
         assert_eq!(gidgetfn(), unsafe { libc::getgid() } as i64);
         assert_eq!(euidgetfn(), unsafe { libc::geteuid() } as i64);
@@ -8086,6 +8087,7 @@ mod gsu_tests {
     /// the stale paramtab Mutex.
     #[test]
     fn usernamegetfn_matches_libc_getpwuid_for_current_uid() {
+        let _g = crate::test_util::global_state_lock();
         let uname = usernamegetfn();
         // The current process is running as some uid; the getter
         // must return either a populated name OR an empty string
@@ -8108,6 +8110,7 @@ mod gsu_tests {
 
     #[test]
     fn test_random_returns_15_bit_value() {
+        let _g = crate::test_util::global_state_lock();
         for _ in 0..100 {
             let v = randomgetfn();
             assert!(v >= 0 && v < 0x8000);
@@ -8116,6 +8119,7 @@ mod gsu_tests {
 
     #[test]
     fn test_random_set_seeds_deterministically() {
+        let _g = crate::test_util::global_state_lock();
         randomsetfn(42);
         let a = randomgetfn();
         randomsetfn(42);
@@ -8125,6 +8129,7 @@ mod gsu_tests {
 
     #[test]
     fn test_ifs_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let original = ifsgetfn();
         ifssetfn(":,;".to_string());
         assert_eq!(ifsgetfn(), ":,;");
@@ -8133,6 +8138,7 @@ mod gsu_tests {
 
     #[test]
     fn test_histsiz_clamps_to_1() {
+        let _g = crate::test_util::global_state_lock();
         let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let original = histsizegetfn();
         histsizesetfn(0);
@@ -8146,6 +8152,7 @@ mod gsu_tests {
 
     #[test]
     fn test_savehistsiz_clamps_to_0() {
+        let _g = crate::test_util::global_state_lock();
         let original = savehistsizegetfn();
         savehistsizesetfn(-5);
         assert_eq!(savehistsizegetfn(), 0);
@@ -8163,6 +8170,7 @@ mod gsu_tests {
     /// cap at zero lines.
     #[test]
     fn savehistsizesetfn_syncs_to_hist_module() {
+        let _g = crate::test_util::global_state_lock();
         use std::sync::atomic::Ordering;
         let original_params = savehistsizegetfn();
         let original_hist = crate::ported::hist::savehistsiz.load(Ordering::SeqCst);
@@ -8185,6 +8193,7 @@ mod gsu_tests {
 
     #[test]
     fn test_pipestat_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         pipestatsetfn(Some(vec!["1".to_string(), "0".to_string(), "127".to_string()]));
         let v = pipestatgetfn();
         assert_eq!(v, vec!["1", "0", "127"]);
@@ -8202,6 +8211,7 @@ mod gsu_tests {
     /// for an integer assigned to a scalar param.
     #[test]
     fn setnumvalue_stores_int_value_into_scalar_pm() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode, value, PM_SCALAR};
         use crate::ported::math::{mnumber, MN_INTEGER};
         // c:2860 — setnumvalue bails when unset(EXECOPT). The unit-test
@@ -8239,12 +8249,14 @@ mod gsu_tests {
 
     #[test]
     fn test_simple_arrayuniq_first_wins() {
+        let _g = crate::test_util::global_state_lock();
         let v = vec!["a".to_string(), "b".to_string(), "a".to_string(), "c".to_string()];
         assert_eq!(simple_arrayuniq(v), vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_split_env_string() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             split_env_string("PATH=/usr/bin:/bin"),
             Some(("PATH".to_string(), "/usr/bin:/bin".to_string()))
@@ -8258,12 +8270,14 @@ mod gsu_tests {
 
     #[test]
     fn test_mkenvstr() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(mkenvstr("PATH", "/usr/bin", 0), "PATH=/usr/bin");
         assert_eq!(mkenvstr("EMPTY", "", 0), "EMPTY=");
     }
 
     #[test]
     fn test_seconds_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         intsecondssetfn(0);
         let s1 = intsecondsgetfn();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -8276,6 +8290,7 @@ mod gsu_tests {
 
     #[test]
     fn test_argzero_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         argzerosetfn("/bin/zsh".to_string());
         assert_eq!(argzerogetfn(), "/bin/zsh");
         argzerosetfn(String::new());
@@ -8283,6 +8298,7 @@ mod gsu_tests {
 
     #[test]
     fn test_env_get_set() {
+        let _g = crate::test_util::global_state_lock();
         let result = zputenv("ZSHRS_TEST_VAR=hello");
         assert_eq!(result, 0);
         assert_eq!(zgetenv("ZSHRS_TEST_VAR"), Some("hello".to_string()));
@@ -8292,6 +8308,7 @@ mod gsu_tests {
 
     #[test]
     fn test_keyboardhack_one_char() {
+        let _g = crate::test_util::global_state_lock();
         keyboardhacksetfn("\\".to_string());
         assert_eq!(keyboardhackgetfn(), "\\");
         keyboardhacksetfn(String::new());
@@ -8311,6 +8328,7 @@ mod gsu_tests {
     /// UTF-8 lead).
     #[test]
     fn keyboardhacksetfn_handles_ascii_and_empty() {
+        let _g = crate::test_util::global_state_lock();
         // c:5056 — single ASCII char stored.
         keyboardhacksetfn(";".to_string());
         assert_eq!(keyboardhackgetfn(), ";",
@@ -8325,6 +8343,7 @@ mod gsu_tests {
 
     #[test]
     fn test_histchars_default() {
+        let _g = crate::test_util::global_state_lock();
         let _g = super::HISTCHARS_TEST_LOCK_SHARED
             .lock().unwrap_or_else(|e| e.into_inner());
         histcharssetfn(None);
@@ -8345,6 +8364,7 @@ mod gsu_tests {
     /// matching atomic.
     #[test]
     fn histcharssetfn_handles_1_2_3_char_inputs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = super::HISTCHARS_TEST_LOCK_SHARED
             .lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
@@ -8450,6 +8470,7 @@ mod tests {
     // `PM_TYPE(pm->node.flags)` (Src/zsh.h:540).
     #[test]
     fn test_colonarr_conversion() {
+        let _g = crate::test_util::global_state_lock();
         let arr = crate::ported::utils::colonsplit("/bin:/usr/bin:/usr/local/bin", false);
         assert_eq!(arr, vec!["/bin", "/usr/bin", "/usr/local/bin"]);
         let path = colonarrgetfn(&arr);
@@ -8457,6 +8478,7 @@ mod tests {
     }
        #[test]
     fn test_isident() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isident("foo"));
         assert!(isident("_bar"));
         assert!(isident("FOO_BAR"));
@@ -8477,6 +8499,7 @@ mod tests {
     /// rejects.
     #[test]
     fn isident_requires_balanced_subscript_brackets() {
+        let _g = crate::test_util::global_state_lock();
         // Balanced `[...]` is valid.
         assert!(isident("foo[0]"),
             "c:1330 — balanced [0] passes parse_subscript");
@@ -8497,6 +8520,7 @@ mod tests {
 
     #[test]
     fn test_unique_array() {
+        let _g = crate::test_util::global_state_lock();
         let arr = vec!["a".into(), "b".into(), "a".into(), "c".into(), "b".into()];
         let result = uniqarray(arr);
         assert_eq!(result, vec!["a", "b", "c"]);
@@ -8504,6 +8528,7 @@ mod tests {
 
     #[test]
     fn test_convbase() {
+        let _g = crate::test_util::global_state_lock();
         // CBASES off (default): `16#FF` / `8#7` form. The `0x.../
         // 0...` short-prefix output is gated on `setopt CBASES` —
         // see Src/params.c:5599-5605.
@@ -8516,6 +8541,7 @@ mod tests {
 
     #[test]
     fn test_convfloat() {
+        let _g = crate::test_util::global_state_lock();
         // Use 2.5 instead of 3.14 — clippy errors on the latter as
         // an approx PI constant. The test checks 2-decimal formatting
         // round-trips, which the exact value doesn't influence.
@@ -8532,6 +8558,7 @@ mod tests {
 
     #[test]
     fn test_getarrvalue() {
+        let _g = crate::test_util::global_state_lock();
         let arr = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         assert_eq!(getarrvalue(&arr, 2, 3), vec!["b", "c"]);
         assert_eq!(getarrvalue(&arr, -2, -1), vec!["c", "d"]);
@@ -8540,6 +8567,7 @@ mod tests {
 
     #[test]
     fn test_setarrvalue() {
+        let _g = crate::test_util::global_state_lock();
         // c:2897 — setarrvalue bails when unset(EXECOPT). Set "exec"
         // for the unit-test env (real zsh defaults exec=true).
         let saved_exec = crate::ported::options::opt_state_get("exec")
@@ -8572,6 +8600,7 @@ mod tests {
 
     #[test]
     fn test_valid_refname() {
+        let _g = crate::test_util::global_state_lock();
         assert!(valid_refname("foo", 0));
         assert!(valid_refname("_bar", 0));
         assert!(valid_refname("1", 0));
@@ -8588,12 +8617,14 @@ mod tests {
 
     #[test]
     fn test_uniq_array_empty() {
+        let _g = crate::test_util::global_state_lock();
         let empty: Vec<String> = Vec::new();
         assert!(uniqarray(empty).is_empty());
     }
 
     #[test]
     fn test_convbase_underscore() {
+        let _g = crate::test_util::global_state_lock();
         let s = convbase_underscore(1234567, 10, 3);
         assert_eq!(s, "1_234_567");
     }
@@ -8607,6 +8638,7 @@ mod tests {
 
     #[test]
     fn getarg_n_flag_picks_second_exact_match() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1431-1442 + 1758 — `(en.2.)pat` picks 2nd exact match.
         let arr: Vec<String> = vec!["foo".into(), "bar".into(), "foo".into(), "baz".into()];
         let out = getarg("(en.2.r)foo", Some(&arr), None, None).expect("Some");
@@ -8615,6 +8647,7 @@ mod tests {
 
     #[test]
     fn getarg_n_flag_third_exact_match() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into(), "b".into()];
         let out = getarg("(en.3.r)a", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "a");
@@ -8622,6 +8655,7 @@ mod tests {
 
     #[test]
     fn getarg_n_flag_returns_index_with_i() {
+        let _g = crate::test_util::global_state_lock();
         // (en.2.i) — return INDEX of 2nd exact match.
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
         let out = getarg("(en.2.i)x", Some(&arr), None, None).expect("Some");
@@ -8630,6 +8664,7 @@ mod tests {
 
     #[test]
     fn getarg_negative_n_flips_search_direction() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1488-1491 — negative `num` flips down (reverse).
         // (en.-1.) on forward-default search matches from the end.
         let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into()];
@@ -8639,6 +8674,7 @@ mod tests {
 
     #[test]
     fn getarg_n_flag_zero_treated_as_one() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1438-1439 — `if (!num) num = 1`.
         let arr: Vec<String> = vec!["x".into(), "y".into()];
         let out = getarg("(en.0.r)x", Some(&arr), None, None).expect("Some");
@@ -8647,6 +8683,7 @@ mod tests {
 
     #[test]
     fn getarg_unknown_flag_char_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1477-1483 flagerr — invalid flag char reports error.
         let arr: Vec<String> = vec!["x".into()];
         assert!(getarg("(z)x", Some(&arr), None, None).is_none());
@@ -8654,6 +8691,7 @@ mod tests {
 
     #[test]
     fn getarg_n_flag_unterminated_arg_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         // (n.5 missing closing delimiter — flagerr.
         let arr: Vec<String> = vec!["x".into()];
         assert!(getarg("(n.5", Some(&arr), None, None).is_none());
@@ -8661,6 +8699,7 @@ mod tests {
 
     #[test]
     fn getarg_b_flag_starts_search_at_index() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1748-1760 — `(b.N.e)pat` skips first N-1 elements
         // forward (parsed value `N`, normalized to `beg = N-1`).
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
@@ -8671,6 +8710,7 @@ mod tests {
 
     #[test]
     fn getarg_b_flag_with_R_reverse_from_offset() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1750-1755 — reverse search starting at parsed-1 idx.
         // arr=(x y x y), beg=2 (parsed 3-1), reverse → walks 2,1,0; first
         // exact 'x' is at idx 2 → 1-based "3".
@@ -8681,6 +8721,7 @@ mod tests {
 
     #[test]
     fn getarg_b_flag_out_of_bounds_forward_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         // c:1746 — beg >= len returns len+1 (empty for value-mode).
         let arr: Vec<String> = vec!["x".into()];
         let out = getarg("(b.5.er)x", Some(&arr), None, None).expect("Some");
@@ -8689,6 +8730,7 @@ mod tests {
 
     #[test]
     fn getarg_b_flag_out_of_bounds_index_mode_returns_len_plus_one() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["x".into(), "y".into()];
         let out = getarg("(b.5.ei)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
@@ -8696,6 +8738,7 @@ mod tests {
 
     #[test]
     fn getarg_hash_neg_num_on_lowercase_r_returns_all() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1488-1491 — neg `num` flips down on `r`,
         // converting hash search to return-all-matches semantics.
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
@@ -8709,6 +8752,7 @@ mod tests {
 
     #[test]
     fn getarg_hash_neg_num_on_uppercase_R_returns_single() {
+        let _g = crate::test_util::global_state_lock();
         // R + neg `num` un-flips back to single-match (r semantics).
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         h.insert("a".into(), "1".into());
@@ -8721,6 +8765,7 @@ mod tests {
 
     #[test]
     fn getarg_hash_b_flag_skips_first_n_entries() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1740-1742 — `b<NUM>` skips first N-1 entries
         // before searching. Hash iteration is insertion order.
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
@@ -8734,6 +8779,7 @@ mod tests {
 
     #[test]
     fn getarg_hash_b_flag_with_R_collects_from_offset() {
+        let _g = crate::test_util::global_state_lock();
         // R returns all matches; b skips first beg entries first.
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         h.insert("a".into(), "1".into());
@@ -8746,6 +8792,7 @@ mod tests {
 
     #[test]
     fn getarg_hash_b_flag_out_of_bounds_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         // c:1746 — beg >= len with single-match → empty.
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         h.insert("a".into(), "1".into());
@@ -8755,6 +8802,7 @@ mod tests {
 
     #[test]
     fn getarg_w_flag_splits_multi_word_array_elements() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1761-1797 — `(w)N` joins array then re-splits by
         // IFS-default whitespace. arr=("a b" "c d"); (w)2 → "b" not "c d".
         let arr: Vec<String> = vec!["a b".into(), "c d".into()];
@@ -8764,6 +8812,7 @@ mod tests {
 
     #[test]
     fn getarg_w_flag_simple_array_indexing_still_works() {
+        let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["one".into(), "two".into(), "three".into()];
         let out = getarg("(w)2", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "two");
@@ -8771,6 +8820,7 @@ mod tests {
 
     #[test]
     fn getarg_f_flag_splits_by_newline() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1424-1427 — `f` flag aliases `w` with sep="\n".
         // arr=("a b\nc d"); (f)2 → "c d" (split by \n only, not space).
         let arr: Vec<String> = vec!["a b\nc d".into()];
@@ -8780,6 +8830,7 @@ mod tests {
 
     #[test]
     fn getarg_scalar_w_flag_picks_nth_word() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1761-1797 — scalar word-mode arm. `(w)2` on
         // scalar "hello world foo" returns the 2nd whitespace word.
         let out = getarg("(w)2", None, None, Some("hello world foo")).expect("Some");
@@ -8788,12 +8839,14 @@ mod tests {
 
     #[test]
     fn getarg_scalar_w_flag_negative_index_counts_from_end() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(w)-1", None, None, Some("alpha beta gamma")).expect("Some");
         assert_eq!(val_str(out), "gamma");
     }
 
     #[test]
     fn getarg_scalar_re_returns_char_at_match_position() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1798-1980 — char-search returns CHAR at match
         // position, not full substring. Verified empirically:
         //   /bin/zsh -c 's="barfooxyz"; print "${s[(r)foo]}"'  → "f"
@@ -8803,6 +8856,7 @@ mod tests {
 
     #[test]
     fn getarg_scalar_ie_returns_position_of_first_match() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(ie)cd", None, None, Some("abcdef")).expect("Some");
         // 'cd' starts at 1-based position 3.
         assert_eq!(val_str(out), "3");
@@ -8810,6 +8864,7 @@ mod tests {
 
     #[test]
     fn getarg_scalar_Ie_returns_position_of_last_match() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(Ie)b", None, None, Some("abcabc")).expect("Some");
         // Last 'b' is at 1-based position 5.
         assert_eq!(val_str(out), "5");
@@ -8817,18 +8872,21 @@ mod tests {
 
     #[test]
     fn getarg_scalar_ie_no_match_returns_len_plus_one() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(ie)z", None, None, Some("abc")).expect("Some");
         assert_eq!(val_str(out), "4");
     }
 
     #[test]
     fn getarg_scalar_Ie_no_match_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(Ie)z", None, None, Some("abc")).expect("Some");
         assert_eq!(val_str(out), "0");
     }
 
     #[test]
     fn getarg_scalar_n_flag_picks_second_match() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1929/1964 — `!--num` Nth-match counter on
         // scalar char-search. abcabc: 'a' at idx 0 and 3 → 2nd match
         // at byte position 4 (1-based).
@@ -8838,6 +8896,7 @@ mod tests {
 
     #[test]
     fn getarg_scalar_b_flag_starts_from_offset() {
+        let _g = crate::test_util::global_state_lock();
         // C params.c:1740-1742 — `(b.N.)` starts search from idx N-1.
         // abc bc abc: with b=4, skip first 3 chars; first 'b' at byte 5.
         let out = getarg("(b.4.ei)b", None, None, Some("abcbc")).expect("Some");
@@ -8846,6 +8905,7 @@ mod tests {
 
     #[test]
     fn getarg_scalar_re_n2_picks_second_substring() {
+        let _g = crate::test_util::global_state_lock();
         let out = getarg("(en.2.r)b", None, None, Some("abab")).expect("Some");
         assert_eq!(val_str(out), "b");
     }
@@ -8856,6 +8916,7 @@ mod tests {
     /// drop assignments.
     #[test]
     fn assignsparam_then_getsparam_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_ASSIGN_GET";
         crate::ported::params::assignsparam(name, "test_value_42", 0);
         assert_eq!(
@@ -8870,6 +8931,7 @@ mod tests {
     /// A regression returning Some("") would mask unset-param errors.
     #[test]
     fn getsparam_unknown_param_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(crate::ported::params::getsparam("ZSHRS_TEST_DEFINITELY_UNSET").is_none());
     }
 
@@ -8878,6 +8940,7 @@ mod tests {
     /// the canonical paramtab is actually backing both reads + writes.
     #[test]
     fn paramtab_remove_makes_getsparam_return_none() {
+        let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_UNSET_FLOW";
         crate::ported::params::assignsparam(name, "to_be_removed", 0);
         assert!(crate::ported::params::getsparam(name).is_some(),
@@ -8892,6 +8955,7 @@ mod tests {
     /// Verify the slot was populated AT ALL by querying paramtab.
     #[test]
     fn assignaparam_populates_paramtab_with_array() {
+        let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_ARR_X";
         crate::ported::params::assignaparam(
             name, vec!["a".into(), "b".into(), "c".into()], 0);
@@ -8915,6 +8979,7 @@ mod tests {
     /// the canonical default `"!^#"` restores on NULL.
     #[test]
     fn histcharssetfn_syncs_all_three_histchar_globals() {
+        let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Default state.
@@ -8942,6 +9007,7 @@ mod tests {
     /// `histcharsgetfn()` returns `"@&%"`.
     #[test]
     fn histcharsgetfn_round_trips_with_histcharssetfn() {
+        let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::params::histcharssetfn(Some("@&%".to_string()));
         assert_eq!(crate::ported::params::histcharsgetfn(), "@&%",
@@ -8957,6 +9023,7 @@ mod tests {
     /// CHASELINKS-off. Pins the basic store-then-read contract.
     #[test]
     fn homesetfn_stores_value_for_getfn() {
+        let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::params::homegetfn();
         crate::ported::params::homesetfn("/tmp/zshrs_test_home".to_string());
         assert_eq!(crate::ported::params::homegetfn(), "/tmp/zshrs_test_home",
@@ -8969,6 +9036,7 @@ mod tests {
     /// Pin empty-string handling.
     #[test]
     fn homesetfn_empty_input_stores_empty() {
+        let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::params::homegetfn();
         crate::ported::params::homesetfn(String::new());
         assert_eq!(crate::ported::params::homegetfn(), "",
@@ -8982,6 +9050,7 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn errnosetfn_writes_through_to_libc_errno_getfn() {
+        let _g = crate::test_util::global_state_lock();
         // Set errno to a small int.
         crate::ported::params::errnosetfn(42);
         assert_eq!(crate::ported::params::errnogetfn(), 42,
@@ -9000,6 +9069,7 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn errnosetfn_does_not_panic_on_truncation() {
+        let _g = crate::test_util::global_state_lock();
         // i64::MAX → truncates to i32 = -1 → warning fires inside.
         // The store at c:5008 happens; whether the warning's libc
         // calls then overwrite errno is implementation-defined.
@@ -9016,6 +9086,7 @@ mod tests {
     /// when a non-ASCII byte is in position 0/1/2.
     #[test]
     fn histcharssetfn_rejects_non_ascii_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         // Reset to defaults.
@@ -9046,6 +9117,7 @@ mod tests {
     /// AND the hist::histsiz atomic used by resizehistents.
     #[test]
     fn histsizesetfn_floors_at_one_and_mirrors_to_hist_module() {
+        let _g = crate::test_util::global_state_lock();
         let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::Ordering;
         let saved_param = histsizegetfn();
@@ -9079,6 +9151,7 @@ mod tests {
     /// reads.
     #[test]
     fn underscoregetfn_runs_untokenize_on_zunderscore() {
+        let _g = crate::test_util::global_state_lock();
         // Inject zunderscore containing a Pound token byte (\u{84})
         // and verify it gets stripped by untokenize in the return.
         let saved = crate::ported::params::zunderscore_lock()
@@ -9113,6 +9186,7 @@ mod tests {
     /// argv[0], not the rewritten name.
     #[test]
     fn argzerogetfn_respects_posixargzero_option() {
+        let _g = crate::test_util::global_state_lock();
         let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::options::{opt_state_get, opt_state_set};
         use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
@@ -9152,6 +9226,7 @@ mod tests {
     /// NOT clobber posixzero.
     #[test]
     fn set_argzero_mirrors_to_posixzero_only_on_first_call() {
+        let _g = crate::test_util::global_state_lock();
         let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
 
@@ -9194,6 +9269,7 @@ mod tests {
     /// per c:4926 and dispatches to `setlocale(ln->category, ...)`.
     #[test]
     fn lc_names_match_zsh_canonical_table() {
+        let _g = crate::test_util::global_state_lock();
         let names: Vec<&str> = LC_NAMES.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
@@ -9221,6 +9297,7 @@ mod tests {
     /// back via `setlocale(cat, NULL)` after the assignment.
     #[test]
     fn lcsetfn_invokes_libc_setlocale_for_matching_category() {
+        let _g = crate::test_util::global_state_lock();
         let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save LC_ALL/LC_CTYPE state.
         let saved_lc_all = env::var("LC_ALL").ok();
@@ -9275,6 +9352,7 @@ mod tests {
     /// touching libc setlocale for the per-category override.
     #[test]
     fn lcsetfn_short_circuits_when_lc_all_set() {
+        let _g = crate::test_util::global_state_lock();
         let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_lc_all = env::var("LC_ALL").ok();
         let saved_lc_ctype = env::var("LC_CTYPE").ok();
@@ -9325,6 +9403,7 @@ mod tests {
     /// with no caller because no caller's type fit the bogus sig.
     #[test]
     fn getsparam_u_unmetas_getsparam_result() {
+        let _g = crate::test_util::global_state_lock();
         let _g = locale_test_lock().lock().unwrap_or_else(|e| e.into_inner());
 
         // Plain ASCII: getsparam_u returns the same content as
@@ -9357,6 +9436,7 @@ mod tests {
     /// must not mutate array params.
     #[test]
     fn setarrvalue_bails_under_no_exec() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode, value, PM_ARRAY};
 
         let saved_exec = crate::ported::options::opt_state_get("exec")
@@ -9404,6 +9484,7 @@ mod tests {
     /// evaluation doesn't leak state into the param table.
     #[test]
     fn setnumvalue_bails_under_no_exec() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode, value, PM_INTEGER};
         use crate::ported::math::{mnumber, MN_INTEGER};
 
@@ -9455,6 +9536,7 @@ mod tests {
     /// included 'n' even when `set -n` was active.
     #[test]
     fn dash_param_rendering_honors_noexec_via_exec_negation() {
+        let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::options::opt_state_get("exec")
             .unwrap_or(false);
 
@@ -9484,6 +9566,7 @@ mod tests {
     /// paths disagreed about which bit means \"unknown terminal\".
     #[test]
     fn term_unknown_bit_value_matches_c() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{TERM_BAD, TERM_UNKNOWN};
         assert_eq!(TERM_UNKNOWN, 0x02,
             "Src/zsh.h:1986 — TERM_UNKNOWN must be 0x02, got {:#x}", TERM_UNKNOWN);
@@ -9501,6 +9584,7 @@ mod tests {
     /// as `0xff` not `255`.
     #[test]
     fn getstrvalue_pm_integer_honors_pm_base() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{value, param, hashnode, PM_INTEGER};
 
         let saved_cbases_top = crate::ported::options::opt_state_get("cbases")
@@ -9568,6 +9652,7 @@ mod tests {
     ///      params survive the unset call.
     #[test]
     fn unsetparam_skips_nameref_and_readonly() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{PM_NAMEREF, PM_READONLY, PM_SCALAR};
 
         let saved_exec = crate::ported::options::opt_state_get("exec")
@@ -9637,6 +9722,7 @@ mod tests {
     /// dropped the flags arg AND returned void; this restores both.
     #[test]
     fn assigniparam_takes_flags_arg_and_returns_param() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_INTEGER;
 
         let saved_exec = crate::ported::options::opt_state_get("exec")
@@ -9684,6 +9770,7 @@ mod tests {
     /// the integer side and the Param return entirely.
     #[test]
     fn setnparam_accepts_both_integer_and_float() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::math::{mnumber, MN_INTEGER as MN_INT, MN_FLOAT as MN_FLT};
         use crate::ported::zsh_h::{PM_INTEGER, PM_FFLOAT};
 
@@ -9739,6 +9826,7 @@ mod tests {
     /// PM_SCALAR via `assignsparam` with a stringified value.
     #[test]
     fn setiparam_creates_pm_integer_param() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_INTEGER;
         let name = "zshrs_test_setiparam_x";
 
@@ -9799,6 +9887,7 @@ mod tests {
     /// the `name: &str` path with digit-first reject + PM_HASHED check.
     #[test]
     fn gethparam_and_gethkparam_signature_matches_c() {
+        let _g = crate::test_util::global_state_lock();
         // c:3122 / c:3136 — digit-first name reject.
         assert_eq!(gethparam("123abc"), None,
             "c:3122 — digit-first name rejected");
@@ -9872,6 +9961,7 @@ mod tests {
     /// (c:3108-3109), non-array / missing-param return None (c:3110).
     #[test]
     fn getaparam_returns_array_for_pm_array_only() {
+        let _g = crate::test_util::global_state_lock();
         // c:3107 — digit-first name → None (positional params reject).
         assert_eq!(getaparam("123abc"), None,
             "c:3107 — digit-first name rejected");

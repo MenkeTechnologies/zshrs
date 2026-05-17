@@ -227,12 +227,14 @@ mod tests {
 
     #[test]
     fn test_dupstring() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstring("hello"), "hello");
         assert_eq!(dupstring(""), "");
     }
 
     #[test]
     fn test_dupstring_wlen() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstring_wlen("hello world", 5), "hello");
         // len longer than string is clamped (matches Rust `min` —
         // C would walk past the NUL which is UB; the safe analog
@@ -244,6 +246,7 @@ mod tests {
 
     #[test]
     fn test_dupstring_wlen_byte_safe_at_codepoint_boundary() {
+        let _g = crate::test_util::global_state_lock();
         // C: `memcpy(t, s, len)` copies bytes regardless of UTF-8
         // boundary. The previous Rust port panicked on
         // `s[..len.min(s.len())]` if `len` landed mid-codepoint.
@@ -259,16 +262,19 @@ mod tests {
 
     #[test]
     fn test_ztrdup() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrdup("permanent"), "permanent");
     }
 
     #[test]
     fn test_wcs_ztrdup() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wcs_ztrdup("ünicode"), "ünicode");
     }
 
     #[test]
     fn test_tricat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(tricat("a", "b", "c"), "abc");
         assert_eq!(tricat("", "", ""), "");
         assert_eq!(tricat("foo", "", "bar"), "foobar");
@@ -276,22 +282,26 @@ mod tests {
 
     #[test]
     fn test_zhtricat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zhtricat("x", "y", "z"), "xyz");
     }
 
     #[test]
     fn test_bicat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(bicat("hello", " world"), "hello world");
         assert_eq!(bicat("", ""), "");
     }
 
     #[test]
     fn test_dyncat() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dyncat("foo", "bar"), "foobar");
     }
 
     #[test]
     fn test_appstr() {
+        let _g = crate::test_util::global_state_lock();
         let mut s = "hello".to_string();
         appstr(&mut s, " world");
         assert_eq!(s, "hello world");
@@ -299,6 +309,7 @@ mod tests {
 
     #[test]
     fn test_dupstrpfx() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstrpfx("hello world", 5), "hello");
         assert_eq!(dupstrpfx("hi", 50), "hi");
         assert_eq!(dupstrpfx("hi", 0), "");
@@ -306,17 +317,20 @@ mod tests {
 
     #[test]
     fn test_dupstrpfx_byte_safe() {
+        let _g = crate::test_util::global_state_lock();
         // 'é' = 0xC3 0xA9. len=1 inside it must not panic.
         let _ = dupstrpfx("é", 1);
     }
 
     #[test]
     fn test_ztrduppfx() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrduppfx("hello", 3), "hel");
     }
 
     #[test]
     fn test_strend_returns_last_codepoint() {
+        let _g = crate::test_util::global_state_lock();
         // C returns pointer to last char (or to NUL on empty).
         // Rust returns the trailing &str slice for pointer-shape parity.
         assert_eq!(strend("hello"), "o");
@@ -332,6 +346,7 @@ mod tests {
     /// dropping any segment silently corrupts every param-subst path.
     #[test]
     fn tricat_concatenates_three_segments_in_order() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(tricat("a", "b", "c"), "abc");
         assert_eq!(tricat("",  "b", "c"), "bc");
         assert_eq!(tricat("a", "",  "c"), "ac");
@@ -341,6 +356,7 @@ mod tests {
     /// c:131 — `dyncat(s1,s2)` is the 2-string concat counterpart.
     #[test]
     fn dyncat_concatenates_two_segments() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dyncat("hello", " world"), "hello world");
         assert_eq!(dyncat("",       "x"),     "x");
     }
@@ -349,6 +365,7 @@ mod tests {
     /// is independent of the source after a mutating clear.
     #[test]
     fn ztrdup_returns_independent_owned_copy() {
+        let _g = crate::test_util::global_state_lock();
         let mut src = String::from("original");
         let dup = ztrdup(&src);
         src.clear();
@@ -361,6 +378,7 @@ mod tests {
     /// truncation path that doesn't pre-clamp.
     #[test]
     fn dupstrpfx_handles_len_larger_than_input() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstrpfx("ab",    100), "ab");
         assert_eq!(dupstrpfx("hello", 0),   "");
         assert_eq!(dupstrpfx("hello", 3),   "hel");
@@ -370,6 +388,7 @@ mod tests {
     /// phantom delimiters).
     #[test]
     fn dyncat_empty_inputs_return_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dyncat("", ""), "");
     }
 
@@ -379,6 +398,7 @@ mod tests {
     /// `strcpy(ptr+l1, s2)`. Two-segment concat, never reorders.
     #[test]
     fn bicat_concatenates_in_order_with_either_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(bicat("foo", "bar"), "foobar");
         assert_eq!(bicat("", "bar"),    "bar",
             "c:152 — strcpy(ptr, \"\") writes only the NUL, ptr+0 starts s2");
@@ -395,6 +415,7 @@ mod tests {
     /// two would silently leak storage-lane assumptions into callers.
     #[test]
     fn ztrduppfx_matches_dupstrpfx_byte_for_byte() {
+        let _g = crate::test_util::global_state_lock();
         for (s, len) in [("hello", 3usize), ("ab", 100), ("hello", 0), ("", 5)] {
             assert_eq!(ztrduppfx(s, len), dupstrpfx(s, len),
                 "ztrduppfx/dupstrpfx divergence at ({:?}, {})", s, len);
@@ -407,6 +428,7 @@ mod tests {
     /// Empty append → base unchanged. Empty base → result equals append.
     #[test]
     fn appstr_appends_in_place() {
+        let _g = crate::test_util::global_state_lock();
         let mut b = String::from("foo");
         appstr(&mut b, "bar");
         assert_eq!(b, "foobar");
@@ -425,6 +447,7 @@ mod tests {
     /// Multi-char input → last char only.
     #[test]
     fn strend_returns_only_last_character_for_multichar_input() {
+        let _g = crate::test_util::global_state_lock();
         // c:200 — `str + strlen(str) - 1` for "hello" (len=5) → 'o'.
         assert_eq!(strend("hello"), "o");
         // c:200 — len=2 → 'b'.
@@ -439,6 +462,7 @@ mod tests {
     /// Empty string round-trips (no underflow on len=0).
     #[test]
     fn dupstring_returns_owned_copy_with_identity_content() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(dupstring("hello"), "hello");
         assert_eq!(dupstring(""), "", "c:39 — empty input → len 0+1, strcpy copies NUL");
         // Non-ASCII (UTF-8) round-trips byte-identical.
@@ -455,6 +479,7 @@ mod tests {
     /// avoid panic per the impl note at c:50).
     #[test]
     fn dupstring_wlen_respects_byte_length_and_clamps_overflow() {
+        let _g = crate::test_util::global_state_lock();
         // c:55 — memcpy(t, s, len) for len < strlen.
         assert_eq!(dupstring_wlen("hello world", 5), "hello");
         // len == 0 → empty.
@@ -472,6 +497,7 @@ mod tests {
     /// wchar_t representation — identity copy.
     #[test]
     fn wcs_ztrdup_returns_independent_copy() {
+        let _g = crate::test_util::global_state_lock();
         let mut src = String::from("widechar");
         let dup = wcs_ztrdup(&src);
         src.clear();
@@ -490,6 +516,7 @@ mod tests {
     /// changed at the byte level.
     #[test]
     fn zhtricat_matches_tricat_byte_for_byte() {
+        let _g = crate::test_util::global_state_lock();
         for (a, b, c) in [
             ("foo", "bar", "baz"),
             ("",    "x",   ""),
@@ -508,6 +535,7 @@ mod tests {
     /// buffer — UB; the Rust port clamps).
     #[test]
     fn ztrduppfx_clamps_oversize_len_safely() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ztrduppfx("hi", 100), "hi");
         assert_eq!(ztrduppfx("",   5),   "");
         assert_eq!(ztrduppfx("abc", 2),  "ab");

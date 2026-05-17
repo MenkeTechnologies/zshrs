@@ -986,6 +986,7 @@ mod region_tests {
 
     #[test]
     fn deactivateregion_clears_active() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:566 — `region_active = 0; return 0`.
         crate::ported::zle::zle_main::zle_reset();
@@ -997,6 +998,7 @@ mod region_tests {
 
     #[test]
     fn setmarkcommand_sets_mark_to_cursor() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:489-490 — `mark = zlecs; region_active = 1`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1010,6 +1012,7 @@ mod region_tests {
 
     #[test]
     fn setmarkcommand_negative_mult_deactivates() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:485-487 — `if (zmult < 0) { region_active = 0; return 0; }`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1026,6 +1029,7 @@ mod region_tests {
 
     #[test]
     fn exchangepointandmark_swaps() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:504-506 — swap zlecs and mark.
         crate::ported::zle::zle_main::zle_reset();
@@ -1044,6 +1048,7 @@ mod region_tests {
 
     #[test]
     fn exchangepointandmark_zero_mult_just_activates() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:500-502 — `if (zmult == 0) { region_active = 1; return 0; }`.
         // No swap occurs.
@@ -1061,6 +1066,7 @@ mod region_tests {
 
     #[test]
     fn exchangepointandmark_clamps_zlecs_to_zlell() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:507-508 — `if (zlecs > zlell) zlecs = zlell`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1078,6 +1084,7 @@ mod region_tests {
 
     #[test]
     fn inccs_increments_zlecs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:121-126 — `zlecs++; alignmultiwordright(...)`. Vec<char>
         // makes alignment a no-op.
@@ -1093,6 +1100,7 @@ mod region_tests {
 
     #[test]
     fn deccs_decrements_zlecs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:132-137 — `zlecs--; alignmultiwordleft(...)`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1107,6 +1115,7 @@ mod region_tests {
 
     #[test]
     fn incpos_decpos_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:142-156 — pos++ / pos-- with no-op alignment.
         let mut p = 5;
@@ -1120,6 +1129,7 @@ mod region_tests {
 
     #[test]
     fn forwardchar_moves_zmult_positions() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:457-458 — `while (zlecs < zlell && n--) INCCS();`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1134,6 +1144,7 @@ mod region_tests {
 
     #[test]
     fn forwardchar_stops_at_zlell() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:457 — `while (zlecs < zlell && ...)`. Walking past end
         // is bounded.
@@ -1148,6 +1159,7 @@ mod region_tests {
 
     #[test]
     fn backwardchar_moves_zmult_positions() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:476-477 — `while (zlecs > 0 && n--) DECCS();`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1162,6 +1174,7 @@ mod region_tests {
 
     #[test]
     fn backwardchar_stops_at_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:476 — `while (zlecs > 0 && ...)`. Doesn't underflow.
         crate::ported::zle::zle_main::zle_reset();
@@ -1175,6 +1188,7 @@ mod region_tests {
 
     #[test]
     fn forwardchar_negative_count_delegates_to_backward() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:445-450 — `if (n < 0) { zmult = -n; ret = backwardchar(); ... }`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1191,6 +1205,7 @@ mod region_tests {
 
     #[test]
     fn backwardchar_negative_count_delegates_to_forward() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -1206,6 +1221,7 @@ mod region_tests {
 
     #[test]
     fn vibeginningofline_jumps_to_bol() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:730 — `zlecs = findbol()`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1219,6 +1235,7 @@ mod region_tests {
 
     #[test]
     fn vibackwardchar_stops_at_line_start() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — at findbol → return 1 without moving.
         crate::ported::zle::zle_main::zle_reset();
@@ -1233,6 +1250,7 @@ mod region_tests {
 
     #[test]
     fn vibackwardchar_moves_within_line() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
@@ -1244,6 +1262,7 @@ mod region_tests {
 
     #[test]
     fn viforwardchar_stops_at_eol() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:674-675 — at findeol → return 1.
         crate::ported::zle::zle_main::zle_reset();
@@ -1257,6 +1276,7 @@ mod region_tests {
 
     #[test]
     fn viforwardchar_moves_within_line() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
@@ -1268,6 +1288,7 @@ mod region_tests {
 
     #[test]
     fn viforwardchar_clamps_at_findeol() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:676 — `while (n-- && zlecs < lim)`.
         crate::ported::zle::zle_main::zle_reset();
@@ -1283,6 +1304,7 @@ mod region_tests {
 
     #[test]
     fn vifirstnonblank_skips_leading_spaces() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:864-866 — bol then skip space/tab.
         crate::ported::zle::zle_main::zle_reset();
@@ -1296,6 +1318,7 @@ mod region_tests {
 
     #[test]
     fn vifirstnonblank_skips_tabs() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:865 — ZC_iblank includes tab.
         crate::ported::zle::zle_main::zle_reset();
@@ -1308,6 +1331,7 @@ mod region_tests {
 
     #[test]
     fn vifirstnonblank_no_blanks() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // No leading blanks → cursor lands at bol.
         crate::ported::zle::zle_main::zle_reset();
@@ -1320,6 +1344,7 @@ mod region_tests {
 
     #[test]
     fn vifirstnonblank_all_blanks() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:865 — `while zlecs != zlell` exits cleanly when only blanks.
         crate::ported::zle::zle_main::zle_reset();
@@ -1333,6 +1358,7 @@ mod region_tests {
 
     #[test]
     fn vifirstnonblank_respects_findbol() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:864 — `zlecs = findbol()`. With multiline buffer, jump
         // to start of CURRENT line, then skip blanks.
@@ -1353,6 +1379,7 @@ mod region_tests {
     /// the first non-blank. Pins the wide-char path end-to-end.
     #[test]
     fn vifirstnonblank_skips_wide_whitespace_per_wcsiblank() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::zle_reset();
         // VT, FF, CR, NBSP, then 'x' — wcsiblank true for all four.
@@ -1371,6 +1398,7 @@ mod region_tests {
     /// boundaries).
     #[test]
     fn vifirstnonblank_stops_at_newline_per_wcsiblank() {
+        let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::zle_reset();
         // Buffer: "  \n  x" — leading 2 spaces, newline, then more.

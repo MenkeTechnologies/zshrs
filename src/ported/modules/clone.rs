@@ -349,6 +349,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_clone_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_clone("clone", &[], &ops, 0), 1);
     }
@@ -356,6 +357,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_clone_invalid_tty_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         // /nonexistent/tty doesn't exist — open() returns -1.
         let rc = bin_clone("clone", &["/nonexistent/tty".to_string()], &ops, 0);
@@ -364,6 +366,7 @@ mod tests {
 
     #[test]
     fn module_loaders_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let mut features: Vec<String> = Vec::new();
         let mut enables: Option<Vec<i32>> = None;
         let m: *const module = std::ptr::null();
@@ -383,6 +386,7 @@ mod tests {
     /// `zmodload -F zsh/clone +nonsense` and break.
     #[test]
     fn features_emits_exactly_one_b_clone_string() {
+        let _g = crate::test_util::global_state_lock();
         let mut feats: Vec<String> = Vec::new();
         features_(std::ptr::null(), &mut feats);
         assert_eq!(feats.len(), 1);
@@ -394,6 +398,7 @@ mod tests {
     /// features" and the module's builtin would never register.
     #[test]
     fn enables_returns_some_with_at_least_one_entry() {
+        let _g = crate::test_util::global_state_lock();
         let mut enables: Option<Vec<i32>> = None;
         enables_(std::ptr::null(), &mut enables);
         let e = enables.expect("must return Some");
@@ -407,6 +412,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn bin_clone_with_extra_arg_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let rc = bin_clone(
             "clone",
@@ -422,6 +428,7 @@ mod tests {
     /// breaks `zmodload -F zsh/clone +clone`.
     #[test]
     fn features_string_uses_b_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let mut feats: Vec<String> = Vec::new();
         features_(std::ptr::null(), &mut feats);
         let f = &feats[0];
@@ -436,6 +443,7 @@ mod tests {
     /// source's `m` parameter is unused (UNUSED(Module m)).
     #[test]
     fn module_lifecycle_stubs_accept_null_module() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         // Each stub must NOT segfault on null input.
         assert_eq!(setup_(m), 0);

@@ -294,6 +294,7 @@ mod tests {
 
     #[test]
     fn nl_names_includes_codeset() {
+        let _g = crate::test_util::global_state_lock();
         assert!(NL_NAMES.contains(&"CODESET"));
         assert!(NL_NAMES.contains(&"D_T_FMT"));
     }
@@ -301,17 +302,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn getlanginfo_codeset_is_some() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getlanginfo("CODESET").is_some());
     }
 
     #[test]
     fn getlanginfo_invalid_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getlanginfo("INVALID_NAME").is_none());
     }
 
     #[cfg(unix)]
     #[test]
     fn liitem_codeset_resolves() {
+        let _g = crate::test_util::global_state_lock();
         assert!(liitem("CODESET").is_some());
         assert!(liitem("DOES_NOT_EXIST").is_none());
     }
@@ -319,6 +323,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn scanlanginfo_emits_items() {
+        let _g = crate::test_util::global_state_lock();
         let v = scanlanginfo();
         assert!(!v.is_empty());
         assert!(v.iter().any(|(k, _)| k == "CODESET"));
@@ -331,6 +336,7 @@ mod tests {
     /// and similar lookups in user scripts.
     #[test]
     fn nl_names_covers_canonical_locale_items() {
+        let _g = crate::test_util::global_state_lock();
         for required in [
             "CODESET", "D_T_FMT", "D_FMT", "T_FMT", "T_FMT_AMPM",
             "AM_STR", "PM_STR", "DAY_1", "DAY_7", "ABDAY_1", "MON_1",
@@ -348,6 +354,7 @@ mod tests {
     /// the user-facing builtin path).
     #[test]
     fn nl_names_entries_are_uppercase_identifiers() {
+        let _g = crate::test_util::global_state_lock();
         for &n in NL_NAMES {
             assert!(!n.is_empty(), "empty entry in NL_NAMES");
             assert!(n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
@@ -362,6 +369,7 @@ mod tests {
     /// would silently double-emit in `scanlanginfo`.
     #[test]
     fn nl_names_has_no_duplicates() {
+        let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = NL_NAMES.iter().copied().collect();
         assert_eq!(unique.len(), NL_NAMES.len(),
             "duplicate entry in NL_NAMES");
@@ -374,6 +382,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn scanlanginfo_keys_are_subset_of_nl_names() {
+        let _g = crate::test_util::global_state_lock();
         for (k, _) in scanlanginfo() {
             assert!(NL_NAMES.contains(&k.as_str()),
                 "scanlanginfo emitted {:?} which is not in NL_NAMES", k);
@@ -386,6 +395,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn getlanginfo_is_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getlanginfo("CODESET").is_some());
         assert!(getlanginfo("codeset").is_none(),
             "getlanginfo must be case-sensitive per the C source's strcmp lookup");
@@ -394,6 +404,7 @@ mod tests {
     /// c:472-510 — module-lifecycle stubs all return 0 in C.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const crate::ported::zsh_h::module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

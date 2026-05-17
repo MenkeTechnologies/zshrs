@@ -498,6 +498,7 @@ mod tests {
     /// NULL → caller treats as PM_UNSET (Option::None).
     #[test]
     fn getpmmapfile_nonexistent_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmmapfile("/nonexistent/file/path/zshrs_mapfile").is_none());
     }
 
@@ -507,6 +508,7 @@ mod tests {
     /// `get_contents`.
     #[test]
     fn file_roundtrip() {
+        let _g = crate::test_util::global_state_lock();
         let test_file = "/tmp/zshrs_mapfile_test_roundtrip.txt";
         let content = "Hello, mapfile!";
         let _ = fs::remove_file(test_file);
@@ -522,6 +524,7 @@ mod tests {
     /// but the open already created the file.
     #[test]
     fn empty_value_creates_file() {
+        let _g = crate::test_util::global_state_lock();
         let test_file = "/tmp/zshrs_mapfile_test_empty.txt";
         let _ = fs::remove_file(test_file);
         setpmmapfile(test_file, "", false);
@@ -536,6 +539,7 @@ mod tests {
     /// (c:263).
     #[test]
     fn scanpmmapfile_skips_dotdirs_and_returns_empty_values() {
+        let _g = crate::test_util::global_state_lock();
         let entries = scanpmmapfile();
         for (name, val) in &entries {
             assert!(name != "." && name != "..");
@@ -548,6 +552,7 @@ mod tests {
     /// removes the file when not readonly.
     #[test]
     fn unsetpmmapfile_removes_file() {
+        let _g = crate::test_util::global_state_lock();
         let test_file = "/tmp/zshrs_mapfile_test_unset.txt";
         let _ = fs::write(test_file, "content");
         unsetpmmapfile(test_file, false);
@@ -558,6 +563,7 @@ mod tests {
     /// callback skips the unlink.
     #[test]
     fn unsetpmmapfile_readonly_skips() {
+        let _g = crate::test_util::global_state_lock();
         let test_file = "/tmp/zshrs_mapfile_test_unset_ro.txt";
         let _ = fs::write(test_file, "content");
         unsetpmmapfile(test_file, true);
@@ -569,6 +575,7 @@ mod tests {
     /// skipped, file is not created.
     #[test]
     fn setpmmapfile_readonly_skips_write() {
+        let _g = crate::test_util::global_state_lock();
         let test_file = "/tmp/zshrs_mapfile_test_set_ro.txt";
         let _ = fs::remove_file(test_file);
         setpmmapfile(test_file, "should not be written", true);
@@ -580,6 +587,7 @@ mod tests {
     /// at c:149.
     #[test]
     fn setpmmapfiles_writes_entries() {
+        let _g = crate::test_util::global_state_lock();
         let f1 = "/tmp/zshrs_mapfile_bulk_1.txt";
         let f2 = "/tmp/zshrs_mapfile_bulk_2.txt";
         let _ = fs::remove_file(f1);
@@ -598,6 +606,7 @@ mod tests {
     /// c:167 — `get_contents` on a nonexistent file returns None.
     #[test]
     fn get_contents_nonexistent_file_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(get_contents("/__never_a_file__/x").is_none(),
             "missing file must return None, not empty Some");
     }
@@ -608,6 +617,7 @@ mod tests {
     /// detection in user scripts.
     #[test]
     fn get_contents_empty_file_returns_empty_string() {
+        let _g = crate::test_util::global_state_lock();
         let f = "/tmp/zshrs_mapfile_empty.txt";
         let _ = fs::write(f, "");
         let r = get_contents(f);
@@ -620,6 +630,7 @@ mod tests {
     /// fidelity (no encoding mangling, no trailing-newline insertion).
     #[test]
     fn get_contents_round_trips_write() {
+        let _g = crate::test_util::global_state_lock();
         let f = "/tmp/zshrs_mapfile_rt.txt";
         let payload = "line1\nline2\nno_trailing_nl";
         setpmmapfile(f, payload, false);
@@ -633,6 +644,7 @@ mod tests {
     /// (a valid write, NOT a delete).
     #[test]
     fn setpmmapfile_empty_value_writes_empty_file() {
+        let _g = crate::test_util::global_state_lock();
         let f = "/tmp/zshrs_mapfile_empty_write.txt";
         let _ = fs::remove_file(f);
         setpmmapfile(f, "", false);
@@ -647,6 +659,7 @@ mod tests {
     /// mapfile[/missing]` call.
     #[test]
     fn unsetpmmapfile_missing_file_is_safe_noop() {
+        let _g = crate::test_util::global_state_lock();
         unsetpmmapfile("/__never_existed_zshrs_mapfile__", false);
     }
 
@@ -656,6 +669,7 @@ mod tests {
     /// `${mapfile[/path]}` for content).
     #[test]
     fn scanpmmapfile_values_always_empty() {
+        let _g = crate::test_util::global_state_lock();
         for (_k, v) in scanpmmapfile() {
             assert!(v.is_empty(),
                 "scanpmmapfile must emit empty values per c:263");
@@ -665,6 +679,7 @@ mod tests {
     /// c:279-310 — module-lifecycle stubs return 0.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);

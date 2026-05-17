@@ -7487,6 +7487,7 @@ mod tests {
     /// family as TERM_UNKNOWN / HIST_* fixes.
     #[test]
     fn nulstring_matches_canonical_nularg_byte() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::Nularg;
         assert_eq!(Nularg as u32, 0xa1,
             "Src/zsh.h:206 — Nularg must be 0xa1");
@@ -7500,6 +7501,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_getkeystring() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         assert_eq!(crate::ported::utils::getkeystring("hello").0, "hello"); // utils.c:6915
         assert_eq!(
@@ -7513,6 +7515,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_simple_param_expansion() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         vars_insert("FOO".to_string(), "bar".to_string()); // utils.c:6915
 
@@ -7522,6 +7525,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_modify_head() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         let result = modify("/path/to/file.txt", ":h"); // utils.c:6915
         assert_eq!(result, "/path/to"); // utils.c:6915
@@ -7529,6 +7533,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_modify_tail() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         let result = modify("/path/to/file.txt", ":t"); // utils.c:6915
         assert_eq!(result, "file.txt"); // utils.c:6915
@@ -7536,6 +7541,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_modify_extension() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         let result = modify("/path/to/file.txt", ":e"); // utils.c:6915
         assert_eq!(result, "txt"); // utils.c:6915
@@ -7543,6 +7549,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_modify_root() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         let result = modify("/path/to/file.txt", ":r"); // utils.c:6915
         assert_eq!(result, "/path/to/file"); // utils.c:6915
@@ -7550,6 +7557,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_dopadding() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // Left pad only
         assert_eq!(dopadding("hi", 5, 0, None, None, " ", " ", 0), "   hi"); // utils.c:6915
@@ -7564,6 +7572,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn test_singsub() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         vars_insert("X".to_string(), "value".to_string()); // utils.c:6915
                                                                       // singsub currently doesn't process $ - it's a high-level wrapper
@@ -7587,6 +7596,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn casemodify_lower_uppercases_via_lowercase() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // Src/hist.c:CASMOD_LOWER applies tolower() per char.
         assert_eq!(casemodify("Hello World", CASMOD_LOWER), "hello world"); // utils.c:6915
@@ -7596,6 +7606,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn casemodify_upper_uppercases_each_char() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // Src/hist.c:CASMOD_UPPER applies toupper() per char.
         assert_eq!(casemodify("Hello World", CASMOD_UPPER), "HELLO WORLD"); // utils.c:6915
@@ -7605,6 +7616,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn casemodify_caps_titlecases_each_word() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // Src/hist.c:CASMOD_CAPS — uppercase first letter of each word,
         // lowercase the rest. zsh treats whitespace as a word boundary.
@@ -7614,6 +7626,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn casemodify_caps_treats_punctuation_as_word_boundary() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // Port of CASMOD_CAPS from Src/hist.c — non-alphanumerics
         // (incl. `-`, `.`, digits-then-alpha) reset `nextupper`.
@@ -7626,6 +7639,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn remtpath_count_zero_strips_last_component() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2063-2066 — `if (!count)` skips back through one
         // filename until the previous separator.
@@ -7641,6 +7655,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn remtpath_positive_count_keeps_n_components_from_front() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2079-2082 — "Return this many components, so start
         // from the front. Leading slash counts as one component."
@@ -7654,6 +7669,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn remtpath_root_is_always_root() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2107-2114 — never erase root slash.
         assert_eq!(remtpath("/", 0), "/"); // utils.c:6915
@@ -7664,6 +7680,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn remlpaths_returns_last_n_components() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2151-2186 — `remlpaths` is the C name for the `:t`
         // (tail) modifier with optional count. Re-read C carefully:
@@ -7689,6 +7706,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn remtext_strips_extension() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2126-2130 — walk from end, drop everything from the
         // last `.` onward (in the LAST path component only).
@@ -7705,6 +7723,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn rembutext_keeps_only_extension() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // hist.c:2141-2143 — return whatever follows the last `.` in
         // the basename. No extension → empty string.
@@ -7721,6 +7740,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn chabspath_collapses_dot_and_dotdot() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // zsh `:A` resolves to canonical absolute path. Without
         // symlinks the behavior reduces to: collapse `.` (no-op),
@@ -7735,6 +7755,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn getkeystring_decodes_basic_escapes() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c — \n \t \r \a \b \f \v \\ \' \"
         assert_eq!(crate::ported::utils::getkeystring("\\n").0, "\n"); // utils.c:6915
@@ -7747,6 +7768,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn getkeystring_decodes_hex_escape() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c handles `\xNN` (1-2 hex digits).
         assert_eq!(crate::ported::utils::getkeystring("\\x41").0, "A"); // 0x41 = 'A' // utils.c:6915
@@ -7755,6 +7777,7 @@ mod tests {
 
     #[test] // utils.c:6915
     fn getkeystring_decodes_unicode_escape() {
+        let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c `\uNNNN` form for BMP code points.
         assert_eq!(crate::ported::utils::getkeystring("\\u00e9").0, "é"); // utils.c:6915
@@ -7767,6 +7790,7 @@ mod tests {
 
     #[test] // c:1625
     fn paramsubst_default_when_unset() {
+        let _g = crate::test_util::global_state_lock();
         // c:1625
         // subst.c:3202-3232 `case '-': case Dash:` — return operand
         // when value is unset. Unique name avoids paramtab collision
@@ -7782,6 +7806,7 @@ mod tests {
 
     #[test] // c:3300
     fn paramsubst_assign_default_writes_indexed_array_slot() {
+        let _g = crate::test_util::global_state_lock();
         // c:3300
         // subst.c:3296-3305 `setaparam` path. zshrs port: numeric
         // subscript with no assoc declared → indexed slot, 1-based.
@@ -7813,6 +7838,7 @@ mod tests {
 
     #[test] // c:3193
     fn paramsubst_alternative_when_unset() {
+        let _g = crate::test_util::global_state_lock();
         // c:3193
         // Unique name avoids paramtab collision with other tests
         // that share the global params::paramtab().
@@ -7870,6 +7896,7 @@ mod tests {
     /// in zsh substitution syntax (`${(p<TAB>)}` vs `${(l:5:)}`).
     #[test]
     fn get_strarg_extracts_paren_delimited_content() {
+        let _g = crate::test_util::global_state_lock();
         let r = get_strarg("(foo)rest");
         assert_eq!(r, Some(('(', "foo".to_string(), "rest")),
             "(foo)rest must split into delim=( , content='foo', tail='rest'");
@@ -7878,6 +7905,7 @@ mod tests {
     /// c:1348 — `get_strarg("")` returns None (no delimiter).
     #[test]
     fn get_strarg_empty_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_strarg(""), None);
     }
 
@@ -7885,6 +7913,7 @@ mod tests {
     /// digit run with paren-delim should return (n, tail).
     #[test]
     fn get_intarg_parses_paren_int() {
+        let _g = crate::test_util::global_state_lock();
         // Clear global errflag — `get_intarg` returns None whenever
         // `errflag != 0` (c:1445). Earlier tests in the suite may
         // have set ERRFLAG_ERROR via parser-failure paths and not
@@ -7899,6 +7928,7 @@ mod tests {
     /// c:1428 — `get_intarg("")` returns None.
     #[test]
     fn get_intarg_empty_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(get_intarg(""), None);
     }
 
@@ -7908,6 +7938,7 @@ mod tests {
     /// any of the 3 parts would break every `${var:-fallback}` path.
     #[test]
     fn strcatsub_concatenates_three_parts_plain() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(strcatsub("a", "b", "c", false), "abc");
         assert_eq!(strcatsub("", "X", "",  false), "X");
         assert_eq!(strcatsub("[", "y", "]", false), "[y]");
@@ -7919,6 +7950,7 @@ mod tests {
     /// on CJK chars.
     #[test]
     fn wcpadwidth_reports_one_for_ascii() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(wcpadwidth('a', 0), 1);
         assert_eq!(wcpadwidth('Z', 0), 1);
     }
@@ -7927,6 +7959,7 @@ mod tests {
     /// `multi_width=2` is the standard zsh "treat wide as 2-cols" mode.
     #[test]
     fn wcpadwidth_reports_width_two_for_cjk_when_multi_set() {
+        let _g = crate::test_util::global_state_lock();
         // multi_width=2 treats wide chars as 2 columns.
         let w = wcpadwidth('中', 2);
         assert!(w >= 1, "CJK char must have width >= 1 (got {w})");
@@ -7937,6 +7970,7 @@ mod tests {
     /// returns None — no substitution to apply.
     #[test]
     fn filesubstr_non_tilde_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(filesubstr("/literal/path", false), None);
         assert_eq!(filesubstr("relative",     false), None);
         assert_eq!(filesubstr("",             false), None);
@@ -7946,6 +7980,7 @@ mod tests {
     /// $HOME directly.
     #[test]
     fn filesubstr_bare_tilde_resolves_to_home() {
+        let _g = crate::test_util::global_state_lock();
         if let Ok(home) = std::env::var("HOME") {
             let r = filesubstr("~", false);
             assert_eq!(r.as_deref(), Some(home.as_str()),
@@ -7959,6 +7994,7 @@ mod tests {
     /// every script using `${PWD:h}` for parent-dir lookups.
     #[test]
     fn modify_h_strips_trailing_component() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("/foo/bar/baz", ":h"), "/foo/bar");
     }
 
@@ -7966,6 +8002,7 @@ mod tests {
     /// → `baz`. Counterpart to `:h`.
     #[test]
     fn modify_t_returns_trailing_component() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("/foo/bar/baz", ":t"), "baz");
     }
 
@@ -7973,6 +8010,7 @@ mod tests {
     /// → `foo`. Used by `${file:r}` for filename manipulation.
     #[test]
     fn modify_r_strips_extension() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("foo.txt", ":r"), "foo");
         assert_eq!(modify("foo",     ":r"), "foo", "no ext = no change");
     }
@@ -7980,6 +8018,7 @@ mod tests {
     /// c:4531 — `:e` returns just the extension. Counterpart to `:r`.
     #[test]
     fn modify_e_returns_extension() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("foo.txt", ":e"), "txt");
     }
 
@@ -7987,12 +8026,14 @@ mod tests {
     /// case-normalisation paths in user shell scripts.
     #[test]
     fn modify_u_uppercases() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("hello", ":u"), "HELLO");
     }
 
     /// c:4531 — `:l` lowercases.
     #[test]
     fn modify_l_lowercases() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("HELLO", ":l"), "hello");
     }
 
@@ -8000,6 +8041,7 @@ mod tests {
     /// strips the extension THEN uppercases → `FOO`.
     #[test]
     fn modify_chained_modifiers_apply_left_to_right() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("foo.txt", ":r:u"), "FOO");
     }
 
@@ -8008,6 +8050,7 @@ mod tests {
     /// processes phantom flags.
     #[test]
     fn modify_empty_modifier_returns_input_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("foo/bar", ""), "foo/bar");
     }
 
@@ -8016,6 +8059,7 @@ mod tests {
     /// to distinguish positional subscripts from modifier letters.
     #[test]
     fn check_colon_subscript_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(check_colon_subscript(""), None);
     }
 
@@ -8025,6 +8069,7 @@ mod tests {
     /// every `${PWD:h}`.
     #[test]
     fn check_colon_subscript_returns_none_on_modifier_letter() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(check_colon_subscript("h"),  None);
         assert_eq!(check_colon_subscript("t"),  None);
         assert_eq!(check_colon_subscript("r"),  None);
@@ -8038,6 +8083,7 @@ mod tests {
     /// shorthand.
     #[test]
     fn check_colon_subscript_bare_colon_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let r = check_colon_subscript(":remainder");
         assert!(r.is_some());
         let (sub, _rest) = r.unwrap();
@@ -8048,6 +8094,7 @@ mod tests {
     /// pass-through to a subshell. Plain ASCII passes unchanged.
     #[test]
     fn quotesubst_passes_plain_ascii_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(quotesubst("hello world"), "hello world");
         assert_eq!(quotesubst(""),            "");
     }
@@ -8056,6 +8103,7 @@ mod tests {
     /// string in-place; plain text with no `$` passes through.
     #[test]
     fn singsub_passes_plain_text_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(singsub("hello"),  "hello");
         assert_eq!(singsub(""),       "");
         assert_eq!(singsub("no var"), "no var");
@@ -8070,6 +8118,7 @@ mod tests {
     /// byte instead of the const fails at compile time.
     #[test]
     fn token_byte_constants_match_zsh_h_canonical_values() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{
             Dnull, Equals, Hat, Inbrack, Inpar, Outbrack, Outpar,
             Snull, Stringg, Tick, Tilde,

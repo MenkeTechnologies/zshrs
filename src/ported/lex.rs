@@ -4099,6 +4099,7 @@ mod tokens_tests {
 
     #[test]
     fn test_token_values() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(Snull as u32, 0x9d);
         assert_eq!(Dnull as u32, 0x9e);
         assert_eq!(Bnull as u32, 0x9f);
@@ -4106,6 +4107,7 @@ mod tokens_tests {
 
     #[test]
     fn test_reserved_words() {
+        let _g = crate::test_util::global_state_lock();
         // Reserved-word lookup goes through the canonical `reswdtab`
         // (port of `Src/hashtable.c:1076 reswds[]`).
         let tab = reswdtab_lock().read().unwrap();
@@ -4116,6 +4118,7 @@ mod tokens_tests {
 
     #[test]
     fn test_redirop() {
+        let _g = crate::test_util::global_state_lock();
         assert!(IS_REDIROP(OUTANG_TOK));
         assert!(IS_REDIROP(DINANG));
         assert!(!IS_REDIROP(IF));
@@ -4130,6 +4133,7 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo hello");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4145,6 +4149,7 @@ mod tests {
 
     #[test]
     fn test_pipeline() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("ls | grep foo");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4161,6 +4166,7 @@ mod tests {
 
     #[test]
     fn test_redirections() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo > file");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4174,6 +4180,7 @@ mod tests {
 
     #[test]
     fn test_heredoc() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("cat << EOF");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4187,6 +4194,7 @@ mod tests {
 
     #[test]
     fn test_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo 'hello world'");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4199,6 +4207,7 @@ mod tests {
 
     #[test]
     fn test_function_tokens() {
+        let _g = crate::test_util::global_state_lock();
         // C zsh's par_funcdef (parse.c:1681, 1717) explicitly toggles
         // `incmdpos` around the function header: 0 before reading the
         // name, 1 before the body opener. The Rust zshlex auto-updates
@@ -4244,6 +4253,7 @@ mod tests {
 
     #[test]
     fn test_double_quotes() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo \"hello $name\"");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4256,6 +4266,7 @@ mod tests {
 
     #[test]
     fn test_command_substitution() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo $(pwd)");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4266,6 +4277,7 @@ mod tests {
 
     #[test]
     fn test_env_assignment() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("FOO=bar echo");
         set_incmdpos(true);
         zshlex();
@@ -4277,6 +4289,7 @@ mod tests {
 
     #[test]
     fn test_array_assignment() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("arr=(a b c)");
         set_incmdpos(true);
         zshlex();
@@ -4285,6 +4298,7 @@ mod tests {
 
     #[test]
     fn test_process_substitution() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("diff <(ls) >(cat)");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4300,6 +4314,7 @@ mod tests {
 
     #[test]
     fn test_arithmetic() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("echo $((1+2))");
         zshlex();
         assert_eq!(tok(), STRING_LEX);
@@ -4310,6 +4325,7 @@ mod tests {
 
     #[test]
     fn test_semicolon_variants() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lex_init("case x in a) cmd;; b) cmd;& c) cmd;| esac");
 
         // Skip to first ;;
@@ -4347,6 +4363,7 @@ mod tests {
     /// into user-visible output.
     #[test]
     fn untokenize_passes_plain_string_through() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(untokenize("hello"),      "hello");
         assert_eq!(untokenize(""),           "");
         assert_eq!(untokenize("a/b/c"),      "a/b/c");
@@ -4365,6 +4382,7 @@ mod tests {
     /// the ITOK range passes through verbatim.
     #[test]
     fn untokenize_strips_marker_sentinels() {
+        let _g = crate::test_util::global_state_lock();
         // Pound = \u{84} per zsh.h:159. ITOK byte; untokenize should
         // strip or replace it (the literal byte must NOT survive).
         let with_pound = format!("a{}b", crate::ported::zsh_h::Pound);
@@ -4394,6 +4412,7 @@ mod tests {
     /// C UB behavior.
     #[test]
     fn untokenize_range_matches_c_itok_endpoints() {
+        let _g = crate::test_util::global_state_lock();
         // META (\u{83}) is IMETA-only, NOT ITOK. Must pass through.
         let with_meta = format!("a{}b", '\u{83}');
         let cleaned = untokenize(&with_meta);
@@ -4412,6 +4431,7 @@ mod tests {
     /// round-trips unchanged.
     #[test]
     fn untokenize_preserve_quotes_plain_input_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(untokenize_preserve_quotes("foo"),  "foo");
         assert_eq!(untokenize_preserve_quotes(""),     "");
     }
@@ -4421,6 +4441,7 @@ mod tests {
     /// where set doesn't stick would silently zero out line numbers.
     #[test]
     fn toklineno_set_then_get_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let saved = toklineno();
         set_toklineno(12345);
         assert_eq!(toklineno(), 12345);
@@ -4431,6 +4452,7 @@ mod tests {
     /// stores into a different slot than read.
     #[test]
     fn tokfd_set_then_get_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let saved = tokfd();
         set_tokfd(7);
         assert_eq!(tokfd(), 7);
@@ -4442,6 +4464,7 @@ mod tests {
     /// panic — the high unicode + nul edge cases.
     #[test]
     fn lexact1_get_handles_high_chars_without_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _ = lexact1_get('a');
         let _ = lexact1_get('\0');
         let _ = lexact1_get('\u{ffff}');
@@ -4452,6 +4475,7 @@ mod tests {
     /// would break every script using zsh's documented numeric-glob.
     #[test]
     fn isnumglob_recognises_numeric_range_pattern() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isnumglob("1-10>",  0), "<1-10> shape recognised");
         assert!(isnumglob("0-100>", 0));
         assert!(isnumglob("9-9>",   0), "single-value range");
@@ -4462,6 +4486,7 @@ mod tests {
     /// these would let `<abc-def>` parse as a numglob.
     #[test]
     fn isnumglob_rejects_malformed_shapes() {
+        let _g = crate::test_util::global_state_lock();
         assert!(!isnumglob("1-10",   0), "missing closing > → not numglob");
         assert!(!isnumglob("1-",     0), "no closing");
         assert!(!isnumglob("abc>",   0), "non-digit content");
@@ -4474,6 +4499,7 @@ mod tests {
     /// the wrong starting char on every embedded numglob.
     #[test]
     fn isnumglob_respects_position_offset() {
+        let _g = crate::test_util::global_state_lock();
         assert!(isnumglob("xxx1-10>",  3), "scan from offset 3");
         assert!(!isnumglob("xxx1-10>", 0), "scan from offset 0 sees 'x'");
     }
@@ -4486,6 +4512,7 @@ mod tests {
     /// Pin these zero-length digit-run edge cases.
     #[test]
     fn isnumglob_accepts_empty_digit_runs_per_c_pattern() {
+        let _g = crate::test_util::global_state_lock();
         // c:577 — `[0-9]*-[0-9]*>` allows ZERO digits on either side.
         assert!(isnumglob("->",   0),
             "c:577 — `<->` is the minimum valid numglob (both runs empty)");
@@ -4501,6 +4528,7 @@ mod tests {
     /// second dash would mis-recognise `<1-2-3>` as a numglob.
     #[test]
     fn isnumglob_rejects_second_dash_after_first() {
+        let _g = crate::test_util::global_state_lock();
         // c:597-602 — after seeing the first `-`, ec becomes `>`.
         // Next non-digit must be `>` or the loop breaks.
         assert!(!isnumglob("1-2-3>", 0),

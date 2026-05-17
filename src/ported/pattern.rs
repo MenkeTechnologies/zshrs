@@ -2258,6 +2258,7 @@ mod tests {
 
     #[test]
     fn literal_match() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("hello");
         assert!(pattry(&prog, "hello"));
         assert!(!pattry(&prog, "world"));
@@ -2265,6 +2266,7 @@ mod tests {
 
     #[test]
     fn star_matches_anything() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("*");
         assert!(pattry(&prog, ""));
         assert!(pattry(&prog, "abc"));
@@ -2272,6 +2274,7 @@ mod tests {
 
     #[test]
     fn star_in_middle() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("a*z");
         assert!(pattry(&prog, "az"));
         assert!(pattry(&prog, "abz"));
@@ -2281,6 +2284,7 @@ mod tests {
 
     #[test]
     fn question_matches_one() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("a?c");
         assert!(pattry(&prog, "abc"));
         assert!(pattry(&prog, "axc"));
@@ -2289,6 +2293,7 @@ mod tests {
 
     #[test]
     fn bracket_anyof() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("[abc]");
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "b"));
@@ -2298,6 +2303,7 @@ mod tests {
 
     #[test]
     fn bracket_range() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("[a-z]");
         assert!(pattry(&prog, "m"));
         assert!(!pattry(&prog, "M"));
@@ -2305,6 +2311,7 @@ mod tests {
 
     #[test]
     fn bracket_negated() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("[^0-9]");
         assert!(pattry(&prog, "a"));
         assert!(!pattry(&prog, "5"));
@@ -2312,6 +2319,7 @@ mod tests {
 
     #[test]
     fn alternation() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("foo|bar");
         assert!(pattry(&prog, "foo"));
         assert!(pattry(&prog, "bar"));
@@ -2320,6 +2328,7 @@ mod tests {
 
     #[test]
     fn captures() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(foo)(bar)");
         let mut nump = 0i32;
         let mut begp: Vec<i32> = Vec::new();
@@ -2337,6 +2346,7 @@ mod tests {
 
     #[test]
     fn hash_zero_or_more() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("a#");
         assert!(pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
@@ -2345,6 +2355,7 @@ mod tests {
 
     #[test]
     fn double_hash_one_or_more() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("a##");
         assert!(!pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
@@ -2353,6 +2364,7 @@ mod tests {
 
     #[test]
     fn escape_literal() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("a\\*b");
         assert!(pattry(&prog, "a*b"));
         assert!(!pattry(&prog, "azb"));
@@ -2360,6 +2372,7 @@ mod tests {
 
     #[test]
     fn convenience_patmatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         assert!(patmatch("hello*", "hello world"));
         assert!(!patmatch("x?z", "abc"));
@@ -2371,6 +2384,7 @@ mod tests {
     /// don't race against simpler call sites.
     #[test]
     fn patcompile_concurrent_safe() {
+        let _g = crate::test_util::global_state_lock();
         use std::thread;
         let handles: Vec<_> = (0..8).map(|i| {
             thread::spawn(move || {
@@ -2386,6 +2400,7 @@ mod tests {
 
     #[test]
     fn haswilds_detects_meta() {
+        let _g = crate::test_util::global_state_lock();
         assert!(haswilds("*"));
         assert!(haswilds("foo?"));
         assert!(haswilds("[abc]"));
@@ -2394,6 +2409,7 @@ mod tests {
 
     #[test]
     fn patmatchrange_basic() {
+        let _g = crate::test_util::global_state_lock();
         let r: Vec<char> = "a-zA-Z".chars().collect();
         assert!(patmatchrange(&r, 'm', false));
         assert!(patmatchrange(&r, 'X', false));
@@ -2402,6 +2418,7 @@ mod tests {
 
     #[test]
     fn range_type_lookup() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(range_type("alpha"), Some(1));
         assert_eq!(range_type("digit"), Some(5));
         assert_eq!(range_type("nonsense"), None);
@@ -2409,6 +2426,7 @@ mod tests {
 
     #[test]
     fn pattern_range_to_string_passes_through_pos_class() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(pattern_range_to_string("[:alpha:]"), "[:alpha:]");
         assert_eq!(pattern_range_to_string("a-z"), "a-z");
         assert_eq!(pattern_range_to_string(""), "");
@@ -2416,6 +2434,7 @@ mod tests {
 
     #[test]
     fn patgetglobflags_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let (bits, _, n) = patgetglobflags("(#i)foo").unwrap();
         assert!((bits & GF_IGNCASE) != 0);
         assert_eq!(n, 4); // length of "(#i)"
@@ -2423,12 +2442,14 @@ mod tests {
 
     #[test]
     fn patgetglobflags_backref() {
+        let _g = crate::test_util::global_state_lock();
         let (bits, _, _) = patgetglobflags("(#b)").unwrap();
         assert!((bits & GF_BACKREF) != 0);
     }
 
     #[test]
     fn patgetglobflags_approx() {
+        let _g = crate::test_util::global_state_lock();
         let (bits, _, _) = patgetglobflags("(#a2)").unwrap();
         assert_eq!(bits & 0xff, 2);
     }
@@ -2440,6 +2461,7 @@ mod tests {
     /// stuck on, defeating the "restore case sensitivity" intent.
     #[test]
     fn patgetglobflags_capital_i_clears_both_case_flags() {
+        let _g = crate::test_util::global_state_lock();
         // Two-flag chain: `(#l)` sets LCMATCHUC; `(#I)` should
         // clear it. C clears via `~(GF_LCMATCHUC|GF_IGNCASE)`.
         let (bits, _, _) = patgetglobflags("(#lI)").unwrap();
@@ -2455,6 +2477,7 @@ mod tests {
     /// accepted it and silently cleared GF_LCMATCHUC, diverging.
     #[test]
     fn patgetglobflags_rejects_undocumented_flag_letters() {
+        let _g = crate::test_util::global_state_lock();
         // 'L' (capital L) — not a documented C flag.
         assert_eq!(patgetglobflags("(#L)"), None,
             "c:1120 default — unknown flag 'L' must be rejected");
@@ -2470,6 +2493,7 @@ mod tests {
     /// accepted empty-digit form and set errs=0.
     #[test]
     fn patgetglobflags_rejects_empty_approx_digit_run() {
+        let _g = crate::test_util::global_state_lock();
         // `(#a)` with no digits after 'a' — C rejects (c:1063
         // `ptr == nptr` check).
         assert_eq!(patgetglobflags("(#a)"), None,
@@ -2478,6 +2502,7 @@ mod tests {
 
     #[test]
     fn pattry_no_anchor_default() {
+        let _g = crate::test_util::global_state_lock();
         // patmatch with anchored compile: only full-string matches succeed.
         let prog = compile("foo");
         assert!(pattry(&prog, "foo"));
@@ -2487,6 +2512,7 @@ mod tests {
     /// Port of pattern.c:1528 (Inang case).
     #[test]
     fn numeric_range_inclusive() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("<10-20>");
         assert!(pattry(&prog, "15"));
         assert!(pattry(&prog, "10"));
@@ -2497,6 +2523,7 @@ mod tests {
 
     #[test]
     fn numeric_range_from_only() {
+        let _g = crate::test_util::global_state_lock();
         // <100-> matches any number ≥ 100.
         let prog = compile("<100->");
         assert!(pattry(&prog, "100"));
@@ -2506,6 +2533,7 @@ mod tests {
 
     #[test]
     fn numeric_range_to_only() {
+        let _g = crate::test_util::global_state_lock();
         // <-5> matches any number ≤ 5.
         let prog = compile("<-5>");
         assert!(pattry(&prog, "0"));
@@ -2515,6 +2543,7 @@ mod tests {
 
     #[test]
     fn numeric_range_any() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("<->");
         assert!(pattry(&prog, "0"));
         assert!(pattry(&prog, "12345"));
@@ -2524,6 +2553,7 @@ mod tests {
     /// `(foo)#` — zero-or-more group repetition.
     #[test]
     fn group_with_hash_quantifier() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(foo)#");
         assert!(pattry(&prog, ""));
         assert!(pattry(&prog, "foo"));
@@ -2533,6 +2563,7 @@ mod tests {
     /// `(a|b)##` — one-or-more group with alternation.
     #[test]
     fn group_alt_with_double_hash() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(a|b)##");
         assert!(!pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
@@ -2542,6 +2573,7 @@ mod tests {
     /// Mixed numeric range and literal: `v<1-99>`.
     #[test]
     fn literal_then_numeric_range() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("v<1-99>");
         assert!(pattry(&prog, "v1"));
         assert!(pattry(&prog, "v50"));
@@ -2553,6 +2585,7 @@ mod tests {
     /// Star is greedy — backtracks correctly with trailing literal.
     #[test]
     fn star_greedy_backtracks() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("*.txt");
         assert!(pattry(&prog, "foo.txt"));
         assert!(pattry(&prog, "a.b.c.txt"));
@@ -2562,6 +2595,7 @@ mod tests {
     /// Bracket with POSIX class.
     #[test]
     fn posix_alpha_class() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("[[:alpha:]]##");
         assert!(pattry(&prog, "abc"));
         assert!(pattry(&prog, "XYZ"));
@@ -2574,6 +2608,7 @@ mod tests {
     /// patcompile hoists into patprog.flags as PAT_LCMATCHUC).
     #[test]
     fn case_insensitive_via_glob_flag() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#i)foo");
         assert!(pattry(&prog, "foo"));
         assert!(pattry(&prog, "FOO"));
@@ -2584,6 +2619,7 @@ mod tests {
     /// `(#i)[abc]` — case-insensitive bracket class.
     #[test]
     fn case_insensitive_bracket() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#i)[abc]");
         assert!(pattry(&prog, "A"));
         assert!(pattry(&prog, "b"));
@@ -2593,6 +2629,7 @@ mod tests {
     /// Unicode case-fold for `(#i)` — non-ASCII Latin chars.
     #[test]
     fn case_insensitive_unicode() {
+        let _g = crate::test_util::global_state_lock();
         // German Ü/ü and É/é folded via char::to_lowercase.
         let prog = compile("(#i)Über");
         assert!(pattry(&prog, "über"));
@@ -2605,6 +2642,7 @@ mod tests {
     /// Without `(#i)`, exact case required.
     #[test]
     fn case_sensitive_default() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("foo");
         assert!(pattry(&prog, "foo"));
         assert!(!pattry(&prog, "FOO"));
@@ -2614,6 +2652,7 @@ mod tests {
     /// second half case-insensitive.
     #[test]
     fn mid_pattern_gflags_switch() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("foo(#i)bar");
         assert!(pattry(&prog, "fooBAR"));
         assert!(pattry(&prog, "foobar"));
@@ -2625,6 +2664,7 @@ mod tests {
     /// `(#s)foo` — start-of-string anchor.
     #[test]
     fn start_anchor() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#s)foo");
         assert!(pattry(&prog, "foo"));
         // pattry runs from position 0 so this is structurally
@@ -2635,6 +2675,7 @@ mod tests {
     /// `foo(#e)` — end-of-string anchor.
     #[test]
     fn end_anchor() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("foo(#e)");
         assert!(pattry(&prog, "foo"));
     }
@@ -2642,6 +2683,7 @@ mod tests {
     /// `(#c3,5)x` — counted repetition: match `x` 3 to 5 times.
     #[test]
     fn count_range_3_to_5() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#c3,5)x");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
@@ -2653,6 +2695,7 @@ mod tests {
     /// `(#c3)x` — exact count: `xxx` only.
     #[test]
     fn count_exact_3() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#c3)x");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
@@ -2661,6 +2704,7 @@ mod tests {
 
     #[test]
     fn debug_alt_b() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(a)|b");
         eprintln!("bytecode len: {}", prog.1.len());
         for (i, b) in prog.1.iter().enumerate() {
@@ -2675,6 +2719,7 @@ mod tests {
     /// `(#c2,)x` — at least 2.
     #[test]
     fn count_min_only() {
+        let _g = crate::test_util::global_state_lock();
         let prog = compile("(#c2,)x");
         assert!(!pattry(&prog, "x"));
         assert!(pattry(&prog, "xx"));
@@ -2683,6 +2728,7 @@ mod tests {
 
     #[test]
     fn captures_unmatched_group_returns_no_match() {
+        let _g = crate::test_util::global_state_lock();
         // Pattern with alt — first branch fails, second succeeds; check
         // captures from successful branch only.
         let prog = compile("(a)|b");
@@ -2695,6 +2741,7 @@ mod tests {
     /// against directories containing dotfiles like `.txt`.
     #[test]
     fn patmatch_star_matches_empty_prefix() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("*.txt", "a.txt"));
         assert!(patmatch("*.txt", ".txt"));
         assert!(!patmatch("*.txt", "a.rs"));
@@ -2704,6 +2751,7 @@ mod tests {
     /// empty or multi-char would break filename-mangling patterns.
     #[test]
     fn patmatch_question_matches_exactly_one_char() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("?.txt", "a.txt"));
         assert!(!patmatch("?.txt", "ab.txt"));
         assert!(!patmatch("?.txt", ".txt"));
@@ -2712,6 +2760,7 @@ mod tests {
     /// c:540 — char-class `[abc]` matches any listed char.
     #[test]
     fn patmatch_char_class_matches_listed_chars() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("[abc].txt", "a.txt"));
         assert!(patmatch("[abc].txt", "b.txt"));
         assert!(patmatch("[abc].txt", "c.txt"));
@@ -2721,6 +2770,7 @@ mod tests {
     /// c:540 — negated `[!abc]` matches any char NOT in the set.
     #[test]
     fn patmatch_negated_char_class_inverts() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("[!abc].txt", "d.txt"));
         assert!(!patmatch("[!abc].txt", "a.txt"));
     }
@@ -2728,6 +2778,7 @@ mod tests {
     /// c:540 — range `[a-z]` ASCII range; uppercase outside.
     #[test]
     fn patmatch_range_matches_ascii_range() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("[a-z]bc", "abc"));
         assert!(patmatch("[a-z]bc", "zbc"));
         assert!(!patmatch("[a-z]bc", "Abc"));
@@ -2739,6 +2790,7 @@ mod tests {
     /// abc) ;;`.
     #[test]
     fn patmatch_literal_requires_exact_string_equality() {
+        let _g = crate::test_util::global_state_lock();
         assert!(patmatch("abc", "abc"));
         assert!(!patmatch("abc", "abcd"));
         assert!(!patmatch("abc", "ab"));
@@ -2752,6 +2804,7 @@ mod tests {
     /// (ignoring CASEGLOB option entirely). Pin all three branches.
     #[test]
     fn patcompstart_sets_patglobflags_per_option_state() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set};
         let saved_caseglob  = opt_state_get("caseglob").unwrap_or(false);
         let saved_casepaths = opt_state_get("casepaths").unwrap_or(false);
@@ -2797,6 +2850,7 @@ mod tests {
     /// so both names point to the same byte.
     #[test]
     fn pattern_marker_alias_matches_canonical_zsh_h_marker() {
+        let _g = crate::test_util::global_state_lock();
         // c:224 — canonical Marker is 0xa2.
         assert_eq!(Marker, 0xa2_u8,
             "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)");
@@ -2813,6 +2867,7 @@ mod tests {
     /// flip between default literal char and the `Marker` sentinel.
     #[test]
     fn patcompcharsset_respects_extendedglob_kshglob_shglob_options() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set};
         use crate::ported::zsh_h::{
             Marker as MARKER_CH, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INPAR,
@@ -2916,6 +2971,7 @@ mod tests {
     /// type mismatch breaks the test.
     #[test]
     fn savepatterndisables_returns_u32_bitmask_round_trip() {
+        let _g = crate::test_util::global_state_lock();
         // Save existing state.
         let saved = savepatterndisables();
         // Clear everything, install a known pattern.
@@ -2937,6 +2993,7 @@ mod tests {
     /// gets caught.
     #[test]
     fn savepatterndisables_each_slot_maps_to_its_bit() {
+        let _g = crate::test_util::global_state_lock();
         let saved = savepatterndisables();
         for slot in 0..(ZPC_COUNT as usize) {
             restorepatterndisables(1u32 << slot);

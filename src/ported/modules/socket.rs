@@ -364,6 +364,7 @@ mod tests {
     /// check is bypassed would leak a socket fd per invocation.
     #[test]
     fn zsocket_l_without_arg_fails_before_socket_call() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'l' as usize] = 1;
         assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
@@ -374,6 +375,7 @@ mod tests {
     /// dup2 the new socket onto stdin silently.
     #[test]
     fn zsocket_d_non_numeric_fails_before_dup2() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'd' as usize] = (1 << 2) | 1;
         ops.args.push("not-a-number".to_string());
@@ -393,6 +395,7 @@ mod tests {
     /// socket fd.
     #[test]
     fn zsocket_connect_mode_without_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
     }
@@ -402,6 +405,7 @@ mod tests {
     /// c:88-90 (already pinned) but for the accept-mode path.
     #[test]
     fn zsocket_a_without_arg_fails_before_accept() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'a' as usize] = 1;
         assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
@@ -413,6 +417,7 @@ mod tests {
     /// taken stdin away.
     #[test]
     fn zsocket_a_zero_listen_fd_fails() {
+        let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops();
         ops.ind[b'a' as usize] = 1;
         assert_eq!(bin_zsocket("zsocket", &["0".to_string()], &ops, 0), 1);
@@ -425,6 +430,7 @@ mod tests {
     /// port must match.
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
         let m = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
@@ -437,6 +443,7 @@ mod tests {
     /// is callable without panicking and returns the success sentinel.
     #[test]
     fn features_returns_success() {
+        let _g = crate::test_util::global_state_lock();
         let mut features = Vec::new();
         assert_eq!(features_(std::ptr::null(), &mut features), 0);
     }

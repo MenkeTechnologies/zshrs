@@ -459,6 +459,7 @@ mod tests_hooks {
 
     #[test]
     fn call_hook_queues_for_host_dispatch() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         call_hook("zle-line-init", None);
         call_hook("zle-keymap-select", Some("vicmd"));
@@ -475,6 +476,7 @@ mod tests_hooks {
 
     #[test]
     fn redrawhook_queues_pre_redraw_hook() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         redrawhook();
         let drained = drain_hooks();
@@ -483,6 +485,7 @@ mod tests_hooks {
 
     #[test]
     fn reexpandprompt_re_runs_expansion_against_raw_templates() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // Set raw templates that don't reference dynamic state, so the
         // expansion is idempotent and easy to assert. %% expands to a
@@ -503,6 +506,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // Ctrl-A → "^A". Mirrors zsh's bindkey -L line for `bindkey '^A'`.
         assert_eq!(bindztrdup(b"\x01"), "^A");
@@ -514,6 +518,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_escapes_backslash_and_caret() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // '\\' → "\\\\" (escaped per C source's `c == '\\'` branch).
         assert_eq!(bindztrdup(b"\\"), "\\\\");
@@ -523,6 +528,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_handles_high_bit_as_meta() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // Byte with bit-7 set → "\\M-X" prefix. \\xC1 = M-A.
         assert_eq!(bindztrdup(b"\xC1"), "\\M-A");
@@ -530,6 +536,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn printbind_caret_form_matches_describe_key_output() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // `^A`-style display form (distinct from bindkey's escape form).
         assert_eq!(printbind(b"\x01"), "^A");
@@ -1464,6 +1471,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_no_newline_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // c:1162 — walks back to start when no '\n' encountered.
         let z = zle_with("hello world", 7);
@@ -1472,6 +1480,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_finds_preceding_newline() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // c:1162 — `zleline[x-1] != '\n'` exits loop when prev char IS '\n'.
         // For "abc\ndef\nghi" with cursor at 9 (the 'h' in 'ghi'):
@@ -1482,6 +1491,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_at_start_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         let z = zle_with("anything", 0);
         assert_eq!(findbol(), 0);
@@ -1489,6 +1499,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findeol_no_newline_returns_end() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // c:1173 — walks forward to zlell when no '\n' encountered.
         let z = zle_with("hello world", 0);
@@ -1497,6 +1508,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findeol_finds_next_newline() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // c:1173 — `zleline[x] != '\n'` exits when current char IS '\n'.
         // For "abc\ndef" cursor at 0: walks 0→1→2→3 (which is '\n'), returns 3.
@@ -1506,6 +1518,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findeol_at_end_returns_zlell() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         let z = zle_with("hello", 5);
         assert_eq!(findeol(), 5);
@@ -1513,6 +1526,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findline_returns_bol_eol_pair() {
+        let _g = crate::test_util::global_state_lock();
         let _g =  zle_test_setup();
         // c:1182-1183 — both findbol and findeol from the same cursor.
         // "abc\ndef\nghi" cursor at 5 (the 'e' in 'def'):
@@ -1529,6 +1543,7 @@ mod findbol_findeol_tests {
     /// zlell by `cnt`.
     #[test]
     fn shiftchars_common_case_removes_cnt_chars_at_to() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abcdef", 0);
         // shiftchars(2, 2) over "abcdef" → "abef" (removes 'cd').
@@ -1544,6 +1559,7 @@ mod findbol_findeol_tests {
     /// yields a 3-char line.
     #[test]
     fn shiftchars_to_plus_cnt_equals_zlell_truncates_to_offset() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abcdef", 0);
         shiftchars(3, 3);
@@ -1563,6 +1579,7 @@ mod findbol_findeol_tests {
     /// (which relies on shiftchars truncating).
     #[test]
     fn shiftchars_to_plus_cnt_past_zlell_truncates_to_to() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abcdef", 0);
         shiftchars(3, 100);
@@ -1580,6 +1597,7 @@ mod findbol_findeol_tests {
     /// Vec storage and surface a panic on next read.
     #[test]
     fn shiftchars_to_past_zlell_clamps_to_len() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abc", 0);
         shiftchars(100, 5);
@@ -1597,6 +1615,7 @@ mod findbol_findeol_tests {
     /// `>= 0` doesn't drift.
     #[test]
     fn shiftchars_zero_count_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abcdef", 0);
         shiftchars(3, 0);
@@ -1610,6 +1629,7 @@ mod findbol_findeol_tests {
     /// is a no-op. Pin the cursor + zlell invariants.
     #[test]
     fn spaceinline_inserts_at_cursor_and_grows_zlell() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abc", 1);
         spaceinline(2);
@@ -1630,6 +1650,7 @@ mod findbol_findeol_tests {
     /// silently inserts a sentinel char on ct=0.
     #[test]
     fn spaceinline_zero_or_negative_is_noop() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("xyz", 1);
         spaceinline(0);
@@ -1645,6 +1666,7 @@ mod findbol_findeol_tests {
     /// content char). Pin the offset so cursor-at-newline cases work.
     #[test]
     fn findbol_lands_after_previous_newline_mid_buffer() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // "abc\ndef" cursor at 6 (the 'f'); bol should be 4 (after '\n').
         zle_with("abc\ndef", 6);
@@ -1659,6 +1681,7 @@ mod findbol_findeol_tests {
     /// 0 instead of 2. Catches the fix.
     #[test]
     fn setline_with_zsl_toend_moves_cursor_to_end() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         use crate::ported::zle::zle_h::ZSL_TOEND;
         zle_with("xxxxxxxxxx", 5);                 // pre-set cursor at 5
@@ -1675,6 +1698,7 @@ mod findbol_findeol_tests {
     /// which case it clamps to zlell. Pin the no-stale-cursor invariant.
     #[test]
     fn setline_without_zsl_toend_clamps_overshoot_cursor() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // Pre-set cursor at 10, then replace line with shorter "abc" (3 chars).
         zle_with("xxxxxxxxxxxx", 10);
@@ -1693,6 +1717,7 @@ mod findbol_findeol_tests {
     /// undo/redo path that calls setline mid-edit.
     #[test]
     fn setline_without_zsl_toend_preserves_in_range_cursor() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         zle_with("abcdef", 2);                     // cursor at 'c'
         setline("ABCDEFGH", 0);                    // longer; cursor=2 still fits
@@ -1708,6 +1733,7 @@ mod findbol_findeol_tests {
     /// argument duplication (a no-op in Rust where `&str` is borrowed).
     #[test]
     fn setline_with_zsl_copy_alone_does_not_change_cursor_logic() {
+        let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         use crate::ported::zle::zle_h::ZSL_COPY;
         zle_with("abcdefghij", 5);
@@ -1722,6 +1748,7 @@ mod findbol_findeol_tests {
     /// renumbering them silently inverts setline behavior.
     #[test]
     fn zsl_constants_match_c_source_values() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
         assert_eq!(ZSL_COPY,  1, "Src/Zle/zle.h:406 — ZSL_COPY = 1");
         assert_eq!(ZSL_TOEND, 2, "Src/Zle/zle.h:407 — ZSL_TOEND = 2");

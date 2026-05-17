@@ -1771,6 +1771,7 @@ mod tests {
 
     #[test]
     fn test_default_options() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // `glob` (OPT_ZSH) is on by default under EMULATE_ZSH.
@@ -1788,6 +1789,7 @@ mod tests {
 
     #[test]
     fn test_set_option() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         dosetopt(optlookup("xtrace"), if true { 1 } else { 0 }, 0);
@@ -1803,6 +1805,7 @@ mod tests {
     /// ambiguous ZLE keymap selection.
     #[test]
     fn dosetopt_emacs_vi_mutual_exclusion() {
+        let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{EMACSMODE, VIMODE};
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
@@ -1826,6 +1829,7 @@ mod tests {
 
     #[test]
     fn test_no_prefix() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         dosetopt(optlookup("noglob"), if true { 1 } else { 0 }, 0);
@@ -1841,6 +1845,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         assert_eq!(optlookup("GLOB"), optlookup("glob"));
@@ -1849,6 +1854,7 @@ mod tests {
 
     #[test]
     fn test_underscore_ignored() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         assert_eq!(optlookup("auto_list"), optlookup("autolist"));
@@ -1857,6 +1863,7 @@ mod tests {
 
     #[test]
     fn test_option_alias() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // `braceexpand` aliases to `noignorebraces` (optns[]:269 -IGNOREBRACES).
@@ -1866,6 +1873,7 @@ mod tests {
 
     #[test]
     fn test_single_letter() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // -x is xtrace.
@@ -1878,6 +1886,7 @@ mod tests {
 
     #[test]
     fn test_emulation() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         emulate("sh", true);
         assert_eq!(
@@ -1895,6 +1904,7 @@ mod tests {
 
     #[test]
     fn test_dash_string() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // `setopt` rejects user-level changes to INTERACTIVE / etc.
         // (dosetopt at options.c:746) when force=0; the test writes
@@ -1910,6 +1920,7 @@ mod tests {
 
     #[test]
     fn test_lookup_canonicalises_underscores_and_case() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // The canonicalised name "autolist" is the same option whether
@@ -1931,6 +1942,7 @@ mod tests {
     ///     matches.
     #[test]
     fn optlookup_lowercase_folding_is_ascii_only() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // ASCII A..=Z fold to a..=z (canonical).
@@ -1963,6 +1975,7 @@ mod tests {
     /// (NULL_OPT) doesn't silently flip global option 0.
     #[test]
     fn optlookup_unknown_names_return_opt_invalid() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         assert_eq!(optlookup(""),            OPT_INVALID,
@@ -1983,6 +1996,7 @@ mod tests {
     /// prefix, plain name.
     #[test]
     fn optlookup_no_prefix_only_fires_when_suffix_resolves() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // `noglob` resolves to -GLOB (real option suffix `glob`).
@@ -2004,6 +2018,7 @@ mod tests {
     /// sentinel shadow fails.
     #[test]
     fn opt_invalid_matches_c_enum_value_zero() {
+        let _g = crate::test_util::global_state_lock();
         // C zsh.h:2363 declares `OPT_INVALID,` as the first enum
         // slot, which by default has value 0.
         assert_eq!(OPT_INVALID, 0,
@@ -2019,6 +2034,7 @@ mod tests {
     /// letter table at a negative offset.
     #[test]
     fn optlookupc_rejects_letters_outside_range() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // c:723 — `if (c < FIRST_OPT || c > LAST_OPT) return 0`.
@@ -2039,6 +2055,7 @@ mod tests {
     /// silently permitting any caller to flip these options post-init.
     #[test]
     fn dosetopt_rejects_locked_options_without_force() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         use crate::ported::zsh_h::{INTERACTIVE, SHINSTDIN, SINGLECOMMAND};
@@ -2086,6 +2103,7 @@ mod tests {
     /// corresponding option is set.
     #[test]
     fn dashgetfn_iterates_c_canonical_range_first_opt_to_last_opt() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // Save state.
@@ -2125,6 +2143,7 @@ mod tests {
     /// sign-flip semantics through a non-locked option.
     #[test]
     fn dosetopt_negative_optno_flips_value() {
+        let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // Use AUTOMENU — a regular option (not locked).

@@ -193,6 +193,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_simple() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("hello world", "hello", &opts).unwrap();
         assert!(result.matched);
@@ -201,6 +202,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_no_match() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("hello world", "goodbye", &opts).unwrap();
         assert!(!result.matched);
@@ -208,6 +210,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_captures() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("hello world", "(hello) (world)", &opts).unwrap();
         assert!(result.matched);
@@ -219,6 +222,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions {
             case_insensitive: true,
             ..Default::default()
@@ -229,6 +233,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("HELLO WORLD", "hello", &opts).unwrap();
         assert!(!result.matched);
@@ -236,6 +241,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_positions() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("foo bar baz", "bar", &opts).unwrap();
         assert!(result.matched);
@@ -245,6 +251,7 @@ mod tests {
 
     #[test]
     fn test_regex_match_invalid_pattern() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("test", "[invalid", &opts);
         assert!(result.is_err());
@@ -252,6 +259,7 @@ mod tests {
 
     #[test]
     fn test_get_match_variables_zsh() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let result = regex_match("hello world", "(hello) (world)", &opts).unwrap();
         let vars = get_match_variables(&result, "hello world", &opts);
@@ -263,6 +271,7 @@ mod tests {
 
     #[test]
     fn test_get_match_variables_bash() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions {
             bash_rematch: true,
             ..Default::default()
@@ -280,6 +289,7 @@ mod tests {
 
     #[test]
     fn test_cond_regex_match() {
+        let _g = crate::test_util::global_state_lock();
         let opts = RegexOptions::default();
         let (matched, _) = cond_regex_match("hello world", "hello", &opts);
         assert!(matched);
@@ -290,12 +300,14 @@ mod tests {
 
     #[test]
     fn test_byte_to_char_offset_ascii() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(byte_to_char_offset("hello", 0), 0);
         assert_eq!(byte_to_char_offset("hello", 5), 5);
     }
 
     #[test]
     fn test_byte_to_char_offset_unicode() {
+        let _g = crate::test_util::global_state_lock();
         let s = "héllo";
         assert_eq!(byte_to_char_offset(s, 0), 0);
         assert_eq!(byte_to_char_offset(s, 1), 1);

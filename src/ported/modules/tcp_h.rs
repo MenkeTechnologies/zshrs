@@ -137,6 +137,7 @@ mod tests {
     /// the individual values are just enum scaffolding.
     #[test]
     fn ztcp_zftp_bit_does_not_overlap_listen_or_inbound() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZTCP_ZFTP & (ZTCP_LISTEN | ZTCP_INBOUND), 0);
     }
 }

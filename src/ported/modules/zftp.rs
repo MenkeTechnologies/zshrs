@@ -4148,6 +4148,7 @@ mod tests {
 
     #[test]
     fn test_transfer_type() {
+        let _g = crate::test_util::global_state_lock();
         // Inline-test pattern matching C: `(typ & ZFST_IMAG) ? "I" : "A"`
         let ascii_letter = if (ZFST_ASCI & ZFST_IMAG) != 0 { "I" } else { "A" };
         let image_letter = if (ZFST_IMAG & ZFST_IMAG) != 0 { "I" } else { "A" };
@@ -4157,6 +4158,7 @@ mod tests {
 
     #[test]
     fn test_transfer_mode() {
+        let _g = crate::test_util::global_state_lock();
         // Inline-test pattern matching C: `(mode & ZFST_BLOC) ? "B" : "S"`
         let stream_letter = if (ZFST_STRE & ZFST_BLOC) != 0 { "B" } else { "S" };
         let block_letter  = if (ZFST_BLOC & ZFST_BLOC) != 0 { "B" } else { "S" };
@@ -4173,6 +4175,7 @@ mod tests {
 
     #[test]
     fn test_ftp_response_positive() {
+        let _g = crate::test_util::global_state_lock();
         let resp: FtpResponse = (200, "OK".to_string());
         assert!(is_positive(resp.0));
         assert!(is_positive_completion(resp.0));
@@ -4181,6 +4184,7 @@ mod tests {
 
     #[test]
     fn test_ftp_response_intermediate() {
+        let _g = crate::test_util::global_state_lock();
         let resp: FtpResponse = (331, "Password required".to_string());
         assert!(is_positive(resp.0));
         assert!(is_positive_intermediate(resp.0));
@@ -4189,6 +4193,7 @@ mod tests {
 
     #[test]
     fn test_ftp_response_negative() {
+        let _g = crate::test_util::global_state_lock();
         let resp: FtpResponse = (550, "File not found".to_string());
         assert!(is_negative(resp.0));
         assert!(!is_positive(resp.0));
@@ -4196,6 +4201,7 @@ mod tests {
 
     #[test]
     fn test_ftp_session_new() {
+        let _g = crate::test_util::global_state_lock();
         let sess = zftp_session::new("test");
         assert_eq!(sess.name, "test");
         assert!(!sess.connected);
@@ -4204,6 +4210,7 @@ mod tests {
 
     #[test]
     fn test_parse_pasv_response() {
+        let _g = crate::test_util::global_state_lock();
         let msg = "227 Entering Passive Mode (192,168,1,1,4,1)";
         let (ip, port) = parse_pasv_response(msg).unwrap();
         assert_eq!(ip, "192.168.1.1");
@@ -4212,18 +4219,21 @@ mod tests {
 
     #[test]
     fn test_parse_pasv_response_invalid() {
+        let _g = crate::test_util::global_state_lock();
         let msg = "invalid";
         assert!(parse_pasv_response(msg).is_err());
     }
 
     #[test]
     fn test_zftp_new() {
+        let _g = crate::test_util::global_state_lock();
         let zftp = zftp_globals::new();
         assert!(zftp.session_names().is_empty());
     }
 
     #[test]
     fn test_zftp_create_session() {
+        let _g = crate::test_util::global_state_lock();
         let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.sessions.contains_key("test"));
@@ -4231,6 +4241,7 @@ mod tests {
 
     #[test]
     fn test_zftp_remove_session() {
+        let _g = crate::test_util::global_state_lock();
         let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.remove_session("test").is_some());
@@ -4239,6 +4250,7 @@ mod tests {
 
     #[test]
     fn test_zftp_set_current() {
+        let _g = crate::test_util::global_state_lock();
         let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.set_current("test"));
@@ -4247,6 +4259,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zftp_no_args() {
+        let _g = crate::test_util::global_state_lock();
         let mut zftp = zftp_globals::new();
         let status = bin_zftp("zftp", &[].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
@@ -4255,6 +4268,7 @@ mod tests {
     /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
     #[test]
     fn test_builtin_zftp_session() {
+        let _g = crate::test_util::global_state_lock();
         // Reset global state for test isolation.
         zftp_cleanup();
         let status = bin_zftp("zftp", &["session", "test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
@@ -4265,6 +4279,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zftp_test_not_connected() {
+        let _g = crate::test_util::global_state_lock();
         let mut zftp = zftp_globals::new();
         let status = bin_zftp("zftp", &["test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
@@ -4282,6 +4297,7 @@ mod tests {
     /// `zftp xyz_not_real` silently succeed and confuse scripts.
     #[test]
     fn zftp_unknown_subcommand_returns_one() {
+        let _g = crate::test_util::global_state_lock();
         zftp_cleanup();
         let ops = zftp_empty_ops();
         let r = bin_zftp("zftp",
@@ -4295,6 +4311,7 @@ mod tests {
     /// before any open command — wrong shell semantics.
     #[test]
     fn zftp_state_empty_after_cleanup() {
+        let _g = crate::test_util::global_state_lock();
         zftp_cleanup();
         assert!(zftp_state().lock().unwrap().sessions.is_empty());
     }
@@ -4306,6 +4323,7 @@ mod tests {
     /// other status bits (mode/login/syst/etc) as if they were type.
     #[test]
     fn zfst_type_isolates_transfer_type_bit() {
+        let _g = crate::test_util::global_state_lock();
         // Pure ASCII → 0
         assert_eq!(ZFST_TYPE(ZFST_ASCI),                                0);
         // Pure IMAGE → 1
@@ -4324,6 +4342,7 @@ mod tests {
     /// LOGI / SYST / NOPS / NOSZ / TRSZ / CLOS bits as "mode."
     #[test]
     fn zfst_mode_isolates_transfer_mode_bit() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZFST_MODE(ZFST_STRE),                                0);
         assert_eq!(ZFST_MODE(ZFST_BLOC),                                4);
         // BLOC + IMAG → still 4 (type masked out)
@@ -4341,6 +4360,7 @@ mod tests {
     /// up `zftp_send` calls that compare-against a known FTP verb.
     #[test]
     fn zfargstring_empty_args_returns_cmd() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zfargstring("RETR", &[]),                            "RETR");
         assert_eq!(zfargstring("QUIT", &[]),                            "QUIT");
         assert_eq!(zfargstring("",     &[]),                            "");
@@ -4350,6 +4370,7 @@ mod tests {
     /// between cmd and arg, no trailing whitespace.
     #[test]
     fn zfargstring_single_arg_one_space() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zfargstring("RETR", &["file.txt"]),                  "RETR file.txt");
         assert_eq!(zfargstring("USER", &["anonymous"]),                 "USER anonymous");
     }
@@ -4359,6 +4380,7 @@ mod tests {
     /// via `sprintf(...,"%s",...)` with explicit space separators.
     #[test]
     fn zfargstring_multi_arg_space_joined() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zfargstring("USER", &["anonymous", "pass@example.com"]),
             "USER anonymous pass@example.com"
@@ -4376,6 +4398,7 @@ mod tests {
     /// (but empty) positional args.
     #[test]
     fn zfargstring_empty_arg_emits_space() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(zfargstring("CMD", &["", "after"]),                  "CMD  after");
         assert_eq!(zfargstring("CMD", &["before", ""]),                 "CMD before ");
     }
@@ -4387,6 +4410,7 @@ mod tests {
     /// transfer selection across the entire zftp subcommand surface.
     #[test]
     fn zfst_type_constants_are_zero_and_one() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZFST_ASCI, 0);
         assert_eq!(ZFST_IMAG, 1);
         assert_eq!(ZFST_TMSK, 1);
@@ -4399,6 +4423,7 @@ mod tests {
     /// a regen that shifts MMSK to bit 1 silently overlaps the type bit.
     #[test]
     fn zfst_mode_constants_have_correct_bit_position() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(ZFST_STRE, 0);
         assert_eq!(ZFST_BLOC, 0x04);
         assert_eq!(ZFST_MMSK, 0x04);
@@ -4413,6 +4438,7 @@ mod tests {
     /// that does `if (zfstatusp[s] & ZFST_LOGI)` style checks.
     #[test]
     fn zfst_status_flag_bits_are_pairwise_distinct() {
+        let _g = crate::test_util::global_state_lock();
         let flags = [ZFST_LOGI, ZFST_SYST, ZFST_NOPS, ZFST_NOSZ, ZFST_TRSZ, ZFST_CLOS];
         // All distinct
         let mut sorted = flags.to_vec();
@@ -4435,6 +4461,7 @@ mod tests {
     /// the well-formed case round-trip.
     #[test]
     fn parse_pasv_response_well_formed_round_trips() {
+        let _g = crate::test_util::global_state_lock();
         let (ip, port) = parse_pasv_response(
             "227 Entering Passive Mode (192,168,1,1,4,1)").unwrap();
         assert_eq!(ip, "192.168.1.1");
@@ -4459,6 +4486,7 @@ mod tests {
     /// no-panic contract for out-of-range octets.
     #[test]
     fn parse_pasv_response_out_of_range_octet_truncates_low_byte() {
+        let _g = crate::test_util::global_state_lock();
         // p1=300 → low byte = 44 (300 & 0xff). port = 44*256 + 1 = 11265.
         let (_, port) = parse_pasv_response(
             "227 ok (192,168,1,1,300,1)").unwrap();
@@ -4480,6 +4508,7 @@ mod tests {
     /// "300.168.1.1").
     #[test]
     fn parse_pasv_response_ip_octets_truncate_to_u8() {
+        let _g = crate::test_util::global_state_lock();
         // h1=300 → 300 & 0xff = 44.
         let (ip, _) = parse_pasv_response("227 ok (300,168,1,1,0,21)").unwrap();
         assert_eq!(ip, "44.168.1.1",
@@ -4491,6 +4520,7 @@ mod tests {
     /// PASV reply doesn't silently produce a wrong IP/port.
     #[test]
     fn parse_pasv_response_wrong_number_count_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(parse_pasv_response("227 ok (1,2,3,4)").is_err(),
             "only 4 numbers → error");
         assert!(parse_pasv_response("227 ok (1,2,3,4,5)").is_err(),
@@ -4504,6 +4534,7 @@ mod tests {
     /// don't silently parse partial values.
     #[test]
     fn parse_pasv_response_missing_parens_errors() {
+        let _g = crate::test_util::global_state_lock();
         assert!(parse_pasv_response("227 ok no parens here").is_err(),
             "missing both parens → error");
         assert!(parse_pasv_response("227 ok (no_close").is_err(),
