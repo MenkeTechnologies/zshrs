@@ -2021,47 +2021,56 @@ pub fn dopadding(                                                            // 
 
 /// Get the delimiter argument for flags like (s:x:) or (j:x:)
 /// Parse a `:STR:`-delimited flag argument.
-/// Port of `get_strarg(char *s, int *lenp)` from Src/subst.c:1348.
+/// Port of `get_strarg(char *s, int *lenp)` from `Src/subst.c:1348`.
+///
+/// C iterates char-by-char looking for the matching close-delimiter,
+/// returning the content between delimiters AND the position past
+/// the closing delim. Bracket-pair mappings: `(...)` / `[...]` /
+/// `{...}` / `<...>` (plus their tokenized counterparts).
+///
+/// **Multibyte-correctness fix:** previous Rust port indexed `&s[rest_start..]`
+/// where `rest_start` came from `chars().enumerate()` — i.e. the
+/// CHAR index, NOT the byte index. For ASCII input these match,
+/// but for multibyte content (e.g. `(:é:rest)`) the char-index
+/// landed mid-codepoint and produced wrong slices (or panicked).
+/// Also failed to advance past the closing delim because
+/// `rest_start = i + 1` used the char-index +1 which is again
+/// mid-codepoint for multibyte preceding the delim.
+///
+/// Fix: use `s.char_indices()` which yields `(byte_offset, char)`
+/// pairs. `rest_start = byte_offset + char.len_utf8()` correctly
+/// advances past the close-delim regardless of width.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, lenp)
 pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
-    // c:1348
-    let mut chars = s.chars().peekable(); // c:1348
+    let mut iter = s.char_indices();
 
-    // Get delimiter
-    let del = chars.next()?; // c:1348
-
-    // Map bracket pairs
+    // Get delimiter (and its byte width).
+    let (_, del) = iter.next()?;
     let close_del = match del {
-        // c:1348
-        '(' => ')',          // c:1348
-        '[' => ']',          // c:1348
-        '{' => '}',          // c:1348
-        '<' => '>',          // c:1348
-        Inpar => Outpar,     // c:1348
-        Inbrack => Outbrack, // c:1348
-        Inbrace => Outbrace, // c:1348
-        Inang => Outang,     // c:1348
-        _ => del,            // c:1348
-    }; // c:1348
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        '<' => '>',
+        Inpar => Outpar,
+        Inbrack => Outbrack,
+        Inbrace => Outbrace,
+        Inang => Outang,
+        _ => del,
+    };
 
-    // Collect content until closing delimiter
-    let mut content = String::new(); // c:1348
-    let mut rest_start = 1; // c:1348
-
-    for (i, c) in s.chars().enumerate().skip(1) {
-        // c:1348
+    // Collect content until closing delimiter.
+    let mut content = String::new();
+    let mut rest_start = s.len();  // default: no close-delim found → rest = ""
+    for (byte_off, c) in iter {
         if c == close_del {
-            // c:1348
-            rest_start = i + 1; // c:1348
-            break; // c:1348
-        } // c:1348
-        content.push(c); // c:1348
-        rest_start = i + 1; // c:1348
-    } // c:1348
+            rest_start = byte_off + c.len_utf8();
+            break;
+        }
+        content.push(c);
+    }
 
-    let rest = &s[rest_start.min(s.len())..]; // c:1348
-    Some((del, content, rest)) // c:1348
-} // c:1348
+    Some((del, content, &s[rest_start..]))
+}
 
 /// Get integer argument for flags like (l.N.)
 /// Parse an `:N:`-delimited integer flag argument.
@@ -8150,6 +8159,57 @@ mod tests {
             "Snull must NOT equal 0x98 (that's Tilde)");
         assert_ne!(Dnull as u32, 0x97,
             "Dnull must NOT equal 0x97 (that's Quest)");
+    }
+
+    /// `Src/subst.c:1348` — `get_strarg(":STR:rest")` walks until
+    /// the matching close-delim and returns the inner content +
+    /// the remainder past the close-delim.
+    ///
+    /// **Multibyte regression:** the previous Rust port indexed
+    /// `&s[rest_start..]` with the CHAR index from
+    /// `chars().enumerate()` instead of the byte index. ASCII input
+    /// worked by coincidence; multibyte input (e.g. content with
+    /// `é`) would land mid-codepoint, panicking on slice or
+    /// returning corrupted output.
+    #[test]
+    fn get_strarg_multibyte_content_safe() {
+        let _g = crate::test_util::global_state_lock();
+        // ASCII smoke — pin the basic contract.
+        let r = get_strarg(":foo:rest").unwrap();
+        assert_eq!(r.0, ':');
+        assert_eq!(r.1, "foo");
+        assert_eq!(r.2, "rest");
+
+        // Multibyte content between delimiters — the bug case.
+        // `é` is 2 UTF-8 bytes. Previous char-indexed port either
+        // panicked here (slice on non-UTF-8 boundary) or returned
+        // wrong rest.
+        let r = get_strarg(":é:rest").unwrap();
+        assert_eq!(r.0, ':');
+        assert_eq!(r.1, "é",
+            "c:1348 — multibyte content preserved verbatim");
+        assert_eq!(r.2, "rest",
+            "c:1348 — rest starts AFTER close-delim (not mid-codepoint)");
+
+        // Bracket pair: `(...)` form with multibyte inside.
+        let r = get_strarg("(héllo)tail").unwrap();
+        assert_eq!(r.0, '(');
+        assert_eq!(r.1, "héllo");
+        assert_eq!(r.2, "tail");
+    }
+
+    /// `Src/subst.c:1348` — empty close-delim case: when no close
+    /// matches before end-of-string, the rest is empty (C returns
+    /// the consumed content with `lenp` pointing past the end).
+    #[test]
+    fn get_strarg_unterminated_returns_consumed_content() {
+        let _g = crate::test_util::global_state_lock();
+        // No matching `)` — content runs to end-of-string.
+        let r = get_strarg("(unclosed_content").unwrap();
+        assert_eq!(r.0, '(');
+        assert_eq!(r.1, "unclosed_content");
+        assert_eq!(r.2, "",
+            "c:1348 — no close-delim → rest is empty");
     }
 } // c:3193
 
