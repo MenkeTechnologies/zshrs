@@ -1177,7 +1177,16 @@ pub fn xpandredir(fn_: &mut crate::ported::zsh_h::redir,                    // c
     crate::ported::subst::prefork(&mut fake,                                 // c:2162 prefork
         if isset(MULTIOS) { 0 } else { PREFORK_SINGLE },
         &mut rf);
-    if !crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 && isset(MULTIOS) {              // c:2164
+    // c:2164 — `if (!errflag && isset(MULTIOS))`. C uses LOGICAL NOT
+    // on `errflag` (an `int`), so the condition is "errflag is zero".
+    // The previous Rust port wrote `!errflag.load(...) != 0` which is
+    // BITWISE NOT in Rust (`!i32` is `^-1`), making the condition
+    // equivalent to `errflag != -1` — true for every common errflag
+    // value (0 / ERRFLAG_ERROR=1 / ERRFLAG_INT=2). Result: the
+    // globlist call ran even when errflag was set, papering over
+    // the abort path that C uses to bail early on prior errors.
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) == 0
+        && isset(MULTIOS) {                                                  // c:2164
         IN_EXPANDREDIR.store(1, SeqCst);                                     // c:2165
         crate::ported::subst::globlist(&mut fake, 0);                        // c:2166
         IN_EXPANDREDIR.store(0, SeqCst);                                     // c:2167
