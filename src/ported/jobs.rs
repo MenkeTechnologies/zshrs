@@ -1234,11 +1234,61 @@ pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {                        // 
 // `oldjobtab` snapshot + per-slot reset loop is structurally
 // replaced — no public reset method is needed.
 pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {   // c:1780
-    let _ = (table, monitor);
-    // oldjobtab snapshot pending; the JobTable internal state is
-    // private to `crate::exec_jobs` now and only needs to reset the
-    // public counters via its API. No public reset method exists; the
-    // executor recreates `JobTable::new()` on subshell entry instead.
+    use crate::ported::zsh_h::STAT_INUSE;
+    let _ = table; // legacy executor-side handle, unused now
+    let posix_jobs = crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::POSIXJOBS);                                    // c:1786
+    // c:1786-1787 — `if (isset(POSIXJOBS)) oldmaxjob = 0;`.
+    if posix_jobs {
+        if let Some(om) = OLDMAXJOB.get() {
+            if let Ok(mut o) = om.lock() { *o = 0; }
+        }
+    }
+    let tab = match JOBTAB.get() {
+        Some(t) => t,
+        None => return,
+    };
+    let mut jobs = match tab.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    // c:1788-1797 — for (i = 1; i <= maxjob; i++).
+    let maxjob = jobs.len();
+    let mut new_oldmax: usize = 0;
+    for i in 1..maxjob {                                                     // c:1788
+        if jobs[i].stat == 0 { continue; }
+        // c:1794-1795 — `if (monitor && !POSIXJOBS && jobtab[i].stat)
+        //                  oldmaxjob = i+1;`
+        if monitor != 0 && !posix_jobs {                                     // c:1794
+            new_oldmax = i + 1;                                              // c:1795
+        } else if (jobs[i].stat & STAT_INUSE) != 0 {                         // c:1796
+            // c:1797 — `freejob(jobtab+i, 0);`.
+            freejob(&mut jobs[i], false);                                    // c:1797
+        }
+    }
+    // c:1800-1817 — `if (monitor && oldmaxjob) { snapshot to oldjobtab }`.
+    if monitor != 0 && new_oldmax > 0 {                                      // c:1800
+        let mut snap: Vec<Job> = jobs[..new_oldmax].iter().cloned().collect();// c:1803-1806
+        // c:1809-1810 — `if (thisjob != -1 && thisjob < oldmaxjob)
+        //                  memset(oldjobtab+thisjob, 0, ...)`.
+        let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1))
+            .lock().unwrap();
+        if thisjob >= 0 && (thisjob as usize) < new_oldmax {                 // c:1809
+            // Zero the slot — Rust uses Default::default().
+            snap[thisjob as usize] = Job::default();                         // c:1810
+        }
+        // c:1816 — `--oldmaxjob;` C decrement before exposure.
+        if let Some(om) = OLDMAXJOB.get() {
+            if let Ok(mut o) = om.lock() {
+                *o = new_oldmax.saturating_sub(1);                           // c:1816
+            }
+        } else {
+            *OLDMAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() =
+                new_oldmax.saturating_sub(1);
+        }
+        *OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().unwrap() = snap;                                         // c:1804
+    }
 }
 
 /// Port of `clearoldjobtab()` from `Src/jobs.c:1835`.
