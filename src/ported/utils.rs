@@ -681,15 +681,64 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
 // Missing utility functions ported from utils.c
 // ---------------------------------------------------------------------------
 
-/// Split path into components (from utils.c slashsplit)
-/// Port of `slashsplit(char *s)` from `Src/utils.c:837`.
-/// Rust idiom replacement: `str::split('/')` replaces the C
-/// manual segment walk + zalloc/strncpy bookkeeping.
-pub fn slashsplit(s: &str) -> Vec<String> {                                 // c:837
-    s.split('/')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
+/// Split path into components (from utils.c slashsplit).
+///
+/// Port of `static char **slashsplit(char *s)` from `Src/utils.c:837`.
+///
+/// C body (c:837-863):
+/// ```c
+/// if (!*s) return zshcalloc(...);            // c:842 — empty input → empty
+/// for (t = s, t0 = 0; *t; t++)               // c:845 — count slashes
+///     if (*t == '/') t0++;
+/// q = r = zalloc(sizeof(char*) * (t0 + 2));
+/// while ((t = strchr(s, '/'))) {             // c:850
+///     *q++ = ztrduppfx(s, t - s);            // c:851 — emit prefix
+///     while (*t == '/') t++;                 // c:852-853 — collapse runs
+///     if (!*t) { *q = NULL; return r; }      // c:854-857 — trailing `/` ends
+///     s = t;
+/// }
+/// *q++ = ztrdup(s);                          // c:860 — final tail
+/// ```
+///
+/// Three behaviors that the previous `split('/').filter(non_empty)`
+/// Rust port got WRONG:
+///   1. **Leading `/` keeps an empty segment** (c:851 with `t == s`).
+///      C: `slashsplit("/usr")` → `["", "usr"]`; previous Rust dropped
+///      the empty, returning `["usr"]`. Caller `xsymlinks` (c:879)
+///      iterates the result building `xbuf` byte-by-byte — the
+///      empty leading segment is how it knows to start from `/`.
+///      Without it, absolute-path resolution silently became relative.
+///   2. **Consecutive slashes collapse** (c:852-853 inner while-loop).
+///      C: `"a//b"` → `["a", "b"]` (drop empty between). Filter-on-
+///      empty Rust gets this right by coincidence.
+///   3. **Trailing `/` drops** (c:854-857). C: `"a/b/"` → `["a", "b"]`.
+///      Filter-on-empty Rust gets this right by coincidence.
+///
+/// Pin: the leading-empty-segment behavior IS the C contract, not
+/// an oversight to filter out. Matches `xsymlinks` and any future
+/// path-walker port that reads slashsplit output.
+pub fn slashsplit(s: &str) -> Vec<String> {                                  // c:837
+    if s.is_empty() {                                                        // c:842
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    let mut rest = s;
+    // c:850 — `while ((t = strchr(s, '/')))`.
+    while let Some(pos) = rest.find('/') {
+        result.push(rest[..pos].to_string());                                // c:851 ztrduppfx
+        rest = &rest[pos..];
+        // c:852-853 — `while (*t == '/') t++;` collapse run.
+        while let Some(rest_after) = rest.strip_prefix('/') {
+            rest = rest_after;
+        }
+        // c:854-857 — if walked off end, return without emitting tail.
+        if rest.is_empty() {
+            return result;
+        }
+    }
+    // c:860 — `*q++ = ztrdup(s);` emit final tail.
+    result.push(rest.to_string());
+    result
 }
 
 /// Convert to absolute path, normalising `.` and `..` components.
@@ -8038,29 +8087,46 @@ mod tests {
         assert_eq!(convbase(-42, 10), "-42");
     }
 
-    /// c:837 — `slashsplit("/usr/local/bin")` → `["usr","local","bin"]`.
-    /// Empty segments (consecutive slashes) MUST be filtered. A
-    /// regression keeping them would yield `["", "usr", ...]` which
-    /// breaks every PATH-walking lookup.
+    /// `Src/utils.c:837` — `slashsplit` keeps an EMPTY leading segment
+    /// when the input has a leading `/`. The caller `xsymlinks`
+    /// (c:879) reads this empty as the signal "absolute path, start
+    /// xbuf from /". Previous Rust test asserted filtering of all
+    /// empties (matching the previous buggy port); that contract was
+    /// wrong relative to C. Updated to assert the C contract.
     #[test]
-    fn slashsplit_filters_empty_segments() {
+    fn slashsplit_keeps_leading_empty_segment() {
         let _g = crate::test_util::global_state_lock();
+        // c:851 with t==s on first iter → empty prefix segment.
         assert_eq!(slashsplit("/usr/local/bin"),
-                   vec!["usr".to_string(), "local".to_string(), "bin".to_string()]);
+                   vec!["".to_string(), "usr".to_string(),
+                        "local".to_string(), "bin".to_string()],
+                   "c:851 — leading `/` produces empty first segment");
+        // Single `/`: one empty segment only.
+        assert_eq!(slashsplit("/"),
+                   vec!["".to_string()],
+                   "c:854-857 — trailing `/` after first iter returns ['']");
+        // Consecutive slashes collapse (c:852-853 inner while-loop).
         assert_eq!(slashsplit("//foo"),
-                   vec!["foo".to_string()],
-                   "consecutive slashes filtered");
-        assert_eq!(slashsplit(""), Vec::<String>::new());
-        assert_eq!(slashsplit("/"), Vec::<String>::new());
+                   vec!["".to_string(), "foo".to_string()],
+                   "c:852-853 — consecutive `/` collapse, leading empty kept");
+        // Empty input still empty result.
+        assert_eq!(slashsplit(""), Vec::<String>::new(),
+                   "c:842 — empty input → empty array");
     }
 
-    /// c:837 — relative paths (no leading `/`) split same way.
-    /// Trailing `/` produces no extra empty segment.
+    /// `Src/utils.c:837` — relative paths (no leading `/`) start
+    /// at the first non-slash; trailing `/` doesn't add a segment
+    /// (c:854-857 returns before tail emit).
     #[test]
     fn slashsplit_relative_path_no_trailing_empty() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(slashsplit("a/b/"),
-                   vec!["a".to_string(), "b".to_string()]);
+                   vec!["a".to_string(), "b".to_string()],
+                   "c:854-857 — trailing `/` doesn't add segment");
+        // Mid-slash collapse in relative path.
+        assert_eq!(slashsplit("a//b"),
+                   vec!["a".to_string(), "b".to_string()],
+                   "c:852-853 — mid `//` collapses");
     }
 
     /// `equalsplit("foo=bar")` returns Some(("foo","bar")). Used by
