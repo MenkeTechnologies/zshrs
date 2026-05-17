@@ -34,25 +34,46 @@ pub fn savematch(m: &mut MatchData) {                                         //
 
 
 
-/// Port of `restorematch(MatchData *m)` from Src/Modules/zutil.c:55.
-/// C body: for each of (match, mbegin, mend) — if Some, setaparam;
-/// if None, unsetparam. Restores the three array params from a saved
-/// snapshot taken before a regex callout temporarily reassigned them.
+/// Port of `static void restorematch(MatchData *m)` from
+/// `Src/Modules/zutil.c:55`.
+///
+/// C body (c:57-68):
+/// ```c
+/// if (m->match)  setaparam("match",  m->match);
+/// else           unsetparam("match");
+/// if (m->mbegin) setaparam("mbegin", m->mbegin);
+/// else           unsetparam("mbegin");
+/// if (m->mend)   setaparam("mend",   m->mend);
+/// else           unsetparam("mend");
+/// ```
+///
+/// Restores `$match`/`$mbegin`/`$mend` from a snapshot. Critical:
+/// when the saved field is NULL/None, C **unsets** the param. The
+/// previous Rust port left it alone — comment claimed "the Rust
+/// paramtab API doesn't yet expose unsetparam-by-string" but
+/// `unsetparam` HAS been ported (`params::unsetparam` at
+/// params.rs:4731). Skipping the unset means a regex callout that
+/// set `$match` from an originally-unset state would leave `$match`
+/// set after restorematch — the OPPOSITE of the documented contract.
 pub fn restorematch(m: &MatchData) {                                         // c:55
-    // c:57-70 — setaparam(name, m->X) when X != NULL else unsetparam(name).
-    if let Some(v) = m.r#match.as_ref() {                                    // c:57-58
+    // c:57-60 — `$match`.
+    if let Some(v) = m.r#match.as_ref() {
         crate::ported::params::assignaparam("match", v.clone(), 0);
+    } else {
+        crate::ported::params::unsetparam("match");
     }
-    if let Some(v) = m.mbegin.as_ref() {                                     // c:62-63
+    // c:61-64 — `$mbegin`.
+    if let Some(v) = m.mbegin.as_ref() {
         crate::ported::params::assignaparam("mbegin", v.clone(), 0);
+    } else {
+        crate::ported::params::unsetparam("mbegin");
     }
-    if let Some(v) = m.mend.as_ref() {                                       // c:67-68
+    // c:65-68 — `$mend`.
+    if let Some(v) = m.mend.as_ref() {
         crate::ported::params::assignaparam("mend", v.clone(), 0);
+    } else {
+        crate::ported::params::unsetparam("mend");
     }
-    // unsetparam path: when field is None, leave the param alone — the
-    // Rust paramtab API doesn't yet expose unsetparam(name)-by-string
-    // through a stable signature; the param's existing value persists,
-    // matching the safe-noop behaviour of unsetparam-on-unset.
 }
 
 /// Port of `freematch(Cmatch m, int nbeg, int nend)` from Src/Modules/zutil.c:72.
@@ -2475,5 +2496,30 @@ mod tests {
         let r = zformat_substring("[%3.0n]", &specs, false);
         assert_eq!(r, "[   ]",
             "c:890-922 — max=0 → empty value, min=3 → 3 spaces");
+    }
+
+    /// `Src/Modules/zutil.c:55-68` — `restorematch` MUST `unsetparam`
+    /// each field that's None (not just leave it alone). Pin:
+    /// pre-seed `$match` with a value, take a snapshot where it's None,
+    /// call restorematch, observe `$match` is now UNSET in paramtab.
+    #[test]
+    fn restorematch_unsets_params_when_snapshot_is_none() {
+        let _g = crate::test_util::global_state_lock();
+        // Pre-seed `$match` so we can observe the unset.
+        crate::ported::params::assignaparam("match",
+            vec!["seed".to_string()], 0);
+        assert!(crate::ported::params::getaparam("match").is_some(),
+            "test setup: $match seeded");
+
+        // Snapshot with all three fields None — restorematch must
+        // unsetparam each (c:60/64/68).
+        let snap = MatchData {
+            r#match: None,
+            mbegin: None,
+            mend: None,
+        };
+        restorematch(&snap);
+        assert!(crate::ported::params::getaparam("match").is_none(),
+            "c:60 — None snapshot must unsetparam(\"match\")");
     }
 }
