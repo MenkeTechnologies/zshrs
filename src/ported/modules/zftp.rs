@@ -3993,7 +3993,13 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                
         .find(')')
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response"))?;
 
-    let nums: Vec<u16> = msg[start + 1..end]
+    // c:940-941 — `sscanf("%d,%d,...", nums...)` then `(unsigned char) nums[i]`.
+    // C parses each value as int, then *truncates* to u8 via cast. Previous
+    // Rust port parsed as u16 and computed `(nums[4] << 8) + nums[5]` which
+    // would PANIC (debug) / wrap (release) when a malicious or malformed
+    // server sent values > 255. Match C's truncate-to-u8 semantics so
+    // out-of-range octets behave the same as C (low 8 bits used; no panic).
+    let nums: Vec<i32> = msg[start + 1..end]
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect();
@@ -4005,8 +4011,13 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                
         ));
     }
 
-    let ip = format!("{}.{}.{}.{}", nums[0], nums[1], nums[2], nums[3]);
-    let port = (nums[4] << 8) + nums[5];
+    // c:947-948 — `iaddr[i] = (unsigned char) nums[i];` — low-byte cast.
+    let oct = |n: i32| -> u8 { n as u8 };
+    let ip = format!("{}.{}.{}.{}", oct(nums[0]), oct(nums[1]), oct(nums[2]), oct(nums[3]));
+    // c:949-950 — `iport[0] = (unsigned char) nums[4]; iport[1] = ... nums[5];`.
+    // Then `memcpy(&sin_port, iport, 2)` reads as network-order u16 =
+    // `(iport[0] << 8) | iport[1]`.
+    let port = ((oct(nums[4]) as u16) << 8) | (oct(nums[5]) as u16);
 
     Ok((ip, port))
 }
@@ -4416,5 +4427,88 @@ mod tests {
             assert_eq!(f & ZFST_MMSK, 0,
                 "ZFST flag 0x{:x} must not overlap mode mask", f);
         }
+    }
+
+    /// `Src/Modules/zftp.c:940-950` — `sscanf("%d,...")` then
+    /// `(unsigned char) nums[i]` cast. The PASV reply `(h1,h2,h3,h4,
+    /// p1,p2)` builds IP as h1.h2.h3.h4 and port as p1*256+p2. Pin
+    /// the well-formed case round-trip.
+    #[test]
+    fn parse_pasv_response_well_formed_round_trips() {
+        let (ip, port) = parse_pasv_response(
+            "227 Entering Passive Mode (192,168,1,1,4,1)").unwrap();
+        assert_eq!(ip, "192.168.1.1");
+        assert_eq!(port, 4 * 256 + 1, "p1*256+p2 = 1025");
+        // High-port case: p1=255, p2=255 → port=65535.
+        let (_, port) = parse_pasv_response(
+            "227 ok (10,0,0,1,255,255)").unwrap();
+        assert_eq!(port, 65535);
+        // Low-port: p1=0, p2=21 → port=21.
+        let (_, port) = parse_pasv_response(
+            "227 ok (127,0,0,1,0,21)").unwrap();
+        assert_eq!(port, 21);
+    }
+
+    /// `Src/Modules/zftp.c:947-948` — `(unsigned char) nums[i]` cast
+    /// TRUNCATES to the low 8 bits. The previous Rust port stored
+    /// `Vec<u16>` and computed `(nums[4] << 8) + nums[5]` which would
+    /// PANIC in debug mode when a malicious or malformed server sent
+    /// `nums[4] > 255` (e.g. `nums[4]=300` → `300 << 8 = 76800`
+    /// overflows u16). The fix matches C's `(unsigned char)` cast
+    /// and uses u16 only AFTER the low-byte truncation. Pin the
+    /// no-panic contract for out-of-range octets.
+    #[test]
+    fn parse_pasv_response_out_of_range_octet_truncates_low_byte() {
+        // p1=300 → low byte = 44 (300 & 0xff). port = 44*256 + 1 = 11265.
+        let (_, port) = parse_pasv_response(
+            "227 ok (192,168,1,1,300,1)").unwrap();
+        assert_eq!(port, 44 * 256 + 1,
+            "c:949 — (unsigned char)300 = 44; port = 44*256+1");
+        // No panic on absurd-but-parseable values. Previous Rust port
+        // would panic in debug here.
+        let (_, port) = parse_pasv_response(
+            "227 ok (1,2,3,4,1000,2000)").unwrap();
+        let expected_p1 = (1000i32 as u8) as u16;  // 232
+        let expected_p2 = (2000i32 as u8) as u16;  // 208
+        assert_eq!(port, (expected_p1 << 8) | expected_p2);
+    }
+
+    /// `Src/Modules/zftp.c:947` — IP octets also get the
+    /// `(unsigned char)` truncation. Pin: `nums[i] > 255` cast to u8
+    /// then formatted. Catches a regression that prints raw
+    /// out-of-range values directly (would yield invalid IPs like
+    /// "300.168.1.1").
+    #[test]
+    fn parse_pasv_response_ip_octets_truncate_to_u8() {
+        // h1=300 → 300 & 0xff = 44.
+        let (ip, _) = parse_pasv_response("227 ok (300,168,1,1,0,21)").unwrap();
+        assert_eq!(ip, "44.168.1.1",
+            "c:947 — octets truncate; out-of-range becomes low byte");
+    }
+
+    /// `Src/Modules/zftp.c:940-941` — `sscanf` failure (not 6 numbers).
+    /// Wrong count → error return. Pin so a server with malformed
+    /// PASV reply doesn't silently produce a wrong IP/port.
+    #[test]
+    fn parse_pasv_response_wrong_number_count_errors() {
+        assert!(parse_pasv_response("227 ok (1,2,3,4)").is_err(),
+            "only 4 numbers → error");
+        assert!(parse_pasv_response("227 ok (1,2,3,4,5)").is_err(),
+            "only 5 numbers → error");
+        assert!(parse_pasv_response("227 ok (1,2,3,4,5,6,7)").is_err(),
+            "7 numbers → error");
+    }
+
+    /// `Src/Modules/zftp.c:925` — missing parentheses → error path.
+    /// Pin so unexpected responses without the `(N,N,N,N,N,N)` shape
+    /// don't silently parse partial values.
+    #[test]
+    fn parse_pasv_response_missing_parens_errors() {
+        assert!(parse_pasv_response("227 ok no parens here").is_err(),
+            "missing both parens → error");
+        assert!(parse_pasv_response("227 ok (no_close").is_err(),
+            "missing close paren → error");
+        assert!(parse_pasv_response("227 ok no_open)").is_err(),
+            "missing open paren → error");
     }
 }
