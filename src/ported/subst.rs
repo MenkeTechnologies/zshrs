@@ -7885,6 +7885,12 @@ mod tests {
     /// digit run with paren-delim should return (n, tail).
     #[test]
     fn get_intarg_parses_paren_int() {
+        // Clear global errflag — `get_intarg` returns None whenever
+        // `errflag != 0` (c:1445). Earlier tests in the suite may
+        // have set ERRFLAG_ERROR via parser-failure paths and not
+        // cleaned up; without this reset the test fails depending
+        // on suite ordering.
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         let r = get_intarg("(42)rest");
         assert_eq!(r, Some((42, "rest")),
             "(42)rest must yield 42 + tail 'rest'");
