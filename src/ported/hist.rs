@@ -2331,21 +2331,56 @@ pub fn remlpaths(s: &str, count: i32) -> String {                            // 
 /// covers the C `tolower`/`toupper`/`isalpha` per-byte loop; the
 /// CASMOD_CAPS branch tracks word-boundary via the `nextupper` flag.
 pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
+    // c:2200 — `int nextupper = 1;`. Start expecting a leading uppercase.
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
-    for c in s.chars() {
+    for c in s.chars() {                                                      // c:2209 `while (*str)`
+        // c:2241 — `if (IS_COMBINING(wc)) break;` — combining chars
+        // (those with WCWIDTH==0) don't affect nextupper state and
+        // don't get case-folded. Macro at `Src/zsh.h:3343`:
+        // `#define IS_COMBINING(wc) (wc != 0 && WCWIDTH(wc) == 0)`.
+        // Previous Rust port omitted this check entirely — combining
+        // acute (U+0301) etc. would (a) get pushed through
+        // to_uppercase/to_lowercase (no-op for combinatior class but
+        // semantically wrong intent) and (b) for CAPS, would reset
+        // nextupper via the `!is_alphanumeric` branch, breaking
+        // word-boundary detection on accented words.
+        let is_combining = (c as u32) != 0
+            && unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0;
         let modified = match how {
-            x if x == CASMOD_LOWER => c.to_lowercase().collect::<String>(),
-            x if x == CASMOD_UPPER => c.to_uppercase().collect::<String>(),
-            x if x == CASMOD_CAPS => {
-                if !c.is_alphanumeric() {
-                    nextupper = true;
+            x if x == CASMOD_LOWER => {                                       // c:2225
+                // c:2226-2229 — `if (iswupper(wc)) wc = towlower(wc);`.
+                if c.is_uppercase() {
+                    c.to_lowercase().collect::<String>()
+                } else {
                     c.to_string()
-                } else if nextupper {
-                    nextupper = false;
+                }
+            }
+            x if x == CASMOD_UPPER => {                                       // c:2232
+                // c:2233-2236 — `if (iswlower(wc)) wc = towupper(wc);`.
+                if c.is_lowercase() {
                     c.to_uppercase().collect::<String>()
                 } else {
+                    c.to_string()
+                }
+            }
+            x if x == CASMOD_CAPS => {                                        // c:2239
+                if is_combining {                                             // c:2241-2242
+                    c.to_string()
+                } else if !c.is_alphanumeric() {                              // c:2243-2244
+                    nextupper = true;
+                    c.to_string()
+                } else if nextupper {                                         // c:2245-2250
+                    nextupper = false;
+                    if c.is_lowercase() {                                     // c:2246
+                        c.to_uppercase().collect::<String>()
+                    } else {
+                        c.to_string()
+                    }
+                } else if c.is_uppercase() {                                  // c:2251-2253
                     c.to_lowercase().collect::<String>()
+                } else {
+                    c.to_string()
                 }
             }
             _ /* CASMOD_NONE */ => c.to_string(),
@@ -5084,5 +5119,74 @@ mod subst_modifier_tests {
             "c:574 — count=0 from digitcount aliases to default 1");
         // Same as explicit count=1.
         assert_eq!(remlpaths("/a/b/c", 0), remlpaths("/a/b/c", 1));
+    }
+
+    /// `Src/hist.c:2225-2228` — CASMOD_LOWER converts uppercase chars
+    /// to lowercase, leaves everything else unchanged.
+    #[test]
+    fn casemodify_lower_lowercases_uppercase_only() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::CASMOD_LOWER;
+        assert_eq!(casemodify("HELLO", CASMOD_LOWER), "hello",
+            "c:2226-2228 — uppercase → lowercase");
+        // Already lowercase: no change.
+        assert_eq!(casemodify("hello", CASMOD_LOWER), "hello");
+        // Digits + punct: untouched.
+        assert_eq!(casemodify("123 !? abc", CASMOD_LOWER), "123 !? abc");
+        // Unicode: 'É' (U+00C9) lowercases to 'é'.
+        assert_eq!(casemodify("ÉLITE", CASMOD_LOWER), "élite");
+    }
+
+    /// `Src/hist.c:2232-2236` — CASMOD_UPPER converts lowercase chars
+    /// to uppercase, leaves everything else unchanged.
+    #[test]
+    fn casemodify_upper_uppercases_lowercase_only() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::CASMOD_UPPER;
+        assert_eq!(casemodify("hello", CASMOD_UPPER), "HELLO",
+            "c:2233-2236 — lowercase → uppercase");
+        assert_eq!(casemodify("HELLO", CASMOD_UPPER), "HELLO");
+        assert_eq!(casemodify("élite", CASMOD_UPPER), "ÉLITE");
+    }
+
+    /// `Src/hist.c:2239-2254` — CASMOD_CAPS title-cases at word
+    /// boundaries (defined by `!iswalnum` chars).
+    #[test]
+    fn casemodify_caps_title_cases_at_word_boundaries() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::CASMOD_CAPS;
+        // c:2245-2250 — first letter and post-space letter uppercase;
+        // mid-word letters lowercase (c:2251-2253).
+        assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
+        // c:2243-2244 — non-alphanumeric resets nextupper.
+        assert_eq!(casemodify("foo-bar.baz", CASMOD_CAPS), "Foo-Bar.Baz");
+        // Already capped: mid-word `LO` → `lo`.
+        assert_eq!(casemodify("HELLO", CASMOD_CAPS), "Hello");
+    }
+
+    /// `Src/hist.c:2241-2242` — `IS_COMBINING(wc)` (WCWIDTH == 0)
+    /// makes CASMOD_CAPS short-circuit BEFORE touching nextupper.
+    /// The previous Rust port omitted this guard — combining marks
+    /// were classified as non-alphanumeric and reset nextupper,
+    /// breaking word-boundary detection on accented words written
+    /// as base char + combining mark.
+    ///
+    /// Test input: `"a" + COMBINING ACUTE (U+0301) + "b"`. With the
+    /// guard: combining mark passes through, b stays lowercase
+    /// (still inside the word). Without the guard: the combiner
+    /// resets nextupper, so `b` would be uppercased.
+    #[test]
+    fn casemodify_caps_skips_combining_chars() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::CASMOD_CAPS;
+        // a + combining acute (U+0301) + b — under CAPS, the
+        // combiner must NOT reset nextupper. Expected output:
+        // `A` + combining acute + `b` (b stays lowercase because
+        // it's still mid-word).
+        let input = "a\u{0301}b";
+        let got = casemodify(input, CASMOD_CAPS);
+        let expected = "A\u{0301}b";
+        assert_eq!(got, expected,
+            "c:2241-2242 — IS_COMBINING short-circuit must not break word boundary");
     }
 }
