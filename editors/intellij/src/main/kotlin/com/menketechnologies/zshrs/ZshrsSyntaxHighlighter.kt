@@ -55,8 +55,14 @@ class ZshrsSyntaxHighlighter : SyntaxHighlighterBase() {
             ZshrsTokenTypes.GLOB -> ZshrsColors.GLOB
 
             ZshrsTokenTypes.PAREN -> ZshrsColors.PAREN
+            ZshrsTokenTypes.LPAREN -> ZshrsColors.PAREN
+            ZshrsTokenTypes.RPAREN -> ZshrsColors.PAREN
             ZshrsTokenTypes.BRACE -> ZshrsColors.BRACE
+            ZshrsTokenTypes.LBRACE -> ZshrsColors.BRACE
+            ZshrsTokenTypes.RBRACE -> ZshrsColors.BRACE
             ZshrsTokenTypes.BRACKET -> ZshrsColors.BRACKET
+            ZshrsTokenTypes.LBRACKET -> ZshrsColors.BRACKET
+            ZshrsTokenTypes.RBRACKET -> ZshrsColors.BRACKET
             ZshrsTokenTypes.COMMA -> ZshrsColors.COMMA
             ZshrsTokenTypes.SEMICOLON -> ZshrsColors.SEMICOLON
             ZshrsTokenTypes.DOUBLE_SEMI -> ZshrsColors.DOUBLE_SEMI

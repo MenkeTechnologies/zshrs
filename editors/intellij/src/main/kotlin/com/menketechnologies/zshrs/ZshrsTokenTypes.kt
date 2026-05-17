@@ -56,9 +56,17 @@ object ZshrsTokenTypes {
     @JvmField val GLOB = ZshrsTokenType("ZSHRS_GLOB")                          // * ? [...] (#qX) etc.
 
     // ── Punctuation ──────────────────────────────────────────────────────
+    // Split L/R variants so `lang.braceMatcher` can pair them; the umbrella
+    // `PAREN`/`BRACE`/`BRACKET` names stay for compat (color slot fallback).
     @JvmField val PAREN = ZshrsTokenType("ZSHRS_PAREN")
+    @JvmField val LPAREN = ZshrsTokenType("ZSHRS_LPAREN")
+    @JvmField val RPAREN = ZshrsTokenType("ZSHRS_RPAREN")
     @JvmField val BRACE = ZshrsTokenType("ZSHRS_BRACE")
+    @JvmField val LBRACE = ZshrsTokenType("ZSHRS_LBRACE")
+    @JvmField val RBRACE = ZshrsTokenType("ZSHRS_RBRACE")
     @JvmField val BRACKET = ZshrsTokenType("ZSHRS_BRACKET")
+    @JvmField val LBRACKET = ZshrsTokenType("ZSHRS_LBRACKET")
+    @JvmField val RBRACKET = ZshrsTokenType("ZSHRS_RBRACKET")
     @JvmField val COMMA = ZshrsTokenType("ZSHRS_COMMA")
     @JvmField val SEMICOLON = ZshrsTokenType("ZSHRS_SEMICOLON")
     @JvmField val DOUBLE_SEMI = ZshrsTokenType("ZSHRS_DOUBLE_SEMI")            // ;; ;;& ;| (case branches)

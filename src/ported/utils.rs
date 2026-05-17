@@ -2705,7 +2705,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {                 //
 ///   3. **No `errflag` / `retflag` / `breaks` / `contflag` early-exit.**
 ///      A SIGINT-driven errflag should abort the read; previous Rust
 ///      port had no break path.
-/// WARNING: returns i32 not Option<char> to match C's signature
+/// WARNING: returns i32 not `Option<char>` to match C's signature
 /// (`(unsigned char) c` for success, `-1` for error).
 pub fn read1char(echo: i32) -> i32 {                                          // c:2972
     #[cfg(unix)]
