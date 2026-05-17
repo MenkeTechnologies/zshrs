@@ -98,6 +98,7 @@ pub mod daemon {
 #[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;
 #[path = "extensions/dumpers.rs"] pub mod dumpers;
 #[path = "extensions/lsp.rs"] pub mod lsp;
+#[path = "extensions/lsp_symbols.rs"] pub mod lsp_symbols;
 #[path = "extensions/dap.rs"] pub mod dap;
 // Lexer + parser live in `src/ported/lex.rs` and `src/ported/parse.rs`.
 // Re-export the modules so existing call sites (`zsh::lex::…`,

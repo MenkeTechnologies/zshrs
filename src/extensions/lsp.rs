@@ -68,7 +68,252 @@ fn write_message<W: Write>(writer: &mut W, msg: &Value) -> io::Result<()> {
 
 #[derive(Default)]
 struct State {
+    /// Documents the IDE has explicitly `didOpen`'d. Authoritative for
+    /// unsaved buffer state.
     docs: HashMap<String, String>,
+    /// Files discovered via a workspace-root walk on `initialize`. Used
+    /// by `references` / `rename` so a function declared in one file can
+    /// be renamed across every other file in the project, even ones the
+    /// user never opened in an editor tab. Read from disk once at
+    /// init; subsequent `didChange` / `didSave` updates the matching
+    /// entry. Empty if the IDE didn't supply a root.
+    workspace_files: HashMap<String, String>,
+    /// Resolved workspace roots — filesystem paths derived from
+    /// `rootUri` and `workspaceFolders` at init time. Used to bound
+    /// follow-up rescans.
+    workspace_roots: Vec<std::path::PathBuf>,
+}
+
+impl State {
+    /// Iterate every (uri, text) pair we know about: the union of
+    /// `didOpen`'d docs and the workspace cache, with the open-doc
+    /// version winning when both are present (so unsaved edits aren't
+    /// shadowed by the on-disk copy).
+    fn all_docs(&self) -> Vec<(String, String)> {
+        let mut out: HashMap<String, String> = self.workspace_files.clone();
+        for (k, v) in &self.docs {
+            out.insert(k.clone(), v.clone());
+        }
+        let mut v: Vec<(String, String)> = out.into_iter().collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+}
+
+/// File extensions we treat as zsh source during workspace walks. Keep
+/// in sync with `ZshrsSettings.supportedExtensions()` on the plugin
+/// side — files outside this list never participate in cross-file
+/// rename. Names like `.zshrc` have empty extension but a known base.
+const ZSH_EXT: &[&str] = &["zsh", "sh"];
+const ZSH_BASENAMES: &[&str] = &[
+    ".zshrc",
+    ".zshenv",
+    ".zprofile",
+    ".zlogin",
+    ".zlogout",
+    ".zsh_aliases",
+    ".zsh_functions",
+    ".zshrc.local",
+    "zshrc",
+];
+/// Don't recurse into these directories during the workspace walk.
+/// Avoids dragging .git history, node_modules, build outputs, and other
+/// large trees into the symbol table.
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    ".idea",
+    ".vscode",
+    ".cache",
+    ".direnv",
+    ".venv",
+    "venv",
+    "__pycache__",
+];
+/// Hard cap on workspace files scanned. Above this we stop reading new
+/// files — a 10k-file shell-script repo is already unusual; bounding
+/// here prevents pathological project roots from gobbling memory.
+const MAX_WORKSPACE_FILES: usize = 10_000;
+/// Per-file size cap. Skip files larger than this; they're almost
+/// certainly not shell source (data dumps, generated artifacts).
+const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// True if `name` looks like a zsh source file by extension or known
+/// dotfile basename. Case-sensitive (Unix conventions); plugin-side
+/// settings override the extension list per-project.
+fn is_zsh_source_filename(name: &str) -> bool {
+    if let Some(ext) = name.rsplit('.').next() {
+        if ext != name && ZSH_EXT.contains(&ext) {
+            return true;
+        }
+    }
+    ZSH_BASENAMES.contains(&name)
+}
+
+/// Convert a filesystem path to a `file://` URI. Returns `None` for
+/// non-absolute / non-UTF-8 paths since LSP URIs require both.
+fn path_to_file_uri(p: &std::path::Path) -> Option<String> {
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(p)
+    };
+    let s = abs.to_str()?;
+    Some(format!("file://{s}"))
+}
+
+/// Convert a `file://` URI to a filesystem path. Naive — strips the
+/// scheme; doesn't decode percent-escapes. Good enough for the local
+/// filesystem walk; the IDE side handles fancy URIs separately.
+fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+    uri.strip_prefix("file://").map(std::path::PathBuf::from)
+}
+
+/// Walk `root` (depth-first, bounded) and read every zsh source file
+/// into `out`, keyed by `file://` URI. Skips dirs in [`SKIP_DIRS`],
+/// files larger than [`MAX_FILE_BYTES`], and stops once the total
+/// count reaches [`MAX_WORKSPACE_FILES`].
+///
+/// Best-effort: filesystem errors are logged at TRACE and skipped, not
+/// propagated — workspace rename should still work when some files are
+/// unreadable.
+fn scan_workspace_root(root: &std::path::Path, out: &mut HashMap<String, String>) {
+    let mut stack: Vec<std::path::PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if out.len() >= MAX_WORKSPACE_FILES {
+            tracing::warn!(
+                target: "zshrs::lsp::workspace",
+                cap = MAX_WORKSPACE_FILES,
+                "workspace scan capped",
+            );
+            return;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::trace!(target: "zshrs::lsp::workspace", path=?dir, %e, "read_dir failed");
+                continue;
+            }
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            let ty = match ent.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if ty.is_dir() {
+                if SKIP_DIRS.contains(&name) || name.starts_with('.') && !ZSH_BASENAMES.iter().any(|b| b == &name) {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            if !ty.is_file() {
+                continue;
+            }
+            if !is_zsh_source_filename(name) {
+                continue;
+            }
+            let md = match ent.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if md.len() > MAX_FILE_BYTES {
+                continue;
+            }
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if let Some(uri) = path_to_file_uri(&path) {
+                out.insert(uri, text);
+                if out.len() >= MAX_WORKSPACE_FILES {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Apply `initialize` workspace info to `state`: extract roots from
+/// `rootUri` / `workspaceFolders` and populate `workspace_files`.
+fn ingest_workspace_init(state: &mut State, params: &Value) {
+    // Collect candidate roots in priority order. Later, dedupe.
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(uri) = params.get("rootUri").and_then(|v| v.as_str()) {
+        if let Some(p) = file_uri_to_path(uri) {
+            roots.push(p);
+        }
+    }
+    if let Some(folders) = params.get("workspaceFolders").and_then(|v| v.as_array()) {
+        for f in folders {
+            if let Some(uri) = f.get("uri").and_then(|v| v.as_str()) {
+                if let Some(p) = file_uri_to_path(uri) {
+                    roots.push(p);
+                }
+            }
+        }
+    }
+    // Dedup while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    roots.retain(|p| seen.insert(p.clone()));
+    if roots.is_empty() {
+        tracing::info!(target: "zshrs::lsp::workspace", "no roots in initialize");
+        return;
+    }
+    let mut buf: HashMap<String, String> = HashMap::new();
+    for r in &roots {
+        scan_workspace_root(r, &mut buf);
+    }
+    tracing::info!(
+        target: "zshrs::lsp::workspace",
+        roots = roots.len(),
+        files = buf.len(),
+        "scanned",
+    );
+    state.workspace_roots = roots;
+    state.workspace_files = buf;
+}
+
+/// Refresh a single workspace-file entry from disk after a save or an
+/// external change. No-op if the path isn't inside any known root.
+fn refresh_workspace_file(state: &mut State, uri: &str) {
+    if state.workspace_roots.is_empty() {
+        return;
+    }
+    let path = match file_uri_to_path(uri) {
+        Some(p) => p,
+        None => return,
+    };
+    let inside_root = state
+        .workspace_roots
+        .iter()
+        .any(|r| path.starts_with(r));
+    if !inside_root {
+        return;
+    }
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if !is_zsh_source_filename(name) {
+            return;
+        }
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(t) => {
+            state.workspace_files.insert(uri.to_string(), t);
+        }
+        Err(_) => {
+            state.workspace_files.remove(uri);
+        }
+    }
 }
 
 // ── Public entry point ──────────────────────────────────────────────────
@@ -123,7 +368,10 @@ pub fn run_lsp() -> i32 {
         );
 
         let response = match method.as_deref() {
-            Some("initialize") => Some(handle_initialize(id, &params)),
+            Some("initialize") => {
+                ingest_workspace_init(&mut state, &params);
+                Some(handle_initialize(id, &params))
+            }
             Some("initialized") => None,
             Some("shutdown") => Some(reply(id, json!(null))),
             Some("exit") => break,
@@ -160,6 +408,10 @@ pub fn run_lsp() -> i32 {
                     if let Some(text) = state.docs.get(uri).cloned() {
                         publish_diagnostics(&mut writer, uri, &text, &mut log);
                     }
+                    // Mirror the saved content into the workspace cache
+                    // so future cross-file lookups see the new on-disk
+                    // text without requiring a full re-walk.
+                    refresh_workspace_file(&mut state, uri);
                 }
                 None
             }
@@ -756,29 +1008,45 @@ fn definition(state: &State, params: &Value) -> Value {
 }
 
 fn references(state: &State, params: &Value) -> Value {
-    let active_uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
+    let active_uri = params["textDocument"]["uri"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let line_no = params["position"]["line"].as_u64().unwrap_or(0) as usize;
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
-    let active_text = match state.docs.get(&active_uri) {
-        Some(t) => t.clone(),
+    // Active text comes from the open-doc map first (unsaved buffer
+    // state wins), then falls back to the workspace cache.
+    let active_text = match state
+        .docs
+        .get(&active_uri)
+        .cloned()
+        .or_else(|| state.workspace_files.get(&active_uri).cloned())
+    {
+        Some(t) => t,
         None => return Value::Array(vec![]),
     };
     let word = match word_at(&active_text, line_no, col) {
         Some(w) if !w.is_empty() => w,
         _ => return Value::Array(vec![]),
     };
-    // Scan EVERY open document, not just the active file. Cross-file
-    // function rename: a `function greet { … }` declared in `lib.zsh`
-    // and called from `~/.zshrc` should have both call sites edited at
-    // once. The textual scan is bounded by the same identifier-boundary
-    // check used for in-file refs.
+    // Scan every document we know about — open buffers AND the
+    // workspace cache populated at `initialize`. Files that exist on
+    // disk but the user hasn't opened still participate in rename, as
+    // long as they were reachable from the workspace root walk.
+    let docs = state.all_docs();
+    let n_open = state.docs.len();
+    let n_workspace = state.workspace_files.len();
     let mut out = Vec::new();
-    let mut docs: Vec<(&String, &String)> = state.docs.iter().collect();
-    docs.sort_by(|a, b| a.0.cmp(b.0)); // deterministic order for tests / logs
-    for (doc_uri, text) in docs {
+    for (doc_uri, text) in &docs {
         for (i, l) in text.lines().enumerate() {
+            // Skip lines that are entirely a `#` comment (after
+            // whitespace) and don't emit refs inside them. The boundary
+            // check below catches false matches for `# foo` but lines
+            // like `foo  # name` still scan the `name` if it spells the
+            // word — guard with the comment gate. Strings are handled
+            // by the same gate via `line_starts_comment_before`.
             let mut start = 0;
-            while let Some(p) = l[start..].find(&word) {
+            while let Some(p) = l[start..].find(word.as_str()) {
                 let abs = start + p;
                 let before = l[..abs].chars().last();
                 let after = l[abs + word.len()..].chars().next();
@@ -788,7 +1056,7 @@ fn references(state: &State, params: &Value) -> Value {
                 let ok_a = after
                     .map(|c| !(c.is_alphanumeric() || c == '_'))
                     .unwrap_or(true);
-                if ok_b && ok_a {
+                if ok_b && ok_a && !line_starts_comment_before(l, abs) {
                     out.push(json!({
                         "uri": doc_uri,
                         "range": {
@@ -805,7 +1073,8 @@ fn references(state: &State, params: &Value) -> Value {
         target: "zshrs::lsp::references",
         %word,
         n_results = out.len(),
-        n_docs = state.docs.len(),
+        n_open,
+        n_workspace,
         "scanned",
     );
     Value::Array(out)
@@ -1677,6 +1946,108 @@ mod tests {
         });
         let r = rename(&state, &params);
         assert!(r.is_null(), "empty new_name must be rejected");
+    }
+
+    #[test]
+    fn workspace_walk_picks_up_unopened_zsh_files() {
+        // Stand up a temporary project root with two files; only one is
+        // ever `didOpen`'d, but renaming a function declared in the
+        // OTHER file must edit both.
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs-workspace-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let lib_path = tmp.join("lib.zsh");
+        let rc_path = tmp.join("rc.zsh");
+        std::fs::write(&lib_path, "function greet { echo hi }\n").unwrap();
+        std::fs::write(&rc_path, "greet\ngreet world\n").unwrap();
+        let rc_uri = format!("file://{}", rc_path.display());
+
+        let mut state = State::default();
+        // Only `rc.zsh` is in the editor — `lib.zsh` is on disk.
+        state.docs.insert(rc_uri.clone(), "greet\ngreet world\n".into());
+        // Simulate the `initialize` workspace handoff.
+        let init = json!({ "rootUri": format!("file://{}", tmp.display()) });
+        ingest_workspace_init(&mut state, &init);
+        // The walk must have read lib.zsh into workspace_files.
+        let lib_uri = format!("file://{}", lib_path.display());
+        assert!(
+            state.workspace_files.contains_key(&lib_uri),
+            "workspace walk picked up lib.zsh: keys={:?}",
+            state.workspace_files.keys().collect::<Vec<_>>(),
+        );
+        // Rename `greet` from the rc.zsh call site — must touch both.
+        let params = json!({
+            "textDocument": { "uri": rc_uri },
+            "position": { "line": 0, "character": 0 },
+            "context": { "includeDeclaration": true },
+            "newName": "salute",
+        });
+        let r = rename(&state, &params);
+        let changes = r["changes"].as_object().expect("changes map");
+        assert!(
+            changes.contains_key(&lib_uri),
+            "lib.zsh (workspace) edited: keys={:?}",
+            changes.keys().collect::<Vec<_>>(),
+        );
+        assert!(
+            changes.contains_key(&rc_uri),
+            "rc.zsh (open) edited: keys={:?}",
+            changes.keys().collect::<Vec<_>>(),
+        );
+        // 1 decl in lib + 2 call sites in rc.
+        assert_eq!(changes[&lib_uri].as_array().unwrap().len(), 1);
+        assert_eq!(changes[&rc_uri].as_array().unwrap().len(), 2);
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn workspace_walk_skips_node_modules_and_git() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs-skip-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.join("node_modules")).unwrap();
+        std::fs::write(tmp.join(".git").join("hooks.zsh"), "should_skip=1\n").unwrap();
+        std::fs::write(tmp.join("node_modules").join("util.zsh"), "should_skip=1\n").unwrap();
+        std::fs::write(tmp.join("real.zsh"), "should_pick_up=1\n").unwrap();
+
+        let mut state = State::default();
+        let init = json!({ "rootUri": format!("file://{}", tmp.display()) });
+        ingest_workspace_init(&mut state, &init);
+        assert_eq!(
+            state.workspace_files.len(),
+            1,
+            "only real.zsh picked up: keys={:?}",
+            state.workspace_files.keys().collect::<Vec<_>>(),
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_zsh_source_filename_accepts_dotfiles_and_extensions() {
+        assert!(is_zsh_source_filename("foo.zsh"));
+        assert!(is_zsh_source_filename("foo.sh"));
+        assert!(is_zsh_source_filename(".zshrc"));
+        assert!(is_zsh_source_filename(".zshenv"));
+        assert!(is_zsh_source_filename(".zsh_aliases"));
+        assert!(!is_zsh_source_filename("foo.py"));
+        assert!(!is_zsh_source_filename(".gitignore"));
+        assert!(!is_zsh_source_filename("README.md"));
     }
 
     #[test]
