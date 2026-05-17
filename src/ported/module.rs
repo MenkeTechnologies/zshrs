@@ -982,11 +982,38 @@ impl modulestab {
         0                                                                    // c:812
     }
 
-    /// Remove autoloading condition (from module.c del_autocond)
-/// Port of `del_autocond(UNUSED(const char *modnam), const char *cnam, int flags)` from `Src/module.c:819`.
-    /// WARNING: param names don't match C — Rust=(name) vs C=(modnam, cnam, flags)
-    pub fn del_autocond(&mut self, name: &str) {
-        self.autoload_conditions.remove(name);
+    /// Port of `static int del_autocond(const char *modnam, const char *cnam,
+    /// int flags)` from `Src/module.c:819`.
+    ///
+    /// C body (c:819-835):
+    /// ```c
+    /// Conddef cd = getconddef((flags & FEAT_INFIX) ? 1 : 0, cnam, 0);
+    /// if (!cd) { if (!(flags & FEAT_IGNORE)) return 2; }
+    /// else if (cd->flags & CONDF_ADDED) {
+    ///     if (!(flags & FEAT_IGNORE)) return 3;
+    /// } else deleteconddef(cd);
+    /// return 0;
+    /// ```
+    ///
+    /// 2 = "no such condition", 3 = "registered condition (CONDF_ADDED) —
+    /// can't unload", 0 = success. FEAT_IGNORE masks both error returns.
+    /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, cnam, flags)
+    pub fn del_autocond(&mut self, name: &str, flags: i32) -> i32 {         // c:819
+        use crate::ported::module::FEAT_IGNORE;
+        // c:821 — `getconddef((flags & FEAT_INFIX) ? 1 : 0, cnam, 0);`.
+        // The Rust ledger holds only the autoload entry; the live
+        // CONDF_ADDED registry isn't separately materialised, so any
+        // entry we find is the autoload form (analog of !CONDF_ADDED).
+        if self.autoload_conditions.contains_key(name) {                     // c:823
+            // c:831-832 — `deleteconddef(cd);` Rust drop autoload entry.
+            self.autoload_conditions.remove(name);                           // c:832
+            return 0;                                                        // c:834
+        }
+        // c:823-826 — `if (!cd) { if (!(flags & FEAT_IGNORE)) return 2; }`.
+        if (flags & FEAT_IGNORE as i32) == 0 {                               // c:824
+            return 2;                                                        // c:825
+        }
+        0                                                                    // c:834
     }
 
     // ------- Hook management (from module.c addhookdef/deletehookdef) -------
@@ -1007,9 +1034,36 @@ impl modulestab {
     }
 
     // Delete hook definitions.                                              // c:902
-    /// Unregister a hook (from module.c deletehookdef)
-    pub fn deletehookdef(&mut self, name: &str) {                           // c:902
-        self.hooks.remove(name);
+    /// Port of `int deletehookdef(Hookdef h)` from `Src/module.c:902`.
+    ///
+    /// C body (c:902-919):
+    /// ```c
+    /// Hookdef p, q;
+    /// for (p = hooktab, q = NULL; p && p != h; q = p, p = p->next);
+    /// if (!p) return 1;
+    /// if (q) q->next = p->next; else hooktab = p->next;
+    /// freelinklist(p->funcs, NULL);
+    /// return 0;
+    /// ```
+    ///
+    /// Walks the linked-list `hooktab` looking for pointer-identity
+    /// `h`, splices it out and frees its funcs list. Returns 0 on
+    /// success, 1 when not found.
+    ///
+    /// Rust port: `self.hooks` is a `HashMap<String, Vec<String>>` keyed
+    /// by name (Rust idiom replaces the C linked-list walk). The C
+    /// `p == h` pointer-equality check becomes a name-keyed lookup.
+    /// `freelinklist(p->funcs, NULL)` is the Drop of the popped value.
+    /// WARNING: param names don't match C — Rust=(name) vs C=(h)
+    pub fn deletehookdef(&mut self, name: &str) -> i32 {                    // c:902
+        // c:907 — `for (p = hooktab; p && p != h; ...)` walk to find.
+        // c:909-910 — `if (!p) return 1;` not-found return.
+        if self.hooks.remove(name).is_none() {                               // c:907
+            return 1;                                                        // c:910
+        }
+        // c:912-915 — splice + `freelinklist(p->funcs, NULL)`.
+        // Rust HashMap::remove already spliced + dropped the Vec funcs.
+        0                                                                    // c:917
     }
 
     /// Unregister multiple hooks (from module.c deletehookdefs)
@@ -3564,5 +3618,91 @@ mod modname_tests {
     #[test]
     fn modname_ok_treats_empty_as_trivially_ok() {
         assert_eq!(modname_ok(""), 1);
+    }
+
+    /// `Src/module.c:464-478` — `del_autobin` returns 2 for "no such
+    /// builtin" (unless FEAT_IGNORE), 3 for "registered builtin —
+    /// can't unload" (unless FEAT_IGNORE), 0 for success.
+    #[test]
+    fn del_autobin_unknown_name_returns_2_or_zero_per_feat_ignore() {
+        use crate::ported::module::FEAT_IGNORE;
+        let mut t = modulestab::new();
+        // unknown name + no FEAT_IGNORE → 2
+        assert_eq!(t.del_autobin("definitely_not_a_builtin", 0), 2);
+        // unknown name + FEAT_IGNORE → 0
+        assert_eq!(t.del_autobin("definitely_not_a_builtin", FEAT_IGNORE), 0);
+    }
+
+    /// `Src/module.c:464-478` — known static-linked builtin (e.g. "echo")
+    /// is in createbuiltintable(), counts as BINF_ADDED → return 3
+    /// unless FEAT_IGNORE.
+    #[test]
+    fn del_autobin_registered_builtin_returns_3_or_zero_per_feat_ignore() {
+        use crate::ported::module::FEAT_IGNORE;
+        let mut t = modulestab::new();
+        // "echo" is a static-linked builtin → can't unload → 3
+        assert_eq!(t.del_autobin("echo", 0), 3);
+        // With FEAT_IGNORE → 0
+        assert_eq!(t.del_autobin("echo", FEAT_IGNORE), 0);
+    }
+
+    /// `Src/module.c:464-478` — name that was added via `add_autobin`
+    /// (i.e. in autoload_builtins) but NOT in builtintab → success
+    /// path → return 0 + removes from autoload ledger.
+    #[test]
+    fn del_autobin_autoload_only_entry_removed() {
+        use crate::ported::module::FEAT_IGNORE;
+        let mut t = modulestab::new();
+        // Seed an autoload entry not in the static builtintab.
+        t.autoload_builtins.insert("zshrs_test_autobin_x".to_string(),
+                                   "mymod".to_string());
+        assert_eq!(t.del_autobin("zshrs_test_autobin_x", 0), 0);
+        assert!(!t.autoload_builtins.contains_key("zshrs_test_autobin_x"),
+            "successful del must remove ledger entry");
+        // Second call → now "no such" → 2.
+        assert_eq!(t.del_autobin("zshrs_test_autobin_x", 0), 2);
+        assert_eq!(t.del_autobin("zshrs_test_autobin_x", FEAT_IGNORE), 0);
+    }
+
+    /// `Src/module.c:819-835` — `del_autocond` parallel contract: 2
+    /// for "no such", 0 for autoload-entry-removed.
+    #[test]
+    fn del_autocond_autoload_entry_removed_or_not_found() {
+        use crate::ported::module::FEAT_IGNORE;
+        let mut t = modulestab::new();
+        // Not present → 2 / 0 per FEAT_IGNORE.
+        assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 2);
+        assert_eq!(t.del_autocond("zshrs_test_cond_x", FEAT_IGNORE), 0);
+        // Seed and delete.
+        t.autoload_conditions.insert("zshrs_test_cond_x".to_string(),
+                                     "mymod".to_string());
+        assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 0);
+        assert!(!t.autoload_conditions.contains_key("zshrs_test_cond_x"));
+    }
+
+    /// `Src/module.c:1240-1255` — `del_autoparam` parallel contract.
+    /// 2 for "no such", 3 for "param exists without PM_AUTOLOAD —
+    /// can't unload", 0 for success.
+    #[test]
+    fn del_autoparam_unknown_name_returns_2() {
+        use crate::ported::module::FEAT_IGNORE;
+        let mut t = modulestab::new();
+        assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", 0), 2);
+        assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", FEAT_IGNORE), 0);
+    }
+
+    /// `Src/module.c:902-919` — `deletehookdef` returns 1 when not
+    /// found, 0 on success.
+    #[test]
+    fn deletehookdef_returns_one_when_missing_zero_on_success() {
+        let mut t = modulestab::new();
+        // Not present → 1.
+        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 1);
+        // Seed + delete → 0.
+        t.hooks.insert("zshrs_test_hook_x".to_string(), Vec::new());
+        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 0);
+        assert!(!t.hooks.contains_key("zshrs_test_hook_x"));
+        // Second call → 1 again.
+        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 1);
     }
 }
