@@ -2619,8 +2619,16 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// need to know the exact stop position, but nothing in zshrs's
 /// expansion layer uses that yet.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
-    // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`
-    if s.is_empty() {
+    use std::sync::atomic::Ordering;
+    use crate::ported::zsh_h::{Nularg, ERRFLAG_INT};
+    use crate::ported::utils::errflag;
+    // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`. C nulstring
+    // is `{Nularg, 0}` (0xa1, NUL) — defined in Src/subst.c:36. A
+    // single-Nularg input is the empty-arg sentinel and returns
+    // success without parsing. The previous Rust port missed the
+    // nulstring check so a Nularg-only input would attempt re-lex,
+    // surfacing a spurious parse error.
+    if s.is_empty() || s == Nularg.to_string() {                              // c:1802
         return Ok(String::new());
     }
     let l = s.len();
@@ -2645,16 +2653,25 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
         Some(ch) => gettokstr(ch, true),
         None => LEXERR,
     };
-    use std::sync::atomic::Ordering;
-    let saw_err = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
+    // c:1813 — `err = errflag;`. Snapshot PRE-strinend errflag so we
+    // can restore it post-zcontext_restore (parse-time errflag bits
+    // must not leak to the caller).
+    let err = errflag.load(Ordering::Relaxed);                                // c:1813
     let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
-    // c:1813 `strinend();`
+    // c:1814 `strinend();`
     crate::ported::hist::strinend();
-    // c:1814 `inpop();`
+    // c:1815 `inpop();`
     crate::ported::input::inpop();
-    // c:1816 `zcontext_restore();`
+    // c:1817 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
-    if ctok == LEXERR || saw_err {
+    // c:1819 — `errflag = err | (errflag & ERRFLAG_INT);`. Restore the
+    // saved errflag, OR'ing in any ERRFLAG_INT bit set during parse
+    // (user interrupt must survive). The previous Rust port skipped
+    // this restore — parse-time ERRFLAG_ERROR bits leaked to callers,
+    // causing the next exec-engine check to abort on a stale flag.
+    let post_err = errflag.load(Ordering::Relaxed);                           // c:1819
+    errflag.store(err | (post_err & ERRFLAG_INT), Ordering::Relaxed);         // c:1819
+    if ctok == LEXERR {                                                       // c:1820
         // Diagnostic already emitted via zerr at the failure site.
         return Err("parse error".to_string());
     }
@@ -4535,5 +4552,46 @@ mod tests {
             "c:597-602 — second `-` breaks the state machine");
         assert!(!isnumglob("1--2>",  0),
             "c:597-602 — `--` not valid in numglob");
+    }
+
+    /// `Src/lex.c:1802` — `parse_subst_string` returns 0 (success,
+    /// no work) on empty input OR on the `nulstring` sentinel
+    /// (`{Nularg, 0}` = `"\u{a1}"`). Previous Rust port only checked
+    /// the empty case; a Nularg-only input would try to re-lex,
+    /// surfacing a spurious parse error from the dquote_parse layer.
+    #[test]
+    fn parse_subst_string_handles_nulstring_sentinel() {
+        let _g = crate::test_util::global_state_lock();
+        use std::sync::atomic::Ordering;
+        // Clear errflag so other tests don't poison the assertion.
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        // c:1802 — empty input is a no-op success.
+        assert!(parse_subst_string("").is_ok(),
+            "c:1802 — empty input → Ok");
+        // c:1802 — nulstring (a single Nularg char) is a no-op success.
+        let nul = crate::ported::zsh_h::Nularg.to_string();
+        assert!(parse_subst_string(&nul).is_ok(),
+            "c:1802 — nulstring sentinel → Ok (was Err on previous port)");
+    }
+
+    /// `Src/lex.c:1819` — `parse_subst_string` MUST restore the
+    /// pre-call errflag value, OR'ing in only any `ERRFLAG_INT`
+    /// bit set during the parse (user interrupt must survive).
+    /// Parse-time `ERRFLAG_ERROR` bits MUST NOT leak to the caller.
+    ///
+    /// Previous Rust port skipped the restore — `parse_subst_string`
+    /// of an invalid expression left ERRFLAG_ERROR set, breaking
+    /// every downstream check that gates on `errflag == 0`.
+    #[test]
+    fn parse_subst_string_restores_errflag_after_parse() {
+        let _g = crate::test_util::global_state_lock();
+        use std::sync::atomic::Ordering;
+        use crate::ported::zsh_h::ERRFLAG_ERROR;
+        use crate::ported::utils::errflag;
+        // Pre-call: errflag clear. Post-call on simple input: still clear.
+        errflag.store(0, Ordering::Relaxed);
+        let _ = parse_subst_string("foo");
+        assert_eq!(errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR, 0,
+            "c:1819 — parse-time errflag must NOT leak; clean input keeps errflag clear");
     }
 }
