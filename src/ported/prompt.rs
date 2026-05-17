@@ -786,7 +786,47 @@ pub static txtunknownattrs: std::sync::atomic::AtomicU64 =
 
 /// Set text attributes (full apply).
 /// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
+///
+/// C body (c:1737-1751):
+/// ```c
+/// /* assume any unknown attributes that we're now setting were unset */
+/// txtcurrentattrs &= ~(newattrs & txtunknownattrs);
+/// txtpendingattrs |= newattrs & TXT_ATTR_ALL;
+/// if (newattrs & TXTFGCOLOUR) {
+///     txtpendingattrs &= ~TXT_ATTR_FG_MASK;
+///     txtpendingattrs |= newattrs & TXT_ATTR_FG_MASK;
+/// }
+/// if (newattrs & TXTBGCOLOUR) {
+///     txtpendingattrs &= ~TXT_ATTR_BG_MASK;
+///     txtpendingattrs |= newattrs & TXT_ATTR_BG_MASK;
+/// }
+/// ```
+///
+/// Returns the SGR escape string emitted by the subsequent
+/// `applytextattributes` flush (the Rust port collapses the
+/// pending-then-flush idiom into a single call so callers get the
+/// rendered diff back immediately).
 pub fn tsetattrs(newattrs: zattr) -> String {                               // c:1737
+    // c:1740 — txtcurrentattrs &= ~(newattrs & txtunknownattrs);
+    let unknown = txtunknownattrs.load(std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut cur = current_attrs_lock().lock().expect("current_attrs poisoned");
+        *cur &= !(newattrs & unknown as zattr);
+    }
+    // c:1742-1750 — txtpendingattrs updates: OR in non-color attrs,
+    // then for FG/BG colour bits replace the existing mask wholesale.
+    {
+        let mut pend = pending_attrs_lock().lock().expect("pending_attrs poisoned");
+        *pend |= newattrs & crate::ported::zsh_h::TXT_ATTR_ALL;              // c:1742
+        if (newattrs & TXTFGCOLOUR) != 0 {                                   // c:1743
+            *pend &= !TXT_ATTR_FG_MASK;                                      // c:1744
+            *pend |= newattrs & TXT_ATTR_FG_MASK;                            // c:1745
+        }
+        if (newattrs & TXTBGCOLOUR) != 0 {                                   // c:1747
+            *pend &= !TXT_ATTR_BG_MASK;                                      // c:1748
+            *pend |= newattrs & TXT_ATTR_BG_MASK;                            // c:1749
+        }
+    }
     apply_text_attributes(newattrs)
 }
 
@@ -2921,5 +2961,31 @@ mod tests {
         assert_eq!(buf, "pre/post");
         stradd(&mut buf, "");
         assert_eq!(buf, "pre/post", "empty append leaves buffer unchanged");
+    }
+
+    /// c:1737-1751 — `tsetattrs` OR-merges non-color attrs into
+    /// `txtpendingattrs` and wholesale-replaces FG/BG mask bits.
+    #[test]
+    fn tsetattrs_updates_pending_attrs_non_color() {
+        set_pending_text_attrs(0);
+        let _ = tsetattrs(TXTBOLDFACE);
+        let p = *pending_attrs_lock().lock().unwrap();
+        assert!(p & TXTBOLDFACE != 0, "TXTBOLDFACE bit ORed into pending");
+    }
+
+    /// c:1743-1746 — TXTFGCOLOUR replaces the FG mask wholesale, not ORs.
+    #[test]
+    fn tsetattrs_fg_color_replaces_fg_mask() {
+        let palette_idx_5: zattr = (5u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
+            & crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK;
+        let palette_idx_2: zattr = (2u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
+            & crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK;
+        // Pre-seed pending with idx=5
+        set_pending_text_attrs(TXTFGCOLOUR | palette_idx_5);
+        // tsetattrs with idx=2 should wholesale-replace, not OR
+        let _ = tsetattrs(TXTFGCOLOUR | palette_idx_2);
+        let p = *pending_attrs_lock().lock().unwrap();
+        assert_eq!(p & TXT_ATTR_FG_COL_MASK, palette_idx_2,
+                   "FG palette index replaced (idx=2), not ORed with prior idx=5");
     }
 }
