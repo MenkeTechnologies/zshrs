@@ -61,6 +61,10 @@ class ZshrsLspServerDescriptor(project: Project) :
         val settings = ZshrsSettings.getInstance()
         val exe = resolveExe()
         LOG.info("Starting zshrs LSP: $exe --lsp ${settings.extraLspArgs}")
+        com.menketechnologies.zshrs.ZshrsDebugLog.log(
+            "lsp",
+            "createCommandLine exe=$exe args=--lsp ${settings.extraLspArgs} cwd=${project.basePath}",
+        )
         val cmd = GeneralCommandLine(exe)
             .withParameters("--lsp")
             .withWorkDirectory(project.basePath ?: PathManager.getHomePath())
@@ -72,6 +76,10 @@ class ZshrsLspServerDescriptor(project: Project) :
         }
         if (settings.logLspToFile && settings.lspLogPath.isNotBlank()) {
             cmd.withEnvironment("ZSHRS_LSP_LOG", settings.lspLogPath)
+            com.menketechnologies.zshrs.ZshrsDebugLog.log(
+                "lsp",
+                "ZSHRS_LSP_LOG=${settings.lspLogPath}",
+            )
         }
         return cmd
     }

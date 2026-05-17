@@ -77,6 +77,11 @@ struct State {
 ///
 /// Called from `bins/zshrs.rs` when `--lsp` is detected.
 pub fn run_lsp() -> i32 {
+    tracing::info!(
+        target: "zshrs::lsp",
+        pid = std::process::id(),
+        "starting --lsp",
+    );
     let mut state = State::default();
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -91,11 +96,15 @@ pub fn run_lsp() -> i32 {
     loop {
         let msg = match read_message(&mut reader) {
             Ok(Some(m)) => m,
-            Ok(None) => break,
+            Ok(None) => {
+                tracing::info!(target: "zshrs::lsp", "stdin EOF, shutting down");
+                break;
+            }
             Err(e) => {
                 if let Some(l) = log.as_mut() {
                     let _ = writeln!(l, "← read error: {}", e);
                 }
+                tracing::error!(target: "zshrs::lsp", %e, "read error, shutting down");
                 break;
             }
         };
@@ -107,6 +116,11 @@ pub fn run_lsp() -> i32 {
         let method = msg.get("method").and_then(|v| v.as_str()).map(|s| s.to_string());
         let id = msg.get("id").cloned();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        tracing::trace!(
+            target: "zshrs::lsp::req",
+            method = method.as_deref().unwrap_or("?"),
+            id = ?id,
+        );
 
         let response = match method.as_deref() {
             Some("initialize") => Some(handle_initialize(id, &params)),
@@ -432,18 +446,98 @@ fn hover(state: &State, params: &Value) -> Value {
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
     let text = match state.docs.get(uri) {
         Some(t) => t,
-        None => return Value::Null,
+        None => {
+            tracing::trace!(target: "zshrs::lsp::hover", line = line_no, col, "no_doc_for_uri");
+            return Value::Null;
+        }
     };
     let word = word_at(text, line_no, col).unwrap_or_default();
-    if word.is_empty() { return Value::Null; }
+    if word.is_empty() {
+        tracing::trace!(target: "zshrs::lsp::hover", line = line_no, col, "empty_word");
+        return Value::Null;
+    }
+    // Gate: when the cursor sits inside a `#` comment or `#!` shebang,
+    // don't return the builtin/keyword doc card — zsh treats everything
+    // after a bare `#` as comment text. Matches what the stryke LSP does
+    // for the `env` builtin on `#!/usr/bin/env zsh`.
+    let line_text = text.lines().nth(line_no).unwrap_or("");
+    if line_starts_comment_before(line_text, col) {
+        tracing::debug!(
+            target: "zshrs::lsp::hover",
+            line = line_no, col, %word,
+            gated = "comment",
+            "suppressed",
+        );
+        return Value::Null;
+    }
     let doc = lookup_doc(&word);
-    if doc.is_empty() { return Value::Null; }
+    if doc.is_empty() {
+        tracing::trace!(target: "zshrs::lsp::hover", line = line_no, col, %word, "miss");
+        return Value::Null;
+    }
+    tracing::debug!(target: "zshrs::lsp::hover", line = line_no, col, %word, "hit");
     json!({
         "contents": {
             "kind": "markdown",
             "value": doc,
         }
     })
+}
+
+/// True if a bare `#` (comment opener) appears in `line[..end]` outside
+/// any `"..."` / `'...'` / `` `...` `` string literal. Handles both shebang
+/// (`#!/usr/bin/env zsh` — `#` at column 0) and inline comments
+/// (`echo hi; # call cd later`).
+///
+/// String-aware so `echo "x #y"` doesn't false-positive — the `#` inside
+/// the literal opens nothing in zsh. Backslash-escapes inside double-
+/// quoted strings are honored. zsh single-quoted strings don't process
+/// escapes, but a closing `'` always terminates, so the simple state
+/// machine still works.
+pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
+    let bytes = line.as_bytes();
+    let cap = end.min(bytes.len());
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut in_bt = false;
+    let mut i = 0;
+    while i < cap {
+        let c = bytes[i];
+        if in_dq {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_dq = false;
+            }
+        } else if in_sq {
+            if c == b'\'' {
+                in_sq = false;
+            }
+        } else if in_bt {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'`' {
+                in_bt = false;
+            }
+        } else {
+            if c == b'#' {
+                return true;
+            }
+            if c == b'"' {
+                in_dq = true;
+            } else if c == b'\'' {
+                in_sq = true;
+            } else if c == b'`' {
+                in_bt = true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 pub fn lookup_doc(name: &str) -> String {
@@ -662,38 +756,58 @@ fn definition(state: &State, params: &Value) -> Value {
 }
 
 fn references(state: &State, params: &Value) -> Value {
-    let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
+    let active_uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
     let line_no = params["position"]["line"].as_u64().unwrap_or(0) as usize;
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
-    let text = match state.docs.get(uri) {
-        Some(t) => t,
+    let active_text = match state.docs.get(&active_uri) {
+        Some(t) => t.clone(),
         None => return Value::Array(vec![]),
     };
-    let word = match word_at(text, line_no, col) {
+    let word = match word_at(&active_text, line_no, col) {
         Some(w) if !w.is_empty() => w,
         _ => return Value::Array(vec![]),
     };
+    // Scan EVERY open document, not just the active file. Cross-file
+    // function rename: a `function greet { … }` declared in `lib.zsh`
+    // and called from `~/.zshrc` should have both call sites edited at
+    // once. The textual scan is bounded by the same identifier-boundary
+    // check used for in-file refs.
     let mut out = Vec::new();
-    for (i, l) in text.lines().enumerate() {
-        let mut start = 0;
-        while let Some(p) = l[start..].find(&word) {
-            let abs = start + p;
-            let before = l[..abs].chars().last();
-            let after = l[abs + word.len()..].chars().next();
-            let ok_b = before.map(|c| !(c.is_alphanumeric() || c == '_')).unwrap_or(true);
-            let ok_a = after.map(|c| !(c.is_alphanumeric() || c == '_')).unwrap_or(true);
-            if ok_b && ok_a {
-                out.push(json!({
-                    "uri": uri,
-                    "range": {
-                        "start": { "line": i, "character": abs },
-                        "end":   { "line": i, "character": abs + word.len() },
-                    },
-                }));
+    let mut docs: Vec<(&String, &String)> = state.docs.iter().collect();
+    docs.sort_by(|a, b| a.0.cmp(b.0)); // deterministic order for tests / logs
+    for (doc_uri, text) in docs {
+        for (i, l) in text.lines().enumerate() {
+            let mut start = 0;
+            while let Some(p) = l[start..].find(&word) {
+                let abs = start + p;
+                let before = l[..abs].chars().last();
+                let after = l[abs + word.len()..].chars().next();
+                let ok_b = before
+                    .map(|c| !(c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(true);
+                let ok_a = after
+                    .map(|c| !(c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(true);
+                if ok_b && ok_a {
+                    out.push(json!({
+                        "uri": doc_uri,
+                        "range": {
+                            "start": { "line": i, "character": abs },
+                            "end":   { "line": i, "character": abs + word.len() },
+                        },
+                    }));
+                }
+                start = abs + word.len();
             }
-            start = abs + word.len();
         }
     }
+    tracing::debug!(
+        target: "zshrs::lsp::references",
+        %word,
+        n_results = out.len(),
+        n_docs = state.docs.len(),
+        "scanned",
+    );
     Value::Array(out)
 }
 
@@ -714,35 +828,88 @@ fn prepare_rename(state: &State, params: &Value) -> Value {
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
     let text = match state.docs.get(uri) {
         Some(t) => t,
-        None => return Value::Null,
+        None => {
+            tracing::debug!(
+                target: "zshrs::lsp::prepareRename",
+                line = line_no, col,
+                "no_doc_for_uri",
+            );
+            return Value::Null;
+        }
     };
+    // Reject positions inside a `#` comment / `#!` shebang — same gate
+    // hover uses. Trying to rename `env` on the shebang line is never
+    // what the user wants.
+    let line_text = text.lines().nth(line_no).unwrap_or("");
+    if line_starts_comment_before(line_text, col) {
+        tracing::debug!(
+            target: "zshrs::lsp::prepareRename",
+            line = line_no, col,
+            "gated_comment",
+        );
+        return Value::Null;
+    }
     if let Some(word) = word_at(text, line_no, col) {
         if !word.is_empty() {
             if let Some(line) = text.lines().nth(line_no) {
                 if let Some(s) = line.find(&word) {
+                    tracing::debug!(
+                        target: "zshrs::lsp::prepareRename",
+                        %word, line = line_no, "accepted",
+                    );
                     return json!({
                         "start": { "line": line_no, "character": s },
                         "end":   { "line": line_no, "character": s + word.len() },
+                        "placeholder": word,
                     });
                 }
             }
         }
     }
+    tracing::debug!(
+        target: "zshrs::lsp::prepareRename",
+        line = line_no, col,
+        "no_identifier",
+    );
     Value::Null
 }
 
 fn rename(state: &State, params: &Value) -> Value {
     let new_name = params["newName"].as_str().unwrap_or("").to_string();
+    if new_name.is_empty() {
+        tracing::warn!(target: "zshrs::lsp::rename", "rejecting empty new_name");
+        return Value::Null;
+    }
+    // Bucket edits per-URI so cross-file rename produces one entry per
+    // file in the `changes` map. The textual scan in `references`
+    // already produced absolute-URI ranges; we just group them.
     let refs = references(state, params);
-    let uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
-    let edits: Vec<Value> = refs
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| json!({ "range": r["range"], "newText": new_name }))
-        .collect();
-    json!({ "changes": { uri: edits } })
+    let arr = refs.as_array().cloned().unwrap_or_default();
+    let mut buckets: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut total = 0usize;
+    for r in arr {
+        let uri = r["uri"].as_str().unwrap_or("").to_string();
+        if uri.is_empty() {
+            continue;
+        }
+        buckets
+            .entry(uri)
+            .or_default()
+            .push(json!({ "range": r["range"], "newText": new_name }));
+        total += 1;
+    }
+    tracing::info!(
+        target: "zshrs::lsp::rename",
+        %new_name,
+        n_files = buckets.len(),
+        n_edits = total,
+        "applied",
+    );
+    let mut changes = serde_json::Map::new();
+    for (uri, edits) in buckets {
+        changes.insert(uri, Value::Array(edits));
+    }
+    json!({ "changes": Value::Object(changes) })
 }
 
 // ── Semantic tokens ─────────────────────────────────────────────────────
@@ -1338,5 +1505,194 @@ mod tests {
         let arr = refs.as_array().unwrap();
         // 1 decl + 2 call sites = 3
         assert_eq!(arr.len(), 3, "expected 3 refs, got: {:?}", arr);
+    }
+
+    // ── Comment / shebang hover gate ────────────────────────────────────────
+
+    #[test]
+    fn line_starts_comment_before_shebang() {
+        // `#!/usr/bin/env zsh` — `#` at column 0 is a shebang. Anything
+        // to its right is comment text and must not hover as code.
+        let line = "#!/usr/bin/env zsh";
+        let pos = line.find("env").unwrap();
+        assert!(line_starts_comment_before(line, pos));
+    }
+
+    #[test]
+    fn line_starts_comment_before_inline() {
+        // `echo hi; # call cd later` — `cd` is in the comment.
+        let line = "echo hi; # call cd later";
+        let pos = line.find("cd").unwrap();
+        assert!(line_starts_comment_before(line, pos));
+    }
+
+    #[test]
+    fn line_starts_comment_before_string_with_hash_is_not_a_comment() {
+        // `echo "x #y"; cd` — the `#` lives inside a double-quoted
+        // string; `cd` after the string is real code.
+        let line = r#"echo "x #y"; cd"#;
+        let pos = line.rfind("cd").unwrap();
+        assert!(
+            !line_starts_comment_before(line, pos),
+            "code after a string containing `#` must still be code"
+        );
+    }
+
+    #[test]
+    fn line_starts_comment_before_single_quote_with_hash() {
+        // `echo 'x #y'; cd` — single quotes also literalize `#`.
+        let line = "echo 'x #y'; cd";
+        let pos = line.rfind("cd").unwrap();
+        assert!(!line_starts_comment_before(line, pos));
+    }
+
+    #[test]
+    fn line_starts_comment_before_backtick_with_hash() {
+        // `` `echo #foo`; cd `` — backtick command-substitution treats
+        // `#` as comment INSIDE the backticks per zsh semantics, but our
+        // gate is "is the cursor sitting inside a top-level # comment",
+        // and the `cd` AFTER the closing backtick is real code at the
+        // top level, so the gate must return false.
+        let line = "`echo #foo`; cd";
+        let pos = line.rfind("cd").unwrap();
+        assert!(!line_starts_comment_before(line, pos));
+    }
+
+    #[test]
+    fn line_starts_comment_negative_at_start() {
+        let line = "cd /tmp";
+        assert!(!line_starts_comment_before(line, 0));
+    }
+
+    // ── Hover gate end-to-end ───────────────────────────────────────────────
+
+    #[test]
+    fn hover_on_shebang_env_is_suppressed() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "#!/usr/bin/env zsh\necho hi\n".into(),
+        );
+        // Cursor on `env` at line 0 — even if a future BUILTINS table
+        // ever lists `env`, the hover must NOT fire on the shebang.
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 12 },
+        });
+        let h = hover(&state, &params);
+        assert!(h.is_null(), "hover on shebang `env` must be null, got: {h}");
+    }
+
+    #[test]
+    fn hover_on_builtin_inside_comment_is_suppressed() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "echo hi  # call cd later\n".into(),
+        );
+        // `cd` is a real zsh builtin with a doc card, but inside a `#`
+        // comment it must not hover.
+        let cd_pos = "echo hi  # call ".len();
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": cd_pos },
+        });
+        let h = hover(&state, &params);
+        assert!(h.is_null(), "comment-text hover must be null, got: {h}");
+    }
+
+    #[test]
+    fn hover_on_real_builtin_outside_comment_still_works() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "cd /tmp\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 0 },
+        });
+        let h = hover(&state, &params);
+        assert!(!h.is_null(), "real builtin must still hover");
+    }
+
+    // ── Cross-file rename via references ────────────────────────────────────
+
+    #[test]
+    fn rename_function_crosses_files() {
+        // `function greet { … }` declared in lib.zsh; called from rc.zsh.
+        // Renaming at the decl must produce edits in BOTH files.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///lib.zsh".into(),
+            "function greet { echo hi }\n".into(),
+        );
+        state.docs.insert(
+            "file:///rc.zsh".into(),
+            "source lib.zsh\ngreet\ngreet world\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///lib.zsh" },
+            "position": { "line": 0, "character": 9 }, // on "greet"
+            "context": { "includeDeclaration": true },
+            "newName": "salute",
+        });
+        let r = rename(&state, &params);
+        let changes = r["changes"].as_object().expect("rename has changes map");
+        assert!(
+            changes.contains_key("file:///lib.zsh"),
+            "lib.zsh edited: {changes:?}"
+        );
+        assert!(
+            changes.contains_key("file:///rc.zsh"),
+            "rc.zsh edited: {changes:?}"
+        );
+        // 1 decl in lib + 2 call sites in rc = 3 total edits.
+        let lib_edits = changes["file:///lib.zsh"].as_array().unwrap();
+        let rc_edits = changes["file:///rc.zsh"].as_array().unwrap();
+        assert_eq!(lib_edits.len(), 1);
+        assert_eq!(rc_edits.len(), 2);
+        for e in lib_edits.iter().chain(rc_edits.iter()) {
+            assert_eq!(e["newText"], "salute");
+        }
+    }
+
+    #[test]
+    fn rename_rejects_empty_new_name() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "function greet { echo hi }\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 },
+            "context": { "includeDeclaration": true },
+            "newName": "",
+        });
+        let r = rename(&state, &params);
+        assert!(r.is_null(), "empty new_name must be rejected");
+    }
+
+    #[test]
+    fn prepare_rename_rejects_in_comment() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "echo hi  # rename me\n".into(),
+        );
+        let pos = "echo hi  # rename ".len();
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": pos },
+        });
+        let r = prepare_rename(&state, &params);
+        assert!(r.is_null(), "prepareRename in comment must reject");
     }
 }
