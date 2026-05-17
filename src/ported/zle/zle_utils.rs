@@ -1004,26 +1004,41 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // 
 }
 
 /// Port of `get_undo_current_change(UNUSED(Param pm))` from Src/Zle/zle_utils.c:1785.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
+/// Returns `undo_changeno` (the most-recently-committed change number),
+/// committing any pending edits to a new undo entry first.
 pub fn get_undo_current_change() -> i64 {                                    // c:1785
-    // C body c:1787-1810 — `if (!curchange) return -1; return curchange->changeno`.
-    //                      Without curchange tracker: -1 (no change).
-    -1
+    // c:1788 — int remetafy;
+    // c:1795 — if (zlemetaline != NULL) { unmetafy_line(); remetafy = 1; }
+    // c:1799 — else remetafy = 0;
+    // Rust uses UTF-8 natively — the metaline transcoding is a no-op
+    // at the storage layer, so the remetafy bookkeeping collapses.
+    // c:1802 — mkundoent();           — flush pending edits to undo ring
+    crate::zle::zle_utils::mkundoent();
+    // c:1803 — setlastline();
+    crate::zle::zle_utils::setlastline();
+    // c:1805-1806 — if (remetafy) metafy_line();    (collapsed per above)
+    // c:1808 — return undo_changeno;
+    UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst) as i64
 }
 
 /// Port of `get_undo_limit_change(UNUSED(Param pm))` from Src/Zle/zle_utils.c:1812.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_undo_limit_change() -> i64 {                                      // c:1812
-    // C body c:1814-1817 — `return undo_limit_change`. Returns the
-    //                      undo-limit anchor change number.
-    -1
+    // c:1815 — return undo_limitno;
+    UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst) as i64
 }
 
 /// Port of `set_undo_limit_change(UNUSED(Param pm), zlong value)` from Src/Zle/zle_utils.c:1819.
-/// WARNING: param names don't match C — Rust=(_n) vs C=(pm, value)
-pub fn set_undo_limit_change(_n: i64) -> i32 {                               // c:1819
-    // C body c:1821-1825 — `undo_limit_change = n; return 0`.
-    //                      Without undo_limit_change global: 0.
+/// WARNING: param names don't match C — Rust=(value) vs C=(pm, value)
+pub fn set_undo_limit_change(value: i64) -> i32 {                            // c:1819
+    // c:1822 — struct change *chp;
+    // c:1823-1837 — walk back from curchange until the entry whose
+    //               changeno <= value, then set undo_limitno = that
+    //               entry's changeno. With our linear UNDO_STACK that
+    //               distinction collapses to clamping to the largest
+    //               committed changeno <= value.
+    let cap = UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst) as i64;
+    let clamped = value.max(0).min(cap);
+    UNDO_LIMITNO.store(clamped as u64, std::sync::atomic::Ordering::SeqCst);
     0
 }
 

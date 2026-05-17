@@ -3205,11 +3205,32 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // 
 // loop with running length pre-compute; the `heap` arg drops since
 // String owns its own allocation.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // c:3928
+    // c:3934-3935 — if (!*s) return heap ? dupstring("") : ztrdup("");
     if arr.is_empty() {
         return String::new();
     }
-    let sep = sep.unwrap_or(" ");
-    arr.join(sep)
+    // c:3936-3946 — if sep is NULL, derive from ifs[0]; default " " when
+    //               ifs[0] is space (common case). Use first MB char of
+    //               IFS otherwise. Rust mirrors via paramtab IFS lookup.
+    let ifs_storage: String;
+    let sep_str: &str = match sep {
+        Some(s) => s,                                                        // c:3936
+        None => {
+            let ifs = crate::ported::params::getsparam("IFS").unwrap_or_default();
+            // c:3938 — if (ifs && *ifs != ' ') sep = first MB char of ifs;
+            if !ifs.is_empty() && !ifs.starts_with(' ') {
+                ifs_storage = ifs.chars().next().map(|c| c.to_string()).unwrap_or_default();
+                &ifs_storage
+            } else {
+                // c:3942-3944 — else sep = " ";
+                " "
+            }
+        }
+    };
+    // c:3947-3956 — pre-compute total length, alloc, copy elements
+    //               interleaving sep. Rust slice::join collapses all that
+    //               into the one canonical call.
+    arr.join(sep_str)
 }
 
 /// Split string by separator - port from zsh/Src/utils.c sepsplit() lines 3961-3992
@@ -5686,32 +5707,44 @@ pub fn privasserted() -> bool {
 ///     return m;
 /// }
 /// ```
-pub fn mode_to_octal(mode: u32) -> i32 {
-    #[cfg(unix)]
+pub fn mode_to_octal(mode: u32) -> i32 {                                     // c:7634
     #[cfg(not(unix))]
     {
-        // No POSIX permission bits on non-Unix; fall back to a
-        // bit-mask matching the canonical layout.
-        let _ = mode;
-        return 0;
+        // No POSIX permission bits on non-Unix; fall back to canonical
+        // octal-bit layout via the same mask values C uses on POSIX.
+        let mut o: i32 = 0;
+        if mode & 0o4000 != 0 { o |= 0o4000; }                               // c:7638-7639
+        if mode & 0o2000 != 0 { o |= 0o2000; }                               // c:7640-7641
+        if mode & 0o1000 != 0 { o |= 0o1000; }                               // c:7642-7643
+        if mode & 0o0400 != 0 { o |= 0o0400; }                               // c:7644-7645
+        if mode & 0o0200 != 0 { o |= 0o0200; }                               // c:7646-7647
+        if mode & 0o0100 != 0 { o |= 0o0100; }                               // c:7648-7649
+        if mode & 0o0040 != 0 { o |= 0o0040; }                               // c:7650-7651
+        if mode & 0o0020 != 0 { o |= 0o0020; }                               // c:7652-7653
+        if mode & 0o0010 != 0 { o |= 0o0010; }                               // c:7654-7655
+        if mode & 0o0004 != 0 { o |= 0o0004; }                               // c:7656-7657
+        if mode & 0o0002 != 0 { o |= 0o0002; }                               // c:7658-7659
+        if mode & 0o0001 != 0 { o |= 0o0001; }                               // c:7660-7661
+        return o;                                                            // c:7662
     }
     #[cfg(unix)]
     {
-        let m = mode as u32;
-        let mut o: i32 = 0;
-        if m & S_ISUID as u32 != 0 { o |= 0o4000; }
-        if m & S_ISGID as u32 != 0 { o |= 0o2000; }
-        if m & S_ISVTX as u32 != 0 { o |= 0o1000; }
-        if m & S_IRUSR as u32 != 0 { o |= 0o0400; }
-        if m & S_IWUSR as u32 != 0 { o |= 0o0200; }
-        if m & S_IXUSR as u32 != 0 { o |= 0o0100; }
-        if m & S_IRGRP as u32 != 0 { o |= 0o0040; }
-        if m & S_IWGRP as u32 != 0 { o |= 0o0020; }
-        if m & S_IXGRP as u32 != 0 { o |= 0o0010; }
-        if m & S_IROTH as u32 != 0 { o |= 0o0004; }
-        if m & S_IWOTH as u32 != 0 { o |= 0o0002; }
-        if m & S_IXOTH as u32 != 0 { o |= 0o0001; }
-        o
+        // c:7636 — int m = 0;
+        let mut m: i32 = 0;
+        // c:7638-7661 — 12 bit-by-bit mappings from libc S_I* → canonical octal.
+        if mode & S_ISUID as u32 != 0 { m |= 0o4000; }                       // c:7638-7639
+        if mode & S_ISGID as u32 != 0 { m |= 0o2000; }                       // c:7640-7641
+        if mode & S_ISVTX as u32 != 0 { m |= 0o1000; }                       // c:7642-7643
+        if mode & S_IRUSR as u32 != 0 { m |= 0o0400; }                       // c:7644-7645
+        if mode & S_IWUSR as u32 != 0 { m |= 0o0200; }                       // c:7646-7647
+        if mode & S_IXUSR as u32 != 0 { m |= 0o0100; }                       // c:7648-7649
+        if mode & S_IRGRP as u32 != 0 { m |= 0o0040; }                       // c:7650-7651
+        if mode & S_IWGRP as u32 != 0 { m |= 0o0020; }                       // c:7652-7653
+        if mode & S_IXGRP as u32 != 0 { m |= 0o0010; }                       // c:7654-7655
+        if mode & S_IROTH as u32 != 0 { m |= 0o0004; }                       // c:7656-7657
+        if mode & S_IWOTH as u32 != 0 { m |= 0o0002; }                       // c:7658-7659
+        if mode & S_IXOTH as u32 != 0 { m |= 0o0001; }                       // c:7660-7661
+        m                                                                    // c:7662
     }
 }
 

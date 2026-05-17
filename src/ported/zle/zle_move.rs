@@ -225,16 +225,74 @@ pub fn beginningoflinehist() -> i32 {  // c:360
 }
 
 /// Port of `endoflinehist(char **args)` from Src/Zle/zle_move.c:403.
-pub fn endoflinehist() -> i32 {   // c:403
-    // C body (c:405-436): mirror of beginningoflinehist; downhistory
-    //                    when hitting eol with count remaining.
-    let r = endofline();
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult > 1 {
-        if let Some(_e) = crate::ported::zle::zle_main::history().lock().unwrap().down() {
-            crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-        }
+pub fn endoflinehist() -> i32 {                                              // c:403
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_main::{ZLECS, ZLELL, ZLELINE, ZMOD};
+
+    // c:405 — int n = zmult;
+    let mut n = ZMOD.lock().unwrap().mult;
+    // c:407-413 — if (n < 0) { zmult = -n; ret = beginningoflinehist(args); zmult = n; return ret; }
+    if n < 0 {
+        let saved = n;
+        ZMOD.lock().unwrap().mult = -n;
+        let ret = beginningoflinehist();
+        ZMOD.lock().unwrap().mult = saved;
+        return ret;
     }
-    r
+
+    // c:414-427 — line-boundary walk: each iteration advances to the
+    //              next '\n' (skipping one if at it under vi-cmd mode).
+    let line = ZLELINE.lock().unwrap().clone();
+    let ll = ZLELL.load(Ordering::SeqCst);
+    while n > 0 {
+        let mut cs = ZLECS.load(Ordering::SeqCst);
+        // c:415-418 — if (zlecs >= zlell) { zlecs = zlell; break; }
+        if cs >= ll {
+            ZLECS.store(ll, Ordering::SeqCst);
+            break;
+        }
+        // c:419-420 — if ((zlecs += invicmdmode()) == zlell) break;
+        cs += invicmdmode();
+        if cs == ll {
+            ZLECS.store(cs, Ordering::SeqCst);
+            break;
+        }
+        // c:421-423 — if (zleline[zlecs] == '\n') if (++zlecs == zlell) break;
+        if cs < line.len() && line.get(cs) == Some(&'\n') {
+            cs += 1;
+            if cs == ll {
+                ZLECS.store(cs, Ordering::SeqCst);
+                break;
+            }
+        }
+        // c:424-425 — while (zlecs != zlell && zleline[zlecs] != '\n') zlecs++;
+        while cs != ll && line.get(cs) != Some(&'\n') {
+            cs += 1;
+        }
+        ZLECS.store(cs, Ordering::SeqCst);
+        n -= 1;                                                              // c:426
+    }
+    // c:428-434 — if (n) { m = zmult; zmult = n; ret = downhistory(args); zmult = m; return ret; }
+    if n > 0 {
+        let m = ZMOD.lock().unwrap().mult;
+        ZMOD.lock().unwrap().mult = n;
+        if let Some(_e) = crate::ported::zle::zle_main::history().lock().unwrap().down() {
+            ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+        ZMOD.lock().unwrap().mult = m;
+    }
+    // c:436 — return 0;
+    0
+}
+
+/// Local port of `invicmdmode()`. Returns 1 in vi-command mode (cursor
+/// stops one short of EOL), 0 otherwise.
+fn invicmdmode() -> usize {
+    if crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Port of `forwardchar(char **args)` from `Src/Zle/zle_move.c:440`.

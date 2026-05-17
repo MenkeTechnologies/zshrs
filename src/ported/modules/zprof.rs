@@ -308,14 +308,24 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
 /// `name [filename:lineno]` using the current `funcstack[0]` frame.
 ///
 /// C signature: `static char *name_for_anonymous_function(char *name)`.
-/// Rust port takes the placeholder name + `(filename, lineno)` pair
-/// the caller pulls from the funcstack.
-/// WARNING: param names don't match C — Rust=(name, filename, lineno) vs C=(name)
-pub fn name_for_anonymous_function(name: &str, filename: &str, lineno: i32) -> String {  // c:217
-    // c:217 — `convbase(lineno, funcstack[0].flineno, 10);`
-    // c:224-230 — `parts[] = { name, " [", filename, ":", lineno, "]", NULL };`
-    // c:232 — `return sepjoin(parts, "", 1);`
-    format!("{} [{}:{}]", name, filename, lineno)
+pub fn name_for_anonymous_function(name: &str) -> String {                    // c:217
+    // c:219 — char lineno[DIGBUFSIZE];
+    // c:220 — char *parts[7];
+    // c:222 — convbase(lineno, funcstack[0].flineno, 10);
+    let stack = crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .expect("FUNCSTACK poisoned");
+    let flineno = stack.first().map(|f| f.flineno).unwrap_or(0);              // c:222
+    let filename = stack
+        .first()
+        .and_then(|f| f.filename.clone())
+        .unwrap_or_default();                                                  // c:226
+    drop(stack);
+    let lineno_str = format!("{}", flineno);                                  // c:222 convbase base=10
+    // c:224-230 — parts[] = { name, " [", filename, ":", lineno, "]", NULL };
+    // c:232 — return sepjoin(parts, "", 1);
+    let parts = [name, " [", filename.as_str(), ":", lineno_str.as_str(), "]"];
+    parts.concat()                                                             // c:232
 }
 
 /// Port of `zprof_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/zprof.c:236`. The
@@ -403,12 +413,9 @@ pub fn zprof_wrapper(prog: *const crate::ported::zsh_h::eprog,              // c
     // `is_anonymous_function_name(name)` is `!strcmp(name, "(anon)")`
     // per Src/exec.c:5303-5306. ANONYMOUS_FUNCTION_NAME = "(anon)".
     let name_for_lookups: String = if name == "(anon)" {                     // c:246
-        // `name_for_anonymous_function(name)` (exec.c:5292): walks the
-        // funcstack to recover the source filename + line. The Rust
-        // port (above in this file) takes (name, filename, lineno);
-        // without the funcstack walk wired here, pass empty placeholders
-        // so the call shape is preserved.
-        name_for_anonymous_function(name, "", 0)                             // c:247
+        // `name_for_anonymous_function(name)` reads funcstack[0]
+        // internally (S1 rule — signature matches C).
+        name_for_anonymous_function(name)                                    // c:247
     } else {                                                                 // c:248
         name.to_string()                                                     // c:249
     };
@@ -843,11 +850,26 @@ mod tests {
     }
 
     /// Verifies `name_for_anonymous_function` formats as
-    /// `name [filename:lineno]` per c:224-232.
+    /// `name [filename:lineno]` per c:224-232, reading filename
+    /// and flineno from `funcstack[0]` per S1 rule.
     #[test]
     fn name_for_anonymous_function_format() {
         let _g = crate::test_util::global_state_lock();
-        let s = name_for_anonymous_function("anon", "/tmp/foo.zsh", 42);
+        // Push a frame onto FUNCSTACK so the fn reads it.
+        {
+            let mut stack = crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap();
+            stack.clear();
+            stack.push(crate::ported::zsh_h::funcstack {
+                filename: Some("/tmp/foo.zsh".to_string()),
+                flineno: 42,
+                ..Default::default()
+            });
+        }
+        let s = name_for_anonymous_function("anon");
+        // Cleanup so subsequent tests aren't polluted.
+        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 

@@ -1025,14 +1025,71 @@ pub fn processcmd() -> i32 {      // c:2971
 }
 
 /// Port of `expandcmdpath(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2997.
-/// WARNING: param names don't match C — Rust=() vs C=(zlenoargs)
+/// Replace the current command word with the full path found via `$PATH`
+/// (`findcmd`), or return 1 when no command is at the cursor.
 pub fn expandcmdpath() -> i32 {                                              // c:2997
     use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_h::COMP_EXPAND;
-    USEMENU.store(0, Ordering::SeqCst);
-    USEGLOB.store(0, Ordering::SeqCst);
-    WOULDINSTAB.store(0, Ordering::SeqCst);
-    docomplete(COMP_EXPAND)
+    use crate::ported::zle::zle_main::{ZLECS, ZLELINE};
+
+    // c:3003 — int oldcs = zlecs, na = noaliases, strll;
+    let oldcs = ZLECS.load(Ordering::SeqCst);
+
+    // c:3007-3009 — noaliases = 1; s = getcurcmd(); noaliases = na;
+    //               (noaliases is per-call lex flag; the lookup we use is
+    //               by path string and isn't alias-sensitive — collapses.)
+    let s = match getcurcmd() {                                              // c:3008
+        Some(c) if !c.is_empty() => c,
+        _ => return 1,                                                       // c:3010-3011
+    };
+
+    // Compute (cmdwb, cmdwe) — start and end byte offsets of the command
+    // word in the line. Without the C lex substrate, find the word
+    // containing `oldcs` by walking outward to whitespace boundaries.
+    let line: String = ZLELINE.lock().unwrap().iter().collect();
+    let cmdwb = line[..oldcs.min(line.len())]
+        .rfind(|c: char| c.is_ascii_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let cmdwe = line[oldcs.min(line.len())..]
+        .find(|c: char| c.is_ascii_whitespace())
+        .map(|i| i + oldcs)
+        .unwrap_or(line.len());
+    // c:3013-3016 — if (cmdwb < 0 || cmdwe < cmdwb) return 1;
+    if cmdwe < cmdwb {
+        return 1;
+    }
+
+    // c:3018 — str = findcmd(s, 1, 0);
+    let str_opt = crate::ported::builtin::findcmd(&s, 1, 0);
+    // c:3020-3021 — if (!str) return 1;
+    let str_full = match str_opt {
+        Some(p) => p,
+        None => return 1,
+    };
+
+    // c:3022 — zlecs = cmdwb;
+    ZLECS.store(cmdwb, Ordering::SeqCst);
+    // c:3023 — foredel(cmdwe - cmdwb, CUT_RAW);
+    crate::ported::zle::zle_utils::foredel((cmdwe - cmdwb) as i32, 0);
+    // c:3024-3027 — splice the resolved full path in place of the deleted span.
+    {
+        let mut zl = ZLELINE.lock().unwrap();
+        let cs = ZLECS.load(Ordering::SeqCst);
+        for (i, ch) in str_full.chars().enumerate() {
+            zl.insert(cs + i, ch);
+        }
+    }
+    let str_chars = str_full.chars().count();
+    crate::ported::zle::zle_main::ZLELL.fetch_add(str_chars, Ordering::SeqCst);
+    // c:3028 — zlecs = oldcs;
+    // c:3029-3033 — if (zlecs >= cmdwe - 1) zlecs += str_chars - (cmdwe - cmdwb);
+    let new_cs = if oldcs >= cmdwe.saturating_sub(1) {
+        oldcs + str_chars - (cmdwe - cmdwb)
+    } else {
+        oldcs
+    };
+    ZLECS.store(new_cs.min(line.len() + str_chars), Ordering::SeqCst);
+    0
 }
 
 /// Port of `expandorcompleteprefix(char **args)` from Src/Zle/zle_tricky.c:3041.
