@@ -197,7 +197,7 @@ pub fn zshlex() {
             munged_term = crate::ported::mem::dupstring(node.str.as_deref().unwrap_or(""));
             // c:286 — `STOPHIST` (history-disable scope — zshrs no-op)
             // c:287 — `doc = gethere(&munged_term, hdocs->type);`
-            doc = crate::vm_helper::gethere(&mut munged_term, node.typ);
+            doc = crate::ported::exec::gethere(&mut munged_term, node.typ);
             // c:288 — `ALLOWHIST`
             // c:289 — `cmdpop();`
             cmdpop();

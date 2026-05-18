@@ -3936,7 +3936,7 @@ pub fn check_warn_pm(
     // (port of exec.c:1052) set to locallevel at every entersubsh().
     let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let forklevel: i32 =
-        crate::vm_helper::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
+        crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
     if created != 0 && isset(WARNCREATEGLOBAL) {                              // c:3168
         if cur_local <= forklevel || pm.level != 0 {                           // c:3169
             return;

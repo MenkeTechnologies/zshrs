@@ -1688,7 +1688,7 @@ pub fn spawnjob() {                                                          // 
     // c:1900 — `if (!subsh) {` — when this isn't a subshell.
     // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
     // (0 = top-level shell).
-    let in_subsh = crate::vm_helper::FORKLEVEL
+    let in_subsh = crate::ported::exec::FORKLEVEL
         .load(std::sync::atomic::Ordering::Relaxed) > 0;
     if !in_subsh {
         // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))

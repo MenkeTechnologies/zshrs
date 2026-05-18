@@ -810,7 +810,7 @@ fn stringsubst(
                         std::fs::read_to_string(path).unwrap_or_default()
                     } else {
                         // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                        crate::vm_helper::getoutput(&cmd)
+                        crate::ported::exec::getoutput(&cmd)
                     };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -999,7 +999,7 @@ fn stringsubst(
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
                 // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                let output = crate::vm_helper::getoutput(&cmd);
+                let output = crate::ported::exec::getoutput(&cmd);
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237

@@ -18,9 +18,13 @@
 pub mod compat;
 pub mod cond;
 pub mod context;
-// `exec` was moved to crate root (src/vm_helper) — it isn't a port of
-// Src/exec.c (C zsh's wordcode VM; zshrs uses fusevm instead). Keep `crate::ported::exec` as a path alias so
-// the many existing `crate::ported::exec::*` call-sites still work.
+// Most of `Src/exec.c` is realised by the fusevm wordcode VM at the
+// crate root (`src/vm_helper`) rather than in `src/ported/`. The
+// genuinely faithful free-function ports from `Src/exec.c` — `gethere`,
+// `getoutput`, `loadautofn`, `getfpfunc`, plus the file-static globals
+// `trap_state` / `trap_return` / `forklevel` — live in `src/ported/exec.rs`.
+// `crate::ported::vm_helper` stays as an alias for the runtime state
+// struct + impl methods that hang off it.
 pub use crate::vm_helper;
 pub mod glob;
 pub mod hashnameddir;
@@ -61,7 +65,7 @@ pub mod signals_h;
 pub mod config_h;
 pub mod lex;
 pub mod parse;
-mod exec;
+pub mod exec;
 
 #[cfg(test)]
 mod tests {
