@@ -2157,7 +2157,7 @@ pub type PatProg = Patprog;
 
 // =====================================================================
 // Transitional Rust-only types — kept for external callers that bind
-// to the previous AST-based port's surface area (exec.rs, exec_shims.rs,
+// to the previous AST-based port's surface area (vm_helper, exec_shims.rs,
 // fusevm_bridge.rs, glob.rs). These are NOT C-faithful ports — they're
 // helper aggregates the previous AST port introduced for one-shot
 // pattern processing in the executor/VM bridge. Track with a TODO

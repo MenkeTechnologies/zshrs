@@ -1738,10 +1738,10 @@ pub fn parse_caarg(mult: i32, atype: i32, num: i32, opt: i32,                // 
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
+// type within a crate, so call sites in vm_helper are unchanged.
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
@@ -1750,7 +1750,7 @@ pub fn parse_caarg(mult: i32, atype: i32, num: i32, opt: i32,                // 
 // END moved-from-exec-rs
 
 
-// ─── moved from src/ported/exec.rs (drift extraction) ───
+// ─── moved from src/ported/vm_helper (drift extraction) ───
 
 // CompSpec / CompMatch / CompGroup / CompState moved out of this
 // port file to `src/extensions/bash_complete.rs` — they are
@@ -1760,7 +1760,7 @@ pub fn parse_caarg(mult: i32, atype: i32, num: i32, opt: i32,                // 
 //
 // Callers that used `crate::ported::zle::computil::Comp*` should
 // switch to `crate::bash_complete::Comp*` (the path lib.rs
-// exports). exec.rs's re-export updated to point to the new home.
+// exports). vm_helper's re-export updated to point to the new home.
 
 
 /// Direct port of `static Cadef alloc_cadef(char **args, int single,

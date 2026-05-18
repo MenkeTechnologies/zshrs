@@ -30,7 +30,7 @@ use crate::ported::zsh_h::PM_UNDEFINED;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use std::sync::atomic::Ordering;
 #[allow(unused_imports)]
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 
 /// State snapshot for plugin delta computation.
 pub(crate) struct PluginSnapshot {
@@ -826,13 +826,13 @@ mod migration_tests {
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Snapshot executor state before sourcing a plugin (for delta computation).
     pub(crate) fn snapshot_state(&self) -> PluginSnapshot {
         PluginSnapshot {

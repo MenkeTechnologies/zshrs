@@ -127,7 +127,7 @@ impl ZshCompiler {
             return;
         }
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_ERREXIT_CHECK, 0), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ERREXIT_CHECK, 0), 0);
         self.builder.emit(Op::Pop, 0);
     }
 
@@ -139,7 +139,7 @@ impl ZshCompiler {
     fn emit_cmd_push(&mut self, token: u8) {
         self.builder.emit(Op::LoadInt(token as i64), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_PUSH, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_PUSH, 1), 0);
         self.builder.emit(Op::Pop, 0);
         self.cmd_stack_depth += 1;
     }
@@ -147,7 +147,7 @@ impl ZshCompiler {
     /// Emit `cmdpop()` — direct port of Src/prompt.c:1631.
     fn emit_cmd_pop(&mut self) {
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_POP, 0), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_POP, 0), 0);
         self.builder.emit(Op::Pop, 0);
         self.cmd_stack_depth = self.cmd_stack_depth.saturating_sub(1);
     }
@@ -162,7 +162,7 @@ impl ZshCompiler {
     fn emit_cmd_stack_drain(&mut self) {
         for _ in 0..self.cmd_stack_depth {
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_POP, 0), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_POP, 0), 0);
             self.builder.emit(Op::Pop, 0);
         }
     }
@@ -205,7 +205,7 @@ impl ZshCompiler {
             raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend;
         self.builder.emit(Op::LoadInt(rel_line as i64), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_LINENO, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
         self.builder.emit(Op::Pop, 0);
 
         // ZshList = sublist + flags (async / disown).
@@ -222,7 +222,7 @@ impl ZshCompiler {
             let sub_idx = self.builder.add_sub_chunk(sub_chunk);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_RUN_BG, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 1), 0);
             self.builder.emit(Op::SetStatus, 0);
         } else {
             self.compile_sublist(&list.sublist);
@@ -345,7 +345,7 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadConst(name_const), 0);
         self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_RUN_COPROC, 0), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_COPROC, 0), 0);
         self.builder.emit(Op::SetStatus, 0);
     }
 
@@ -358,7 +358,7 @@ impl ZshCompiler {
                 let rhs_const = self.builder.add_constant(Value::str(rhs));
                 self.builder.emit(Op::LoadConst(rhs_const), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_DEFAULT_FAMILY, 3),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_DEFAULT_FAMILY, 3),
                     0,
                 );
             }
@@ -371,7 +371,7 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING, 3), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING, 3), 0);
             }
             ParamModifierKind::SubstringExpr {
                 offset_expr,
@@ -391,7 +391,7 @@ impl ZshCompiler {
                     .add_constant(Value::Bool(length_expr.is_some()));
                 self.builder.emit(Op::LoadConst(has_len_const), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING_EXPR, 4),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING_EXPR, 4),
                     0,
                 );
             }
@@ -419,7 +419,7 @@ impl ZshCompiler {
                 };
                 self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 4), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_STRIP, 4), 0);
             }
             ParamModifierKind::Replace {
                 op,
@@ -445,19 +445,19 @@ impl ZshCompiler {
                 };
                 self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_REPLACE, 5), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_REPLACE, 5), 0);
             }
             ParamModifierKind::Length => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1), 0);
             }
             ParamModifierKind::FilterRemoveMatching { pattern } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FILTER, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FILTER, 2), 0);
             }
         }
     }
@@ -545,7 +545,7 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadInt(idx as i64), 0);
         }
         self.builder.emit(
-            Op::CallBuiltin(crate::exec::BUILTIN_RUN_PIPELINE, stages.len() as u8),
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_PIPELINE, stages.len() as u8),
             0,
         );
         self.builder.emit(Op::SetStatus, 0);
@@ -627,7 +627,7 @@ impl ZshCompiler {
                     let sub_idx = self.builder.add_sub_chunk(chunk);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_TIME_SUBLIST, 1), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 1), 0);
                     self.builder.emit(Op::SetStatus, 0);
                 } else {
                     // Bare `time` — print zero stats and exit 0.
@@ -645,7 +645,7 @@ impl ZshCompiler {
                 // Capture try-block's exit status into $TRY_BLOCK_ERROR so
                 // the always arm can read it (zsh's documented semantics).
                 self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_SET_TRY_BLOCK_ERROR, 0),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_TRY_BLOCK_ERROR, 0),
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
@@ -656,7 +656,7 @@ impl ZshCompiler {
                 // because the always arm overwrote last_status with
                 // its own success code.
                 self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0),
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
@@ -676,7 +676,7 @@ impl ZshCompiler {
             !simple.assigns.is_empty() && !simple.words.is_empty();
         if has_inline_env_scope {
             self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_BEGIN_INLINE_ENV, 0),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 0),
                 0,
             );
             self.builder.emit(Op::Pop, 0);
@@ -696,7 +696,7 @@ impl ZshCompiler {
             // Src/exec.c:3398 (the assignment-only return path
             // through execcmd_exec).
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_NEWLINE, 0), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_NEWLINE, 0), 0);
             self.builder.emit(Op::Pop, 0);
             return;
         }
@@ -738,13 +738,13 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(opt_const), 0);
             self.builder.emit(Op::LoadInt(1), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_RAW_OPT, 2), 0);
             self.builder.emit(Op::Pop, 0);
             self.compile_simple(&inner);
             self.builder.emit(Op::LoadConst(opt_const), 0);
             self.builder.emit(Op::LoadInt(0), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_RAW_OPT, 2), 0);
             self.builder.emit(Op::Pop, 0);
             return;
         }
@@ -841,7 +841,7 @@ impl ZshCompiler {
                 self.break_patches[idx].push(j);
             } else {
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_BREAK, 0), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0), 0);
                 self.builder.emit(Op::Pop, 0);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -872,7 +872,7 @@ impl ZshCompiler {
                 self.continue_patches[idx].push(j);
             } else {
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_CONTINUE, 0), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_CONTINUE, 0), 0);
                 self.builder.emit(Op::Pop, 0);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -920,7 +920,7 @@ impl ZshCompiler {
         // accounted for as the new cmd name.
         let trace_argc = (simple.words.len() - precmd_skip) as u8;
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_ARGS, trace_argc), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc), 0);
         self.builder.emit(Op::Pop, 0);
 
         // `shopt` is bash-only; zsh has no such builtin. Force external lookup
@@ -999,7 +999,7 @@ impl ZshCompiler {
 
         if has_inline_env_scope {
             self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_END_INLINE_ENV, 0),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_END_INLINE_ENV, 0),
                 0,
             );
             self.builder.emit(Op::Pop, 0);
@@ -1056,7 +1056,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(text_const), 0);
                     self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                     self.builder.emit(Op::HereString, 0);
                 }
             }
@@ -1109,7 +1109,7 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(vid_const), 0);
             self.builder.emit(Op::LoadInt(op_byte as i64), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_OPEN_NAMED_FD, 3), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPEN_NAMED_FD, 3), 0);
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
@@ -1147,14 +1147,14 @@ impl ZshCompiler {
                         self.builder.emit(Op::LoadConst(key_const), 0);
                     }
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     self.compile_word_str(s);
                     self.builder.emit(Op::Concat, 0);
                 } else {
                     self.compile_word_str(s);
                 }
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_ASSOC, 3), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 3), 0);
                 self.builder.emit(Op::Pop, 0);
                 return;
             }
@@ -1218,15 +1218,15 @@ impl ZshCompiler {
                 // doneps4) then `fprintf("%s=", name);
                 // quotedzputs(val); fputc(' ');` per-assignment.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_ASSIGN, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2), 0);
                 self.builder.emit(Op::Pop, 0);
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
                     // if `name` is an indexed array, push the value as a new
                     // element; if assoc, refuse (zsh errors); else scalar concat.
-                    crate::exec::BUILTIN_APPEND_SCALAR_OR_PUSH
+                    crate::vm_helper::BUILTIN_APPEND_SCALAR_OR_PUSH
                 } else {
-                    crate::exec::BUILTIN_SET_VAR
+                    crate::vm_helper::BUILTIN_SET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(bid, 2), 0);
                 // Propagate the assignment's status to $?. SET_VAR
@@ -1248,7 +1248,7 @@ impl ZshCompiler {
                         self.compile_word_str(elem);
                         if has_unquoted_expansion(elem) {
                             self.builder
-                                .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                         }
                     }
                     let name_const = self.builder.add_constant(Value::str(base));
@@ -1265,7 +1265,7 @@ impl ZshCompiler {
                     }
                     let argc = (elements.len() + 2) as u8;
                     self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_SET_SUBSCRIPT_RANGE, argc),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, argc),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0);
@@ -1289,16 +1289,16 @@ impl ZshCompiler {
                     // (`a=($(...))`) should produce per-word elements.
                     if has_unquoted_expansion(elem) {
                         self.builder
-                            .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
                 }
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let argc = (elements.len() + 1) as u8;
                 let bid = if assign.append {
-                    crate::exec::BUILTIN_APPEND_ARRAY
+                    crate::vm_helper::BUILTIN_APPEND_ARRAY
                 } else {
-                    crate::exec::BUILTIN_SET_ARRAY
+                    crate::vm_helper::BUILTIN_SET_ARRAY
                 };
                 self.builder.emit(Op::CallBuiltin(bid, argc), 0);
                 self.builder.emit(Op::Pop, 0);
@@ -1732,7 +1732,7 @@ impl ZshCompiler {
                 self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
             self.builder.emit(Op::LoadConst(idx), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
             if in_dq && untoked == "$*" {
                 // Discard the GET_VAR result; JOIN_STAR re-fetches the
                 // array and joins by IFS first char. (We can't easily
@@ -1740,7 +1740,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN_STAR, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1), 0);
             }
             return;
         }
@@ -1768,9 +1768,9 @@ impl ZshCompiler {
                 // word-split. BUILTIN_ARRAY_ALL returns
                 // `Value::Array` which the VM splices into argv.
                 let opcode = if matches!(name, "argv" | "@" | "*") {
-                    crate::exec::BUILTIN_ARRAY_ALL
+                    crate::vm_helper::BUILTIN_ARRAY_ALL
                 } else {
-                    crate::exec::BUILTIN_GET_VAR
+                    crate::vm_helper::BUILTIN_GET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(opcode, 1), 0);
                 return;
@@ -1819,7 +1819,7 @@ impl ZshCompiler {
                         self.builder.emit(Op::LoadConst(idx), 0);
                         self.builder.emit(Op::LoadInt(4), 0);
                         self.builder
-                            .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                         return;
                     }
                 }
@@ -1848,7 +1848,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1), 0);
                 return;
             }
         }
@@ -1887,7 +1887,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder.emit(Op::LoadInt(4), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                 return;
             }
         }
@@ -1915,10 +1915,10 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(name_part));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                 if do_glob {
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
                 }
                 return;
             }
@@ -1947,7 +1947,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                 return;
             }
         }
@@ -1971,7 +1971,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                 let suffix_const = self.builder.add_constant(Value::str(suffix));
                 self.builder.emit(Op::LoadConst(suffix_const), 0);
                 self.builder.emit(Op::Concat, 0);
@@ -1985,7 +1985,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                 return;
             }
         }
@@ -2013,7 +2013,7 @@ impl ZshCompiler {
                 if valid {
                     let idx = self.builder.add_constant(Value::str(rest));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    self.builder.emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    self.builder.emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                     return;
                 }
             } else {
@@ -2023,14 +2023,14 @@ impl ZshCompiler {
                 if valid {
                     let idx = self.builder.add_constant(Value::str(inner));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    self.builder.emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    self.builder.emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                     // Apply glob expansion to the resulting scalar.
                     // BUILTIN_GLOB_EXPAND pops a string, runs
                     // expand_glob (filesystem matching), pushes
                     // Value::Array (or single-element on no-match
                     // depending on NOMATCH option).
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
                     return;
                 }
             }
@@ -2059,7 +2059,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(bare));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_ALL, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 1), 0);
                 return;
             }
         }
@@ -2081,16 +2081,16 @@ impl ZshCompiler {
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let load_bid = match splice {
-                    '@' => crate::exec::BUILTIN_ARRAY_ALL,
-                    '*' => crate::exec::BUILTIN_ARRAY_JOIN_STAR,
-                    _ => crate::exec::BUILTIN_GET_VAR,
+                    '@' => crate::vm_helper::BUILTIN_ARRAY_ALL,
+                    '*' => crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR,
+                    _ => crate::vm_helper::BUILTIN_GET_VAR,
                 };
                 let argc = if splice == ' ' { 1 } else { 0 };
                 self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
                 let in_scalar_assign = self.scalar_assign_depth > 0;
                 if force_split && !in_scalar_assign {
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                 }
                 return;
             }
@@ -2111,9 +2111,9 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 let force_join = self.scalar_assign_depth > 0;
                 let bid = if array_splice_is_star(&untoked) || force_join {
-                    crate::exec::BUILTIN_ARRAY_JOIN_STAR
+                    crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
                 } else {
-                    crate::exec::BUILTIN_ARRAY_ALL
+                    crate::vm_helper::BUILTIN_ARRAY_ALL
                 };
                 self.builder.emit(Op::CallBuiltin(bid, 0), 0);
                 return;
@@ -2141,7 +2141,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                 return;
             }
         }
@@ -2163,9 +2163,9 @@ impl ZshCompiler {
                 // glob/brace pollution of the key.
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                 return;
             }
         }
@@ -2186,7 +2186,7 @@ impl ZshCompiler {
                 let flags_const = self.builder.add_constant(Value::str(flags));
                 self.builder.emit(Op::LoadConst(flags_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
                 return;
             }
         }
@@ -2238,7 +2238,7 @@ impl ZshCompiler {
                 let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
                 self.builder.emit(Op::LoadConst(flags_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
                 return;
             }
         }
@@ -2274,7 +2274,7 @@ impl ZshCompiler {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
                             0,
                         );
                         return;
@@ -2298,7 +2298,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
                 // `(k)NAME[(I)pat]` / `(v)NAME[(I)pat]` / `(k)NAME[(R)pat]`
@@ -2334,7 +2334,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
                 // `(v)NAME[(I)pat]` — subscript yields KEYS but outer
@@ -2353,7 +2353,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
                 // Symmetric `(k)NAME[(R)pat]` — values-flag subscript
@@ -2367,7 +2367,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
                 // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
@@ -2386,7 +2386,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                 let sentinel = self.builder.add_constant(Value::str("\u{01}"));
                 self.builder.emit(Op::LoadConst(sentinel), 0);
                 self.builder.emit(Op::Swap, 0);
@@ -2394,7 +2394,7 @@ impl ZshCompiler {
                 let flags_const = self.builder.add_constant(Value::str(flags));
                 self.builder.emit(Op::LoadConst(flags_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
                 return;
             }
         }
@@ -2470,7 +2470,7 @@ impl ZshCompiler {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
                             0,
                         );
                         return;
@@ -2531,7 +2531,7 @@ impl ZshCompiler {
                             let body_const = self.builder.add_constant(Value::str(inner));
                             self.builder.emit(Op::LoadConst(body_const), 0);
                             self.builder.emit(
-                                Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
                                 0,
                             );
                             return;
@@ -2605,7 +2605,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(expr.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
                 return;
             }
         }
@@ -2621,7 +2621,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(inner));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_SUBST_TEXT, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_SUBST_TEXT, 1), 0);
                 // Word-split the result on IFS when the surrounding
                 // word is unquoted. zsh: `f $(echo a b c)` passes
                 // three args; `f "$(echo a b c)"` passes one. The
@@ -2635,7 +2635,7 @@ impl ZshCompiler {
                 let in_assign = self.assign_context_depth > 0;
                 if !in_dq && !in_assign {
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                 }
                 return;
             }
@@ -2669,20 +2669,20 @@ impl ZshCompiler {
                     _ => false,
                 });
                 let concat_builtin = if has_splice_seg {
-                    Some(crate::exec::BUILTIN_CONCAT_SPLICE)
+                    Some(crate::vm_helper::BUILTIN_CONCAT_SPLICE)
                 } else if has_distribute_seg {
                     // `${^arr}` / `${(@)arr}` etc — distribution is
                     // explicit at the source level, not gated on the
                     // rcexpandparam option. Use the FORCED variant so
                     // a Value::Array on the stack always distributes
                     // cartesian with the surrounding text.
-                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE_FORCED)
+                    Some(crate::vm_helper::BUILTIN_CONCAT_DISTRIBUTE_FORCED)
                 } else {
                     // Pure scalars OR `${arr}` plain — runtime check via
                     // BUILTIN_CONCAT_DISTRIBUTE (handles scalar fast path
                     // AND RC_EXPAND_PARAM cartesian when GET_VAR returns
                     // Value::Array because the option is set).
-                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
+                    Some(crate::vm_helper::BUILTIN_CONCAT_DISTRIBUTE)
                 };
                 // If the parent word is DQ-wrapped (raw form starts and
                 // ends with Dnull), each Expansion segment inherits the
@@ -2760,14 +2760,14 @@ impl ZshCompiler {
                     // Brace-expand the assembled scalar. Pops Value::Str,
                     // runs xpandbraces, pushes Value::Array.
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_BRACE_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0), 0);
                 }
                 if needs_glob && !parent_is_dq {
                     // Glob-expand the assembled scalar at runtime. The
                     // builtin pops a Value::Str, runs expand_glob, and
                     // pushes Value::Array (or single-elem when no match).
                     self.builder
-                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
                 }
                 return;
             }
@@ -2812,7 +2812,7 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadConst(idx), 0);
         self.builder.emit(Op::LoadInt(mode as i64), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
         // Brace expansion on the bridge-text path. Words like
         // `X{1,2,3}Y` that don't have $/`/$( fall through here
         // (split_word_segments returns Some([Literal]) but the
@@ -2827,7 +2827,7 @@ impl ZshCompiler {
             && self.dq_context_depth == 0
         {
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_BRACE_EXPAND, 0), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0), 0);
         }
     }
 
@@ -3043,7 +3043,7 @@ impl ZshCompiler {
             self.compile_word_str(w);
             if has_unquoted_expansion(w) {
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
             }
         }
         let name_const = self.builder.add_constant(Value::str(f.var.as_str()));
@@ -3052,7 +3052,7 @@ impl ZshCompiler {
 
         let argc = (words.len() + 2) as u8;
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_RUN_SELECT, argc), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_SELECT, argc), 0);
         self.builder.emit(Op::SetStatus, 0);
     }
 
@@ -3061,10 +3061,10 @@ impl ZshCompiler {
         let at_const = self.builder.add_constant(Value::str("@"));
         self.builder.emit(Op::LoadConst(at_const), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
         // Then flatten + iterate, same shape as compile_for_words' tail.
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_FLATTEN, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, 1), 0);
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let len_slot = self.next_slot;
@@ -3088,7 +3088,7 @@ impl ZshCompiler {
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
         self.builder.emit(Op::Pop, 0);
         // xtrace: emit `name=value\n` per iteration. Direct port of
         // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
@@ -3098,10 +3098,10 @@ impl ZshCompiler {
         let var_const2 = self.builder.add_constant(Value::str(var));
         self.builder.emit(Op::LoadConst(var_const2), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
         self.builder.emit(Op::Concat, 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
 
         self.break_patches.push(Vec::new());
@@ -3159,7 +3159,7 @@ impl ZshCompiler {
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_ALL, 0), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 0), 0);
                 continue;
             }
             self.compile_word_str(word);
@@ -3168,11 +3168,11 @@ impl ZshCompiler {
             // of `$(...)` or unquoted `$var`. Quoted forms keep one word.
             if has_unquoted_expansion(word) {
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
             }
         }
         self.builder.emit(
-            Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_FLATTEN, words.len() as u8),
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, words.len() as u8),
             0,
         );
         // ARRAY_FLATTEN pushes Array then Int(len) (its return). Top is len.
@@ -3207,7 +3207,7 @@ impl ZshCompiler {
             }
             self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
             self.builder.emit(Op::Pop, 0);
             // xtrace: emit `name=value\n` per iteration. Direct port
             // of Src/loop.c:163-166:
@@ -3222,10 +3222,10 @@ impl ZshCompiler {
             let name_const2 = self.builder.add_constant(Value::str(*name));
             self.builder.emit(Op::LoadConst(name_const2), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
             self.builder.emit(Op::Concat, 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
         }
 
@@ -3295,7 +3295,7 @@ impl ZshCompiler {
                 let idx = this.builder.add_constant(Value::str(untoked.as_str()));
                 this.builder.emit(Op::LoadConst(idx), 0);
                 this.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
             } else {
                 this.compile_arith_str(s);
             }
@@ -3316,7 +3316,7 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(untoked.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
                 // ARITH_EVAL returns Value::Str ("0" / "1" / etc.).
                 // Convert to bool: non-zero → true.
                 let zero_const = self.builder.add_constant(Value::str("0"));
@@ -3400,7 +3400,7 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(suffix_const), 0);
             self.builder.emit(Op::Concat, 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
 
             let mut match_jumps = Vec::new();
@@ -3560,7 +3560,7 @@ impl ZshCompiler {
             let anchor_const = self.builder.add_constant(Value::str(line_base_str.as_str()));
             self.builder.emit(Op::LoadConst(anchor_const), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 4),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_REGISTER_COMPILED_FN, 4),
                 0,
             );
             self.builder.emit(Op::SetStatus, 0);
@@ -3609,7 +3609,7 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadConst(close_const), 0);
         self.builder.emit(Op::Concat, 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
         self.emit_cmd_push(crate::ported::zsh_h::CS_COND as u8);
         // Result on stack: bool. Status set after this returns.
@@ -3881,63 +3881,63 @@ impl ZshCompiler {
             "-c" => {
                 // Character device. Not in fusevm's file_test set.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_CHARDEV, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_CHARDEV, 1), 0);
                 return;
             }
             "-b" => {
                 // Block device.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_BLOCKDEV, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_BLOCKDEV, 1), 0);
                 return;
             }
             "-p" => {
                 // FIFO (named pipe).
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_FIFO, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_FIFO, 1), 0);
                 return;
             }
             "-S" => {
                 // Socket.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_SOCKET, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_SOCKET, 1), 0);
                 return;
             }
             "-k" => {
                 // Sticky bit (S_ISVTX). Not in fusevm's file_test set;
                 // route through a thin host-side builtin.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_STICKY, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_HAS_STICKY, 1), 0);
                 return;
             }
             "-u" => {
                 // Setuid bit (S_ISUID).
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_SETUID, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_HAS_SETUID, 1), 0);
                 return;
             }
             "-g" => {
                 // Setgid bit (S_ISGID).
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_SETGID, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_HAS_SETGID, 1), 0);
                 return;
             }
             "-O" => {
                 // Owned by effective UID.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OWNED_BY_USER, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_USER, 1), 0);
                 return;
             }
             "-G" => {
                 // Owned by effective GID.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OWNED_BY_GROUP, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_GROUP, 1), 0);
                 return;
             }
             "-N" => {
                 // File modified since last accessed (mtime > atime).
                 // zsh: used to gate mailbox-style "fresh content" checks.
                 self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_FILE_MODIFIED_SINCE_ACCESS, 1),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_FILE_MODIFIED_SINCE_ACCESS, 1),
                     0,
                 );
                 return;
@@ -3960,7 +3960,7 @@ impl ZshCompiler {
                 // route through BUILTIN_VAR_EXISTS which checks scalar /
                 // array / assoc / env tables.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_VAR_EXISTS, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_VAR_EXISTS, 1), 0);
                 return;
             }
             "-o" => {
@@ -3968,7 +3968,7 @@ impl ZshCompiler {
                 // through BUILTIN_OPTION_SET which normalizes the name
                 // (strip _, lowercase) and reads exec.options.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OPTION_SET, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_SET, 1), 0);
                 return;
             }
             "-t" => {
@@ -3976,7 +3976,7 @@ impl ZshCompiler {
                 // fd-string (e.g. "0", "1", "2"). Route through a
                 // host-side builtin that calls libc::isatty.
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_TTY, 1), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_TTY, 1), 0);
                 return;
             }
             _ => {
@@ -4035,13 +4035,13 @@ impl ZshCompiler {
             "-ge" => self.builder.emit(Op::NumGe, 0),
             "-ef" => self
                 .builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SAME_FILE, 2), 0),
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SAME_FILE, 2), 0),
             "-nt" => self
                 .builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_NEWER, 2), 0),
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_FILE_NEWER, 2), 0),
             "-ot" => self
                 .builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_OLDER, 2), 0),
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_FILE_OLDER, 2), 0),
             _ => {
                 tracing::debug!(op, "compile_zsh: unknown binary test op");
                 self.builder.emit(Op::Pop, 0);
@@ -4061,7 +4061,7 @@ impl ZshCompiler {
         let trace_const = self.builder.add_constant(Value::str(trace_text.as_str()));
         self.builder.emit(Op::LoadConst(trace_const), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
         self.emit_cmd_push(crate::ported::zsh_h::CS_MATH as u8);
         // Compound `(( expr ))` — set status based on whether expr is non-zero.
@@ -4089,7 +4089,7 @@ impl ZshCompiler {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
             self.builder.emit(Op::Pop, 0);
             // Status is 0 (truthy assignment) per zsh — `((a[i]=42))` is
             // success unless rhs is 0.
@@ -4142,7 +4142,7 @@ impl ZshCompiler {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
             // Result stays on stack as Value::Str (e.g. "3" / "0" / "1.5").
             // Compare against "0" to compute the truthiness. Don't
             // re-evaluate the expression — it's an assignment so the
@@ -4202,7 +4202,7 @@ impl ZshCompiler {
             let name_const = ac.builder.add_constant(Value::str(name.as_str()));
             ac.builder.emit(Op::LoadConst(name_const), 0);
             ac.builder
-                .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
             ac.builder.emit(Op::SetSlot(slot), 0);
         }
 
@@ -4250,7 +4250,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::GetSlot(slot), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
                 self.builder.emit(Op::Pop, 0); // discard Status(0)
             }
         }

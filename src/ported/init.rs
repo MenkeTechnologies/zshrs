@@ -1134,7 +1134,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // 
                     // Eprog↔ZshProgram bridge not yet in place; pass a
                     // freshly-allocated empty eprog so getjobtext/getpermtext
                     // return their NULL-prog representation. Real text comes
-                    // from src/exec.rs once that bridge lands.
+                    // from src/vm_helper once that bridge lands.
                     let placeholder: crate::ported::zsh_h::Eprog =
                         Box::new(crate::ported::zsh_h::eprog {
                             flags: 0, len: 0, npats: 0, nref: 0,
@@ -1178,11 +1178,11 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // 
             }
             // c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
             // No fusevm bridge for parse-tree execution in src/ported yet;
-            // the exec dispatch happens at `src/exec.rs::run_program`. Mirror
+            // the exec dispatch happens at `src/vm_helper::run_program`. Mirror
             // the call as a local stub keyed off the toplevel selector.
             let _exec_label = if toplevel != 0 { "toplevel" } else { "file" };
             // c:220 execode(prog, ...) — stubbed: actual eval is owned by
-            // the binary-level REPL (src/exec.rs) which calls into this
+            // the binary-level REPL (src/vm_helper) which calls into this
             // same loop. Keep the structure faithful so the slot is
             // visible in audits.
             let _ = prog_inner;

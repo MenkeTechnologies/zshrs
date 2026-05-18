@@ -63,11 +63,11 @@ pub use ported::*;
 #[path = "extensions/overlay_snapshot.rs"] pub mod overlay_snapshot;
 #[path = "extensions/daemon_presence.rs"] pub mod daemon_presence;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
-// so existing `crate::daemon::...` (in exec.rs) and `zsh::daemon::...` (in bins,
+// so existing `crate::daemon::...` (in vm_helper) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
 //
 // The `daemon` feature gates the actual zshrs-daemon dep. When disabled
-// (--no-default-features), a stub module covers the call sites in exec.rs.
+// (--no-default-features), a stub module covers the call sites in vm_helper.
 // This lets the library compile in isolation while the daemon crate is
 // being refactored in a concurrent session.
 #[cfg(feature = "daemon")]
@@ -76,7 +76,7 @@ pub use zshrs_daemon as daemon;
 #[cfg(not(feature = "daemon"))]
 pub mod daemon {
     //! Stub module used when the `daemon` feature is disabled. Provides
-    //! the minimal surface that `src/exec.rs` calls — the real
+    //! the minimal surface that `src/vm_helper` calls — the real
     //! implementation lives in the `zshrs-daemon` workspace crate.
     pub mod builtins {
         pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[];
@@ -174,9 +174,9 @@ pub use builtins::rlimits;
 // Top-level shell executor state + fusevm bridge glue. Not a port of
 // any single Src/*.c file — zsh's native wordcode VM lives in `Src/exec.c`;
 // zshrs runs fusevm instead (see src/fusevm_bridge.rs).
-pub mod exec;
+pub mod vm_helper;
 
-pub use exec::ShellExecutor;
+pub use vm_helper::ShellExecutor;
 pub use fish_features::{
     autosuggest_from_history,
     colorize_line,

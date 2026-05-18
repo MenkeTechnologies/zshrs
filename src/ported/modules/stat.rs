@@ -15,7 +15,7 @@
 //!   - bin_stat       `[c:368]`
 //!   - 6 module loaders
 
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 use std::fs;
 use std::os::unix::fs::MetadataExt;

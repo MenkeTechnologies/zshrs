@@ -25,7 +25,7 @@ use reedline::{
     Validator,
 };
 
-use zsh::exec::ShellExecutor;
+use zsh::vm_helper::ShellExecutor;
 use zsh::history::HistoryEngine;
 use zsh::zwc;
 
@@ -572,7 +572,7 @@ pub fn zshrs_main() {
             // Remove our argv[0] (the binary path); positional args remain
             // for the entire bundle (every file sees the same $1..$N).
             let script_args: Vec<String> = args.iter().skip(1).cloned().collect();
-            let mut executor = zsh::exec::ShellExecutor::new();
+            let mut executor = zsh::vm_helper::ShellExecutor::new();
             executor.set_pparams(script_args);
             let mut last_status = 0;
             for file in &embedded.0 {

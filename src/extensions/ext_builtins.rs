@@ -8,15 +8,15 @@
 //! zcalc, peach), etc.
 //!
 //! These methods previously lived on `ShellExecutor` in
-//! `src/ported/exec.rs`. They were bulk-moved here so that
+//! `src/ported/vm_helper`. They were bulk-moved here so that
 //! `src/ported/` only contains C-port code, satisfying the
 //! `port_purity` discipline described in `docs/PORT.md`.
 
 #![allow(unused_imports)]
 
 use std::env;
-use crate::ported::exec::ShellExecutor;
-use crate::ported::exec::*;
+use crate::ported::vm_helper::ShellExecutor;
+use crate::ported::vm_helper::*;
 use crate::parse::Redirect;
 use crate::ported::zsh_h::PM_UNDEFINED;
 use std::process::{Command, Stdio};
@@ -48,7 +48,7 @@ impl ShellExecutor {
     /// 'LINE main' at top level). With N>0: 'LINE FUNC FILE' for
     /// frame N. Direct port of bash's bin_caller in builtins.def.
     /// Reads from the existing $funcstack array we now maintain
-    /// (exec.rs:7828-7835).
+    /// (vm_helper:7828-7835).
     pub(crate) fn builtin_caller(&self, args: &[String]) -> i32 {
         let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
         let stack = self.array("funcstack").unwrap_or_default();
@@ -3393,7 +3393,7 @@ impl ShellExecutor {
                             // Use the canonical glob matcher so `[Cc]ode*`,
                             // `?ar`, `{a,b}*` etc. work. Was a local 4-rule
                             // matcher that only handled '*PAT' / 'PAT*'.
-                            crate::exec::glob_match_static(name, pat)
+                            crate::vm_helper::glob_match_static(name, pat)
                         }
                         None => true,
                     };

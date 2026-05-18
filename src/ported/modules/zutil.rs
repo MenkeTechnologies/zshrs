@@ -1512,10 +1512,10 @@ pub fn rmatch(
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
+// type within a crate, so call sites in vm_helper are unchanged.
 // ===========================================================
 
 // =====================================================================
@@ -2230,7 +2230,7 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 pub fn finish_(m: *const module) -> i32 {                                   // c:2190
     0
 }
-// zstyle_entry is defined below (moved from exec.rs).
+// zstyle_entry is defined below (moved from vm_helper).
 
 /// Save/restore for the per-pattern-match magic vars `$match`,
 /// `$mbegin`, `$mend`. Direct port of `MatchData` and the
@@ -2273,7 +2273,7 @@ pub struct style_table {
 /// recursion doesn't collide with the outer wrapper's name.
 struct ZFormat;
 
-// ─── moved from src/ported/exec.rs (drift extraction) ───
+// ─── moved from src/ported/vm_helper (drift extraction) ───
 
 /// One `zstyle` entry — Rust extension that flattens what C splits
 /// across `struct style` (zutil.c:91, holds the style name) and

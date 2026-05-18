@@ -11,7 +11,7 @@
 //! Lifecycle:
 //!   1. Parse `--file PATH` (and friends) from argv.
 //!   2. `recorder::enable()` flips the global. Every state-mutating
-//!      dispatcher in `src/exec.rs` checks this and emits a record.
+//!      dispatcher in `src/vm_helper` checks this and emits a record.
 //!   3. `recorder::install_atexit()` registers the libc atexit hook so
 //!      the end-of-run summary + daemon IPC bundle still fire when the
 //!      shell exits via `std::process::exit` (skipping Rust Drop).
@@ -24,7 +24,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use zsh::exec::ShellExecutor;
+use zsh::vm_helper::ShellExecutor;
 
 const USAGE: &str = "\
 zshrs-recorder — capture every state-mutating dispatcher fire during

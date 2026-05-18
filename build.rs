@@ -33,7 +33,7 @@ fn main() {
 
     // Parse `src/zsh/Config/version.mk` for VERSION + VERSION_DATE
     // and emit them as compile-time constants. Replaces hardcoded
-    // `"5.9"` / `"zsh-5.9-0-g73d3173"` literals in `src/exec.rs`
+    // `"5.9"` / `"zsh-5.9-0-g73d3173"` literals in `src/vm_helper`
     // with values derived from the vendored zsh source so future
     // version bumps land automatically.
     let version_mk = manifest_dir.join("src/zsh/Config/version.mk");

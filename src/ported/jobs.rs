@@ -1688,7 +1688,7 @@ pub fn spawnjob() {                                                          // 
     // c:1900 — `if (!subsh) {` — when this isn't a subshell.
     // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
     // (0 = top-level shell).
-    let in_subsh = crate::exec::FORKLEVEL
+    let in_subsh = crate::vm_helper::FORKLEVEL
         .load(std::sync::atomic::Ordering::Relaxed) > 0;
     if !in_subsh {
         // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
@@ -3164,10 +3164,10 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {                                // 
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
+// type within a crate, so call sites in vm_helper are unchanged.
 // ===========================================================
 
 // BEGIN moved-from-exec-rs

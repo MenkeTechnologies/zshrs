@@ -153,7 +153,7 @@ pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // 
 
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: module-shims
 // ===========================================================

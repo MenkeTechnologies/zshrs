@@ -1,17 +1,17 @@
 //! Recorder helpers — extension; no zsh C counterpart.
 #![cfg(feature = "recorder")]
 #[allow(unused_imports)]
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_EXPORTED, PM_READONLY, PM_UNIQUE, };
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Look up the structured `ParamAttrs` for an existing parameter
     /// name in the current executor state. Used by every assign hook
     /// to populate the recorder event so replay can faithfully

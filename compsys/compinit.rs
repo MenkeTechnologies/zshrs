@@ -543,7 +543,7 @@ pub fn build_cache_from_fpath(
 
     let autoloads_time = t2.elapsed();
 
-    // Timing logged by caller in exec.rs via tracing
+    // Timing logged by caller in vm_helper via tracing
 
     Ok(result)
 }
