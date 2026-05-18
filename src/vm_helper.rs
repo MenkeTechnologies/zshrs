@@ -9,7 +9,7 @@
 //! - VM-adjacent helpers that read/write that state
 //! - drift extension scaffolding still being moved out
 //!
-//! Path-wise this file lives at the crate root (`src/exec.rs`) rather
+//! Path-wise this file lives at the crate root (`src/vm_helper`) rather
 //! than in `src/ported/` because nothing here corresponds 1:1 to a
 //! `Src/*.c` source file. `crate::ported::exec` is kept as a
 //! re-export alias so existing call-sites continue to compile.
@@ -3043,7 +3043,7 @@ pub enum BuiltinType {
 // `impl ShellExecutor` blocks. Per user feedback ("each of those
 // bin_* is fake anyways"), the impl blocks were deleted from the
 // port tree. The methods are recreated here as stubs so existing
-// callers (fusevm_bridge, ext_builtins, exec.rs's own dispatch loop)
+// callers (fusevm_bridge, ext_builtins, vm_helper's own dispatch loop)
 // keep compiling. Each stub delegates to the canonical free-fn port
 // at `crate::ported::builtin::bin_X` when one exists, or returns 0.
 //
@@ -3233,7 +3233,7 @@ use ::regex::{Regex, RegexBuilder, Error as RegexError};
 // MOVED FROM: src/ported/pattern.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Check if pattern contains extended glob syntax
     pub(crate) fn has_extglob_pattern(&self, pattern: &str) -> bool {
         let chars: Vec<char> = pattern.chars().collect();
@@ -3303,7 +3303,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/options.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Returns every option name in `ZSH_OPTIONS_SET` (canonical port
     /// of `optns[]` at `Src/options.c:79+`). Replaces a 200-line
     /// hardcoded `&[...]` duplicate that drifted from upstream.
@@ -3445,7 +3445,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/options.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
 
 }
 
@@ -3453,7 +3453,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/params.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Parse subscript range like "1" or "1,5" or "-1" or "1,-1"
     pub(crate) fn parse_subscript_range(&self, s: &str, len: usize) -> Option<(usize, usize)> {
         if s.is_empty() || len == 0 {
@@ -3729,7 +3729,7 @@ impl crate::ported::exec::ShellExecutor {
 
             // === BUILTINS ===
             "builtins" => {
-                let builtins: Vec<&str> = crate::exec::BUILTIN_NAMES
+                let builtins: Vec<&str> = crate::vm_helper::BUILTIN_NAMES
                     .iter().map(|s| s.as_str()).collect();
                 if key == "@" || key == "*" {
                     return Some(builtins.join(" "));
@@ -4114,7 +4114,7 @@ impl crate::ported::exec::ShellExecutor {
             // === FUNCTION CALL STACK ===
             // $funcstack: array of function names in the current call
             // chain (innermost first). Already maintained by the
-            // function-call code at exec.rs:7828-7835. Surface it here
+            // function-call code at vm_helper:7828-7835. Surface it here
             // so `${funcstack[1]}` / `${funcstack[@]}` reads work.
             // funcfiletrace / funcsourcetrace need separate tables (file
             // and definition tracking) which we don't yet wire; emit
@@ -4165,7 +4165,7 @@ impl crate::ported::exec::ShellExecutor {
             // self.options['_disabled_<name>']. The other dis_*
             // variants (aliases/functions/reswords/patchars) lose
             // their entries entirely on disable in zshrs's table
-            // model (see do_enable_disable at exec.rs:31371) so the
+            // model (see do_enable_disable at vm_helper:31371) so the
             // disabled list isn't recoverable post-disable; emit
             // empty for those.
             "dis_builtins" => {
@@ -4788,7 +4788,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/hist.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Split a command string into words for word designators, respecting quotes.
     pub(crate) fn history_split_words(cmd: &str) -> Vec<String> {
         let mut words = Vec::new();
@@ -4911,7 +4911,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/signals.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Execute trap handlers for a signal
     pub fn run_trap(&mut self, signal: &str) {
         if let Some(action) = self.traps.get(signal).cloned() {
@@ -4927,7 +4927,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/prompt.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Expand prompt escape sequences using the full prompt module.
     /// `expand_prompt` itself now reads C globals (paramtab / LASTVAL /
     /// curhist / JOBTAB / scriptname) so no per-executor sync is
@@ -4961,7 +4961,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/glob.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Expand glob pattern to matching files
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
         // Glob alternation `(a|b|c)` is a primary zsh feature
@@ -5039,7 +5039,7 @@ impl crate::ported::exec::ShellExecutor {
                         if name.starts_with('.') {
                             continue;
                         }
-                        if !crate::exec::glob_match_static(&name, neg) {
+                        if !crate::vm_helper::glob_match_static(&name, neg) {
                             let path = if prefix.is_empty() {
                                 name
                             } else {
@@ -5096,8 +5096,8 @@ impl crate::ported::exec::ShellExecutor {
                     .into_iter()
                     .filter(|p| {
                         let basename = p.rsplit('/').next().unwrap_or(p);
-                        !crate::exec::glob_match_static(basename, &rhs)
-                            && !crate::exec::glob_match_static(p, &rhs)
+                        !crate::vm_helper::glob_match_static(basename, &rhs)
+                            && !crate::vm_helper::glob_match_static(p, &rhs)
                     })
                     .collect();
                 if !filtered.is_empty() {
@@ -6594,7 +6594,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/glob.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Filter file list by glob qualifiers
     /// Prefetch file metadata in parallel across the worker pool.
     /// Returns a map from path → (metadata, symlink_metadata).
@@ -6702,7 +6702,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/utils.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     pub(crate) fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
         if !dest.exists() {
             std::fs::create_dir_all(dest)?;
@@ -6727,7 +6727,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/zle/compcore.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // zsh compadd - add completion matches
     // zsh compset - modify completion prefix/suffix
 }
@@ -6736,14 +6736,14 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/zle/computil.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
 }
 
 // =====================================================================
 // MOVED FROM: src/ported/zle/zle_main.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // `vared` shim — parses the `"AaceghM:m:p:r:i:f:"` BUILTIN spec
     // from zle_main.c:2186 into a real `options` struct, then invokes
     // the canonical free-fn port at
@@ -6755,7 +6755,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/cap.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// `cap` builtin entry. Bridge to `bin_cap()` above.
     pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
@@ -6779,7 +6779,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/zpty.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // `zpty` builtin — delegates to canonical port at
     // `src/ported/modules/zpty.rs:367` (`bin_zpty()` from
     // `Src/Modules/zpty.c`). The named-pty table lives on
@@ -6791,7 +6791,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/terminfo.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// `echoti` shim — delegates to the canonical free-fn port at
     /// `crate::ported::modules::terminfo::bin_echoti` (matching C
     /// `bin_echoti(nam, args, ops, func)` per terminfo.c:64). The
@@ -6809,7 +6809,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/watch.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // `log` builtin — delegates to canonical port at
     // `src/ported/modules/watch.rs` (`bin_log()` from
     // `Src/Modules/watch.c`). The watch state lives in
@@ -6823,7 +6823,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/pcre.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // `pcre_compile` builtin — delegates to canonical port at
     // `src/ported/modules/pcre.rs` (`bin_pcre_compile()` from
     // `Src/Modules/pcre.c:70`). Builds an `options` struct from the
@@ -6843,14 +6843,14 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/tcp.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
 }
 
 // =====================================================================
 // MOVED FROM: src/ported/modules/db_gdbm.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // Tie a parameter to a GDBM database
     // Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
     // Untie a parameter from its GDBM database
@@ -6864,7 +6864,7 @@ impl crate::ported::exec::ShellExecutor {
 // MOVED FROM: src/ported/modules/termcap.rs
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // `echotc` builtin shim — adapts `&[String]` argv to
     // `bin_echotc` over a `[bool; 256]` ops bitmask.
 }
@@ -6957,7 +6957,7 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
 // lives at the per-call site in fusevm_bridge.rs subst_port arms.
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
         self.plugin_cache = None;
@@ -6994,7 +6994,7 @@ impl crate::ported::exec::ShellExecutor {
 ///
 /// plus extendedglob preprocessing (`^pat` negation, `(a|b)~(x)`
 /// exclusion). The preprocessing is shell-canonical but lives here
-/// in exec.rs instead of inside patcompile or a wrapper. To dissolve:
+/// in vm_helper instead of inside patcompile or a wrapper. To dissolve:
 /// move the extendedglob `^` / `~` arm into patcompile (or a thin
 /// canonical pre-walker) so callers use patmatch directly.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
@@ -7007,7 +7007,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         with_executor(|e| crate::ported::options::opt_state_get("extendedglob").unwrap_or(false));
     if extendedglob_on {
         if let Some(rest) = pattern.strip_prefix('^') {
-            return !crate::exec::glob_match_static(s, rest);
+            return !crate::vm_helper::glob_match_static(s, rest);
         }
         // Extendedglob `~` exclusion: `pat1~pat2` matches strings
         // matching `pat1` AND NOT matching `pat2`. Direct port of
@@ -7020,8 +7020,8 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         if let Some(idx) = find_top_level_tilde(pattern) {
             let lhs = &pattern[..idx];
             let rhs = &pattern[idx + 1..];
-            return crate::exec::glob_match_static(s, lhs)
-                && !crate::exec::glob_match_static(s, rhs);
+            return crate::vm_helper::glob_match_static(s, lhs)
+                && !crate::vm_helper::glob_match_static(s, rhs);
         }
     }
 
@@ -7052,7 +7052,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
                 }
             }
             if balanced && depth == 0 {
-                return !crate::exec::glob_match_static(s, body);
+                return !crate::vm_helper::glob_match_static(s, body);
             }
         }
     }

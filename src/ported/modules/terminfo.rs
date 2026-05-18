@@ -340,10 +340,10 @@ pub fn scanterminfo() -> Vec<(String, String)> {                         // c:17
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
+// type within a crate, so call sites in vm_helper are unchanged.
 // ===========================================================
 
 // BEGIN moved-from-exec-rs

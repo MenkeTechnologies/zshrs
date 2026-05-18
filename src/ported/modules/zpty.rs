@@ -146,7 +146,7 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: module-shims
 // ===========================================================
@@ -157,7 +157,7 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // END moved-from-exec-rs
 
 
-// ─── moved from src/ported/exec.rs (drift extraction) ───
+// ─── moved from src/ported/vm_helper (drift extraction) ───
 
 // Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
 // It was a duplicate of `ptycmd` (zpty.rs:19), which is the correct

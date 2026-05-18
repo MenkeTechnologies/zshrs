@@ -13,7 +13,7 @@
 //! P9e of the PORT_PLAN.md migration to make their non-C-faithful
 //! nature explicit.
 //!
-//! Phase 9c (par_* wordcode emission) + Phase 9d (exec.rs wordcode
+//! Phase 9c (par_* wordcode emission) + Phase 9d (vm_helper wordcode
 //! consumer rewrite) will eventually retire these types entirely —
 //! the parser will emit wordcode directly and the executor will read
 //! wordcode directly, matching the C pipeline. Until then, the AST

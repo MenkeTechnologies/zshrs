@@ -61,7 +61,7 @@ pub fn is_zshrs_builtin(name: &str) -> bool {
 
 /// Combines the name check with `dispatch`: returns the exit status if `name` is
 /// one of ours, `None` otherwise. The shell core routes through this so adding a
-/// new z* builtin never requires changing exec.rs.
+/// new z* builtin never requires changing vm_helper.
 pub fn try_dispatch(name: &str, argv: &[String]) -> Option<i32> {
     if is_zshrs_builtin(name) {
         dispatch(name, argv)

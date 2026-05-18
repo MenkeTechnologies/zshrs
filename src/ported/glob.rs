@@ -26,7 +26,7 @@ use crate::ported::zsh_h::Bnullkeep;
 use std::process::Command;
 use crate::ported::options::opt_state_get;
 #[allow(unused_imports)]
-use crate::ported::exec::{
+use crate::ported::vm_helper::{
     self,
 };
 use crate::ported::zsh_h::{
@@ -1833,7 +1833,7 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {                       //
     // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
     // current ShellExecutor for in-shell evaluation. Falls back to
     // a fresh executor if no ExecutorContext is active.
-    let mut __exec = crate::exec::ShellExecutor::new();
+    let mut __exec = crate::vm_helper::ShellExecutor::new();
     let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
     let rc = __exec.execute_script(expr).unwrap_or(1);                        // c:3919
     let ret = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);        // c:3921 ret = lastval
@@ -2153,7 +2153,7 @@ pub fn glob_isset(opt: i32) -> bool {
 pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // RUST-ONLY
         // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
         // runs during substitution before glob — patterns reaching glob()
-        // are already brace-free in the production path (exec.rs handles
+        // are already brace-free in the production path (vm_helper handles
         // it). For direct programmatic callers of glob_with_options, run
         // the brace pass here so `GlobOptions.brace_ccl` is actually
         // consulted: with brace_ccl set, `{a-mnop}` expands to a..m,n,o,p
@@ -4216,7 +4216,7 @@ pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: glob
 // ===========================================================
@@ -4227,7 +4227,7 @@ pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
@@ -4238,7 +4238,7 @@ pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
+// Free fns moved verbatim from src/ported/vm_helper.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,

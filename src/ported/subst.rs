@@ -48,7 +48,7 @@
 //! shapes is treated as a bug — file an issue + add a parity test.
 
 #[allow(unused_imports)]
-use crate::ported::exec::{
+use crate::ported::vm_helper::{
     cached_regex, slice_array_zero_based, slice_positionals,
 };
 use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
@@ -810,7 +810,7 @@ fn stringsubst(
                         std::fs::read_to_string(path).unwrap_or_default()
                     } else {
                         // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                        crate::exec::getoutput(&cmd)
+                        crate::vm_helper::getoutput(&cmd)
                     };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -999,7 +999,7 @@ fn stringsubst(
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
                 // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                let output = crate::exec::getoutput(&cmd);
+                let output = crate::vm_helper::getoutput(&cmd);
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237
@@ -2105,7 +2105,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 
     // C: `singsub(&p);` — parameter-substitute the content (so
     // `(l:$n:)` looks up $n).
-    let mut __exec = crate::exec::ShellExecutor::new();
+    let mut __exec = crate::vm_helper::ShellExecutor::new();
     let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
     let expanded = singsub(&parsed); // c:1444
     if errflag_set() {
@@ -7831,7 +7831,7 @@ mod tests {
             module_path!().replace("::", "_"),
             line!()
         );
-        let mut exec = crate::exec::ShellExecutor::new();
+        let mut exec = crate::vm_helper::ShellExecutor::new();
         let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
         arrays_insert(name.clone(), Vec::new()); // c:3296
         let pat = format!("${{{}[3]:=val}}", name);
@@ -8292,7 +8292,7 @@ pub fn sub_flags_set(v: i32) {
 
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: subst
 // ===========================================================

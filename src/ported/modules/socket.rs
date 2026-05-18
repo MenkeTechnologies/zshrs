@@ -213,7 +213,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
 
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // ===========================================================
 

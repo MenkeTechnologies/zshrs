@@ -18,10 +18,10 @@
 pub mod compat;
 pub mod cond;
 pub mod context;
-// `exec` was moved to crate root (src/exec.rs) — it isn't a port of
+// `exec` was moved to crate root (src/vm_helper) — it isn't a port of
 // Src/exec.c (C zsh's wordcode VM; zshrs uses fusevm instead). Keep `crate::ported::exec` as a path alias so
 // the many existing `crate::ported::exec::*` call-sites still work.
-pub use crate::exec;
+pub use crate::vm_helper;
 pub mod glob;
 pub mod hashnameddir;
 pub mod hashtable;
@@ -61,6 +61,7 @@ pub mod signals_h;
 pub mod config_h;
 pub mod lex;
 pub mod parse;
+mod exec;
 
 #[cfg(test)]
 mod tests {

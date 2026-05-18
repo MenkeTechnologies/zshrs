@@ -331,7 +331,7 @@ mod params_special_vars {
         // $_ — last argument of the previous command. Both shells
         // route reads through underscoregetfn → zunderscore_lock;
         // the writer side updates the lock from the command-dispatch
-        // hook installed in exec.rs.
+        // hook installed in vm_helper.
         assert_parity(r#"echo first arg; echo "_=$_""#);
     }
 }

@@ -443,5 +443,5 @@ pub struct DapHooks {
 #[allow(dead_code)]
 pub fn install_hooks(_hooks: DapHooks) {
     // v1: no-op. Future revisions store these in a OnceLock and have
-    // exec.rs/eval.rs call them at statement boundaries.
+    // vm_helper/eval.rs call them at statement boundaries.
 }

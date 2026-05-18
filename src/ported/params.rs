@@ -3932,11 +3932,11 @@ pub fn check_warn_pm(
         return;
     }
     // `locallevel` is the canonical `pub static` above (port of
-    // params.c:54). `forklevel` is the ported global at exec.rs
+    // params.c:54). `forklevel` is the ported global at vm_helper
     // (port of exec.c:1052) set to locallevel at every entersubsh().
     let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let forklevel: i32 =
-        crate::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
+        crate::vm_helper::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
     if created != 0 && isset(WARNCREATEGLOBAL) {                              // c:3168
         if cur_local <= forklevel || pm.level != 0 {                           // c:3169
             return;
@@ -3983,7 +3983,7 @@ pub fn check_warn_pm(
 
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: params
 // ===========================================================
@@ -3994,7 +3994,7 @@ pub fn check_warn_pm(
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
+// Free fns moved verbatim from src/ported/vm_helper.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
 /// Subscript-argument result.
@@ -4224,7 +4224,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
 // against the `Param.node.flags` int.
 //
 // Both types had zero external use sites — pure dead-code carryover
-// from an earlier exec.rs refactor. The PM_* bit constants are at
+// from an earlier vm_helper refactor. The PM_* bit constants are at
 // `zsh_h.rs:1340+` and the `(t)` formatting routes through
 // `typeset_print_flags` (when wired) reading bare `Param.node.flags`.
 
@@ -8002,7 +8002,7 @@ fn zunderscore_lock() -> &'static Mutex<String> {
 /// command. Mirrors C zsh's writeback in `execcmd_exec` (Src/exec.c)
 /// where `zunderscore` is set to the last argv slot before
 /// returning. Callers: every command-dispatch hook in
-/// fusevm_bridge / exec.rs.
+/// fusevm_bridge / vm_helper.
 pub fn set_zunderscore(argv: &[String]) {
     let new = if let Some(last) = argv.last() {
         last.clone()

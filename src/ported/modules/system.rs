@@ -23,7 +23,7 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
 use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};

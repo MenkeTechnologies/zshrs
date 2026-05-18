@@ -114,7 +114,7 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
 
     // Spot check: known nested files exist.
     let has_glob_rs = got.iter().any(|p| p.ends_with("/src/glob.rs"));
-    let has_exec_rs = got.iter().any(|p| p.ends_with("/src/exec.rs"));
+    let has_exec_rs = got.iter().any(|p| p.ends_with("/src/vm_helper"));
     assert!(has_glob_rs, "src/glob.rs not found in `**.rs` results");
     assert!(has_exec_rs, "src/exec.rs not found in `**.rs` results");
 }

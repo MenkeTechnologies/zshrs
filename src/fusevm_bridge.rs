@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use indexmap::IndexMap;
 
-use crate::ported::exec::*;
+use crate::ported::vm_helper::*;
 use crate::exec_jobs::JobState;
 use crate::intercepts::{AdviceKind, Intercept, intercept_matches};
 use std::io::Write;
@@ -416,7 +416,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // BUILTIN_EXEC / BUILTIN_COMMAND / BUILTIN_BUILTIN wires deleted
-    // along with their handler stubs in src/exec.rs. The opcodes were
+    // along with their handler stubs in src/vm_helper. The opcodes were
     // never emitted by the fusevm compiler (zero `Op::CallBuiltin(...)`
     // references) — leftover from the deleted pre-fusevm `Src/exec.c` port.
     // When `command` / `exec` / `builtin` land as canonical
@@ -1740,7 +1740,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         })(idx);
         if let Some((flags, pat)) = parsed_flags.clone() {
             let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
-                let keys = crate::exec::scan_magic_assoc_keys(name)?;
+                let keys = crate::vm_helper::scan_magic_assoc_keys(name)?;
                 Some(keys
                     .into_iter()
                     .map(|k| {
@@ -1757,7 +1757,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut out: Vec<String> = Vec::new();
                 for (k, v) in &pairs {
                     let hay = if by_key { k } else { v };
-                    if crate::exec::glob_match_static(hay, &pat) {
+                    if crate::vm_helper::glob_match_static(hay, &pat) {
                         out.push(if by_key { k.clone() } else { v.clone() });
                         if !return_all { break; }
                     }
@@ -2482,7 +2482,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // parameter-module hashes (Src/Modules/parameter.c)
                 // that don't live in `exec.assoc_arrays`. Direct
                 // delegation to the canonical port reader.
-                if crate::exec::scan_magic_assoc_keys(&name).is_some() {
+                if crate::vm_helper::scan_magic_assoc_keys(&name).is_some() {
                     return Value::str(
                         exec.get_special_array_value(&name, &idx).unwrap_or_default());
                 }
@@ -2509,7 +2509,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('I');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if crate::exec::glob_match_static(k, &pat) {
+                                if crate::vm_helper::glob_match_static(k, &pat) {
                                     out.push(v.clone());
                                     if !return_all {
                                         break;
@@ -2527,7 +2527,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('R');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if crate::exec::glob_match_static(v, &pat) {
+                                if crate::vm_helper::glob_match_static(v, &pat) {
                                     out.push(k.clone());
                                     if !return_all {
                                         break;
@@ -2987,7 +2987,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        crate::exec::scan_magic_assoc_keys(&name)
+                        crate::vm_helper::scan_magic_assoc_keys(&name)
                     {
                         St::A(keys)
                     } else {
@@ -3001,7 +3001,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        crate::exec::scan_magic_assoc_keys(&name)
+                        crate::vm_helper::scan_magic_assoc_keys(&name)
                     {
                         let values: Vec<String> = keys
                             .iter()
@@ -3868,7 +3868,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = crate::exec::scan_magic_assoc_keys(&name) {
+                                if let Some(keys) = crate::vm_helper::scan_magic_assoc_keys(&name) {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3901,7 +3901,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                crate::exec::scan_magic_assoc_keys(&name)
+                                crate::vm_helper::scan_magic_assoc_keys(&name)
                                     .unwrap_or_default()
                             }
                         });
@@ -3928,7 +3928,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                crate::exec::scan_magic_assoc_keys(&name)
+                                crate::vm_helper::scan_magic_assoc_keys(&name)
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3949,7 +3949,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                crate::exec::scan_magic_assoc_keys(&name)
+                                crate::vm_helper::scan_magic_assoc_keys(&name)
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -4377,7 +4377,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let kind = with_executor(|exec| {
                         // Delegate to the canonical (t)-flag formatter
                         // which reads PM_TYPE flags from paramtab. The
-                        // exec.rs "parameters" arm of get_special_array
+                        // vm_helper "parameters" arm of get_special_array
                         // _value handles the same PM_INTEGER / PM_FFLOAT
                         // / PM_LOWER / PM_READONLY flag dispatch.
                         exec.get_special_array_value("parameters", &target)
@@ -5269,7 +5269,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            crate::exec::scan_magic_assoc_keys(&name).map(|keys| {
+            crate::vm_helper::scan_magic_assoc_keys(&name).map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()
@@ -5920,10 +5920,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 });
                 if extendedglob {
                     if let Some(neg) = pat.strip_prefix('^') {
-                        return !crate::exec::glob_match_static(s, neg);
+                        return !crate::vm_helper::glob_match_static(s, neg);
                     }
                 }
-                crate::exec::glob_match_static(s, pat)
+                crate::vm_helper::glob_match_static(s, pat)
             } else {
                 s == pat
             }
@@ -6837,7 +6837,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     key
                                 };
                                 return Some(arr.iter().any(|el| {
-                                    crate::exec::glob_match_static(el, pat)
+                                    crate::vm_helper::glob_match_static(el, pat)
                                 }));
                             }
                             None
@@ -7069,7 +7069,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     };                                       // c:2186
                     for end in end_iter {                    // c:2186
                         let sub: String = chars[start..end].iter().collect(); // c:2186
-                        if crate::exec::glob_match_static(&sub, pattern) { // c:2186
+                        if crate::vm_helper::glob_match_static(&sub, pattern) { // c:2186
                             // (S) prefers the leftmost match
                             // for # / ##, and the rightmost for
                             // % / %%. # / ## scan left-to-right;
@@ -7110,7 +7110,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // shortest prefix strip — try k = 0, 1, ...
                     for k in 0..=n {
                         let prefix: String = chars[..k].iter().collect();
-                        if crate::exec::glob_match_static(&prefix, pattern) {
+                        if crate::vm_helper::glob_match_static(&prefix, pattern) {
                             return if sub_match {            // c:2171
                                 prefix                       // c:2171
                             } else {                         // c:2171
@@ -7124,7 +7124,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // longest prefix strip — try k = n down to 0
                     for k in (0..=n).rev() {
                         let prefix: String = chars[..k].iter().collect();
-                        if crate::exec::glob_match_static(&prefix, pattern) {
+                        if crate::vm_helper::glob_match_static(&prefix, pattern) {
                             return if sub_match {            // c:2171
                                 prefix                       // c:2171
                             } else {                         // c:2171
@@ -7138,7 +7138,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // shortest suffix strip
                     for k in 0..=n {
                         let suffix: String = chars[n - k..].iter().collect();
-                        if crate::exec::glob_match_static(&suffix, pattern) {
+                        if crate::vm_helper::glob_match_static(&suffix, pattern) {
                             return if sub_match {            // c:2171
                                 suffix                       // c:2171
                             } else {                         // c:2171
@@ -7152,7 +7152,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // longest suffix strip
                     for k in (0..=n).rev() {
                         let suffix: String = chars[n - k..].iter().collect();
-                        if crate::exec::glob_match_static(&suffix, pattern) {
+                        if crate::vm_helper::glob_match_static(&suffix, pattern) {
                             return if sub_match {            // c:2171
                                 suffix                       // c:2171
                             } else {                         // c:2171
@@ -7600,7 +7600,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "builtins" | "dis_builtins"
                 | "dis_functions" | "dis_aliases"
                 | "dis_galiases" | "dis_saliases" => {
-                    return crate::exec::scan_magic_assoc_keys(&name)
+                    return crate::vm_helper::scan_magic_assoc_keys(&name)
                         .map(|v| v.len())
                         .unwrap_or(0);
                 }
@@ -7778,7 +7778,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `#` / `##` extendedglob postfix detector for the
             // BUILTIN_PARAM_REPLACE pattern compile. Matches the
             // same handling in subst_port::glob_to_regex_capturing
-            // and exec.rs::glob_match_static — direct port of zsh's
+            // and vm_helper::glob_match_static — direct port of zsh's
             // pattern.c Pound/POUND2 cases. Used by zinit's
             // main-message-formatter pattern `[^\}]##` (one-or-
             // more non-`}`).
@@ -8197,7 +8197,7 @@ impl ZshrsHost {
     }
 }
 
-fn expand_dollar_refs(s: &str, exec: &crate::ported::exec::ShellExecutor) -> String {
+fn expand_dollar_refs(s: &str, exec: &crate::ported::vm_helper::ShellExecutor) -> String {
     // Single-pass `$VAR` / `${VAR}` expansion for subscript bodies.
     // Mirrors the small subset of paramsubst needed when the BUILTIN_
     // PARAM_LENGTH handler resolves `${#arr[$i]}`.
@@ -8761,7 +8761,7 @@ impl fusevm::ShellHost for ZshrsHost {
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
         // `case` arms, and any other point that compares against a glob pattern.
-        crate::exec::glob_match_static(s, pattern)
+        crate::vm_helper::glob_match_static(s, pattern)
     }
 
     fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[fusevm::Value]) -> fusevm::Value {
@@ -9503,7 +9503,7 @@ impl fusevm::ShellHost for ZshrsHost {
 // fusevm VM. Not a port of Src/exec.c (see file-level docs above) — they're
 // the bridge between fusevm opcodes and ShellExecutor state.
 // ───────────────────────────────────────────────────────────────────────────
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     // ─── Host-routed shell ops (called by ZshrsHost from fusevm) ────────────
 
     /// Apply a single redirection. The current scope's saved-fd vec gets a

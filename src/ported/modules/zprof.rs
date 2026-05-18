@@ -479,7 +479,7 @@ pub fn zprof_wrapper(prog: *const crate::ported::zsh_h::eprog,              // c
 
     // c:285 — `runshfunc(prog, w, name);`
     // runshfunc isn't yet ported as a free fn — the wrapped invocation
-    // happens at the executor level (src/exec.rs::dispatch_function_call).
+    // happens at the executor level (src/vm_helper::dispatch_function_call).
     // Keep the C call slot visible; live integration occurs there.
     let _ = (prog, w);                                                       // c:285 runshfunc(prog, w, name)
 

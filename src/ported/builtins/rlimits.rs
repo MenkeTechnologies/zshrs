@@ -1399,7 +1399,7 @@ fn leak_unknown_name(i: i32) -> &'static str {
 
 // WARNING: NOT IN RLIMITS.C — `zsetlimit` lives in `Src/exec.c:314`,
 // not `rlimits.c`. The Rust port colocates the helper here because
-// rlimits.rs is the only consumer; the eventual exec.rs port can
+// rlimits.rs is the only consumer; the eventual vm_helper port can
 // move it. Inlines the C body: if LIMITS[i] differs from
 // CURRENT_LIMITS[i], call `setrlimit`, then sync CURRENT_LIMITS[i]
 // back to LIMITS[i].

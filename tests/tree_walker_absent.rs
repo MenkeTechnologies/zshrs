@@ -36,7 +36,7 @@ use std::path::PathBuf;
 
 fn read_exec_rs() -> String {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("src/exec.rs");
+    p.push("vm_helper.rs");
     fs::read_to_string(&p).unwrap_or_else(|e| panic!("cannot read {}: {}", p.display(), e))
 }
 
@@ -81,7 +81,7 @@ fn execute_command_bg_is_deleted() {
 #[test]
 fn execute_command_dispatches_via_compiler_or_is_absent() {
     // `execute_command` is the legacy AST-based entry point. If it
-    // still exists in src/exec.rs, the body MUST compile via
+    // still exists in src/vm_helper, the body MUST compile via
     // parse_init+parse + ZshCompiler and run the chunk on a fusevm VM —
     // never match-dispatch to a tree walker.
     let src = read_exec_rs();
@@ -141,13 +141,13 @@ fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
 
 #[test]
 fn no_match_shellcommand_outside_compiler() {
-    // `src/exec.rs` must not contain a `match cmd { ShellCommand::… }`
+    // `src/vm_helper` must not contain a `match cmd { ShellCommand::… }`
     // dispatch — that would be a tree walker.
     let src = read_exec_rs();
     // Strict check: the specific pattern that used to appear in
     // execute_command is `ShellCommand::Simple(simple) =>
     // self.execute_simple(simple)`. Even if a future refactor doesn't
-    // use that exact name, dispatching by AST variant from exec.rs is
+    // use that exact name, dispatching by AST variant from vm_helper is
     // a regression.
     assert!(
         !src.contains("ShellCommand::Simple(simple) => self.execute_simple"),

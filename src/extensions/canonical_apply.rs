@@ -38,7 +38,7 @@ use std::path::PathBuf;
 
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
-use crate::exec::{AutoloadFlags, ShellExecutor, zstyle_entry};
+use crate::vm_helper::{AutoloadFlags, ShellExecutor, zstyle_entry};
 // Legacy `zle()` / `KeymapName` removed alongside the
 // `extensions::keymaps` dissolution. Recorder-replay paths that
 // previously wrote into `ZleManager` (bindkey + user-widget
@@ -233,7 +233,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // bindkey: install each captured (keyseq, widget) into the global
     // KeymapManager. Recorder encodes the keymap-target by prefixing
     // the value with `[KEYMAP] ` (per `bin_bindkey` in
-    // src/exec.rs); strip that prefix and dispatch to the right
+    // src/vm_helper); strip that prefix and dispatch to the right
     // keymap. Default = Main.
     {
         // bindkey replay routes through the canonical `bindkey()`
@@ -252,7 +252,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // (compsys::compdef::compdef_execute) that runtime `compdef _git
     // git` would have used. Recorder captures with format
     // `name=function value="cmd1 cmd2 …"` (per `builtin_compdef` in
-    // src/exec.rs).
+    // src/vm_helper).
     if !shard.compdef.is_empty() {
         // Executor's constructor only opens compsys_cache if the
         // .db file already exists (cold start = None). Open it
@@ -344,7 +344,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 
 /// Decode a recorder-emitted bindkey value into (keymap, widget).
 ///
-/// Format from `src/exec.rs:bin_bindkey`:
+/// Format from `src/vm_helper:bin_bindkey`:
 ///   `widget_name`               → KeymapName::Main
 ///   `[keymap_name] widget_name` → KeymapName::from_str("keymap_name")
 ///

@@ -206,7 +206,7 @@ pub fn ecadjusthere(p: usize, d: i32) {
 //
 // P9e (PORT_PLAN.md): the types moved to src/extensions/zsh_ast.rs
 // to make their Rust-only-extension nature explicit. The full P9c +
-// P9d rewrite (par_* emitting wordcode + exec.rs reading wordcode)
+// P9d rewrite (par_* emitting wordcode + vm_helper reading wordcode)
 // retires them entirely — until then, callers reach them via this
 // re-export.
 pub use crate::heredoc_ast::HereDoc;
@@ -2659,7 +2659,7 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
 // ecgetstr, ecgetarr, ecgetredirs, ecgetlist, eccopyredirs).
 // Read packed wordcode out of an Eprog at execution time.
 // Used by exec_wordcode and the wordcode-walking dispatch in
-// src/exec.rs.
+// src/vm_helper.
 // ============================================================
 
 /// Port of `ecrawstr(Eprog p, Wordcode pc, int *tokflag)` from

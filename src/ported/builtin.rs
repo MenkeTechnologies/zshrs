@@ -1,7 +1,7 @@
 //! Direct port of `Src/builtin.c` — the master registration site for
 //! the in-shell builtin commands. The C source is 7608 lines; the
 //! actual `bin_*` handler bodies were ported organically into
-//! `src/ported/exec.rs` and `src/ported/builtins/*.rs` long before
+//! `src/ported/vm_helper` and `src/ported/builtins/*.rs` long before
 //! this file existed. This file scaffolds:
 //!
 //! Builtins in the main executable                                          // c:38
@@ -19,7 +19,7 @@
 //! Each row's `handler` field names the canonical Rust port of the
 //! C handler so future work can wire them up without re-discovering
 //! the mapping. When the handler lives in `crate::ported::builtins`,
-//! the comment cites the file; when it lives in `exec.rs`'s
+//! the comment cites the file; when it lives in `vm_helper`'s
 //! `Executor` impl, that's noted too.
 
 use std::collections::HashMap;
@@ -52,13 +52,13 @@ use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX};
 use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
 use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_SH};
 
-// === Imports needed by the methods moved from exec.rs (below) ===
+// === Imports needed by the methods moved from vm_helper (below) ===
 #[allow(unused_imports)]
 use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 #[allow(unused_imports)]
 use indexmap::IndexMap;
 #[allow(unused_imports)]
-use crate::ported::exec::{
+use crate::ported::vm_helper::{
     self,  BUILTIN_NAMES,
     format_int_in_base,
 };
@@ -211,7 +211,7 @@ pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // 
 
 
 // ===========================================================
-// ksh_autoload_body moved from src/ported/exec.rs.
+// ksh_autoload_body moved from src/ported/vm_helper.
 // Mirrors the ksh-style autoload helper in Src/builtin.c
 // (bin_functions / load_function_def).
 // ===========================================================
@@ -3001,7 +3001,7 @@ pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // 
     let _d = OPT_ISSET(ops, b'd');
     // loadautofn lives in Src/exec.c:5050 — full fpath search + parse_string
     // + install. Static-link path: returns 0 (success), so `!loadautofn` is 1.
-    let r = crate::exec::loadautofn(shf, mode, 1, _d as i32);                             // c:3193
+    let r = crate::vm_helper::loadautofn(shf, mode, 1, _d as i32);                             // c:3193
     if r == 0 { 1 } else { 0 }
 }
 
@@ -3030,8 +3030,8 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
             && shf_mut.filename.is_some()
         {
             let spec = vec![shf_mut.filename.clone().unwrap_or_default()];
-            if crate::exec::getfpfunc(&shf_mut.node.nam, &mut None,                       // c:3206
-                         Some(&spec), 1).is_some() {
+            if crate::vm_helper::getfpfunc(&shf_mut.node.nam, &mut None,                       // c:3206
+                                           Some(&spec), 1).is_some() {
                 return 0;                                                    // c:3209
             }
             // c:3211-3217 — `-d` not set: bail (with -R = error, with -r = silent).
@@ -3047,7 +3047,7 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
         }
         // c:3219-3231 — fpath walk via getfpfunc + dircache_set install.
         let mut dir_path: Option<String> = None;
-        if crate::exec::getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
+        if crate::vm_helper::getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
             && dir_path.is_some()
         {
             // c:3220-3228 — dircache_set + relative-path absolutize.
@@ -3334,7 +3334,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                 (*src_ptr).funcdef = None;
             }
             // c:3419 — `loadautofn(shf, 1, 0, 0)`.
-            if crate::exec::loadautofn(src_ptr, 1, 0, 0) != 0 {
+            if crate::vm_helper::loadautofn(src_ptr, 1, 0, 0) != 0 {
                 // c:3420-3421 — autoload failed.
                 return 1;
             }
@@ -5110,7 +5110,7 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
         }
     } else {
         // c:5636-5654 — shift positional parameters ($1..$N).
-        // Static-link path: positional params live in src/ported/exec.rs;
+        // Static-link path: positional params live in src/ported/vm_helper;
         // expose via PPARAMS Mutex<Vec<String>>.
         let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
         let l = pp.len() as i32;
@@ -5365,18 +5365,18 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                 let posixtraps =
                     crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixtraps"));
                 let cur_state =
-                    crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
                 let cur_return =
-                    crate::exec::TRAP_RETURN.load(Ordering::Relaxed);
+                    crate::vm_helper::TRAP_RETURN.load(Ordering::Relaxed);
                 if cur_state == crate::ported::zsh_h::TRAP_STATE_PRIMED      // c:5845
                     && cur_return == -2                                      // c:5845
                     && !(posixtraps && implicit)                             // c:5851
                 {
-                    crate::exec::TRAP_STATE.store(                           // c:5852
-                        crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
-                        Ordering::Relaxed,
+                    crate::vm_helper::TRAP_STATE.store(                           // c:5852
+                                                                                  crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                                                                                  Ordering::Relaxed,
                     );
-                    crate::exec::TRAP_RETURN.store(num, Ordering::Relaxed);  // c:5853
+                    crate::vm_helper::TRAP_RETURN.store(num, Ordering::Relaxed);  // c:5853
                 }
                 return num;                                                  // c:5855
             }
@@ -5413,18 +5413,18 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
             // BIN_EXIT isn't possible mid-match; inline the same
             // guard logic here.
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::vm_helper::FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
                 if STOPMSG.load(Ordering::Relaxed) == 0 {
                     zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884
-                    let trap_state = crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {                                     // c:5885
-                        crate::exec::TRAP_STATE.store(                       // c:5886
-                            crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
-                            Ordering::Relaxed,
+                        crate::vm_helper::TRAP_STATE.store(                       // c:5886
+                                                                                  crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                                                                                  Ordering::Relaxed,
                         );
                     }
                     RETFLAG.store(1, Ordering::Relaxed);                     // c:5887
@@ -5458,7 +5458,7 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
         // unwinding the function stack.
         x if x == BIN_EXIT => {
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::vm_helper::FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
                 // Probe via ZEXIT_DEFERRED — may set stopmsg.
@@ -5466,11 +5466,11 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                     zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884 still no stopmsg → defer
-                    let trap_state = crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {                                     // c:5885
-                        crate::exec::TRAP_STATE.store(                       // c:5886
-                            crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
-                            Ordering::Relaxed,
+                        crate::vm_helper::TRAP_STATE.store(                       // c:5886
+                                                                                  crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                                                                                  Ordering::Relaxed,
                         );
                     }
                     RETFLAG.store(1, Ordering::Relaxed);                     // c:5887
@@ -6562,7 +6562,7 @@ pub fn bin_notavail(nam: &str, _argv: &[String],                             // 
 // at `Src/builtin.c:40-137`. Entries appear in the same order so
 // any diff against the C source stays trivial. The `handler_name`
 // column points at the canonical Rust port that the dispatcher in
-// `Executor::register_builtins` (`src/ported/exec.rs`) wires up.
+// `Executor::register_builtins` (`src/ported/vm_helper`) wires up.
 // ---------------------------------------------------------------------------
 
 pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
@@ -6675,7 +6675,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("pcre_compile", 0, Some(crate::ported::modules::pcre::bin_pcre_compile as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("aimx"), None),
     BUILTIN("pcre_study", 0, Some(crate::ported::modules::pcre::bin_pcre_study as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
     // bin_pcre_match returns (i32, Option<String>, Vec<...>) — non-standard
-    // signature, can't dispatch via execbuiltin. Wrapper stays in exec.rs.
+    // signature, can't dispatch via execbuiltin. Wrapper stays in vm_helper.
     BUILTIN("pcre_match", 0, None, 1, -1, 0, Some("ab:nv:"), None),
     BUILTIN("ztcp", 0, Some(crate::ported::modules::tcp::bin_ztcp as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acdflLtv"), None),
     BUILTIN("ztie", 0, Some(crate::ported::modules::db_gdbm::bin_ztie as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("d:f:r"), None),
@@ -6824,7 +6824,7 @@ pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // (lowercase, matches C name). Re-export that single storage so
 // every reader and writer addresses the same atomic — without
 // this, `LOCALLEVEL.store(0)` in zle/computil.rs would zero one
-// global while `params::locallevel.fetch_add(1)` in exec.rs
+// global while `params::locallevel.fetch_add(1)` in vm_helper
 // incremented a DIFFERENT global, leaving the two views out of
 // sync indefinitely.
 pub use crate::ported::params::locallevel as LOCALLEVEL;
@@ -6842,7 +6842,7 @@ pub use crate::ported::zsh_h::ZEXIT_NORMAL;
 // taking `u32` flag bitsets (BINF_*) and a `&str` handler-name
 // column used only for documentation/wiring lookup — handler
 // function pointers themselves are wired up later in
-// `Executor::register_builtins` (`src/ported/exec.rs`).
+// `Executor::register_builtins` (`src/ported/vm_helper`).
 //
 // The `handler` arg was previously a `_handler_name: &'static str` that
 // was discarded — `handlerfunc` always ended up `NULLBINCMD`, so

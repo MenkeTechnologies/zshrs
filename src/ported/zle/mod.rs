@@ -10,7 +10,7 @@
 //! - History navigation
 //! - Multi-line editing
 
-// Core ZLE types (old API for exec.rs compatibility)
+// Core ZLE types (old API for vm_helper compatibility)
 
 // New comprehensive ZLE port from C
 

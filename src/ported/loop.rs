@@ -9,7 +9,7 @@
 //! In C, loop.c contains execfor, execwhile, execif, execcase, execselect,
 //! execrepeat, and exectry as separate functions operating on bytecode.
 //! In Rust, all of these are implemented as match arms in
-//! ShellExecutor::execute_compound() in exec.rs, operating on the typed AST
+//! ShellExecutor::execute_compound() in vm_helper, operating on the typed AST
 //! (CompoundCommand::For, While, If, Case, Select, Repeat, Try).
 //!
 //! This module provides the loop state management and helper functions
@@ -105,7 +105,7 @@ pub fn execselect(_do_exec: i32) -> i32 {                                // c:21
 // PORT_PLAN Phase 2. It was a Rust-only invention that double-tracked
 // the same data already living in the file-statics LOOP_DEPTH /
 // CONT_FLAG / BREAK_LEVEL above (and on `ShellExecutor.breaking` /
-// `ShellExecutor.continuing` in src/exec.rs:572-573). Zero callers
+// `ShellExecutor.continuing` in src/vm_helper:572-573). Zero callers
 // outside its own test module.
 //
 // C source's actual loop-control file-globals at `Src/loop.c`:

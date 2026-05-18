@@ -5011,7 +5011,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {                     // 
 }
 
 // ===========================================================
-// xtrace helpers moved from src/ported/exec.rs.
+// xtrace helpers moved from src/ported/vm_helper.
 // printprompt4 is a direct port of utils.c:1718-1735; quotedzputs
 // is its argument-formatter companion (zsh formats `set -x` lines
 // via the same utils.c path).
@@ -6643,7 +6643,7 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
@@ -6654,7 +6654,7 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
+// Free fns moved verbatim from src/ported/vm_helper.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
 pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
@@ -6693,7 +6693,7 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
-// Utility helpers moved from src/ported/exec.rs.
+// Utility helpers moved from src/ported/vm_helper.
 // All correspond to Src/utils.c logic (path/string/bslashquote helpers).
 // ===========================================================
 

@@ -1,6 +1,6 @@
 //! Background compinit pre-warm — extension; no zsh C counterpart.
 #[allow(unused_imports)]
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 #[allow(unused_imports)]
 use std::{env, collections::HashMap, path::PathBuf};
 use compsys::cache::CompsysCache;
@@ -16,13 +16,13 @@ pub struct CompInitBgResult {
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Non-blocking drain of background compinit results.
     /// Call this before any completion lookup (prompt, tab-complete, etc.).
     /// If the background thread hasn't finished yet, this is a no-op.

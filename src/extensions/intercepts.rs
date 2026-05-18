@@ -1,6 +1,6 @@
 //! Command intercept / advice machinery — extension; no zsh C counterpart.
 #[allow(unused_imports)]
-use crate::ported::exec::ShellExecutor;
+use crate::ported::vm_helper::ShellExecutor;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 
@@ -53,13 +53,13 @@ pub(crate) fn intercept_matches(pattern: &str, cmd_name: &str, full_cmd: &str) -
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: drift
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
+impl crate::ported::vm_helper::ShellExecutor {
     /// Check intercepts for a command. Returns Some(result) if an around
     /// advice fully handled the command, None to proceed normally.
     pub(crate) fn run_intercepts(

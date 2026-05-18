@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use crate::ported::utils::zerr;
 use std::env;
-use crate::ported::exec::{
+use crate::ported::vm_helper::{
     self,
 };
 
@@ -2542,7 +2542,7 @@ pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
 }
 
 // ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
+// Methods moved verbatim from src/ported/vm_helper because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // Phase: math
 // ===========================================================
@@ -2553,7 +2553,7 @@ pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
+// Free fns moved verbatim from src/ported/vm_helper.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
 /// Pop argc arguments from the VM stack into a Vec<String>.
@@ -2761,7 +2761,7 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
-// Numeric formatting helpers moved from src/ported/exec.rs.
+// Numeric formatting helpers moved from src/ported/vm_helper.
 // Mirror Src/math.c / Src/utils.c base+digit-grouping logic.
 // ===========================================================
 
