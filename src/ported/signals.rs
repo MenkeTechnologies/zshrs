@@ -800,7 +800,7 @@ pub fn removetrap(sig: i32) {                                                 //
     // Read live from the ported global so SIGPIPE only re-installs in
     // the top-level shell, never inside a forked subshell.
     let forklevel: i32 =
-        crate::vm_helper::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
+        crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed);    // c:1052 (Src/exec.c)
     if sig == libc::SIGINT && interact {                                     // c:802
         // c:803-805 — `intr(); noholdintr();`. Re-enable SIGINT
         // delivery (subshells ignoring SIGINT need the unblock).
@@ -1295,8 +1295,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
     crate::ported::context::zcontext_save();                                 // c:1126
     // c:1128 — `execsave()` saves trap_return/trap_state. Without a
     // canonical `execsave` port yet, snapshot the two atomics inline.
-    let saved_trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::SeqCst);   // c:1128 execsave
-    let saved_trap_return = crate::vm_helper::TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
+    let saved_trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::SeqCst);   // c:1128 execsave
+    let saved_trap_return = crate::ported::exec::TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
     BREAKS.store(0, Ordering::SeqCst);                                       // c:1129 breaks = 0
     RETFLAG.store(0, Ordering::SeqCst);                                      // c:1129 retflag = 0
     traplocallevel.store(LOCALLEVEL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
@@ -1327,8 +1327,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
         let num = format!("{}", sig);                                        // c:1151 sprintf(num, "%d", sig)
         args.push(num);                                                      // c:1152
 
-        crate::vm_helper::TRAP_RETURN.store(-1, Ordering::SeqCst);                // c:1154 trap_return = -1
-        crate::vm_helper::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1155
+        crate::ported::exec::TRAP_RETURN.store(-1, Ordering::SeqCst);                // c:1154 trap_return = -1
+        crate::ported::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1155
         crate::ported::signals::trapisfunc.store(1, Ordering::SeqCst);       // c:1156
         isfunc = 1;
 
@@ -1345,8 +1345,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
         let _ = args;                                                        // c:1163 freelinklist(args)
         crate::ported::mem::zsfree(name);                                    // c:1164 zsfree(name)
     } else {                                                                 // c:1165
-        crate::vm_helper::TRAP_RETURN.store(-2, Ordering::SeqCst);                // c:1166 trap_return = -2
-        crate::vm_helper::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1167
+        crate::ported::exec::TRAP_RETURN.store(-2, Ordering::SeqCst);                // c:1166 trap_return = -2
+        crate::ported::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst);  // c:1167
         crate::ported::signals::trapisfunc.store(0, Ordering::SeqCst);       // c:1168
         isfunc = 0;
         // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");`
@@ -1363,12 +1363,12 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {           //
 
     traperr = crate::ported::utils::errflag.load(Ordering::SeqCst);          // c:1174
 
-    new_trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::SeqCst);         // c:1177
-    new_trap_return = crate::vm_helper::TRAP_RETURN.load(Ordering::SeqCst);       // c:1178
+    new_trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::SeqCst);         // c:1177
+    new_trap_return = crate::ported::exec::TRAP_RETURN.load(Ordering::SeqCst);       // c:1178
 
     // c:1180 — `execrestore()` restores trap_return/trap_state.
-    crate::vm_helper::TRAP_STATE.store(saved_trap_state, Ordering::SeqCst);       // c:1180
-    crate::vm_helper::TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst);     // c:1180
+    crate::ported::exec::TRAP_STATE.store(saved_trap_state, Ordering::SeqCst);       // c:1180
+    crate::ported::exec::TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst);     // c:1180
     crate::ported::context::zcontext_restore();                              // c:1181
 
     if new_trap_state == TRAP_STATE_FORCE_RETURN                             // c:1183

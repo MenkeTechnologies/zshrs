@@ -3001,7 +3001,7 @@ pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // 
     let _d = OPT_ISSET(ops, b'd');
     // loadautofn lives in Src/exec.c:5050 — full fpath search + parse_string
     // + install. Static-link path: returns 0 (success), so `!loadautofn` is 1.
-    let r = crate::vm_helper::loadautofn(shf, mode, 1, _d as i32);                             // c:3193
+    let r = crate::ported::exec::loadautofn(shf, mode, 1, _d as i32);                             // c:3193
     if r == 0 { 1 } else { 0 }
 }
 
@@ -3030,7 +3030,7 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
             && shf_mut.filename.is_some()
         {
             let spec = vec![shf_mut.filename.clone().unwrap_or_default()];
-            if crate::vm_helper::getfpfunc(&shf_mut.node.nam, &mut None,                       // c:3206
+            if crate::ported::exec::getfpfunc(&shf_mut.node.nam, &mut None,                       // c:3206
                                            Some(&spec), 1).is_some() {
                 return 0;                                                    // c:3209
             }
@@ -3047,7 +3047,7 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
         }
         // c:3219-3231 — fpath walk via getfpfunc + dircache_set install.
         let mut dir_path: Option<String> = None;
-        if crate::vm_helper::getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
+        if crate::ported::exec::getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
             && dir_path.is_some()
         {
             // c:3220-3228 — dircache_set + relative-path absolutize.
@@ -3334,7 +3334,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                 (*src_ptr).funcdef = None;
             }
             // c:3419 — `loadautofn(shf, 1, 0, 0)`.
-            if crate::vm_helper::loadautofn(src_ptr, 1, 0, 0) != 0 {
+            if crate::ported::exec::loadautofn(src_ptr, 1, 0, 0) != 0 {
                 // c:3420-3421 — autoload failed.
                 return 1;
             }
@@ -5365,18 +5365,18 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                 let posixtraps =
                     crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixtraps"));
                 let cur_state =
-                    crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
+                    crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
                 let cur_return =
-                    crate::vm_helper::TRAP_RETURN.load(Ordering::Relaxed);
+                    crate::ported::exec::TRAP_RETURN.load(Ordering::Relaxed);
                 if cur_state == crate::ported::zsh_h::TRAP_STATE_PRIMED      // c:5845
                     && cur_return == -2                                      // c:5845
                     && !(posixtraps && implicit)                             // c:5851
                 {
-                    crate::vm_helper::TRAP_STATE.store(                           // c:5852
+                    crate::ported::exec::TRAP_STATE.store(                           // c:5852
                                                                                   crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
                                                                                   Ordering::Relaxed,
                     );
-                    crate::vm_helper::TRAP_RETURN.store(num, Ordering::Relaxed);  // c:5853
+                    crate::ported::exec::TRAP_RETURN.store(num, Ordering::Relaxed);  // c:5853
                 }
                 return num;                                                  // c:5855
             }
@@ -5413,16 +5413,16 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
             // BIN_EXIT isn't possible mid-match; inline the same
             // guard logic here.
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::vm_helper::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
                 if STOPMSG.load(Ordering::Relaxed) == 0 {
                     zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884
-                    let trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {                                     // c:5885
-                        crate::vm_helper::TRAP_STATE.store(                       // c:5886
+                        crate::ported::exec::TRAP_STATE.store(                       // c:5886
                                                                                   crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
                                                                                   Ordering::Relaxed,
                         );
@@ -5458,7 +5458,7 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
         // unwinding the function stack.
         x if x == BIN_EXIT => {
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::vm_helper::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {           // c:5871
                 // Probe via ZEXIT_DEFERRED — may set stopmsg.
@@ -5466,9 +5466,9 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                     zexit(0, crate::ported::zsh_h::ZEXIT_DEFERRED);          // c:5884
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {                    // c:5884 still no stopmsg → defer
-                    let trap_state = crate::vm_helper::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {                                     // c:5885
-                        crate::vm_helper::TRAP_STATE.store(                       // c:5886
+                        crate::ported::exec::TRAP_STATE.store(                       // c:5886
                                                                                   crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
                                                                                   Ordering::Relaxed,
                         );
