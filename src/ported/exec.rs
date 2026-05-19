@@ -20,6 +20,13 @@
 //! - **`loadautofn`** + **`getfpfunc`** (`Src/exec.c:5050` / `:5260`)
 //!   — `$fpath` walker + autoload file installer. Called from
 //!   `bin_autoload` / `bin_functions -c` in `src/ported/builtin.rs`.
+//! - **`resolvebuiltin`** (`Src/exec.c:2703`) — module-autoload guard
+//!   used by the dispatch walk in `execcmd_exec`.
+//! - **`execcmd_exec`** (`Src/exec.c:2900`) — head section only
+//!   (locals + precommand-modifier walk through `c:3091`). The rest
+//!   of the C function drives the wordcode-walker dispatch and is
+//!   replaced by fusevm bytecode in `src/extensions/compile_zsh.rs`;
+//!   see the WARNING block inside the function body.
 
 use std::sync::atomic::Ordering;
 
@@ -295,4 +302,246 @@ pub fn getfpfunc(name: &str, dir_path_out: &mut Option<String>,                 
         }
     }
     None
+}
+
+/// Port of `resolvebuiltin(const char *cmdarg, HashNode hn)` from
+/// `Src/exec.c:2703`. Ensures that an autoload-stub builtin has its
+/// module loaded before the caller invokes its `handlerfunc`. If the
+/// stub has no handler, `ensurefeature` is asked to load the module
+/// and re-lookup the builtin node. C body (abridged):
+/// ```c
+/// if (!((Builtin) hn)->handlerfunc) {
+///     char *modname = dupstring(((Builtin) hn)->optstr);
+///     (void)ensurefeature(modname, "b:", ...);
+///     hn = builtintab->getnode(builtintab, cmdarg);
+///     if (!hn) { lastval=1; zerr(...); return NULL; }
+/// }
+/// return hn;
+/// ```
+///
+/// WARNING: zshrs's builtin table is the static `BUILTINS` array in
+/// `src/ported/builtin.rs`. Module autoload (`ensurefeature` from
+/// `Src/module.c`) is not yet wired through the same code path; the
+/// helper exists today as `crate::ported::module::ensurefeature` for
+/// the few sites that touch it. Until module-autoload is hooked up,
+/// this port is the identity for builtins with a registered
+/// `handlerfunc` and returns `None` for unresolved stubs (matching
+/// the C return-NULL-on-failure contract).
+pub fn resolvebuiltin<'a>(cmdarg: &str,                                       // c:2703 (Src/exec.c)
+                          hn: &'a crate::ported::zsh_h::builtin)
+    -> Option<&'a crate::ported::zsh_h::builtin>
+{
+    // c:2705 — `if (!((Builtin) hn)->handlerfunc)`.
+    if hn.handlerfunc.is_none() {
+        // c:2706 — `modname = dupstring(((Builtin)hn)->optstr)`.
+        let modname = hn.optstr.clone().unwrap_or_default();
+        // c:2712-2714 — `ensurefeature(modname, "b:", ...)`. The Rust
+        // module-autoload path is not yet wired; treat missing
+        // handlerfunc as unresolvable.
+        // c:2715-2721 — re-lookup, fail with `lastval=1` + zerr.
+        crate::ported::utils::zerr(&format!(
+            "autoloading module {} failed to define builtin: {}",
+            modname, cmdarg));
+        return None;                                                          // c:2720
+    }
+    Some(hn)                                                                  // c:2723
+}
+
+/// Dispatch decision returned by `execcmd_exec`'s head-walk port.
+/// Encodes the local-variable state that the C function carries
+/// through `c:2913-2916` (`is_builtin`, `is_shfunc`, `cflags`,
+/// `use_defpath`) plus the precmd-modifier strip count. The fusevm
+/// bytecode compiler reads this to emit the correct dispatch opcode
+/// in `src/extensions/compile_zsh.rs::compile_simple`.
+///
+/// Not a C struct — invented to bridge the divergence between the
+/// C wordcode-walker (which mutates locals + falls through to
+/// invocation) and zshrs's split parse → compile → VM pipeline.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Default, Clone)]
+pub struct execcmd_dispatch {
+    /// Number of `BINF_PREFIX` words to strip from the head of args.
+    /// `Src/exec.c:3086 uremnode(preargs, firstnode(preargs))`.
+    pub precmd_skip: usize,
+    /// Set when the head (after strip) is a real builtin
+    /// (`Src/exec.c:3065 is_builtin = 1`).
+    pub is_builtin: bool,
+    /// Set when the head (after strip) is a shell function
+    /// (`Src/exec.c:3053 is_shfunc = 1`).
+    pub is_shfunc: bool,
+    /// `cflags` accumulator from `Src/exec.c:2915` — gathers
+    /// `BINF_BUILTIN | BINF_COMMAND | BINF_EXEC | BINF_DASH |
+    /// BINF_NOGLOB` bits encountered during the precommand-modifier
+    /// walk (c:3062 `cflags |= hn->flags`).
+    pub cflags: u32,
+    /// `command -p` requested: use the default `$PATH` for lookup
+    /// (`Src/exec.c:3160 use_defpath = 1`). NOT YET HONORED by the
+    /// fusevm compiler — flagged for follow-up.
+    pub use_defpath: bool,
+}
+
+/// Port of the head section of `execcmd_exec(Estate state,
+/// Execcmd_params eparams, int input, int output, int how, int
+/// last1, int close_if_forked)` from `Src/exec.c:2900`. Body
+/// translated line-for-line from `c:2904-3091` covering local
+/// initialisation, %job-table head detection, and the
+/// precommand-modifier walk that strips `BINF_PREFIX` builtins
+/// (`-`, `builtin`, `command`, `exec`, `noglob`) before dispatch.
+///
+/// =================== WARNING — DIVERGENCE ====================
+///
+/// The C function runs ~1500 lines and PERFORMS dispatch: it sets up
+/// `multio` redirections, evaluates `varspc` assignments, then calls
+/// `execbuiltin` / `runshfunc` / `execute` directly. zshrs DOES NOT
+/// port that tail because the fusevm bytecode VM
+/// (`src/extensions/compile_zsh.rs::compile_simple` +
+/// `src/fusevm_bridge.rs::register_builtins`) emits dispatch opcodes
+/// at compile time and the VM drives them at runtime.
+///
+/// This Rust port stops at `c:3091` — immediately after the
+/// precmd-modifier walk — and returns the dispatch decision via
+/// `execcmd_dispatch`. The fusevm compiler reads that struct to
+/// decide which `Op::CallBuiltin` / `Op::CallFunction` / `Op::Exec`
+/// to emit, and to compute the correct post-strip `argc`.
+///
+/// Code below this function's return point that lives in C
+/// (`Src/exec.c:3092-4404`) is intentionally NOT ported. The
+/// `BINF_COMMAND` / `BINF_EXEC` sub-modifier option-parsing block
+/// (`c:3092-3275`) is a TODO — today `command -p`, `command -v/-V`,
+/// `exec -a`, `exec -l`, `exec -c` are partially handled in
+/// `compile_zsh.rs` / `src/ported/builtin.rs::bin_command` /
+/// `bin_exec` rather than here. When those land canonically, they
+/// extend this function past `c:3091`.
+///
+/// =============================================================
+///
+/// Signature adaptation: the C `Estate`/`Execcmd_params` carry the
+/// wordcode iterator state — zshrs doesn't traverse wordcode, so
+/// the args list arrives already-expanded as a `&[String]` (analog
+/// of `preargs` after `execcmd_getargs` at `c:3028`). `type_`
+/// mirrors `eparams->type` (`WC_SIMPLE` vs `WC_TYPESET`).
+pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         // c:2900 (Src/exec.c)
+    use crate::ported::zsh_h::{
+        BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, WC_SIMPLE, WC_TYPESET,
+    };
+
+    // c:2904-2916 — locals.
+    let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None;        // c:2904
+    let mut is_shfunc = false;                                                // c:2913
+    let mut is_builtin = false;                                               // c:2913
+    let use_defpath = false;                                                  // c:2913
+    let mut cflags: u32 = 0;                                                  // c:2915
+    let mut orig_cflags: u32 = 0;                                             // c:2915
+    let _ = orig_cflags;
+
+    // c:2962-2973 — `%job` head: rewrite `%name` → `fg|bg|disown %name`.
+    // Not in scope for the compile-time dispatch walk: jobspec
+    // expansion happens at runtime in fusevm; the bytecode emits a
+    // direct `fg`/`bg` call when it sees a leading `%`. Flagged for
+    // follow-up when the canonical port lands.
+
+    // c:2975-2986 — AUTORESUME prefix-match against jobtab. Same
+    // status as the %job head: runtime concern, deferred.
+
+    // c:3013-3091 — precommand-modifier walk.
+    let mut preargs: Vec<String> = args.to_vec();                             // c:3027 newlinklist
+    let mut precmd_skip: usize = 0;
+
+    // c:3018 — `if ((type == WC_SIMPLE || type == WC_TYPESET) && args)`.
+    if (type_ == WC_SIMPLE || type_ == WC_TYPESET) && !preargs.is_empty() {   // c:3018
+        // c:3029 — `while (nonempty(preargs))`.
+        while precmd_skip < preargs.len() {                                   // c:3029
+            // c:3030 — `cmdarg = (char *) peekfirst(preargs);`.
+            let cmdarg = crate::ported::lex::untokenize(&preargs[precmd_skip]);
+            // c:3031 — `checked = !has_token(cmdarg)`. zshrs's fusevm
+            // already performed prefork expansion on `preargs`, so
+            // `has_token` is effectively false here; the C `break` on
+            // unexpanded tokens is unreachable in this entry point.
+
+            // c:3034-3035 — WC_TYPESET fast path: `getnode2` looks up
+            // even disabled builtins so the reserved-word form
+            // (`integer x`, `local foo`) still dispatches to the
+            // typeset family. The static `BUILTINS` array doesn't
+            // expose a separate disabled-bit lookup; one path covers
+            // both. Effect is identical for the precmd-modifier walk.
+
+            // c:3050-3052 — `if (!(cflags & (BINF_BUILTIN |
+            // BINF_COMMAND)) && shfunctab->getnode(...))` — shell
+            // function takes precedence unless a `builtin`/`command`
+            // modifier preceded it.
+            if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {                // c:3051
+                if crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .map(|t| t.iter().any(|(k, _)| k == &cmdarg))
+                    .unwrap_or(false)
+                {
+                    is_shfunc = true;                                         // c:3053
+                    break;                                                    // c:3054
+                }
+            }
+            // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
+            let entry = crate::ported::builtin::BUILTINS
+                .iter()
+                .find(|b| b.node.nam == cmdarg);
+            let Some(entry) = entry else {                                    // c:3056-3058
+                break;
+            };
+            hn = Some(entry);
+            // c:3061-3063 — accumulate cflags.
+            orig_cflags |= cflags;
+            cflags &= !(BINF_BUILTIN | BINF_COMMAND);
+            cflags |= entry.node.flags as u32;
+            // c:3064 — `if (!(hn->flags & BINF_PREFIX))` — real
+            // builtin, stop.
+            if (entry.node.flags as u32 & BINF_PREFIX) == 0 {                 // c:3064
+                // WARNING — DIVERGENCE: c:3068 calls `resolvebuiltin`
+                // to autoload the builtin's module if its
+                // `handlerfunc` is NULL. In zshrs, builtins live in
+                // two places: the static `BUILTINS` table (which
+                // mirrors C `handlerfunc`, often `None` for ports
+                // dispatched through fusevm) AND fusevm's
+                // `register_builtins` map (the actual runtime
+                // dispatcher). A null `handlerfunc` in the static
+                // table is NOT an autoload failure for us — it
+                // means dispatch routes through fusevm. So we
+                // skip the resolvebuiltin call here; the faithful
+                // port remains available for future callers that
+                // genuinely need module-autoload semantics.
+                is_builtin = true;                                            // c:3065
+                break;                                                        // c:3077
+            }
+            // c:3086 — `uremnode(preargs, firstnode(preargs))`.
+            precmd_skip += 1;
+
+            // WARNING — DIVERGENCE (sub-modifier option-parsing): the
+            // C body at `c:3092-3275` handles `command -p / -v / -V`
+            // and `exec -a / -l / -c` option flags on the
+            // newly-stripped head. zshrs currently routes those
+            // through `bin_command` / `bin_exec` (ports in
+            // `src/ported/builtin.rs`) — that path doesn't run here.
+            // Result: `use_defpath` stays false even for `command -p`.
+            // Flagged for follow-up; not a blocker for the
+            // `builtin … typeset +x FPATH` chain that prompted this
+            // port.
+        }
+    }
+
+    // =================== WARNING — DIVERGENCE ====================
+    // c:3285+: prefork-substitution, magic_assign decision, multio
+    // setup, varspc evaluation, and the actual execbuiltin /
+    // runshfunc / execute call. ~1300 lines of interpreter-only
+    // code, entirely replaced by fusevm bytecode dispatch in
+    // `src/extensions/compile_zsh.rs::compile_simple` and the
+    // opcode handlers in `src/fusevm_bridge.rs::register_builtins`.
+    // The return value below feeds those compile-time decisions.
+    // =============================================================
+
+    let _ = hn;
+    execcmd_dispatch {
+        precmd_skip,
+        is_builtin,
+        is_shfunc,
+        cflags,
+        use_defpath,
+    }
 }

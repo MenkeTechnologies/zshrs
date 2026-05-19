@@ -573,9 +573,17 @@ pub fn optlookupc(c: char) -> i32 {                                          // 
     } else {
         zshletters
     };
-    for (ch, name, _negated) in letters {
+    for (ch, name, negated) in letters {
         if *ch == c {
-            return optno_by_name(name).unwrap_or(0);                         // c:725
+            // c:725 — `optletters[c - FIRST_OPT]` is signed in C;
+            // negative optno means "set this letter inverts the
+            // option's sense" (`-n` letter ↔ EXECOPT but `-n` means
+            // *unset* EXECOPT). dosetopt at c:743 reads `optno < 0`
+            // to flip `value`. Without applying the negation here,
+            // `optlookupc('n')` returned the positive EXECOPT and
+            // `setopt -n` SET exec instead of unsetting it.
+            let optno = optno_by_name(name).unwrap_or(0);                    // c:725
+            return if *negated { -optno } else { optno };
         }
     }
     0
@@ -1478,16 +1486,27 @@ fn setemulate_opts_lock()
         .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Reverse lookup `index_to_name` to map a canonical option name
-/// back to its C-fixed optno (one of the `zh::OPT_*` constants).
-/// Rust-only architectural helper: C iterates `optiontab` (a
-/// HashTable keyed by name) and reads `Optname.optno` — the Rust
-/// port stores the same mapping inverted in `index_to_name`'s match
-/// arms; this fn walks `0..OPT_SIZE` and matches the first idx that
+/// Reverse lookup to map a canonical option name back to its
+/// C-fixed optno (one of the `zh::OPT_*` constants). Rust-only
+/// architectural helper: C iterates `optiontab` (a HashTable keyed
+/// by name) and reads `Optname.optno` — the Rust port keeps the
+/// canonical idx→name mapping in `zh::opt_name` (zsh_h.rs:2954,
+/// kept in sync with the C `optns[]` table at `Src/options.c:43`).
+/// This fn walks `1..OPT_SIZE` and matches the first idx that
 /// names to `name`.
+///
+/// The previously-local `index_to_name` in this file was a
+/// near-duplicate of `zh::opt_name` and drifted out of sync —
+/// missing `cbases`, `cdsilent`, `checkrunningjobs`,
+/// `continueonerror`, `dvorak`, `emacs`, `evallineno`,
+/// `loginshell`, `typesettounset`. `setopt cbases` reported `no
+/// such option` because the lookup failed to find an idx matching
+/// "cbases". Deleted that copy; this single canonical table now
+/// serves both `opt_name(idx) → name` and the reverse via walk.
 fn optno_by_name(name: &str) -> Option<i32> {
     for idx in 1..OPT_SIZE {
-        if index_to_name(idx) == Some(name) {
+        let n = zh::opt_name(idx);
+        if !n.is_empty() && n == name {
             return Some(idx);
         }
     }
@@ -1559,205 +1578,6 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>,
         print_emulate_option(n, value, fully);                               // c:986 callback
     }
 }
-
-/// Map a canonical zsh option index (the constants in `zsh_h.rs`
-/// like `VIMODE = 180`, `POSIXBUILTINS = 135`) back to the option's
-/// lowercase name. Mirrors the C `optns[]` table in `Src/options.c`
-/// indexed by `OPT_*` enum value (zsh.h:2050+).
-///
-/// Rust-only architectural helper: C iterates `optiontab` (a
-/// HashTable keyed by name) and reads `Optname.optno` to get the
-/// index; the reverse direction needs an explicit `optno -> name`
-/// table, which doesn't exist in the C source — there it's just
-/// implicit in the order of `OPT_*` enum entries paired with the
-/// `optns[]` array. This match collapses both into one lookup.
-fn index_to_name(idx: i32) -> Option<&'static str> {
-    let i = idx.unsigned_abs() as i32;
-    Some(match i {
-        x if x == zh::ALIASESOPT          => "aliases",
-        x if x == zh::ALIASFUNCDEF        => "aliasfuncdef",
-        x if x == zh::ALLEXPORT           => "allexport",
-        x if x == zh::ALWAYSLASTPROMPT    => "alwayslastprompt",
-        x if x == zh::ALWAYSTOEND         => "alwaystoend",
-        x if x == zh::APPENDCREATE        => "appendcreate",
-        x if x == zh::APPENDHISTORY       => "appendhistory",
-        x if x == zh::AUTOCD              => "autocd",
-        x if x == zh::AUTOCONTINUE        => "autocontinue",
-        x if x == zh::AUTOLIST            => "autolist",
-        x if x == zh::AUTOMENU            => "automenu",
-        x if x == zh::AUTONAMEDIRS        => "autonamedirs",
-        x if x == zh::AUTOPARAMKEYS       => "autoparamkeys",
-        x if x == zh::AUTOPARAMSLASH      => "autoparamslash",
-        x if x == zh::AUTOPUSHD           => "autopushd",
-        x if x == zh::AUTOREMOVESLASH     => "autoremoveslash",
-        x if x == zh::AUTORESUME          => "autoresume",
-        x if x == zh::BADPATTERN          => "badpattern",
-        x if x == zh::BANGHIST            => "banghist",
-        x if x == zh::BAREGLOBQUAL        => "bareglobqual",
-        x if x == zh::BASHAUTOLIST        => "bashautolist",
-        x if x == zh::BASHREMATCH         => "bashrematch",
-        x if x == zh::BEEP                => "beep",
-        x if x == zh::BGNICE              => "bgnice",
-        x if x == zh::BRACECCL            => "braceccl",
-        x if x == zh::BSDECHO             => "bsdecho",
-        x if x == zh::CASEGLOB            => "caseglob",
-        x if x == zh::CASEMATCH           => "casematch",
-        x if x == zh::CDABLEVARS          => "cdablevars",
-        x if x == zh::CHASEDOTS           => "chasedots",
-        x if x == zh::CHASELINKS          => "chaselinks",
-        x if x == zh::CHECKJOBS           => "checkjobs",
-        x if x == zh::CLOBBER             => "clobber",
-        x if x == zh::COMBININGCHARS      => "combiningchars",
-        x if x == zh::COMPLETEALIASES     => "completealiases",
-        x if x == zh::COMPLETEINWORD      => "completeinword",
-        x if x == zh::CORRECT             => "correct",
-        x if x == zh::CORRECTALL          => "correctall",
-        x if x == zh::CPRECEDENCES        => "cprecedences",
-        x if x == zh::CSHJUNKIEHISTORY    => "cshjunkiehistory",
-        x if x == zh::CSHJUNKIELOOPS      => "cshjunkieloops",
-        x if x == zh::CSHJUNKIEQUOTES     => "cshjunkiequotes",
-        x if x == zh::CSHNULLCMD          => "cshnullcmd",
-        x if x == zh::CSHNULLGLOB         => "cshnullglob",
-        x if x == zh::DEBUGBEFORECMD      => "debugbeforecmd",
-        x if x == zh::EMACSMODE           => "emacsmode",
-        x if x == zh::EQUALSOPT           => "equals",
-        x if x == zh::ERREXIT             => "errexit",
-        x if x == zh::ERRRETURN           => "errreturn",
-        x if x == zh::EXTENDEDGLOB        => "extendedglob",
-        x if x == zh::EXTENDEDHISTORY     => "extendedhistory",
-        x if x == zh::FLOWCONTROL         => "flowcontrol",
-        x if x == zh::FORCEFLOAT          => "forcefloat",
-        x if x == zh::FUNCTIONARGZERO     => "functionargzero",
-        x if x == zh::GLOBOPT             => "glob",
-        x if x == zh::GLOBALEXPORT        => "globalexport",
-        x if x == zh::GLOBALRCS           => "globalrcs",
-        x if x == zh::GLOBASSIGN          => "globassign",
-        x if x == zh::GLOBCOMPLETE        => "globcomplete",
-        x if x == zh::GLOBDOTS            => "globdots",
-        x if x == zh::GLOBSTARSHORT       => "globstarshort",
-        x if x == zh::GLOBSUBST           => "globsubst",
-        x if x == zh::HASHCMDS            => "hashcmds",
-        x if x == zh::HASHDIRS            => "hashdirs",
-        x if x == zh::HASHEXECUTABLESONLY => "hashexecutablesonly",
-        x if x == zh::HASHLISTALL         => "hashlistall",
-        x if x == zh::HISTALLOWCLOBBER    => "histallowclobber",
-        x if x == zh::HISTBEEP            => "histbeep",
-        x if x == zh::HISTEXPIREDUPSFIRST => "histexpiredupsfirst",
-        x if x == zh::HISTFCNTLLOCK       => "histfcntllock",
-        x if x == zh::HISTFINDNODUPS      => "histfindnodups",
-        x if x == zh::HISTIGNOREALLDUPS   => "histignorealldups",
-        x if x == zh::HISTIGNOREDUPS      => "histignoredups",
-        x if x == zh::HISTIGNORESPACE     => "histignorespace",
-        x if x == zh::HISTLEXWORDS        => "histlexwords",
-        x if x == zh::HISTNOFUNCTIONS     => "histnofunctions",
-        x if x == zh::HISTNOSTORE         => "histnostore",
-        x if x == zh::HISTREDUCEBLANKS    => "histreduceblanks",
-        x if x == zh::HISTSAVEBYCOPY      => "histsavebycopy",
-        x if x == zh::HISTSAVENODUPS      => "histsavenodups",
-        x if x == zh::HISTSUBSTPATTERN    => "histsubstpattern",
-        x if x == zh::HISTVERIFY          => "histverify",
-        x if x == zh::HUP                 => "hup",
-        x if x == zh::IGNOREBRACES        => "ignorebraces",
-        x if x == zh::IGNORECLOSEBRACES   => "ignoreclosebraces",
-        x if x == zh::IGNOREEOF           => "ignoreeof",
-        x if x == zh::INCAPPENDHISTORY    => "incappendhistory",
-        x if x == zh::INCAPPENDHISTORYTIME => "incappendhistorytime",
-        x if x == zh::INTERACTIVE         => "interactive",
-        x if x == zh::INTERACTIVECOMMENTS => "interactivecomments",
-        x if x == zh::KSHARRAYS           => "ksharrays",
-        x if x == zh::KSHAUTOLOAD         => "kshautoload",
-        x if x == zh::KSHGLOB             => "kshglob",
-        x if x == zh::KSHOPTIONPRINT      => "kshoptionprint",
-        x if x == zh::KSHTYPESET          => "kshtypeset",
-        x if x == zh::KSHZEROSUBSCRIPT    => "kshzerosubscript",
-        x if x == zh::LISTAMBIGUOUS       => "listambiguous",
-        x if x == zh::LISTBEEP            => "listbeep",
-        x if x == zh::LISTPACKED          => "listpacked",
-        x if x == zh::LISTROWSFIRST       => "listrowsfirst",
-        x if x == zh::LISTTYPES           => "listtypes",
-        x if x == zh::LOCALLOOPS          => "localloops",
-        x if x == zh::LOCALOPTIONS        => "localoptions",
-        x if x == zh::LOCALPATTERNS       => "localpatterns",
-        x if x == zh::LOCALTRAPS          => "localtraps",
-        x if x == zh::LOGINSHELL          => "loginshell",
-        x if x == zh::LONGLISTJOBS        => "longlistjobs",
-        x if x == zh::MAGICEQUALSUBST     => "magicequalsubst",
-        x if x == zh::MAILWARNING         => "mailwarning",
-        x if x == zh::MARKDIRS            => "markdirs",
-        x if x == zh::MENUCOMPLETE        => "menucomplete",
-        x if x == zh::MONITOR             => "monitor",
-        x if x == zh::MULTIBYTE           => "multibyte",
-        x if x == zh::MULTIFUNCDEF        => "multifuncdef",
-        x if x == zh::MULTIOS             => "multios",
-        x if x == zh::NOMATCH             => "nomatch",
-        x if x == zh::NOTIFY              => "notify",
-        x if x == zh::NULLGLOB            => "nullglob",
-        x if x == zh::NUMERICGLOBSORT     => "numericglobsort",
-        x if x == zh::OCTALZEROES         => "octalzeroes",
-        x if x == zh::OVERSTRIKE          => "overstrike",
-        x if x == zh::PATHDIRS            => "pathdirs",
-        x if x == zh::PATHSCRIPT          => "pathscript",
-        x if x == zh::PIPEFAIL            => "pipefail",
-        x if x == zh::POSIXALIASES        => "posixaliases",
-        x if x == zh::POSIXARGZERO        => "posixargzero",
-        x if x == zh::POSIXBUILTINS       => "posixbuiltins",
-        x if x == zh::POSIXCD             => "posixcd",
-        x if x == zh::POSIXIDENTIFIERS    => "posixidentifiers",
-        x if x == zh::POSIXJOBS           => "posixjobs",
-        x if x == zh::POSIXSTRINGS        => "posixstrings",
-        x if x == zh::POSIXTRAPS          => "posixtraps",
-        x if x == zh::PRINTEIGHTBIT       => "printeightbit",
-        x if x == zh::PRINTEXITVALUE      => "printexitvalue",
-        x if x == zh::PRIVILEGED          => "privileged",
-        x if x == zh::PROMPTBANG          => "promptbang",
-        x if x == zh::PROMPTCR            => "promptcr",
-        x if x == zh::PROMPTPERCENT       => "promptpercent",
-        x if x == zh::PROMPTSP            => "promptsp",
-        x if x == zh::PROMPTSUBST         => "promptsubst",
-        x if x == zh::PUSHDIGNOREDUPS     => "pushdignoredups",
-        x if x == zh::PUSHDMINUS          => "pushdminus",
-        x if x == zh::PUSHDSILENT         => "pushdsilent",
-        x if x == zh::PUSHDTOHOME         => "pushdtohome",
-        x if x == zh::RCEXPANDPARAM       => "rcexpandparam",
-        x if x == zh::RCQUOTES            => "rcquotes",
-        x if x == zh::RCS                 => "rcs",
-        x if x == zh::RECEXACT            => "recexact",
-        x if x == zh::REMATCHPCRE         => "rematchpcre",
-        x if x == zh::RESTRICTED          => "restricted",
-        x if x == zh::RMSTARSILENT        => "rmstarsilent",
-        x if x == zh::RMSTARWAIT          => "rmstarwait",
-        x if x == zh::SHAREHISTORY        => "sharehistory",
-        x if x == zh::SHFILEEXPANSION     => "shfileexpansion",
-        x if x == zh::SHGLOB              => "shglob",
-        x if x == zh::SHINSTDIN           => "shinstdin",
-        x if x == zh::SHNULLCMD           => "shnullcmd",
-        x if x == zh::SHOPTIONLETTERS     => "shoptionletters",
-        x if x == zh::SHORTLOOPS          => "shortloops",
-        x if x == zh::SHORTREPEAT         => "shortrepeat",
-        x if x == zh::SHWORDSPLIT         => "shwordsplit",
-        x if x == zh::SINGLECOMMAND       => "singlecommand",
-        x if x == zh::SINGLELINEZLE       => "singlelinezle",
-        x if x == zh::SOURCETRACE         => "sourcetrace",
-        x if x == zh::SUNKEYBOARDHACK     => "sunkeyboardhack",
-        x if x == zh::TRANSIENTRPROMPT    => "transientrprompt",
-        x if x == zh::TRAPSASYNC          => "trapsasync",
-        x if x == zh::TYPESETSILENT       => "typesetsilent",
-        x if x == zh::UNSET               => "unset",
-        x if x == zh::VERBOSE             => "verbose",
-        // C `Src/options.c:255` lists this option as `"vi"` (the
-        // table entry is `{NULL, "vi", 0}, VIMODE`). Match the
-        // canonical name so `optlookup("vi")`, `opt_state_set("vi", _)`,
-        // and `isset(VIMODE)→opt_name(VIMODE)="vi"` all address
-        // the same storage slot.
-        x if x == zh::VIMODE              => "vi",                            // c:255
-        x if x == zh::WARNCREATEGLOBAL    => "warncreateglobal",
-        x if x == zh::WARNNESTEDVAR       => "warnnestedvar",
-        x if x == zh::XTRACE              => "xtrace",
-        x if x == zh::USEZLE              => "zle",
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use crate::zsh_h::isset;

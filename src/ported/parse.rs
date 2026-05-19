@@ -1138,10 +1138,30 @@ fn par_cmd() -> Option<ZshCommand> {
 /// (parse.c:1100-1140 inside par_for).
 fn par_for() -> Option<ZshCommand> {
     let is_foreach = tok() == FOREACH;
-    zshlex();
+    // c:1094-1095 (Src/parse.c, par_for) — set `infor=2` (only when
+    // tok==FOR) so the lexer's `(` peek at lex.c:784-789
+    // (`if (infor) { ... return DINPAR; }`) routes the arith-for
+    // body through dbparens semicolon-splitting instead of the
+    // `cmd_or_math` whole-body capture path. Without this, `for ((
+    // i=0; i<3; i++ ))` lexed as a single `((arith))` expression
+    // and parse_for_cstyle's second zshlex got an empty/wrong tok.
+    //
+    // The companion C statement `incmdpos = 0;` at c:1094 isn't
+    // mirrored here: zshrs's parser doesn't otherwise touch
+    // LEX_INCMDPOS at this boundary, and forcing it false breaks
+    // the SELECT case where downstream tokenization relied on the
+    // inherited state. The C parser maintains incmdpos inline at
+    // every grammar transition (parse.c:617, :791, :1072, :1145,
+    // :1154, :1161, ...); without porting those companion sites a
+    // single explicit reset here is more harmful than helpful.
+    set_infor(if tok() == FOR { 2 } else { 0 });                             // c:1095
+    zshlex();                                                                // c:1096
 
     // Check for C-style: for (( init; cond; step ))
     if tok() == DINPAR {
+        // c:1110-1111 — close out infor / cmdpos after parse_for_cstyle
+        // has consumed the init/cond/step triple. Done inside the
+        // helper itself so we honour the C ordering.
         return parse_for_cstyle();
     }
 
@@ -7418,7 +7438,6 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     //   Dinpar "init"   - init expression, semicolon consumed
     //   Dinpar "cond"   - cond expression, semicolon consumed
     //   Doutpar "step"  - step expression, closing )) consumed
-
     zshlex(); // Get init: Dinpar "i=0"
 
     if tok() != DINPAR {
@@ -7443,6 +7462,12 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     }
     let step = tokstr().unwrap_or_default();
 
+    // c:1110 — `infor = 0;` before the body opener. The companion
+    // `incmdpos = 1;` at c:1111 is intentionally skipped here for
+    // the same reason c:1094's `incmdpos = 0;` is skipped in
+    // par_for above — zshrs doesn't mirror the full
+    // incmdpos state-machine inline.
+    set_infor(0);                                                            // c:1110
     zshlex(); // Move past ))
 
     skip_separators();

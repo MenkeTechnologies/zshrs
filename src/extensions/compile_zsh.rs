@@ -880,9 +880,27 @@ impl ZshCompiler {
             return;
         }
 
-        // Builtin or function or external. Push args first.
-        let argc = (simple.words.len() - 1) as u8;
-        for word in &simple.words[1..] {
+        // Run the ported head section of `execcmd_exec`
+        // (`src/ported/exec.rs`, c:2900) to get the precommand-modifier
+        // strip count + dispatch decision. The C function performs
+        // dispatch directly; zshrs splits it: this head-walk runs at
+        // compile time, the actual invocation is the bytecode emitted
+        // below. See the WARNING block in `execcmd_exec` for the
+        // divergence rationale.
+        //
+        // `WC_SIMPLE` (vs `WC_TYPESET`) is fine for both `typeset` and
+        // ordinary cmds in this context — the walk doesn't depend on
+        // the wordcode distinction past `getnode2` (c:3035), and the
+        // static BUILTINS table doesn't model an enabled/disabled bit.
+        let dispatch = crate::ported::exec::execcmd_exec(
+            &simple.words,
+            crate::ported::zsh_h::WC_SIMPLE,
+        );
+        let precmd_skip = dispatch.precmd_skip;
+
+        // Builtin or function or external. Push args first (post-strip).
+        let argc = (simple.words.len() - precmd_skip - 1) as u8;
+        for word in &simple.words[precmd_skip + 1..] {
             self.compile_word_str(word);
         }
 
@@ -893,24 +911,6 @@ impl ZshCompiler {
         // BUILTIN_XTRACE_ARGS peeks args without consuming, pops the
         // prefix (cmd-name) we push next, builds + prints the line.
         // Stack on entry: [arg1, …, argN, prefix].
-        //
-        // Precommand-modifier stripping: zsh's exec.c:3086 removes
-        // `builtin`/`command`/`noglob`/`nocorrect`/`exec`/`-` from
-        // preargs before tracing (BINF_PREFIX flag). Mirror at
-        // compile-time so xtrace shows `zmodload zsh/datetime` not
-        // `builtin zmodload zsh/datetime`.
-        let mut precmd_skip = 0usize;
-        while precmd_skip + 1 < simple.words.len() {
-            let w = crate::lex::untokenize(&simple.words[precmd_skip]);
-            if matches!(
-                w.as_str(),
-                "builtin" | "command" | "noglob" | "nocorrect" | "exec" | "-"
-            ) {
-                precmd_skip += 1;
-            } else {
-                break;
-            }
-        }
         let cmd_prefix = crate::lex::untokenize(&simple.words[precmd_skip]);
         let prefix_const = self.builder.add_constant(Value::str(cmd_prefix.as_str()));
         self.builder.emit(Op::LoadConst(prefix_const), 0);
