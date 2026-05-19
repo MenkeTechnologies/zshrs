@@ -1191,30 +1191,100 @@ fn run_doctor() {
     println!("  function files: {}", fpath_files);
     println!();
 
-    // --- SQLite Databases ---
-    println!("{}", bold("SQLite Caches"));
-
-    // History
-    let hist_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("zshrs/history.db");
-    if hist_path.exists() {
-        let size = std::fs::metadata(&hist_path).map(|m| m.len()).unwrap_or(0);
-        let count = zsh::history::HistoryEngine::new()
-            .ok()
-            .and_then(|e| e.count().ok())
-            .unwrap_or(0);
+    // --- Caches (rkyv-mmapped) ---
+    // Per docs/DESIGN_GOALS.md:13 and docs/DAEMON.md:226, the only
+    // shell cache layer is rkyv-mmapped bytecode under
+    // `~/.zshrs/images/` with the top-level `~/.zshrs/index.rkyv`
+    // (fq_name → shard_id, generation, byte_offset). Hot lookups
+    // never hit SQLite — clients mmap rkyv exclusively.
+    println!("{}", bold("Caches (rkyv-mmapped)"));
+    let zshrs_dir = dirs::home_dir()
+        .map(|h| h.join(".zshrs"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/.zshrs"));
+    let index_rkyv = zshrs_dir.join("index.rkyv");
+    if index_rkyv.exists() {
+        let size = std::fs::metadata(&index_rkyv).map(|m| m.len()).unwrap_or(0);
         println!(
-            "  history.db:  {} entries, {} bytes  {}",
-            count,
+            "  index:       {} {}  {}",
+            index_rkyv.display(),
             format_bytes(size),
-            green("OK"),
+            green("OK")
         );
     } else {
-        println!("  history.db:  {}", yellow("not found"));
+        println!(
+            "  index:       {} {}",
+            index_rkyv.display(),
+            yellow("(absent — daemon has not built shards yet)")
+        );
+    }
+    let images_dir = zshrs_dir.join("images");
+    if images_dir.is_dir() {
+        let mut shards: Vec<(String, u64)> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&images_dir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) == Some("rkyv") {
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    let name = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    shards.push((name, size));
+                }
+            }
+        }
+        shards.sort();
+        let total: u64 = shards.iter().map(|(_, s)| *s).sum();
+        println!(
+            "  images/:     {} shards, {} total",
+            shards.len(),
+            format_bytes(total)
+        );
+        for (name, size) in &shards {
+            println!("               {} {}", format_bytes(*size), name);
+        }
+    } else {
+        println!(
+            "  images/:     {} {}",
+            images_dir.display(),
+            yellow("(absent)")
+        );
     }
 
-    // Compsys cache
+    // Legacy single-file shards still in active shell-side use until
+    // daemon hydration migrates them under images/.
+    if let Some((count, bytes)) = zsh::script_cache::stats() {
+        let path = zsh::script_cache::default_cache_path();
+        println!(
+            "  scripts:     {} entries, {}  {}",
+            count,
+            format_bytes(bytes as u64),
+            dim(&format!("{}", path.display()))
+        );
+    }
+    let autoload_count = zsh::autoload_cache::entry_count();
+    if autoload_count > 0 {
+        let path = zsh::autoload_cache::default_cache_path();
+        println!(
+            "  autoloads:   {} functions  {}",
+            autoload_count,
+            dim(&format!("{}", path.display()))
+        );
+    }
+    println!();
+
+    // --- SQLite (read-only mirrors) ---
+    // Same directory, different job: daemon-maintained copies you can
+    // query with SQL or `dbview`. They are NOT the bytecode cache and
+    // are NOT read when deciding cache hit/miss or when running
+    // compiled code. The numbers below are inspection-only.
+    println!("{}", bold("SQLite (read-only mirrors)"));
+    println!(
+        "  {}",
+        dim("daemon-maintained; not read on cache lookup / hot path")
+    );
+
     let compsys_path = compsys::cache::default_cache_path();
     if compsys_path.exists() {
         let size = std::fs::metadata(&compsys_path)
@@ -1228,16 +1298,15 @@ fn run_doctor() {
             "  compsys.db:  {} completions, {}  {}",
             count,
             format_bytes(size),
-            green("OK"),
+            dim("mirror"),
         );
     } else {
         println!(
             "  compsys.db:  {}",
-            yellow("not found — run compinit to create")
+            yellow("not found — run compinit to create the mirror")
         );
     }
 
-    // Plugin cache
     let plugin_path = zsh::plugin_cache::default_cache_path();
     if plugin_path.exists() {
         let size = std::fs::metadata(&plugin_path)
@@ -1247,19 +1316,21 @@ fn run_doctor() {
             .map(|c| c.stats())
             .unwrap_or((0, 0));
         println!(
-            "  plugins.db:  {} plugins, {} cached functions, {}  {}",
+            "  plugins.db:  {} plugins, {} functions, {}  {}",
             plugins,
             functions,
             format_bytes(size),
-            green("OK"),
+            dim("mirror"),
         );
 
-        // Check for stale entries
+        // Stale plugin diagnostic — file mtime no longer matches the
+        // mirror's stored mtime. Indicates the rkyv shard may be out
+        // of date and needs daemon rehydration.
         if let Ok(cache) = zsh::plugin_cache::PluginCache::open(&plugin_path) {
             let stale = count_stale_plugins(&cache);
             if stale > 0 {
                 println!(
-                    "               {} {} plugin(s) have stale cache (file changed since cached)",
+                    "               {} {} plugin(s) stale in mirror — rkyv shard may need rehydration",
                     yellow("!"),
                     stale
                 );
@@ -1268,8 +1339,32 @@ fn run_doctor() {
     } else {
         println!(
             "  plugins.db:  {}",
-            yellow("not found — source a file to create")
+            yellow("not found — source a file to create the mirror")
         );
+    }
+    println!();
+
+    // --- History ---
+    // History is a durable command record, not a cache. Reported in
+    // its own section to make that distinction visible.
+    println!("{}", bold("History"));
+    let hist_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("zshrs/history.db");
+    if hist_path.exists() {
+        let size = std::fs::metadata(&hist_path).map(|m| m.len()).unwrap_or(0);
+        let count = zsh::history::HistoryEngine::new()
+            .ok()
+            .and_then(|e| e.count().ok())
+            .unwrap_or(0);
+        println!(
+            "  history.db:  {} entries, {}  {}",
+            count,
+            format_bytes(size),
+            green("OK"),
+        );
+    } else {
+        println!("  history.db:  {}", yellow("not found"));
     }
     println!();
 

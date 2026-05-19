@@ -82,6 +82,20 @@ impl ShellExecutor {
         let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
         let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
         let dim = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+        let format_bytes = |n: u64| -> String {
+            const KIB: u64 = 1024;
+            const MIB: u64 = 1024 * KIB;
+            const GIB: u64 = 1024 * MIB;
+            if n >= GIB {
+                format!("{:.2} GiB", n as f64 / GIB as f64)
+            } else if n >= MIB {
+                format!("{:.2} MiB", n as f64 / MIB as f64)
+            } else if n >= KIB {
+                format!("{:.1} KiB", n as f64 / KIB as f64)
+            } else {
+                format!("{} B", n)
+            }
+        };
 
         println!("{}", bold("zshrs doctor"));
         println!("{}", dim(&"=".repeat(60)));
@@ -164,51 +178,150 @@ impl ShellExecutor {
         println!("  autoload:    {} pending", autoload_count);
         println!();
 
-        // --- SQLite Caches ---
-        println!("{}", bold("SQLite Caches"));
-        if let Some(ref engine) = self.history {
-            let count = engine.count().unwrap_or(0);
-            println!("  history:     {} entries  {}", count, green("OK"));
-        } else {
-            println!("  history:     {}", yellow("not initialized"));
-        }
-
-        if let Some(ref cache) = self.compsys_cache {
-            let count = compsys::cache_entry_count(cache);
-            println!("  compsys:     {} completions  {}", count, green("OK"));
-
-            // Bytecode coverage = bodies-with-source minus rkyv-shard-keys.
-            // The rkyv autoload cache lives at ~/.cache/zshrs/autoloads.rkyv.
-            if let Ok(total_bodies) = cache.count_autoloads_with_body() {
-                let cached = crate::autoload_cache::entry_count();
-                let missing = total_bodies.saturating_sub(cached);
-                if missing == 0 {
-                    println!(
-                        "  bytecode cache:   {}",
-                        green("all functions compiled to bytecode")
-                    );
-                } else {
-                    println!(
-                        "  bytecode cache:   {} functions {}",
-                        missing,
-                        yellow("missing bytecode blobs")
-                    );
-                }
-            }
-        } else {
-            println!("  compsys:     {}", yellow("no cache"));
-        }
-
-        if let Some(ref cache) = self.plugin_cache {
-            let (plugins, functions) = cache.stats();
+        // --- Caches (rkyv-mmapped) ---
+        // Per docs/DESIGN_GOALS.md:13 and docs/DAEMON.md:226, the only
+        // shell cache layer is rkyv-mmapped bytecode under
+        // `~/.zshrs/images/` with the top-level `~/.zshrs/index.rkyv`
+        // (fq_name → shard_id, generation, byte_offset). Hot lookups
+        // never hit SQLite — clients mmap rkyv exclusively.
+        println!("{}", bold("Caches (rkyv-mmapped)"));
+        let zshrs_dir = dirs::home_dir()
+            .map(|h| h.join(".zshrs"))
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/.zshrs"));
+        let index_rkyv = zshrs_dir.join("index.rkyv");
+        if index_rkyv.exists() {
+            let size = std::fs::metadata(&index_rkyv).map(|m| m.len()).unwrap_or(0);
             println!(
-                "  plugins:     {} plugins, {} cached functions  {}",
-                plugins,
-                functions,
+                "  index:       {} {}  {}",
+                index_rkyv.display(),
+                format_bytes(size),
                 green("OK")
             );
         } else {
-            println!("  plugins:     {}", yellow("no cache"));
+            println!(
+                "  index:       {} {}",
+                index_rkyv.display(),
+                yellow("(absent — daemon not built shards yet)")
+            );
+        }
+        let images_dir = zshrs_dir.join("images");
+        if images_dir.is_dir() {
+            let mut shards: Vec<(String, u64)> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&images_dir) {
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if p.extension().and_then(|e| e.to_str()) == Some("rkyv") {
+                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        let name = p
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        shards.push((name, size));
+                    }
+                }
+            }
+            shards.sort();
+            let total: u64 = shards.iter().map(|(_, s)| *s).sum();
+            println!(
+                "  images/:     {} shards, {} total",
+                shards.len(),
+                format_bytes(total)
+            );
+            for (name, size) in &shards {
+                println!("               {} {}", format_bytes(*size), name);
+            }
+        } else {
+            println!(
+                "  images/:     {} {}",
+                images_dir.display(),
+                yellow("(absent)")
+            );
+        }
+
+        // Legacy single-file shards still in active shell-side use until
+        // they migrate under images/ in the daemon hydration path.
+        if let Some((count, bytes)) = crate::script_cache::stats() {
+            let path = crate::script_cache::default_cache_path();
+            println!(
+                "  scripts:     {} entries, {}  {}",
+                count,
+                format_bytes(bytes as u64),
+                dim(&format!("{}", path.display()))
+            );
+        }
+        let autoload_count = crate::autoload_cache::entry_count();
+        if autoload_count > 0 {
+            let path = crate::autoload_cache::default_cache_path();
+            println!(
+                "  autoloads:   {} functions  {}",
+                autoload_count,
+                dim(&format!("{}", path.display()))
+            );
+        }
+
+        // Bytecode coverage diagnostic: how many compsys-autoloaded
+        // functions have a parsed body in the SQLite inspection mirror
+        // but no compiled bytecode blob in the rkyv shard yet. A
+        // healthy daemon-hydrated cache reports 0 missing.
+        if let Some(ref cache) = self.compsys_cache {
+            if let Ok(total_bodies) = cache.count_autoloads_with_body() {
+                let missing = total_bodies.saturating_sub(autoload_count);
+                if missing == 0 {
+                    println!(
+                        "  coverage:    {}",
+                        green("all autoload bodies have bytecode")
+                    );
+                } else {
+                    println!(
+                        "  coverage:    {} {}",
+                        missing,
+                        yellow("autoload bodies missing bytecode")
+                    );
+                }
+            }
+        }
+        println!();
+
+        // --- SQLite (read-only mirrors) ---
+        // Same directory, different job: daemon-maintained copies you
+        // can query with SQL or `dbview`. They are NOT the bytecode
+        // cache and are NOT read when deciding cache hit/miss or when
+        // running compiled code. The numbers below are inspection-only.
+        println!("{}", bold("SQLite (read-only mirrors)"));
+        println!(
+            "  {}",
+            dim("daemon-maintained; not read on cache lookup / hot path")
+        );
+        if let Some(ref cache) = self.compsys_cache {
+            let count = compsys::cache_entry_count(cache);
+            println!("  compsys:     {} completions  {}", count, dim("mirror"));
+        } else {
+            println!("  compsys:     {}", yellow("no mirror"));
+        }
+        if let Some(ref cache) = self.plugin_cache {
+            let (plugins, functions) = cache.stats();
+            println!(
+                "  plugins:     {} plugins, {} functions  {}",
+                plugins,
+                functions,
+                dim("mirror")
+            );
+        } else {
+            println!("  plugins:     {}", yellow("no mirror"));
+        }
+        println!();
+
+        // --- History ---
+        // History is not a cache; it's a durable command record. Kept
+        // here because the doctor previously buried it under the
+        // (mis-labeled) "SQLite Caches" header.
+        println!("{}", bold("History"));
+        if let Some(ref engine) = self.history {
+            let count = engine.count().unwrap_or(0);
+            println!("  entries:     {}  {}", count, green("OK"));
+        } else {
+            println!("  entries:     {}", yellow("not initialized"));
         }
         println!();
 
