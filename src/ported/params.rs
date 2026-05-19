@@ -4204,16 +4204,37 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
     }
 
     // c:3269 `v->pm->node.flags &= ~PM_DEFAULTED;`
-    let pm = tab.get_mut(name).unwrap();
-    pm.node.flags &= !(PM_DEFAULTED as i32);
+    let pm = tab.get_mut(name).unwrap();                                     // c:3269
+    pm.node.flags &= !(PM_DEFAULTED as i32);                                 // c:3269
 
-    // c:3343 `assignstrvalue(v, val, flags)` — scalar write.
-    pm.u_str = Some(val.to_string());
-
-    let cloned = pm.clone();
-    drop(tab);
+    // c:3343 `assignstrvalue(v, val, flags)`. C aliases `v->pm`
+    // through to the param in the hash table; Rust's borrow rules
+    // forbid holding `&mut Param` and wrapping it in `value.pm:
+    // Option<Param>` at once, so we take the Param out of the table,
+    // wrap, dispatch through the existing `assignstrvalue` port
+    // (params.c:2692), and put the mutated Param back. The previous
+    // Rust body wrote `pm.u_str = val` directly, skipping the
+    // PM_INTEGER / PM_EFLOAT / PM_FFLOAT / PM_ARRAY arms entirely —
+    // `integer i=0; i=5; print $i` printed 0 because `getsparam`
+    // reads `pm.u_val` for PM_INTEGER (params.rs:3757) while the
+    // write only touched `pm.u_str`.
+    let taken = tab.remove(name).unwrap();                                   // c:3343
+    drop(tab);                                                               // c:3343
+    let mut v = crate::ported::zsh_h::value {                                // c:3343
+        pm: Some(taken),                                                     // c:3343
+        arr: Vec::new(),                                                     // c:3343
+        scanflags: 0,                                                        // c:3343
+        valflags: 0,                                                         // c:3343
+        start: 0,                                                            // c:3343
+        end: -1,                                                             // c:3343
+    };                                                                       // c:3343
+    assignstrvalue(Some(&mut v), Some(val.to_string()), flags);              // c:3343
+    let cloned = v.pm.as_ref().cloned();                                     // c:3345
+    if let Some(pm_back) = v.pm {                                            // c:3343
+        paramtab().write().unwrap().insert(name.to_string(), pm_back);       // c:3343
+    }                                                                        // c:3343
     crate::ported::signals::unqueue_signals();                               // c:3344
-    Some(cloned)                                                             // c:3345
+    cloned                                                                   // c:3345
 }
 
 // `VarAttr` struct + `VarKind` enum + `impl VarAttr::format_zsh`
@@ -9403,15 +9424,24 @@ mod tests {
     /// drop assignments.
     #[test]
     fn assignsparam_then_getsparam_round_trips() {
-        let _g = crate::test_util::global_state_lock();
-        let name = "ZSHRS_TEST_ASSIGN_GET";
-        crate::ported::params::assignsparam(name, "test_value_42", 0);
-        assert_eq!(
-            crate::ported::params::getsparam(name).as_deref(),
-            Some("test_value_42")
-        );
+        let _g = crate::test_util::global_state_lock();                       // c:3193
+        // c:2697 — assignsparam → assignstrvalue bails when
+        // unset(EXECOPT). The unit-test env doesn't run through
+        // createoptiontable so we set "exec" explicitly to simulate
+        // normal runtime. Mirrors the same setup used by
+        // `setnumvalue_stores_int_value_into_scalar_pm` above.
+        let saved_exec = crate::ported::options::opt_state_get("exec")        // c:2697
+            .unwrap_or(false);                                                // c:2697
+        crate::ported::options::opt_state_set("exec", true);                  // c:2697
+        let name = "ZSHRS_TEST_ASSIGN_GET";                                   // c:3193
+        crate::ported::params::assignsparam(name, "test_value_42", 0);        // c:3193
+        assert_eq!(                                                            // c:3076
+            crate::ported::params::getsparam(name).as_deref(),                // c:3076
+            Some("test_value_42")                                              // c:3076
+        );                                                                     // c:3076
         // Cleanup so other tests don't see leaked param.
-        let _ = crate::ported::params::paramtab().write().unwrap().remove(name);
+        let _ = crate::ported::params::paramtab().write().unwrap().remove(name); // c:3819
+        crate::ported::options::opt_state_set("exec", saved_exec);            // c:2697
     }
 
     /// c:3076 — getsparam on a non-existent param returns None.
