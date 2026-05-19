@@ -253,7 +253,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SOURCE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = dispatch_builtin("dot", args);
+        // BUILTINS has `source` (c:116, Src/builtin.c) wired to
+        // bin_dot. The legacy `dot` lookup-name predated the
+        // canonical table merge and silently returned 1 without
+        // emitting the "no such file or directory" error from
+        // bin_dot's missing-file path, so failed sources looked
+        // like silent successes from the user's side.
+        let status = dispatch_builtin("source", args);
         Value::Status(status)
     });
 

@@ -2807,7 +2807,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
     // three high-frequency paths inline: assoc creation (`PM_HASHED`
     // + `name=(k v k v)`), array creation (`PM_ARRAY` + `name=(a b c)`),
     // and scalar assignment.
-    let _ = (off, returnval, name);
+    let _ = (off, returnval);
     let is_hashed = (on & PM_HASHED) != 0;                                   // c:2655 `-A`
     let is_array  = (on & PM_ARRAY)  != 0;                                   // c:2655 `-a`
     for arg in argv {
@@ -2820,6 +2820,42 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
             Some(i) => &arg[..i],
             None => arg.as_str(),
         };
+
+        // c:2519-2552 (Src/builtin.c, inside typeset_single) — name
+        // validation gate. Direct port:
+        //   else if ((isident(pname) || paramtab->getnode(paramtab, pname))
+        //            && (!idigit(*pname) || !strcmp(pname, "0"))) {
+        //       /* proceed */
+        //   } else {
+        //       if (idigit(*pname))
+        //           zerrnam(cname, "not an identifier: %s", pname);
+        //       else
+        //           zerrnam(cname, "not valid in this context: %s", pname);
+        //       return NULL;
+        //   }
+        //
+        // The C function returns NULL on failure; the outer bin_typeset
+        // name loop continues to the next arg (errflag silences
+        // subsequent zerr calls so we won't double-emit). Mirror that
+        // here with `continue`.
+        let pname_in_tab = crate::ported::params::paramtab()
+            .read()
+            .map(|t| t.get(arg_name).is_some())
+            .unwrap_or(false);
+        let first_is_digit = arg_name.as_bytes().first().is_some_and(|b| b.is_ascii_digit());
+        let pname_valid = (crate::ported::params::isident(arg_name) || pname_in_tab)
+            && (!first_is_digit || arg_name == "0");
+        if !pname_valid {
+            if first_is_digit {
+                crate::ported::utils::zerrnam(name,                          // c:2548
+                    &format!("not an identifier: {}", arg_name));
+            } else {
+                crate::ported::utils::zerrnam(name,                          // c:2550
+                    &format!("not valid in this context: {}", arg_name));
+            }
+            continue;                                                        // c:2551 return NULL
+        }
+
         if (on & PM_LOCAL) != 0
             && !arg_name.is_empty()
             && !arg_name.starts_with('-')
@@ -5718,32 +5754,60 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
         crate::ported::utils::set_argzero(prev);
     }
 
-    // c:6130-6137 — error path.
+    // c:6130-6137 — error path. C: `if (ret == SOURCE_NOT_FOUND)`
+    // emits via zerrnam (POSIX) / zwarnnam (default). The Rust port
+    // uses zwarnnam unconditionally because the POSIX hard-error
+    // path also calls zerrnam which behaves identically here (both
+    // route through zwarning); the only difference C makes is
+    // promoting errflag to ERRFLAG_ERROR which already happens
+    // inside zwarnnam.
     let path = match found_path {
         Some(p) => p,
         None => {                                                            // c:6130
-            let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
             let msg = format!("{}: {}", "no such file or directory", arg0);  // c:6135
-            if posix {
-                crate::ported::utils::zwarnnam(name, &msg);                  // c:6133
-            } else {
-                crate::ported::utils::zwarnnam(name, &msg);                  // c:6135
-            }
-            return 1;
+            crate::ported::utils::zwarnnam(name, &msg);                      // c:6135
+            // c:6143 — `return ret == SOURCE_OK ? lastval : 128 - ret`.
+            // SOURCE_NOT_FOUND = 1 (Src/zsh.h:2214) → 128 - 1 = 127.
+            return 128 - 1;
         }
     };
 
     // c:6140 — `ret = source(enam = buf);`
-    // Execute the script: read + parse + eval. Static-link path: best-
-    // effort exec via std::fs read; full source-loop integration lives
-    // in src/ported/init.rs.
+    // C `source()` lives at Src/init.c:1550. It opens the file, sets
+    // up sourcelevel + scriptname + funcstack, parses + executes via
+    // the wordcode walker, then unwinds. Rust port reads the file
+    // and routes the body through fusevm's `execute_script` — the
+    // VM's parse + compile + run loop is the analog of C's
+    // loop/execlist tree walk. Errors during execution propagate
+    // through `lastval`; missing read returns SOURCE_ERROR (128-2 =
+    // 126) per c:6143.
+    //
+    // SOURCELEVEL bump (Src/init.c:1606 `sourcelevel++;` /
+    // c:1644 `sourcelevel--;`) is REQUIRED for `return` inside the
+    // sourced file to unwind correctly. bin_break (Src/builtin.c:5840)
+    // checks `(interactive && shinstdin) || locallevel || sourcelevel`
+    // — without the bump, `return N` falls through to `zexit(num,
+    // ZEXIT_NORMAL)` (c:5858) and kills the entire shell instead of
+    // unwinding to the source caller. Also clear RETFLAG after the
+    // sourced script returns so the unwind doesn't propagate to the
+    // outer compile unit.
+    SOURCELEVEL.fetch_add(1, Ordering::Relaxed);                             // c:1606
     let result = match std::fs::read_to_string(&path) {                      // c:6140
-        Ok(_src) => {
-            let _ = path;
-            0
+        Ok(src) => {
+            crate::fusevm_bridge::with_executor(|exec| {
+                exec.execute_script(&src).unwrap_or(1)
+            })
         }
-        Err(_) => 1,
+        // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
+        Err(_) => 128 - 2,
     };
+    SOURCELEVEL.fetch_sub(1, Ordering::Relaxed);                             // c:1644
+    // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
+    // sourced file's execute_script unwinds, the return has been
+    // serviced; clear the flag so the outer compile unit's main loop
+    // (init.rs:1252's `if retflag break` guard) doesn't see a stale
+    // request and abort `echo done` after `source foo`.
+    RETFLAG.store(0, Ordering::Relaxed);                                     // c:5842 unwind
     // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
         crate::ported::utils::set_argzero(prev);
@@ -6828,7 +6892,15 @@ pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // incremented a DIFFERENT global, leaving the two views out of
 // sync indefinitely.
 pub use crate::ported::params::locallevel as LOCALLEVEL;
-pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// Same single-storage rationale as LOCALLEVEL above — C zsh has
+// only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
+// Rust port is `crate::ported::init::sourcelevel` (lowercase,
+// matches C name). Re-export that single storage so the bin_break
+// reader and the bin_dot bumps address the same atomic; without
+// this, `bin_dot` could increment one global while `bin_break`
+// inspected the other and `return` inside a sourced file would
+// fall through to `zexit` (Src/builtin.c:5858).
+pub use crate::ported::init::sourcelevel as SOURCELEVEL;
 
 // `ZEXIT_NORMAL` re-exported from canonical zsh_h.rs (port of the
 // `enum { ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED }` in Src/zsh.h).
