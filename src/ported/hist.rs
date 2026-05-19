@@ -1676,7 +1676,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         crate::ported::utils::errflag.store(0, Ordering::Relaxed);           // c:1518
         let args = vec!["zshaddhistory".to_string(), chline_text.clone()];   // c:1520-1521
         hookret = crate::ported::utils::callhookfunc(                        // c:1522
-            "zshaddhistory", Some(&args), true);
+            "zshaddhistory", Some(&args), 1, std::ptr::null_mut());
         let new_errflag = (crate::ported::utils::errflag                     // c:1524-1525
             .load(Ordering::Relaxed)
             & !crate::ported::utils::ERRFLAG_ERROR) | save_errflag;

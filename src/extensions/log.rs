@@ -207,3 +207,64 @@ pub fn flamegraph_enabled() -> bool {
 pub fn prometheus_enabled() -> bool {
     cfg!(feature = "prometheus")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialize env-mutating tests to avoid races. Other suites may
+    // touch ZSHRS_HOME concurrently; this lock keeps us inside ours.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_zshrs_home<F: FnOnce()>(value: Option<&str>, f: F) {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var_os("ZSHRS_HOME");
+        match value {
+            Some(v) => std::env::set_var("ZSHRS_HOME", v),
+            None => std::env::remove_var("ZSHRS_HOME"),
+        }
+        f();
+        match prev {
+            Some(v) => std::env::set_var("ZSHRS_HOME", v),
+            None => std::env::remove_var("ZSHRS_HOME"),
+        }
+    }
+
+    #[test]
+    fn log_dir_honors_zshrs_home_env_var() {
+        with_zshrs_home(Some("/tmp/zshrs-test-home"), || {
+            assert_eq!(log_dir(), PathBuf::from("/tmp/zshrs-test-home"));
+        });
+    }
+
+    #[test]
+    fn log_path_appends_zshrs_log_filename() {
+        with_zshrs_home(Some("/tmp/zshrs-test-path"), || {
+            assert_eq!(
+                log_path(),
+                PathBuf::from("/tmp/zshrs-test-path/zshrs.log")
+            );
+        });
+    }
+
+    #[test]
+    fn log_dir_falls_back_when_zshrs_home_unset() {
+        with_zshrs_home(None, || {
+            let dir = log_dir();
+            // Must end in `.zshrs` regardless of whether HOME is set
+            // (no HOME → /tmp/.zshrs).
+            assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some(".zshrs"));
+        });
+    }
+
+    #[test]
+    fn feature_flag_helpers_match_cfg() {
+        // Each helper must agree with the underlying cfg!() macro —
+        // a regression here would mean someone special-cased the
+        // helper independent of the feature.
+        assert_eq!(profiling_enabled(), cfg!(feature = "profiling"));
+        assert_eq!(flamegraph_enabled(), cfg!(feature = "flamegraph"));
+        assert_eq!(prometheus_enabled(), cfg!(feature = "prometheus"));
+    }
+}

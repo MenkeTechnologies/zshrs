@@ -1895,30 +1895,41 @@ pub fn enables_(m: *const crate::ported::zsh_h::module) -> i32 {             // 
 }
 
 /// Direct port of `int boot_(Module m)` from `Src/Zle/complete.c:1758`.
-/// Registers the completion hooks (`complete` → do_completion,
-/// `before_complete`, `after_complete`, `accept_completion` →
-/// accept_last, `list_matches`, `invalidate_list`) into the HOOKTAB.
+/// C registers six completion Hookfns:
+/// ```c
+/// addhookfunc("complete",          do_completion);
+/// addhookfunc("before_complete",   before_complete);
+/// addhookfunc("after_complete",    after_complete);
+/// addhookfunc("accept_completion", accept_last);
+/// addhookfunc("list_matches",      list_matches);
+/// addhookfunc("invalidate_list",   invalidate_list);
+/// ```
+/// The Rust handlers in `compcore.rs` / `compresult.rs` currently have
+/// non-`Hookfn`-shaped signatures (`do_completion(s: &str, incmd, lst)`
+/// etc.) and direct callers in `zle_tricky.rs`. Registering them
+/// requires a follow-up that either (a) changes the handler sigs to
+/// `(*mut hookdef, *mut c_void) -> i32` and casts the void* arg back
+/// to the typed pointer inside the body — matching C's
+/// `(Hookfn) do_completion` cast at registration site — or (b) adds
+/// per-handler Hookfn-shape thunks under separate C-named symbols.
+/// The fallback handlers in zle_h.rs/compresult.rs fire when no
+/// Hookfn is registered (matching c:993-995), so leaving the
+/// registration out is observationally neutral until that follow-up
+/// lands.
 #[allow(unused_variables)]
 pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {                // c:1758
-    crate::ported::module::addhookfunc("complete",          "do_completion");
-    crate::ported::module::addhookfunc("before_complete",   "before_complete");
-    crate::ported::module::addhookfunc("after_complete",    "after_complete");
-    crate::ported::module::addhookfunc("accept_completion", "accept_last");
-    crate::ported::module::addhookfunc("list_matches",      "list_matches");
-    crate::ported::module::addhookfunc("invalidate_list",   "invalidate_list");
+    // TODO: hookfn-sig refactor — re-enable these six registrations
+    // once compcore/compresult handlers carry the (Hookdef, void *)
+    // shape. See port note above.
     0                                                                         // c:1767
 }
 
 /// Direct port of `int cleanup_(Module m)` from `Src/Zle/complete.c:1772`.
-/// Unregisters the same hooks that `boot_` added.
+/// C unregisters the same six Hookfns that `boot_` added. Paired with
+/// the same registration deferral — currently a no-op until the
+/// handler-sig refactor.
 #[allow(unused_variables)]
 pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:1772
-    crate::ported::module::deletehookfunc("complete",          "do_completion");
-    crate::ported::module::deletehookfunc("before_complete",   "before_complete");
-    crate::ported::module::deletehookfunc("after_complete",    "after_complete");
-    crate::ported::module::deletehookfunc("accept_completion", "accept_last");
-    crate::ported::module::deletehookfunc("list_matches",      "list_matches");
-    crate::ported::module::deletehookfunc("invalidate_list",   "invalidate_list");
     0                                                                         // c:1783
 }
 

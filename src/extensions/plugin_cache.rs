@@ -1177,9 +1177,18 @@ impl crate::ported::vm_helper::ShellExecutor {
             crate::ported::options::opt_state_set(name, *enabled);
         }
 
-        // Hooks — append into the canonical `<hook>_functions` paramtab array.
+        // Hooks — append into the canonical `<hook>_functions`
+        // paramtab array (port of `Src/Functions/Misc/add-zsh-hook`
+        // shell-function idiom). NOT the C-module HOOKTAB
+        // (src/ported/module.rs `addhookfunc`), which stores
+        // Hookfn fn pointers for C-internal hookdefs.
         for (hook, func) in &delta.hooks {
-            self.add_hook(hook, func);
+            let array_name = format!("{}_functions", hook);
+            let mut arr = self.array(&array_name).unwrap_or_default();
+            if !arr.iter().any(|f| f == func) {
+                arr.push(func.clone());
+                crate::ported::params::setaparam(&array_name, arr);
+            }
         }
 
         // Plugin cache replay: each bincode blob is a ShellCommand AST.

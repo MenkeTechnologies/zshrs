@@ -2603,13 +2603,12 @@ impl ShellExecutor {}
 impl ShellExecutor {}
 
 impl ShellExecutor {
-    /// `add-zsh-hook` registration stub. The hooks-machinery file was
-    /// removed from extensions/; these no-ops preserve the call sites
-    /// in `ext_builtins.rs::builtin_add_zsh_hook` and `plugin_cache.rs`.
-    pub(crate) fn add_hook(&mut self, _hook: &str, _func: &str) {}
-
-    /// `add-zsh-hook -d` removal — same stub rationale as `add_hook`.
-    pub(crate) fn delete_hook(&mut self, _hook: &str, _func: &str) {}
+    // `add_hook` / `delete_hook` now live in src/extensions/hooks.rs.
+    // That file was orphaned (never declared as a module) and the no-op
+    // stubs that previously sat here silently swallowed every
+    // `add-zsh-hook` registration. Wiring hooks.rs back into lib.rs
+    // restored the real paramtab-backed implementation; the empty
+    // stubs were removed so dispatch resolves unambiguously.
 
     // ═══════════════════════════════════════════════════════════════════
     // AOP INTERCEPT — the killer builtin

@@ -2769,9 +2769,12 @@ pub(crate) fn enables_() -> Vec<i32> {
 /// dispatch via the same names; the actual hook registry is in
 /// src/ported/module.rs.
 pub(crate) fn boot_() -> i32 {
-    // c:4051-4052 — register the two compctl-driver hooks into HOOKTAB.
-    crate::ported::module::addhookfunc("compctl_make",    "ccmakehookfn");
-    crate::ported::module::addhookfunc("compctl_cleanup", "cccleanuphookfn");
+    // c:4051-4052 — `addhookfunc("compctl_make", ccmakehookfn);
+    //                addhookfunc("compctl_cleanup", cccleanuphookfn);`
+    // Deferred until ccmakehookfn / cccleanuphookfn carry the Hookfn
+    // signature `(Hookdef, void *) -> int`. The current Rust thunks
+    // are wrappers around makecomplistctl with non-Hookfn shapes;
+    // re-enable once that refactor lands.
     0
 }
 
@@ -2784,9 +2787,10 @@ use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLA
 /// Reverses boot_: removes the two hooks, then disables features
 /// via `setfeatureenables(m, &module_features, NULL)`.
 pub(crate) fn cleanup_() -> i32 {
-    // c:4060-4062 — unregister the two compctl hooks.
-    crate::ported::module::deletehookfunc("compctl_make",    "ccmakehookfn");
-    crate::ported::module::deletehookfunc("compctl_cleanup", "cccleanuphookfn");
+    // c:4060-4062 — `deletehookfunc("compctl_make", ccmakehookfn);
+    //                deletehookfunc("compctl_cleanup", cccleanuphookfn);`
+    // Same registration deferral as `boot_()` above — no-op until
+    // the Hookfn-sig refactor.
     0
 }
 

@@ -1475,21 +1475,19 @@ pub fn list_matches() -> i32 {                                               // 
     let mut dat = crate::ported::zle::comp_h::Chdata::default();
     dat.matches = groups.into_iter().next().map(Box::new);                   // c:2317 first group head
     dat.num     = nmatches_g.load(Ordering::Relaxed);                        // c:2319
-    let _ = dat;
     // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
-    // registered `complist-matches` handler; first non-zero return
-    // short-circuits per HOOKF_ALL semantics. Falls back to the
-    // canonical `ilistmatches` renderer when no handler is registered.
-    let handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
-        .ok().and_then(|t| t.get("complist-matches").cloned())
-        .unwrap_or_default();
-    let mut handled = false;
-    for f in &handlers {
-        if crate::ported::utils::getshfunc(f).is_some() {
-            let _ = crate::ported::zle::compcore::shfunc_call(f);
-            handled = true;
-        }
-    }
+    // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
+    // When `gethookdef` returns NULL (no module registered a handler)
+    // or `runhookdef` returns 0 with no Hookfns, fall through to the
+    // canonical `ilistmatches` renderer.
+    let h = crate::ported::module::gethookdef("complist-matches");
+    let handled = if !h.is_null() {
+        let dat_ptr = (&mut dat) as *mut crate::ported::zle::comp_h::Chdata
+            as *mut std::ffi::c_void;
+        crate::ported::module::runhookdef(h, dat_ptr) != 0
+    } else {
+        false
+    };
     if !handled {
         ilistmatches();
     }

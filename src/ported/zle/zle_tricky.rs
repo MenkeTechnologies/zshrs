@@ -388,18 +388,15 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
     }
     ACTIVE.with(|c| c.set(true));
 
-    // c:621 — runhookdef(BEFORECOMPLETEHOOK, &lst). Any handler
-    // returning non-zero short-circuits with ret=0.
+    // c:621 — `runhookdef(BEFORECOMPLETEHOOK, &lst)`. Canonical
+    // dispatch via `gethookdef + runhookdef`; null check matches
+    // c:992 `empty(h->funcs)`-and-no-`def` path returning 0.
     let mut lst_box = lst;
-    let handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
-        .ok().and_then(|t| t.get("before_complete").cloned())
-        .unwrap_or_default();
-    for f in &handlers {
-        if crate::ported::utils::getshfunc(f).is_some() {
-            let _ = crate::ported::zle::compcore::shfunc_call(f);
-        }
+    let h_before = crate::ported::module::gethookdef("before_complete");
+    if !h_before.is_null() {
+        let lst_ptr = (&mut lst_box) as *mut i32 as *mut std::ffi::c_void;
+        crate::ported::module::runhookdef(h_before, lst_ptr);
     }
-    let _ = lst_box;
 
     // c:628 — `if (doexpandhist()) { active = 0; return 0; }`.
     if doexpandhist() != 0 {
@@ -415,17 +412,15 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
         .lock().map(|g| g.clone()).unwrap_or_default();
     let ret = crate::ported::zle::compcore::do_completion(&line, 0, lst);
 
-    // c:878 — runhookdef(AFTERCOMPLETEHOOK, &dat).
+    // c:878 — `runhookdef(AFTERCOMPLETEHOOK, &dat)`. Same dispatch
+    // shape as the BEFORECOMPLETEHOOK call above; passes a 2-element
+    // int buffer per C's `int dat[2]`.
     let mut dat: [i32; 2] = [0, 0];
-    let after_handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
-        .ok().and_then(|t| t.get("after_complete").cloned())
-        .unwrap_or_default();
-    for f in &after_handlers {
-        if crate::ported::utils::getshfunc(f).is_some() {
-            let _ = crate::ported::zle::compcore::shfunc_call(f);
-        }
+    let h_after = crate::ported::module::gethookdef("after_complete");
+    if !h_after.is_null() {
+        let dat_ptr = dat.as_mut_ptr() as *mut std::ffi::c_void;
+        crate::ported::module::runhookdef(h_after, dat_ptr);
     }
-    let _ = dat;
     let _ = Ordering::Relaxed;
     ACTIVE.with(|c| c.set(false));
     ret

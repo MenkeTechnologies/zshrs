@@ -1224,7 +1224,15 @@ impl ShellExecutor {
         0
     }
 
-    /// add-zsh-hook builtin - add function to hook
+    /// `add-zsh-hook` builtin. Direct port of the shell function at
+    /// `Src/Functions/Misc/add-zsh-hook`, which maintains a paramtab
+    /// array per well-known hook (`chpwd_functions`, `precmd_functions`,
+    /// `preexec_functions`, `periodic_functions`, `zshexit_functions`,
+    /// `zshaddhistory_functions`). This is the SHELL-LEVEL mechanism;
+    /// it is distinct from the C-module hookdef chain in
+    /// `src/ported/module.rs` (`addhookfunc(name, Hookfn)` writes to
+    /// `hooktab` and is consumed by `runhookdef` for C-module
+    /// callbacks like BEFORECOMPLETEHOOK / AFTERCOMPLETEHOOK).
     pub(crate) fn builtin_add_zsh_hook(&mut self, args: &[String]) -> i32 {
         // add-zsh-hook [-d] hook function
         if args.len() < 2 {
@@ -1237,15 +1245,23 @@ impl ShellExecutor {
                 eprintln!("usage: add-zsh-hook -d hook function");
                 return 1;
             }
-            (true, &args[1], &args[2])
+            (true, args[1].as_str(), args[2].as_str())
         } else {
-            (false, &args[0], &args[1])
+            (false, args[0].as_str(), args[1].as_str())
         };
 
+        let array_name = format!("{}_functions", hook);
         if delete {
-            self.delete_hook(hook, func);
+            if let Some(mut arr) = self.array(&array_name) {
+                arr.retain(|f| f != func);
+                crate::ported::params::setaparam(&array_name, arr);
+            }
         } else {
-            self.add_hook(hook, func);
+            let mut arr = self.array(&array_name).unwrap_or_default();
+            if !arr.iter().any(|f| f == func) {
+                arr.push(func.to_string());
+                crate::ported::params::setaparam(&array_name, arr);
+            }
         }
         0
     }
@@ -8219,5 +8235,131 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
     }
     eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
     1
+}
+
+#[cfg(test)]
+mod add_zsh_hook_tests {
+    //! Tests for the `add-zsh-hook` builtin — the SHELL-LEVEL hook
+    //! registration mechanism (`<hook>_functions` paramtab arrays;
+    //! port of `Src/Functions/Misc/add-zsh-hook`). Distinct from the
+    //! C-module HOOKTAB / `runhookdef` system, which is tested in
+    //! `src/ported/module.rs`.
+    use crate::vm_helper::ShellExecutor;
+
+    #[test]
+    fn add_zsh_hook_registers_function_in_paramtab_array() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        let rc = exec.builtin_add_zsh_hook(&[
+            "chpwd".to_string(),
+            "my_fn".to_string(),
+        ]);
+        assert_eq!(rc, 0);
+        assert_eq!(
+            exec.array("chpwd_functions").unwrap(),
+            vec!["my_fn".to_string()]
+        );
+        // Cleanup so other tests aren't polluted.
+        crate::ported::params::setaparam("chpwd_functions", Vec::new());
+    }
+
+    #[test]
+    fn add_zsh_hook_appends_distinct_functions_in_order() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        crate::ported::params::setaparam("precmd_functions", Vec::new());
+        exec.builtin_add_zsh_hook(&["precmd".to_string(), "alpha".to_string()]);
+        exec.builtin_add_zsh_hook(&["precmd".to_string(), "beta".to_string()]);
+        exec.builtin_add_zsh_hook(&["precmd".to_string(), "gamma".to_string()]);
+        assert_eq!(
+            exec.array("precmd_functions").unwrap(),
+            vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()]
+        );
+        crate::ported::params::setaparam("precmd_functions", Vec::new());
+    }
+
+    #[test]
+    fn add_zsh_hook_is_idempotent_for_duplicate_function() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        crate::ported::params::setaparam("preexec_functions", Vec::new());
+        exec.builtin_add_zsh_hook(&["preexec".to_string(), "solo".to_string()]);
+        exec.builtin_add_zsh_hook(&["preexec".to_string(), "solo".to_string()]);
+        exec.builtin_add_zsh_hook(&["preexec".to_string(), "solo".to_string()]);
+        assert_eq!(
+            exec.array("preexec_functions").unwrap(),
+            vec!["solo".to_string()]
+        );
+        crate::ported::params::setaparam("preexec_functions", Vec::new());
+    }
+
+    #[test]
+    fn add_zsh_hook_d_removes_target_function_only() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        crate::ported::params::setaparam("zshexit_functions", Vec::new());
+        exec.builtin_add_zsh_hook(&["zshexit".to_string(), "keep_a".to_string()]);
+        exec.builtin_add_zsh_hook(&["zshexit".to_string(), "drop_me".to_string()]);
+        exec.builtin_add_zsh_hook(&["zshexit".to_string(), "keep_b".to_string()]);
+        let rc = exec.builtin_add_zsh_hook(&[
+            "-d".to_string(),
+            "zshexit".to_string(),
+            "drop_me".to_string(),
+        ]);
+        assert_eq!(rc, 0);
+        assert_eq!(
+            exec.array("zshexit_functions").unwrap(),
+            vec!["keep_a".to_string(), "keep_b".to_string()],
+            "-d must only remove the named function, not every entry"
+        );
+        crate::ported::params::setaparam("zshexit_functions", Vec::new());
+    }
+
+    #[test]
+    fn add_zsh_hook_d_on_missing_function_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        crate::ported::params::setaparam("periodic_functions", Vec::new());
+        exec.builtin_add_zsh_hook(&["periodic".to_string(), "alone".to_string()]);
+        let rc = exec.builtin_add_zsh_hook(&[
+            "-d".to_string(),
+            "periodic".to_string(),
+            "never_registered".to_string(),
+        ]);
+        assert_eq!(rc, 0);
+        assert_eq!(
+            exec.array("periodic_functions").unwrap(),
+            vec!["alone".to_string()]
+        );
+        crate::ported::params::setaparam("periodic_functions", Vec::new());
+    }
+
+    #[test]
+    fn add_zsh_hook_rejects_too_few_args_no_state_change() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        let rc_no_args = exec.builtin_add_zsh_hook(&[]);
+        let rc_one_arg =
+            exec.builtin_add_zsh_hook(&["zshaddhistory".to_string()]);
+        assert_eq!(rc_no_args, 1);
+        assert_eq!(rc_one_arg, 1);
+        // Error path must not populate the array.
+        assert!(exec.array("zshaddhistory_functions").is_none()
+            || exec
+                .array("zshaddhistory_functions")
+                .unwrap()
+                .is_empty());
+    }
+
+    #[test]
+    fn add_zsh_hook_d_rejects_too_few_args() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = ShellExecutor::new();
+        let rc = exec.builtin_add_zsh_hook(&[
+            "-d".to_string(),
+            "chpwd".to_string(),
+        ]);
+        assert_eq!(rc, 1);
+    }
 }
 

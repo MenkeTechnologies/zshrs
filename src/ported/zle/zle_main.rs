@@ -1134,9 +1134,12 @@ pub fn zle_resetprompt() {                                                   // 
 /// ```
 /// Hook callback fired BEFORE a trap handler runs — pushes a
 /// param scope and exposes ZLE state to the trap function (when
-/// zle is active).
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn zlebeforetrap() -> i32 {                                              // c:2104
+/// zle is active). Hookfn signature `(Hookdef, void *) -> int`.
+/// Both params are unused (C: `UNUSED(Hookdef dummy), UNUSED(void *dat)`).
+pub fn zlebeforetrap(                                                        // c:2104
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
         // c:2107 — `startparamscope()`. Push a param scope so trap
@@ -1175,8 +1178,12 @@ pub fn zlebeforetrap() -> i32 {                                              // 
 /// ```
 /// Hook callback fired AFTER a trap handler runs — pops the
 /// param scope that `zlebeforetrap` pushed (if zle is active).
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn zleaftertrap() -> i32 {                                               // c:2114
+/// Hookfn signature `(Hookdef, void *) -> int`. Both params unused
+/// (C: `UNUSED(Hookdef dummy), UNUSED(void *dat)`).
+pub fn zleaftertrap(                                                         // c:2114
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
         crate::ported::params::endparamscope();                              // c:2117
@@ -1280,28 +1287,40 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
 /// return 0;
 /// ```
 pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:2301
-    // c:2301-2304 — `addhookfunc("before_trap", zlebeforetrap);
+    // c:2303-2304 — `addhookfunc("before_trap", zlebeforetrap);
     //                addhookfunc("after_trap",  zleaftertrap);`
-    crate::ported::module::addhookfunc("before_trap", "zlebeforetrap");      // c:2303
-    crate::ported::module::addhookfunc("after_trap",  "zleaftertrap");       // c:2304
+    // The trap hookdefs are registered as part of init.rs's `zshhooks[]`
+    // (entries 1 and 2). With real Hookfn fn pointers now flowing
+    // through `addhookfunc`, the trap thunks attach directly.
+    crate::ported::module::addhookfunc("before_trap", zlebeforetrap);        // c:2303
+    crate::ported::module::addhookfunc("after_trap",  zleaftertrap);         // c:2304
 
     // Register comphooks defs. C zsh's complete-module setup_() does
     // `addhookdefs(m, comphooks, ...)` (complete.c:1766) with the
-    // 5-entry comphooks[] table (complete.c:1702). The zle and
-    // complete modules are statically linked together in zshrs so the
-    // registration happens here; this seeds HOOKTAB with empty handler
-    // lists for each name so `add-zsh-hook NAME fn` (and the canonical
-    // after_complete runhookdef walk in compcore.rs) see valid hook
-    // entries. Insertion is idempotent — re-running boot_() is a
-    // no-op for already-present entries.
-    if let Ok(mut t) = crate::ported::module::HOOKTAB.lock() {
-        for name in ["insert_match",                                         // c:1703
-                     "menu_start",                                           // c:1704
-                     "compctl_make",                                         // c:1705
-                     "compctl_cleanup",                                      // c:1706
-                     "comp_list_matches"]                                    // c:1707
-        {
-            t.entry(name.to_string()).or_default();
+    // 5-entry comphooks[] table (complete.c:1702). The zle and complete
+    // modules are statically linked together in zshrs so the
+    // registration happens here. Each name is registered as a fresh
+    // hookdef in the global `hooktab` so the canonical
+    // `runhookdef(gethookdef(NAME), &dat)` dispatch path in compcore /
+    // compresult / zle_tricky finds them. Re-entry is guarded by
+    // `addhookdef`'s duplicate check (c:866) — second boot_() returns
+    // 1 per hook and we ignore.
+    for name in ["insert_match",                                             // c:1703
+                 "menu_start",                                               // c:1704
+                 "compctl_make",                                             // c:1705
+                 "compctl_cleanup",                                          // c:1706
+                 "comp_list_matches"]                                        // c:1707
+    {
+        let h = Box::into_raw(Box::new(crate::ported::zsh_h::hookdef {
+            next: std::ptr::null_mut(),
+            name: name.to_string(),
+            def: None,
+            flags: crate::ported::zsh_h::HOOKF_ALL,
+            funcs: std::ptr::null_mut(),
+        }));
+        if crate::ported::module::addhookdef(h) != 0 {
+            // Already present from a prior boot_(); reclaim the Box.
+            unsafe { drop(Box::from_raw(h)); }
         }
     }
     0                                                                        // c:2309
@@ -1324,8 +1343,8 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
     }
     // c:2318-2319 — `deletehookfunc("before_trap", zlebeforetrap);
     //                deletehookfunc("after_trap",  zleaftertrap);`
-    crate::ported::module::deletehookfunc("before_trap", "zlebeforetrap");   // c:2318
-    crate::ported::module::deletehookfunc("after_trap",  "zleaftertrap");    // c:2319
+    crate::ported::module::deletehookfunc("before_trap", zlebeforetrap);     // c:2318
+    crate::ported::module::deletehookfunc("after_trap",  zleaftertrap);      // c:2319
     // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
     // explicit-name unlink from keymapnamtab so the next module load starts
     // fresh.
