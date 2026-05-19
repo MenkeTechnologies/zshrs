@@ -1165,6 +1165,15 @@ fn par_for() -> Option<ZshCommand> {
         return parse_for_cstyle();
     }
 
+    // c:1116 — `infor = 0;` immediately on entering the foreach
+    // branch. Without this, `infor` stays at 2 (set at c:1095 when
+    // tok==FOR) for the rest of par_for, and the lexer's `((`
+    // peek at lex.c:786 routes every subsequent `((...))` inside
+    // the loop body through dbparens — so `for x in a; do (( 1
+    // )); done` and `if (( 1 )) { … }` inside the do-body both
+    // mis-lexed as a c-style for header.
+    set_infor(0);                                                            // c:1116
+
     // Get variable name(s). zsh parse.c par_for accepts multiple
     // identifier tokens before `in`/`(`/newline — `for k v in ...`
     // assigns each iteration's pair of values to k and v in turn.

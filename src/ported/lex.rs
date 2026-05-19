@@ -642,33 +642,61 @@ fn cmd_or_math_sub() -> i32 {
 
 /// Check whether we're looking at valid numeric globbing syntax
 /// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
-/// opening `<`. Leaves the input position unchanged, returning true
-/// or false.
+/// Port of `static int isnumglob(void)` from `Src/lex.c:581`.
+/// Called pointing just after the opening `<`. Looks ahead to
+/// detect zsh's numeric-glob shape `<[0-9]*-[0-9]*>` (e.g. `<->`,
+/// `<1-5>`, `<10->`). Returns `true` when the shape matches.
+/// Leaves the input stream in the same position regardless of
+/// outcome — all consumed chars are `hungetc`'d back.
 ///
-/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
-/// hgetc/hungetc against the input stream and a temp buffer to
-/// remember consumed chars; zshrs takes a `(input, pos)` slice and
-/// scans without consumption. Same predicate, different I/O model.
-pub fn isnumglob(input: &str, pos: usize) -> bool {
-    let chars: Vec<char> = input[pos..].chars().collect();
-    let mut i = 0;
-    let mut expect_close = false;
+/// C body:
+/// ```c
+/// while (1) {
+///     c = hgetc();
+///     if (lexstop) { lexstop = 0; break; }
+///     tbuf[n++] = c;
+///     if (!idigit(c)) {
+///         if (c != ec) break;
+///         if (ec == '>') { ret = 1; break; }
+///         ec = '>';
+///     }
+/// }
+/// while (n--) hungetc(tbuf[n]);
+/// return ret;
+/// ```
+pub fn isnumglob() -> bool {                                                  // c:581 (Src/lex.c)
+    // c:583 — `int c, ec = '-', ret = 0;`. `ec` is the expected
+    // non-digit char: starts at `-`, flips to `>` after the dash.
+    let mut ec: char = '-';                                                   // c:583
+    let mut ret = false;                                                      // c:583
+    // c:585 — char buffer for the rewind at c:606-607.
+    let mut buf: Vec<char> = Vec::new();
 
-    // Look for digits, then -, then digits, then >
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_ascii_digit() {
-            i += 1;
-        } else if c == '-' && !expect_close {
-            expect_close = true;
-            i += 1;
-        } else if c == '>' && expect_close {
-            return true;
-        } else {
-            break;
+    loop {                                                                    // c:587
+        let cn = hgetc();                                                     // c:588
+        if LEX_LEXSTOP.get() {                                                // c:589
+            LEX_LEXSTOP.set(false);                                           // c:590
+            break;                                                            // c:591
+        }
+        let Some(cn) = cn else { break };
+        buf.push(cn);                                                         // c:593
+        if !cn.is_ascii_digit() {                                             // c:594 !idigit(c)
+            if cn != ec {                                                     // c:595
+                break;                                                        // c:596
+            }
+            if ec == '>' {                                                    // c:597
+                ret = true;                                                   // c:598
+                break;                                                        // c:599
+            }
+            ec = '>';                                                         // c:601
         }
     }
-    false
+    // c:606-607 — `while (n--) hungetc(tbuf[n]);` — rewind in
+    // reverse order so the next hgetc sees the same bytes.
+    while let Some(ch) = buf.pop() {
+        hungetc(ch);
+    }
+    ret                                                                       // c:609
 }
 
 // SPECCHARS / PATCHARS — port of `Src/zsh.h:228, 232`. Use
@@ -1306,8 +1334,33 @@ fn gettok() -> lextok {
                 }
                 Some('&') => INANGAMP,
                 _ => {
+                    // c:858-862 — `hungetc(d); if (isnumglob()) goto
+                    // unpeekfd; peek = INANG;`. `<digits-digits>` is
+                    // zsh's numeric-glob pattern (e.g., `<-> `, `<1-5>`,
+                    // `<10->`). isnumglob looks ahead to confirm the
+                    // shape and rewinds. When it matches, the entire
+                    // `<...>` is a glob, NOT a redir — fall through to
+                    // gettokstr so it lexes as a literal STRING token.
+                    //
+                    // Without this, `[[ $1 = <-> ]]` had the lexer
+                    // consume `<` as INANG and try to take the next
+                    // token as the redir target, blowing up with
+                    // "expected word after redirection". Critical for
+                    // any zsh code using <-> / <N-M> globs (e.g.
+                    // zinit.zsh:1983).
                     if let Some(d) = d {
                         hungetc(d);
+                    }
+                    if isnumglob() {                                          // c:860
+                        // c:861 — `goto unpeekfd;` — restore peekfd
+                        // and fall through to gettokstr at LX1 break.
+                        if peekfd != -1 {                                     // c:832
+                            hungetc(c);                                       // c:833
+                            return gettokstr(((b'0' as i32) + peekfd) as u8   // c:834
+                                as char, false);
+                        }
+                        LEX_LEXSTOP.set(false);
+                        return gettokstr(c, false);
                     }
                     LEX_LEXSTOP.set(false);
                     INANG_TOK
@@ -1820,68 +1873,72 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            // c:1187 — `case LX2_INANG:` — `<`.
-            //
-            // c:1188 — `if (isset(SHGLOB) && sub) break;` — under
-            // SHGLOB inside substitution context, `<` ends the
-            // token (so e.g. `$(< file)` works as input redirection).
+            // c:1187 — `case LX2_INANG:` — `<` body, direct port.
+            // C order: SHGLOB+sub guard, then `<(...)` proc-sub
+            // (only when NOT in brace_param/sub), then isnumglob,
+            // then the in_brace_param/sub guard that keeps `<` as
+            // a literal character.
             LX2_INANG => {
+                // c:1188 — `if (isset(SHGLOB) && sub) break;`.
                 if isset(SHGLOB) && sub {
                     break;
                 }
-                // c:1201 — `if (!in_brace_param && isnumglob()) { ... }`.
-                // Empirical observation: real zsh's wordcode strs has
-                // Inang/Outang for `<N-M>` numglob shapes INSIDE
-                // `${var/pat/repl}` and `${var//pat/repl}` too. The
-                // C source's `!in_brace_param` gate would prevent that
-                // per literal reading, but zsh's runtime does emit
-                // markers — likely via a parser-side re-lex through
-                // `parsestrnoerr` (lex.c:1713) when the pattern is
-                // tokenized for storage. Mirror the empirical
-                // behavior by checking isnumglob in any context
-                // where the `<` could plausibly be the start of a
-                // numglob (NOT inside [[ ]] cond / case pattern).
-                if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                    add(c);
-                } else if {
-                    let lookahead = LEX_INPUT.with_borrow(|s| {
-                        s[LEX_POS.get()..].to_string()
-                    });
-                    isnumglob(&lookahead, 0)
-                } {
-                    // c:1202-1206 — `add(Inang); while ((c = hgetc())
-                    // != '>') add(c); c = Outang;` then break (falls
-                    // through to the post-switch `add(c)`). i.e. the
-                    // opening `<` and closing `>` get tokenized as
-                    // Inang (`\u{94}`) / Outang (`\u{95}`) markers,
-                    // not raw bytes. Without this, the strs section
-                    // emitted `/tmp/<1-100>.txt` literally instead of
-                    // `/tmp/\u{94}1-100\u{95}.txt` and wordcode parity
-                    // broke on every numeric range glob.
-                    add(Inang);
-                    while let Some(ch) = hgetc() {
-                        if ch == '>' {
-                            break;
-                        }
-                        add(ch);
-                    }
-                    add(Outang);
-                } else {
-                    let e = hgetc();
-                    if e != Some('(') {
-                        if let Some(e) = e {
-                            hungetc(e);
-                        }
-                        LEX_LEXSTOP.set(false);
-                        break;
-                    }
-                    // <(...)
-                    add(Inang);
-                    if skipcomm().is_err() {
+                // c:1190-1198 — `e = hgetc(); if (!(in_brace_param ||
+                // sub) && e == '(') { add(Inang); skipcomm(); c =
+                // Outpar; break; }`. `<(...)` process-sub only when
+                // outside brace_param/sub — inside, `<` stays literal.
+                let e = hgetc();                                              // c:1190
+                if !(in_brace_param > 0 || sub) && e == Some('(') {           // c:1191
+                    add(Inang);                                               // c:1192
+                    if skipcomm().is_err() {                                  // c:1193
                         peek = LEXERR;
                         break;
                     }
-                    add(Outpar);
+                    add(Outpar);                                              // c:1197 c=Outpar
+                } else {
+                    // c:1200 — `hungetc(e);`.
+                    if let Some(e) = e {
+                        hungetc(e);
+                    }
+                    // c:1201-1207 — isnumglob → emit Inang/.../Outang.
+                    if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                        // [[ ]] / case pattern context: `<` literal.
+                        // Original zshrs note: real zsh's wordcode has
+                        // Inang/Outang markers even inside ${var//pat/repl}
+                        // so isnumglob still fires below — but cond /
+                        // case patterns stay raw.
+                        add(c);
+                    } else if isnumglob() {                                   // c:1201
+                        // c:1202-1206 — emit Inang…Outang markers.
+                        add(Inang);                                           // c:1202
+                        while let Some(ch) = hgetc() {                        // c:1203
+                            if ch == '>' {
+                                break;
+                            }
+                            add(ch);                                          // c:1204
+                        }
+                        add(Outang);                                          // c:1205
+                    } else {
+                        // c:1208 — `lexstop = 0;`.
+                        LEX_LEXSTOP.set(false);                               // c:1208
+                        // c:1209-1210 — `if (in_brace_param || sub) break;`
+                        // exits the C switch and falls to the
+                        // post-switch `add(c)`. In Rust the LX2_INANG
+                        // arm doesn't fall to a shared add — add `<`
+                        // explicitly here so it lands in the token
+                        // buffer. Inside `${...}` and `$(...)` /
+                        // backticks, bare `<` is literal — required
+                        // for patterns like `${arr[@]:#<no-data>}`
+                        // (zinit.zsh:2507) which excludes elements
+                        // matching the literal `<no-data>`.
+                        if in_brace_param > 0 || sub {                        // c:1209
+                            add(c);
+                        } else {
+                            // c:1211 — `goto brk;` outside brace_param/sub
+                            // ends the token (bare `<` is a redirect).
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -4493,9 +4550,11 @@ mod tests {
     #[test]
     fn isnumglob_recognises_numeric_range_pattern() {
         let _g = crate::test_util::global_state_lock();
-        assert!(isnumglob("1-10>",  0), "<1-10> shape recognised");
-        assert!(isnumglob("0-100>", 0));
-        assert!(isnumglob("9-9>",   0), "single-value range");
+        // Tests drive the streaming port via lex_init → isnumglob,
+        // matching C's hgetc/hungetc model exactly.
+        lex_init("1-10>");  assert!(isnumglob(), "<1-10> shape recognised");
+        lex_init("0-100>"); assert!(isnumglob());
+        lex_init("9-9>");   assert!(isnumglob(), "single-value range");
     }
 
     /// `isnumglob` rejects malformed shapes: missing closing `>`,
@@ -4504,21 +4563,30 @@ mod tests {
     #[test]
     fn isnumglob_rejects_malformed_shapes() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!isnumglob("1-10",   0), "missing closing > → not numglob");
-        assert!(!isnumglob("1-",     0), "no closing");
-        assert!(!isnumglob("abc>",   0), "non-digit content");
-        assert!(!isnumglob(">",      0), "bare close");
-        assert!(!isnumglob("",       0), "empty input");
+        lex_init("1-10");  assert!(!isnumglob(), "missing closing > → not numglob");
+        lex_init("1-");    assert!(!isnumglob(), "no closing");
+        lex_init("abc>");  assert!(!isnumglob(), "non-digit content");
+        lex_init(">");     assert!(!isnumglob(), "bare close");
+        lex_init("");      assert!(!isnumglob(), "empty input");
     }
 
-    /// `isnumglob` honours the `pos` offset — it scans from `pos`,
-    /// not always from 0. Regression ignoring `pos` would scan from
-    /// the wrong starting char on every embedded numglob.
+    /// `Src/lex.c:606-607` — `while (n--) hungetc(tbuf[n]);` —
+    /// isnumglob must rewind the stream to its starting position
+    /// regardless of whether it returned true or false. Regression
+    /// would leave consumed bytes missing from the input, causing
+    /// the next token to start mid-pattern.
     #[test]
-    fn isnumglob_respects_position_offset() {
+    fn isnumglob_rewinds_stream_on_match_and_non_match() {
         let _g = crate::test_util::global_state_lock();
-        assert!(isnumglob("xxx1-10>",  3), "scan from offset 3");
-        assert!(!isnumglob("xxx1-10>", 0), "scan from offset 0 sees 'x'");
+        lex_init("1-10>tail");
+        assert!(isnumglob());
+        // After match, the next hgetc() should still see the first
+        // char of the pattern, not the suffix.
+        assert_eq!(hgetc(), Some('1'), "c:606-607 — rewind on match");
+
+        lex_init("abc>tail");
+        assert!(!isnumglob());
+        assert_eq!(hgetc(), Some('a'), "c:606-607 — rewind on non-match");
     }
 
     /// `Src/lex.c:580-610` — the C comment says `/<[0-9]*-[0-9]*\>/`.
@@ -4531,12 +4599,13 @@ mod tests {
     fn isnumglob_accepts_empty_digit_runs_per_c_pattern() {
         let _g = crate::test_util::global_state_lock();
         // c:577 — `[0-9]*-[0-9]*>` allows ZERO digits on either side.
-        assert!(isnumglob("->",   0),
+        lex_init("->");
+        assert!(isnumglob(),
             "c:577 — `<->` is the minimum valid numglob (both runs empty)");
-        assert!(isnumglob("-10>", 0),
-            "c:577 — left run can be empty");
-        assert!(isnumglob("1->",  0),
-            "c:577 — right run can be empty");
+        lex_init("-10>");
+        assert!(isnumglob(), "c:577 — left run can be empty");
+        lex_init("1->");
+        assert!(isnumglob(), "c:577 — right run can be empty");
     }
 
     /// `Src/lex.c:594-602` — C state machine: once `ec` flips from
@@ -4548,9 +4617,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:597-602 — after seeing the first `-`, ec becomes `>`.
         // Next non-digit must be `>` or the loop breaks.
-        assert!(!isnumglob("1-2-3>", 0),
+        lex_init("1-2-3>");
+        assert!(!isnumglob(),
             "c:597-602 — second `-` breaks the state machine");
-        assert!(!isnumglob("1--2>",  0),
+        lex_init("1--2>");
+        assert!(!isnumglob(),
             "c:597-602 — `--` not valid in numglob");
     }
 
