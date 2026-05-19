@@ -206,44 +206,232 @@ pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32
     ret                                                                      // c:563
 }
 
-/// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
+/// Port of `Hookdef gethookdef(const char *n)` from `Src/module.c:849`.
 ///
-/// C body:
+/// C body (c:849-861):
 /// ```c
-/// addhookdeffunc(Hookdef h, Hookfn f) {
+/// Hookdef gethookdef(const char *n) {
+///     Hookdef p;
+///     for (p = hooktab; p; p = p->next)
+///         if (!strcmp(n, p->name))
+///             return p;
+///     return NULL;
+/// }
+/// ```
+pub fn gethookdef(n: &str) -> *mut crate::ported::zsh_h::hookdef {           // c:849
+    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst);           // c:852 p = hooktab
+    while !p.is_null() {                                                     // c:853
+        unsafe {
+            if (*p).name == n {                                              // c:854 !strcmp
+                return p;                                                    // c:855
+            }
+            p = (*p).next;                                                   // c:853 p = p->next
+        }
+    }
+    std::ptr::null_mut()                                                     // c:856
+}
+
+/// Port of `int addhookdef(Hookdef h)` from `Src/module.c:864`.
+///
+/// C body (c:864-874):
+/// ```c
+/// int addhookdef(Hookdef h) {
+///     if (gethookdef(h->name)) return 1;
+///     h->next = hooktab;
+///     hooktab = h;
+///     h->funcs = znewlinklist();
+///     return 0;
+/// }
+/// ```
+pub fn addhookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {            // c:864
+    unsafe {
+        if !gethookdef(&(*h).name).is_null() {                               // c:866
+            return 1;                                                        // c:867
+        }
+        (*h).next = hooktab.load(std::sync::atomic::Ordering::SeqCst);       // c:869 h->next = hooktab
+        hooktab.store(h, std::sync::atomic::Ordering::SeqCst);               // c:870 hooktab = h
+        if (*h).funcs.is_null() {                                            // c:871 h->funcs = znewlinklist()
+            (*h).funcs = Box::into_raw(Box::new(crate::ported::zsh_h::linklist {
+                first: None,
+                last: None,
+                flags: 0,
+            }));
+        }
+    }
+    0                                                                        // c:873
+}
+
+/// Port of `int addhookdefs(Module m, Hookdef h, int size)` from
+/// `Src/module.c:883`.
+///
+/// C body (c:883-895):
+/// ```c
+/// int addhookdefs(Module m, Hookdef h, int size) {
+///     int ret = 0;
+///     while (size--) {
+///         if (addhookdef(h)) {
+///             zwarnnam(m ? m->node.nam : NULL, "name clash when adding hook `%s'", h->name);
+///             ret = 1;
+///         }
+///         h++;
+///     }
+///     return ret;
+/// }
+/// ```
+pub fn addhookdefs(                                                          // c:883
+    m: *const crate::ported::zsh_h::module,
+    mut h: *mut crate::ported::zsh_h::hookdef,
+    mut size: i32,
+) -> i32 {
+    let mut ret: i32 = 0;                                                    // c:885
+    while size > 0 {                                                         // c:887 size--
+        if addhookdef(h) != 0 {                                              // c:888
+            let nam: String = if m.is_null() {                               // c:889 m ? m->node.nam : NULL
+                String::new()
+            } else {
+                unsafe { (*m).node.nam.clone() }
+            };
+            let hook_name = unsafe { (*h).name.clone() };
+            crate::ported::utils::zwarnnam(                                  // c:889 zwarnnam
+                &nam,
+                &format!("name clash when adding hook `{}'", hook_name),
+            );
+            ret = 1;                                                         // c:891
+        }
+        unsafe { h = h.add(1); }                                             // c:893 h++
+        size -= 1;                                                           // c:887
+    }
+    ret                                                                      // c:894
+}
+
+/// Port of `int deletehookdef(Hookdef h)` from `Src/module.c:902`.
+///
+/// C body (c:902-919):
+/// ```c
+/// int deletehookdef(Hookdef h) {
+///     Hookdef p, q;
+///     for (p = hooktab, q = NULL; p && p != h; q = p, p = p->next);
+///     if (!p) return 1;
+///     if (q) q->next = p->next; else hooktab = p->next;
+///     freelinklist(p->funcs, NULL);
+///     return 0;
+/// }
+/// ```
+pub fn deletehookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {         // c:902
+    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst);           // c:906 p = hooktab
+    let mut q: *mut crate::ported::zsh_h::hookdef = std::ptr::null_mut();    // c:906 q = NULL
+    while !p.is_null() && p != h {                                           // c:907
+        q = p;                                                               // c:907 q = p
+        unsafe { p = (*p).next; }                                            // c:907 p = p->next
+    }
+    if p.is_null() {                                                         // c:909
+        return 1;                                                            // c:910
+    }
+    unsafe {
+        if !q.is_null() {                                                    // c:912
+            (*q).next = (*p).next;                                           // c:913 q->next = p->next
+        } else {
+            hooktab.store((*p).next, std::sync::atomic::Ordering::SeqCst);   // c:915 hooktab = p->next
+        }
+        if !(*p).funcs.is_null() {                                           // c:916 freelinklist(p->funcs, NULL)
+            drop(Box::from_raw((*p).funcs));
+            (*p).funcs = std::ptr::null_mut();
+        }
+    }
+    0                                                                        // c:917
+}
+
+/// Port of `int deletehookdefs(Module m, Hookdef h, int size)` from
+/// `Src/module.c:923`. `m` is unused per `UNUSED(Module m)` in C.
+pub fn deletehookdefs(                                                       // c:923
+    _m: *const crate::ported::zsh_h::module,
+    mut h: *mut crate::ported::zsh_h::hookdef,
+    mut size: i32,
+) -> i32 {
+    let mut ret: i32 = 0;                                                    // c:925
+    while size > 0 {                                                         // c:927 size--
+        if deletehookdef(h) != 0 {                                           // c:928
+            ret = 1;                                                         // c:929
+        }
+        unsafe { h = h.add(1); }                                             // c:930 h++
+        size -= 1;                                                           // c:927
+    }
+    ret                                                                      // c:931
+}
+
+/// Port of `int addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
+///
+/// C body (c:939-944):
+/// ```c
+/// int addhookdeffunc(Hookdef h, Hookfn f) {
 ///     zaddlinknode(h->funcs, (void *) f);
 ///     return 0;
 /// }
 /// ```
-///
-/// Appends function `f` to the named hook's function-list. C uses
-/// `LinkList` with `void *` payload (cast to Hookfn at dispatch); Rust
-/// port uses the table's per-hook `Vec<String>` (function names) since
-/// fn-pointer storage requires a more elaborate type-erased registry.
-/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
-pub fn addhookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:939
-    // c:939 — zaddlinknode(h->funcs, (void *) f);
-    table.hooks.entry(h.name.clone()).or_default().push(fn_name.to_string());
-    let _ = h.funcs; // keep field mention for parity
-    0                                                                    // c:943
-}
-
-/// Port of `void addhookfunc(const char *name, Hookfn fn)` —
-/// the global-scope wrapper used by modules and ZLE boot/cleanup
-/// paths to install hook callbacks without holding a ModuleTable.
-pub fn addhookfunc(hook: &str, func: &str) {                                 // c:module.c
-    if let Ok(mut tab) = HOOKTAB.lock() {
-        tab.entry(hook.to_string())
-            .or_default()
-            .push(func.to_string());
+pub fn addhookdeffunc(                                                       // c:939
+    h: *mut crate::ported::zsh_h::hookdef,
+    f: crate::ported::zsh_h::Hookfn,
+) -> i32 {
+    unsafe {
+        if (*h).funcs.is_null() {
+            (*h).funcs = Box::into_raw(Box::new(crate::ported::zsh_h::linklist {
+                first: None,
+                last: None,
+                flags: 0,
+            }));
+        }
+        let funcs = &mut *(*h).funcs;
+        // c:942 — zaddlinknode(h->funcs, f) appends to end of LinkList.
+        // Walk to tail of owned chain (linklist.last cannot be a Box
+        // pointer because that would duplicate ownership of the tail
+        // node — the C `last` field is a raw pointer; the Rust
+        // representation keeps it as None and resolves the tail by
+        // walking forward from .first).
+        let new_node = Box::new(crate::ported::zsh_h::linknode {
+            next: None,
+            prev: None,
+            dat: f as usize,
+        });
+        if funcs.first.is_none() {
+            funcs.first = Some(new_node);
+        } else {
+            let mut tail = funcs.first.as_mut().unwrap();
+            while tail.next.is_some() {
+                tail = tail.next.as_mut().unwrap();
+            }
+            tail.next = Some(new_node);
+        }
     }
+    0                                                                        // c:943
 }
 
-/// Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:961`.
+/// Port of `int addhookfunc(char *n, Hookfn f)` from `Src/module.c:948`.
 ///
-/// C body:
+/// C body (c:948-955):
 /// ```c
-/// deletehookdeffunc(Hookdef h, Hookfn f) {
+/// int addhookfunc(char *n, Hookfn f) {
+///     Hookdef h = gethookdef(n);
+///     if (h) return addhookdeffunc(h, f);
+///     return 1;
+/// }
+/// ```
+pub fn addhookfunc(                                                          // c:948
+    n: &str,
+    f: crate::ported::zsh_h::Hookfn,
+) -> i32 {
+    let h = gethookdef(n);                                                   // c:950 h = gethookdef(n)
+    if !h.is_null() {                                                        // c:951
+        return addhookdeffunc(h, f);                                         // c:952
+    }
+    1                                                                        // c:953
+}
+
+/// Port of `int deletehookdeffunc(Hookdef h, Hookfn f)` from
+/// `Src/module.c:961`.
+///
+/// C body (c:961-973):
+/// ```c
+/// int deletehookdeffunc(Hookdef h, Hookfn f) {
 ///     LinkNode p;
 ///     for (p = firstnode(h->funcs); p; incnode(p))
 ///         if (f == (Hookfn) getdata(p)) {
@@ -253,30 +441,111 @@ pub fn addhookfunc(hook: &str, func: &str) {                                 // 
 ///     return 1;
 /// }
 /// ```
-///
-/// Removes function `f` from the hook's function-list. Returns 0 on
-/// successful removal, 1 if not found.
-/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
-pub fn deletehookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:961
-    if let Some(funcs) = table.hooks.get_mut(&h.name) {
-        // c:965-969 — for (p = firstnode...; p; incnode(p)) if (f == ...)
-        if let Some(pos) = funcs.iter().position(|n| n == fn_name) {
-            funcs.remove(pos);                                            // c:967 remnode
-            let _ = h.funcs;
-            return 0;                                                     // c:968
+pub fn deletehookdeffunc(                                                    // c:961
+    h: *mut crate::ported::zsh_h::hookdef,
+    f: crate::ported::zsh_h::Hookfn,
+) -> i32 {
+    unsafe {
+        if (*h).funcs.is_null() {
+            return 1;
+        }
+        let funcs = &mut *(*h).funcs;
+        let f_val = f as usize;
+        // Walk owning chain looking for the matching dat. Splice on hit.
+        let mut prev: &mut Option<Box<crate::ported::zsh_h::linknode>> = &mut funcs.first;
+        loop {
+            match prev {
+                None => return 1,                                            // c:971
+                Some(node) if node.dat == f_val => {                         // c:966 f == getdata(p)
+                    let next = node.next.take();                             // c:967 remnode
+                    *prev = next;
+                    return 0;                                                // c:968
+                }
+                Some(_) => {
+                    // c:965 incnode(p) — advance.
+                    prev = &mut prev.as_mut().unwrap().next;
+                }
+            }
         }
     }
-    let _ = h.funcs;
-    1                                                                    // c:970
 }
 
-/// Port of `void deletehookfunc(const char *name, Hookfn fn)`.
-/// Removes one registered handler from the global HOOKTAB.
-pub fn deletehookfunc(hook: &str, func: &str) {                              // c:module.c
-    if let Ok(mut tab) = HOOKTAB.lock() {
-        if let Some(v) = tab.get_mut(hook) {
-            v.retain(|f| f != func);
+/// Port of `int deletehookfunc(const char *n, Hookfn f)` from
+/// `Src/module.c:977`.
+///
+/// C body (c:977-984):
+/// ```c
+/// int deletehookfunc(const char *n, Hookfn f) {
+///     Hookdef h = gethookdef(n);
+///     if (h) return deletehookdeffunc(h, f);
+///     return 1;
+/// }
+/// ```
+pub fn deletehookfunc(                                                       // c:977
+    n: &str,
+    f: crate::ported::zsh_h::Hookfn,
+) -> i32 {
+    let h = gethookdef(n);                                                   // c:979 h = gethookdef(n)
+    if !h.is_null() {                                                        // c:980
+        return deletehookdeffunc(h, f);                                      // c:981
+    }
+    1                                                                        // c:982
+}
+
+/// Port of `int runhookdef(Hookdef h, void *d)` from `Src/module.c:990`.
+///
+/// C body (c:990-1010):
+/// ```c
+/// int runhookdef(Hookdef h, void *d) {
+///     if (empty(h->funcs)) {
+///         if (h->def) return h->def(h, d);
+///         return 0;
+///     } else if (h->flags & HOOKF_ALL) {
+///         LinkNode p; int r;
+///         for (p = firstnode(h->funcs); p; incnode(p))
+///             if ((r = ((Hookfn) getdata(p))(h, d))) return r;
+///         if (h->def) return h->def(h, d);
+///         return 0;
+///     } else
+///         return ((Hookfn) getdata(lastnode(h->funcs)))(h, d);
+/// }
+/// ```
+pub fn runhookdef(                                                           // c:990
+    h: *mut crate::ported::zsh_h::hookdef,
+    d: *mut std::ffi::c_void,
+) -> i32 {
+    unsafe {
+        let funcs_ptr = (*h).funcs;
+        let funcs_empty = funcs_ptr.is_null() || (*funcs_ptr).first.is_none(); // c:992 empty()
+        if funcs_empty {                                                     // c:992
+            if let Some(def) = (*h).def {                                    // c:993 if (h->def)
+                return def(h, d);                                            // c:994 return h->def(h,d)
+            }
+            return 0;                                                        // c:995
         }
+        if (*h).flags & crate::ported::zsh_h::HOOKF_ALL != 0 {                // c:996 h->flags & HOOKF_ALL
+            let mut node = (*funcs_ptr).first.as_ref();                      // c:999 firstnode
+            while let Some(n) = node {                                       // c:999 ; p ;
+                let fn_ptr: crate::ported::zsh_h::Hookfn =
+                    std::mem::transmute(n.dat);                              // c:1000 (Hookfn) getdata(p)
+                let r = fn_ptr(h, d);                                        // c:1000 (...)(h, d)
+                if r != 0 {                                                  // c:1000 if ((r = ...))
+                    return r;                                                // c:1001
+                }
+                node = n.next.as_ref();                                      // c:999 incnode
+            }
+            if let Some(def) = (*h).def {                                    // c:1002 if (h->def)
+                return def(h, d);                                            // c:1003 return h->def(h, d)
+            }
+            return 0;                                                        // c:1004
+        }
+        // c:1006 — last fn only.
+        let mut tail = (*funcs_ptr).first.as_ref().expect("non-empty");
+        while let Some(next) = tail.next.as_ref() {
+            tail = next;
+        }
+        let fn_ptr: crate::ported::zsh_h::Hookfn = std::mem::transmute(tail.dat);
+        fn_ptr(h, d)                                                         // c:1006
     }
 }
 
@@ -1043,93 +1312,20 @@ impl modulestab {
         0                                                                    // c:834
     }
 
-    // ------- Hook management (from module.c addhookdef/deletehookdef) -------
-
-    /// Register a hook (from module.c addhookdef)
-/// Port of `addhookdef(Hookdef h)` from `Src/module.c:864`.
-    pub fn addhookdef(&mut self, h: &str) {                              // c:864
-        self.hooks.entry(h.to_string()).or_default();
-    }
-
-    /// Register multiple hooks (from module.c addhookdefs)
-/// Port of `addhookdefs(Module m, Hookdef h, int size)` from `Src/module.c:883`.
-    /// WARNING: param names don't match C — Rust=(names) vs C=(m, h, size)
-    pub fn addhookdefs(&mut self, names: &[&str]) {
-        for name in names {
-            self.addhookdef(name);
-        }
-    }
-
-    // Delete hook definitions.                                              // c:902
-    /// Port of `int deletehookdef(Hookdef h)` from `Src/module.c:902`.
-    ///
-    /// C body (c:902-919):
-    /// ```c
-    /// Hookdef p, q;
-    /// for (p = hooktab, q = NULL; p && p != h; q = p, p = p->next);
-    /// if (!p) return 1;
-    /// if (q) q->next = p->next; else hooktab = p->next;
-    /// freelinklist(p->funcs, NULL);
-    /// return 0;
-    /// ```
-    ///
-    /// Walks the linked-list `hooktab` looking for pointer-identity
-    /// `h`, splices it out and frees its funcs list. Returns 0 on
-    /// success, 1 when not found.
-    ///
-    /// Rust port: `self.hooks` is a `HashMap<String, Vec<String>>` keyed
-    /// by name (Rust idiom replaces the C linked-list walk). The C
-    /// `p == h` pointer-equality check becomes a name-keyed lookup.
-    /// `freelinklist(p->funcs, NULL)` is the Drop of the popped value.
-    /// WARNING: param names don't match C — Rust=(name) vs C=(h)
-    pub fn deletehookdef(&mut self, name: &str) -> i32 {                    // c:902
-        // c:907 — `for (p = hooktab; p && p != h; ...)` walk to find.
-        // c:909-910 — `if (!p) return 1;` not-found return.
-        if self.hooks.remove(name).is_none() {                               // c:907
-            return 1;                                                        // c:910
-        }
-        // c:912-915 — splice + `freelinklist(p->funcs, NULL)`.
-        // Rust HashMap::remove already spliced + dropped the Vec funcs.
-        0                                                                    // c:917
-    }
-
-    /// Unregister multiple hooks (from module.c deletehookdefs)
-/// Port of `deletehookdefs(UNUSED(Module m), Hookdef h, int size)` from `Src/module.c:923`.
-    /// WARNING: param names don't match C — Rust=(names) vs C=(m, h, size)
-    pub fn deletehookdefs(&mut self, names: &[&str]) {
-        for name in names {
-            self.deletehookdef(name);
-        }
-    }
-
-    /// Add function to hook (from module.c addhookdeffunc/addhookfunc)
-/// Port of `addhookfunc(char *n, Hookfn f)` from `Src/module.c:948`.
-    pub fn addhookfunc(&mut self, n: &str, f: &str) {
-        self.hooks
-            .entry(n.to_string())
-            .or_default()
-            .push(f.to_string());
-    }
-
-    /// Remove function from hook (from module.c deletehookdeffunc/deletehookfunc)
-/// Port of `deletehookfunc(const char *n, Hookfn f)` from `Src/module.c:977`.
-    pub fn deletehookfunc(&mut self, n: &str, f: &str) {
-        if let Some(funcs) = self.hooks.get_mut(n) {
-            funcs.retain(|f| f != f);
-        }
-    }
-
-    /// Get hook definition (from module.c gethookdef)
-/// Port of `gethookdef(const char *n)` from `Src/module.c:849`.
-    pub fn gethookdef(&self, n: &str) -> Option<&Vec<String>> {
-        self.hooks.get(n)
-    }
-
-    // Run the function(s) for a hook.                                       // c:990
-    /// Run hook functions (from module.c runhookdef)
-    pub fn runhookdef(&self, name: &str) -> Vec<String> {                   // c:990
-        self.hooks.get(name).cloned().unwrap_or_default()
-    }
+    // ------- Hook management lives in the file-static free fns above ------
+    //
+    // C `hooktab` (Src/module.c:843) is a file-static `Hookdef` linked
+    // list, NOT a member of `ModuleTable` (which is the `modulestab`
+    // HashTable of Module nodes at c:Modules/zmodload.c:32). The
+    // previous `ModuleTable::addhookdef/addhookdefs/deletehookdef/
+    // deletehookdefs/addhookfunc/deletehookfunc/gethookdef/runhookdef`
+    // methods on this struct were a bag-of-globals anti-pattern (PORT.md
+    // Rule D) — a Rust-only `hooks: HashMap<String,Vec<String>>`
+    // aggregator field absorbing what C stores in the separate
+    // `hooktab` chain. All hook ops are now free fns operating on the
+    // file-static `hooktab` (above): `gethookdef`, `addhookdef`,
+    // `addhookdefs`, `deletehookdef`, `deletehookdefs`, `addhookdeffunc`,
+    // `addhookfunc`, `deletehookdeffunc`, `deletehookfunc`, `runhookdef`.
 
     // ------- Parameter management (from module.c addparamdef/deleteparamdef) -------
 
@@ -3131,14 +3327,14 @@ pub fn getfeatureenables(                                                    // 
     enables                                                                  // c:3340
 }
 
-/// Port of `Hookdef hooktab;` from `Src/module.c:843` — the global
-/// hook-definition table. Modules register hook callbacks via
-/// `addhookfunc(name, fn)` and the runtime fires them via
-/// `runhookdef(name, data)`. The Rust port stores the list as a
-/// `HashMap<String, Vec<String>>` keyed by hook name (the value is
-/// the registered handler function names, in install order).
-pub static HOOKTAB: Lazy<Mutex<HashMap<String, Vec<String>>>> =              // c:843
-    Lazy::new(|| Mutex::new(HashMap::new()));
+/// Port of `Hookdef hooktab;` from `Src/module.c:843` — the file-static
+/// linked-list head pointer to the chain of registered `hookdef`
+/// nodes. Walked by `gethookdef`; mutated by `addhookdef` /
+/// `deletehookdef`. Each node is a `Box::leak`'d hookdef (so the raw
+/// pointer has program-lifetime, matching C's static-storage
+/// `zshhooks[]` and module-side hookdef arrays).
+pub static hooktab: std::sync::atomic::AtomicPtr<crate::ported::zsh_h::hookdef> = // c:843
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 /// Port of `mod_export ModuleTable modulestab` from
 /// `Src/Modules/zmodload.c:32`. The C source keeps the module
@@ -3193,8 +3389,10 @@ pub struct modulestab {
     pub autoload_params: HashMap<String, String>,
     /// Math function name → module name mapping for autoload
     pub autoload_mathfuncs: HashMap<String, String>,
-    /// Hook functions
-    pub hooks: HashMap<String, Vec<String>>,
+    // `hooks: HashMap<String, Vec<String>>` deleted — bag-of-globals
+    // shadow of the file-static `hooktab` linked list (Src/module.c:843).
+    // Hook registrations live in the `hooktab` global (above) via
+    // `addhookdef` / `addhookfunc` etc., not on the module table.
     /// BINF_ADDED ledger — tracks which builtins have been added via
     /// `setbuiltins` (C: `b->node.flags & BINF_ADDED`, c:508).
     pub added_builtins: HashMap<String, u32>,
@@ -3335,20 +3533,11 @@ mod tests {
         assert!(loaded.contains(&"zsh/complete"));
     }
 
-    #[test]
-    fn test_hooks() {
-        let _g = crate::test_util::global_state_lock();
-        let mut table = modulestab::new();
-        table.addhookdef("chpwd");
-        table.addhookfunc("chpwd", "my_chpwd_handler");
-
-        let funcs = table.runhookdef("chpwd");
-        assert_eq!(funcs, vec!["my_chpwd_handler"]);
-
-        table.deletehookfunc("chpwd", "my_chpwd_handler");
-        let funcs = table.runhookdef("chpwd");
-        assert!(funcs.is_empty());
-    }
+    // `test_hooks` deleted — it exercised the bag-of-globals
+    // `ModuleTable::{addhookdef,addhookfunc,runhookdef,deletehookfunc}`
+    // shadow methods that were dissolved. The canonical hook system
+    // is now tested via the free fns in module.rs's tests at
+    // `gethookdef_*`, `addhookdef_*`, `runhookdef_*` below.
 
     #[test]
     fn test_autoload() {
@@ -3629,6 +3818,234 @@ mod tests {
         assert_eq!(deletewrapper("zsh/test", &probe), 1);
         WRAPPERS.lock().unwrap().extend(snapshot);
     }
+
+    // C-faithful hookdef tests. The system under test is:
+    //   - `hooktab` (file-static linked-list head, port of c:843)
+    //   - `gethookdef` / `addhookdef` / `addhookdefs` / `deletehookdef` /
+    //     `deletehookdefs` / `addhookdeffunc` / `addhookfunc` /
+    //     `deletehookdeffunc` / `deletehookfunc` / `runhookdef` —
+    //     C-identical signatures over real `Hookfn` fn pointers.
+    //
+    // Each test holds `global_state_lock` and snapshots the chain at
+    // start so any incidental registrations from other state leak don't
+    // affect outcomes.
+
+    // Real Rust fns matching the `Hookfn` shape. Used as test handlers
+    // that bump a per-test atomic counter when invoked, proving
+    // `runhookdef` actually dispatches the registered fn pointers.
+    static H1_CALLS: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+    static H2_CALLS: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+    static H1_RETVAL: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+
+    fn h1(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
+        H1_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        H1_RETVAL.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn h2(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
+        H2_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        0
+    }
+
+    // Allocate a fresh hookdef on the heap and leak its Box so that the
+    // returned `*mut hookdef` has program-lifetime — matching C's
+    // static-storage hookdef nodes (zshhooks[] etc.). The test then
+    // takes responsibility for splicing it out via deletehookdef.
+    fn leak_hookdef(name: &str, flags: i32) -> *mut crate::ported::zsh_h::hookdef {
+        Box::into_raw(Box::new(crate::ported::zsh_h::hookdef {
+            next: std::ptr::null_mut(),
+            name: name.to_string(),
+            def: None,
+            flags,
+            funcs: std::ptr::null_mut(),
+        }))
+    }
+
+    /// `gethookdef` returns null when no hookdef with that name is in
+    /// `hooktab`, and the registered pointer once `addhookdef` runs.
+    #[test]
+    fn gethookdef_returns_null_then_registered_ptr() {
+        let _g = crate::test_util::global_state_lock();
+        // Unique name to avoid colliding with other tests' registrations.
+        let h = leak_hookdef("zshrs_test_get_hook", crate::ported::zsh_h::HOOKF_ALL);
+        unsafe { assert!(gethookdef(&(*h).name).is_null()); }
+        assert_eq!(addhookdef(h), 0);
+        unsafe { assert_eq!(gethookdef(&(*h).name), h); }
+        // Cleanup so the chain doesn't leak into other tests.
+        assert_eq!(deletehookdef(h), 0);
+        unsafe { drop(Box::from_raw(h)); }
+    }
+
+    /// `addhookdef` rejects a name already present in `hooktab`
+    /// (port of c:866-867: `if (gethookdef(h->name)) return 1`).
+    #[test]
+    fn addhookdef_rejects_duplicate_name() {
+        let _g = crate::test_util::global_state_lock();
+        let h1 = leak_hookdef("zshrs_test_dup_hook", crate::ported::zsh_h::HOOKF_ALL);
+        let h2 = leak_hookdef("zshrs_test_dup_hook", crate::ported::zsh_h::HOOKF_ALL);
+        assert_eq!(addhookdef(h1), 0);
+        assert_eq!(addhookdef(h2), 1, "duplicate name must return 1");
+        // Cleanup.
+        assert_eq!(deletehookdef(h1), 0);
+        unsafe {
+            drop(Box::from_raw(h1));
+            drop(Box::from_raw(h2));
+        }
+    }
+
+    /// `deletehookdef` returns 1 when the hookdef isn't in the chain
+    /// (port of c:909-910: `if (!p) return 1`) and 0 after add.
+    #[test]
+    fn deletehookdef_returns_one_on_miss_zero_on_hit() {
+        let _g = crate::test_util::global_state_lock();
+        let h = leak_hookdef("zshrs_test_del_hook", crate::ported::zsh_h::HOOKF_ALL);
+        assert_eq!(deletehookdef(h), 1, "not in chain → 1");
+        assert_eq!(addhookdef(h), 0);
+        assert_eq!(deletehookdef(h), 0, "spliced out → 0");
+        assert_eq!(deletehookdef(h), 1, "second delete misses → 1");
+        unsafe { drop(Box::from_raw(h)); }
+    }
+
+    /// `runhookdef` dispatches every registered Hookfn under `HOOKF_ALL`
+    /// (port of c:996-1004) — the test handlers' counters bump on every
+    /// fire, and the first non-zero return short-circuits.
+    #[test]
+    fn runhookdef_dispatches_all_under_hookf_all_short_circuits_on_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        H1_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H2_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H1_RETVAL.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let h = leak_hookdef("zshrs_test_runall", crate::ported::zsh_h::HOOKF_ALL);
+        assert_eq!(addhookdef(h), 0);
+        assert_eq!(addhookdeffunc(h, h1), 0);
+        assert_eq!(addhookdeffunc(h, h2), 0);
+
+        // Both fire → r1=0, r2=0 → final return 0.
+        assert_eq!(runhookdef(h, std::ptr::null_mut()), 0);
+        assert_eq!(H1_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(H2_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Make h1 return 7 → runhookdef should return 7 without calling h2.
+        H1_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H2_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H1_RETVAL.store(7, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(runhookdef(h, std::ptr::null_mut()), 7);
+        assert_eq!(H1_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            H2_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "h2 must not fire after h1 returns nonzero"
+        );
+
+        // Cleanup.
+        assert_eq!(deletehookdef(h), 0);
+        unsafe { drop(Box::from_raw(h)); }
+    }
+
+    /// `runhookdef` calls only the LAST registered Hookfn when
+    /// `HOOKF_ALL` is clear (port of c:1006).
+    #[test]
+    fn runhookdef_calls_only_last_when_hookf_all_clear() {
+        let _g = crate::test_util::global_state_lock();
+        H1_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H2_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H1_RETVAL.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let h = leak_hookdef("zshrs_test_runlast", 0); // HOOKF_ALL clear
+        assert_eq!(addhookdef(h), 0);
+        assert_eq!(addhookdeffunc(h, h1), 0);
+        assert_eq!(addhookdeffunc(h, h2), 0);
+
+        runhookdef(h, std::ptr::null_mut());
+        assert_eq!(
+            H1_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "h1 must not fire when HOOKF_ALL is clear"
+        );
+        assert_eq!(
+            H2_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only the last-registered handler fires"
+        );
+
+        assert_eq!(deletehookdef(h), 0);
+        unsafe { drop(Box::from_raw(h)); }
+    }
+
+    /// `deletehookdeffunc` removes a single Hookfn from the chain
+    /// (port of c:961-973). Pins the closure-shadow regression at the
+    /// new free-fn surface.
+    #[test]
+    fn deletehookdeffunc_removes_only_target_hookfn() {
+        let _g = crate::test_util::global_state_lock();
+        H1_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H2_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        H1_RETVAL.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let h = leak_hookdef("zshrs_test_del_fn", crate::ported::zsh_h::HOOKF_ALL);
+        assert_eq!(addhookdef(h), 0);
+        addhookdeffunc(h, h1);
+        addhookdeffunc(h, h2);
+        // Remove only h1 — h2 must remain and fire.
+        assert_eq!(deletehookdeffunc(h, h1), 0);
+        // Second remove of h1 returns 1 (miss).
+        assert_eq!(deletehookdeffunc(h, h1), 1);
+        runhookdef(h, std::ptr::null_mut());
+        assert_eq!(H1_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(H2_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        assert_eq!(deletehookdef(h), 0);
+        unsafe { drop(Box::from_raw(h)); }
+    }
+
+    /// `addhookfunc` / `deletehookfunc` return 1 when no hookdef with
+    /// that name is registered (port of c:953, c:982).
+    #[test]
+    fn addhookfunc_and_deletehookfunc_return_one_when_no_hookdef() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(addhookfunc("zshrs_test_no_such_hook", h1), 1);
+        assert_eq!(deletehookfunc("zshrs_test_no_such_hook", h1), 1);
+    }
+
+    /// `addhookdefs(NULL, h_array, size)` registers contiguous hookdef
+    /// nodes from an array (port of c:883-895). Each entry must be
+    /// findable via `gethookdef` after the call.
+    #[test]
+    fn addhookdefs_registers_contiguous_array() {
+        let _g = crate::test_util::global_state_lock();
+        let arr: Box<[crate::ported::zsh_h::hookdef; 2]> = Box::new([
+            crate::ported::zsh_h::hookdef {
+                next: std::ptr::null_mut(),
+                name: "zshrs_test_arr_0".into(),
+                def: None,
+                flags: crate::ported::zsh_h::HOOKF_ALL,
+                funcs: std::ptr::null_mut(),
+            },
+            crate::ported::zsh_h::hookdef {
+                next: std::ptr::null_mut(),
+                name: "zshrs_test_arr_1".into(),
+                def: None,
+                flags: crate::ported::zsh_h::HOOKF_ALL,
+                funcs: std::ptr::null_mut(),
+            },
+        ]);
+        let base: *mut crate::ported::zsh_h::hookdef =
+            Box::into_raw(arr) as *mut crate::ported::zsh_h::hookdef;
+        assert_eq!(addhookdefs(std::ptr::null(), base, 2), 0);
+        assert_eq!(gethookdef("zshrs_test_arr_0"), base);
+        unsafe { assert_eq!(gethookdef("zshrs_test_arr_1"), base.add(1)); }
+        // Cleanup. Splice out then re-take ownership of the boxed array.
+        unsafe {
+            assert_eq!(deletehookdef(base), 0);
+            assert_eq!(deletehookdef(base.add(1)), 0);
+            drop(Box::from_raw(
+                base as *mut [crate::ported::zsh_h::hookdef; 2]
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3747,19 +4164,8 @@ mod modname_tests {
         assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", FEAT_IGNORE), 0);
     }
 
-    /// `Src/module.c:902-919` — `deletehookdef` returns 1 when not
-    /// found, 0 on success.
-    #[test]
-    fn deletehookdef_returns_one_when_missing_zero_on_success() {
-        let _g = crate::test_util::global_state_lock();
-        let mut t = modulestab::new();
-        // Not present → 1.
-        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 1);
-        // Seed + delete → 0.
-        t.hooks.insert("zshrs_test_hook_x".to_string(), Vec::new());
-        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 0);
-        assert!(!t.hooks.contains_key("zshrs_test_hook_x"));
-        // Second call → 1 again.
-        assert_eq!(t.deletehookdef("zshrs_test_hook_x"), 1);
-    }
+    // `deletehookdef_returns_one_when_missing_zero_on_success` deleted —
+    // tested the deleted `ModuleTable::deletehookdef(&str) -> i32` shadow
+    // method. The canonical free-fn `deletehookdef(*mut hookdef) -> i32`
+    // is exercised by the new tests in `mod tests` above.
 }

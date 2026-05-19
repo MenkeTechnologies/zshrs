@@ -307,3 +307,254 @@ pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, Strin
     set_executable(out_path);
     Ok(out_path.to_path_buf())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mkfile(name: &str, src: &str) -> EmbeddedFile {
+        EmbeddedFile { name: name.into(), source: src.into() }
+    }
+
+    #[test]
+    fn build_trailer_layout_matches_spec() {
+        let t = build_trailer(0x11_22_33_44, 0xAA_BB_CC_DD, AOT_VERSION_V2);
+        assert_eq!(t.len(), TRAILER_LEN as usize);
+        // little-endian u64 compressed_len
+        assert_eq!(&t[0..8], &0x11_22_33_44u64.to_le_bytes());
+        // little-endian u64 uncompressed_len
+        assert_eq!(&t[8..16], &0xAA_BB_CC_DDu64.to_le_bytes());
+        // little-endian u32 version
+        assert_eq!(&t[16..20], &AOT_VERSION_V2.to_le_bytes());
+        // 20..24 reserved zeros
+        assert_eq!(&t[20..24], &[0u8; 4]);
+        // magic
+        assert_eq!(&t[24..32], AOT_MAGIC);
+    }
+
+    #[test]
+    fn payload_v2_roundtrip_single_file() {
+        let files = vec![mkfile("hello.zsh", "echo hi\n")];
+        let encoded = encode_payload_v2(&files);
+        let decoded = decode_payload_v2(&encoded).expect("decode v2");
+        assert_eq!(decoded.0.len(), 1);
+        assert_eq!(decoded.0[0].name, "hello.zsh");
+        assert_eq!(decoded.0[0].source, "echo hi\n");
+    }
+
+    #[test]
+    fn payload_v2_roundtrip_multiple_files_preserves_order() {
+        let files = vec![
+            mkfile("a.zsh", "echo a\n"),
+            mkfile("b.zsh", "echo b\n"),
+            mkfile("c.zsh", "echo c\n"),
+        ];
+        let encoded = encode_payload_v2(&files);
+        let decoded = decode_payload_v2(&encoded).expect("decode v2");
+        assert_eq!(decoded.0.len(), 3);
+        assert_eq!(decoded.0[0].name, "a.zsh");
+        assert_eq!(decoded.0[1].name, "b.zsh");
+        assert_eq!(decoded.0[2].name, "c.zsh");
+        assert_eq!(decoded.0[0].source, "echo a\n");
+        assert_eq!(decoded.0[1].source, "echo b\n");
+        assert_eq!(decoded.0[2].source, "echo c\n");
+    }
+
+    #[test]
+    fn payload_v2_roundtrip_zero_files() {
+        let files: Vec<EmbeddedFile> = vec![];
+        let encoded = encode_payload_v2(&files);
+        // u32 count=0 → 4 bytes of zero.
+        assert_eq!(encoded.as_slice(), &0u32.to_le_bytes());
+        let decoded = decode_payload_v2(&encoded).expect("decode zero-file v2");
+        assert!(decoded.0.is_empty());
+    }
+
+    #[test]
+    fn payload_v2_handles_empty_source() {
+        let files = vec![mkfile("empty.zsh", "")];
+        let encoded = encode_payload_v2(&files);
+        let decoded = decode_payload_v2(&encoded).expect("decode empty source");
+        assert_eq!(decoded.0[0].source, "");
+        assert_eq!(decoded.0[0].name, "empty.zsh");
+    }
+
+    #[test]
+    fn payload_v2_preserves_utf8_in_names_and_sources() {
+        let files = vec![
+            mkfile("名前.zsh", "echo こんにちは\n"),
+            mkfile("emoji-🚀.zsh", "echo $'\\xf0\\x9f\\x9a\\x80'\n"),
+        ];
+        let encoded = encode_payload_v2(&files);
+        let decoded = decode_payload_v2(&encoded).expect("decode utf8");
+        assert_eq!(decoded.0[0].name, "名前.zsh");
+        assert_eq!(decoded.0[0].source, "echo こんにちは\n");
+        assert_eq!(decoded.0[1].name, "emoji-🚀.zsh");
+    }
+
+    #[test]
+    fn payload_v2_rejects_truncated_input() {
+        let files = vec![mkfile("x.zsh", "echo x\n")];
+        let mut encoded = encode_payload_v2(&files);
+        // Drop the last byte — source ends prematurely.
+        encoded.pop();
+        assert!(decode_payload_v2(&encoded).is_none());
+    }
+
+    #[test]
+    fn payload_v2_rejects_empty_buffer() {
+        assert!(decode_payload_v2(&[]).is_none());
+    }
+
+    #[test]
+    fn payload_v2_rejects_lying_count_header() {
+        // Header claims 5 files but no body follows.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&5u32.to_le_bytes());
+        assert!(decode_payload_v2(&buf).is_none());
+    }
+
+    #[test]
+    fn payload_v1_decodes_legacy_single_script() {
+        let name = "old.zsh";
+        let source = "echo legacy\n";
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(source.as_bytes());
+        let decoded = decode_payload_v1(&buf).expect("decode v1");
+        assert_eq!(decoded.0.len(), 1);
+        assert_eq!(decoded.0[0].name, name);
+        assert_eq!(decoded.0[0].source, source);
+    }
+
+    #[test]
+    fn payload_v1_rejects_short_buffer() {
+        assert!(decode_payload_v1(&[]).is_none());
+        assert!(decode_payload_v1(&[1, 2, 3]).is_none());
+    }
+
+    #[test]
+    fn payload_v1_rejects_name_len_larger_than_buffer() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&999u32.to_le_bytes()); // name_len = 999
+        buf.extend_from_slice(b"abc"); // only 3 bytes follow
+        assert!(decode_payload_v1(&buf).is_none());
+    }
+
+    #[test]
+    fn payload_v1_handles_empty_source_after_name() {
+        let mut buf = Vec::new();
+        let name = "x";
+        buf.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        // No source bytes after — should still decode with empty source.
+        let decoded = decode_payload_v1(&buf).expect("decode v1 empty source");
+        assert_eq!(decoded.0[0].source, "");
+    }
+
+    #[test]
+    fn append_and_load_roundtrip_single_file() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        // Pre-populate with non-magic data simulating an existing binary.
+        std::fs::write(tmp.path(), b"FAKE-ELF-PREFIX").expect("write prefix");
+        let files = vec![mkfile("greet.zsh", "echo hello\n")];
+        append_embedded_files(tmp.path(), &files).expect("append");
+        let loaded = try_load_embedded(tmp.path()).expect("load back");
+        assert_eq!(loaded.0.len(), 1);
+        assert_eq!(loaded.0[0].name, "greet.zsh");
+        assert_eq!(loaded.0[0].source, "echo hello\n");
+    }
+
+    #[test]
+    fn append_and_load_roundtrip_multiple_files() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        std::fs::write(tmp.path(), b"PREFIX").expect("write prefix");
+        let files = vec![
+            mkfile("first.zsh", "first()  { :; }\n"),
+            mkfile("second.zsh", "first\nsecond()  { :; }\n"),
+            mkfile("third.zsh", "echo done\n"),
+        ];
+        append_embedded_files(tmp.path(), &files).expect("append");
+        let loaded = try_load_embedded(tmp.path()).expect("load back");
+        assert_eq!(loaded.0.len(), 3);
+        assert_eq!(loaded.0[0].name, "first.zsh");
+        assert_eq!(loaded.0[1].name, "second.zsh");
+        assert_eq!(loaded.0[2].name, "third.zsh");
+    }
+
+    #[test]
+    fn try_load_embedded_returns_none_without_magic() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        // Write at least TRAILER_LEN bytes but no magic in the trailing slot.
+        std::fs::write(tmp.path(), vec![0u8; 64]).expect("write");
+        assert!(try_load_embedded(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn try_load_embedded_returns_none_for_small_file() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        // Smaller than TRAILER_LEN — fast bail.
+        std::fs::write(tmp.path(), b"tiny").expect("write");
+        assert!(try_load_embedded(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn try_load_embedded_returns_none_for_missing_path() {
+        let path = std::path::PathBuf::from("/this/path/does/not/exist/zshrs-aot");
+        assert!(try_load_embedded(&path).is_none());
+    }
+
+    #[test]
+    fn try_load_embedded_returns_none_for_zero_compressed_len() {
+        // Forge a trailer with valid magic but compressed_len=0.
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let mut data = vec![0u8; 100];
+        let trailer = build_trailer(0, 0, AOT_VERSION_V2);
+        data.extend_from_slice(&trailer);
+        std::fs::write(tmp.path(), &data).expect("write");
+        assert!(try_load_embedded(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn try_load_embedded_rejects_unknown_version() {
+        // Build a valid magic + size frame, but version=99 — unsupported.
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let payload = encode_payload_v2(&[mkfile("x.zsh", "y\n")]);
+        let compressed = zstd::stream::encode_all(&payload[..], 3).expect("zstd");
+        let mut data = vec![0u8; 32]; // prefix
+        data.extend_from_slice(&compressed);
+        let trailer = build_trailer(compressed.len() as u64, payload.len() as u64, 99);
+        data.extend_from_slice(&trailer);
+        std::fs::write(tmp.path(), &data).expect("write");
+        assert!(try_load_embedded(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn try_load_embedded_rejects_corrupt_uncompressed_len() {
+        // Magic + version OK, but uncompressed_len lies → decoder returns None.
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let payload = encode_payload_v2(&[mkfile("x.zsh", "y\n")]);
+        let compressed = zstd::stream::encode_all(&payload[..], 3).expect("zstd");
+        let mut data = vec![0u8; 32];
+        data.extend_from_slice(&compressed);
+        // Lie: claim uncompressed is one byte larger than reality.
+        let trailer = build_trailer(
+            compressed.len() as u64,
+            payload.len() as u64 + 1,
+            AOT_VERSION_V2,
+        );
+        data.extend_from_slice(&trailer);
+        std::fs::write(tmp.path(), &data).expect("write");
+        assert!(try_load_embedded(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn build_rejects_empty_input_list() {
+        let out = std::path::PathBuf::from("/tmp/zshrs-aot-empty-out");
+        let res = build(&[], &out);
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert!(err.contains("at least one"), "got: {err}");
+    }
+}

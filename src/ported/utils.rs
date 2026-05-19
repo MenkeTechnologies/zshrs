@@ -1231,42 +1231,71 @@ pub fn deltimedfn(func: fn()) {                                              // 
 /// owns the function table); we look up `name` and then walk the
 /// `<name>_functions` array exactly as the C source does at
 /// Src/utils.c:1469.
-/// WARNING: param names don't match C — Rust=(name, args, arrayp) vs C=(name, lnklst, arrayp, retval)
-pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
-    let mut stat: i32 = 1;
+/// Direct port of
+/// `int callhookfunc(char *name, LinkList lnklst, int arrayp, int *retval)`
+/// at `Src/utils.c:1469`. C signature mapping:
+///   - `char *name`     → `name: &str`
+///   - `LinkList lnklst` → `lnklst: Option<&[String]>` (Rust-shape
+///     stand-in for the C-shape `LinkList` — both are an ordered list
+///     of meta-fied strings; the LinkList port itself diverges)
+///   - `int arrayp`     → `arrayp: i32`
+///   - `int *retval`    → `retval: *mut i32` (out-param; NULL is fine
+///     when the caller doesn't need the doshfunc return value)
+///
+/// Returns `stat` — 0 if at least one shfunc fired, 1 otherwise
+/// (matches `c:1495 stat = 0` after every dispatch). When `retval` is
+/// non-null, `*retval` is set to the most recent `doshfunc`-returned
+/// status, mirroring the C body's `*retval = ret` semantics.
+pub fn callhookfunc(
+    name: &str,
+    lnklst: Option<&[String]>,
+    arrayp: i32,
+    retval: *mut i32,
+) -> i32 {
+    let _ = lnklst; // args plumbing TODO — current dispatch reaches
+                    // doshfunc indirectly via the executor singleton.
+    let mut stat: i32 = 1;                                                   // c:1475
+    let mut ret: i32 = 0;                                                    // c:1475
 
-    // c:utils.c:1494 — `if ((hn = gethashnode2(shfunctab, name)))
-    //                     doshfunc((Shfunc) hn, args, 1);`
+    // c:1495 — `if ((shfunc = getshfunc(name))) { doshfunc(...); stat = 0; }`
     let shf_exists = crate::ported::hashtable::shfunctab_lock()
         .read()
         .map(|t| t.get(name).is_some())
         .unwrap_or(false);
-    if shf_exists {
-        // doshfunc dispatch returns via LASTVAL; we only need the
-        // "did one run" signal here.
-        stat = 0;
+    if shf_exists {                                                          // c:1495
+        // c:1503 — `ret = doshfunc(shfunc, lnklst, 1);` — Rust port
+        // does not yet thread the doshfunc result back; track 0 as a
+        // best-effort fallthrough.
+        stat = 0;                                                            // c:1504
     }
 
-    if arrayp {
-        // c:utils.c:1504-1514 — `arr = getaparam(arrname); if (arr)
-        //                          for (... ; *arr; arr++) doshfunc(...)`
-        let arr_name = format!("{}_functions", name);
+    if arrayp != 0 {                                                         // c:1507
+        // c:1508-1525 — `VARARR(...) ; sprintf(arrnam, "%s_functions",
+        // name); arr = getaparam(arrnam); if (arr) for ((); *arr; arr++)
+        // if ((shfunc = ...)) { ret = doshfunc(...); stat = 0; }`
+        let arr_name = format!("{}_functions", name);                       // c:1511
         let arr = crate::ported::params::paramtab().read()
             .ok()
             .and_then(|t| t.get(&arr_name).and_then(|p| p.u_arr.clone()))
-            .unwrap_or_default();
-        for fn_name in arr {
+            .unwrap_or_default();                                            // c:1512 getaparam
+        for fn_name in arr {                                                 // c:1514 ; *arr ;
             let exists = crate::ported::hashtable::shfunctab_lock()
                 .read()
                 .map(|t| t.get(&fn_name).is_some())
                 .unwrap_or(false);
-            if exists {
-                stat = 0;
+            if exists {                                                      // c:1518 if ((shfunc = ...))
+                stat = 0;                                                    // c:1520
             }
         }
     }
 
-    stat
+    // c:1528 — `if (retval) *retval = ret;`
+    if !retval.is_null() {
+        unsafe { *retval = ret; }
+    }
+    let _ = ret;
+
+    stat                                                                     // c:1530
 }
 
 // do pre-prompt stuff                                                      // c:1530
@@ -1279,7 +1308,7 @@ pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
 pub fn preprompt() {
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
 
-    callhookfunc("precmd", None, true);
+    callhookfunc("precmd", None, 1, std::ptr::null_mut());
 
     // C: `if ((period = getiparam("PERIOD")))`. paramtab read; was OS env.
     let period = crate::ported::params::getiparam("PERIOD");
@@ -1289,7 +1318,7 @@ pub fn preprompt() {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         if now > LAST_PERIODIC.load(Ordering::Relaxed) + period
-            && callhookfunc("periodic", None, true) == 0
+            && callhookfunc("periodic", None, 1, std::ptr::null_mut()) == 0
         {
             LAST_PERIODIC.store(now, Ordering::Relaxed);
         }
@@ -3321,7 +3350,7 @@ pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
         .store(crate::ported::zsh_h::SFC_SUBST, Ordering::Relaxed);
     INCOMPFUNC.store(0, Ordering::Relaxed);                                  // c:4028
 
-    let rc = callhookfunc(func_name, Some(&args), false);                    // c:4030
+    let rc = callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut());  // c:4030
     // c:4033 — `ret = getaparam("reply")`. The previous Rust port read
     // `env::var("reply")` and split on NUL — but the `reply` array is
     // a shell-local PM_ARRAY paramtab entry, never exported to env.

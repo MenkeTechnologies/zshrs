@@ -78,21 +78,58 @@ pub static tccolours: AtomicI32 = AtomicI32::new(0);                         // 
 // SIGCHLD mask                                                              // c:96
 // `mod_export sigset_t sigchld_mask;` — owned by signals layer.             // c:99
 
-/// Port of `struct hookdef zshhooks[]` from Src/init.c:102-107.
-pub static zshhooks: Mutex<[crate::ported::zsh_h::hookdef; 4]> = Mutex::new([ // c:102
-    crate::ported::zsh_h::hookdef {                                          // c:103
-        next: None, name: String::new(), def: None, flags: 1, funcs: None,
-    },
-    crate::ported::zsh_h::hookdef {                                          // c:104
-        next: None, name: String::new(), def: None, flags: 1, funcs: None,
-    },
-    crate::ported::zsh_h::hookdef {                                          // c:105
-        next: None, name: String::new(), def: None, flags: 1, funcs: None,
-    },
-    crate::ported::zsh_h::hookdef {                                          // c:106
-        next: None, name: String::new(), def: None, flags: 1, funcs: None,
-    },
-]);
+/// Port of `struct hookdef zshhooks[]` from `Src/init.c:101-106`:
+/// ```c
+/// struct hookdef zshhooks[] = {
+///     HOOKDEF("exit", NULL, HOOKF_ALL),
+///     HOOKDEF("before_trap", NULL, HOOKF_ALL),
+///     HOOKDEF("after_trap", NULL, HOOKF_ALL),
+///     HOOKDEF("get_color_attr", NULL, HOOKF_ALL),
+/// };
+/// ```
+/// Stored as `AtomicPtr<hookdef>` holding the base pointer of a
+/// heap-leaked `[hookdef; 4]` so that `addhookdefs(NULL, zshhooks,
+/// 4)` at `setupvals()` (c:1085) can walk the array via `h++` exactly
+/// as the C call does. The leak is intentional — C's static-storage
+/// `zshhooks[]` has program lifetime, and the registered hookdef
+/// pointers must stay valid for any later `runhookdef` dispatch.
+pub static zshhooks: once_cell::sync::Lazy<                                  // c:101
+    std::sync::atomic::AtomicPtr<crate::ported::zsh_h::hookdef>,
+> = once_cell::sync::Lazy::new(|| {
+    use crate::ported::zsh_h::{hookdef, HOOKF_ALL};
+    let arr: Box<[hookdef; 4]> = Box::new([
+        hookdef {                                                            // c:102
+            next: std::ptr::null_mut(),
+            name: "exit".to_string(),
+            def: None,
+            flags: HOOKF_ALL,
+            funcs: std::ptr::null_mut(),
+        },
+        hookdef {                                                            // c:103
+            next: std::ptr::null_mut(),
+            name: "before_trap".to_string(),
+            def: None,
+            flags: HOOKF_ALL,
+            funcs: std::ptr::null_mut(),
+        },
+        hookdef {                                                            // c:104
+            next: std::ptr::null_mut(),
+            name: "after_trap".to_string(),
+            def: None,
+            flags: HOOKF_ALL,
+            funcs: std::ptr::null_mut(),
+        },
+        hookdef {                                                            // c:105
+            next: std::ptr::null_mut(),
+            name: "get_color_attr".to_string(),
+            def: None,
+            flags: HOOKF_ALL,
+            funcs: std::ptr::null_mut(),
+        },
+    ]);
+    let base = Box::into_raw(arr) as *mut hookdef;
+    std::sync::atomic::AtomicPtr::new(base)
+});
 
 // original argv[0]. This is already metafied                                // c:258
 
@@ -453,7 +490,13 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
         }
     }
 
-    // (void)addhookdefs(NULL, zshhooks, ...);                               // c:1085
+    // c:1085 — `(void)addhookdefs(NULL, zshhooks, sizeof(zshhooks)/sizeof(*zshhooks));`
+    // Registers the four well-known hookdefs (exit, before_trap,
+    // after_trap, get_color_attr) into the global `hooktab` chain.
+    {
+        let base = zshhooks.load(std::sync::atomic::Ordering::SeqCst);
+        let _ = crate::ported::module::addhookdefs(std::ptr::null(), base, 4);
+    }
     // init_eprog();                                                         // c:1087
     // zero_mnumber.type = MN_INTEGER; zero_mnumber.u.l = 0;                 // c:1089-1090
 
@@ -1157,7 +1200,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // 
                         placeholder2, None, 0);                              // c:200
                     args.push(cmdstr.clone());
                     crate::ported::utils::callhookfunc(                      // c:202
-                        "preexec", Some(&args), true,
+                        "preexec", Some(&args), 1, std::ptr::null_mut(),
                     );
                     crate::ported::mem::zsfree(cmdstr);                      // c:205
                     crate::ported::utils::errflag.fetch_and(                 // c:214 errflag &= ~ERRFLAG_ERROR

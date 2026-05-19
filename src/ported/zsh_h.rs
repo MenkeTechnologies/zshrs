@@ -780,19 +780,32 @@ pub struct feature_enables {
     pub pat: Option<Patprog>, // c:1577
 }
 
-/// Port of `typedef int (*Hookfn)(...)` from `Src/zsh.h:1582`.
-pub type Hookfn = fn(def: Hookdef, data: usize) -> i32;
+/// Port of `typedef int (*Hookfn)(Hookdef, void *)` from `Src/zsh.h:1582`.
+/// Real Rust fn-pointer matching the C ABI of a hook callback.
+pub type Hookfn = fn(h: *mut hookdef, d: *mut std::ffi::c_void) -> i32;
 
 /// Port of `struct hookdef` from `Src/zsh.h:1584-1590`.
+/// `next` and `funcs` are raw pointers matching the C
+/// `Hookdef next` / `LinkList funcs` types exactly. NULL is represented
+/// by `std::ptr::null_mut()`. Backing storage for hookdef nodes is
+/// expected to be `Box::leak`'d (mirroring C's static-storage
+/// `zshhooks[]` array and module-side `struct hookdef foo[] = { ... }`
+/// constants).
 #[allow(non_camel_case_types)]
 pub struct hookdef {
     // c:1584
-    pub next: Option<Hookdef>,   // c:1585
-    pub name: String,            // c:1586
-    pub def: Option<Hookfn>,     // c:1587
+    pub next: *mut hookdef,      // c:1585 — struct hookdef *
+    pub name: String,            // c:1586 — char *
+    pub def: Option<Hookfn>,     // c:1587 — Hookfn (NULL = None)
     pub flags: i32,              // c:1588
-    pub funcs: Option<LinkList>, // c:1589
+    pub funcs: *mut linklist,    // c:1589 — LinkList (struct linklist *)
 }
+// SAFETY: hookdef contains raw pointers. C zsh is single-threaded;
+// zshrs serializes hook operations via the module-level `hooktab`
+// AtomicPtr + the global_state_lock used by tests. Marking explicitly
+// because raw pointers default to !Send/!Sync.
+unsafe impl Send for hookdef {}
+unsafe impl Sync for hookdef {}
 
 /// Port of `struct patprog` from `Src/zsh.h:1601-1611`.
 ///
@@ -2030,16 +2043,18 @@ pub fn CONDDEF(
     }
 }
 
-/// Port of `HOOKDEF(name, func, flags)` from `Src/zsh.h:1594`.
+/// Port of `HOOKDEF(name, func, flags)` from `Src/zsh.h:1594`:
+/// `{ NULL, name, (Hookfn) func, flags, NULL }`. `func` accepts `None`
+/// to match C's `HOOKDEF("exit", NULL, HOOKF_ALL)` form.
 #[inline]
 #[allow(non_snake_case)]
-pub fn HOOKDEF(name: &str, func: Hookfn, flags: i32) -> hookdef {
+pub fn HOOKDEF(name: &str, func: Option<Hookfn>, flags: i32) -> hookdef {
     hookdef {
-        next: None,
+        next: std::ptr::null_mut(),
         name: name.to_string(),
-        def: Some(func),
+        def: func,
         flags,
-        funcs: None,
+        funcs: std::ptr::null_mut(),
     }
 }
 

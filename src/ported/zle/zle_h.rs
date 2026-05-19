@@ -674,17 +674,15 @@ pub struct compldat {                                                        // 
 /// LISTMATCHESHOOK chain via `runhookdef`, falling back to the
 /// canonical `ilistmatches` renderer when no user hook is registered.
 pub fn listmatches() {                                                       // c:398
-    // c:398 — `runhookdef(LISTMATCHESHOOK, NULL)`.
-    let registered = crate::ported::module::HOOKTAB.lock().ok()
-        .and_then(|tab| tab.get("list-matches").cloned())
-        .unwrap_or_default();
-    let mut handled = false;
-    for f in &registered {
-        if crate::ported::utils::getshfunc(f).is_some() {
-            let _ = crate::ported::zle::compcore::shfunc_call(f);
-            handled = true;
-        }
-    }
+    // c:398 — `runhookdef(LISTMATCHESHOOK, NULL)`. Returns nonzero
+    // when a Hookfn handled it; 0 (or no handler registered) falls
+    // through to the default renderer.
+    let h = crate::ported::module::gethookdef("list-matches");
+    let handled = if !h.is_null() {
+        crate::ported::module::runhookdef(h, std::ptr::null_mut()) != 0
+    } else {
+        false
+    };
     if !handled {
         // Default handler — ilistmatches (compresult.c:2284).
         let _ = crate::ported::zle::compresult::ilistmatches();
@@ -696,17 +694,15 @@ pub fn listmatches() {                                                       // 
 /// canonical `invalidate_list` cleanup (compresult.c:2334) when no
 /// user hook is registered.
 pub fn invalidatelist() {                                                    // c:402
-    // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL)`.
-    let registered = crate::ported::module::HOOKTAB.lock().ok()
-        .and_then(|tab| tab.get("invalidate-list").cloned())
-        .unwrap_or_default();
-    let mut handled = false;
-    for f in &registered {
-        if crate::ported::utils::getshfunc(f).is_some() {
-            let _ = crate::ported::zle::compcore::shfunc_call(f);
-            handled = true;
-        }
-    }
+    // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL)`. Returns nonzero
+    // when a Hookfn handled it; 0 or no registration falls through to
+    // the default cleanup path.
+    let h = crate::ported::module::gethookdef("invalidate-list");
+    let handled = if !h.is_null() {
+        crate::ported::module::runhookdef(h, std::ptr::null_mut()) != 0
+    } else {
+        false
+    };
     if !handled {
         let _ = crate::ported::zle::compresult::invalidate_list();
     }

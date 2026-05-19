@@ -430,27 +430,14 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {                              // 
     //              to handlers through the normal completion-state
     //              parameter reads.
 
-    // c:518 — `runhookdef(MENUSTARTHOOK, &cdat)`. C dispatches via
-    // the hookdef chain; the Rust port walks HOOKTAB["menu_start"] and
-    // invokes each shell-fn via the canonical dispatch_function_call
-    // path used by signal-trap shfunc dispatch (signals.rs:1087). The
-    // first non-zero return short-circuits per HOOKF_ALL semantics
-    // (module.c:996-1005).
-    let handlers: Vec<String> = crate::ported::module::HOOKTAB
-        .lock()
-        .ok()
-        .and_then(|t| t.get("menu_start").cloned())
-        .unwrap_or_default();
-
+    // c:518 — `runhookdef(MENUSTARTHOOK, &cdat)`. Canonical dispatch
+    // via `gethookdef("menu_start") + runhookdef(h, &cdat)`. Returns
+    // 0 when no Hookfn is registered (matches c:993-995: empty funcs
+    // and h->def NULL → return 0).
     let mut ret: i32 = 0;
-    for fn_name in &handlers {
-        let r = crate::fusevm_bridge::with_executor(|exec| {
-            exec.dispatch_function_call(fn_name, &[]).unwrap_or(0)
-        });
-        if r != 0 {
-            ret = r;
-            break;                                                           // c:1001 short-circuit
-        }
+    let h_menu_start = crate::ported::module::gethookdef("menu_start");
+    if !h_menu_start.is_null() {
+        ret = crate::ported::module::runhookdef(h_menu_start, std::ptr::null_mut());
     }
 
     if ret == 0 {
@@ -3456,17 +3443,17 @@ fn errflag_get() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
 }
 
-/// Direct port of `void runhookdef(Hookdef h, void *arg)` from
-/// `Src/init.c:990` — dispatches each registered shell function for
-/// the named hook by walking the global `hooktab` (module.c:843).
-fn runhookdef_compcore(hook: &str) {                                              // init.c:990
-    let fns: Vec<String> = crate::ported::module::HOOKTAB.lock()
-        .ok()
-        .and_then(|g| g.get(hook).cloned())
-        .unwrap_or_default();
-    for f in fns {
-        let _ = shfunc_call(&f);
+/// Local dispatcher used by compcore call sites for hook names that
+/// don't yet have a typed-data argument. Delegates to the canonical
+/// `module::runhookdef(gethookdef(name), NULL)` — no-op when no
+/// Hookfn is registered (c:993-995). Returns the Hookfn return value
+/// (or 0 when no handler fires).
+fn runhookdef_compcore(hook: &str) -> i32 {                                  // c:990
+    let h = crate::ported::module::gethookdef(hook);
+    if h.is_null() {
+        return 0;
     }
+    crate::ported::module::runhookdef(h, std::ptr::null_mut())
 }
 
 /// Direct port of `runhookdef(COMPCTLMAKEHOOK, &dat)` from

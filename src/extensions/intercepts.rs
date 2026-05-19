@@ -185,3 +185,105 @@ impl crate::ported::vm_helper::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn star_matches_anything() {
+        assert!(intercept_matches("*", "anything", "anything --here"));
+        assert!(intercept_matches("*", "", ""));
+    }
+
+    #[test]
+    fn all_matches_anything() {
+        assert!(intercept_matches("all", "ls", "ls -la"));
+        assert!(intercept_matches("all", "git", "git status"));
+    }
+
+    #[test]
+    fn exact_match_on_cmd_name() {
+        assert!(intercept_matches("git", "git", "git push"));
+        assert!(intercept_matches("ls", "ls", "ls -la"));
+    }
+
+    #[test]
+    fn exact_pattern_does_not_match_different_name() {
+        assert!(!intercept_matches("git", "svn", "svn diff"));
+        assert!(!intercept_matches("ls", "lsof", "lsof -p 1"));
+    }
+
+    #[test]
+    fn glob_star_matches_prefix() {
+        // "git *" should match the full command line like "git push origin".
+        assert!(intercept_matches("git *", "git", "git push origin"));
+    }
+
+    #[test]
+    fn glob_star_underscore_prefix_matches_completion_funcs() {
+        // "_*" is the canonical zsh pattern for completion functions.
+        assert!(intercept_matches("_*", "_files", "_files"));
+        assert!(intercept_matches("_*", "_describe", "_describe"));
+    }
+
+    #[test]
+    fn glob_star_does_not_match_non_prefix() {
+        assert!(!intercept_matches("_*", "files", "files"));
+    }
+
+    #[test]
+    fn question_mark_glob_matches_single_char() {
+        assert!(intercept_matches("l?", "ls", "ls"));
+        assert!(!intercept_matches("l?", "lsof", "lsof"));
+    }
+
+    #[test]
+    fn unmatched_pattern_without_glob_chars_returns_false() {
+        assert!(!intercept_matches("nope", "git", "git push"));
+    }
+
+    #[test]
+    fn invalid_glob_pattern_returns_false() {
+        // `[` with no closing bracket is invalid; should not panic and not match.
+        // Pattern with `[` triggers neither the `*` shortcut nor exact match,
+        // but it also contains no `*` or `?`, so we never reach glob parsing.
+        assert!(!intercept_matches("[invalid", "git", "git push"));
+    }
+
+    #[test]
+    fn empty_pattern_does_not_match_non_empty_cmd() {
+        assert!(!intercept_matches("", "ls", "ls -la"));
+    }
+
+    #[test]
+    fn empty_pattern_matches_empty_cmd_exactly() {
+        // Falls through to the `pattern == cmd_name` check.
+        assert!(intercept_matches("", "", ""));
+    }
+
+    #[test]
+    fn advice_kind_variants_round_trip_clone() {
+        let b = AdviceKind::Before;
+        let a = AdviceKind::After;
+        let r = AdviceKind::Around;
+        assert!(matches!(b.clone(), AdviceKind::Before));
+        assert!(matches!(a.clone(), AdviceKind::After));
+        assert!(matches!(r.clone(), AdviceKind::Around));
+    }
+
+    #[test]
+    fn intercept_struct_clone_preserves_fields() {
+        let i = Intercept {
+            pattern: "git *".into(),
+            kind: AdviceKind::Before,
+            code: "echo before".into(),
+            id: 42,
+        };
+        let c = i.clone();
+        assert_eq!(c.pattern, "git *");
+        assert!(matches!(c.kind, AdviceKind::Before));
+        assert_eq!(c.code, "echo before");
+        assert_eq!(c.id, 42);
+    }
+}

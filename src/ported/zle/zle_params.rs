@@ -866,16 +866,18 @@ mod trap_tests {
     fn zlebeforetrap_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:2110 — `return 0` always.
-        assert_eq!(zlebeforetrap(), 0);
+        // c:2110 — `return 0` always. Hookfn signature; pass null
+        // for both unused params.
+        assert_eq!(zlebeforetrap(std::ptr::null_mut(), std::ptr::null_mut()), 0);
     }
 
     #[test]
     fn zleaftertrap_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:2119 — `return 0` always.
-        assert_eq!(zleaftertrap(), 0);
+        // c:2119 — `return 0` always. Hookfn signature; pass null
+        // for both unused params.
+        assert_eq!(zleaftertrap(std::ptr::null_mut(), std::ptr::null_mut()), 0);
     }
 }
 

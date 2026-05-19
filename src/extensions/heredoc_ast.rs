@@ -80,3 +80,104 @@ pub struct HereDocInfo {
     #[serde(default)]
     pub quoted: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heredoc_construct_and_field_access() {
+        let h = HereDoc {
+            terminator: "EOF".into(),
+            strip_tabs: false,
+            content: "hello\n".into(),
+            quoted: false,
+            processed: false,
+        };
+        assert_eq!(h.terminator, "EOF");
+        assert!(!h.strip_tabs);
+        assert_eq!(h.content, "hello\n");
+        assert!(!h.quoted);
+        assert!(!h.processed);
+    }
+
+    #[test]
+    fn heredoc_clone_preserves_all_fields() {
+        let h = HereDoc {
+            terminator: "MARKER".into(),
+            strip_tabs: true,
+            content: "$x and `cmd`\n".into(),
+            quoted: true,
+            processed: true,
+        };
+        let c = h.clone();
+        assert_eq!(c.terminator, h.terminator);
+        assert_eq!(c.strip_tabs, h.strip_tabs);
+        assert_eq!(c.content, h.content);
+        assert_eq!(c.quoted, h.quoted);
+        assert_eq!(c.processed, h.processed);
+    }
+
+    #[test]
+    fn heredoc_info_serde_roundtrip_unquoted() {
+        let info = HereDocInfo {
+            content: "line1\nline2\n".into(),
+            terminator: "END".into(),
+            quoted: false,
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        let back: HereDocInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.content, info.content);
+        assert_eq!(back.terminator, info.terminator);
+        assert_eq!(back.quoted, info.quoted);
+    }
+
+    #[test]
+    fn heredoc_info_serde_roundtrip_quoted() {
+        let info = HereDocInfo {
+            content: "literal $var\n".into(),
+            terminator: "EOF".into(),
+            quoted: true,
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        let back: HereDocInfo = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.quoted);
+        assert_eq!(back.content, "literal $var\n");
+    }
+
+    #[test]
+    fn heredoc_info_quoted_defaults_to_false_when_missing() {
+        // Older serialized payloads predate `quoted`; `#[serde(default)]`
+        // must populate it as false instead of erroring.
+        let json = r#"{"content":"body\n","terminator":"EOF"}"#;
+        let info: HereDocInfo = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(info.content, "body\n");
+        assert_eq!(info.terminator, "EOF");
+        assert!(!info.quoted, "quoted should default to false");
+    }
+
+    #[test]
+    fn heredoc_info_serializes_empty_body() {
+        let info = HereDocInfo {
+            content: String::new(),
+            terminator: "X".into(),
+            quoted: false,
+        };
+        let json = serde_json::to_string(&info).expect("serialize empty");
+        let back: HereDocInfo = serde_json::from_str(&json).expect("deserialize empty");
+        assert!(back.content.is_empty());
+        assert_eq!(back.terminator, "X");
+    }
+
+    #[test]
+    fn heredoc_info_preserves_special_chars_through_serde() {
+        let info = HereDocInfo {
+            content: "$(echo nested)\n\t`backtick`\n\"quoted\"\n".into(),
+            terminator: "EOF".into(),
+            quoted: false,
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        let back: HereDocInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.content, info.content);
+    }
+}
