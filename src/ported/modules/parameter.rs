@@ -15,7 +15,8 @@
 
 use crate::ported::hashnameddir::nameddirtab;
 use crate::ported::hashtable::{
-    aliastab_lock, cmdnam_hashed, cmdnamtab_lock, shfunctab_lock, sufaliastab_lock,
+    aliastab_lock, cmdnam_hashed, cmdnamtab_lock, createaliasnode, shfunctab_lock,
+    sufaliastab_lock,
 };
 use crate::ported::hist::hist_ring;
 use crate::ported::jobs::{getjob, selectjobtab, sigmsg};
@@ -187,7 +188,7 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
 #[cfg(test)]
 mod paramtypestr_tests {
     use super::*;
-    use crate::ported::zsh_h::{hashnode, param, PM_ARRAY, PM_EXPORTED, PM_SCALAR, PM_UNSET};
+    use crate::ported::zsh_h::param;
 
     fn make_pm(flags: u32, level: i32) -> param {
         param {
@@ -254,9 +255,6 @@ pub fn scanpmparameters(
     func: Option<ScanFunc>, // c:124
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{
-        PM_READONLY, PM_SCALAR, PM_UNSET, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS,
-    };
     let func = match func {
         Some(f) => f,
         None => return,
@@ -1582,7 +1580,6 @@ pub fn scanpmmodules(
     func: Option<ScanFunc>, // c:1074
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{PM_READONLY, PM_SCALAR};
     let func = match func {
         Some(f) => f,
         None => return,
@@ -1751,9 +1748,6 @@ pub fn scanpmhistory(
     func: Option<ScanFunc>, // c:1188
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{
-        PM_READONLY, PM_SCALAR, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS,
-    };
     let func = match func {
         Some(f) => f,
         None => return,
@@ -1922,9 +1916,6 @@ pub fn scanpmjobtexts(
     func: Option<ScanFunc>, // c:1308
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{
-        PM_READONLY, PM_SCALAR, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, STAT_NOPRINT,
-    };
     let func = match func {
         Some(f) => f,
         None => return,
@@ -2097,9 +2088,6 @@ pub fn scanpmjobstates(
     func: Option<ScanFunc>, // c:1415
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{
-        PM_READONLY, PM_SCALAR, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, STAT_NOPRINT,
-    };
     let func = match func {
         Some(f) => f,
         None => return,
@@ -2220,9 +2208,6 @@ pub fn scanpmjobdirs(
     func: Option<ScanFunc>, // c:1487
     flags: i32,
 ) {
-    use crate::ported::zsh_h::{
-        PM_READONLY, PM_SCALAR, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, STAT_NOPRINT,
-    };
     let func = match func {
         Some(f) => f,
         None => return,
@@ -2717,7 +2702,6 @@ pub fn setaliases(
     ht: *mut HashTable,
     flags: i32,
 ) {
-    use crate::ported::hashtable::{aliastab_lock, createaliasnode};
 
     // c:1774-1775 — `if (!ht) return;`
     if ht.is_null() {
@@ -3540,7 +3524,8 @@ fn module_features() -> &'static Mutex<features_t> {
 mod scan_callback_tests {
     use super::*;
     use std::sync::atomic::{AtomicI32, Ordering};
-    use crate::zsh_h::param;
+
+    use crate::ported::zsh_h::param;
 
     // Module-scoped collector statics. Tests are serialised by name +
     // each test resets before/after so cross-test bleed is impossible.
@@ -3697,7 +3682,7 @@ mod scan_callback_tests {
 #[cfg(test)]
 mod setalias_tests {
     use super::*;
-    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
+    use crate::ported::zsh_h::param;
 
     /// setalias wires `aliastab.add(createaliasnode(name, value, flags))`
     /// per c:1701-1702. After call, aliastab should contain the new
@@ -3744,10 +3729,7 @@ mod setalias_tests {
 #[cfg(test)]
 mod paramtypestr_table_tests {
     use super::*;
-    use crate::ported::zsh_h::{
-        hashnode, param, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_INTEGER,
-        PM_READONLY,
-    };
+    use crate::ported::zsh_h::param;
 
     fn pm(flags: u32) -> param {
         param {

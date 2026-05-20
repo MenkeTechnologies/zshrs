@@ -37,8 +37,8 @@ use crate::ported::zle::compcore::listdat as listdat_static;
 use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
-    CGF_ROWS, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED,
-    CMF_ROWS,
+    CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST,
+    CMF_PACKED, CMF_ROWS,
 };
 use crate::ported::zle::compcore::{
     amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc,
@@ -104,7 +104,6 @@ pub fn cline_str(
     // c:165
     l: Option<&crate::ported::zle::comp_h::Cline>,
 ) -> String {
-    use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
     let mut out = String::new();
     let mut cur = l;
     while let Some(node) = cur {
@@ -415,9 +414,6 @@ pub fn accept_last(
     word_end: usize,
     selected: &str,
 ) -> (String, usize) {
-    use crate::ported::zle::compcore::{amatches, menuacc, MINFO};
-    use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
-    use crate::ported::zle::zle_tricky::{LASTPOSTBR, LASTPREBR};
     use std::sync::atomic::Ordering;
 
     // c:1299 — `if (!menuacc)` snapshot prebr/postbr.
@@ -1590,7 +1586,6 @@ pub fn iprintm(
     width: i32,
 ) -> i32 {
     // c:2241
-    use crate::ported::zle::comp_h::{CGF_FILES, CMF_ALL, CMF_DISPLINE};
     use std::sync::atomic::Ordering;
 
     let m = match mp {
@@ -1788,9 +1783,8 @@ pub static INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 
 #[cfg(test)]
 mod tests {
-    use crate::zle::comp_h::{Cline, Cmatch, CLF_LINE};
-    use crate::zle::compcore::onlyexpl;
     use super::*;
+    use crate::ported::zle::comp_h::Cline;
 
     #[test]
     fn test_unambig_data() {
