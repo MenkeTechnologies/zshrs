@@ -1628,7 +1628,7 @@ pub fn createparamtable() {                                                  // 
     let argv0 = std::env::args().next().unwrap_or_default();
     setsparam(
         "ZSH_ARGZERO",
-        &crate::ported::utils::ztrdup(&argv0),
+        &crate::ported::string::ztrdup(&argv0),
     );                                                                       // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
@@ -6055,7 +6055,7 @@ pub fn argzerosetfn(x: String) {                                             // 
             crate::ported::utils::zerr("read-only variable: 0");             // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
-            crate::ported::utils::set_argzero(Some(crate::ported::utils::ztrdup(&x)));
+            crate::ported::utils::set_argzero(Some(crate::ported::string::ztrdup(&x)));
         }
         // c:4946 — `zsfree(x)`. Rust drop handles via move.
     }

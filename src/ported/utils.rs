@@ -3030,7 +3030,7 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
         } else {
             bytes[i]
         };
-        if !iwsep_byte(b) {
+        if !crate::ported::ztype_h::iwsep(b) {
             break;
         }
         if bytes[i] == Meta {
@@ -3176,13 +3176,13 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // 
         let mut r: i32 = 0;
         // C: if (mul <= 0) skipwsep(&s);
         if mul <= 0 {
-            while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+            while s_pos < bytes.len() && crate::ported::ztype_h::iwsep(bytes[s_pos]) {
                 s_pos += 1;
             }
         }
         // C: if ((*s && itype_end(s,ISEP,1)!=s) || (mul<0 && t!=s)) r++;
         let has_word_now = s_pos < bytes.len()
-            && !iwsep(bytes[s_pos] as char);
+            && !crate::ported::ztype_h::iwsep(bytes[s_pos]);
         if has_word_now || (mul < 0 && t_orig != s_pos) {
             r += 1;
         }
@@ -3190,23 +3190,23 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // 
         while s_pos < bytes.len() {
             // Advance past the current word (non-ISEP chars).
             let word_start = s_pos;
-            while s_pos < bytes.len() && !iwsep(bytes[s_pos] as char) {
+            while s_pos < bytes.len() && !crate::ported::ztype_h::iwsep(bytes[s_pos]) {
                 s_pos += 1;
             }
             if s_pos > word_start && mul <= 0 {
-                while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                while s_pos < bytes.len() && crate::ported::ztype_h::iwsep(bytes[s_pos]) {
                     s_pos += 1;
                 }
             }
             // C: (void)findsep(&s, NULL, 0) — advance past one sep run.
             // Already handled above when mul<=0; for mul>0 we still need
             // to consume one separator byte to make progress.
-            if s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+            if s_pos < bytes.len() && crate::ported::ztype_h::iwsep(bytes[s_pos]) {
                 s_pos += 1;
             }
             let t_after = s_pos;
             if mul <= 0 {
-                while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                while s_pos < bytes.len() && crate::ported::ztype_h::iwsep(bytes[s_pos]) {
                     s_pos += 1;
                 }
             }
@@ -6152,17 +6152,12 @@ pub fn set_shinstdin(v: bool) {
 }
 
 /// Check if string is a valid identifier
-/// Check whether a string is a valid shell identifier.
-/// Port of the `itype_end(...IIDENT)` walk Src/utils.c uses
-/// (around `validident()`).
-pub fn isident(s: &str) -> bool {                                            // c:params.c:1288
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
+// `isident` DELETED — fake duplicate (cited `c:params.c:1288` from
+// utils.rs, location mismatch). Canonical port is
+// `crate::ported::params::isident` at `params.rs:2056`, which
+// correctly handles namespace prefix (`ns.var`) per the real C
+// body — the utils.rs copy dropped that arm. Callers now route
+// through `crate::ported::params::isident` directly.
 
 // QuoteType enum + impl deleted — the canonical quote-type values are
 // the bare `QT_*: i32` constants at `zsh_h.rs:175` (port of anonymous
@@ -6237,44 +6232,19 @@ pub fn convbase(val: i64, base: u32) -> String {                             // 
     crate::ported::params::convbase(val, base)
 }
 
-/// Check glob qualifier syntax
-/// Port from zsh/Src/utils.c checkglobqual()
-/// Check whether a string contains glob qualifiers `(…)`.
-/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/utils.c.
-pub fn checkglobqual(s: &str) -> bool {                                      // c:glob.c:1158
-    if !s.ends_with(')') {
-        return false;
-    }
-    let mut depth = 0;
-    let mut in_bracket = false;
-    for c in s.chars() {
-        match c {
-            '[' if !in_bracket => in_bracket = true,
-            ']' if in_bracket => in_bracket = false,
-            '(' if !in_bracket => depth += 1,
-            ')' if !in_bracket => {
-                if depth > 0 {
-                    depth -= 1;
-                } else {
-                    return false;
-                }
-            }
-            _ => {}
-        }
-    }
-    depth == 0
-}
+// `checkglobqual` DELETED — fake bracket-depth scanner cited
+// `c:glob.c:1158` from utils.rs. Canonical port is
+// `crate::ported::glob::checkglobqual(str, sl, nobareglob, sp)` at
+// `glob.rs:813`, which matches the real C signature
+// `(char *str, int sl, int nobareglob, char **sp)`. The utils.rs
+// fake reduced the signature to a single bool and discarded the
+// `sp` glob-qualifier-start out-pointer that callers need. Zero
+// callers used the utils.rs version.
 
-/// Port of `dupstrpfx(const char *s, int len)` from `Src/utils.c` (~line 1230 — duplicate
-/// the first `len` BYTES of `s` into a fresh heap string). C body
-/// is `memcpy(zhalloc(len+1), s, len); ret[len] = 0;`. The Rust
-/// port operates on bytes (not chars) to match — multibyte input
-/// can be sliced mid-codepoint by C callers.
-pub fn dupstrpfx(s: &str, len: usize) -> String {                            // c:string.c:161
-    let bytes = s.as_bytes();
-    let take = len.min(bytes.len());
-    String::from_utf8_lossy(&bytes[..take]).into_owned()
-}
+// `dupstrpfx` DELETED — fake duplicate cited `c:string.c:161` from
+// utils.rs (wrong location). Canonical port is
+// `crate::ported::string::dupstrpfx` at `string.rs:161`. Zero
+// callers used the utils.rs version.
 
 /// Get username from UID (from utils.c getpwuid handling)
 pub fn statuidprint(uid: u32) -> Option<String> {
@@ -6294,67 +6264,29 @@ pub fn statuidprint(uid: u32) -> Option<String> {
     }
 }
 
-/// String duplicate (from utils.c ztrdup)
-pub fn ztrdup(s: &str) -> String {                                           // c:string.c:62
-    s.to_string()
-}
+// `ztrdup` / `dyncat` / `tricat` / `bicat` DELETED — these were
+// fake duplicates of the canonical ports in `src/ported/string.rs`
+// (`Src/string.c:62`, `:131`, `:98`, `:145`). The utils.rs copies
+// admitted they were not in utils.c via `c:string.c:NNN`
+// annotations; PORT.md Rule 1 disallows the duplicate location.
+// Callers now route through `crate::ported::string::{ztrdup,
+// dyncat, tricat, bicat}` directly.
 
-/// String concat (from utils.c dyncat)
-pub fn dyncat(s1: &str, s2: &str) -> String {                                // c:string.c:131
-    format!("{}{}", s1, s2)
-}
+// `iwsep` / `iwsep_byte` DELETED — these were fake hardcoded
+// `c==' '||c=='\t'||c=='\n'` checks claiming to port `iwsep` from
+// "Src/zsh.h", but the real macro lives at `Src/ztype.h:61`
+// (`#define iwsep(X) zistype(X, IWSEP)`) and consults the `typtab[]`
+// lookup — which mutates when IFS is reassigned. The canonical port
+// is `crate::ported::ztype_h::iwsep(u8) -> bool` at `ztype_h.rs:133`.
+// Internal utils.rs callers (skipwsep / spacesplit / findword) now
+// route through it directly.
 
-/// Triple concat (from utils.c tricat)
-pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // c:string.c:98
-    format!("{}{}{}", s1, s2, s3)
-}
-
-/// Buffer concat (from utils.c bicat)
-pub fn bicat(s1: &str, s2: &str) -> String {                                 // c:string.c:145
-    format!("{}{}", s1, s2)
-}
-
-/// Port of `iwsep()` macro from `Src/zsh.h`.
-///
-/// `iwsep(c) == c == ' ' || c == '\t' || c == '\n'` — true for
-/// space, tab, or newline. The original Rust port omitted `\n`
-/// which is wrong: `wordcount`/`skipwsep`/`spacesplit` all rely on
-/// `\n` being a separator for lines.
-pub fn iwsep(c: char) -> bool {
-    c == ' ' || c == '\t' || c == '\n'
-}
-
-/// Byte-form of `iwsep` for callers that work on raw bytes (e.g.
-/// `skipwsep` walking a metafied buffer).
-#[inline]
-pub fn iwsep_byte(b: u8) -> bool {
-    b == b' ' || b == b'\t' || b == b'\n'
-}
-
-/// Port of `imeta(X)` macro from `Src/ztype.h:60`.
-///
-/// C macro: `#define imeta(X) zistype(X, IMETA)` — consults the
-/// `typtab[256]` lookup. The doc-comment previously claimed
-/// `#define imeta(c) ((c) >= Meta)`; that's the **byte-range**
-/// approximation, NOT the actual C macro. Per `Src/utils.c:4195-4201`,
-/// IMETA gets set in typtab on these bytes:
-///   * NUL (`typtab['\0'] |= IMETA;`, c:4195)
-///   * `Meta` byte 0x83 (c:4196)
-///   * `Marker` byte 0xa2 (c:4197)
-///   * ITOK range Pound..Nularg = 0x84..=0xa2 (c:4199-4201)
-///
-/// The previous Rust port returned TRUE for every char ≥ 0x83 —
-/// over-reported for bytes 0xa3..=0xff (legit metafied output, e.g.
-/// high Latin / CJK lead bytes). Route through `imeta_byte` which
-/// has the canonical `NUL ∪ 0x83..=0xa2` set. Wide chars (>0xff)
-/// are out of the IMETA range entirely (the typtab is 256 bytes).
-pub fn imeta(c: char) -> bool {                                              // c:ztype.h:60
-    let code = c as u32;
-    if code > 0xff {
-        return false;
-    }
-    imeta_byte(code as u8)
-}
+// `imeta(c: char)` DELETED — fake `char`-arg wrapper cited
+// `c:ztype.h:60` from utils.rs (wrong location, wrong signature).
+// Canonical port is `crate::ported::ztype_h::imeta(u8) -> bool` at
+// `ztype_h.rs:130`. C `imeta(X)` takes a byte; wrapping with `char`
+// invented an `> 0xff` early-out that C doesn't have. Migrated 1
+// caller (`zle/computil.rs:6194`).
 
 /// Get hostname
 pub fn gethostname() -> String {
@@ -6377,14 +6309,12 @@ pub fn gethostname() -> String {
 
 /// Get current working directory — re-export of the canonical
 /// port at `compat::zgetcwd` (Src/compat.c:559).
-///
-/// Returns `Option<String>` for caller-API compatibility — C's
-/// `zgetcwd` returns a non-NULL `char*` (falls back to `"."`), so
-/// the Some-arm is always taken. `Option` is retained so call sites
-/// like `if let Some(cwd) = utils::zgetcwd()` continue to compile.
-pub fn zgetcwd() -> Option<String> {                                         // c:compat.c:559
-    Some(crate::ported::compat::zgetcwd())
-}
+// `zgetcwd` DELETED — fake `Option<String>` wrapper around the
+// canonical `compat::zgetcwd() -> String` port (`Src/compat.c:559`).
+// C `zgetcwd` never returns NULL (falls back to `"."` per the
+// `dupstring(".")` arm), so the `Option` was caller-API churn, not
+// a port. Callers route through `crate::ported::compat::zgetcwd()`
+// directly.
 
 // `zchdir` duplicate deleted — canonical port at compat.rs:253
 // matches C's `int zchdir(char *dir)` signature (returns i32, not
@@ -7049,13 +6979,14 @@ mod tests {
 
     #[test]
     fn test_dupstrpfx_byte_counted() {
-        let _g = crate::test_util::global_state_lock();
-        // 5 bytes of ASCII = 5 chars, identical.
-        assert_eq!(dupstrpfx("hello", 3), "hel");
-        // Beyond length clamps.
-        assert_eq!(dupstrpfx("hi", 10), "hi");
-        // Empty.
-        assert_eq!(dupstrpfx("anything", 0), "");
+        let _g = crate::test_util::global_state_lock();                       // c:161
+        // 5 bytes of ASCII = 5 chars, identical. Canonical
+        // port lives at `string.rs:161`; pin from utils.rs's test
+        // module via the qualified path.
+        use crate::ported::string::dupstrpfx;                                 // c:161
+        assert_eq!(dupstrpfx("hello", 3), "hel");                             // c:161
+        assert_eq!(dupstrpfx("hi", 10), "hi");                                // c:161
+        assert_eq!(dupstrpfx("anything", 0), "");                             // c:161
     }
 
     #[test]
@@ -7158,28 +7089,25 @@ mod tests {
 
     #[test]
     fn test_imeta_macro_threshold() {
-        let _g = crate::test_util::global_state_lock();
+        let _g = crate::test_util::global_state_lock();                       // c:60
         // `Src/ztype.h:60` `imeta(X) zistype(X, IMETA)` — typtab-driven
         // predicate. Per `Src/utils.c:4195-4201`, IMETA is set on:
         // NUL, Meta=0x83, Marker=0xa2, and the Pound..Nularg ITOK range
-        // (0x84..=0xa2). The previous Rust port returned `c >= Meta`
-        // which over-reports bytes 0xa3..=0xff as IMETA. Pin the
-        // canonical set: in-range bytes are IMETA; high bytes (0xb0,
-        // 0xff, wide chars) are NOT IMETA.
-        assert!(imeta('\0'),         "c:4195 — NUL is IMETA");
-        assert!(imeta(Meta as char), "c:4196 — Meta (0x83) is IMETA");
-        assert!(imeta(0xa2 as char), "c:4197 — Marker (0xa2) is IMETA");
-        assert!(imeta(0x84 as char), "c:4199-4201 — Pound (0x84) is IMETA via ITOK range");
-        assert!(imeta(0x9b as char), "c:4199-4201 — Dash sentinel within ITOK range is IMETA");
-        // Bytes outside the typtab IMETA set:
-        assert!(!imeta(0x82 as char), "c:4170 — 0x82 is ICNTRL, not IMETA");
-        assert!(!imeta(0xa3 as char), "byte 0xa3 is past Marker — NOT IMETA");
-        assert!(!imeta(0xff as char), "byte 0xff is NOT IMETA (the prior `>= Meta` over-report)");
-        assert!(!imeta(' '),          "space is not IMETA");
-        assert!(!imeta('A'),          "'A' is not IMETA");
-        // Wide chars (>0xff) collapse to false — IMETA typtab is 256 bytes.
-        assert!(!imeta('é'),          "wide char 'é' not in 256-byte IMETA typtab");
-        assert!(!imeta('字'),         "wide CJK not in 256-byte IMETA typtab");
+        // (0x84..=0xa2). Routes through canonical
+        // `ztype_h::imeta(u8)`; init the typtab first since the
+        // canonical port reads through it.
+        crate::ported::utils::inittyptab();                                   // c:4148
+        use crate::ported::ztype_h::imeta;                                    // c:60
+        assert!(imeta(0x00),  "c:4195 — NUL is IMETA");                       // c:4195
+        assert!(imeta(Meta),  "c:4196 — Meta (0x83) is IMETA");               // c:4196
+        assert!(imeta(0xa2),  "c:4197 — Marker (0xa2) is IMETA");             // c:4197
+        assert!(imeta(0x84),  "c:4199-4201 — Pound (0x84) is IMETA via ITOK range");
+        assert!(imeta(0x9b),  "c:4199-4201 — Dash sentinel within ITOK range is IMETA");
+        assert!(!imeta(0x82), "c:4170 — 0x82 is ICNTRL, not IMETA");          // c:4170
+        assert!(!imeta(0xa3), "byte 0xa3 is past Marker — NOT IMETA");
+        assert!(!imeta(0xff), "byte 0xff is NOT IMETA (the prior `>= Meta` over-report)");
+        assert!(!imeta(b' '), "space is not IMETA");
+        assert!(!imeta(b'A'), "'A' is not IMETA");
     }
 
     #[test]
@@ -7192,13 +7120,15 @@ mod tests {
 
     #[test]
     fn test_iwsep_includes_newline() {
-        let _g = crate::test_util::global_state_lock();
+        let _g = crate::test_util::global_state_lock();                       // c:61
         // The previous port omitted '\n' which broke wordcount on
-        // multi-line input.
-        assert!(iwsep('\n'));
-        assert!(iwsep('\t'));
-        assert!(iwsep(' '));
-        assert!(!iwsep('a'));
+        // multi-line input. Routes through canonical
+        // `ztype_h::iwsep` (`Src/ztype.h:61`).
+        use crate::ported::ztype_h::iwsep;                                    // c:61
+        assert!(iwsep(b'\n'));                                                // c:61
+        assert!(iwsep(b'\t'));                                                // c:61
+        assert!(iwsep(b' '));                                                 // c:61
+        assert!(!iwsep(b'a'));                                                // c:61
     }
 
     #[test]
@@ -7249,12 +7179,14 @@ mod tests {
 
     #[test]
     fn test_isident() {
-        let _g = crate::test_util::global_state_lock();
-        assert!(isident("foo"));
-        assert!(isident("_bar"));
-        assert!(isident("baz123"));
-        assert!(!isident("123abc"));
-        assert!(!isident("foo-bar"));
+        let _g = crate::test_util::global_state_lock();                       // c:1288
+        // Canonical port lives at `params.rs:2056` (`Src/params.c:1288`).
+        use crate::ported::params::isident;                                   // c:1288
+        assert!(isident("foo"));                                              // c:1288
+        assert!(isident("_bar"));                                             // c:1288
+        assert!(isident("baz123"));                                           // c:1288
+        assert!(!isident("123abc"));                                          // c:1288
+        assert!(!isident("foo-bar"));                                         // c:1288
     }
 
     #[test]
@@ -8318,21 +8250,31 @@ mod tests {
     /// a poisoned param that no later expansion can address.
     #[test]
     fn isident_rejects_digit_leading_names() {
-        let _g = crate::test_util::global_state_lock();
-        assert!(!isident("1foo"));
-        assert!(!isident("99"));
-        assert!(!isident(""));
+        let _g = crate::test_util::global_state_lock();                       // c:1288
+        // c:1315-1319 — C `isident`: if first char is digit, ALL
+        // chars must be digit (all-digit names are valid positional
+        // params like $99). So `1foo` is rejected (digit-then-alpha)
+        // but `99` is accepted as a valid positional-param name.
+        // The previous utils.rs fake rejected all-digit names too,
+        // which was non-faithful — the canonical `params::isident`
+        // at `params.rs:2056` matches the C semantics.
+        use crate::ported::params::isident;                                   // c:1288
+        assert!(!isident("1foo"));                                            // c:1318
+        assert!(isident("99"),                                                // c:1318
+            "c:1315-1319 — all-digit names are valid positional params");
+        assert!(!isident(""));                                                // c:1290
     }
 
     /// `isident` MUST accept underscore-leading + alpha-leading names —
     /// `_foo`, `Foo_BAR_42` are valid POSIX shell idents.
     #[test]
     fn isident_accepts_underscore_and_alpha_leading() {
-        let _g = crate::test_util::global_state_lock();
-        assert!(isident("foo"));
-        assert!(isident("_foo"));
-        assert!(isident("Foo_BAR_42"));
-        assert!(isident("a"));
+        let _g = crate::test_util::global_state_lock();                       // c:1288
+        use crate::ported::params::isident;                                   // c:1288
+        assert!(isident("foo"));                                              // c:1288
+        assert!(isident("_foo"));                                             // c:1288
+        assert!(isident("Foo_BAR_42"));                                       // c:1288
+        assert!(isident("a"));                                                // c:1288
     }
 
     /// `isident` rejects whitespace/punctuation/$. A regression
@@ -8340,11 +8282,17 @@ mod tests {
     /// subsequent lookup can address (`typeset 'foo bar'=baz`).
     #[test]
     fn isident_rejects_special_chars() {
-        let _g = crate::test_util::global_state_lock();
-        assert!(!isident("foo bar"));
-        assert!(!isident("foo-bar"));
-        assert!(!isident("foo."));
-        assert!(!isident("a$b"));
+        let _g = crate::test_util::global_state_lock();                       // c:1288
+        // c:1320-1322 — non-digit-leading names use itype_end with
+        // INAMESPC bits (alnum + `_` + `.`); other chars terminate.
+        // The previous utils.rs fake rejected `foo.` outright, which
+        // is incorrect — C accepts trailing `.` (it's an INAMESPC
+        // member). Whitespace, `-`, and `$` are NOT INAMESPC chars
+        // and remain rejected.
+        use crate::ported::params::isident;                                   // c:1288
+        assert!(!isident("foo bar"));                                         // c:1322
+        assert!(!isident("foo-bar"));                                         // c:1322
+        assert!(!isident("a$b"));                                             // c:1322
     }
 
     /// `convbase(0, 10)` MUST produce `"0"`, not `""`. The literal-zero

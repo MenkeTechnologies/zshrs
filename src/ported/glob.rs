@@ -372,7 +372,7 @@ pub fn insert(s: &str, checked: i32) {                                       // 
                 return;                                                      // c:387
             }
         }
-        news = crate::ported::utils::dyncat(&pathbuf_local, &news);          // c:389
+        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:389
         statted = 1;                                                         // c:391
         // c:392-418 — for (qn = qo; qn && qn->func;) ...
         // The qualifier-fn pointer chain (`qn->func`) isn't exposed
@@ -384,9 +384,9 @@ pub fn insert(s: &str, checked: i32) {                                       // 
             crate::ported::signals::unqueue_signals();                       // c:421
             return;                                                          // c:422
         }
-        news = crate::ported::utils::dyncat(&pathbuf_local, &news);          // c:424
+        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:424
     } else {                                                                 // c:425
-        news = crate::ported::utils::dyncat(&pathbuf_local, &news);          // c:426
+        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:426
     }
 
     // c:428 — `while (!inserts || (news = dupstring(*inserts++)))`

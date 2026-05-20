@@ -1755,12 +1755,11 @@ pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {        // 
         let mut v = value.unwrap().to_string();
         // c:1590-1594 — absolute-path normalization for relative input.
         if !v.starts_with('/') {                                             // c:1590
-            if let Some(cwd) = crate::ported::utils::zgetcwd() {              // c:1591 zgetcwd
-                v = format!("{}/{}", cwd, v);                                // c:1591 zhtricat
-                if let Some(resolved) = crate::ported::utils::xsymlink(&v) { // c:1593 xsymlink(..., 1)
-                    v = resolved;
-                }
-            }
+            let cwd = crate::ported::compat::zgetcwd();                      // c:1591 zgetcwd
+            v = format!("{}/{}", cwd, v);                                    // c:1591 zhtricat
+            if let Some(resolved) = crate::ported::utils::xsymlink(&v) {     // c:1593 xsymlink(..., 1)
+                v = resolved;                                                // c:1593
+            }                                                                // c:1593
         }
         // c:1602-1606 — `dircache_lastentry` fast-path: same path as last.
         let last_idx = DIRCACHE_LASTENTRY.load(Ordering::SeqCst);

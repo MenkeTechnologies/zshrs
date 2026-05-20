@@ -988,7 +988,7 @@ pub fn bin_pwd(_name: &str, _argv: &[String],                                // 
         || (chaselinks && !OPT_ISSET(ops, b'L'))                             // c:731
     {
         // c:732 — `printf("%s\n", zgetcwd());`
-        println!("{}", crate::ported::utils::zgetcwd().unwrap_or_default()); // c:732
+        println!("{}", crate::ported::compat::zgetcwd()); // c:732
     } else {
         // c:734 — `zputs(pwd, stdout); putchar('\n');`. C reads the
         // shell-internal `pwd` global (Src/params.c:108). The
@@ -1003,7 +1003,7 @@ pub fn bin_pwd(_name: &str, _argv: &[String],                                // 
         // already unset, so the read fell through to zgetcwd
         // bypassing the just-set paramtab PWD).
         let pwd = crate::ported::params::getsparam("PWD")
-            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
+            .unwrap_or_else(|| crate::ported::compat::zgetcwd());
         println!("{}", pwd);                                                 // c:734
     }
     0                                                                        // c:737
@@ -1039,7 +1039,7 @@ pub fn bin_dirs(_name: &str, argv: &[String],                                // 
         // Route through `utils::fprintdir` which calls `finddir`,
         // matching C's named-dir abbreviation.
         let pwd = crate::ported::params::getsparam("PWD")
-            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
+            .unwrap_or_else(|| crate::ported::compat::zgetcwd());
         if OPT_ISSET(ops, b'l') {                                            // c:771
             print!("{}", pwd);                                               // c:772
         } else {
@@ -1151,7 +1151,7 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
     //          $PWD). Read from paramtab; fall back to getcwd if
     //          unset.
     let pwd = crate::ported::params::getsparam("PWD")
-        .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
+        .unwrap_or_else(|| crate::ported::compat::zgetcwd());
     if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
         d.insert(0, pwd);                                                    // c:849
     }
@@ -1286,7 +1286,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
         //              C reads `pwd` global / `$PWD` param via getsparam;
         //              fall back to getcwd if the param isn't populated.
         let pwd = crate::ported::params::getsparam("PWD")
-            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
+            .unwrap_or_else(|| crate::ported::compat::zgetcwd());
         let pat = &argv[0];
         let new_pat = &argv[1];
         match pwd.find(pat.as_str()) {                                       // c:917
