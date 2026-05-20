@@ -3637,6 +3637,8 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
 
     // c:2989-2998 — splice val into [start..end] range.
     let end_idx = end_idx.min(arr.len());
+    let val_len = val.len();                                                 // c:3030 post-assign sanity
+    let pre_len = arr.len();                                                 // c:3030 (snapshot)
     if start_idx <= end_idx {
         arr.splice(start_idx..end_idx, val);
     } else {
@@ -3648,6 +3650,23 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
             }
         }
     }
+    // c:3030 — DPUTS2(p - new != post_assignment_length,
+    //                 "setarrvalue: wrong allocation: %d 1= %lu",
+    //                 post_assignment_length, (unsigned long)(p - new))
+    // In C, p-new is the pointer-arithmetic count of elements written
+    // into the freshly-allocated buffer; post_assignment_length is the
+    // pre-calculated expected length. In Rust the post-splice arr.len()
+    // is the equivalent of `p - new`; the expected length follows the
+    // same arithmetic as C's post_assignment_length.
+    let expected = if start_idx <= end_idx {                                 // c:3030
+        pre_len - (end_idx - start_idx) + val_len                            // c:3030
+    } else {                                                                  // c:3030
+        (start_idx + val_len).max(pre_len)                                   // c:3030
+    };
+    crate::DPUTS2!(                                                          // c:3030
+        arr.len() != expected,                                                // c:3030
+        "setarrvalue: wrong allocation: {} 1= {}", expected, arr.len()       // c:3030-3031
+    );
 }
 
 /// Retrieve integer parameter.

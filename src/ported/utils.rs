@@ -911,12 +911,25 @@ pub fn print_if_link(s: &str, all: bool) {                                   // 
             }
         }
     } else {                                                                 // c:1006
+        // c:1007-1011 — HAVE_MEMCCPY arm: copy s into a PATH_MAX-1 buffer
+        // and DPUTS1 if the input overflows. Rust's String has no fixed
+        // PATH_MAX limit but the C parity-check still fires when a
+        // pathological caller passes a path that wouldn't fit C's
+        // s_at_entry[PATH_MAX+1] buffer.
+        crate::DPUTS1!(                                                       // c:1009
+            s.len() >= libc::PATH_MAX as usize,                              // c:1008 memccpy returns NULL
+            "path longer than PATH_MAX: {}", s                               // c:1009
+        );
         let s_at_entry = s.to_string();                                      // c:1013
-        if let Ok(resolved) = std::fs::canonicalize(s) {                     // c:1015
-            let r = resolved.to_string_lossy().into_owned();
-            if r != s_at_entry {                                             // c:1015
+        // c:1015 — `if (chrealpath(&s, 'P', 0) && strcmp(s, s_at_entry))`
+        // The previous Rust port called std::fs::canonicalize directly —
+        // a fake that bypassed the canonical chrealpath port (hist.rs:2311).
+        let mut resolved = s.to_string();                                    // c:1015 &s in/out
+        if let Some(r) = crate::ported::hist::chrealpath(&resolved, b'P', false) { // c:1015
+            resolved = r;
+            if resolved != s_at_entry {                                       // c:1015 strcmp(s, s_at_entry)
                 print!(" -> ");                                              // c:1016
-                print!("{}", if r.is_empty() { "/" } else { &r });           // c:1017
+                print!("{}", if resolved.is_empty() { "/" } else { &resolved }); // c:1017
             }
         }
     }
