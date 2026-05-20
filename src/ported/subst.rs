@@ -1181,20 +1181,27 @@ pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
 /// Port of `singsub(char **s)` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:514
 pub fn singsub(s: &str) -> String {                  // c:514
-    // c:514
-    let mut list = LinkList::default(); // c:514
-    list.push_back(s.to_string()); // c:514
-    let mut ret_flags = 0i32; // c:514
+    // c:516 — `local_list1(foo);` (Rust analogue: stack-local list).
+    let mut list = LinkList::default();                                       // c:516
+    // c:518 — `init_list1(foo, *s);` (push the single input element).
+    list.push_back(s.to_string());                                            // c:518
+    let mut ret_flags = 0i32;                                                 // c:520 NULL ret_flags
 
-    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags); // c:514
+    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags);                       // c:520
 
-    if errflag_set() {
-        // c:514
-        return String::new(); // c:514
-    } // c:514
+    if errflag_set() {                                                        // c:521 if (errflag)
+        return String::new();                                                 // c:522 return
+    }
 
-    list.getdata(0).cloned().unwrap_or_default() // c:514
-} // c:514
+    // c:523 `*s = (char *) ugetnode(&foo);` — pull first node.
+    let result = list.getdata(0).cloned().unwrap_or_default();               // c:523
+    // c:524 — DPUTS asserts the list is now empty (singsub never
+    // produces more than one word). Rust port wires the canonical
+    // DPUTS macro from zsh_h.rs.
+    crate::DPUTS!(list.nodes.len() > 1,                                       // c:524
+        "BUG: singsub() produced more than one word!");                       // c:524
+    result                                                                    // c:523
+}
 
 /// Substitution with possible multiple results
 /// Multi-word substitution with IFS splitting.
