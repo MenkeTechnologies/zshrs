@@ -11,7 +11,7 @@
 //! Provides watch/log functionality for monitoring user logins/logouts.
 
 use chrono::{Local, TimeZone};
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -600,7 +600,6 @@ pub fn dowatch() {
     // c:645-646 — `free(wtab); wtab = utab; wtabsz = utabsz;`
     WTAB.with(|t| *t.borrow_mut() = utab);
     // c:647 — `fflush(stdout); lastwatch = time(NULL);`
-    use std::io::Write;
     let _ = std::io::stdout().flush();
     let now = unsafe { libc::time(std::ptr::null_mut()) as i64 };
     LASTWATCH.with(|t| t.set(now));
@@ -1050,7 +1049,6 @@ fn wtmp_file_path() -> &'static str {
 /// putchar/printf; Rust collects into a String and writes once for
 /// atomicity.
 fn emit_event(inout: i32, u: &libc::utmpx, fmt: &str) {
-    use std::io::Write;
     let line = watchlog2(inout, u, fmt, 1, 0);
     let _ = writeln!(std::io::stdout(), "{}", line);
 }
@@ -1223,7 +1221,6 @@ mod tests {
     #[test]
     fn test_glob_match() {
         let _g = crate::test_util::global_state_lock();
-        use crate::glob::matchpat;
         assert!(matchpat("*", "anything", false, true));
         assert!(matchpat("user*", "username", false, true));
         assert!(matchpat("*name", "username", false, true));
