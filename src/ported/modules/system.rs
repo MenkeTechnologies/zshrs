@@ -27,7 +27,7 @@ use crate::ported::math::{matheval, mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::options::{opt_state_get, opt_state_set};
 use crate::ported::params::{isident, paramtab, setiparam, setsparam};
 use crate::ported::utils::{metafy, movefd, unmeta, zclose, zstrtol, zwarnnam};
-use crate::ported::zsh_h::{options, OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
 
 const SYSREAD_BUFSIZE: usize = 8192; // c:45
 
@@ -1134,7 +1134,6 @@ pub fn scanpmsysparams() -> Vec<(String, String)> {
 // static struct features module_features                            c:910 (system.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 // `bintab` — port of `static struct builtin bintab[]` (system.c).
 

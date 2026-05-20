@@ -15,8 +15,12 @@
 //! Rust port calls `crate::ported::utils::ztrftime()` for the
 //! base format and adds %N extensions on top.
 
-use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{options, OPT_ARG, OPT_ISSET};
+use crate::ported::utils::{metafy, zwarnnam};
+use std::sync::{Mutex, OnceLock};
+use crate::ported::compat::zgettime;
+use crate::ported::params::{getsparam, setiparam, setsparam};
+use crate::ported::zsh_system_h::timespec;
+use crate::ported::zsh_h::{features, options, OPT_ARG, OPT_ISSET, MAX_OPS, module};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -203,7 +207,7 @@ pub fn output_strftime(
 
     // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
     if let Some(name) = scalar {
-        setsparam(name, &crate::ported::utils::metafy(&formatted));
+        setsparam(name, &metafy(&formatted));
         // c:178
     } else {
         // c:180-183 — fwrite + putchar('\n') unless -n
@@ -236,7 +240,7 @@ pub fn bin_strftime(
     // (canonical shell var storage); previous port read
     // `env::var("TZ")` which diverges from shell-internal TZ values
     // not yet exported. Same env-vs-paramtab family as recent fixes.
-    let tz_saved = crate::ported::params::getsparam("TZ"); // c:191
+    let tz_saved = getsparam("TZ"); // c:191
                                                            // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL);
                                                            //              setsparam("TZ", tz);`. The Rust port mirrors via
                                                            // env::set_var so libc's strftime sees the locale-active TZ —
@@ -275,8 +279,8 @@ pub fn getcurrentsecs() -> i64 {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn getcurrentrealtime() -> f64 {
     // c:212
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() }; // c:212
-    crate::ported::compat::zgettime(&mut now); // c:215
+    let mut now: timespec = unsafe { std::mem::zeroed() }; // c:212
+    zgettime(&mut now); // c:215
     (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9 // c:216
 }
 
@@ -296,9 +300,9 @@ pub fn getcurrentrealtime() -> f64 {
 pub fn getcurrenttime() -> (i64, i64) {
     // c:220
     // c:222-224 — `char **arr; char buf[DIGBUFSIZE]; struct timespec now;`
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };
+    let mut now: timespec = unsafe { std::mem::zeroed() };
     // c:226 — `zgettime(&now);`
-    crate::ported::compat::zgettime(&mut now);
+    zgettime(&mut now);
     // c:228-232 — C allocates a 3-element char** via zhalloc, sprintf
     // tv_sec then tv_nsec into a stack buf, dupstring's each entry,
     // sets arr[2]=NULL. Rust returns the numeric pair directly;
@@ -328,7 +332,6 @@ pub fn setup_(m: *const module) -> i32 {
 // static struct features module_features                            c:262
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -390,10 +393,8 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::params::{setiparam, setsparam};
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -404,7 +405,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:strftime".to_string(),
         "p:EPOCHSECONDS".to_string(),
@@ -419,7 +420,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -432,7 +433,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -462,9 +463,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,
@@ -480,7 +481,6 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
 
     #[test]

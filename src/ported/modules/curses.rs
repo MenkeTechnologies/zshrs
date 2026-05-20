@@ -38,12 +38,11 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::{Read, Write, self};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::utils::{zerrnam, zwarnnam};
 use crate::ported::zsh_h::{features, module, options};
-use std::io::Read;
 use crate::ported::params::{getiparam, setsparam};
 // =====================================================================
 // Port of `struct zc_win` from `Src/Modules/curses.c:63`.

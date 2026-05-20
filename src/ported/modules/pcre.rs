@@ -4,7 +4,7 @@
 //! Uses the Rust `regex` crate which provides Perl-compatible regex syntax.
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ISSET, options, OPT_ARG, OPT_HASARG};
+use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options};
 use regex::Regex;
 
 /// Port of `CPCRE_PLAIN` from `Src/Modules/pcre.c:34`. Default
@@ -189,7 +189,6 @@ pub fn pcre_callout(
 // static struct features module_features                            c:530 (pcre.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
 /// pcre2_match_data *mdata, int captured_count, char *matchvar,

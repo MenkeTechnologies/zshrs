@@ -29,8 +29,7 @@
 
 use std::io::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::ported::compat::output64;
 use crate::ported::cond::{cond_str, cond_val};

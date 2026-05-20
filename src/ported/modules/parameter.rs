@@ -239,7 +239,7 @@ mod paramtypestr_tests {
 // static struct features module_features                            c:2300 (parameter.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
+use crate::ported::zsh_h::{ScanFunc, module};
 
 /// Port of `scanpmparameters(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:124.
 ///
@@ -1673,7 +1673,6 @@ pub fn dirssetfn(pm: *mut ParamStruct, x: Vec<String>) {
 // `getreswords()` (Src/lex.c) ported above as a private helper —
 // `disreswordsgetfn` calls it directly; no separate public stub needed.
 
-use crate::ported::zsh_h::ScanFunc;
 
 /// Port of `dirsgetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:1147.
 /// C: `static char **dirsgetfn(UNUSED(Param pm))` →

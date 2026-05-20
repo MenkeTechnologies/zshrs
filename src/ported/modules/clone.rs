@@ -13,8 +13,7 @@
 #![allow(non_snake_case)]
 
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
 use crate::ported::zsh_h::{features, module, options, MAX_OPS};

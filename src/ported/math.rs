@@ -23,13 +23,10 @@ use crate::ported::params::{convbase, getsparam, unsetparam};
 use crate::ported::zsh_h::Nularg;
 
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
-pub use crate::ported::zsh_h::mnumber;
+pub use crate::ported::zsh_h::{MN_FLOAT, MN_INTEGER, MN_UNSET, mnumber};
 /// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
-pub use crate::ported::zsh_h::MN_FLOAT;
 /// Re-export of `MN_INTEGER` (defined in zsh_h.rs as the Src/zsh.h:103 port).
-pub use crate::ported::zsh_h::MN_INTEGER;
 /// Re-export of `MN_UNSET` (defined in zsh_h.rs as the Src/zsh.h:105 port).
-pub use crate::ported::zsh_h::MN_UNSET;
 
 /// Port of `struct mathvalue` from `Src/math.c`:
 ///

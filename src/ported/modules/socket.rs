@@ -9,7 +9,7 @@
 /// C signature matches exactly: `static int bin_zsocket(char *nam,
 /// char **args, Options ops, UNUSED(int func))`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET, module};
 
 pub fn bin_zsocket(
     nam: &str,
@@ -333,7 +333,6 @@ pub fn bin_zsocket(
 // static struct features module_features                            c:284
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 // `bintab` — port of `static struct builtin bintab[]` (socket.c:280).
 

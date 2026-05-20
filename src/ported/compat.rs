@@ -8,8 +8,7 @@
 //! - Path handling for long pathnames
 //! - 64-bit integer formatting
 
-use std::env;
-use std::fs;
+use std::{env, fs};
 
 use std::os::unix::fs::MetadataExt;
 use crate::params::getsparam;

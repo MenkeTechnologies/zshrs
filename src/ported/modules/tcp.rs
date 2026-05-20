@@ -17,7 +17,7 @@
 
 use crate::ported::modules::tcp_h::{tcp_session, tcp_sockaddr, ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP};
 use crate::ported::utils::{zerrnam, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module};
 use std::net::ToSocketAddrs;
 use std::os::unix::io::RawFd;
 
@@ -871,7 +871,6 @@ pub fn boot_(m: *const module) -> i32 {
 // static struct features module_features                            c:705 (tcp.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
