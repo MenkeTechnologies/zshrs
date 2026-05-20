@@ -1272,6 +1272,12 @@ pub fn deletefilelist(file_list: &mut Job, disowning: bool) {                   
 /// index 0 (job 0 is unused / "the shell itself"); Rust port does
 /// the same with `iter_mut().skip(1)`.
 pub fn cleanfilelists(jobtab: &mut [Job]) {
+    // c:1447 — DPUTS(shell_exiting >= 0, "BUG: cleanfilelists() before exit")
+    crate::DPUTS!(                                                            // c:1447
+        crate::ported::builtin::SHELL_EXITING                                // c:1447
+            .load(std::sync::atomic::Ordering::Relaxed) >= 0,                // c:1447
+        "BUG: cleanfilelists() before exit"                                  // c:1447
+    );
     for job in jobtab.iter_mut().skip(1) {
         deletefilelist(job, false);
     }
@@ -1677,9 +1683,10 @@ pub fn setjobpwd() {                                                          //
 /// Port of `void spawnjob(void)` from `Src/jobs.c:1894`.
 pub fn spawnjob() {                                                          // c:1894
     use crate::ported::zsh_h::{isset, MONITOR};
-    // c:1898 — DPUTS(thisjob == -1, ...). Defensive: bail if no job.
     let thisjob_idx = *THISJOB.get_or_init(|| Mutex::new(-1))
         .lock().expect("thisjob poisoned");
+    // c:1898 — DPUTS(thisjob == -1, "No valid job in spawnjob.")
+    crate::DPUTS!(thisjob_idx == -1, "No valid job in spawnjob.");           // c:1898
     if thisjob_idx < 0 {
         return;
     }
