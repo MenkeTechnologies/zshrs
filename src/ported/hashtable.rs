@@ -18,15 +18,13 @@
 #![allow(non_camel_case_types)]
 
 use crate::ported::zsh_h::{
-    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC,
-    HIST_DUP, HIST_TMPSTORE, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME,
-    TYPESET, UNTIL, WHILE, ZEND,
+    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF,
+    INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -1761,6 +1759,7 @@ pub fn freehistnode(nodeptr: &str) {
 /// WARNING: param names don't match C — Rust=(idx, unlink) vs C=(he, unlink)
 pub fn freehistdata(idx: usize, unlink: i32) {
     // c:1458
+    use crate::ported::zsh_h::{HIST_DUP, HIST_TMPSTORE};
     let mut ring = crate::ported::hist::hist_ring.lock().unwrap();
     let he = match ring.get(idx) {
         Some(h) => h,
@@ -1798,6 +1797,7 @@ pub fn freehistdata(idx: usize, unlink: i32) {
 /// HashMap-value (i32). Add/remove via the (name, value) pair.
 pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {
     // c:1537
+    use std::sync::atomic::Ordering;
     let mut cache = dircache_lock().lock().expect("dircache poisoned");
 
     if value.is_none() {
@@ -2315,7 +2315,7 @@ mod tests {
     fn test_hasher() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher(""), 0);
-        assert!(hasher("test") != 0);
+        assert_ne!(hasher("test"), 0);
         assert_eq!(hasher("test"), hasher("test"));
         assert_ne!(hasher("test"), hasher("Test"));
     }
@@ -2327,6 +2327,7 @@ mod tests {
     #[test]
     fn hnamcmp_uses_ztrcmp_meta_aware_compare() {
         let _g = crate::test_util::global_state_lock();
+        use std::cmp::Ordering;
         // Plain ASCII: same as str::cmp.
         assert_eq!(hnamcmp("apple", "banana"), Ordering::Less);
         assert_eq!(hnamcmp("banana", "apple"), Ordering::Greater);
@@ -2431,6 +2432,7 @@ mod tests {
     #[test]
     fn histstrcmp_inblank_is_narrow_space_tab_only() {
         let _g = crate::test_util::global_state_lock();
+        use std::cmp::Ordering;
         // c:1411-1413 — runs of inblank collapse to a single boundary.
         assert_eq!(
             histstrcmp("hello\tworld", "hello world", false),
@@ -2473,6 +2475,7 @@ mod tests {
     #[test]
     fn histstrcmp_strips_leading_and_trailing_inblank() {
         let _g = crate::test_util::global_state_lock();
+        use std::cmp::Ordering;
         assert_eq!(
             histstrcmp("  cmd", "\tcmd", false),
             Ordering::Equal,
@@ -2500,8 +2503,8 @@ mod tests {
         assert!(table.get("nonexistent").is_none());
 
         let ls = table.get("ls").unwrap();
-        assert!((ls.node.flags & HASHED as i32) != 0);
-        assert!((ls.node.flags & DISABLED as i32) == 0);
+        assert_ne!((ls.node.flags & HASHED as i32), 0);
+        assert_eq!((ls.node.flags & DISABLED as i32), 0);
     }
 
     #[test]
@@ -2512,8 +2515,8 @@ mod tests {
         table.add(shfunc_autoload("lazy"));
 
         assert!(table.get("myfunc").is_some());
-        assert!((table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32) == 0);
-        assert!((table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32) != 0);
+        assert_eq!((table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32), 0);
+        assert_ne!((table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32), 0);
 
         table.disable("myfunc");
         assert!(table.get("myfunc").is_none());
@@ -2534,7 +2537,7 @@ mod tests {
         assert!(!table.is_reserved("notreserved"));
 
         let if_rw = table.get("if").unwrap();
-        assert_eq!(if_rw.token, crate::ported::zsh_h::IF);
+        assert_eq!(if_rw.token, IF);
     }
 
     #[test]
@@ -2547,11 +2550,11 @@ mod tests {
 
         table.add(createaliasnode("G", "| grep", ALIAS_GLOBAL as u32));
         let g = table.get("G").unwrap();
-        assert!((g.node.flags & ALIAS_GLOBAL as i32) != 0);
+        assert_ne!((g.node.flags & ALIAS_GLOBAL as i32), 0);
 
         table.add(createaliasnode("pdf", "zathura", ALIAS_SUFFIX as u32));
         let p = table.get("pdf").unwrap();
-        assert!((p.node.flags & ALIAS_SUFFIX as i32) != 0);
+        assert_ne!((p.node.flags & ALIAS_SUFFIX as i32), 0);
 
         table.disable("G");
         assert!(table.get("G").is_none());
@@ -2564,7 +2567,7 @@ mod tests {
         // hashtable.c:1517 — the cache lives in a global Mutex
         // matching C semantics. Each test gets a fresh slice via
         // a unique-name marker so parallel tests don't collide.
-        let cache = super::dircache_lock();
+        let cache = dircache_lock();
         {
             let mut g = cache.lock().unwrap();
             g.clear();
@@ -2810,7 +2813,7 @@ mod tests {
         let a = createaliasnode("foo", "echo bar", ALIAS_GLOBAL as u32);
         assert_eq!(a.node.nam, "foo");
         assert_eq!(a.text, "echo bar");
-        assert!((a.node.flags & ALIAS_GLOBAL as i32) != 0);
+        assert_ne!((a.node.flags & ALIAS_GLOBAL as i32), 0);
     }
 
     #[test]
@@ -2988,7 +2991,7 @@ mod tests {
     #[test]
     fn addhashnode_then_gethashnode2_round_trips() {
         let _g = crate::test_util::global_state_lock();
-        let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        let mut h: HashMap<String, i32> = HashMap::new();
         addhashnode(&mut h, "key1", 42);
         assert_eq!(gethashnode2(&h, "key1"), Some(&42));
         assert_eq!(gethashnode2(&h, "missing"), None);
@@ -3001,7 +3004,7 @@ mod tests {
     #[test]
     fn removehashnode_returns_value_and_drops_entry() {
         let _g = crate::test_util::global_state_lock();
-        let mut h: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut h: HashMap<String, String> = HashMap::new();
         addhashnode(&mut h, "key1", "val".to_string());
         let removed = removehashnode(&mut h, "key1");
         assert_eq!(removed.as_deref(), Some("val"));

@@ -3275,7 +3275,7 @@ pub fn hdynread(stop: i32) -> Option<String> {
             Some(ch) if ch == stop_c => break, // c:2568
             Some('\n') => break,               // c:2568
             Some(ch) => {
-                if crate::ported::hist::lexstop.load(SeqCst) {
+                if lexstop.load(SeqCst) {
                     break;
                 } // c:2568
                 let mut written = ch;
@@ -3312,25 +3312,25 @@ pub fn ihungetc(c: i32) {
     // c:989
     let mut c = c as u8 as char; // c:991 int c
     let mut doit = 1; // c:991 doit = 1
-    while !crate::ported::hist::lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
+    while !lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
         && errflag.load(SeqCst) == 0
     {
         let hp = crate::ported::hist::hptr.load(SeqCst);
         let line = crate::ported::hist::chline.lock().unwrap().clone();
         let line_b = line.as_bytes();
-        let stop = crate::ported::hist::stophist.load(SeqCst);
+        let stop = stophist.load(SeqCst);
         let inflags = crate::ported::input::inbufflags.with(|f| f.get());
-        let active = crate::ported::hist::histactive.load(SeqCst);
+        let active = histactive.load(SeqCst);
         if hp >= 2 && hp <= line_b.len()                                     // c:994-997
             && line_b[hp - 1] != c as u8 && stop < 4
             && line_b[hp - 1] == b'\n' && line_b[hp - 2] == b'\\'
-            && (active & crate::ported::hist::HA_UNGET) == 0
+            && (active & HA_UNGET) == 0
             && (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS
         {
-            crate::ported::hist::histactive.fetch_or(crate::ported::hist::HA_UNGET, SeqCst); // c:998
+            histactive.fetch_or(HA_UNGET, SeqCst); // c:998
             inungetc('\n'); // c:999 hungetc('\n') — default = inungetc (c:1140)
             inungetc('\\'); // c:1000
-            crate::ported::hist::histactive.fetch_and(!crate::ported::hist::HA_UNGET, SeqCst);
+            histactive.fetch_and(!HA_UNGET, SeqCst);
             // c:1001
         }
         if crate::ported::hist::expanding.load(SeqCst) != 0 {
@@ -3354,19 +3354,19 @@ pub fn ihungetc(c: i32) {
             let bangchar_v = crate::ported::hist::bangchar.load(SeqCst) as u8;
             let qb = c as u8 == bangchar_v && stop < 2                       // c:1014-1015
                 && new_hp > 0 && line_b.get(new_hp - 1).copied() == Some(b'\\');
-            crate::ported::hist::qbang.store(qb, SeqCst);
+            qbang.store(qb, SeqCst);
         } else {
-            crate::ported::hist::qbang.store(false, SeqCst); // c:1018 No active bangs in aliases
+            qbang.store(false, SeqCst); // c:1018 No active bangs in aliases
         }
         if doit != 0 {
             // c:1020
             inungetc(c); // c:1021
         }
-        if !crate::ported::hist::qbang.load(SeqCst) {
+        if !qbang.load(SeqCst) {
             return;
         } // c:1022
         let inflags2 = crate::ported::input::inbufflags.with(|f| f.get());
-        doit = if crate::ported::hist::stophist.load(SeqCst) == 0            // c:1023-1024
+        doit = if stophist.load(SeqCst) == 0            // c:1023-1024
             && ((inflags2 & INP_HIST) != 0 || (inflags2 & INP_ALIAS) == 0)
         {
             1

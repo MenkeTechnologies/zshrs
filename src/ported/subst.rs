@@ -65,11 +65,16 @@ use crate::ported::modules::parameter::*;
 // Bulk-import the most-used cross-module names so the bodies below
 // stay close to the C source visually instead of being drowned in
 // fully-qualified `crate::ported::*::` paths.
+use crate::ported::hashnameddir::nameddirtab;
 use crate::ported::hashtable::{aliastab_lock, shfunctab_lock};
-use crate::ported::params::{getarrvalue, getsparam, paramtab};
+use crate::ported::hist::hsubl;
+use crate::ported::params::{assignsparam, getarrvalue, getsparam, paramtab, paramtab_hashed_storage};
 use crate::ported::pattern::patmatch;
 use crate::ported::utils::errflag;
-use crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP;
+use crate::ported::zsh_h::{
+    LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, QT_BACKSLASH_PATTERN,
+    SHFILEEXPANSION, SORTIT_ANYOLDHOW,
+};
 use crate::ported::string::dyncat;
 use crate::ported::utils::{getkeystring, quotestring};
 use crate::ported::utils::{xsymlinks, zerr};
@@ -219,7 +224,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
             return; // c:100
         } // c:100
 
-        if isset(crate::ported::zsh_h::SHFILEEXPANSION) {
+        if isset(SHFILEEXPANSION) {
             // c:100
             // SHFILEEXPANSION - do file substitution first
             if let Some(data) = list.getdata(node_idx) {
@@ -254,7 +259,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
     } // c:100
 
     // Second pass for SHFILEEXPANSION
-    if isset(crate::ported::zsh_h::SHFILEEXPANSION) {
+    if isset(SHFILEEXPANSION) {
         // c:100
         node_idx = 0; // c:100
         while node_idx < list.nodes.len() {
@@ -335,7 +340,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // entirely when state.skip_filesub is set — used
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
-                if !isset(crate::ported::zsh_h::SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get())
+                if !isset(SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get())
                 {
                     // c:100
                     if let Some(data) = list.getdata(node_idx) {
@@ -1326,7 +1331,7 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
                 crate::ported::zsh_h::Dnull |               // c:602 (")
                 crate::ported::zsh_h::Snull |               // c:603 (')
                 crate::ported::zsh_h::Tick => { inq = !inq; } // c:604 (`)
-                crate::ported::zsh_h::Inpar => { inp += 1; }  // c:606
+                Inpar => { inp += 1; }  // c:606
                 crate::ported::zsh_h::Outpar => { inp -= 1; } // c:608
                 _ => {}
             }
@@ -1612,7 +1617,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
         // while `~$xxx` (Stringg, which should NOT isend) would.
         let isend = |c: char| -> bool {
-            c == '\0' || c == '/' || c == crate::ported::zsh_h::Inpar || (assign && c == ':')
+            c == '\0' || c == '/' || c == Inpar || (assign && c == ':')
         };
 
         // `~/...` and `~` (isend(str[1])) — bare HOME
@@ -1703,7 +1708,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             // getpwnam.
             // Canonical nameddirtab lookup (mirrors C'namptr
             // `getnameddir(name)` at hashnameddir.c via gethashnode2).
-            let named = crate::ported::hashnameddir::nameddirtab()
+            let named = nameddirtab()
                 .lock()
                 .ok()
                 .and_then(|t| t.get(&user).map(|nd| nd.dir.clone()));
@@ -1739,7 +1744,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     // Stringg; Inpar is \u{88}). Use canonical consts.
     if (first == '=' || first == crate::ported::zsh_h::Equals)
         && chars.len() > 1
-        && chars[1] != crate::ported::zsh_h::Inpar
+        && chars[1] != Inpar
     {
         let cmd_part: String = chars[1..].iter().collect();
         // Split at `:` if assign, else take the whole thing.
@@ -2422,7 +2427,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
             // c:1579
             '[' | crate::ported::zsh_h::Inbrack => depth += 1, // c:1579
             ']' | crate::ported::zsh_h::Outbrack => depth -= 1, // c:1579
-            '(' | crate::ported::zsh_h::Inpar => depth += 1,   // c:1579
+            '(' | Inpar => depth += 1,   // c:1579
             ')' | crate::ported::zsh_h::Outpar => depth -= 1,  // c:1579
             ':' if depth == 0 => {
                 end = Some(i);
@@ -2562,7 +2567,7 @@ pub fn paramsubst(
         let mut flnum: u32 = 0; // c:1722
 
         // c:1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
-        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW; // c:1728
+        let mut sortit: i32 = SORTIT_ANYOLDHOW; // c:1728
         let mut indord: i32 = 0; // c:1728
 
         // c:1730 — `int unique = 0;` (u) flag.
@@ -2974,7 +2979,7 @@ pub fn paramsubst(
                         // QT_NONE) goto flagerr;` (flagerr not yet
                         // ported; skipped).
                         quotemod = 1; // c:2258
-                        quotetype = crate::ported::zsh_h::QT_BACKSLASH_PATTERN; // c:2259
+                        quotetype = QT_BACKSLASH_PATTERN; // c:2259
                     } // c:2260
                     'c' => {
                         // c:2275
@@ -2990,7 +2995,7 @@ pub fn paramsubst(
                     } // c:2283
                     'z' => {
                         // c:2439
-                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE; // c:2440
+                        shsplit = LEXFLAGS_ACTIVE; // c:2440
                     } // c:2441
                     'Z' => {
                         // c:2443
@@ -3000,7 +3005,7 @@ pub fn paramsubst(
                         //   n: treat newlines as whitespace (LEXFLAGS_NEWLINE)
                         // Direct port of subst.c:2443-2473 — bare (Z) sets
                         // ACTIVE; sub-letters OR additional bits.
-                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
+                        shsplit = LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
                         idx += 1; // c:2444 ++s
                         if idx < body_chars.len() {
                             // c:2445 if (*t)
@@ -3017,7 +3022,7 @@ pub fn paramsubst(
                                 // c:2452
                                 } else if ch == 'C' {
                                     // c:2455
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP;
+                                    shsplit |= LEXFLAGS_COMMENTS_STRIP;
                                 // c:2457
                                 } else if ch == 'n' {
                                     // c:2460
@@ -4118,7 +4123,7 @@ pub fn paramsubst(
                         Some(k) => format!("{}[{}]", var_name, k),
                         None => var_name.clone(),
                     };
-                    crate::ported::params::assignsparam(&__s, &value, 0);
+                    assignsparam(&__s, &value, 0);
                     exec_sync_state_from_paramtab();
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
@@ -4148,7 +4153,7 @@ pub fn paramsubst(
                             Some(k) => format!("{}[{}]", var_name, k),
                             None => var_name.clone(),
                         };
-                        crate::ported::params::assignsparam(&__s, &value, 0);
+                        assignsparam(&__s, &value, 0);
                         exec_sync_state_from_paramtab();
                     }
                 }
@@ -4182,7 +4187,7 @@ pub fn paramsubst(
                             Some(k) => format!("{}[{}]", var_name, k),
                             None => var_name.clone(),
                         };
-                        crate::ported::params::assignsparam(&__s, &value, 0);
+                        assignsparam(&__s, &value, 0);
                         exec_sync_state_from_paramtab();
                     }
                 }
@@ -5139,7 +5144,7 @@ pub fn paramsubst(
         // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
         // subst.c:4180-4253 array sortit/unique post-processing.
         // Applies on space-joined value; reassembles after.
-        if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW || unique {
+        if sortit != SORTIT_ANYOLDHOW || unique {
             // c:4290 if (sortit != SORTIT_ANYOLDHOW)
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
@@ -5164,7 +5169,7 @@ pub fn paramsubst(
                 let mut seen = std::collections::HashSet::new(); // c:4253
                 sorted.retain(|s| seen.insert(s.clone())); // c:4253
             } // c:4253
-            if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW {
+            if sortit != SORTIT_ANYOLDHOW {
                 // c:4290
                 // (a) flag (indord=1, c:2226) preserves insertion order
                 // — skip sort entirely.
@@ -5364,7 +5369,7 @@ pub fn paramsubst(
         // reentry is deferred — this covers the common idioms
         // \${(z)cmdline} (split a command into words) and
         // \${(Zn)multiline} (newlines act like spaces).
-        if (shsplit & crate::ported::zsh_h::LEXFLAGS_ACTIVE) != 0 {
+        if (shsplit & LEXFLAGS_ACTIVE) != 0 {
             // c:2439
             let mut words: Vec<String> = Vec::new(); // c:2439
             let mut cur = String::new(); // c:2439
@@ -5438,7 +5443,7 @@ pub fn paramsubst(
                         in_dq = true;
                     } // c:2439
                     '#' if cur.is_empty()
-                        && !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 =>
+                        && !(shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 =>
                     {
                         // c:2451
                         // Start of comment word — keep or skip.
@@ -5448,7 +5453,7 @@ pub fn paramsubst(
                         } // c:2451
                     } // c:2451
                     '#' if cur.is_empty()
-                        && (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 =>
+                        && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 =>
                     {
                         // c:2456
                         in_comment = true; // c:2456
@@ -5486,7 +5491,7 @@ pub fn paramsubst(
                                                                      // walks the nameddirtab in length-desc order.
                                                                      // c:2229 — canonical nameddirtab read (mirrors C's
                                                                      // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
-            let mut named: Vec<(String, String)> = crate::ported::hashnameddir::nameddirtab()
+            let mut named: Vec<(String, String)> = nameddirtab()
                 .lock()
                 .map(|t| {
                     t.iter()
@@ -5580,7 +5585,7 @@ pub fn paramsubst(
             }
             out
         };
-        if quotemod > 0 && quotetype == crate::ported::zsh_h::QT_BACKSLASH_PATTERN {
+        if quotemod > 0 && quotetype == QT_BACKSLASH_PATTERN {
             // c:4034 (b)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
@@ -5782,7 +5787,7 @@ pub fn paramsubst(
                 s.to_string() // c:4034
             } // c:4034
         }; // c:4034
-        if quotemod > 0 && quotetype != crate::ported::zsh_h::QT_BACKSLASH_PATTERN {
+        if quotemod > 0 && quotetype != QT_BACKSLASH_PATTERN {
             // c:4033 (already-applied b above)
             // c:2237
             if let Some(parts) = split_parts.clone() {
@@ -5851,7 +5856,7 @@ pub fn paramsubst(
                 // longest-prefix-first to avoid shallow-prefix
                 // shadowing. Mirrors C's `mod_export HashTable
                 // nameddirtab` (hashnameddir.c:48).
-                if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                if let Ok(t) = nameddirtab().lock() {
                     let mut entries: Vec<(String, String)> = t
                         .iter()
                         .map(|(k, nd)| (k.clone(), nd.dir.clone()))
@@ -6981,7 +6986,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             } else {
                 3
             };
-            *crate::ported::hist::hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
+            *hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
             *crate::ported::hist::hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
             crate::ported::hist::hsubpatopt
                 .store(mode as i32, std::sync::atomic::Ordering::Relaxed); // c:4673
@@ -7022,7 +7027,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         if modifier == '&' {
             // c:4531
             let last_subst = {
-                let p_opt = crate::ported::hist::hsubl.lock().unwrap().clone();
+                let p_opt = hsubl.lock().unwrap().clone();
                 let r_opt = crate::ported::hist::hsubr.lock().unwrap().clone();
                 match (p_opt, r_opt) {
                     (Some(p), Some(r)) => {
@@ -7335,7 +7340,7 @@ const OUTANGPROC: char = OutangProc; // c:zsh.h:177
 //   - `function_names`/`command_names`/`alias_names`/`var_attrs`
 //                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
 //   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
-//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
+//   - `last_subst` → `hsubl`/`hsubr`/`hsubpatopt`.
 //   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
 // Every fn signature has dropped the `state: &mut SubstState` arg.
 
@@ -7636,7 +7641,7 @@ fn scanpmdisfunction_source() -> String {
 
 /// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
 fn scanpmnameddirs() -> String {
-    crate::ported::hashnameddir::nameddirtab()
+    nameddirtab()
         .lock()
         .ok()
         .map(|t| {
@@ -7795,7 +7800,7 @@ fn arrays_insert(name: String, value: Vec<String>) {
 /// Read an associative array parameter from the parallel
 /// `paramtab_hashed_storage` (PM_HASHED values).
 fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
-    crate::ported::params::paramtab_hashed_storage()
+    paramtab_hashed_storage()
         .lock()
         .ok()
         .and_then(|s| s.get(name).cloned())
@@ -7803,7 +7808,7 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
 
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
 fn assoc_contains(name: &str) -> bool {
-    crate::ported::params::paramtab_hashed_storage()
+    paramtab_hashed_storage()
         .lock()
         .map_or(false, |s| s.contains_key(name))
 }
@@ -8600,7 +8605,7 @@ fn exec_sethparam(name: &str, parts: Vec<String>) {
     while let (Some(k), Some(v)) = (it.next(), it.next()) {
         map.insert(k, v);
     }
-    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+    if let Ok(mut store) = paramtab_hashed_storage().lock() {
         store.insert(name.to_string(), map);
     }
     if let Ok(mut tab) = paramtab().write() {
