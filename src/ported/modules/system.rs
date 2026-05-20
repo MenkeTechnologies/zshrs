@@ -23,10 +23,11 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
-use crate::ported::params::isident;
-use crate::ported::utils::{metafy, movefd, unmeta, zclose, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
+use crate::ported::math::{matheval, mnumber, MN_FLOAT, MN_INTEGER};
+use crate::ported::options::{opt_state_get, opt_state_set};
+use crate::ported::params::{isident, paramtab, setiparam, setsparam};
+use crate::ported::utils::{metafy, movefd, unmeta, zclose, zstrtol, zwarnnam};
+use crate::ported::zsh_h::{options, OPT_ARG, OPT_ISSET};
 
 const SYSREAD_BUFSIZE: usize = 8192; // c:45
 
@@ -38,7 +39,7 @@ const SYSREAD_BUFSIZE: usize = 8192; // c:45
 pub fn getposint(instr: &str, nam: &str) -> i32 {
     // c:45
     // c:45 — `ret = (int)zstrtol(instr, &eptr, 10);`
-    let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
+    let (ret, eptr) = zstrtol(instr, 10);
     let ret = ret as i32;
     // c:51 — `if (*eptr || ret < 0)`
     if !eptr.is_empty() || ret < 0 {
@@ -63,7 +64,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {
 pub fn bin_sysread(
     nam: &str,
     args: &[String], // c:72
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     // c:74 — `int infd = 0, outfd = -1, bufsize = SYSREAD_BUFSIZE, count;`
@@ -136,7 +137,7 @@ pub fn bin_sysread(
     // poll branch (c:129-152).
     if let Some(t_str) = timeout_arg {
         // c:137 — `to_mn = matheval(OPT_ARG(ops,'t'));`
-        let to_mn = match crate::ported::math::matheval(t_str) {
+        let to_mn = match matheval(t_str) {
             Ok(m) => m,
             Err(_) => return 1, // c:138-139 errflag
         };
@@ -184,7 +185,7 @@ pub fn bin_sysread(
     }
     // c:192-193 — `if (countvar) setiparam(countvar, count);`
     if let Some(ref cv) = countvar {
-        crate::ported::params::setiparam(cv, count as i64); // c:192
+        setiparam(cv, count as i64); // c:192
     }
     // c:194-195 — `if (count < 0) return 2;`
     if count < 0 {
@@ -216,10 +217,10 @@ pub fn bin_sysread(
                 if let Some(ref ov) = outvar {
                     let buf_remaining = String::from_utf8_lossy(&inbuf[p..p + remaining]);
                     let m = metafy(&buf_remaining);
-                    crate::ported::params::setsparam(ov, &m); // c:209
+                    setsparam(ov, &m); // c:209
                 }
                 if let Some(ref cv) = countvar {
-                    crate::ported::params::setiparam(cv, remaining as i64); // c:210
+                    setiparam(cv, remaining as i64); // c:210
                 }
                 return 3; // c:212
             }
@@ -233,7 +234,7 @@ pub fn bin_sysread(
     let target = outvar.unwrap_or_else(|| "REPLY".to_string()); // c:220-221
     let buf_str = String::from_utf8_lossy(&inbuf[..count]);
     let m = metafy(&buf_str);
-    crate::ported::params::setsparam(&target, &m); // c:223
+    setsparam(&target, &m); // c:223
     if count != 0 {
         0
     } else {
@@ -256,7 +257,7 @@ pub fn bin_sysread(
 pub fn bin_syswrite(
     nam: &str,
     args: &[String], // c:238
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:240-241 — `int outfd = 1, len, count, totcount;
@@ -308,7 +309,7 @@ pub fn bin_syswrite(
                 // c:265
                 if let Some(ref cv) = countvar {
                     // c:267-268
-                    crate::ported::params::setiparam(cv, totcount as i64); // c:268
+                    setiparam(cv, totcount as i64); // c:268
                 }
                 return 2; // c:269
             }
@@ -320,7 +321,7 @@ pub fn bin_syswrite(
     }
     // c:276-277 — `if (countvar) setiparam(countvar, totcount);`
     if let Some(ref cv) = countvar {
-        crate::ported::params::setiparam(cv, totcount as i64); // c:277
+        setiparam(cv, totcount as i64); // c:277
     }
     0 // c:279
 }
@@ -337,7 +338,7 @@ pub fn bin_syswrite(
 pub fn bin_sysopen(
     nam: &str,
     args: &[String], // c:319
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:321-323 — `int read = OPT_ISSET(ops, 'r');` etc.
@@ -459,7 +460,7 @@ pub fn bin_sysopen(
             return 1; // c:378
         }
         // c:380 — `perms = zstrtol(opt, 0, 8);`
-        let (v, _) = crate::ported::utils::zstrtol(mode_str, 8);
+        let (v, _) = zstrtol(mode_str, 8);
         perms = v as u32;
     }
 
@@ -508,7 +509,7 @@ pub fn bin_sysopen(
 
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {
-        crate::ported::params::setiparam(&fdvar, moved_fd as i64); // c:414
+        setiparam(&fdvar, moved_fd as i64); // c:414
     }
 
     0 // c:433
@@ -526,7 +527,7 @@ pub fn bin_sysopen(
 pub fn bin_sysseek(
     nam: &str,
     args: &[String], // c:433
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:435 — `int w = SEEK_SET, fd = 0;`
@@ -620,7 +621,7 @@ pub fn math_systell(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber
 pub fn bin_syserror(
     nam: &str,
     args: &[String], // c:494
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:496-497 — `int num = 0; char *errvar = NULL, *msg, *pfx = "", *str;`
@@ -686,7 +687,7 @@ pub fn bin_syserror(
     // c:533-539 — write back to errvar or stderr.
     if let Some(ev) = errvar {
         let str_out = format!("{}{}", pfx, msg); // c:534-535
-        crate::ported::params::setsparam(&ev, &str_out); // c:536
+        setsparam(&ev, &str_out); // c:536
     } else {
         eprintln!("{}{}", pfx, msg); // c:538
     }
@@ -707,7 +708,7 @@ pub fn bin_syserror(
 pub fn bin_zsystem_flock(
     nam: &str,
     args: &[String], // c:546
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     // c:548-551 — option-state locals.
@@ -784,7 +785,7 @@ pub fn bin_zsystem_flock(
                         );
                         return 1;
                     };
-                    let tp = match crate::ported::math::matheval(&optarg) {
+                    let tp = match matheval(&optarg) {
                         Ok(m) => m,
                         Err(_) => return 1,
                     };
@@ -818,7 +819,7 @@ pub fn bin_zsystem_flock(
                         );
                         return 1;
                     };
-                    let mut tp = match crate::ported::math::matheval(&optarg) {
+                    let mut tp = match matheval(&optarg) {
                         Ok(m) => m,
                         Err(_) => return 1,
                     };
@@ -982,7 +983,7 @@ pub fn bin_zsystem_flock(
 
     // c:764-765 — `if (fdvar) setiparam(fdvar, flock_fd);`
     if let Some(ref var) = fdvar {
-        crate::ported::params::setiparam(var, flock_fd as i64); // c:765
+        setiparam(var, flock_fd as i64); // c:765
     }
     0 // c:781
 }
@@ -998,7 +999,7 @@ pub fn bin_zsystem_flock(
 pub fn bin_zsystem_supports(
     nam: &str,
     args: &[String], // c:781
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     // c:784-787 — `if (!args[0]) ... return 255;`
@@ -1033,7 +1034,7 @@ pub fn bin_zsystem_supports(
 pub fn bin_zsystem(
     nam: &str,
     args: &[String], // c:806
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     if args.is_empty() {
@@ -1642,7 +1643,7 @@ mod tests {
         let r = bin_syserror("syserror", &["ENOENT".to_string()], &ops, 0);
         assert_eq!(r, 0);
         // Side-effect param flows through params::setsparam → paramtab().
-        let val = crate::ported::params::paramtab()
+        let val = paramtab()
             .read()
             .ok()
             .and_then(|t| t.get("myerr").and_then(|p| p.u_str.clone()))
@@ -1679,8 +1680,8 @@ mod tests {
         // createoptiontable does at shell start, so the test must do
         // it manually — same pattern as the existing tests in
         // params.rs (8212/8547/9392/9442).
-        let saved_exec = crate::ported::options::opt_state_get("exec").unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        let saved_exec = opt_state_get("exec").unwrap_or(false);
+        opt_state_set("exec", true);
 
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("a.txt");
@@ -1695,7 +1696,7 @@ mod tests {
         // and routes via `assignnparam` — the value lands in `u_val` (i64),
         // NOT `u_str`. The original test read `u_str`, got `""`, and
         // `parse::<i32>()` returned ParseIntError::Empty. Read u_val.
-        let fd: i32 = crate::ported::params::paramtab()
+        let fd: i32 = paramtab()
             .read()
             .ok()
             .and_then(|t| t.get("MYFD").map(|p| p.u_val as i32))
@@ -1704,7 +1705,7 @@ mod tests {
         unsafe {
             libc::close(fd);
         }
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
@@ -1738,15 +1739,15 @@ mod tests {
     #[test]
     fn setiparam_writes_integer_to_paramtab() {
         let _g = crate::test_util::global_state_lock();
-        let saved_exec = crate::ported::options::opt_state_get("exec").unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        let saved_exec = opt_state_get("exec").unwrap_or(false);
+        opt_state_set("exec", true);
         let name = "ZSHRS_TEST_SETIPARAM_FD_INT";
-        let _ = crate::ported::params::setiparam(name, 12345);
-        let val = crate::ported::params::paramtab()
+        let _ = setiparam(name, 12345);
+        let val = paramtab()
             .read()
             .ok()
             .and_then(|t| t.get(name).map(|p| p.u_val));
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
         assert_eq!(
             val,
             Some(12345),
