@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::ported::zsh_h::{
-    isset, opt_name, AUTONAMEDIRS, BEEP, MULTIBYTE, POSIXIDENTIFIERS,
+    isset, unset, opt_name, AUTONAMEDIRS, BEEP, MULTIBYTE, POSIXIDENTIFIERS,
     PRINTEIGHTBIT, XTRACE,
 };
 use std::sync::atomic::Ordering;
@@ -133,30 +133,23 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     let argzero = argzero_lock().lock().unwrap().clone();
     let locallevel = crate::ported::params::locallevel
         .load(std::sync::atomic::Ordering::Relaxed);
-    // c:90/97 — `isset(SHINSTDIN)`. The previous Rust port read a
-    // separate `shinstdin_lock` Mutex<bool> that was NEVER updated
-    // by `setopt SHINSTDIN` / option-init — always returned the
-    // default `false`. zwarning's prefix-emission branch was thus
-    // always taking the `shinstdin == false` path regardless of
-    // actual option state. Route through canonical isset() so the
-    // option state drives the prefix.
-    let shinstdin = isset( SHINSTDIN );
     let prefix: String = scriptname
         .or(argzero)
         .unwrap_or_default();
     let stderr_handle = std::io::stderr();
     let mut stderr_lock = stderr_handle.lock();
     if let Some(cmd) = cmd {
-        // C: if (unset(SHINSTDIN) || locallevel) — emit prefix.
-        if !shinstdin || locallevel != 0 {
+        // c:107-110 — `if (unset(SHINSTDIN) || locallevel) {
+        //                 nicezputs(prefix, stderr); fputc(':', stderr); }`
+        if unset(SHINSTDIN) || locallevel != 0 {
             let _ = stderr_lock.write_all(nicezputs(&prefix).as_bytes());
             let _ = stderr_lock.write_all(b":");
         }
         let _ = stderr_lock.write_all(nicezputs(cmd).as_bytes());
         let _ = stderr_lock.write_all(b":");
     } else {
-        // C: nicezputs((isset(SHINSTDIN) && !locallevel) ? "zsh" : prefix, ...);
-        let to_emit = if shinstdin && locallevel == 0 {
+        // c:114 — `nicezputs((isset(SHINSTDIN) && !locallevel) ? "zsh" : prefix, stderr);`
+        let to_emit = if isset(SHINSTDIN) && locallevel == 0 {
             "zsh"
         } else {
             prefix.as_str()
@@ -164,12 +157,13 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
         let _ = stderr_lock.write_all(nicezputs(to_emit).as_bytes());
         let _ = stderr_lock.write_all(b":");
     }
-    // C: zerrmsg(stderr, fmt, ap);  — emit lineno prefix (when
-    // SHINSTDIN unset or locallevel != 0) then formatted message + \n.
-    // Direct port of utils.c:301-308. Route through lex::lineno()
-    // (parser-advanced counter) — same fix as the zerrmsg call below.
+    // c:116 — `zerrmsg(stderr, fmt, ap)` — lineno prefix + message.
+    // Pre-built `msg: &str` covers C's va_list; zerrmsg port hasn't
+    // had its `(file, fmt, ap)` signature wired yet so the lineno
+    // prefix + write is inlined here against the same `unset(SHINSTDIN)`
+    // gate C uses at c:301.
     let lineno = lineno() as i32;
-    if (!shinstdin || locallevel != 0) && lineno != 0 {
+    if (unset(SHINSTDIN) || locallevel != 0) && lineno != 0 {
         let _ = stderr_lock.write_all(format!("{}: ", lineno).as_bytes());
     } else {
         let _ = stderr_lock.write_all(b" ");
@@ -349,17 +343,14 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // 
     // Route through lex::lineno() so the parser-advanced counter
     // drives the error prefix.
     let lineno = lineno() as i32;
-    // c:310 — `unset(SHINSTDIN)`. Same fix as zwarning: route through
-    // canonical isset() rather than the never-updated separate Mutex.
-    let shinstdin = crate::ported::zsh_h::isset(
-        crate::ported::zsh_h::SHINSTDIN
-    );
     let locallevel = crate::ported::params::locallevel
         .load(std::sync::atomic::Ordering::Relaxed);
-    // C: if ((unset(SHINSTDIN) || locallevel) && lineno) — prefix
-    // with the line number.
-    if (!shinstdin || locallevel != 0) && lineno != 0 {
+    // c:301-308 — `if ((unset(SHINSTDIN) || locallevel) && lineno)
+    //                 fprintf(file, "%d: ", lineno); else fputc(' ', file);`
+    if (unset(SHINSTDIN) || locallevel != 0) && lineno != 0 {
         eprint!("{}: ", lineno);
+    } else {
+        eprint!(" ");
     }
     if let Some(e) = errno {
         eprintln!("{}: {}", msg, std::io::Error::from_raw_os_error(e));
