@@ -53,11 +53,9 @@ use std::sync::Mutex;
 // =====================================================================
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 /// Direct port of `freecmlist(Cmlist l)` from `Src/Zle/complete.c:98`.
 /// C body (c:101-110): walk the linked list freeing each Cmatcher
 /// via `freecmatcher()` and the per-entry `str` via `zsfree()`.
@@ -67,23 +65,10 @@ use crate::ported::zle::zle_hist::*;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {
     // c:98

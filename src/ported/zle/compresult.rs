@@ -49,11 +49,9 @@ use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
 use crate::ported::zsh_h::{isset, USEZLE};
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 /// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
 /// Invalidation counter — bumped every time the cached completion
 /// list goes stale. `complistmatches` reads it to detect "we have a
@@ -62,23 +60,10 @@ use crate::ported::zle::zle_hist::*;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 /// Truncate a long completion line with `...` so it fits a column
 /// budget.

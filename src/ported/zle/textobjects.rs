@@ -8,32 +8,19 @@ use std::sync::atomic::Ordering;
 use crate::ported::zle::zle_h::{ZC_iblank, MOD_MULT};
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, zle_hist::*,
+};
 /// Port of `blankwordclass(ZLE_CHAR_T x)` from `Src/Zle/textobjects.c:34`. The
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 pub fn blankwordclass(x: char) -> i32 {
     // c:34

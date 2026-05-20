@@ -31,34 +31,19 @@ use crate::ported::zsh_h::{zattr, HashNode};
 // both C paths.
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 /// Port of `ZLE_CHAR_T` from zle.h:31 / zle.h:107.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 // (was: use crate::ported::zle::widget::*; — widget.rs deleted)
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 pub type ZLE_CHAR_T = char; // c:31
 

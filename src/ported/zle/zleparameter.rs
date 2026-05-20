@@ -11,9 +11,9 @@
 use std::collections::HashMap;
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*,
+};
 /// Format a widget's type label as `$widgets[name]` would show it.
 /// Port of `widgetstr(Widget w)` from Src/Zle/zleparameter.c. The C source
 /// emits "builtin" for `iwidgets.list` entries, "user:fnname" for
@@ -24,27 +24,10 @@ use crate::ported::zle::textobjects::*;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::zle_h::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*,
+    zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     // c:37

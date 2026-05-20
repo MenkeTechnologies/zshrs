@@ -47,30 +47,15 @@ use crate::ported::zsh_h::{
     SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY,
 };
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 // =====================================================================
 // Substrate-blocked stubs — bodies need substrate listed in each

@@ -34,9 +34,9 @@ use crate::ported::zsh_h::{
     PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT, ZLCON_VARED,
 };
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*,
+};
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
 /// `BUFFER` getfn entry in `zleparams[]`).
@@ -44,25 +44,10 @@ use crate::ported::zle::textobjects::*;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::zle_h::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 /// Direct port of `void makezleparams(int ro)` from
 /// `Src/Zle/zle_params.c:194-228`. Registers the `$BUFFER`,

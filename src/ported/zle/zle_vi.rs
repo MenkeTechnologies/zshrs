@@ -19,35 +19,24 @@ use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 // use sites where zle_misc's duplicate `pub static MARK` is also
 // in scope via the `zle_misc::*` glob below.
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*,
+};
 /// Port of `int virangeflag;` from `Src/Zle/zle_vi.c:36`. Set during
 /// vi range-pending operations to suppress the cursor-included
 /// region adjustment (see `textobjects.rs:261` and `zle_vi.c:196`).
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::zle_h::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    zle_h::*, zle_hist::*,
+};
 use crate::ported::zle::zle_main;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
+    zle_utils::*, zle_word::*,
+};
 
 /// Direct port of `int vichange(UNUSED(char **args))` from
 /// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
