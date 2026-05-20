@@ -22,7 +22,7 @@
 
 use crate::ported::signals::{queue_front, queue_rear, signal_mask_queue, signal_queue};
 use std::sync::atomic::{AtomicI32, Ordering};
-
+use crate::signals::{queue_in, queueing_enabled};
 // ---------------------------------------------------------------------------
 // Pseudo-signal indexes (c:34-46).
 // ---------------------------------------------------------------------------
@@ -285,8 +285,8 @@ pub const MAX_QUEUE_SIZE: usize = 128; // c:76
 #[allow(non_snake_case)]
 pub fn queue_signals() {
     // c:90/112
-    crate::ported::signals::queue_in.fetch_add(1, Ordering::SeqCst);
-    crate::ported::signals::queueing_enabled.fetch_add(1, Ordering::SeqCst);
+    queue_in.fetch_add(1, Ordering::SeqCst);
+    queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Port of `#define unqueue_signals()` from `Src/signals.h:92/114`.
@@ -300,11 +300,11 @@ pub fn unqueue_signals() {
     // c:93 — DPUTS(!queueing_enabled, "BUG: unqueue_signals called but not queueing")
     crate::DPUTS!(
         // c:93
-        crate::ported::signals::queueing_enabled.load(Ordering::SeqCst) == 0, // c:93
+        queueing_enabled.load(Ordering::SeqCst) == 0, // c:93
         "BUG: unqueue_signals called but not queueing"                        // c:93
     );
-    crate::ported::signals::queue_in.fetch_sub(1, Ordering::SeqCst); // c:94 --queue_in
-    let prev = crate::ported::signals::queueing_enabled.fetch_sub(1, Ordering::SeqCst); // c:95
+    queue_in.fetch_sub(1, Ordering::SeqCst); // c:94 --queue_in
+    let prev = queueing_enabled.fetch_sub(1, Ordering::SeqCst); // c:95
     if prev == 1 {
         // c:95 if (!--queueing_enabled)
         run_queued_signals(); // c:95 run_queued_signals()
@@ -319,8 +319,8 @@ pub fn unqueue_signals() {
 #[allow(non_snake_case)]
 pub fn dont_queue_signals() {
     // c:98/118
-    let level = crate::ported::signals::queueing_enabled.swap(0, Ordering::SeqCst);
-    crate::ported::signals::queue_in.store(level, Ordering::SeqCst);
+    let level = queueing_enabled.swap(0, Ordering::SeqCst);
+    queue_in.store(level, Ordering::SeqCst);
     run_queued_signals();
 }
 
@@ -334,8 +334,8 @@ pub fn restore_queue_signals(q: i32) {
     // c:104/123
     // c:105-106 — DPUTS2(queueing_enabled && queue_in != q,
     //                    "BUG: q = %d != queue_in = %d", q, queue_in)
-    let qi = crate::ported::signals::queue_in.load(Ordering::SeqCst); // c:105
-    let qe = crate::ported::signals::queueing_enabled.load(Ordering::SeqCst); // c:105
+    let qi = queue_in.load(Ordering::SeqCst); // c:105
+    let qe = queueing_enabled.load(Ordering::SeqCst); // c:105
     crate::DPUTS2!(
         // c:105
         qe != 0 && qi != q, // c:105
@@ -343,8 +343,8 @@ pub fn restore_queue_signals(q: i32) {
         q,
         qi // c:106
     );
-    crate::ported::signals::queue_in.store(q, Ordering::SeqCst); // c:107 queue_in = q
-    crate::ported::signals::queueing_enabled.store(q, Ordering::SeqCst); // c:107 queueing_enabled = q
+    queue_in.store(q, Ordering::SeqCst); // c:107 queue_in = q
+    queueing_enabled.store(q, Ordering::SeqCst); // c:107 queueing_enabled = q
 }
 
 /// Port of `#define queue_signal_level()` from `Src/signals.h:127`.
@@ -354,7 +354,7 @@ pub fn restore_queue_signals(q: i32) {
 #[allow(non_snake_case)]
 pub fn queue_signal_level() -> i32 {
     // c:127
-    crate::ported::signals::queueing_enabled.load(Ordering::SeqCst)
+    queueing_enabled.load(Ordering::SeqCst)
 }
 
 /// Port of `#define run_queued_signals()` from `Src/signals.h:78-86`.

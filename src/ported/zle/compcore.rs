@@ -26,16 +26,18 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::ported::params::{getsparam, paramtab, paramtab_hashed_storage, setaparam, setsparam};
 use crate::ported::signals::unqueue_signals;
-use crate::ported::zle::comp_h::{Cadata, Cline, Cmlist, Menuinfo};
+use crate::ported::zle::comp_h::{Cadata, Ccmakedat, Cline, Cmlist, Menuinfo};
 use crate::ported::zle::complete::{COMPQSTACK, INCOMPFUNC};
 use crate::ported::zle::compmatch::{bld_parts, cline_matched};
 use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
+use crate::ported::zle::compresult::{do_ambig_menu, ztat};
 use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
 use crate::ported::zle::zle_tricky::{ORIGCS, ORIGLINE, VALIDLIST};
 use crate::ported::zsh_h::{
     isset, Bnull, Inbrace, Outbrace, Stringg, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
-    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES,
+    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES,
     SORTIT_NUMERICALLY,
+    Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qstring, Quest, Snull, Star, Tilde,
 };
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
@@ -43,8 +45,6 @@ use crate::ported::zle::comp_h::{
     Aminfo, Cexpl, Cmatch, Cmgroup, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL,
     CGF_UNIQCON, CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR,
     CMF_PARNEST, CMF_ROWS,
-};
-use crate::ported::zle::comp_h::{
     CAF_ALL, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL,
     CAF_UNIQCON,
 };
@@ -77,9 +77,6 @@ use crate::ported::zle::zle_utils::*;
 use crate::ported::zle::zle_vi::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_word::*;
-use crate::ported::zsh_h::{
-    Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qstring, Quest, Snull, Star, Tilde,
-};
 
 // =====================================================================
 // Substrate-blocked stubs — bodies need substrate listed in each
@@ -115,7 +112,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     let instring = INSTRING.load(Ordering::Relaxed); // c:307
                                                                                      // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
                                                                                      // Inlined `char_from_qt(x)` as `(x as u8) as char`.
-    let head_q: char = if instring == crate::ported::zsh_h::QT_NONE {
+    let head_q: char = if instring == QT_NONE {
         // c:305
         QT_BACKSLASH as u8 as char
     } else {
@@ -277,7 +274,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         // c:366
         if nm != 0 {
             {
-                let _ = crate::ported::zle::compresult::do_ambig_menu();
+                let _ = do_ambig_menu();
             };
         } // c:367
         ret = if nm == 0 { 1 } else { 0 }; // c:369
@@ -893,7 +890,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         // c:1038
         // c:1040-1047 — compctl dispatch via COMPCTLMAKEHOOK.
-        let mut dat = crate::ported::zle::comp_h::Ccmakedat {
+        let mut dat = Ccmakedat {
             str: Some(s_owned.clone()), // c:1042
             incmd,                      // c:1043
             lst,                        // c:1044
@@ -2488,12 +2485,12 @@ pub fn add_match_data(
     if (flags & CMF_FILE) != 0 && !orig.is_empty() && !orig.ends_with('/') {
         let pb = format!("{}{}", cm.prpre.as_deref().unwrap_or("./"), orig);
         // c:2960 — ztat follow-symlink for mode.
-        if let Some(meta) = crate::ported::zle::compresult::ztat(&pb, false) {
+        if let Some(meta) = ztat(&pb, false) {
             use std::os::unix::fs::MetadataExt;
             cm.mode = meta.mode();
         }
         // c:2965 — ztat without symlink-follow for fmode.
-        if let Some(meta) = crate::ported::zle::compresult::ztat(&pb, true) {
+        if let Some(meta) = ztat(&pb, true) {
             use std::os::unix::fs::MetadataExt;
             cm.fmode = meta.mode();
         }
@@ -3684,7 +3681,7 @@ fn goto_compend(ret: i32) -> i32 {
 // `COMP_LIST_COMPLETE` / `QT_NONE_STUB` / `QT_BACKSLASH_STUB` local
 // aliases deleted — call sites now reach the real C-side constants
 // directly (`crate::ported::zle::zle_h::COMP_LIST_COMPLETE`,
-// `crate::ported::zsh_h::QT_NONE`, `QT_BACKSLASH`).
+// `QT_NONE`, `QT_BACKSLASH`).
 // The local `COMP_LIST_COMPLETE = 2` was a value-mismatch bug (the
 // real constant is 1 per `Src/Zle/zle.h:357`).
 
@@ -3810,7 +3807,7 @@ fn metafy_line() {
 // write `minfo.cur = &m;`. Callers should inline the
 // `MINFO.lock().cur = Some(Box::new(m))` write directly.
 // do_ambig_menu_stub deleted — inlined as
-// `{ let _ = crate::ported::zle::compresult::do_ambig_menu(); }`
+// `{ let _ = do_ambig_menu(); }`
 // at the single call site (c:367).
 // do_ambiguous_stub / do_single_stub / do_allmatches_stub /
 // invalidatelist_stub deleted — Rust-only glue wrappers, all
@@ -4147,7 +4144,7 @@ fn runhookdef_compcore(hook: &str) -> i32 {
 /// `makecomplistctl` via its registered shfunc list.
 fn runhookdef_compctlmake(
     // init.c:990 (COMPCTLMAKEHOOK)
-    dat: &mut crate::ported::zle::comp_h::Ccmakedat,
+    dat: &mut Ccmakedat,
 ) {
     // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
     let s = dat.str.clone().unwrap_or_default();

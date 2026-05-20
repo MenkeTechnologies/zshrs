@@ -2,19 +2,23 @@
 //!
 //! Port of Src/init.c
 
-use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
-use crate::ported::lex::ENDINPUT;
-use crate::ported::builtin::STOPMSG;
-use crate::ported::hist::hend;
-use crate::ported::params::getsparam;
-use crate::ported::signals::{install_handler, signal_ignore, unqueue_signals};
-use crate::ported::utils::{errflag, movefd, unmeta};
-use crate::zsh_h::{
-    islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
-    HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
-};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+use crate::ported::builtin::{realexit, LASTVAL, STOPMSG};
+use crate::ported::hist::{curhist, curline, hbegin, hend, hist_ring, histlinect, stophist};
+use crate::ported::lex::{tok, ENDINPUT};
+use crate::ported::options::emulation;
+use crate::ported::params::{getsparam, TERMFLAGS};
+use crate::ported::signals::{install_handler, intr, queue_signals, signal_ignore, unqueue_signals};
+use crate::ported::utils::{errflag, movefd, unmeta};
+use crate::ported::zsh_h::{
+    interact, Eprog,
+};
+use crate::zsh_h::{
+    eprog, islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
+    HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
+};
 // =========================================================================
 // File-scope globals from init.c
 // =========================================================================
@@ -485,7 +489,7 @@ pub fn init_term() -> i32 {
     let term = getsparam("TERM").unwrap_or_default();
     if term.is_empty() {
         // c:777
-        crate::ported::params::TERMFLAGS
+        TERMFLAGS
             .fetch_or(crate::ported::zsh_h::TERM_UNKNOWN, Ordering::SeqCst); // c:778
         return 0; // c:779
     }
@@ -645,7 +649,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:1097-1098
     // bangchar = '!'; hashchar = '#'; hatchar = '^';                        // c:1100-1102
     // termflags = TERM_UNKNOWN;                                             // c:1103
-    crate::ported::params::TERMFLAGS.store(1, Ordering::SeqCst);
+    TERMFLAGS.store(1, Ordering::SeqCst);
     // curjob = prevjob = coprocin = coprocout = -1;                         // c:1104
     // zgettime_monotonic_if_available(&shtimer);                            // c:1105
     // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1106
@@ -816,7 +820,7 @@ pub fn init_signals() {
     // dispositions on every signal at startup so a parent's stale
     // handlers don't leak in.
     #[cfg(unix)]
-    if crate::ported::zsh_h::interact() {
+    if interact() {
         let empty = crate::ported::signals::signal_mask(0);
         let _ = crate::ported::signals::signal_setmask(&empty);
         // c:1404 — `for (i=0; i<NSIG; ++i) signal_default(i);`. NSIG
@@ -839,7 +843,7 @@ pub fn init_signals() {
     // mask global not yet modeled — the few callers that need it
     // (job-reap path) re-derive on demand.
 
-    crate::ported::signals::intr(); // c:1409
+    intr(); // c:1409
 
     #[cfg(unix)]
     unsafe {
@@ -872,7 +876,7 @@ pub fn init_signals() {
         }
 
         // c:1427-1431 — interactive-only handlers.
-        if crate::ported::zsh_h::interact() {
+        if interact() {
             install_handler(libc::SIGPIPE); // c:1428
             install_handler(libc::SIGALRM); // c:1429
             signal_ignore(libc::SIGTERM); // c:1430
@@ -899,7 +903,7 @@ pub fn run_init_scripts() {
     //          consulted by the script-source path internally.)
 
     // c:1449 — if (EMULATION(EMULATE_KSH|EMULATE_SH)) { ... }
-    let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
+    let emul = emulation.load(Ordering::SeqCst);
     let is_posix = (emul & (EMULATE_KSH | EMULATE_SH) as i32) != 0;
 
     let is_login = islogin();
@@ -1025,8 +1029,8 @@ pub fn source(s: &str) -> i32 {
 /// Port of `void sourcehome(char *s)` from Src/init.c:1679.
 pub fn sourcehome(s: &str) {
     // c:1679
-    crate::ported::signals::queue_signals(); // c:1679
-    let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
+    queue_signals(); // c:1679
+    let emul = emulation.load(Ordering::SeqCst);
     let is_posix = (emul & 6) != 0;
     // c:1684 — `h = is_posix ? getsparam("HOME") : (getsparam("ZDOTDIR")
     //                                                 ?: getsparam("HOME"))`
@@ -1266,7 +1270,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
     let err: i32; // c:116
     let mut non_empty: i32 = 0; // c:116
 
-    crate::ported::signals::queue_signals(); // c:118
+    queue_signals(); // c:118
     crate::ported::mem::pushheap(); // c:119
     if toplevel == 0 {
         // c:120 !toplevel
@@ -1279,7 +1283,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             // c:124 stophist == 3
             hend(None); // c:125 hend(NULL)
         }
-        crate::ported::hist::hbegin(1); // c:126 hbegin(1)
+        hbegin(1); // c:126 hbegin(1)
         if isset(SHINSTDIN) {
             // c:127 isset(SHINSTDIN)
             crate::ported::utils::setblock_stdin(); // c:128
@@ -1292,7 +1296,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 crate::ported::utils::preprompt(); // c:140
                 if stophist.load(Ordering::SeqCst) != 3 {
                     // c:141
-                    crate::ported::hist::hbegin(1); // c:142
+                    hbegin(1); // c:142
                 } else {
                     // c:143
                     stophist.store(hstop, Ordering::SeqCst); // c:144
@@ -1302,14 +1306,14 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             }
         }
         use_exit_printed.store(0, Ordering::SeqCst); // c:153
-        crate::ported::signals::intr(); // c:154
+        intr(); // c:154
         crate::ported::lex::lexinit(); // c:155
         prog = crate::ported::parse::parse_event(ENDINPUT as i32); // c:156
         if prog.is_none() {
             // c:156
             hend(None); // c:158
                                              // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
-            let tok_v = crate::ported::lex::tok(); // c:159 tok
+            let tok_v = tok(); // c:159 tok
             let errflag_v = errflag.load(Ordering::SeqCst);
             let lexerr_break = tok_v == LEXERR && (!isset(SHINSTDIN) || toplevel == 0);
             let endinput_break = tok_v == ENDINPUT && errflag_v == 0;
@@ -1326,10 +1330,10 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     ZEXIT_NORMAL,
                 );
             }
-            if tok_v == LEXERR && crate::ported::builtin::LASTVAL.load(Ordering::SeqCst) == 0
+            if tok_v == LEXERR && LASTVAL.load(Ordering::SeqCst) == 0
             // c:172
             {
-                crate::ported::builtin::LASTVAL.store(1, Ordering::SeqCst); // c:173 lastval = 1
+                LASTVAL.store(1, Ordering::SeqCst); // c:173 lastval = 1
             }
             continue; // c:174
         }
@@ -1340,7 +1344,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         let prog_bytes: Vec<u8> = format!("{:?}", prog_inner).into_bytes();
         let hend_ret = hend(Some(&prog_bytes)); // c:176
         if hend_ret != 0 {
-            let _toksav = crate::ported::lex::tok(); // c:177
+            let _toksav = tok(); // c:177
             non_empty = 1; // c:179
                            // c:180-215 — preexec hook + ZLE_CMD_PREEXEC.
             if toplevel != 0 {
@@ -1373,8 +1377,8 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     // freshly-allocated empty eprog so getjobtext/getpermtext
                     // return their NULL-prog representation. Real text comes
                     // from src/vm_helper once that bridge lands.
-                    let placeholder: crate::ported::zsh_h::Eprog =
-                        Box::new(crate::ported::zsh_h::eprog {
+                    let placeholder: Eprog =
+                        Box::new(eprog {
                             flags: 0,
                             len: 0,
                             npats: 0,
@@ -1385,8 +1389,8 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                             shf: None,
                             dump: None,
                         });
-                    let placeholder2: crate::ported::zsh_h::Eprog =
-                        Box::new(crate::ported::zsh_h::eprog {
+                    let placeholder2: Eprog =
+                        Box::new(eprog {
                             flags: 0,
                             len: 0,
                             npats: 0,
@@ -1458,7 +1462,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         // c:232 — `if (subsh) realexit();`
         if subsh != 0 {
             // c:232
-            crate::ported::builtin::realexit(); // c:233
+            realexit(); // c:233
         }
         // c:234 — `if (((!interact || sourcelevel) && errflag) || retflag) break;`
         let errflag_v = errflag.load(Ordering::SeqCst);
@@ -1480,7 +1484,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 drop(tr);
                 let _ = crate::ported::signals::dotrap(0 /* SIGEXIT */); // c:239
             }
-            crate::ported::builtin::realexit(); // c:240
+            realexit(); // c:240
         }
         if justonce != 0 {
             // c:242
