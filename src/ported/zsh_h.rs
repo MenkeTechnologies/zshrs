@@ -1937,6 +1937,94 @@ macro_rules! HEAP_ERROR {
     };
 }
 
+/// Port of `#define DPUTS(X, Y)` macro from `Src/zsh.h:2918` (macro).
+///
+/// C body (DEBUG defined, c:2918):
+/// ```c
+/// # define DPUTS(X,Y) if (!(X)) {;} else dputs(ERRMSG(Y))
+/// ```
+/// where `ERRMSG(x)` is `(__FILE__ ":" STRINGIFY(__LINE__) ": " x)`
+/// (c:2917). Without DEBUG (c:2923) the macro expands to nothing.
+///
+/// The Rust port routes through `crate::ported::utils::dputs` (port
+/// of `dputs` at `Src/utils.c:253`) under `#[cfg(debug_assertions)]`
+/// — Rust's analogue to C's `#ifdef DEBUG`. The file:line prefix
+/// uses `file!()` / `line!()` to mirror `__FILE__:__LINE__`.
+#[macro_export]
+macro_rules! DPUTS {                                                          // c:2918
+    ($x:expr, $y:expr) => {                                                  // c:2918
+        #[cfg(debug_assertions)]                                              // c:2918 ifdef DEBUG
+        {
+            if $x {                                                           // c:2918 if (X)
+                crate::ported::utils::dputs(&format!(                        // c:2918 dputs(ERRMSG(Y))
+                    "{}:{}: {}", file!(), line!(), $y                        // c:2917 ERRMSG
+                ));                                                           // c:2918
+            }                                                                 // c:2918
+        }                                                                     // c:2914 ifdef DEBUG
+    };                                                                        // c:2918
+}                                                                             // c:2918
+
+/// Port of `#define DPUTS1(X, Y, Z1)` macro from `Src/zsh.h:2919` (macro).
+///
+/// C body (DEBUG defined):
+/// ```c
+/// # define DPUTS1(X,Y,Z1) if (!(X)) {;} else dputs(ERRMSG(Y), Z1)
+/// ```
+/// One-arg printf-style variant — `Y` is a printf format string with
+/// one `%`-substitution, `Z1` is the argument. The Rust port uses
+/// `format!` with `{}` placeholders; callers should write Rust-style
+/// format strings (`"BUG: x = {}"`) instead of C printf strings
+/// (`"BUG: x = %d"`).
+#[macro_export]
+macro_rules! DPUTS1 {                                                         // c:2919
+    ($x:expr, $y:expr, $z1:expr) => {                                         // c:2919
+        #[cfg(debug_assertions)]                                              // c:2919
+        {
+            if $x {                                                           // c:2919
+                crate::ported::utils::dputs(&format!(                        // c:2919
+                    "{}:{}: {}", file!(), line!(), format!($y, $z1)          // c:2917
+                ));                                                           // c:2919
+            }                                                                 // c:2919
+        }                                                                     // c:2914
+    };                                                                        // c:2919
+}                                                                             // c:2919
+
+/// Port of `#define DPUTS2(X, Y, Z1, Z2)` macro from `Src/zsh.h:2920` (macro).
+///
+/// Two-arg printf-style variant. Same shape as DPUTS1 but with two
+/// substitution arguments.
+#[macro_export]
+macro_rules! DPUTS2 {                                                         // c:2920
+    ($x:expr, $y:expr, $z1:expr, $z2:expr) => {                              // c:2920
+        #[cfg(debug_assertions)]                                              // c:2920
+        {
+            if $x {                                                           // c:2920
+                crate::ported::utils::dputs(&format!(                        // c:2920
+                    "{}:{}: {}", file!(), line!(), format!($y, $z1, $z2)     // c:2917
+                ));                                                           // c:2920
+            }                                                                 // c:2920
+        }                                                                     // c:2914
+    };                                                                        // c:2920
+}                                                                             // c:2920
+
+/// Port of `#define DPUTS3(X, Y, Z1, Z2, Z3)` macro from `Src/zsh.h:2921` (macro).
+///
+/// Three-arg printf-style variant. Same shape as DPUTS1/DPUTS2 but
+/// with three substitution arguments.
+#[macro_export]
+macro_rules! DPUTS3 {                                                         // c:2921
+    ($x:expr, $y:expr, $z1:expr, $z2:expr, $z3:expr) => {                    // c:2921
+        #[cfg(debug_assertions)]                                              // c:2921
+        {
+            if $x {                                                           // c:2921
+                crate::ported::utils::dputs(&format!(                        // c:2921
+                    "{}:{}: {}", file!(), line!(), format!($y, $z1, $z2, $z3) // c:2917
+                ));                                                           // c:2921
+            }                                                                 // c:2921
+        }                                                                     // c:2914
+    };                                                                        // c:2921
+}                                                                             // c:2921
+
 /// Port of `#define SGTTYFLAG` from `Src/zsh.h:2614/2616`. Termios
 /// flag accessor — `shttyinfo.tio.c_oflag` (HAVE_TERMIOS) or
 /// `shttyinfo.sgttyb.sg_flags` (sgtty fallback). Rust port exposes
