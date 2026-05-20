@@ -5,65 +5,57 @@
 //! Provides miscellaneous utilities: error handling, file operations,
 //! string utilities, and character classification.
 
-use std::io::{self, Write};
+use std::ffi::CString;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
+
+use libc::{
+    S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
+    S_IXOTH, S_IXUSR,
+};
 
 use crate::init::zleentry;
 use crate::params::getsparam_u;
-// Most-used cross-module names, lifted to top-of-file imports so the
-// bodies below stay close to the C source visually instead of being
-// drowned in `crate::ported::*::` qualification noise.
+use crate::ported::builtin::SFCONTEXT;
+use crate::ported::hashnameddir::nameddirtab;
+use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::chrealpath;
+use crate::ported::modules::clone::{coprocin, coprocout};
 // SHTTY imported under an alias to avoid collision with the
 // `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
 // (Rule E — C uses SHTTY as both the global and the parameter name).
 use crate::ported::init::SHTTY as SHTTY_FD;
 use crate::ported::lex::lineno;
-// Additional names lifted out of inside-fn `use` statements (PORT.md
-// 'no imports inside FNs ever'). Aliased ZT_* names disambiguate
-// ztype_h constants from same-named locals/module-names.
-use crate::ported::options::dosetopt;
-use crate::ported::builtin::SFCONTEXT;
-use crate::ported::hashnameddir::nameddirtab;
-use crate::ported::hashtable::shfunctab_lock;
-use crate::ported::options::opt_state_set;
+use crate::ported::options::{dosetopt, opt_state_set};
 use crate::ported::params::{
-    assignsparam, getaparam, getsparam, ifsgetfn, isident, locallevel as LOCALLEVEL,
-    wordcharsgetfn, wordcharssetfn,
+    assignsparam, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn, isident,
+    locallevel as LOCALLEVEL, setaparam, setiparam, wordcharsgetfn, wordcharssetfn,
 };
-use crate::ported::ztype_h::ZISPRINT;
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
 use crate::ported::zsh_h::{
-    hashnode, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS,
-    EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL,
-    FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, META, Nularg, ND_NOABBREV,
-    ND_USERNAME, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH,
-    QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE,
-    QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH,
+    dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP,
+    CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK,
+    FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker,
+    META, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS,
+    PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK,
+    QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS,
+    XTRACE, ZLE_CMD_TRASH,
 };
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
+// Aliased ZT_* names disambiguate ztype_h constants from same-named locals/module-names.
 use crate::ported::ztype_h::{
-    imeta, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL, IPATTERN
-    as ZT_IPATTERN, ISEP, ISEP as ZT_ISEP, ISPECIAL, ISPECIAL as ZT_ISPECIAL, ITOK, IUSER, IWORD,
-    IWORD as ZT_IWORD, IWSEP as ZT_IWSEP, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR, ZTF_INIT,
-    ZTF_INTERACT, ZTF_SP_COMMA,
+    imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
+    IPATTERN as ZT_IPATTERN, ISEP, ISEP as ZT_ISEP, ISPECIAL, ISPECIAL as ZT_ISPECIAL, ITOK,
+    IUSER, IWORD, IWORD as ZT_IWORD, IWSEP as ZT_IWSEP, TYPTAB, TYPTAB_FLAGS, ZISPRINT,
+    ZTF_BANGCHAR, ZTF_INIT, ZTF_INTERACT, ZTF_SP_COMMA,
 };
-use libc::{
-    S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
-    S_IXOTH, S_IXUSR,
-};
-use std::ffi::CString;
-use std::fs;
-use std::io::Read;
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
-use std::os::unix::io::RawFd;
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
 
 /// Set a wide-char array from a multibyte source string.
 /// Port of `set_widearray(char *mb_array, Widechar_array wca)` from `Src/utils.c:69`.
@@ -1292,7 +1284,7 @@ pub fn finddir(path: &str) -> Option<String> {
 pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {
     // c:1187
 
-    if !crate::ported::zsh_h::interact() {
+    if !interact() {
         return;
     } // c:1193
     if let Ok(t) = nameddirtab().lock() {
@@ -1934,12 +1926,12 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
                                                                // c:1931-1932 — `if (adjustlines(from) && zgetenv("LINES")) setiparam(...)`
             let lines = adjustlines() as i32;
             if std::env::var_os("LINES").is_some() {
-                crate::ported::params::setiparam("LINES", lines as i64); // c:1932
+                setiparam("LINES", lines as i64); // c:1932
             }
             // c:1933-1934 — same for COLUMNS.
             let cols = adjustcolumns() as i32;
             if std::env::var_os("COLUMNS").is_some() {
-                crate::ported::params::setiparam("COLUMNS", cols as i64); // c:1934
+                setiparam("COLUMNS", cols as i64); // c:1934
             }
             ADJUSTWINSIZE_GETWINSZ.store(1, Ordering::SeqCst); // c:1935
         }
@@ -2225,17 +2217,17 @@ pub fn zclose(fd: i32) -> i32 {
             MAX_ZSH_FD.store(m, Ordering::Relaxed);
             // c:2140-2143 — coproc fd tracking.
             if fd
-                == crate::ported::modules::clone::coprocin
+                == coprocin
                     .load(Ordering::Relaxed)
             {
-                crate::ported::modules::clone::coprocin
+                coprocin
                     .store(-1, Ordering::Relaxed);
             }
             if fd
-                == crate::ported::modules::clone::coprocout
+                == coprocout
                     .load(Ordering::Relaxed)
             {
-                crate::ported::modules::clone::coprocout
+                coprocout
                     .store(-1, Ordering::Relaxed);
             }
         }
@@ -2348,7 +2340,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
 /// (Snull at 0x9d follows Bang at 0x9c).
 pub fn has_token(s: &str) -> bool {
     // c:2282
-    s.bytes().any(crate::ported::ztype_h::itok) // c:2285
+    s.bytes().any(itok) // c:2285
 }
 
 // Delete a character in a string                                           // c:2294
@@ -2701,7 +2693,7 @@ pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
         (2, &s[2..])
     } else if s.starts_with('0')
         && s.len() > 1
-        && isset(crate::ported::zsh_h::OCTALZEROES)
+        && isset(OCTALZEROES)
     // c:2543
     {
         (8, &s[1..])
@@ -4506,7 +4498,7 @@ pub fn setcbreak() -> bool {
 pub fn attachtty(pgrp: i32) {
     // c:4775
 
-    if !(crate::ported::zsh_h::jobbing() && crate::ported::zsh_h::interact()) {
+    if !(crate::ported::zsh_h::jobbing() && interact()) {
         return; // c:4779
     }
     let shtty = SHTTY_FD.load(Ordering::Relaxed); // c:4781
@@ -4959,7 +4951,7 @@ pub fn zputs(s: &str) -> io::Result<()> {
             } else {
                 i += 1;
             }
-        } else if crate::ported::ztype_h::itok(c) {
+        } else if itok(c) {
             // c:5272
             // c:5273-5274 — token byte: `s++; continue;` (skip without
             // emitting). Canonical `itok()` covers Pound..Nularg +
@@ -6132,7 +6124,7 @@ pub fn upchdir(n: usize) -> io::Result<()> {
 /// `restoredir` integrity check (utils.c:7592) reads. Adding them
 /// so callers can verify the saved-and-restored cwd matches the
 /// captured device + inode.
-// `struct dirsav` lives in `crate::ported::zsh_h::dirsav` per Rule C
+// `struct dirsav` lives in `dirsav` per Rule C
 // (its C definition is `Src/zsh.h:1159`, not utils.c). The previous
 // Rust port had a `pub struct DirSav` PascalCase duplicate of the
 // canonical lowercase struct; deleted in favour of routing through
@@ -6151,9 +6143,9 @@ pub fn upchdir(n: usize) -> io::Result<()> {
 /// The C `dirname = NULL` becomes `dirname: None`; Rust port prefills
 /// dirname with current_dir for legacy callers that immediately read
 /// it (mirrors what `setpwd()` does in C right after `init_dirsav`).
-pub fn init_dirsav() -> crate::ported::zsh_h::dirsav {
+pub fn init_dirsav() -> dirsav {
     // c:7381
-    crate::ported::zsh_h::dirsav {
+    dirsav {
         dirfd: -1,
         level: 0,
         dev: 0,
@@ -6209,7 +6201,7 @@ pub fn lchdir(path: &str) -> io::Result<()> {
 /// Signature change: previous Rust port took `saved: &str` and
 /// returned `bool` — different shape from C, missed the dirfd /
 /// level / dev / ino fields entirely.
-pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
+pub fn restoredir(d: &mut dirsav) -> i32 {
     // C: if (d->dirname && *d->dirname == '/') return chdir(d->dirname);
     if let Some(name) = d.dirname.as_ref() {
         if name.starts_with('/') {
@@ -6807,10 +6799,10 @@ pub fn set_shinstdin(v: bool) {
 /// Check if string is a valid identifier
 // `isident` DELETED — fake duplicate (cited `c:params.c:1288` from
 // utils.rs, location mismatch). Canonical port is
-// `crate::ported::params::isident` at `params.rs:2056`, which
+// `isident` at `params.rs:2056`, which
 // correctly handles namespace prefix (`ns.var`) per the real C
 // body — the utils.rs copy dropped that arm. Callers now route
-// through `crate::ported::params::isident` directly.
+// through `isident` directly.
 
 // QuoteType enum + impl deleted — the canonical quote-type values are
 // the bare `QT_*: i32` constants at `zsh_h.rs:175` (port of anonymous
@@ -6898,7 +6890,7 @@ pub fn convbase(val: i64, base: u32) -> String {
 
 // `dupstrpfx` DELETED — fake duplicate cited `c:string.c:161` from
 // utils.rs (wrong location). Canonical port is
-// `crate::ported::string::dupstrpfx` at `string.rs:161`. Zero
+// `dupstrpfx` at `string.rs:161`. Zero
 // callers used the utils.rs version.
 
 /// Get username from UID (from utils.c getpwuid handling)
@@ -7436,7 +7428,7 @@ mod tests {
 
         // Write a known reply array via the canonical setaparam path.
         let payload = vec!["abbreviated".to_string(), "11".to_string()];
-        let _ = crate::ported::params::setaparam("reply", payload.clone());
+        let _ = setaparam("reply", payload.clone());
 
         // The reply array must be reachable via getaparam — not env.
         // (env::var would return Err because setaparam never exports
@@ -7448,7 +7440,7 @@ mod tests {
         );
 
         // Restore.
-        let _ = crate::ported::params::setaparam("reply", saved.unwrap_or_default());
+        let _ = setaparam("reply", saved.unwrap_or_default());
     }
 
     /// c:1133-1134 — `finddir` reads the global `home` variable (the
@@ -7465,7 +7457,7 @@ mod tests {
         // same code path PM_SPECIAL dispatch routes through.
         let saved = crate::ported::params::homegetfn();
         let sentinel = "/tmp/zshrs-finddir-pin".to_string();
-        crate::ported::params::homesetfn(sentinel.clone());
+        homesetfn(sentinel.clone());
 
         // `/tmp/zshrs-finddir-pin/x` must abbreviate to `~/x`.
         let abbrev = finddir(&format!("{}/x", sentinel));
@@ -7477,7 +7469,7 @@ mod tests {
         );
 
         // Restore.
-        crate::ported::params::homesetfn(saved);
+        homesetfn(saved);
     }
 
     #[test]
@@ -9363,7 +9355,7 @@ mod tests {
         // c:2537 — pure decimal (no leading zero).
         assert_eq!(zstrtoul_underscore("12345"), Some(12345));
         // c:2543 — leading-zero with OCTALZEROES off (default) → decimal.
-        if !isset(crate::ported::zsh_h::OCTALZEROES) {
+        if !isset(OCTALZEROES) {
             assert_eq!(
                 zstrtoul_underscore("0777"),
                 Some(777),
@@ -9848,7 +9840,7 @@ mod tests {
     #[test]
     fn adduserdir_rejects_paths_at_or_above_path_max() {
         let _g = crate::test_util::global_state_lock();
-        if !crate::ported::zsh_h::interact() {
+        if !interact() {
             // c:1193 — non-interactive shells skip the table entirely.
             // Test inactive in non-interactive contexts.
             return;
@@ -9946,13 +9938,13 @@ mod tests {
             return;
         }
         let saved = ifsgetfn();
-        crate::ported::params::ifssetfn(":".to_string());
+        ifssetfn(":".to_string());
         assert!(
             wcsitype(':', ISEP as u32),
             "c:4367 — IFS membership through canonical global"
         );
         // Restore.
-        crate::ported::params::ifssetfn(saved);
+        ifssetfn(saved);
     }
 
     /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is
