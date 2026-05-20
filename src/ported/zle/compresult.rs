@@ -32,7 +32,7 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
 use crate::ported::init::SHTTY;
-use crate::ported::utils::write_loop;
+use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
 use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
@@ -726,8 +726,8 @@ pub fn calclist(showall: i32) -> i32 {
     let invcount = INVCOUNT.load(Relaxed);
     let onlyexpl_v = onlyexpl.load(Relaxed);
     let menuacc_v = crate::ported::zle::compcore::menuacc.load(Relaxed);
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32; // c:zterm_columns
-    let zterm_lines = crate::ported::utils::adjustlines() as i32; // c:zterm_lines
+    let zterm_columns = adjustcolumns() as i32; // c:zterm_columns
+    let zterm_lines = adjustlines() as i32; // c:zterm_lines
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
@@ -1251,7 +1251,7 @@ pub fn asklist() -> i32 {
         .ok()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let zterm_lines = crate::ported::utils::adjustlines() as i32;
+    let zterm_lines = adjustlines() as i32;
     let cmax = COMPLISTMAX.load(Ordering::Relaxed) as i32;
 
     let has_cur = MINFO
@@ -1438,7 +1438,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // c:2044
                 let last_idx = g.ylist.len().saturating_sub(1);
                 for (i, p) in g.ylist.iter().enumerate() {
-                    let _ = crate::ported::utils::zputs(p);
+                    let _ = zputs(p);
                     if i != last_idx {
                         // c:2050
                         // C wraps via " \b" or "\n"; we emit \n for safety.
@@ -1449,7 +1449,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // c:2058
                 // Column layout — emit each entry.
                 for entry in &g.ylist {
-                    let _ = crate::ported::utils::zputs(entry);
+                    let _ = zputs(entry);
                     let _ = write_loop(out_fd, b"\n");
                     ml += 1;
                 }
@@ -1516,7 +1516,7 @@ pub fn bld_all_str() -> String {
     //          `adjustcolumns` which probes via TIOCGWINSZ and falls
     //          back to $COLUMNS. Was reading raw `std::env::var(
     //          "COLUMNS")` only — wrong: missed the live width.
-    let cols: i32 = crate::ported::utils::adjustcolumns() as i32;
+    let cols: i32 = adjustcolumns() as i32;
     let mut len: i32 = cols - 5; // c:2192
     let mut add: i32 = 0;
     let mut buf = String::new(); // c:2196
