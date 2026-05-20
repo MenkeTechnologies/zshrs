@@ -4798,7 +4798,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         set_infor(0);
         // c:1117-1118 — `if (tok != STRING || !isident(tokstr)) YYERRORV(oecused);`
         if tok() != STRING_LEX
-            || !crate::ported::utils::isident(&tokstr().unwrap_or_default())
+            || !crate::ported::params::isident(&tokstr().unwrap_or_default())
         {
             crate::ported::utils::zerr("par_for: expected identifier");
             return;
@@ -4830,7 +4830,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
                 break;
             }
             // c:1130-1135 — `if (!isident(tokstr) || errflag) { ... YYERRORV; }`
-            if !crate::ported::utils::isident(&tokstr().unwrap_or_default())
+            if !crate::ported::params::isident(&tokstr().unwrap_or_default())
                 || (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) & 1) != 0
             {
                 set_noaliases(ona);
@@ -6287,7 +6287,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                         let inner_end = bytes.len() - closer_len;
                         let inner = &s[inner_start..inner_end];
                         if !inner.is_empty()
-                            && crate::ported::utils::isident(inner)
+                            && crate::ported::params::isident(inner)
                         {
                             // c:1946-1948 — `char *idstring = dupstrpfx(...);`
                             //                `redir_var = 1; zshlex();`

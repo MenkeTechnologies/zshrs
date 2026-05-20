@@ -102,9 +102,9 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
                 .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
                 .unwrap_or_default();
             let mut ap: Vec<String> = Vec::with_capacity(zsh_match.len() + 1);
-            ap.push(crate::ported::utils::ztrdup(&match_str));          // c:78
+            ap.push(crate::ported::string::ztrdup(&match_str));          // c:78
             for s in &zsh_match {                                       // c:79-80
-                ap.push(crate::ported::utils::ztrdup(s));
+                ap.push(crate::ported::string::ztrdup(s));
             }
             if !pm.is_null() {
                 unsafe { (*pm).u_arr = Some(ap.clone()); }
@@ -115,7 +115,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
         } else {
             // c:81-82 — pm->u.arr = zarrdup(zsh_match);
             let dup: Vec<String> = zsh_match.iter()
-                .map(|s| crate::ported::utils::ztrdup(s))
+                .map(|s| crate::ported::string::ztrdup(s))
                 .collect();
             if !pm.is_null() {
                 unsafe { (*pm).u_arr = Some(dup.clone()); }
@@ -127,7 +127,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
         let match_str: String = crate::ported::params::paramtab().read().ok()
             .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
             .unwrap_or_default();
-        let one = vec![crate::ported::utils::ztrdup(&match_str)];
+        let one = vec![crate::ported::string::ztrdup(&match_str)];
         if !pm.is_null() {
             unsafe { (*pm).u_arr = Some(one.clone()); }
         }
@@ -263,7 +263,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
             unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() }
         };
         crate::ported::params::setsparam(".sh.fun",                     // c:181
-            &crate::ported::utils::ztrdup(&name_str));
+            &crate::ported::string::ztrdup(&name_str));
         unsafe { (*pm).node.flags |= PM_READONLY as i32; }              // c:182
     }
     pm = crate::ported::params::createparam(".sh.level",                // c:184

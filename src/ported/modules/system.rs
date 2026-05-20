@@ -26,7 +26,8 @@
 use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
-use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};
+use crate::ported::utils::{metafy, unmeta, zwarnnam, zclose, movefd};
+use crate::ported::params::isident;                                          // c:1288
 use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 
 const SYSREAD_BUFSIZE: usize = 8192;                                     // c:45

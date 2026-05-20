@@ -882,20 +882,6 @@ mod tests {
         }
     }
 
-    /// `Src/compat.c:559-567` — the `utils.rs` re-export wraps the
-    /// canonical compat port in `Some(...)` for caller-API back-compat
-    /// (Option-returning shape). Pin the wrap: `utils::zgetcwd()`
-    /// returns Some(non-empty) iff `compat::zgetcwd()` returns non-empty.
-    #[test]
-    fn utils_zgetcwd_reexport_wraps_compat_in_some() {
-        let _g = crate::test_util::global_state_lock();
-        let from_utils = crate::ported::utils::zgetcwd();
-        assert!(from_utils.is_some(),
-            "utils::zgetcwd always Some — C zsh's zgetcwd is non-NULL");
-        assert_eq!(from_utils.unwrap(), zgetcwd(),
-            "utils re-export must match compat port byte-for-byte");
-    }
-
     /// `Src/compat.c:579-590` — `zchdir("")` returns 0 immediately
     /// (c:585 `if (!*dir || chdir(dir) == 0)`). Pins the empty-path
     /// short-circuit so a refactor of the loop init doesn't break it.

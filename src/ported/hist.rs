@@ -930,14 +930,13 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                 }
                 b'P' => {                                                    // c:937
                     if !sline.starts_with('/') {                             // c:938
-                        if let Some(here) = crate::ported::utils::zgetcwd() {// c:939
-                            sline = if here.ends_with('/') {
-                                crate::ported::utils::dyncat(&here, &sline)  // c:943
-                            } else {
-                                // c:941 zhtricat(metafy(here, -1, META_HEAPDUP), "/", sline)
-                                format!("{}/{}", here, sline)
-                            };
-                        }
+                        let here = crate::ported::compat::zgetcwd();         // c:939
+                        sline = if here.ends_with('/') {                     // c:940
+                            crate::ported::string::dyncat(&here, &sline)     // c:943
+                        } else {                                             // c:941
+                            // c:941 zhtricat(metafy(here, -1, META_HEAPDUP), "/", sline)
+                            format!("{}/{}", here, sline)                    // c:941
+                        };                                                   // c:944
                     }
                     match crate::ported::utils::xsymlink(&sline) {           // c:945
                         Some(new) => sline = new,

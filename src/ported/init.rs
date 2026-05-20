@@ -558,11 +558,10 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
     }
 
     // PWD/OLDPWD initialization                                             // c:1236-1259
-    if let Some(cwd) = crate::ported::utils::zgetcwd() {                     // c:1252
-        std::env::set_var("PWD", &cwd);
-        if std::env::var("OLDPWD").is_err() {                                // c:1255-1257
-            std::env::set_var("OLDPWD", &cwd);
-        }
+    let cwd = crate::ported::compat::zgetcwd();                              // c:1252
+    std::env::set_var("PWD", &cwd);                                          // c:1253
+    if std::env::var("OLDPWD").is_err() {                                    // c:1255-1257
+        std::env::set_var("OLDPWD", &cwd);                                   // c:1256
     }
 
     crate::ported::utils::inittyptab();                                      // c:1261

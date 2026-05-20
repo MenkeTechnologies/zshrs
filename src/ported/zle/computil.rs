@@ -6191,7 +6191,7 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
     use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
         CPAT_EQUIV, CPAT_NCLASS};
     use crate::ported::zle::compmatch::{pattern_match1, pattern_match_equivalence};
-    use crate::ported::utils::imeta;
+    use crate::ported::ztype_h::imeta;                                          // c:60
 
     // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
     // / pattern_match_equivalence. Walks an encoded char-range byte
@@ -6278,7 +6278,10 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
                                 w, ind + 1, mtp, addc);
                             if eq != u32::MAX {
                                 if let Some(c) = char::from_u32(eq) {
-                                    let _ = imeta(c);  // imeta handled implicitly
+                                    // c:60 — imeta(byte) gate; `c` is a
+                                    // u32 codepoint, so cap to u8 range
+                                    // before calling the byte-arg port.
+                                    let _ = if eq <= 0xff { imeta(eq as u8) } else { false };
                                     out.push(c);
                                 }
                             }

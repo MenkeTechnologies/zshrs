@@ -55,7 +55,7 @@ use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
 use crate::ported::zsh_h::PM_HASHED;
 use std::sync::atomic::AtomicUsize;
 use crate::ported::modules::parameter::*;
-use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED, PM_UNIQUE};
+use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED, PM_UNIQUE, PM_TIED, PM_SPECIAL, PM_NAMEREF};
 use std::ffi::CString;
 // `subst.rs` does NOT reach into `ShellExecutor` — every shell-state
 // read/write goes through the canonical C-named accessor (paramtab,
@@ -4777,28 +4777,60 @@ pub fn paramsubst(
             // c:2814 — read PM_* flags directly from paramtab and
             // synthesize the type tag. Mirrors C `pm->node.flags &
             // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = crate::ported::params::paramtab().read()
-                .ok()
-                .and_then(|tab| tab.get(&var_name).map(|pm| {
-                    let f = pm.node.flags as u32;
-                    let base = if f & PM_HASHED != 0 { "association" }
-                          else if f & PM_ARRAY != 0 { "array" }
-                          else if f & PM_INTEGER != 0 { "integer" }
-                          else if f & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" }
-                          else { "scalar" };
-                    let mut out = String::from(base);
-                    if f & PM_LEFT != 0    { out.push_str("-left"); }
-                    if f & PM_RIGHT_B != 0 { out.push_str("-right_blanks"); }
-                    if f & PM_RIGHT_Z != 0 { out.push_str("-zero"); }
-                    if f & PM_LOWER != 0   { out.push_str("-lower"); }
-                    if f & PM_UPPER != 0   { out.push_str("-upper"); }
-                    if f & PM_READONLY != 0{ out.push_str("-readonly"); }
-                    if f & PM_TAGGED != 0  { out.push_str("-tag"); }
-                    if f & PM_EXPORTED != 0{ out.push_str("-export"); }
-                    if f & PM_UNIQUE != 0  { out.push_str("-unique"); }
-                    if f & PM_HIDE != 0    { out.push_str("-hide"); }
-                    if f & PM_HIDEVAL != 0 { out.push_str("-hideval"); }
-                    out
+            value = crate::ported::params::paramtab().read()                  // c:2814
+                .ok()                                                           // c:2814
+                .and_then(|tab| tab.get(&var_name).map(|pm| {                  // c:2814
+                    let f = pm.node.flags as u32;                              // c:2814
+                    let val = if f & PM_HASHED != 0 { "association" }          // c:2823 case PM_HASHED
+                          else if f & PM_ARRAY != 0 { "array" }                // c:2819 case PM_ARRAY
+                          else if f & PM_INTEGER != 0 { "integer" }            // c:2820 case PM_INTEGER
+                          else if f & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" } // c:2821-2822 PM_EFLOAT|PM_FFLOAT
+                          else if f & PM_NAMEREF != 0 { "nameref" }            // c:2818 case PM_NAMEREF
+                          else { "scalar" };                                   // c:2817 case PM_SCALAR
+                    let val = crate::ported::string::dupstring(val);           // c:2825 val = dupstring(val)
+                    let val = if pm.level != 0                                  // c:2826
+                        { crate::ported::string::dyncat(&val, "-local") }       // c:2827
+                        else { val };                                           // c:2826
+                    let val = if f & PM_LEFT != 0                               // c:2828
+                        { crate::ported::string::dyncat(&val, "-left") }        // c:2829
+                        else { val };                                           // c:2828
+                    let val = if f & PM_RIGHT_B != 0                            // c:2830
+                        { crate::ported::string::dyncat(&val, "-right_blanks") } // c:2831
+                        else { val };                                           // c:2830
+                    let val = if f & PM_RIGHT_Z != 0                            // c:2832
+                        { crate::ported::string::dyncat(&val, "-right_zeros") } // c:2833
+                        else { val };                                           // c:2832
+                    let val = if f & PM_LOWER != 0                              // c:2834
+                        { crate::ported::string::dyncat(&val, "-lower") }       // c:2835
+                        else { val };                                           // c:2834
+                    let val = if f & PM_UPPER != 0                              // c:2836
+                        { crate::ported::string::dyncat(&val, "-upper") }       // c:2837
+                        else { val };                                           // c:2836
+                    let val = if f & PM_READONLY != 0                           // c:2838
+                        { crate::ported::string::dyncat(&val, "-readonly") }    // c:2839
+                        else { val };                                           // c:2838
+                    let val = if f & PM_TAGGED != 0                             // c:2840
+                        { crate::ported::string::dyncat(&val, "-tag") }         // c:2841
+                        else { val };                                           // c:2840
+                    let val = if f & PM_TIED != 0                               // c:2842
+                        { crate::ported::string::dyncat(&val, "-tied") }        // c:2843
+                        else { val };                                           // c:2842
+                    let val = if f & PM_EXPORTED != 0                           // c:2844
+                        { crate::ported::string::dyncat(&val, "-export") }      // c:2845
+                        else { val };                                           // c:2844
+                    let val = if f & PM_UNIQUE != 0                             // c:2846
+                        { crate::ported::string::dyncat(&val, "-unique") }      // c:2847
+                        else { val };                                           // c:2846
+                    let val = if f & PM_HIDE != 0                               // c:2848
+                        { crate::ported::string::dyncat(&val, "-hide") }        // c:2849
+                        else { val };                                           // c:2848
+                    let val = if f & PM_HIDEVAL != 0                            // c:2850
+                        { crate::ported::string::dyncat(&val, "-hideval") }     // c:2851
+                        else { val };                                           // c:2850
+                    let val = if f & PM_SPECIAL != 0                            // c:2852
+                        { crate::ported::string::dyncat(&val, "-special") }     // c:2853
+                        else { val };                                           // c:2852
+                    val                                                         // c:2854
                 }))
                 .unwrap_or_else(|| {
                     if assoc_contains(&var_name) {
