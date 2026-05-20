@@ -1210,8 +1210,19 @@ pub fn ihwbegin(offset: i32) {                                               // 
     if pos % 2 != 0 {                                                        // c:1662 chwordpos%2
         chwordpos.fetch_sub(1, Ordering::SeqCst);                            // c:1663
     }
+    // c:1664-1665 — DPUTS1(pos < 0, "History word position < 0 in %s",
+    //                      dupstrpfx(chline, hptr-chline))
+    let word_pos = (hptr_val as i32) + offset;                               // c:1664 pos
+    crate::DPUTS1!(                                                          // c:1664
+        word_pos < 0,                                                         // c:1664
+        "History word position < 0 in {}",                                   // c:1664
+        {                                                                     // c:1665 dupstrpfx(chline, hptr-chline)
+            let line = chline.lock().unwrap();                               // c:1665
+            line.chars().take(hptr_val).collect::<String>()                  // c:1665
+        }
+    );
     // c:1666 — `if (pos < 0) pos = 0;`. The .max(0) clamp.
-    let start = ((hptr_val as i32) + offset).max(0) as i16;                  // c:1658
+    let start = word_pos.max(0) as i16;                                       // c:1658
     let mut words = chwords.lock().unwrap();
     let idx = chwordpos.load(Ordering::SeqCst) as usize;
     if words.len() <= idx {
