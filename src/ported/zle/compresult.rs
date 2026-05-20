@@ -33,21 +33,20 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::ported::init::SHTTY;
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
-use crate::ported::zle::compcore::listdat as listdat_static;
-use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
     CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST,
     CMF_PACKED, CMF_ROWS,
 };
 use crate::ported::zle::compcore::{
-    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc,
-    nmatches as nmatches_g, oldins, oldlist, onlyexpl, MINFO,
+    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static,
+    menuacc, nmatches as nmatches_g, oldins, oldlist, onlyexpl, MINFO,
 };
-use crate::ported::zle::zle_refresh::tcoutclear;
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+use crate::ported::zle::zle_refresh::tcoutclear;
+use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zsh_h::{isset, USEZLE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
