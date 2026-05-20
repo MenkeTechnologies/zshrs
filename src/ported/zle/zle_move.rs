@@ -9,11 +9,9 @@ use std::sync::atomic::Ordering;
 
 use crate::ported::zle::zle_h::{MOD_CHAR, MOD_LINE};
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 /// Move cursor to the start of the current logical line.
 /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
 /// just mutates zlecs in-place instead of returning the index.
@@ -22,21 +20,10 @@ use crate::ported::zle::zle_hist::*;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*,
+    zle_vi::*, zle_word::*,
+};
 
 /// Port of `alignmultiwordleft(int *pos, int setpos)` from Src/Zle/zle_move.c:49.
 ///

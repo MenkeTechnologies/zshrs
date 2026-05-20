@@ -317,11 +317,9 @@ use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
 use HighlightCategory as HC;
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*, zle_hist::*,
+};
 /// Main refresh function — redraws the line.
 /// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
 /// a full virtual-screen diff against the previous frame; this Rust
@@ -336,21 +334,10 @@ use crate::ported::zle::zle_hist::*;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_tricky::*, zle_utils::*, zle_vi::*,
+    zle_word::*,
+};
 
 /// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
 pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len(); // c:284

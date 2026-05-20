@@ -16,36 +16,19 @@ use super::zle_h::{
 use crate::ported::zsh_h::DISABLED;
 
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
-#[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::{
+    deltochar::*, textobjects::*,
+};
 /// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
 /// reference to a widget. `ThingyFlags` deleted — C uses an `int
 /// flags` field with `TH_IMMORTAL` (1<<1) and `DISABLED` (1<<0) bits.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::zle_h::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_main::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_misc::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_refresh::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
+use crate::ported::zle::{
+    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*,
+    zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
+};
 
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.
