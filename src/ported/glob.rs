@@ -3238,7 +3238,7 @@ fn sort_matches(state: &mut globdata) {                                      // 
             return;
         }
 
-        let numeric = glob_isset(crate::ported::zsh_h::NUMERICGLOBSORT);
+        let numeric = glob_isset(NUMERICGLOBSORT);
         state.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
 }
 
