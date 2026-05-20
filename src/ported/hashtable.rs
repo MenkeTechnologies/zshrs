@@ -3021,7 +3021,7 @@ mod tests {
     #[test]
     fn removehashnode_missing_key_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        let mut h: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        let mut h: HashMap<String, i32> = HashMap::new();
         addhashnode(&mut h, "k1", 1);
         let len_before = h.len();
         assert!(removehashnode(&mut h, "missing").is_none());

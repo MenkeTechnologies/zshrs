@@ -30,6 +30,8 @@ use std::sync::atomic::Ordering;
 // short names without colliding with `STRING_LEX` (the lextok=34 constant).
 use crate::ported::input::inpush;
 use crate::ported::prompt::{cmdpop, cmdpush};
+use crate::ported::utils::zerr;
+use crate::ported::zsh_h::INP_ALIAS;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
     isset, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, ERRFLAG_INT, Hat, Inang, ZCONTEXT_LEX, ZCONTEXT_PARSE,
@@ -205,7 +207,7 @@ pub fn zshlex() {
             // c:291 — `if (!doc)`
             let Some(doc) = doc else {
                 // c:292 — `zerr("here document too large");`
-                crate::ported::utils::zerr("here document too large");
+                zerr("here document too large");
                 // c:293-297 — while (hdocs) { next = hdocs->next; zfree(hdocs); hdocs = next; }
                 crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = None);
                 // c:298 — `tok = LEXERR;`
@@ -1001,7 +1003,7 @@ fn gettok() -> lextok {
         && c as i32 == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
     let qbang_adj: i32 = if qbang_at_bang { 1 } else { 0 };
     if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
-        && (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS)
+        && (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS)
             == 0
     {
         LEX_WORDBEG.set(crate::ported::input::inbufct.with(|c| c.get()) - qbang_adj);
@@ -2278,13 +2280,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     // c:1445-1446 — `if (unmatched && !(lexflags & LEXFLAGS_ACTIVE))
     //                  zerr("unmatched %c", unmatched);`
     if unmatched != '\0' && LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
-        crate::ported::utils::zerr(&format!("unmatched {}", unmatched));
+        zerr(&format!("unmatched {}", unmatched));
     }
 
     // c:1447-1453 — `zerr("closing brace expected");` when in_brace_param
     // is still open at end of token.
     if in_brace_param > 0 {
-        crate::ported::utils::zerr("closing brace expected");
+        zerr("closing brace expected");
     }
 
     set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
@@ -2557,7 +2559,7 @@ pub fn parsestr(s: &str) -> Result<String, String> {
                 // Err(msg) string carries the diagnostic already formatted
                 // by dquote_parse / gettokstr; emit it via zerr to match
                 // C's stderr behaviour.
-                crate::ported::utils::zerr(&msg); // c:1702/1704
+                zerr(&msg); // c:1702/1704
                 set_tok(LEXERR); // c:1705
             }
             Err(msg)
@@ -2863,14 +2865,14 @@ fn checkalias(lextext: &str) -> bool {
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
                     if !crate::ztype_h::iblank(c as u8) {
-                        inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        inpush(" ", INP_ALIAS, None);
                     }
                 }
             }
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
             inpush(
                 &alias.text,
-                crate::ported::zsh_h::INP_ALIAS,
+                INP_ALIAS,
                 Some(lextext.to_string()),
             );
             // c:1929 — `an->inuse = 1;`.
@@ -2909,13 +2911,13 @@ fn checkalias(lextext: &str) -> bool {
                         // body. C does it the same way.
                         inpush(
                             lextext,
-                            crate::ported::zsh_h::INP_ALIAS,
+                            INP_ALIAS,
                             Some(suffix.to_string()),
                         );
-                        inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        inpush(" ", INP_ALIAS, None);
                         inpush(
                             &alias.text,
-                            crate::ported::zsh_h::INP_ALIAS,
+                            INP_ALIAS,
                             None,
                         );
                         // c:1941 — `an->inuse = 1;`.
@@ -2968,7 +2970,7 @@ pub fn exalias() -> bool {
     //    && (isset(CORRECTALL) || (isset(CORRECT) && incmdpos)))
     //       spckword(&tokstr, 1, incmdpos, 1);
     let inbufflags_alias =
-        (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS) != 0;
+        (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) != 0;
     let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
     if crate::ported::zsh_h::interact()
         && isset(SHINSTDIN)
@@ -4540,10 +4542,10 @@ mod tests {
         );
         // Nularg (\u{a1}) IS ITOK. C's untokenize SKIPS it (no
         // replacement char per c:2089 `if (c != Nularg)`).
-        let with_nularg = format!("a{}b", crate::ported::zsh_h::Nularg);
+        let with_nularg = format!("a{}b", Nularg);
         let cleaned = untokenize(&with_nularg);
         assert!(
-            !cleaned.contains(crate::ported::zsh_h::Nularg),
+            !cleaned.contains(Nularg),
             "c:2089 — Nularg (\\u{{a1}}) must be DROPPED by untokenize"
         );
     }
@@ -4697,7 +4699,7 @@ mod tests {
         // c:1802 — empty input is a no-op success.
         assert!(parse_subst_string("").is_ok(), "c:1802 — empty input → Ok");
         // c:1802 — nulstring (a single Nularg char) is a no-op success.
-        let nul = crate::ported::zsh_h::Nularg.to_string();
+        let nul = Nularg.to_string();
         assert!(
             parse_subst_string(&nul).is_ok(),
             "c:1802 — nulstring sentinel → Ok (was Err on previous port)"

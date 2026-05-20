@@ -385,11 +385,11 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     // claiming "SHTTY isn't a single global in zshrs"
                     // — but SHTTY IS a global at `init::SHTTY`. Use it.
                     let shtty =
-                        crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::SeqCst);
+                        crate::ported::init::SHTTY.load(Ordering::SeqCst);
                     let on_tty = shtty >= 0 && unsafe { libc::isatty(shtty) } != 0;
                     if !on_tty {
                         crate::ported::builtin::STOPMSG // c:439
-                            .store(1, std::sync::atomic::Ordering::Relaxed);
+                            .store(1, Ordering::Relaxed);
                         crate::ported::builtin::zexit(libc::SIGPIPE, ZEXIT_SIGNAL);
                         // c:440
                     }
@@ -400,7 +400,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
             // c:445
             if handletrap(libc::SIGHUP) == 0 {
                 // c:447 — `stopmsg = 1; zexit(SIGHUP, ZEXIT_SIGNAL);`
-                crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed);
                 crate::ported::builtin::zexit(libc::SIGHUP, ZEXIT_SIGNAL); // c:448
             }
         }
@@ -417,15 +417,15 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     crate::ported::builtin::zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
-                let cur = errflag.load(std::sync::atomic::Ordering::Relaxed);
+                let cur = errflag.load(Ordering::Relaxed);
                 errflag
-                    .store(cur | ERRFLAG_INT, std::sync::atomic::Ordering::Relaxed); // c:457
+                    .store(cur | ERRFLAG_INT, Ordering::Relaxed); // c:457
                                                                                      // c:458-462 — list_pipe/chline/simple_pline branch
                                                                                      // (loops break, inerrflush, check_cursh_sig) lives
                                                                                      // in the executor; not yet plumbed.
                                                                                      // c:463 — `lastval = 128 + SIGINT;`
-                crate::ported::builtin::LASTVAL
-                    .store(128 + libc::SIGINT, std::sync::atomic::Ordering::Relaxed);
+                LASTVAL
+                    .store(128 + libc::SIGINT, Ordering::Relaxed);
                 // c:463
             }
         }
@@ -470,10 +470,10 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     // common-case behavior here).
                 } else {
                     // c:486 — `errflag = noerrs = 0;`
-                    errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+                    errflag.store(0, Ordering::Relaxed);
                     // c:487 — `zwarn("timeout");`
                     crate::ported::utils::zwarn("timeout"); // c:487
-                    crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:488
+                    crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:488
                     crate::ported::builtin::zexit(libc::SIGALRM, ZEXIT_SIGNAL); // c:489
                 }
             }
@@ -519,10 +519,10 @@ pub fn killrunjobs(from_signal: i32) {
     let mut killed: i32 = 0;
     // c:514 — `for (i = 1; i <= maxjob; i++)`. Skip index 0
     // (shell itself).
-    let tab = crate::ported::jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let tab = crate::ported::jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
     let tab = tab.lock().expect("jobtab poisoned");
     let thisjob = crate::ported::jobs::THISJOB
-        .get_or_init(|| std::sync::Mutex::new(-1))
+        .get_or_init(|| Mutex::new(-1))
         .lock()
         .map(|g| *g)
         .unwrap_or(-1);
@@ -813,7 +813,7 @@ pub fn removetrap(sig: i32) {
     //   (c) omitted the SIGEXIT/POSIXTRAPS-LOCALTRAPS option gates and the
     //       locallevel-non-zero requirement entirely.
     let cond_local_or_exit = if sig == SIGEXIT {
-        !isset(crate::ported::zsh_h::POSIXTRAPS) // c:771 sig==SIGEXIT branch
+        !isset(POSIXTRAPS) // c:771 sig==SIGEXIT branch
     } else {
         isset(crate::ported::zsh_h::LOCALTRAPS) // c:771 else branch
     };
@@ -842,12 +842,12 @@ pub fn removetrap(sig: i32) {
     // trap. The previous Rust port collapsed everything to a single
     // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
     // special branches AND the RT-signal branch entirely.
-    let interact = isset(crate::ported::zsh_h::INTERACTIVE);
+    let interact = isset(INTERACTIVE);
     // c:808 `forklevel` — depth of subshell forks. C global at
     // exec.c:1052 set to `locallevel` at every entersubsh() (c:1221).
     // Read live from the ported global so SIGPIPE only re-installs in
     // the top-level shell, never inside a forked subshell.
-    let forklevel: i32 = crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed); // c:1052 (Src/exec.c)
+    let forklevel: i32 = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed); // c:1052 (Src/exec.c)
     if sig == libc::SIGINT && interact {
         // c:802
         // c:803-805 — `intr(); noholdintr();`. Re-enable SIGINT
@@ -1070,7 +1070,7 @@ pub fn endtrapscope() {
         // c:961, c:1132 FUNC branch
         // Build args = ["TRAPEXIT", "<SIGEXIT-num>"]. Matches the
         // canonical signature dotrapargs would have constructed.
-        let signame = crate::ported::signals::getsigname(SIGEXIT);
+        let signame = getsigname(SIGEXIT);
         let trap_fn = format!("TRAP{}", signame);
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             let args = vec![SIGEXIT.to_string()];
@@ -1240,7 +1240,7 @@ pub fn dotrap(sig: i32) -> i32 {
 
     // c:1251 — `if (sigtrapped[sig] & ZSIG_FUNC)` → run TRAPxxx shfunc.
     if trapped & ZSIG_FUNC != 0 {
-        let signame = crate::ported::signals::getsigname(sig);
+        let signame = getsigname(sig);
         let trap_fn = format!("TRAP{}", signame);
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             // c:1252-1255 — `dotrapargs(sig, sigtrapped+sig, funcprog)`.
@@ -1398,7 +1398,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             Some(n) => crate::ported::mem::ztrdup(&n), // c:1145 ztrdup(hn->nam)
             None => {
                 // c:1146
-                format!("TRAP{}", crate::ported::signals::getsigname(sig)) // c:1147-1148
+                format!("TRAP{}", getsigname(sig)) // c:1147-1148
             }
         };
         args.push(name.clone()); // c:1150 zaddlinknode(args, name)
@@ -1407,7 +1407,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
 
         TRAP_RETURN.store(-1, Ordering::SeqCst); // c:1154 trap_return = -1
         TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1155
-        crate::ported::signals::trapisfunc.store(1, Ordering::SeqCst); // c:1156
+        trapisfunc.store(1, Ordering::SeqCst); // c:1156
         isfunc = 1;
 
         SFCONTEXT.store(SFC_SIGNAL, Ordering::SeqCst); // c:1158
@@ -1427,7 +1427,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         // c:1165
         TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166 trap_return = -2
         TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
-        crate::ported::signals::trapisfunc.store(0, Ordering::SeqCst); // c:1168
+        trapisfunc.store(0, Ordering::SeqCst); // c:1168
         isfunc = 0;
         // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");`
         // Eprog dispatch via fusevm bridge isn't wired for raw eprog yet;
@@ -1809,7 +1809,7 @@ pub static EXIT_TRAP_POSIX: AtomicBool = AtomicBool::new(false);
 /// suppressing `dosavetrap` calls during `settrap` invoked from
 /// `endtrapscope`'s restore loop (so the restore itself doesn't
 /// push fresh save entries).
-pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static DONTSAVETRAP: AtomicI32 = AtomicI32::new(0);
 
 /// Port of `killpg()` libc passthrough — used by jobs.c / signals.c
 /// callers; not in zsh source itself but referenced via libc.
@@ -1828,8 +1828,8 @@ pub fn kill(pid: i32, sig: i32) -> i32 {
 // SIGINT-related setup on interactive shell mode.
 // ---------------------------------------------------------------------------
 
-fn interact_lock() -> &'static std::sync::atomic::AtomicBool {
-    static INTERACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn interact_lock() -> &'static AtomicBool {
+    static INTERACT: AtomicBool = AtomicBool::new(false);
     &INTERACT
 }
 
@@ -1860,7 +1860,7 @@ pub fn set_interact(v: bool) {
 ///
 /// Route through canonical isset() so the option drives the predicate.
 pub fn is_interact() -> bool {
-    isset(crate::ported::zsh_h::INTERACTIVE)
+    isset(INTERACTIVE)
 }
 
 // ===========================================================

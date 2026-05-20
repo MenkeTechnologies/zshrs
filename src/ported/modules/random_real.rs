@@ -224,6 +224,7 @@ pub fn clz64(x: u64) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use super::*;
 
     /// Verifies `clz64` matches `_zclz64` across boundary inputs —

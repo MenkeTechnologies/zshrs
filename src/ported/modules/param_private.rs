@@ -91,7 +91,7 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
         return;
     }
     let pm_level = unsafe { (*hn).level };
-    let cur_local = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+    let cur_local = LOCALLEVEL.load(Ordering::Relaxed);
     if pm_level != cur_local {
         return;
     } // c:83 only act on this scope's entries
@@ -129,7 +129,7 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
                 }), // c:133
             );
         }
-        MAKEPRIVATE_ERROR.store(1, std::sync::atomic::Ordering::Relaxed); // c:130/135
+        MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:130/135
         return; // c:137
     }
 
@@ -267,7 +267,7 @@ pub fn bin_private(
     }
 
     // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
-    let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
+    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
     if locallevel == 0 {
         // c:235
         let warn =
@@ -391,7 +391,7 @@ pub fn pps_getfn(pm: *mut param) -> String {
         return String::new();
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
         // c:292
         // c:293 — gsu->getfn(pm). Static-link path: read the param's
         // u_str field directly since the gsu_closure indirection
@@ -421,9 +421,9 @@ pub fn pps_setfn(pm: *mut param, x: &str) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
+        || LOCALLEVEL.load(Ordering::Relaxed)
+            > private_wraplevel.load(Ordering::Relaxed)
     {
         // c:304
         unsafe {
@@ -457,7 +457,7 @@ pub fn pps_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
         // c:317
         // c:318 — gsu->unsetfn(pm, explicit). Set u_str to None.
         unsafe {
@@ -486,7 +486,7 @@ pub fn ppi_getfn(pm: *mut param) -> i64 {
         return 0;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
         // c:340
         unsafe { (*pm).u_val } // c:340 gsu->getfn
     } else {
@@ -501,9 +501,9 @@ pub fn ppi_setfn(pm: *mut param, x: i64) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
+        || LOCALLEVEL.load(Ordering::Relaxed)
+            > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
             (*pm).u_val = x;
@@ -520,7 +520,7 @@ pub fn ppi_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
         // c:357
         unsafe {
             (*pm).u_val = 0;
@@ -547,7 +547,7 @@ pub fn ppf_getfn(pm: *mut param) -> f64 {
         return 0.0;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
         // c:380
         unsafe { (*pm).u_dval } // c:380
     } else {
@@ -562,9 +562,9 @@ pub fn ppf_setfn(pm: *mut param, x: f64) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
+        || LOCALLEVEL.load(Ordering::Relaxed)
+            > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
             (*pm).u_dval = x;
@@ -581,7 +581,7 @@ pub fn ppf_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
         // c:397
         unsafe {
             (*pm).u_dval = 0.0;
@@ -608,7 +608,7 @@ pub fn ppa_getfn(pm: *mut param) -> Vec<String> {
         return Vec::new();
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
         // c:421
         unsafe { (*pm).u_arr.clone().unwrap_or_default() } // c:421
     } else {
@@ -623,9 +623,9 @@ pub fn ppa_setfn(pm: *mut param, x: Vec<String>) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
+        || LOCALLEVEL.load(Ordering::Relaxed)
+            > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
             (*pm).u_arr = Some(x);
@@ -642,7 +642,7 @@ pub fn ppa_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
         // c:438
         unsafe {
             (*pm).u_arr = None;
@@ -667,8 +667,8 @@ pub fn ppa_unsetfn(pm: *mut param, explicit: i32) {
 /// the wrapper swaps in on `private`-builtin entry. Allocated in
 /// boot_, freed in finish_ via deletehashtable.
 #[allow(non_upper_case_globals)]
-pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
-    std::sync::Mutex::new(None); // c:447
+pub static emptytable: Mutex<Option<crate::ported::zsh_h::HashTable>> =
+    Mutex::new(None); // c:447
 
 /// Port of `pph_getfn(Param pm)` from `Src/Modules/param_private.c:451`.
 ///
@@ -683,7 +683,7 @@ pub fn pph_getfn(pm: *mut param) -> Option<()> {
         return None;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
         // c:463
         unsafe { (*pm).u_hash.as_ref().map(|_| ()) } // c:463
     } else {
@@ -702,9 +702,9 @@ pub fn pph_setfn(
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
+        || LOCALLEVEL.load(Ordering::Relaxed)
+            > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
             (*pm).u_hash = x;
@@ -721,7 +721,7 @@ pub fn pph_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
         // c:480
         unsafe {
             (*pm).u_hash = None;
@@ -759,7 +759,7 @@ pub fn scopeprivate(hn: *mut param, onoff: i32) {
         return;
     }
     let pm_level = unsafe { (*hn).level };
-    let local = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+    let local = LOCALLEVEL.load(Ordering::Relaxed);
     if pm_level != local {
         return;
     } // c:515
@@ -837,12 +837,12 @@ pub fn wrap_private(
     _name: *mut libc::c_char,
 ) -> i32 {
     // c:550
-    let local = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
-    let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
+    let local = LOCALLEVEL.load(Ordering::Relaxed);
+    let pwl = private_wraplevel.load(Ordering::Relaxed);
     if pwl < local {
         // c:552
         let owl = pwl; // c:553
-        private_wraplevel.store(local, std::sync::atomic::Ordering::Relaxed); // c:554
+        private_wraplevel.store(local, Ordering::Relaxed); // c:554
                                                                               // c:555 — scopeprivate(PM_UNSET) on every private param.
                                                                               // Iterate the registry — each entry is a private param name
                                                                               // we'd need a `*mut param` for. Static-link path skips the
@@ -851,7 +851,7 @@ pub fn wrap_private(
                                                                               // for the locallevel == private_wraplevel test in `*_setfn`.
                                                                               // c:556 — runshfunc(prog, w, name) — handled by caller.
                                                                               // c:557 — scopeprivate(0) restore on exit.
-        private_wraplevel.store(owl, std::sync::atomic::Ordering::Relaxed); // c:558
+        private_wraplevel.store(owl, Ordering::Relaxed); // c:558
         return 0; // c:559
     }
     1 // c:561
@@ -875,9 +875,9 @@ pub fn getprivatenode(pm: *mut param) -> *mut param {
     // c:580-607 — `pm = pm->old` walk while is_private
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
-        let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let local = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
+        let fakelvl = FAKELEVEL.load(Ordering::Relaxed);
+        let local = LOCALLEVEL.load(Ordering::Relaxed);
+        let pwl = private_wraplevel.load(Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
             break;
         }
@@ -912,8 +912,8 @@ pub fn getprivatenode2(pm: *mut param) -> *mut param {
     let mut cur = pm;
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
-        let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let local = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let fakelvl = FAKELEVEL.load(Ordering::Relaxed);
+        let local = LOCALLEVEL.load(Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
             break;
         }
@@ -958,12 +958,12 @@ pub fn printprivatenode(hn: *mut param, printflags: i32) {
     while !cur.is_null() {
         let pm_level = unsafe { (*cur).level };
         let pm_flags = unsafe { (*cur).node.flags };
-        let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let fakelvl = FAKELEVEL.load(Ordering::Relaxed);
         let unset_in_fake = fakelvl != 0
             && fakelvl > pm_level
             && (pm_flags & PM_UNSET as i32) != 0;
         let cond = (fakelvl == 0 || unset_in_fake)
-            && LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
+            && LOCALLEVEL.load(Ordering::Relaxed)
                 > pm_level
             && is_private(cur) != 0;
         if !cond {
@@ -1088,8 +1088,8 @@ pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::
 // node.flags directly; this side-set is the bridge until paramtab
 // reads/writes use the real flag.
 pub static PRIVATE_PARAMS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashSet<String>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    Mutex<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
 // `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
 // Set by `bin_private` to the locallevel at which it ran, used by
@@ -1181,10 +1181,10 @@ fn module_features() -> &'static Mutex<features_t> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, MAX_OPS};
+    use crate::zsh_h::{hashnode, options, MAX_OPS};
     use super::*;
 
-    fn empty_ops_pp() -> crate::ported::zsh_h::options {
+    fn empty_ops_pp() -> options {
         options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
