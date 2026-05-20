@@ -1197,7 +1197,7 @@ pub fn gettext2(state: &mut estate) {
             }
             _ => {
                 // c:1010 — DPUTS(1, "unknown word code in gettext2()")
-                crate::DPUTS!(true, "unknown word code in gettext2()"); // c:1010
+                DPUTS!(true, "unknown word code in gettext2()"); // c:1010
                 return;
             }
         }
@@ -1247,11 +1247,11 @@ pub fn getredirs(redirs: &LinkList<redir>) {
                         }
                         if !has_token(&n) {
                             tpush(b'\'' as i32);
-                            taddstr(&quotestring(&n, crate::ported::zsh_h::QT_SINGLE));
+                            taddstr(&quotestring(&n, zsh_h::QT_SINGLE));
                             tpush(b'\'' as i32);
                         } else {
                             tpush(b'"' as i32);
-                            taddstr(&quotestring(&n, crate::ported::zsh_h::QT_DOUBLE));
+                            taddstr(&quotestring(&n, zsh_h::QT_DOUBLE));
                             tpush(b'"' as i32);
                         }
                         let _ = sav;
@@ -1275,13 +1275,13 @@ pub fn getredirs(redirs: &LinkList<redir>) {
             // the canonical `N>&-` text anyway.
             t if t == REDIR_CLOSE => {
                 // c:1106
-                crate::DPUTS!(true, "BUG: CLOSE in getredirs()"); // c:1107
+                DPUTS!(true, "BUG: CLOSE in getredirs()"); // c:1107
                 taddchr(b'0' as i32 + f.fd1); // c:1108
                 taddstr(">&- "); // c:1109
             }
             _ => {
                 // c:1111 default
-                crate::DPUTS!(true, "BUG: unknown redirection in getredirs()"); // c:1112
+                DPUTS!(true, "BUG: unknown redirection in getredirs()"); // c:1112
             }
         }
     }

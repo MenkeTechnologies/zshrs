@@ -471,7 +471,7 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
         // 0x8b as the previous comment claimed (drift bug pattern).
         // Emit the single Nularg char so downstream code recognises
         // the empty-bslashquote sentinel.
-        crate::ported::zsh_h::Nularg.to_string() // c:227
+        Nularg.to_string() // c:227
     } else {
         format!("{}{}{}", prefix, strsub, suffix) // c:215-220
     };
@@ -1328,11 +1328,11 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
             //   Snull  = 0x9d, Dnull  = 0x9e, Tick   = 0x93,
             //   Inpar  = 0x88, Outpar = 0x8a.
             match c {                                       // c:600
-                crate::ported::zsh_h::Dnull |               // c:602 (")
-                crate::ported::zsh_h::Snull |               // c:603 (')
-                crate::ported::zsh_h::Tick => { inq = !inq; } // c:604 (`)
+                Dnull |               // c:602 (")
+                Snull |               // c:603 (')
+                Tick => { inq = !inq; } // c:604 (`)
                 Inpar => { inp += 1; }  // c:606
-                crate::ported::zsh_h::Outpar => { inp -= 1; } // c:608
+                Outpar => { inp -= 1; } // c:608
                 _ => {}
             }
             // ISEP test (C line 581) — outside quotes/parens, char
@@ -1671,7 +1671,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                 // dstackent(ch, val) → pwd or stack entry.
                 // c:4902 — read from canonical DIRSTACK global (mirrors
                 // C'namptr `mod_export LinkList dirstack` at builtin.c:743).
-                let dirstack: Vec<String> = crate::ported::modules::parameter::DIRSTACK
+                let dirstack: Vec<String> = DIRSTACK
                     .lock()
                     .map(|d| d.clone())
                     .unwrap_or_default();
@@ -1742,7 +1742,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     // The previous Rust port had `\u{86}` labeled Equals (wrong — that's
     // Hat; Equals is \u{8d}) AND `\u{85}` labeled Inpar (wrong — that's
     // Stringg; Inpar is \u{88}). Use canonical consts.
-    if (first == '=' || first == crate::ported::zsh_h::Equals)
+    if (first == '=' || first == Equals)
         && chars.len() > 1
         && chars[1] != Inpar
     {
@@ -2229,15 +2229,15 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
             // c:1472
             if !qt {
                 // c:1473
-                if *c == crate::ported::zsh_h::Qstring {
+                if *c == Qstring {
                     // c:1474
-                    *c = crate::ported::zsh_h::Stringg; // c:1475
-                } else if *c == crate::ported::zsh_h::Qtick {
+                    *c = Stringg; // c:1475
+                } else if *c == Qtick {
                     // c:1476
-                    *c = crate::ported::zsh_h::Tick; // c:1477
+                    *c = Tick; // c:1477
                 }
             }
-            if *c == crate::ported::zsh_h::Dnull {
+            if *c == Dnull {
                 // c:1480
                 qt = !qt; // c:1481
             }
@@ -2425,10 +2425,10 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
         // `Src/zsh.h:163,165`. Use the canonical consts.
         match c {
             // c:1579
-            '[' | crate::ported::zsh_h::Inbrack => depth += 1, // c:1579
-            ']' | crate::ported::zsh_h::Outbrack => depth -= 1, // c:1579
+            '[' | Inbrack => depth += 1, // c:1579
+            ']' | Outbrack => depth -= 1, // c:1579
             '(' | Inpar => depth += 1,   // c:1579
-            ')' | crate::ported::zsh_h::Outpar => depth -= 1,  // c:1579
+            ')' | Outpar => depth -= 1,  // c:1579
             ':' if depth == 0 => {
                 end = Some(i);
                 break;
@@ -2705,15 +2705,15 @@ pub fn paramsubst(
                     } // c:2147
                     'L' => {
                         // c:2197
-                        casmod = crate::ported::zsh_h::CASMOD_LOWER; // c:2198
+                        casmod = CASMOD_LOWER; // c:2198
                     } // c:2199
                     'U' => {
                         // c:2200
-                        casmod = crate::ported::zsh_h::CASMOD_UPPER; // c:2201
+                        casmod = CASMOD_UPPER; // c:2201
                     } // c:2202
                     'C' => {
                         // c:2203
-                        casmod = crate::ported::zsh_h::CASMOD_CAPS; // c:2204
+                        casmod = CASMOD_CAPS; // c:2204
                     } // c:2205
                     'q' => {
                         // c:2236
@@ -3626,7 +3626,7 @@ pub fn paramsubst(
                 // value lives in `u_str`.
                 let nul = std::ptr::null_mut();
                 let is_splice = sub == "@" || sub == "*";
-                let pm: Option<crate::ported::zsh_h::Param> = if is_splice {
+                let pm: Option<Param> = if is_splice {
                     None // splice form — handled below.
                 } else {
                     match var_name.as_str() {
@@ -5117,10 +5117,10 @@ pub fn paramsubst(
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
                 // c:3937
-                if casmod == crate::ported::zsh_h::CASMOD_LOWER {
+                if casmod == CASMOD_LOWER {
                     // c:3937 CASMOD_LOWER
                     s.to_lowercase() // c:3937
-                } else if casmod == crate::ported::zsh_h::CASMOD_UPPER {
+                } else if casmod == CASMOD_UPPER {
                     // c:3937 CASMOD_UPPER
                     s.to_uppercase() // c:3937
                 } else {
@@ -6245,7 +6245,7 @@ pub fn paramsubst(
                 // partab[] dispatch (Src/Modules/parameter.c:2234).
                 // See companion dispatch at the braced-form site.
                 let nul = std::ptr::null_mut();
-                let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
+                let pm: Option<Param> = if sub == "@" || sub == "*" {
                     None
                 } else {
                     match var_name.as_str() {
@@ -6989,7 +6989,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             *hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
             *crate::ported::hist::hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
             crate::ported::hist::hsubpatopt
-                .store(mode as i32, std::sync::atomic::Ordering::Relaxed); // c:4673
+                .store(mode as i32, Ordering::Relaxed); // c:4673
                                                                            // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
                                                                            // rejoins. Pull through the same code path :& uses
                                                                            // below by deferring to a shared `apply_subst` closure.
@@ -7032,7 +7032,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 match (p_opt, r_opt) {
                     (Some(p), Some(r)) => {
                         let mode = crate::ported::hist::hsubpatopt
-                            .load(std::sync::atomic::Ordering::Relaxed)
+                            .load(Ordering::Relaxed)
                             as u8;
                         Some((p, r, mode))
                     }
@@ -8165,7 +8165,7 @@ mod tests {
         // with other tests that share the global params::paramtab().
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
         let (result, _, _) =                                // c:3202
             paramsubst("${__default_unset_var:-fallback}", 0, false, 0, &mut 0); // c:3202
         assert_eq!(result, "fallback"); // c:3202
@@ -8182,7 +8182,7 @@ mod tests {
         // bridges no-op and the slot never appears in `arrays_get`.
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
         let name = format!(
             "__sub_arr_{}_{}",
             module_path!().replace("::", "_"),

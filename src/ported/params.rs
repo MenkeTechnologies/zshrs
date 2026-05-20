@@ -73,8 +73,8 @@ pub static LC_UPDATE_NEEDED: std::sync::atomic::AtomicI32 = std::sync::atomic::A
 /// `assignsparam` / `assignnparam` for the assoc-element path.
 /// Stores the param name; the live `&param` lookup is done by
 /// the caller through paramtab.
-pub static FOUNDPARAM: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+pub static FOUNDPARAM: OnceLock<Mutex<Option<String>>> =
+    OnceLock::new();
 
 /// Port of `rprompt_indent_unsetfn(Param pm, int exp)` from `Src/params.c:152`. C
 /// body: `stdunsetfn(pm, exp); rprompt_indent = 1;` — keeps in
@@ -763,7 +763,7 @@ pub const special_params: &[special_paramdef] = &[
     special_paramdef {
         name: "PS4",
         pm_type: PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT_SUID,
+        pm_flags: PM_DONTIMPORT_SUID,
         tied_name: None,
     },
     special_paramdef {
@@ -1063,7 +1063,7 @@ pub fn getparamnode(
 pub fn scancopyparams(
     pm: &mut param,
     _flags: i32,
-    outtable: &mut std::collections::HashMap<String, Box<param>>,
+    outtable: &mut HashMap<String, Box<param>>,
 ) {
     // c:586-588 — `tpm = (Param) zshcalloc(...); copyparam(tpm, pm, 0); addnode(...)`.
     let mut tpm = Box::new(pm.clone()); // c:586 zshcalloc
@@ -1100,13 +1100,13 @@ pub fn copyparamtable(
 pub fn deleteparamtable(t: Option<HashTable>) {
     // c:616-623 — `int odelunset = delunset; delunset = 1;` save/
     // restore so the inner free path fires every entry's unsetfn.
-    let odelunset = DELUNSET.swap(1, std::sync::atomic::Ordering::Relaxed); // c:620-621
+    let odelunset = DELUNSET.swap(1, Ordering::Relaxed); // c:620-621
     if let Some(table) = t {
         // Box dropped here → fields freed; param freenode callbacks
         // are invoked transparently via Drop on each `param` entry.
         drop(table);
     }
-    DELUNSET.store(odelunset, std::sync::atomic::Ordering::Relaxed); // c:623
+    DELUNSET.store(odelunset, Ordering::Relaxed); // c:623
 }
 
 /// Port of `scancountparams(UNUSED(HashNode hn), int flags)` from `Src/params.c:630`. C body:
@@ -1472,7 +1472,7 @@ pub fn createparamtable() {
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
     let add_special =
         |ip: &special_paramdef,
-         tab: &mut std::collections::HashMap<String, Param>| {
+         tab: &mut HashMap<String, Param>| {
             let pm = Box::new(param {
                 node: hashnode {
                     next: None,
@@ -1598,7 +1598,7 @@ pub fn createparamtable() {
     crate::ported::mem::pushheap(); // c:891
 
     // c:893-924 — environment import loop.
-    for (iname, ivalue) in std::env::vars() {
+    for (iname, ivalue) in env::vars() {
         if iname.is_empty() {
             continue;
         }
@@ -1626,7 +1626,7 @@ pub fn createparamtable() {
         }
         // c:907-908 — assignsparam(..., ASSPM_ENV_IMPORT).
         let metafied = crate::ported::utils::metafy(&ivalue);
-        let _ = assignsparam(&iname, &metafied, crate::ported::zsh_h::ASSPM_ENV_IMPORT);
+        let _ = assignsparam(&iname, &metafied, ASSPM_ENV_IMPORT);
         // c:909-915 — stamp PM_EXPORTED and the env-side string.
         let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut(&iname) {
@@ -1723,7 +1723,7 @@ pub fn createparamtable() {
     // integer post-import). Falls back to env for the rare case
     // where paramtab hasn't seen the import yet.
     let new_shlvl: i32 = getsparam("SHLVL")
-        .or_else(|| std::env::var("SHLVL").ok())
+        .or_else(|| env::var("SHLVL").ok())
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
         + 1; // c:951 `++shlvl`
@@ -1768,7 +1768,7 @@ pub fn createparamtable() {
         "VENDOR",
         &ztrdup_metafy(crate::ported::config_h::VENDOR),
     );
-    let argv0 = std::env::args().next().unwrap_or_default();
+    let argv0 = env::args().next().unwrap_or_default();
     setsparam("ZSH_ARGZERO", &crate::ported::string::ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
@@ -1808,7 +1808,7 @@ pub fn createparamtable() {
             node: hashnode {
                 next: None,
                 nam: "signals".to_string(),
-                flags: (PM_ARRAY | crate::ported::zsh_h::PM_SPECIAL) as i32,
+                flags: (PM_ARRAY | PM_SPECIAL) as i32,
             },
             u_data: 0,
             u_arr: Some(signals_arr),
@@ -1839,7 +1839,7 @@ pub fn createparamtable() {
 /// HashTable substrate isn't wired yet; the assoc-array values live
 /// here keyed on param name until that lands.
 static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
-    Mutex<HashMap<String, indexmap::IndexMap<String, String>>>,
+    Mutex<HashMap<String, IndexMap<String, String>>>,
 > = OnceLock::new();
 
 /// Port of `assigngetset(Param pm)` from `Src/params.c:994`. C body
@@ -1945,7 +1945,7 @@ pub fn createparam(
 
     if !name.is_empty() {
         // c:1149-1150 — `if (isset(ALLEXPORT) && !(flags & PM_HASHELEM)) flags |= PM_EXPORTED;`
-        if isset(crate::ported::zsh_h::ALLEXPORT) && (flags as u32 & PM_HASHELEM) == 0 {
+        if isset(ALLEXPORT) && (flags as u32 & PM_HASHELEM) == 0 {
             flags |= PM_EXPORTED as i32;
         }
     }
@@ -1956,7 +1956,7 @@ pub fn createparam(
     // local-shadow path). The reuse arm just returns the existing
     // pm with reset base/width; the shadow arm does the chain
     // installation that endparamscope later unwinds.
-    let cur_locallevel = locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let cur_locallevel = locallevel.load(Ordering::Relaxed);
     // c:1106-1107 — DPUTS(oldpm && oldpm->level > locallevel,
     //                    "BUG: old local parameter not deleted");
     crate::DPUTS!(
@@ -2080,7 +2080,7 @@ pub fn createspecialhash(name: &str, flags: i32) -> Option<Param> {
         // the shadow record's level (always 0) wouldn't trigger the
         // endparamscope unset. Now reads the canonical `locallevel`
         // global from params.rs (matching the C global).
-        pm.level = locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        pm.level = locallevel.load(Ordering::Relaxed) as i32;
         // c:1205
     }
 
@@ -2292,7 +2292,7 @@ pub fn isident(s: &str) -> bool {
 pub(crate) fn getarg<'a>(
     idx: &'a str,
     arr: Option<&[String]>,
-    assoc: Option<&indexmap::IndexMap<String, String>>,
+    assoc: Option<&IndexMap<String, String>>,
     scalar: Option<&str>,
 ) -> Option<getarg_out<'a>> {
     let rest = idx.strip_prefix('(')?;
@@ -3024,7 +3024,7 @@ pub fn fetchvalue<'a>(
             }
         } else if (scanflags & crate::ported::zsh_h::SCANPM_ASSIGNING as i32) == 0
             && v.scanflags != 0
-            && crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"))
+            && isset(crate::ported::options::optlookup("ksharrays"))
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
@@ -3426,7 +3426,7 @@ pub fn export_param(pm: &mut param) {
     let val: String = if t == PM_INTEGER {
         // c:2664 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
         let base = if pm.base > 0 { pm.base as u32 } else { 10 };
-        crate::ported::params::convbase(intgetfn(pm), base) // c:2664
+        convbase(intgetfn(pm), base) // c:2664
     } else if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         // c:2668 — `convfloat(pm->gsu.f->getfn(pm), pm->base,
         //                     pm->node.flags, NULL)`.
@@ -3520,7 +3520,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 let zlen = z.len() as i32;
                 let mut start = v.start;
                 let mut end = v.end;
-                if (v.valflags & VALFLAG_INV) != 0 && !isset(crate::ported::zsh_h::KSHARRAYS) {
+                if (v.valflags & VALFLAG_INV) != 0 && !isset(KSHARRAYS) {
                     start -= 1;
                     end -= 1;
                 }
@@ -3560,7 +3560,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 strsetfn(pm, x);
                 if (pm.node.flags as u32 & PM_HASHELEM) == 0
                     && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0
-                        || isset(crate::ported::zsh_h::AUTONAMEDIRS))
+                        || isset(AUTONAMEDIRS))
                 {
                     pm.node.flags |= PM_NAMEDDIR as i32;
                     // adduserdir(pm.node.nam, &z, 0, 0); -- userdirs not ported
@@ -3677,10 +3677,10 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         _ => {}
     }
     setscope(pm);
-    if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
+    if errflag.load(Ordering::Relaxed) != 0
         || ((pm.env.is_none()
             && (pm.node.flags as u32 & PM_EXPORTED) == 0
-            && !(isset(crate::ported::zsh_h::ALLEXPORT)
+            && !(isset(ALLEXPORT)
                 && (pm.node.flags as u32 & PM_HASHELEM) == 0))
             || (pm.node.flags as u32 & PM_ARRAY) != 0
             || pm.ename.is_some())
@@ -3833,7 +3833,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         return;
     }
     if v.start == -1 && v.end == 0 && t == PM_HASHED {
-        arrhashsetfn(pm, val, crate::ported::zsh_h::ASSPM_AUGMENT);
+        arrhashsetfn(pm, val, ASSPM_AUGMENT);
         return;
     }
     if t == PM_HASHED {
@@ -3848,7 +3848,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // subscripts (`a[(i)pat]=val`) are 1-based when KSHARRAYS is
     // off; shift start/end down by 1 to match the 0-based slice
     // arithmetic below.
-    if v.valflags & VALFLAG_INV != 0 && !isset(crate::ported::zsh_h::KSHARRAYS) {
+    if v.valflags & VALFLAG_INV != 0 && !isset(KSHARRAYS) {
         if v.start > 0 {
             v.start -= 1;
         }
@@ -3948,7 +3948,7 @@ pub fn getnparam(s: &str) -> (i64, f64, bool) {
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(s) {
             let fl = pm.node.flags as u32;
-            if (fl & (crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT)) != 0 {
+            if (fl & (PM_EFLOAT | PM_FFLOAT)) != 0 {
                 return (pm.u_dval as i64, pm.u_dval, true);
             }
             if (fl & PM_INTEGER) != 0 {
@@ -4056,7 +4056,7 @@ pub fn getsparam(name: &str) -> Option<String> {
     // 3. Env fallback — C imports env into paramtab at init so the
     //    read above would hit. If the import hasn't happened yet
     //    (e.g. during very early init) fall back to the live env.
-    std::env::var(name).ok()
+    env::var(name).ok()
 }
 
 /// Port of `getsparam_u(char *s)` from `Src/params.c:3089`. C body
@@ -4231,8 +4231,8 @@ pub fn check_warn_pm(
     // `locallevel` is the canonical `pub static` above (port of
     // params.c:54). `forklevel` is the ported global at vm_helper
     // (port of exec.c:1052) set to locallevel at every entersubsh().
-    let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    let forklevel: i32 = crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed); // c:1052 (Src/exec.c)
+    let cur_local: i32 = locallevel.load(Ordering::Relaxed);
+    let forklevel: i32 = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed); // c:1052 (Src/exec.c)
     if created != 0 && isset(WARNCREATEGLOBAL) {
         // c:3168
         if cur_local <= forklevel || pm.level != 0 {
@@ -4323,7 +4323,7 @@ pub fn check_warn_pm(
 #[allow(non_camel_case_types)]
 pub enum getarg_out<'a> {
     Flags { flags: &'a str, rest: &'a str },
-    Value(fusevm::Value),
+    Value(Value),
 }
 
 /// Port of `assignsparam(char *s, char *val, int flags)` from `Src/params.c:3193`. C signature:
@@ -4361,7 +4361,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         errflag.fetch_or(
             // c:3206
             ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
+            Ordering::Relaxed,
         );
         return None; // c:3207
     }
@@ -4455,7 +4455,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             pm.node.flags = (pm.node.flags & !(PM_TYPE(u32::MAX) as i32)) | PM_HASHED as i32;
             pm.u_arr = None;
             pm.u_str = None;
-            let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+            let mut map: IndexMap<String, String> = IndexMap::new();
             map.insert(key.to_string(), val.to_string());
             paramtab_hashed_storage()
                 .lock()
@@ -4522,7 +4522,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         if is_array_or_hash
             && !is_special_or_tied
             && !augment_bit
-            && !isset(crate::ported::zsh_h::KSHARRAYS)
+            && !isset(KSHARRAYS)
         {
             // c:3242 — flip type to PM_SCALAR, drop array/hash slots.
             let pm_mut = tab.get_mut(name).unwrap();
@@ -4543,7 +4543,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             errflag.fetch_or(
                 // c:3263
                 ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
+                Ordering::Relaxed,
             );
             unqueue_signals(); // c:3262
             return None; // c:3264
@@ -4680,7 +4680,7 @@ pub fn assignaparam(
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         zerr(&format!("not an identifier: {}", name));
-        errflag.fetch_or(ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
 
@@ -4701,7 +4701,7 @@ pub fn assignaparam(
                 "{}: attempt to set slice of associative array",
                 base
             ));
-            errflag.fetch_or(ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
             return None;
         }
         // Slice into a non-existent param → create as PM_ARRAY (c:3377-3382).
@@ -4785,7 +4785,7 @@ pub fn assignaparam(
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
 pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
-    assignaparam(name, val, crate::ported::zsh_h::ASSPM_WARN)
+    assignaparam(name, val, ASSPM_WARN)
 }
 
 /// Direct port of `Param sethparam(char *s, char **val)` from
@@ -4817,7 +4817,7 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
 
     // Build the IndexMap from flat (k,v) pairs (mirrors c:arrhashsetfn
     // pair-walking at c:4140-4166).
-    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+    let mut map: IndexMap<String, String> = IndexMap::new();
     let mut iter = val.into_iter();
     while let Some(k) = iter.next() {
         let v = iter.next().unwrap_or_default();
@@ -4879,7 +4879,7 @@ pub fn assignnparam(
         errflag.fetch_or(
             // c:3669
             ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
+            Ordering::Relaxed,
         );
         return None; // c:3670
     }
@@ -5227,7 +5227,7 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     // unsetting from a NESTED scope (locallevel > pm.level) would
     // succeed when C rejects, AND unsetting from a deeper scope
     // (locallevel < pm.level) would reject when C succeeds.
-    let cur_ll = locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32; // c:3850 locallevel
+    let cur_ll = locallevel.load(Ordering::Relaxed) as i32; // c:3850 locallevel
     if (pm.node.flags as u32 & PM_READONLY) != 0 && pm.level <= cur_ll {
         // c:3850
         // c:3852 — `zerr("read-only %s: %s", ...)`. Emit diagnostic
@@ -5317,7 +5317,7 @@ pub fn strsetfn(pm: &mut param, x: String) {
     pm.u_str = Some(x.clone()); // c:4044 pm->u.str = x
                                 // c:4045-4046 — `if (!(PM_HASHELEM) && (PM_NAMEDDIR || isset(AUTONAMEDIRS)))`.
     if (pm.node.flags as u32 & PM_HASHELEM) == 0
-        && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0 || isset(crate::ported::zsh_h::AUTONAMEDIRS))
+        && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0 || isset(AUTONAMEDIRS))
     // c:4046 isset(AUTONAMEDIRS)
     {
         pm.node.flags |= PM_NAMEDDIR as i32; // c:4047
@@ -6136,7 +6136,7 @@ pub fn ttyidlegetfn() -> i64 {
     // when SHTTY was opened on a non-stdin file descriptor (e.g.
     // `zsh < script` where stdin is a file but the controlling tty
     // was opened separately). C tracks the actual SHTTY fd.
-    let shtty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::SeqCst);
+    let shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
     if shtty == -1 {
         // c:4776
         return -1;
@@ -6471,7 +6471,7 @@ pub fn argzerosetfn(x: String) {
             zerr("read-only variable: 0"); // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
-            crate::ported::utils::set_argzero(Some(crate::ported::string::ztrdup(&x)));
+            set_argzero(Some(crate::ported::string::ztrdup(&x)));
         }
         // c:4946 — `zsfree(x)`. Rust drop handles via move.
     }
@@ -6494,9 +6494,9 @@ pub fn argzerosetfn(x: String) {
 pub fn argzerogetfn() -> String {
     if isset(crate::ported::zsh_h::POSIXARGZERO) {
         // c:4958
-        crate::ported::utils::posixzero().unwrap_or_default() // c:4959
+        posixzero().unwrap_or_default() // c:4959
     } else {
-        crate::ported::utils::argzero().unwrap_or_default() // c:4960
+        argzero().unwrap_or_default() // c:4960
     }
 }
 
@@ -6524,7 +6524,7 @@ pub fn histsizesetfn(v: i64) {
     *histsiz_lock().lock().expect("histsiz poisoned") = v.max(1);
     // c:4977 — mirror into the hist.rs atomic so resizehistents()
     // sees the new size, then trigger the prune.
-    histsiz.store(v.max(1), std::sync::atomic::Ordering::SeqCst);
+    histsiz.store(v.max(1), Ordering::SeqCst);
     crate::ported::hist::resizehistents(); // c:4977
 }
 
@@ -6557,7 +6557,7 @@ pub fn savehistsizesetfn(v: i64) {
     // Mirror to hist.rs::savehistsiz so the writer-side cap
     // matches the just-assigned value. C uses a single global;
     // the Rust port's twin-storage requires sync writes.
-    savehistsiz.store(clamped, std::sync::atomic::Ordering::SeqCst);
+    savehistsiz.store(clamped, Ordering::SeqCst);
     // c:4994
 }
 
@@ -6798,7 +6798,7 @@ pub fn homesetfn(x: String) {
     // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
     // Falls through to the plain `x` store when CHASELINKS is off or
     // xsymlink fails.
-    let resolved = if !x.is_empty() && crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASELINKS)
+    let resolved = if !x.is_empty() && isset(crate::ported::zsh_h::CHASELINKS)
     {
         crate::ported::utils::xsymlink(&x).unwrap_or(x)
     } else {
@@ -6854,7 +6854,7 @@ pub fn underscoregetfn() -> String {
 pub fn term_reinit_from_pm() {
     // c:5163
     // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
-    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+    let interactive = isset(crate::ported::options::optlookup("interactive"));
     let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
     if !interactive || term.is_empty() {
         // c:5167
@@ -6893,7 +6893,7 @@ pub fn terminfogetfn() -> String {
 /// Port of `int rprompt_indent` from `Src/init.c`. Set to 1 by
 /// `init_term()` and reset by `rprompt_indent_unsetfn` when the
 /// `RPROMPT_INDENT` parameter is unset.
-pub static RPROMPT_INDENT: std::sync::Mutex<i32> = std::sync::Mutex::new(1);
+pub static RPROMPT_INDENT: Mutex<i32> = Mutex::new(1);
 
 /// Port of `terminfosetfn(Param pm, char *x)` from `Src/params.c:5205`. C body:
 /// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
@@ -7115,7 +7115,7 @@ pub fn findenv(name: &str) -> Option<usize> {
     // c:5398-5404 — walk environ until match. Use std::env::vars()
     // which preserves the same ordering as the underlying libc
     // environ.
-    for (i, (k, _)) in std::env::vars_os().enumerate() {
+    for (i, (k, _)) in env::vars_os().enumerate() {
         if let Some(s) = k.to_str() {
             if s == bare {
                 return Some(i); // c:5401-5403
@@ -7156,7 +7156,7 @@ pub fn copyenvstr(buf: &mut String, value: &str, flags: i32) {
         if flags_u & crate::ported::zsh_h::PM_LOWER != 0 {
             // c:5439
             ch = ch.to_ascii_lowercase(); // c:5440
-        } else if flags_u & crate::ported::zsh_h::PM_UPPER != 0 {
+        } else if flags_u & PM_UPPER != 0 {
             // c:5441
             ch = ch.to_ascii_uppercase(); // c:5442
         }
@@ -7414,11 +7414,11 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         return "NaN".to_string();
     }
     // Pick fmt char + adjust digits per the C cascade at 5705-5727.
-    let (fmt_char, digits) = if (pm_flags & crate::ported::zsh_h::PM_EFLOAT) != 0 {
+    let (fmt_char, digits) = if (pm_flags & PM_EFLOAT) != 0 {
         // c:5715
         let d = if digits <= 0 { 10 } else { digits }; // c:5718
         ('e', (d - 1).max(0)) // c:5725
-    } else if (pm_flags & crate::ported::zsh_h::PM_FFLOAT) != 0 {
+    } else if (pm_flags & PM_FFLOAT) != 0 {
         // c:5716
         let d = if digits <= 0 { 10 } else { digits }; // c:5718
         ('f', d)
@@ -7609,7 +7609,7 @@ pub fn endparamscope() {
 /// no-ops for now (C macros / Src/params.c:5900 / Src/params.c:5900).
 pub fn scanendscope(pm: &mut param, _flags: i32) {
     // c:5900
-    let cur_local = locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let cur_local = locallevel.load(Ordering::Relaxed);
     if pm.level <= cur_local {
         // c:5903
         return;
@@ -7628,7 +7628,7 @@ pub fn scanendscope(pm: &mut param, _flags: i32) {
         // USE_LOCALE branch: LC_*/LANG bumps lc_update_needed.
         // Global not yet ported; placeholder comment retains intent.
         if pm.node.nam.starts_with("LC_") || pm.node.nam == "LANG" {
-            LC_UPDATE_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+            LC_UPDATE_NEEDED.store(1, Ordering::SeqCst);
         }
 
         if pm.node.nam == "SECONDS" {
@@ -7703,7 +7703,7 @@ pub fn scanendscope(pm: &mut param, _flags: i32) {
 pub fn freeparamnode(mut _hn: Param) {
     // c:5977
     // c:5977-5987 — `if (delunset) pm->gsu.s->unsetfn(pm, 1);`.
-    if DELUNSET.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    if DELUNSET.load(Ordering::Relaxed) != 0 {
         // The Rust port's stdunsetfn writes the unset state back to
         // paramtab; calling it on the about-to-drop param re-marks
         // its slot in the table so consumers that read the table
@@ -7841,7 +7841,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         // "global not yet wired" comment, but the canonical
         // global IS at params.rs (declared above). Read it live.
         if (f & PM_RO_BY_DESIGN) != 0 {
-            let cur_ll = locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32;
+            let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
             if hn.level != cur_ll {
                 // c:6157
                 return;
@@ -8253,7 +8253,7 @@ pub static DELUNSET: std::sync::atomic::AtomicI32 = // c:610
     std::sync::atomic::AtomicI32::new(0);
 
 pub(crate) fn paramtab_hashed_storage(
-) -> &'static Mutex<HashMap<String, indexmap::IndexMap<String, String>>> {
+) -> &'static Mutex<HashMap<String, IndexMap<String, String>>> {
     PARAMTAB_HASHED_STORAGE_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -8267,7 +8267,7 @@ pub(crate) fn paramtab_hashed_storage(
 pub fn sync_state_from_paramtab(
     variables: &mut HashMap<String, String>,
     arrays: &mut HashMap<String, Vec<String>>,
-    assoc_arrays: &mut HashMap<String, indexmap::IndexMap<String, String>>,
+    assoc_arrays: &mut HashMap<String, IndexMap<String, String>>,
 ) {
     let tab = paramtab().read().unwrap();
     for (name, pm) in tab.iter() {
@@ -8427,12 +8427,12 @@ fn cached_username_lock() -> &'static Mutex<String> {
 //   c:639  static char **paramvals;
 //   c:640  static Param foundparam;   <-- exposed earlier as FOUNDPARAM
 pub static NUMPARAMVALS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); // c:626
-pub static SCANPROG: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new(); // c:637
-pub static SCANSTR: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new(); // c:638
-pub static PARAMVALS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
-    std::sync::OnceLock::new(); // c:639
+pub static SCANPROG: OnceLock<Mutex<Option<String>>> =
+    OnceLock::new(); // c:637
+pub static SCANSTR: OnceLock<Mutex<Option<String>>> =
+    OnceLock::new(); // c:638
+pub static PARAMVALS: OnceLock<Mutex<Vec<String>>> =
+    OnceLock::new(); // c:639
 
 /// Resolve the current user's name. Mirrors C's `get_username()`
 /// init at Src/init.c which reads `getpwuid(getuid())->pw_name`
@@ -8526,12 +8526,12 @@ fn dontimport(flags: i32) -> i32 {
         return 1; // c:800
     }
     // c:802-803 — `if (flags & PM_EXPORTED) return 1`.
-    if flags & crate::ported::zsh_h::PM_EXPORTED != 0 {
+    if flags & PM_EXPORTED != 0 {
         // c:802
         return 1; // c:803
     }
     // c:805-806 — `if ((flags & PM_DONTIMPORT_SUID) && isset(PRIVILEGED)) return 1`.
-    if flags & crate::ported::zsh_h::PM_DONTIMPORT_SUID != 0                 // c:805
+    if flags & PM_DONTIMPORT_SUID != 0                 // c:805
         && isset(crate::ported::zsh_h::PRIVILEGED)
     {
         return 1; // c:806
@@ -8582,7 +8582,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
         let n: usize = name.parse().ok()?;
         if n == 0 {
-            return crate::ported::utils::argzero();
+            return argzero();
         }
         let pp = pparams_lock().lock().ok()?;
         return pp.get(n - 1).cloned();
@@ -8615,12 +8615,12 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "SAVEHIST" => Some(savehistsizegetfn().to_string()),
         "#" | "ARGC" => Some(poundgetfn().to_string()),
         // $0 routes through utils::argzero.
-        "0" => crate::ported::utils::argzero(),
+        "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through
         // dedicated gsu getfn callbacks (Src/params.c special_assigns).
         "?" => Some(
             crate::ported::builtin::LASTVAL
-                .load(std::sync::atomic::Ordering::Relaxed)
+                .load(Ordering::Relaxed)
                 .to_string(),
         ),
         "$" => Some(std::process::id().to_string()),
@@ -8693,13 +8693,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
 /// tests submodules both write the same global; this lock
 /// serialises them under parallel test execution).
 #[cfg(test)]
-pub(crate) static HISTSIZ_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static HISTSIZ_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Shared test mutex for histchars mutations (gsu_tests +
 /// tests submodules both write bangchar/hatchar/hashchar atomics;
 /// this lock serialises them under parallel test execution).
 #[cfg(test)]
-pub(crate) static HISTCHARS_TEST_LOCK_SHARED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static HISTCHARS_TEST_LOCK_SHARED: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 mod gsu_tests {
@@ -8954,7 +8954,7 @@ mod gsu_tests {
         let _g = crate::test_util::global_state_lock();
         intsecondssetfn(0);
         let s1 = intsecondsgetfn();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(5));
         let s2 = intsecondsgetfn();
         assert!(s2 >= s1);
         // Reset to a known offset and read back.
@@ -9021,7 +9021,7 @@ mod gsu_tests {
     #[test]
     fn test_histchars_default() {
         let _g = crate::test_util::global_state_lock();
-        let _g = super::HISTCHARS_TEST_LOCK_SHARED
+        let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         histcharssetfn(None);
@@ -9043,7 +9043,7 @@ mod gsu_tests {
     #[test]
     fn histcharssetfn_handles_1_2_3_char_inputs() {
         let _g = crate::test_util::global_state_lock();
-        let _g = super::HISTCHARS_TEST_LOCK_SHARED
+        let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
@@ -9143,8 +9143,8 @@ mod gsu_tests {
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn foundparam_lock() -> &'static std::sync::Mutex<Option<String>> {
-    FOUNDPARAM.get_or_init(|| std::sync::Mutex::new(None))
+fn foundparam_lock() -> &'static Mutex<Option<String>> {
+    FOUNDPARAM.get_or_init(|| Mutex::new(None))
 }
 
 /// Accessor for the global `paramtab` (Src/params.c:515).
@@ -9162,16 +9162,16 @@ pub fn realparamtab() -> &'static RwLock<HashMap<String, Param>> {
     REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn scanprog_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCANPROG.get_or_init(|| std::sync::Mutex::new(None))
+fn scanprog_lock() -> &'static Mutex<Option<String>> {
+    SCANPROG.get_or_init(|| Mutex::new(None))
 }
 
-fn scanstr_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCANSTR.get_or_init(|| std::sync::Mutex::new(None))
+fn scanstr_lock() -> &'static Mutex<Option<String>> {
+    SCANSTR.get_or_init(|| Mutex::new(None))
 }
 
-fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
-    PARAMVALS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+fn paramvals_lock() -> &'static Mutex<Vec<String>> {
+    PARAMVALS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]
@@ -9387,7 +9387,7 @@ mod tests {
         let v = mnumber {
             l: 0,
             d: 2.5,
-            type_: crate::ported::math::MN_FLOAT,
+            type_: MN_FLOAT,
         };
         setnparam("gs_f", v);
         let s = getsparam("gs_f").expect("PM_FFLOAT should serialize");
@@ -9754,7 +9754,7 @@ mod tests {
         // Use 2.5 instead of 3.14 — clippy errors on the latter as
         // an approx PI constant. The test checks 2-decimal formatting
         // round-trips, which the exact value doesn't influence.
-        let s = convfloat(2.5, 2, crate::ported::zsh_h::PM_FFLOAT);
+        let s = convfloat(2.5, 2, PM_FFLOAT);
         assert!(s.starts_with("2.50"));
 
         assert_eq!(convfloat(f64::INFINITY, 0, 0), "Inf");
@@ -9961,7 +9961,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // C params.c:1488-1491 — neg `num` flips down on `r`,
         // converting hash search to return-all-matches semantics.
-        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "2".into());
@@ -9974,7 +9974,7 @@ mod tests {
     fn getarg_hash_neg_num_on_uppercase_R_returns_single() {
         let _g = crate::test_util::global_state_lock();
         // R + neg `num` un-flips back to single-match (r semantics).
-        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "2".into());
@@ -9988,7 +9988,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // C params.c:1740-1742 — `b<NUM>` skips first N-1 entries
         // before searching. Hash iteration is insertion order.
-        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
@@ -10001,7 +10001,7 @@ mod tests {
     fn getarg_hash_b_flag_with_R_collects_from_offset() {
         let _g = crate::test_util::global_state_lock();
         // R returns all matches; b skips first beg entries first.
-        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
@@ -10014,7 +10014,7 @@ mod tests {
     fn getarg_hash_b_flag_out_of_bounds_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         // c:1746 — beg >= len with single-match → empty.
-        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         let out = getarg("(b.5.e)1", None, Some(&h), None).expect("Some");
         assert_eq!(val_str(out), "");
@@ -10146,7 +10146,7 @@ mod tests {
             .unwrap_or(false); // c:2697
         opt_state_set("exec", true); // c:2697
         let name = "ZSHRS_TEST_ASSIGN_GET"; // c:3193
-        crate::ported::params::assignsparam(name, "test_value_42", 0); // c:3193
+        assignsparam(name, "test_value_42", 0); // c:3193
         assert_eq!(
             // c:3076
             getsparam(name).as_deref(), // c:3076
@@ -10175,7 +10175,7 @@ mod tests {
     fn paramtab_remove_makes_getsparam_return_none() {
         let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_UNSET_FLOW";
-        crate::ported::params::assignsparam(name, "to_be_removed", 0);
+        assignsparam(name, "to_be_removed", 0);
         assert!(
             getsparam(name).is_some(),
             "param must be set before remove path"
@@ -10197,7 +10197,7 @@ mod tests {
     fn assignaparam_populates_paramtab_with_array() {
         let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_ARR_X";
-        crate::ported::params::assignaparam(name, vec!["a".into(), "b".into(), "c".into()], 0);
+        assignaparam(name, vec!["a".into(), "b".into(), "c".into()], 0);
         let tab = paramtab()
             .read()
             .expect("paramtab poisoned");
@@ -10285,14 +10285,14 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         histcharssetfn(Some("@&%".to_string()));
         assert_eq!(
-            crate::ported::params::histcharsgetfn(),
+            histcharsgetfn(),
             "@&%",
             "c:5068-5073 — getfn reads atomic globals setfn wrote"
         );
         // Restore default and verify round-trip.
         histcharssetfn(None);
         assert_eq!(
-            crate::ported::params::histcharsgetfn(),
+            histcharsgetfn(),
             "!^#",
             "default `!^#` round-trips through atomics"
         );
@@ -10399,7 +10399,7 @@ mod tests {
 
     /// Shared mutex for tests that mutate argzero/posixzero — both
     /// share global state and race when run in parallel.
-    static ARGZERO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ARGZERO_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     // HISTSIZ_TEST_LOCK is defined at module scope to share between
     // gsu_tests and tests submodules — both mutate histsiz.
@@ -10437,7 +10437,7 @@ mod tests {
         assert_eq!(histsiz.load(Ordering::SeqCst), 500);
 
         // Restore.
-        *crate::ported::params::histsiz_lock().lock().unwrap() = saved_param;
+        *histsiz_lock().lock().unwrap() = saved_param;
         histsiz.store(saved_hist, Ordering::SeqCst);
     }
 
@@ -10465,7 +10465,7 @@ mod tests {
         s.push('b');
         *zunderscore_lock().lock().unwrap() = s;
 
-        let result = crate::ported::params::underscoregetfn();
+        let result = underscoregetfn();
         // c:5156 — untokenize replaces Pound (ITOK) with '#'
         // (its ztokens entry). The raw \u{84} byte must NOT survive.
         assert!(
@@ -10506,7 +10506,7 @@ mod tests {
         // POSIXARGZERO off → returns argzero.
         opt_state_set("posixargzero", false);
         assert_eq!(
-            crate::ported::params::argzerogetfn(),
+            argzerogetfn(),
             "rewritten-name",
             "c:4960 — !POSIXARGZERO returns argzero (current display name)"
         );
@@ -10514,7 +10514,7 @@ mod tests {
         // POSIXARGZERO on → returns posixzero (the preserved startup argv[0]).
         opt_state_set("posixargzero", true);
         assert_eq!(
-            crate::ported::params::argzerogetfn(),
+            argzerogetfn(),
             "/bin/zsh",
             "c:4959 — POSIXARGZERO on returns posixzero (original startup argv[0])"
         );
@@ -10572,9 +10572,9 @@ mod tests {
     /// serialization a concurrent `env::set_var("LC_ALL")` can race
     /// a `env::remove_var("LC_ALL")` and corrupt assertions. Pin
     /// every locale test through this Mutex.
-    fn locale_test_lock() -> &'static std::sync::Mutex<()> {
-        static L: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        L.get_or_init(|| std::sync::Mutex::new(()))
+    fn locale_test_lock() -> &'static Mutex<()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
     }
 
     /// Pin `LC_NAMES` to the canonical zsh `lc_names[]` table at
@@ -11387,7 +11387,7 @@ mod tests {
                     node: hashnode {
                         next: None,
                         nam: "zshrs_test_gethp_hash".to_string(),
-                        flags: crate::ported::zsh_h::PM_HASHED as i32,
+                        flags: PM_HASHED as i32,
                     },
                     u_data: 0,
                     u_arr: None,

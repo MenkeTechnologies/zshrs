@@ -46,9 +46,9 @@ pub fn printmodulenode(hn: &str, m: &module) -> String {
     // C inspects `m->node.flags` — `MOD_ALIAS`/`MOD_UNLOAD`/`MOD_LINKED`.
     let state = if (m.node.flags & MOD_ALIAS) != 0 {
         "alias"
-    } else if (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0 {
+    } else if (m.node.flags & MOD_UNLOAD) != 0 {
         "unloaded"
-    } else if (m.node.flags & crate::ported::zsh_h::MOD_LINKED) != 0 {
+    } else if (m.node.flags & MOD_LINKED) != 0 {
         "loaded"
     } else {
         "autoloaded"
@@ -1490,7 +1490,7 @@ impl modulestab {
         if exists {
             unqueue_signals(); // c:1211
                                                        // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
-            if (flags & crate::ported::module::FEAT_IGNORE) != 0 {
+            if (flags & FEAT_IGNORE) != 0 {
                 return 0; // c:1219 ret==2 → 0
             }
             return -1; // c:1219 ret==1 → -1
@@ -1498,7 +1498,7 @@ impl modulestab {
         // c:1222-1227 — noerrs=2; setsparam; PM_AUTOLOAD (+PM_AUTOALL if FEAT_AUTOALL)
         self.autoload_params
             .insert(name.to_string(), module.to_string()); // c:1223 setsparam
-        let _ = crate::ported::zsh_h::PM_AUTOLOAD; // c:1224 pm->flags |= PM_AUTOLOAD
+        let _ = PM_AUTOLOAD; // c:1224 pm->flags |= PM_AUTOLOAD
         if (flags & FEAT_AUTOALL) != 0 {
             // c:1225
             let _ = crate::ported::zsh_h::PM_AUTOALL; // c:1226
@@ -2618,7 +2618,7 @@ pub fn bin_zmodload(
             ret = bin_zmodload_load(table, nam, args, ops); // c:2508
         }
     }
-    crate::ported::mem::unqueue_signals(); // c:2515
+    unqueue_signals(); // c:2515
     ret // c:2515
 }
 
@@ -2950,7 +2950,7 @@ pub fn bin_zmodload_dep(
 /// WARNING: param names don't match C — Rust=(name, module, flags, lon) vs C=(hn, lon)
 pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) {
     // c:2710
-    if (flags & crate::ported::zsh_h::PM_AUTOLOAD) != 0 {
+    if (flags & PM_AUTOLOAD) != 0 {
         // c:2710
         if lon != 0 {
             // c:2715
@@ -3627,7 +3627,7 @@ pub fn deletemathfunc(f: &mathfunc) -> i32 {
             }
             // c:1352-1354 zsfree+zfree
             else {
-                tab[i].flags &= !crate::ported::zsh_h::MFF_ADDED;
+                tab[i].flags &= !MFF_ADDED;
             } // c:1357 ~MFF_ADDED
             0
         }
@@ -4128,7 +4128,7 @@ mod tests {
         // flag instead of dropping the node (c:1357). Tests by adding
         // a user-defined mathfunc, flipping MFF_ADDED on, then deleting.
         let mut f = mk_mf("zshrs_test_clear_flag", false);
-        f.flags = crate::ported::zsh_h::MFF_ADDED;
+        f.flags = MFF_ADDED;
         assert_eq!(
             addmathfunc(f),
             1,
@@ -4141,14 +4141,14 @@ mod tests {
             .unwrap()
             .insert(0, mk_mf("zshrs_test_clear_flag2", false));
         let mut f2 = mk_mf("zshrs_test_clear_flag2", false);
-        f2.flags = crate::ported::zsh_h::MFF_ADDED;
+        f2.flags = MFF_ADDED;
         // f2 is the lookup probe; by name it matches the seeded entry.
         assert_eq!(deletemathfunc(&f2), 0);
         let tab = MATHFUNCS.lock().unwrap();
         let entry = tab.iter().find(|m| m.name == "zshrs_test_clear_flag2");
         // Entry stays in the table (module was None) but MFF_ADDED cleared.
         if let Some(e) = entry {
-            assert_eq!(e.flags & crate::ported::zsh_h::MFF_ADDED, 0);
+            assert_eq!(e.flags & MFF_ADDED, 0);
         }
         drop(tab);
         removemathfunc("zshrs_test_clear_flag2");
@@ -4161,7 +4161,7 @@ mod tests {
             next: None,
             name: name.to_string(),
             flags: if infix {
-                crate::ported::zsh_h::CONDF_INFIX
+                CONDF_INFIX
             } else {
                 0
             },
@@ -4230,13 +4230,13 @@ mod tests {
         let add_selectors = [1, 1];
         assert_eq!(setconddefs("test", &mut entries, Some(&add_selectors)), 0);
         // Both should now have CONDF_ADDED set per c:773.
-        assert_ne!(entries[0].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
-        assert_ne!(entries[1].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+        assert_ne!(entries[0].flags & CONDF_ADDED, 0);
+        assert_ne!(entries[1].flags & CONDF_ADDED, 0);
         // Now delete both via e=[0,0].
         let del_selectors = [0, 0];
         assert_eq!(setconddefs("test", &mut entries, Some(&del_selectors)), 0);
-        assert_eq!(entries[0].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
-        assert_eq!(entries[1].flags & crate::ported::zsh_h::CONDF_ADDED, 0);
+        assert_eq!(entries[0].flags & CONDF_ADDED, 0);
+        assert_eq!(entries[1].flags & CONDF_ADDED, 0);
     }
 
     // ===== Tests for `addbuiltin` / `addbuiltins` against canonical builtintab.
@@ -4271,7 +4271,7 @@ mod tests {
         // the static table, r==1; otherwise r==0 and b.flags now has BINF_ADDED.
         assert!(r == 0 || r == 1);
         if r == 0 {
-            assert_ne!(b.node.flags & crate::ported::zsh_h::BINF_ADDED as i32, 0);
+            assert_ne!(b.node.flags & BINF_ADDED as i32, 0);
         }
     }
 
@@ -4281,9 +4281,9 @@ mod tests {
         // C addbuiltins (c:553): `if (b->node.flags & BINF_ADDED) continue`.
         // Pre-marking BINF_ADDED should skip both entries; ret stays 0.
         let mut b1 = mk_b("zshrs_test_already_added_1");
-        b1.node.flags = crate::ported::zsh_h::BINF_ADDED as i32;
+        b1.node.flags = BINF_ADDED as i32;
         let mut b2 = mk_b("zshrs_test_already_added_2");
-        b2.node.flags = crate::ported::zsh_h::BINF_ADDED as i32;
+        b2.node.flags = BINF_ADDED as i32;
         let mut binl = vec![b1, b2];
         assert_eq!(addbuiltins("test", &mut binl), 0);
     }

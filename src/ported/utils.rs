@@ -159,9 +159,9 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     }
     let scriptname = scriptname_lock().lock().unwrap().clone();
     let argzero = argzero_lock().lock().unwrap().clone();
-    let locallevel = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
     let prefix: String = scriptname.or(argzero).unwrap_or_default();
-    let stderr_handle = std::io::stderr();
+    let stderr_handle = io::stderr();
     let mut stderr_lock = stderr_handle.lock();
     if let Some(cmd) = cmd {
         // c:107-110 — `if (unset(SHINSTDIN) || locallevel) {
@@ -317,7 +317,7 @@ pub fn dputs(msg: &str) {
                                                  // c:264 — `fopen(filename, "a")` — append mode.
     let opened = log_file.as_ref().and_then(|p| {
         // c:264
-        std::fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(p)
@@ -327,7 +327,7 @@ pub fn dputs(msg: &str) {
     // zerrmsg at c:296-308. Built once, written to file or stderr.
     let lineno = lineno() as i32;
     let shinstdin = isset(SHINSTDIN);
-    let locallevel = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
     let prefix = if (!shinstdin || locallevel != 0) && lineno != 0 {
         format!("{}: ", lineno)
     } else {
@@ -340,7 +340,7 @@ pub fn dputs(msg: &str) {
                                               // c:266 — `fclose(file)` — handled by Drop when `f` goes out of scope.
     } else {
         // c:267 else stderr
-        let _ = std::io::stderr().write_all(line.as_bytes()); // c:268 zerrmsg(stderr, ...)
+        let _ = io::stderr().write_all(line.as_bytes()); // c:268 zerrmsg(stderr, ...)
     }
 }
 
@@ -384,7 +384,7 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     // Route through lex::lineno() so the parser-advanced counter
     // drives the error prefix.
     let lineno = lineno() as i32;
-    let locallevel = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
     // c:301-308 — `if ((unset(SHINSTDIN) || locallevel) && lineno)
     //                 fprintf(file, "%d: ", lineno); else fputc(' ', file);`
     if (unset(SHINSTDIN) || locallevel != 0) && lineno != 0 {
@@ -393,7 +393,7 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
         eprint!(" ");
     }
     if let Some(e) = errno {
-        eprintln!("{}: {}", msg, std::io::Error::from_raw_os_error(e));
+        eprintln!("{}: {}", msg, io::Error::from_raw_os_error(e));
     } else {
         eprintln!("{}", msg);
     }
@@ -410,7 +410,7 @@ pub fn zsetupterm() {
     // c:390
     static TERM_COUNT: std::sync::atomic::AtomicI32 = // c:402
         std::sync::atomic::AtomicI32::new(0);
-    let tc = TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    let tc = TERM_COUNT.load(Ordering::Relaxed);
     // c:395-396 — DPUTS(term_count < 0 || (term_count > 0 && !cur_term),
     //                   "inconsistent term_count and/or cur_term");
     // The Rust port has no `cur_term` analogue (terminfo state lives
@@ -418,19 +418,19 @@ pub fn zsetupterm() {
     // `term_count > 0 && true` if we treat cur_term as the count
     // itself. Simplified to the bare `term_count < 0` invariant.
     crate::DPUTS!(tc < 0, "inconsistent term_count and/or cur_term"); // c:395-396
-    TERM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed); // c:402
+    TERM_COUNT.fetch_add(1, Ordering::Relaxed); // c:402
 }
 
 /// Port of `void zdeleteterm(void)` from Src/utils.c:409.
 pub fn zdeleteterm() {
     // c:409
     static TERM_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    let tc = TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    let tc = TERM_COUNT.load(Ordering::Relaxed);
     // c:412-413 — DPUTS(term_count < 1 || !cur_term,
     //                   "inconsistent term_count and/or cur_term");
     crate::DPUTS!(tc < 1, "inconsistent term_count and/or cur_term"); // c:412-413
     if tc > 0 {
-        TERM_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed); // c:414
+        TERM_COUNT.fetch_sub(1, Ordering::Relaxed); // c:414
     }
 }
 
@@ -725,10 +725,10 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
             // the unmeta step. Paths containing Meta-encoded bytes
             // (from PATH entries or prog name with metafy lead bytes)
             // would silently miss valid executables.
-            let unmeta_path = crate::ported::utils::unmeta(full_path.to_str().unwrap_or("")); // c:776 unmeta(buf)
+            let unmeta_path = unmeta(full_path.to_str().unwrap_or("")); // c:776 unmeta(buf)
                                                                                               // c:777-779 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
                                                                                               // is_file() folds existence + stat + not-dir into one.
-            if let Ok(meta) = std::fs::metadata(&unmeta_path) {
+            if let Ok(meta) = fs::metadata(&unmeta_path) {
                 if meta.is_file() {
                     // Return the unmeta'd path since that's what
                     // C does (funmeta is the returned value).
@@ -795,11 +795,11 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
     if !pwd.starts_with('/') {
         return false;
     }
-    let pwd_meta = match std::fs::metadata(pwd) {
+    let pwd_meta = match fs::metadata(pwd) {
         Ok(m) => m,
         Err(_) => return false,
     };
-    let dot_meta = match std::fs::metadata(".") {
+    let dot_meta = match fs::metadata(".") {
         Ok(m) => m,
         Err(_) => return false,
     };
@@ -903,7 +903,7 @@ pub fn slashsplit(s: &str) -> Vec<String> {
 /// replaces (or prepends to) the accumulator; otherwise the
 /// component appends as-is. C handles re-rooting (absolute symlink
 /// target replaces buf) and component-level concat.
-pub fn xsymlinks(s: &str) -> std::io::Result<String> {
+pub fn xsymlinks(s: &str) -> io::Result<String> {
     // c:872
     if s.is_empty() {
         return Ok(String::new());
@@ -941,7 +941,7 @@ pub fn xsymlinks(s: &str) -> std::io::Result<String> {
                                                            // c:908 — `readlink(unmeta(xbuf2), xbuf3, PATH_MAX)`.
                 #[cfg(unix)]
                 {
-                    match std::fs::read_link(&candidate) {
+                    match fs::read_link(&candidate) {
                         // c:908
                         Ok(target) => {
                             // c:918-933 — successful readlink: target is
@@ -1110,7 +1110,7 @@ pub fn print_if_link(s: &str, all: bool) {
             }
         }
     }
-    let _ = std::io::stdout().flush();
+    let _ = io::stdout().flush();
 }
 
 /// Port of `void fprintdir(char *s, FILE *f)` from Src/utils.c:1031.
@@ -1306,7 +1306,7 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {
             // c:1199
             return;
         }
-        if !always && !isset(crate::ported::zsh_h::AUTONAMEDIRS) && !t.contains_key(name) {
+        if !always && !isset(AUTONAMEDIRS) && !t.contains_key(name) {
             // c:1207
             return;
         }
@@ -1369,7 +1369,7 @@ pub fn getnameddir(name: &str) -> Option<String> {
     #[cfg(unix)]
     {
         // c:1268 — getpwnam fallback.
-        let cn = std::ffi::CString::new(name).ok()?;
+        let cn = CString::new(name).ok()?;
         let pw = unsafe { libc::getpwnam(cn.as_ptr()) };
         if !pw.is_null() {
             let raw_dir = unsafe {
@@ -1391,7 +1391,7 @@ pub fn getnameddir(name: &str) -> Option<String> {
             // Cache the lookup so subsequent `~user` expansions hit the
             // nameddirtab fast-path at c:1254 instead of round-tripping
             // through getpwnam every time.
-            adduserdir(name, &dir, crate::ported::zsh_h::ND_USERNAME, true); // c:1276
+            adduserdir(name, &dir, ND_USERNAME, true); // c:1276
             return Some(dir);
         }
     }
@@ -1571,7 +1571,7 @@ pub fn preprompt() {
     let period = crate::ported::params::getiparam("PERIOD");
     if period > 0 {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         if now > LAST_PERIODIC.load(Ordering::Relaxed) + period
@@ -1602,7 +1602,7 @@ pub fn checkmailpath(paths: &[String]) -> Vec<String> {
             (path.as_str(), None)
         };
 
-        if let Ok(meta) = std::fs::metadata(file) {
+        if let Ok(meta) = fs::metadata(file) {
             if let Ok(modified) = meta.modified() {
                 if let Ok(elapsed) = modified.elapsed() {
                     if elapsed.as_secs() < 60 {
@@ -1696,7 +1696,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {
                 Some(n) => n,
                 None => break,
             };
-            let cn = match std::ffi::CString::new(fn_.clone()) {
+            let cn = match CString::new(fn_.clone()) {
                 Ok(c) => c,
                 Err(_) => break,
             };
@@ -1711,7 +1711,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {
                 result = Some((fd, fn_));
                 break;
             }
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if err != libc::EEXIST {
                 // c:2269
                 break;
@@ -1756,10 +1756,10 @@ pub fn gettyinfo() -> Option<libc::termios> {
 /// or an io::Error on failure (caller equivalent to zsh's `zerr`).
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(fd) vs C=(SHTTY, ti)
-pub fn fdgettyinfo(fd: i32) -> std::io::Result<libc::termios> {
+pub fn fdgettyinfo(fd: i32) -> io::Result<libc::termios> {
     let mut tio: libc::termios = unsafe { std::mem::zeroed() };
     if unsafe { libc::tcgetattr(fd, &mut tio) } == -1 {
-        Err(std::io::Error::last_os_error())
+        Err(io::Error::last_os_error())
     } else {
         Ok(tio)
     }
@@ -1793,13 +1793,13 @@ pub fn settyinfo(ti: &libc::termios) -> bool {
 /// `while (tcsetattr(SHTTY, TCSADRAIN, &ti->tio) == -1 && errno
 /// == EINTR)` — same retry shape here.
 #[cfg(unix)]
-pub fn fdsettyinfo(SHTTY: i32, ti: &libc::termios) -> std::io::Result<()> {
+pub fn fdsettyinfo(SHTTY: i32, ti: &libc::termios) -> io::Result<()> {
     loop {
         if unsafe { libc::tcsetattr(SHTTY, libc::TCSADRAIN, ti) } != -1 {
             return Ok(());
         }
-        let err = std::io::Error::last_os_error();
-        if err.kind() != std::io::ErrorKind::Interrupted {
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
             return Err(err);
         }
     }
@@ -2000,7 +2000,7 @@ pub static ADJUSTWINSIZE_GETWINSZ: std::sync::atomic::AtomicI32 =
 pub fn check_fd_table(fd: i32) -> bool {
     // c:1969
     // c:1971-1972 — `if (fd <= max_zsh_fd) return;`
-    let cur_max = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed); // c:1971
+    let cur_max = MAX_ZSH_FD.load(Ordering::Relaxed); // c:1971
     if fd <= cur_max {
         // c:1971
         return true; // c:1972 (return; in C)
@@ -2020,7 +2020,7 @@ pub fn check_fd_table(fd: i32) -> bool {
         }
     }
     // c:1982 — `max_zsh_fd = fd;`.
-    MAX_ZSH_FD.store(fd, std::sync::atomic::Ordering::Relaxed); // c:1982
+    MAX_ZSH_FD.store(fd, Ordering::Relaxed); // c:1982
     true
 }
 
@@ -2214,35 +2214,35 @@ pub fn zclose(fd: i32) -> i32 {
         // c:2130-2133 — comment carry: "Careful: we allow closing of
         // arbitrary fd's, beyond max_zsh_fd. In that case we don't
         // try anything clever."
-        let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed); // c:2134
+        let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed); // c:2134
         if fd <= max_fd {
             // c:2134
-            if fdtable_get(fd) == crate::ported::zsh_h::FDT_FLOCK {
+            if fdtable_get(fd) == FDT_FLOCK {
                 // c:2135
-                FDTABLE_FLOCKS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                FDTABLE_FLOCKS.fetch_sub(1, Ordering::Relaxed);
                 // c:2136
             }
             fdtable_set(fd, FDT_UNUSED); // c:2137
                                                                // c:2138-2139 — shrink max_zsh_fd past trailing UNUSED slots.
-            let mut m = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+            let mut m = MAX_ZSH_FD.load(Ordering::Relaxed);
             while m > 0 && fdtable_get(m) == FDT_UNUSED {
                 m -= 1;
             }
-            MAX_ZSH_FD.store(m, std::sync::atomic::Ordering::Relaxed);
+            MAX_ZSH_FD.store(m, Ordering::Relaxed);
             // c:2140-2143 — coproc fd tracking.
             if fd
                 == crate::ported::modules::clone::coprocin
-                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .load(Ordering::Relaxed)
             {
                 crate::ported::modules::clone::coprocin
-                    .store(-1, std::sync::atomic::Ordering::Relaxed);
+                    .store(-1, Ordering::Relaxed);
             }
             if fd
                 == crate::ported::modules::clone::coprocout
-                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .load(Ordering::Relaxed)
             {
                 crate::ported::modules::clone::coprocout
-                    .store(-1, std::sync::atomic::Ordering::Relaxed);
+                    .store(-1, Ordering::Relaxed);
             }
         }
         #[cfg(unix)]
@@ -2276,7 +2276,7 @@ pub fn zclose(fd: i32) -> i32 {
 /// faithfully.
 pub fn zcloselockfd(fd: i32) -> i32 {
     // c:2156
-    let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
     // c:2158 — `if (fd > max_zsh_fd) return -1;`.
     if fd > max_fd {
         return -1;
@@ -2319,7 +2319,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
                                                           // pid+timestamp. Caller is responsible for O_EXCL open.
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let unique = format!("{:x}{:x}", pid, nanos & 0xffffff);
@@ -2882,7 +2882,7 @@ pub fn zsleep(us: i64) -> i32 {
                 // c:2808
                 return 1;
             }
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if err != libc::EINTR {
                 // c:2810
                 return 0; // c:2811
@@ -2977,7 +2977,7 @@ pub fn checkrmall(s: &str) -> bool {
         }
     }
     // c:2893-2904 — four-arm prompt based on file count.
-    let stderr_h = std::io::stderr();
+    let stderr_h = io::stderr();
     let mut stderr_w = stderr_h.lock();
     if count > max_count {
         // c:2893
@@ -3014,7 +3014,7 @@ pub fn checkrmall(s: &str) -> bool {
         drop(stderr_w); // release lock around zbeep + sleep
         zbeep(); // c:2909
         std::thread::sleep(std::time::Duration::from_secs(10)); // c:2910
-        let _ = writeln!(std::io::stderr()); // c:2911 fputc('\n', shout)
+        let _ = writeln!(io::stderr()); // c:2911 fputc('\n', shout)
     } else {
         drop(stderr_w);
     }
@@ -3025,7 +3025,7 @@ pub fn checkrmall(s: &str) -> bool {
     }
     // c:2915-2917 — emit "[yn]? ", flush, beep.
     let prompt = " [yn]? "; // c:2915
-    let _ = std::io::stderr().flush(); // c:2916
+    let _ = io::stderr().flush(); // c:2916
     zbeep(); // c:2917
              // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
              // char is 'n' (no) — getquery's first valid char is the default
@@ -3084,7 +3084,7 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
                         continue; // c:2934
                     }
                     // c:2935-2936 — `if (fd != SHTTY) zwarn("read failed: %e", errno);`
-                    let shtty = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
+                    let shtty = SHTTY_FD.load(Ordering::Relaxed);
                     if fd != shtty {
                         // c:2935
                         zwarn(
@@ -3150,7 +3150,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
                         continue; // c:2959
                     }
                     // c:2960-2961 — `if (fd != SHTTY) zwarn("write failed: %e", errno);`
-                    let shtty = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
+                    let shtty = SHTTY_FD.load(Ordering::Relaxed);
                     if fd != shtty {
                         // c:2960
                         zwarn(
@@ -3210,7 +3210,7 @@ pub fn read1char(echo: i32) -> i32 {
     // c:2972
     #[cfg(unix)]
     {
-        let shtty = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
+        let shtty = SHTTY_FD.load(Ordering::Relaxed);
         if shtty < 0 {
             return -1;
         }
@@ -3223,14 +3223,14 @@ pub fn read1char(echo: i32) -> i32 {
             }
             // c:2979 — `if (errno != EINTR || errflag || retflag || breaks
             //              || contflag) return -1;`
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if err != libc::EINTR {
                 return -1;
             }
             // Check errflag interrupt flag (the most observable of the
             // four guards; retflag/breaks/contflag are control-flow
             // states that don't apply outside the exec engine).
-            if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            if errflag.load(Ordering::Relaxed) != 0 {
                 return -1;
             }
         }
@@ -3297,7 +3297,7 @@ pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
     let mut buf = [0u8; 1];
     #[cfg(unix)]
     {
-        if std::io::stdin().read_exact(&mut buf).is_ok() {
+        if io::stdin().read_exact(&mut buf).is_ok() {
             let c = buf[0] as char;
             if valid_chars.is_empty() || valid_chars.contains(c) {
                 return Some(c);
@@ -3391,7 +3391,7 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
         }
 
         let mut buf = vec![0u8; 256];
-        let c_fmt = std::ffi::CString::new(fmt).unwrap_or_default();
+        let c_fmt = CString::new(fmt).unwrap_or_default();
         let len = libc::strftime(
             buf.as_mut_ptr() as *mut libc::c_char,
             buf.len(),
@@ -4307,7 +4307,7 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
     let cls = itype as u16;
     if cls == IIDENT {
         // c:4347
-        if isset(crate::ported::zsh_h::POSIXIDENTIFIERS) {
+        if isset(POSIXIDENTIFIERS) {
             return false; // c:4348
         }
         return c.is_alphanumeric(); // c:4350
@@ -4402,7 +4402,7 @@ pub fn wcs_zarrdup(s: &[String]) -> Vec<String> {
 /// Port of `spname(char *oldname)` from `Src/utils.c:4562`.
 /// WARNING: param names don't match C — Rust=(name, dir) vs C=(oldname)
 pub fn spname(name: &str, dir: &str) -> Option<String> {
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return None,
     };
@@ -4426,7 +4426,7 @@ pub fn spname(name: &str, dir: &str) -> Option<String> {
 /// Port of `mindist(char *dir, char *mindistguess, char *mindistbest, int wantdir)` from `Src/utils.c:4624`.
 /// WARNING: param names don't match C — Rust=(dir, name) vs C=(dir, mindistguess, mindistbest, wantdir)
 pub fn mindist(dir: &str, name: &str) -> Option<(String, usize)> {
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return None,
     };
@@ -4524,20 +4524,20 @@ pub fn attachtty(pgrp: i32) {
     if rc == -1 && ep == 0 {
         // c:4781
         let mypgrp_val = *crate::ported::jobs::MYPGRP // c:4792
-            .get_or_init(|| std::sync::Mutex::new(0))
+            .get_or_init(|| Mutex::new(0))
             .lock()
             .unwrap();
         if pgrp != mypgrp_val && unsafe { libc::kill(-pgrp, 0) } == -1 {
             attachtty(mypgrp_val); // c:4793
         } else {
-            let errno_val = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            let errno_val = io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if errno_val != libc::ENOTTY {
                 // c:4795
                 zwarn(&format!(
                     "can't set tty pgrp: {}", // c:4797
-                    std::io::Error::from_raw_os_error(errno_val)
+                    io::Error::from_raw_os_error(errno_val)
                 ));
-                let _ = std::io::stderr().flush(); // c:4798
+                let _ = io::stderr().flush(); // c:4798
             }
             crate::ported::options::opt_state_set("monitor", false); // c:4815 opts[MONITOR]=0
             ATTACHTTY_EP.store(1, Ordering::Relaxed); // c:4815
@@ -4545,7 +4545,7 @@ pub fn attachtty(pgrp: i32) {
     } else if rc != -1 {
         // c:4815
         *crate::ported::jobs::LAST_ATTACHED_PGRP // c:4815
-            .get_or_init(|| std::sync::Mutex::new(0))
+            .get_or_init(|| Mutex::new(0))
             .lock()
             .unwrap() = pgrp;
     }
@@ -4918,7 +4918,7 @@ pub fn ztrsub(buf: &str, start: usize, end: usize) -> usize {
 /// WARNING: param names don't match C — Rust=(path, ignoredots) vs C=(dir, ignoredots)
 pub fn zreaddir(path: &str, ignoredots: i32) -> Vec<String> {
     // c:5217
-    match std::fs::read_dir(path) {
+    match fs::read_dir(path) {
         Ok(entries) => entries
             .filter_map(|e| e.ok())
             .filter_map(|e| e.file_name().into_string().ok())
@@ -4947,7 +4947,7 @@ pub fn zreaddir(path: &str, ignoredots: i32) -> Vec<String> {
 /// typtab range (which covers Pound..Nularg + Snull..Nularg). Now
 /// routes through the canonical `itok()` predicate.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
-pub fn zputs(s: &str) -> std::io::Result<()> {
+pub fn zputs(s: &str) -> io::Result<()> {
     // c:5265
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -4979,7 +4979,7 @@ pub fn zputs(s: &str) -> std::io::Result<()> {
             i += 1;
         }
     }
-    std::io::stdout().lock().write_all(out.as_bytes()) // c:5278
+    io::stdout().lock().write_all(out.as_bytes()) // c:5278
 }
 
 /// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289`
@@ -5069,7 +5069,7 @@ pub fn niceztrlen(s: &str) -> usize {
 // mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
 // valid scalars, so the invalid-byte arm collapses).
 pub fn mb_niceformat(s: &str) -> String {
-    let unmeta = self::unmeta(s);
+    let unmeta = unmeta(s);
     let mut out = String::with_capacity(unmeta.len());
     // c:5407-5435 — C iterates via `mbrtowc(&c, ptr, umlen, &mbs)`
     // then calls `wcs_nicechar(c, ...)` on each scalar. The Rust
@@ -5871,7 +5871,7 @@ pub fn ucs4toutf8(wval: u32) -> Option<String> {
     // c:6760
     else {
         // c:6762
-        crate::ported::utils::zerr("character not in range"); // c:6763
+        zerr("character not in range"); // c:6763
         return None; // c:6764
     };
     let mut buf = [0u8; 6];
@@ -6253,7 +6253,7 @@ pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
     }
     // C: dev/ino integrity check after the chdir/fchdir.
     if (d.dev != 0 || d.ino != 0) && err == 0 {
-        if let Ok(meta) = std::fs::metadata(".") {
+        if let Ok(meta) = fs::metadata(".") {
             if meta.ino() != d.ino || meta.dev() != d.dev {
                 err = -1;
             }
@@ -6508,7 +6508,7 @@ pub fn mailstat(path: &str, st: &mut libc::stat) -> i32 {
     let mut mtime: libc::time_t = 0; // c:7748
     for sub_name in ["new", "cur"] {
         let dir = format!("{}/{}", path, sub_name);
-        let entries = match std::fs::read_dir(&dir) {
+        let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => return 0,
         };
@@ -6573,18 +6573,18 @@ pub static mut SCRIPT_FILENAME: Option<String> = None;
 /// Port of `char *scriptname` from `Src/init.c`. Set when `source`
 /// is reading a script; cleared on return. Used by `zwarning()`
 /// (utils.c:147) as the diagnostic prefix.
-static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+static SCRIPTNAME: std::sync::OnceLock<Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 
 /// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
 /// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
 /// prefix when scriptname is unset.
-static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+static ARGZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
 
 /// Port of `char *posixzero` from `Src/params.c:76`. The original
 /// argv[0] preserved unchanged by later mutations. Used by
 /// `argzerogetfn` for `$0` under `isset(POSIXARGZERO)`.
-static POSIXZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+static POSIXZERO: std::sync::OnceLock<Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 
 // error flag: bits from enum errflag_bits                                 // c:124
@@ -6602,7 +6602,7 @@ pub static errflag: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 /// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
 /// suppresses error printing. `noerrs >= 2` also suppresses the
 /// `errflag` set inside `zerr`/`zerrnam`.
-static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+static NOERRS: std::sync::OnceLock<Mutex<i32>> = std::sync::OnceLock::new();
 
 /// Port of `int locallevel` from `Src/init.c`. Function-call depth
 /// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
@@ -6614,12 +6614,12 @@ static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock:
 /// Port of `int lineno` from `Src/init.c`. Current line number;
 /// `zerrmsg()` includes it in the diagnostic when locallevel > 0
 /// or shinstdin is unset (utils.c:301).
-static LINENO: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+static LINENO: std::sync::OnceLock<Mutex<i32>> = std::sync::OnceLock::new();
 
 /// Port of the `isset(SHINSTDIN)` check from utils.c:150. C reads
 /// the SHINSTDIN option directly; the Rust port caches it here so
 /// callers don't pull in the whole option-table for every error.
-static SHINSTDIN_OPT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+static SHINSTDIN_OPT: std::sync::OnceLock<Mutex<bool>> = std::sync::OnceLock::new();
 
 /// `ERRFLAG_ERROR` from `Src/zsh.h`. Set on `zerr`/`zerrnam` to
 /// signal a fatal error has occurred.
@@ -6695,7 +6695,7 @@ static ATTACHTTY_EP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 // scope expansion, not a port. !!!
 // =====================================================================
 
-static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> = std::sync::OnceLock::new();
+static FDTABLE: std::sync::OnceLock<Mutex<Vec<i32>>> = std::sync::OnceLock::new();
 
 /// Port of `int max_zsh_fd` global from `Src/exec.c:201`.
 /// "The highest fd we know zsh is using" — bumped by `fdtable_set`
@@ -6734,17 +6734,17 @@ pub fn scriptname_get() -> Option<String> {
 /// `Mutex<i32>` here that split state from params.rs; both copies
 /// were never kept in sync.
 pub fn locallevel() -> i32 {
-    LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
+    LOCALLEVEL.load(Ordering::Relaxed)
 }
 
 /// Bump `locallevel` (called by `startparamscope`).
 pub fn inc_locallevel() {
-    LOCALLEVEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    LOCALLEVEL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Decrement `locallevel` (called by `endparamscope`).
 pub fn dec_locallevel() {
-    LOCALLEVEL.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    LOCALLEVEL.fetch_sub(1, Ordering::Relaxed);
 }
 
 /// Setter for `argzero`. Called once at shell init from `parseargs`.
@@ -6795,7 +6795,7 @@ pub fn set_noerrs(v: i32) {
 
 /// Setter for `locallevel`. Called by function-call entry/exit.
 pub fn set_locallevel(v: i32) {
-    LOCALLEVEL.store(v, std::sync::atomic::Ordering::Relaxed);
+    LOCALLEVEL.store(v, Ordering::Relaxed);
 }
 
 /// Setter for `lineno`. Called by the parser as it advances.
@@ -7003,7 +7003,7 @@ pub fn gethostname() -> String {
 /// Port of the static `prepromptfns` LinkList in Src/utils.c:1319.
 /// Holds the bare-fn pointers `addprepromptfn`/`delprepromptfn`
 /// register and `preprompt()` walks.
-static PREPROMPT_FNS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
+static PREPROMPT_FNS: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
 
 /// Set environment variable
 pub fn setenv(name: &str, value: &str) {
@@ -7020,7 +7020,7 @@ pub fn unsetenv(name: &str) {
 /// `sched` builtin. Sorted ascending by `when` (epoch seconds);
 /// `addtimedfn` does an insertion sort (matches the C source's
 /// `for (;;)` walk at lines 1394-1411).
-pub static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec::new()); // c:1371 timedfns (mod_export in C)
+pub static TIMED_FNS: Mutex<Vec<(i64, fn())>> = Mutex::new(Vec::new()); // c:1371 timedfns (mod_export in C)
 
 /// Get current user ID
 pub fn getuid() -> u32 {
@@ -7226,9 +7226,9 @@ pub fn fdtable_set(fd: i32, kind: i32) {
     // c:1982 — `max_zsh_fd = fd;` (with `if (fd <= max_zsh_fd) return;`
     // guard at c:1971). Inline equivalent: bump only when this fd
     // exceeds the current max.
-    let cur = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+    let cur = MAX_ZSH_FD.load(Ordering::Relaxed);
     if fd > cur {
-        MAX_ZSH_FD.store(fd, std::sync::atomic::Ordering::Relaxed);
+        MAX_ZSH_FD.store(fd, Ordering::Relaxed);
     }
 }
 
@@ -7381,45 +7381,45 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init
 // helpers. C dereferences each global directly.
-fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCRIPTNAME.get_or_init(|| std::sync::Mutex::new(None))
+fn scriptname_lock() -> &'static Mutex<Option<String>> {
+    SCRIPTNAME.get_or_init(|| Mutex::new(None))
 }
 
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
-    ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
+fn argzero_lock() -> &'static Mutex<Option<String>> {
+    ARGZERO.get_or_init(|| Mutex::new(None))
 }
 
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock accessor for `posixzero`.
 // C's `posixzero` lives in params.c:76; the canonical storage lives
 // here for OnceLock initialisation parity with `argzero`.
-fn posixzero_lock() -> &'static std::sync::Mutex<Option<String>> {
-    POSIXZERO.get_or_init(|| std::sync::Mutex::new(None))
+fn posixzero_lock() -> &'static Mutex<Option<String>> {
+    POSIXZERO.get_or_init(|| Mutex::new(None))
 }
 
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
-    NOERRS.get_or_init(|| std::sync::Mutex::new(0))
+fn noerrs_lock() -> &'static Mutex<i32> {
+    NOERRS.get_or_init(|| Mutex::new(0))
 }
 
 // `locallevel_lock` removed — duplicate of canonical
 // `LOCALLEVEL` (port of params.c:54). All
 // accessors here now route through the canonical AtomicI32.
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn lineno_lock() -> &'static std::sync::Mutex<i32> {
-    LINENO.get_or_init(|| std::sync::Mutex::new(0))
+fn lineno_lock() -> &'static Mutex<i32> {
+    LINENO.get_or_init(|| Mutex::new(0))
 }
 
 // WARNING: NOT IN UTILS.C — Rust-only cache for the SHINSTDIN
 // option flag so error-emission doesn't pull in the option-table.
-fn shinstdin_lock() -> &'static std::sync::Mutex<bool> {
-    SHINSTDIN_OPT.get_or_init(|| std::sync::Mutex::new(false))
+fn shinstdin_lock() -> &'static Mutex<bool> {
+    SHINSTDIN_OPT.get_or_init(|| Mutex::new(false))
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. C source uses bare
 /// `unsigned char *fdtable` global from Src/utils.c:~63.
-fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
-    FDTABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+fn fdtable_lock() -> &'static Mutex<Vec<i32>> {
+    FDTABLE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]
@@ -7474,7 +7474,7 @@ mod tests {
         crate::ported::params::homesetfn(sentinel.clone());
 
         // `/tmp/zshrs-finddir-pin/x` must abbreviate to `~/x`.
-        let abbrev = super::finddir(&format!("{}/x", sentinel));
+        let abbrev = finddir(&format!("{}/x", sentinel));
         assert_eq!(
             abbrev.as_deref(),
             Some("~/x"),
@@ -7589,15 +7589,15 @@ mod tests {
         // rwx all = 0o777.
         let all = (S_IRUSR | S_IWUSR | S_IXUSR) as u32 * (1 + 8 + 64);
         // Use libc constants individually for portability.
-        let m = (libc::S_IRUSR
-            | libc::S_IWUSR
-            | libc::S_IXUSR
-            | libc::S_IRGRP
-            | libc::S_IWGRP
-            | libc::S_IXGRP
-            | libc::S_IROTH
-            | libc::S_IWOTH
-            | libc::S_IXOTH) as u32;
+        let m = (S_IRUSR
+            | S_IWUSR
+            | S_IXUSR
+            | S_IRGRP
+            | S_IWGRP
+            | S_IXGRP
+            | S_IROTH
+            | S_IWOTH
+            | S_IXOTH) as u32;
         assert_eq!(mode_to_octal(m), 0o777);
         let _ = all;
     }
@@ -7625,7 +7625,7 @@ mod tests {
         if rc == 0 {
             assert_eq!(
                 st.st_nlink as u64,
-                std::fs::metadata("/etc/hosts").unwrap().nlink()
+                fs::metadata("/etc/hosts").unwrap().nlink()
             );
         }
     }
@@ -8011,11 +8011,11 @@ mod tests {
     fn test_quotestring_pattern() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            quotestring("*.txt", crate::ported::zsh_h::QT_BACKSLASH_PATTERN),
+            quotestring("*.txt", QT_BACKSLASH_PATTERN),
             "\\*.txt"
         );
         assert_eq!(
-            quotestring("file[1]", crate::ported::zsh_h::QT_BACKSLASH_PATTERN),
+            quotestring("file[1]", QT_BACKSLASH_PATTERN),
             "file\\[1\\]"
         );
     }
@@ -8070,7 +8070,7 @@ mod tests {
         // 'A' = 0x41, ASCII, single byte in any locale.
         let n = ucs4tomb('A' as u32, &mut buf);
         // wctomb may return 1 in C/POSIX locale; in UTF-8 locale also 1.
-        assert!(n == 1);
+        assert_eq!(n, 1);
         assert_eq!(buf[0], b'A');
     }
 
@@ -8154,7 +8154,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Open a regular tempfile.
         let dir = tempfile::TempDir::new().unwrap();
-        let f = std::fs::File::create(dir.path().join("regular")).unwrap();
+        let f = fs::File::create(dir.path().join("regular")).unwrap();
         let fd = f.as_raw_fd();
         let (changed, mode) = setblock_fd(true, fd);
         assert!(
@@ -8238,7 +8238,7 @@ mod tests {
             return;
         }
         // Call setblock_stdin — should CLEAR O_NONBLOCK.
-        crate::ported::utils::setblock_stdin();
+        setblock_stdin();
         let after_setblock = unsafe { libc::fcntl(0, libc::F_GETFL, 0) };
         assert_eq!(
             after_setblock & libc::O_NONBLOCK,
@@ -8461,7 +8461,7 @@ mod tests {
     #[test]
     fn dquotedztrdup_default_path_wraps_whole_string() {
         let _g = crate::test_util::global_state_lock();
-        if isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+        if isset(CSHJUNKIEQUOTES) {
             return; // Default-only test.
         }
         // c:6690 — `*p++ = '"';` then iterate.
@@ -8492,7 +8492,7 @@ mod tests {
     #[test]
     fn dquotedztrdup_pending_backslash_only_doubles_when_needed() {
         let _g = crate::test_util::global_state_lock();
-        if isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+        if isset(CSHJUNKIEQUOTES) {
             return;
         }
         // Mid-string `\` before ordinary char: stays as single `\`.
@@ -9629,7 +9629,7 @@ mod tests {
         // Reset globals so the test is deterministic regardless
         // of prior ordering — other tests may have grown the
         // table or bumped MAX_ZSH_FD.
-        MAX_ZSH_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
+        MAX_ZSH_FD.store(-1, Ordering::Relaxed);
         {
             let mut g = fdtable_lock().lock().unwrap();
             g.clear();
@@ -9639,7 +9639,7 @@ mod tests {
         // With cur_max=-1, fd=-1 hits `fd <= cur_max` → true.
         assert!(check_fd_table(-1));
         assert_eq!(
-            MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed),
+            MAX_ZSH_FD.load(Ordering::Relaxed),
             -1,
             "fd ≤ cur_max early-returns; MAX_ZSH_FD untouched"
         );
@@ -9647,7 +9647,7 @@ mod tests {
         // c:1974-1981 — fd > cur_max grows fdtable to fd+1 slots.
         assert!(check_fd_table(7));
         assert_eq!(
-            MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed),
+            MAX_ZSH_FD.load(Ordering::Relaxed),
             7,
             "c:1982 — MAX_ZSH_FD := fd"
         );
@@ -9664,7 +9664,7 @@ mod tests {
         // Idempotence under fd ≤ cur_max.
         assert!(check_fd_table(3));
         assert_eq!(
-            MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed),
+            MAX_ZSH_FD.load(Ordering::Relaxed),
             7,
             "fd ≤ cur_max keeps MAX_ZSH_FD at 7"
         );
@@ -9799,7 +9799,7 @@ mod tests {
             return;
         }
         fdtable_set(fd, FDT_FLOCK);
-        let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+        let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
         assert!(
             max_fd >= fd,
             "c:1982 — max_zsh_fd ({}) must be >= newly-set fd ({})",
@@ -9867,7 +9867,7 @@ mod tests {
         over.push_str(&"a".repeat(libc::PATH_MAX as usize));
         // adduserdir with the oversized path + AUTONAMEDIRS-off path
         // via always=true (so the AUTONAMEDIRS guard doesn't reject).
-        crate::ported::utils::adduserdir(name, &over, 0, true);
+        adduserdir(name, &over, 0, true);
         // c:1211 — too-long → remove path triggered, no entry added.
         let tab = nameddirtab().lock().unwrap();
         assert!(
@@ -9887,13 +9887,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Create a non-executable file in /tmp and add /tmp to PATH.
         let test_name = format!("zshrs_test_pathprog_{}", unsafe { libc::getpid() });
-        let path = std::path::PathBuf::from("/tmp").join(&test_name);
+        let path = PathBuf::from("/tmp").join(&test_name);
         // Write content, NO executable bit.
-        if std::fs::write(&path, b"plain content").is_err() {
+        if fs::write(&path, b"plain content").is_err() {
             return; // /tmp may be unwritable on some systems.
         }
         // Verify it's not executable.
-        let meta = std::fs::metadata(&path).unwrap();
+        let meta = fs::metadata(&path).unwrap();
         assert_eq!(
             meta.permissions().mode() & 0o111,
             0,
@@ -9905,7 +9905,7 @@ mod tests {
         // pathprog should find the file.
         let r = pathprog(&test_name);
         // Cleanup.
-        let _ = std::fs::remove_file(&path);
+        let _ = fs::remove_file(&path);
         if let Some(prev) = saved_path {
             assignsparam("PATH", &prev, 0);
         }
@@ -9923,15 +9923,15 @@ mod tests {
     fn pathprog_skips_directories() {
         let _g = crate::test_util::global_state_lock();
         let test_name = format!("zshrs_test_pathprog_dir_{}", unsafe { libc::getpid() });
-        let path = std::path::PathBuf::from("/tmp").join(&test_name);
-        if std::fs::create_dir(&path).is_err() {
+        let path = PathBuf::from("/tmp").join(&test_name);
+        if fs::create_dir(&path).is_err() {
             return;
         }
         let saved_path = getsparam("PATH");
         assignsparam("PATH", "/tmp", 0);
         let r = pathprog(&test_name);
         // Cleanup.
-        let _ = std::fs::remove_dir(&path);
+        let _ = fs::remove_dir(&path);
         if let Some(prev) = saved_path {
             assignsparam("PATH", &prev, 0);
         }
@@ -10272,12 +10272,12 @@ mod tests {
         // Test environment: SHTTY is -1 (no controlling tty bound
         // by the port). C-side would `read(-1, ...)` which fails;
         // Rust port should fail-fast with -1.
-        let saved = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
-        SHTTY_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
+        let saved = SHTTY_FD.load(Ordering::Relaxed);
+        SHTTY_FD.store(-1, Ordering::Relaxed);
         let got = read1char(0); // echo=0
         assert_eq!(got, -1, "c:2978 — SHTTY=-1 → read fails → return -1");
         // Restore.
-        SHTTY_FD.store(saved, std::sync::atomic::Ordering::Relaxed);
+        SHTTY_FD.store(saved, Ordering::Relaxed);
     }
 
     /// `Src/utils.c:1989-2012` — `movefd(fd)` dups fd to >= 10 (so it
@@ -10291,7 +10291,7 @@ mod tests {
     fn movefd_marks_fdtable_internal() {
         let _g = crate::test_util::global_state_lock();
         // Open /dev/null to get a small (< 10) fd...
-        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let dev_null = CString::new("/dev/null").unwrap();
         let fd = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
         assert!(fd >= 0, "open /dev/null returned -1");
         let new_fd = movefd(fd);
@@ -10343,7 +10343,7 @@ mod tests {
     fn redup_copies_fdtable_ownership_to_target() {
         let _g = crate::test_util::global_state_lock();
         // Open two distinct fds — both will land in the fdtable.
-        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let dev_null = CString::new("/dev/null").unwrap();
         let x = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
         let y = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
         assert!(x >= 0 && y >= 0, "open /dev/null returned -1");
@@ -10382,8 +10382,8 @@ mod tests {
         let target = tmp.join(format!("zshrs_xsymlinks_target_{}", std::process::id()));
         let link = tmp.join(format!("zshrs_xsymlinks_link_{}", std::process::id()));
         // Create target as a regular dir to symlink to.
-        let _ = std::fs::create_dir(&target);
-        let _ = std::fs::remove_file(&link);
+        let _ = fs::create_dir(&target);
+        let _ = fs::remove_file(&link);
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let got = xsymlinks(link.to_str().unwrap()).unwrap();
@@ -10394,8 +10394,8 @@ mod tests {
         );
 
         // Cleanup.
-        let _ = std::fs::remove_file(&link);
-        let _ = std::fs::remove_dir(&target);
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_dir(&target);
     }
 
     /// `Src/utils.c:881-882` — `.` components are skipped.
@@ -10413,9 +10413,9 @@ mod tests {
     #[cfg(unix)]
     fn xsymlinks_normalises_dot_and_dotdot() {
         let _g = crate::test_util::global_state_lock();
-        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let tmp = fs::canonicalize(std::env::temp_dir()).unwrap();
         let base_dir = tmp.join(format!("zshrs_xs_norm_{}", std::process::id()));
-        let _ = std::fs::create_dir(&base_dir);
+        let _ = fs::create_dir(&base_dir);
         // `<base>/.` should be `<base>` (c:881 — `.` skipped).
         let arg = format!("{}/./.", base_dir.display());
         let got = xsymlinks(&arg).unwrap();
@@ -10432,7 +10432,7 @@ mod tests {
             base_dir.to_string_lossy(),
             "c:891-895 — `..` walks back one segment"
         );
-        let _ = std::fs::remove_dir(&base_dir);
+        let _ = fs::remove_dir(&base_dir);
     }
 
     /// `Src/utils.c:2055-2056` — when fdtable[x] is FDT_FLOCK or
@@ -10452,7 +10452,7 @@ mod tests {
     #[cfg(unix)]
     fn redup_promotes_flock_to_internal_on_target() {
         let _g = crate::test_util::global_state_lock();
-        let dev_null = std::ffi::CString::new("/dev/null").unwrap();
+        let dev_null = CString::new("/dev/null").unwrap();
         let x = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
         let y = unsafe { libc::open(dev_null.as_ptr(), libc::O_RDONLY) };
         assert!(x >= 0 && y >= 0);
@@ -10461,7 +10461,7 @@ mod tests {
         check_fd_table(x);
         check_fd_table(y);
         // Mark x as FDT_FLOCK.
-        fdtable_set(x, crate::ported::zsh_h::FDT_FLOCK);
+        fdtable_set(x, FDT_FLOCK);
         FDTABLE_FLOCKS.store(2, Ordering::SeqCst); // start at 2 so double-decrement lands at 0
 
         let _ = redup(x, y);
@@ -10496,9 +10496,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         let base = tmp.join(format!("zshrs_zreaddir_{}", std::process::id()));
-        let _ = std::fs::create_dir(&base);
+        let _ = fs::create_dir(&base);
         // Create one real entry to make the test non-trivial.
-        std::fs::write(base.join("file"), "x").unwrap();
+        fs::write(base.join("file"), "x").unwrap();
 
         // c:5232 — ignoredots=1: skip `.` and `..`, keep `file`.
         let with_skip = zreaddir(base.to_str().unwrap(), 1);
@@ -10528,8 +10528,8 @@ mod tests {
         // reliably; pin only that the API path doesn't error out.
         let _ = without_skip;
 
-        let _ = std::fs::remove_file(base.join("file"));
-        let _ = std::fs::remove_dir(&base);
+        let _ = fs::remove_file(base.join("file"));
+        let _ = fs::remove_dir(&base);
     }
 
     /// `Src/utils.c:1075` — `get_username()` uses `ztrdup_metafy` on

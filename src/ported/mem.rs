@@ -416,8 +416,8 @@ pub fn bin_mem(
     let m_high: i64 = 0; // c:1727 high addr
     let m_s: i32 = 0; // c:1742 sbrk total
     let m_b: i32 = 0; // c:1742 brk total
-    crate::ported::signals::queue_signals(); // c:1729
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    queue_signals(); // c:1729
+    if OPT_ISSET(ops, b'v') {
         // c:1730
         println!("The lower and the upper addresses of the heap. Diff gives");
         println!("the difference between them, i.e. the size of the heap.\n");
@@ -428,14 +428,14 @@ pub fn bin_mem(
         m_high,
         m_high - m_l
     ); // c:1734
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1737
         println!("\nThe number of bytes that were allocated using sbrk() and");
         println!("the number of bytes that were given back to the system");
         println!("via brk().");
     }
     println!("\nsbrk {}\tbrk {}", m_s, m_b); // c:1742
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1744
         println!("\nInformation about the sizes that were allocated or freed.");
         println!("For each size that were used the number of mallocs and");
@@ -448,7 +448,7 @@ pub fn bin_mem(
     }
     println!("\nsize\tmalloc\tfree\tdiff\ttotal\tcum"); // c:1754
                                                         // c:1755-1761 m_m[i]/m_f[i] histogram — all zero with system allocator.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1766
         println!("\nThe list of memory blocks. For each block the following");
         println!("information is shown:\n");
@@ -470,7 +470,7 @@ pub fn bin_mem(
     }
     println!("\nblock list:\nnum\ttnum\taddr\t\tlen\tstate\tcum"); // c:1785
                                                                    // c:1786-1816 block-list walk — empty under system allocator.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1818
         println!("\nHere is some information about the small blocks used.");
         println!("For each size the arrays with the number of free and the");
@@ -478,7 +478,7 @@ pub fn bin_mem(
     }
     println!("\nsmall blocks:\nsize\tblocks (free/used)"); // c:1823
                                                            // c:1825-1836 — m_small histogram, all zero.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1837
         println!("\n\nBelow is some information about the allocation");
         println!("behaviour of the zsh heaps. First the number of times");
@@ -489,14 +489,14 @@ pub fn bin_mem(
     let h_pop: i32 = 0;
     let h_free: i32 = 0;
     println!("push {}\tpop {}\tfree {}\n", h_push, h_pop, h_free); // c:1844
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+    if OPT_ISSET(ops, b'v') {
         // c:1846
         println!("\nThe next list shows for several sizes the number of times");
         println!("memory of this size were taken from heaps.\n");
     }
     println!("size\tmalloc\ttotal"); // c:1850
                                      // c:1851-1856 h_m[] histogram — all zero.
-    crate::ported::signals::unqueue_signals(); // c:1858
+    unqueue_signals(); // c:1858
     0 // c:1859
 }
 
@@ -643,6 +643,7 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 // across the whole tree (the prior parallel copies here split the
 // queueing state, which was wrong).
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::zsh_h::OPT_ISSET;
 
 /// Split string by separator.
 /// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's

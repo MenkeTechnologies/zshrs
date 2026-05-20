@@ -168,7 +168,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         // Recursively eval the index (so a[i+1], h[$k], etc work).
         let idx_val = matheval(idx_str)
             .map(|n| {
-                if n.type_ == crate::ported::zsh_h::MN_FLOAT {
+                if n.type_ == MN_FLOAT {
                     n.d as i64
                 } else {
                     n.l
@@ -191,14 +191,14 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                             return mnumber {
                                 l: n,
                                 d: 0.0,
-                                type_: crate::ported::zsh_h::MN_INTEGER,
+                                type_: MN_INTEGER,
                             };
                         }
                         if let Ok(f) = raw.parse::<f64>() {
                             return mnumber {
                                 l: 0,
                                 d: f,
-                                type_: crate::ported::zsh_h::MN_FLOAT,
+                                type_: MN_FLOAT,
                             };
                         }
                     }
@@ -213,14 +213,14 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                         return mnumber {
                             l: n,
                             d: 0.0,
-                            type_: crate::ported::zsh_h::MN_INTEGER,
+                            type_: MN_INTEGER,
                         };
                     }
                     if let Ok(f) = v.parse::<f64>() {
                         return mnumber {
                             l: 0,
                             d: f,
-                            type_: crate::ported::zsh_h::MN_FLOAT,
+                            type_: MN_FLOAT,
                         };
                     }
                 }
@@ -229,7 +229,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         return mnumber {
             l: 0,
             d: 0.0,
-            type_: crate::ported::zsh_h::MN_INTEGER,
+            type_: MN_INTEGER,
         };
     }
     if let Some(raw) = crate::ported::params::getsparam(base_name) {
@@ -237,14 +237,14 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             return mnumber {
                 l: n,
                 d: 0.0,
-                type_: crate::ported::zsh_h::MN_INTEGER,
+                type_: MN_INTEGER,
             };
         }
         if let Ok(f) = raw.parse::<f64>() {
             return mnumber {
                 l: 0,
                 d: f,
-                type_: crate::ported::zsh_h::MN_FLOAT,
+                type_: MN_FLOAT,
             };
         }
         // Non-numeric string: fall through to recursive-eval below.

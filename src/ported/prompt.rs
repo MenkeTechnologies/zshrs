@@ -3473,7 +3473,7 @@ mod tests {
         set_pending_text_attrs(0);
         let _ = tsetattrs(TXTBOLDFACE);
         let p = *pending_attrs_lock().lock().unwrap();
-        assert!(p & TXTBOLDFACE != 0, "TXTBOLDFACE bit ORed into pending");
+        assert_ne!(p & TXTBOLDFACE, 0, "TXTBOLDFACE bit ORed into pending");
     }
 
     /// c:1743-1746 — TXTFGCOLOUR replaces the FG mask wholesale, not ORs.

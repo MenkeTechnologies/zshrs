@@ -32,6 +32,7 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
 use crate::ported::utils::write_loop;
+use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
     Aminfo, Cldata, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED, CGF_ROWS, CMF_ALL,
     CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_ROWS,
@@ -769,9 +770,9 @@ pub fn calclist(showall: i32) -> i32 {
     let mut nlines = 0i32;
     let mut max = 0i32;
 
-    let listpacked = crate::ported::zsh_h::isset(crate::ported::zsh_h::LISTPACKED);
-    let listrowsfirst = crate::ported::zsh_h::isset(crate::ported::zsh_h::LISTROWSFIRST);
-    let listtypes = crate::ported::zsh_h::isset(crate::ported::zsh_h::LISTTYPES);
+    let listpacked = isset(crate::ported::zsh_h::LISTPACKED);
+    let listrowsfirst = isset(crate::ported::zsh_h::LISTROWSFIRST);
+    let listtypes = isset(crate::ported::zsh_h::LISTTYPES);
 
     // First pass — per-group width / line accounting (c:1514-1657).
     for g in groups.iter_mut() {
@@ -849,7 +850,7 @@ pub fn calclist(showall: i32) -> i32 {
                     }
                     if let Some(disp) = m.disp.clone() {
                         if (m.flags & CMF_DISPLINE) != 0 {
-                            nlines += 1 + crate::ported::zle::zle_tricky::printfmt(
+                            nlines += 1 + printfmt(
                                 &disp, 0, false, false,
                             );
                             g.flags |= CGF_HASDL;
@@ -903,7 +904,7 @@ pub fn calclist(showall: i32) -> i32 {
             if (e.count != 0 || e.always != 0)
                 && (onlyexpl_v == 0 || (onlyexpl_v & if e.always > 0 { 2 } else { 1 }) != 0)
             {
-                nlines += 1 + crate::ported::zle::zle_tricky::printfmt(
+                nlines += 1 + printfmt(
                     e.str.as_deref().unwrap_or(""),
                     if e.always != 0 { -1 } else { e.count },
                     false,
@@ -1420,7 +1421,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             }
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
             let n = if e.always != 0 { -1 } else { e.count };
-            let l = crate::ported::zle::zle_tricky::printfmt(
+            let l = printfmt(
                 e.str.as_deref().unwrap_or(""),
                 n,
                 true,
