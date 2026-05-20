@@ -9,11 +9,10 @@
 //! - setopt/unsetopt builtins
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::EMULATE_FULLY;
-use crate::ported::zsh_h::OPT_SIZE;
 use crate::ported::zsh_h::{
-    APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES,
-    MAILWARNING, MULTIBYTE, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
+    APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE, EMULATE_FULLY, GLOBDOTS, HASHCMDS,
+    HISTNOFUNCTIONS, IGNOREBRACES, MAILWARNING, MONITOR, MULTIBYTE, OPT_SIZE, PROMPTSUBST,
+    SHINSTDIN, SINGLECOMMAND, SUNKEYBOARDHACK, VIMODE,
 };
 use std::sync::atomic::AtomicI32;
 
@@ -721,7 +720,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // monitor` in a non-tty context would succeed and flip the
         // option flag without actually acquiring the process group,
         // leaving job control half-broken.
-        use crate::ported::zsh_h::MONITOR;
         if idx == MONITOR && value != 0 {
             // c:851
             let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
@@ -759,7 +757,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     // The previous Rust port skipped this entirely; both options
     // could be on at once, leaving ZLE keymap selection ambiguous.
     {
-        use crate::ported::zsh_h::{EMACSMODE, VIMODE};
         if (idx == EMACSMODE || idx == VIMODE) && value != 0 {
             // c:859
             // c:870 — turn off the OTHER keymap option. Resolve
@@ -776,7 +773,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     // sunkeyboardhack sets keyboardhackchar to '`'; unsetopt to '\0'.
     // Also no `!force` guard in C.
     {
-        use crate::ported::zsh_h::SUNKEYBOARDHACK;
         if idx == SUNKEYBOARDHACK {
             // c:871
             // c:873 — `keyboardhackchar = (value ? '`' : '\0');`
@@ -1671,7 +1667,6 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>, f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zsh_h::{isset, EMACSMODE, INTERACTIVE, VIMODE};
 
     // Tests share global OPTS_LIVE state; serialize via this mutex so
     // parallel cargo-test threads don't stomp each other's option-state
