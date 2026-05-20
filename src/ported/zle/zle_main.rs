@@ -18,7 +18,15 @@ use crate::ported::utils::zwarnnam;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
+
+use crate::ported::zsh_h::{
+    ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC,
+    ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE,
+    ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH,
+};
 
 use super::zle_h::widget as Widget;
 use super::zle_h::{ZLE_LASTCOL, ZLE_NOTCOMMAND};
@@ -468,7 +476,6 @@ pub fn getfullchar(do_keytmout: bool) -> Option<char> {
 /// WARNING: param names don't match C — Rust=(inchar) vs C=(inchar, outstr, outcount)
 pub fn getrestchar(inchar: i32) -> i32 {
     // c:990
-    use std::sync::atomic::Ordering::SeqCst;
     LASTCHAR_WIDE_VALID.store(1, SeqCst); // c:994
     if inchar < 0 {
         // c:998 inchar == EOF
@@ -1096,7 +1103,6 @@ pub fn recursiveedit() -> i32 {
     //                       errflag = done = eofsent = 0; return locerror`.
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
     crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
@@ -1111,7 +1117,6 @@ pub fn recursiveedit() -> i32 {
 /// Port of `reexpandprompt()` from `Src/Zle/zle_main.c:2000`.
 pub fn reexpandprompt() {
     // c:2000
-    use std::sync::atomic::Ordering;
     // c:2002 — static int reexpanding;
     // c:2003 — static int looping;
     // Per-thread recursion counter (bucket 1 — file-static in C).
@@ -1209,7 +1214,6 @@ pub fn resetprompt() {
 /// reads it and triggers `reexpandprompt + redisplay`.
 pub fn zle_resetprompt() {
     // c:2058
-    use std::sync::atomic::Ordering;
     // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
     // in zlecore (reads ZLE_RESET_NEEDED + clears it).
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
@@ -1244,7 +1248,6 @@ pub fn trashzle() {
     // c:2091 — applytextattributes(0) → CSI 0m resets all SGR.
     // Write both blobs to SHTTY (stdout fallback) so the prompt
     // teardown reaches the same destination as the prompt write.
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
     let _ = crate::ported::utils::write_loop(out, b"\r\x1b[K\x1b[0m");
@@ -1488,7 +1491,6 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {
 /// ```
 pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {
     // c:2312
-    use std::sync::atomic::Ordering;
     // c:2314 — refuse to unload while ZLE is active.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         return 1;
@@ -1592,7 +1594,6 @@ pub fn zle_reset() {
     // module init (zle.c:init_zle).
     crate::ported::zle::zle_keymap::createkeymapnamtab();
     crate::ported::zle::zle_keymap::default_bindings();
-    use std::sync::atomic::Ordering;
     ZLELINE.lock().unwrap().clear();
     ZLECS.store(0, Ordering::SeqCst);
     ZLELL.store(0, Ordering::SeqCst);
@@ -1655,7 +1656,6 @@ pub fn zle_reset() {
 
 /// Try to read a byte non-blocking
 fn try_read_byte(buf: &mut [u8]) -> io::Result<bool> {
-    use std::os::unix::io::AsRawFd;
 
     let mut fds = [libc::pollfd {
         fd: io::stdin().as_raw_fd(),
@@ -1756,11 +1756,6 @@ pub enum zle_main_entry_args<'a> {
 /// ```
 pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> {
     // c:2123
-    use crate::ported::zsh_h::{
-        ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC,
-        ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT,
-        ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH,
-    };
 
     match cmd {
         // c:2125 switch (cmd)

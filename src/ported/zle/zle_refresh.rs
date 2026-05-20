@@ -2,7 +2,11 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_refresh.c
 
+use std::fmt::Write as FmtWrite;
 use std::io::{self, Write};
+use std::sync::atomic::Ordering;
+
+use super::zle_h::REFRESH_ELEMENT;
 
 /// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
 /// ```c
@@ -474,7 +478,6 @@ pub fn zle_free_highlight() { // c:415
 /// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
 pub fn tcoutclear(to_end: bool) {
     // c:607
-    use std::sync::atomic::Ordering;
     let bytes: &[u8] = if to_end { b"\x1b[J" } else { b"\x1b[2J" }; // c:611 tcout
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed); // c:611 shout
     let _ = crate::ported::utils::write_loop(if fd >= 0 { fd } else { 1 }, bytes);
@@ -667,7 +670,6 @@ pub fn zrefresh() {
     //          collects the rendered escape stream into a String
     //          and writes it to SHTTY in one shot — matches C's
     //          shout destination and reduces syscall count.
-    use std::fmt::Write as FmtWrite;
     let mut handle = String::new();
 
     let (cols, _rows) = (
@@ -792,7 +794,6 @@ pub fn zrefresh() {
     //          fallback). Replaces the prior `stdout.lock()`
     //          fake that wrote refresh output to stdout instead
     //          of the controlling tty.
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
@@ -912,7 +913,6 @@ pub fn wpfxlen(
 /// `// !!! STUB: needs <c-name> port at <Src/file.c:NNNN>`.
 pub fn refreshline(ln: i32) {
     // c:1749
-    use std::sync::atomic::Ordering;
 
     // c:1751 — REFRESH_STRING nl, ol, p1
     // !!! STUB: nbuf / obuf statics — Src/Zle/zle_refresh.c not yet
@@ -1386,7 +1386,6 @@ pub fn moveto(row: usize, col: usize) {
 /// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
 pub fn tcmultout(cap: &str, count: i32) {
     // c:2163
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     for _ in 0..count {
@@ -1466,7 +1465,6 @@ pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {
 /// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
 pub fn tcout(cap: &str) {
     // c:2339
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if fd >= 0 {
         let _ = crate::ported::utils::write_loop(fd, cap.as_bytes());
@@ -1487,7 +1485,6 @@ pub fn tcout(cap: &str) {
 /// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
 pub fn tcoutarg(cap: &str, arg: i32) {
     // c:2351
-    use std::sync::atomic::Ordering;
     // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
     let s = cap.replace("%d", &arg.to_string());
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
@@ -1590,8 +1587,6 @@ pub fn redisplay() {
 /// inline with `// !!! STUB: …`.
 pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     // c:2397
-    use crate::ported::zle::zle_h::REFRESH_ELEMENT;
-    use std::sync::atomic::Ordering;
 
     // c:2399-2405 — declarations.
     let mut vbuf: crate::ported::zle::zle_h::REFRESH_STRING; // c:2399
@@ -2123,7 +2118,6 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
 
 /// Full screen refresh - clears and redraws everything.
 pub fn full_refresh() -> io::Result<()> {
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
     let _ = crate::ported::utils::write_loop(out, b"\x1b[2J\x1b[H");

@@ -17,9 +17,13 @@
 
 pub use crate::signals_h::{signal_default, signal_ignore};
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
+use crate::ported::builtin::{BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT};
+use crate::ported::params::locallevel as LOCALLEVEL;
+use crate::ported::utils::ERRFLAG_ERROR;
 use crate::zsh_h::{
-    isset, ERRFLAG_INT, INTERACTIVE, POSIXTRAPS, PRIVILEGED, TRAP_STATE_FORCE_RETURN,
-    TRAP_STATE_PRIMED, ZEXIT_SIGNAL, ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
+    isset, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE,
+    POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL,
+    ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
 };
 use nix::sys::signal::{sigprocmask, SigmaskHow};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal};
@@ -1325,12 +1329,6 @@ pub fn dotrap(sig: i32) -> i32 {
 #[allow(clippy::too_many_arguments)]
 pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     // c:1081
-    use crate::ported::builtin::{BREAKS, LASTVAL, LOCALLEVEL, LOOPS, RETFLAG, SFCONTEXT};
-    use crate::ported::zsh_h::{
-        AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_ERROR, ERRFLAG_INT,
-        SFC_SIGNAL, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZSIG_FUNC, ZSIG_IGNORED,
-    };
-    use crate::signals_h::{SIGDEBUG, SIGEXIT, SIGZERR};
 
     let obreaks: i32 = BREAKS.load(Ordering::SeqCst); // c:1085
     let oretflag: i32 = RETFLAG.load(Ordering::SeqCst); // c:1086
@@ -2143,8 +2141,6 @@ mod tests {
     #[test]
     fn queue_traps_respects_trapsasync_and_wait_cmd() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::dosetopt;
-        use crate::ported::zsh_h::TRAPSASYNC;
         let saved = crate::ported::zsh_h::isset(TRAPSASYNC);
 
         // Setup: TRAPSASYNC off, trap_queueing_enabled cleared.
@@ -2193,8 +2189,6 @@ mod tests {
     #[test]
     fn settrap_rejects_job_control_signals_when_monitor_set() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::dosetopt;
-        use crate::ported::zsh_h::MONITOR;
         // Save current MONITOR state; restore at end.
         let saved = crate::ported::zsh_h::isset(MONITOR);
         // MONITOR off → trapping SIGTSTP is allowed.
@@ -2241,8 +2235,6 @@ mod tests {
     #[test]
     fn killrunjobs_short_circuits_when_hup_unset() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::dosetopt;
-        use crate::ported::zsh_h::HUP;
         let saved = crate::ported::zsh_h::isset(HUP);
         // Force HUP off; killrunjobs must return immediately.
         dosetopt(HUP, 0, 0);
