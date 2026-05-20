@@ -34,33 +34,21 @@ use crate::ported::params::{
 use crate::ported::ztype_h::ZISPRINT;
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::FDT_UNUSED;
-use crate::ported::zsh_h::{hashnode, nameddir, ND_NOABBREV, ND_USERNAME};
 use crate::ported::zsh_h::{
-    isset, opt_name, unset, AUTONAMEDIRS, BEEP, MULTIBYTE, POSIXIDENTIFIERS, PRINTEIGHTBIT, XTRACE,
-};
-use crate::ported::zsh_h::{
-    Marker, Nularg, Pound, Snull, DEFAULT_IFS, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC,
-    FDT_INTERNAL, FDT_MODULE, LAST_NORMAL_TOK, META, PATCHARS, SPECCHARS,
-};
-use crate::ported::zsh_h::{CSHJUNKIEQUOTES, SHINSTDIN, ZLE_CMD_TRASH};
-use crate::ported::zsh_h::{EMULATE_KSH, EMULATE_SH, EMULATION};
-use crate::ported::zsh_h::{
-    QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE,
-    QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL,
+    hashnode, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS,
+    EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL,
+    FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, META, Nularg, ND_NOABBREV,
+    ND_USERNAME, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH,
+    QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE,
+    QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH,
 };
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
-use crate::ported::ztype_h::ISEP;
-use crate::ported::ztype_h::ZTF_BANGCHAR;
 use crate::ported::ztype_h::{
-    imeta, iwsep, IPATTERN as ZT_IPATTERN, ISEP as ZT_ISEP, ISPECIAL as ZT_ISPECIAL,
-    IWORD as ZT_IWORD, IWSEP as ZT_IWSEP, ZTF_INTERACT,
+    imeta, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL, IPATTERN
+    as ZT_IPATTERN, ISEP, ISEP as ZT_ISEP, ISPECIAL, ISPECIAL as ZT_ISPECIAL, ITOK, IUSER, IWORD,
+    IWORD as ZT_IWORD, IWSEP as ZT_IWSEP, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR, ZTF_INIT,
+    ZTF_INTERACT, ZTF_SP_COMMA,
 };
-use crate::ported::ztype_h::{
-    IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL, ITOK, IUSER, IWORD,
-    TYPTAB, TYPTAB_FLAGS, ZTF_INIT,
-};
-use crate::ported::ztype_h::{ISPECIAL, ZTF_SP_COMMA};
 use libc::{
     S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
     S_IXOTH, S_IXUSR,

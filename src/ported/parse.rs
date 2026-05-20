@@ -14,6 +14,7 @@ use super::lex::{
     IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
     OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN,
     TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
+    LEX_HEREDOCS
 };
 use super::zsh_h::{
     eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Outang,
@@ -26,11 +27,10 @@ use super::zsh_h::{
     REDIR_READ, REDIR_READWRITE, REDIR_VARID_MASK, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS,
     SHORTREPEAT, WCB_COND, WCB_SIMPLE, WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE,
     WC_REDIR_VARID, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
+    funcdump
 };
-use crate::ported::lex::LEX_HEREDOCS;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{errflag, zerr, zwarnnam, ERRFLAG_ERROR};
-use crate::ported::zsh_h::funcdump;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};

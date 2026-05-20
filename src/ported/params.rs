@@ -19,36 +19,31 @@ use crate::config_h::DEFAULT_TMPPREFIX;
 use crate::func_body_fmt::FuncBodyFmt;
 use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, savehistsiz};
 #[allow(unused_imports)]
-use crate::ported::utils::{set_locallevel, zerr};
-use crate::ported::zsh_h::{
-    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, isset as isset_opt,
-    HashTable, Marker, Param, SCANPM_ISVAR_AT, SCANPM_NONAMEREF, SCANPM_WANTINDEX, VALFLAG_SUBST,
-};
-
-#[allow(unused_imports)]
-use crate::ported::math::{mnumber, MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT};
+use crate::ported::math::{MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT};
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set};
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
 #[allow(unused_imports)]
 use crate::ported::utils::{
-    argzero, errflag, inittyptab, posixzero, set_argzero, set_posixzero, unmeta, ztrdup_metafy,
-    zwarn,
+    argzero, errflag, inittyptab, posixzero, set_argzero, set_locallevel, set_posixzero, unmeta,
+    ztrdup_metafy, zerr, zwarn,
 };
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
-    hashtable, isset, paramdef, unset, value, ALLEXPORT, ASSPM_AUGMENT, ASSPM_ENV_IMPORT,
-    ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR,
-    EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
+    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, hashtable, isset, mnumber, paramdef,
+    unset, value, HashTable, Marker, Param, ALLEXPORT, ASSPM_AUGMENT,
+    ASSPM_ENV_IMPORT, ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION,
+    ERRFLAG_ERROR, EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
     PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
     PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
     PM_READONLY_SPECIAL, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
     PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE,
     PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY,
-    PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_KEYMATCH, SCANPM_MATCHKEY,
-    SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY,
-    VALFLAG_INV, WARNCREATEGLOBAL, WARNNESTEDVAR,
+    PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_ISVAR_AT, SCANPM_KEYMATCH,
+    SCANPM_MATCHKEY, SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_NONAMEREF, SCANPM_WANTINDEX,
+    SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
+    WARNCREATEGLOBAL, WARNNESTEDVAR,
 };
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
@@ -62,8 +57,7 @@ pub static LC_UPDATE_NEEDED: std::sync::atomic::AtomicI32 = std::sync::atomic::A
 /// `assignsparam` / `assignnparam` for the assoc-element path.
 /// Stores the param name; the live `&param` lookup is done by
 /// the caller through paramtab.
-pub static FOUNDPARAM: OnceLock<Mutex<Option<String>>> =
-    OnceLock::new();
+pub static FOUNDPARAM: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 /// Port of `rprompt_indent_unsetfn(Param pm, int exp)` from `Src/params.c:152`. C
 /// body: `stdunsetfn(pm, exp); rprompt_indent = 1;` — keeps in
@@ -309,7 +303,7 @@ pub fn newparamtable(size: i32, name: &str) -> Option<HashTable> {
     for _ in 0..hsize {
         nodes.push(None);
     }
-    Some(Box::new(crate::ported::zsh_h::hashtable {
+    Some(Box::new(hashtable {
         hsize,
         ct: 0,
         nodes,
@@ -1018,10 +1012,7 @@ pub const special_params_sh: &[special_paramdef] = &[
 ///  return (HashNode)pm;`
 /// Stub: needs HashTable + autoload + nameref resolve.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
-pub fn getparamnode(
-    ht: &HashTable,
-    nam: &str,
-) -> Option<Param> {
+pub fn getparamnode(ht: &HashTable, nam: &str) -> Option<Param> {
     // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
     let pm = paramtab().read().unwrap().get(nam).cloned();
     let pm = loadparamnode(ht, pm, nam);
@@ -1049,11 +1040,7 @@ pub fn getparamnode(
 /// caller-supplied destination table. The original C uses the
 /// global `outtable`; Rust port plumbs it in explicitly.
 /// WARNING: param names don't match C — Rust=(pm, _flags, outtable) vs C=(hn, flags)
-pub fn scancopyparams(
-    pm: &mut param,
-    _flags: i32,
-    outtable: &mut HashMap<String, Box<param>>,
-) {
+pub fn scancopyparams(pm: &mut param, _flags: i32, outtable: &mut HashMap<String, Box<param>>) {
     // c:586-588 — `tpm = (Param) zshcalloc(...); copyparam(tpm, pm, 0); addnode(...)`.
     let mut tpm = Box::new(pm.clone()); // c:586 zshcalloc
     tpm.old = None;
@@ -1072,10 +1059,7 @@ pub fn scancopyparams(
 /// table; the per-node clone walk requires the HashTable iterator
 /// which isn't wired yet (callers receive the empty allocated
 /// table — same shape the C source returns when `ht` is empty).
-pub fn copyparamtable(
-    ht: Option<&HashTable>,
-    name: &str,
-) -> Option<HashTable> {
+pub fn copyparamtable(ht: Option<&HashTable>, name: &str) -> Option<HashTable> {
     let ht = ht?;
     newparamtable(ht.hsize, name)
 }
@@ -1459,35 +1443,33 @@ pub fn createparamtable() {
 
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
-    let add_special =
-        |ip: &special_paramdef,
-         tab: &mut HashMap<String, Param>| {
-            let pm = Box::new(param {
-                node: hashnode {
-                    next: None,
-                    nam: ip.name.to_string(),
-                    flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
-                },
-                u_data: 0,
-                u_arr: None,
-                u_str: None,
-                u_val: 0,
-                u_dval: 0.0,
-                u_hash: None,
-                gsu_s: None,
-                gsu_i: None,
-                gsu_f: None,
-                gsu_a: None,
-                gsu_h: None,
-                base: 0,
-                width: 0,
-                env: None,
-                ename: None,
-                old: None,
-                level: 0,
-            });
-            tab.insert(ip.name.to_string(), pm);
-        };
+    let add_special = |ip: &special_paramdef, tab: &mut HashMap<String, Param>| {
+        let pm = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: ip.name.to_string(),
+                flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        });
+        tab.insert(ip.name.to_string(), pm);
+    };
 
     // c:838-840 — `for (ip = special_params; ip->node.nam; ip++)
     //              paramtab->addnode(...)`. Section 1: always loaded.
@@ -1502,9 +1484,7 @@ pub fn createparamtable() {
     // load special_params_sh (scalar versions). Otherwise load
     // special_params zsh-only section (the continuation past the
     // inner NULL sentinel).
-    let is_sh_ksh = EMULATION(
-        EMULATE_SH | EMULATE_KSH,
-    );
+    let is_sh_ksh = EMULATION(EMULATE_SH | EMULATE_KSH);
     {
         let mut tab = paramtab().write().unwrap();
         if is_sh_ksh {
@@ -1827,9 +1807,8 @@ pub fn createparamtable() {
 /// is typed `Option<HashTable>` per Src/zsh.h:1841 but the full
 /// HashTable substrate isn't wired yet; the assoc-array values live
 /// here keyed on param name until that lands.
-static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
-    Mutex<HashMap<String, IndexMap<String, String>>>,
-> = OnceLock::new();
+static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<Mutex<HashMap<String, IndexMap<String, String>>>> =
+    OnceLock::new();
 
 /// Port of `assigngetset(Param pm)` from `Src/params.c:994`. C body
 /// installs the standard get/set/unset vtable matching the
@@ -3548,8 +3527,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 }
                 strsetfn(pm, x);
                 if (pm.node.flags as u32 & PM_HASHELEM) == 0
-                    && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0
-                        || isset(AUTONAMEDIRS))
+                    && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0 || isset(AUTONAMEDIRS))
                 {
                     pm.node.flags |= PM_NAMEDDIR as i32;
                     // adduserdir(pm.node.nam, &z, 0, 0); -- userdirs not ported
@@ -3669,8 +3647,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
     if errflag.load(Ordering::Relaxed) != 0
         || ((pm.env.is_none()
             && (pm.node.flags as u32 & PM_EXPORTED) == 0
-            && !(isset(ALLEXPORT)
-                && (pm.node.flags as u32 & PM_HASHELEM) == 0))
+            && !(isset(ALLEXPORT) && (pm.node.flags as u32 & PM_HASHELEM) == 0))
             || (pm.node.flags as u32 & PM_ARRAY) != 0
             || pm.ename.is_some())
     {
@@ -4206,12 +4183,7 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
 /// Without the diagnostic, `setopt WARN_CREATE_GLOBAL` had no
 /// observable effect — the whole point of the option is the
 /// user-visible warning.
-pub fn check_warn_pm(
-    pm: &param,
-    pmtype: &str,
-    created: i32,
-    may_warn_about_nested_vars: i32,
-) {
+pub fn check_warn_pm(pm: &param, pmtype: &str, created: i32, may_warn_about_nested_vars: i32) {
     // c:3160
     if may_warn_about_nested_vars == 0 && created == 0 {
         // c:3165
@@ -4463,7 +4435,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     if !existing {
         // c:3234 `createparam(t, PM_SCALAR); created = 1;`
         let mut pm_flags = PM_SCALAR as i32;
-        if isset_opt(ALLEXPORT) {
+        if isset(ALLEXPORT) {
             // c:1149-1150 (ALLEXPORT path)
             pm_flags |= PM_EXPORTED as i32;
         }
@@ -4508,11 +4480,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let is_array_or_hash = (f & PM_ARRAY) != 0 || (f & PM_HASHED) != 0;
         let is_special_or_tied = (f & (PM_SPECIAL | PM_TIED)) != 0;
         let augment_bit = (flags & ASSPM_AUGMENT) != 0;
-        if is_array_or_hash
-            && !is_special_or_tied
-            && !augment_bit
-            && !isset(KSHARRAYS)
-        {
+        if is_array_or_hash && !is_special_or_tied && !augment_bit && !isset(KSHARRAYS) {
             // c:3242 — flip type to PM_SCALAR, drop array/hash slots.
             let pm_mut = tab.get_mut(name).unwrap();
             pm_mut.node.flags =
@@ -4635,10 +4603,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // callbacks, intrusive `next` chain, scope-stacked iterators) is
 // not yet wired; until it is, the typed map is the operative
 // storage.
-static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> =
-    OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> =
-    OnceLock::new();
+static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::new();
+static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::new();
 
 /// Array parameter assignment (no subscript).
 ///
@@ -4653,11 +4619,7 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> =
 ///   - ASSPM_AUGMENT (`a+=val`) preserve-old prepend (c:3404-3412)
 ///   - PM_UNIQUE dedupe (c:3401)
 ///   - element-wise `a[k]=v` slice path (c:3373-3389)
-pub fn assignaparam(
-    name: &str,
-    val: Vec<String>,
-    flags: i32,
-) -> Option<Param> {
+pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // c:3357
     use crate::ported::utils::ERRFLAG_ERROR;
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
@@ -4851,11 +4813,7 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
 /// already-ported helpers; the createparam/paramtab backend is
 /// still stubbed elsewhere so the create-new-param branch returns
 /// None until `createparam` lands.
-pub fn assignnparam(
-    s: &str,
-    val: mnumber,
-    flags: i32,
-) -> Option<Box<param>> {
+pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
         zerr(&format!("not an identifier: {}", s)); // c:3667
@@ -5013,10 +4971,7 @@ pub fn assignnparam(
 /// the fabricated sig fit nothing. Match C exactly: `(s, val)` where
 /// `val` is the canonical `mnumber` tagged union, returning the
 /// resulting Param.
-pub fn setnparam(
-    s: &str,
-    val: mnumber,
-) -> Option<Param> {
+pub fn setnparam(s: &str, val: mnumber) -> Option<Param> {
     assignnparam(s, val, ASSPM_WARN as i32) // c:3748
 }
 
@@ -5117,10 +5072,10 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
     // c:3796
     let s = pm.node.nam.clone(); // c:3796
     queue_signals(); // c:3799
-                                             // c:3800-3807 — paramtab->getnode2 / getnode reachability check.
-                                             // Without paramtab vtable wired we cannot detect the hidden-
-                                             // variable case, so we proceed; a future port of paramtab
-                                             // adds the check at this site.
+                     // c:3800-3807 — paramtab->getnode2 / getnode reachability check.
+                     // Without paramtab vtable wired we cannot detect the hidden-
+                     // variable case, so we proceed; a future port of paramtab
+                     // adds the check at this site.
     unsetparam_pm(pm, 0, 1); // c:3819
     unqueue_signals(); // c:3819
     let _ = createparam(&s, flags); // c:3819
@@ -5149,19 +5104,19 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 pub fn unsetparam(name: &str) {
     // c:3819
     queue_signals(); // c:3825
-                                             // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
-                                             // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
-                                             //
-                                             // Two divergences in the previous Rust port:
-                                             //   1. Missing PM_NAMEREF check — `unsetparam("ref")` where `ref`
-                                             //      is a nameref would remove the ref alias itself. C explicitly
-                                             //      skips nameref params here (they're cleared via the
-                                             //      ref-specific path, not the value-side unset).
-                                             //   2. Bypassed `unsetparam_pm` — removed the entry directly from
-                                             //      paramtab without running the readonly-guard at c:3850, the
-                                             //      stdunsetfn dispatch at c:3870, or the `pm->old` scope
-                                             //      restore. `typeset -r x=foo; unset x` would silently succeed
-                                             //      in Rust where C rejects with `read-only variable: x`.
+                     // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
+                     // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
+                     //
+                     // Two divergences in the previous Rust port:
+                     //   1. Missing PM_NAMEREF check — `unsetparam("ref")` where `ref`
+                     //      is a nameref would remove the ref alias itself. C explicitly
+                     //      skips nameref params here (they're cleared via the
+                     //      ref-specific path, not the value-side unset).
+                     //   2. Bypassed `unsetparam_pm` — removed the entry directly from
+                     //      paramtab without running the readonly-guard at c:3850, the
+                     //      stdunsetfn dispatch at c:3870, or the `pm->old` scope
+                     //      restore. `typeset -r x=foo; unset x` would silently succeed
+                     //      in Rust where C rejects with `read-only variable: x`.
     let (found, is_nameref) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
@@ -5383,7 +5338,7 @@ pub fn arrhashsetfn(
     // c:4132-4138 — install or augment. Skip the createparam
     // sub-hash walk pending assoc-storage wiring; install an
     // empty hashtable so hashgetfn doesn't return stale data.
-    pm.u_hash = Some(Box::new(crate::ported::zsh_h::hashtable {
+    pm.u_hash = Some(Box::new(hashtable {
         hsize: 0,
         ct: 0,
         nodes: Vec::new(),
@@ -6781,8 +6736,7 @@ pub fn homesetfn(x: String) {
     // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
     // Falls through to the plain `x` store when CHASELINKS is off or
     // xsymlink fails.
-    let resolved = if !x.is_empty() && isset(crate::ported::zsh_h::CHASELINKS)
-    {
+    let resolved = if !x.is_empty() && isset(crate::ported::zsh_h::CHASELINKS) {
         crate::ported::utils::xsymlink(&x).unwrap_or(x)
     } else {
         x
@@ -8096,10 +8050,7 @@ thread_local! {
 /// for a nameref. Rust signature mirrors C `Param upscope(Param,
 /// const Param ref)`.
 /// WARNING: param names don't match C — Rust=(pm, reference) vs C=(pm, ref)
-pub fn upscope(
-    mut pm: Param,
-    reference: &param,
-) -> Param {
+pub fn upscope(mut pm: Param, reference: &param) -> Param {
     if (reference.node.flags as u32 & PM_UPPER) != 0 {
         while pm.level > reference.level - 1 {
             match pm.old.take() {
@@ -8235,8 +8186,8 @@ pub fn set_foundparam(nam: Option<String>) {
 pub static DELUNSET: std::sync::atomic::AtomicI32 = // c:610
     std::sync::atomic::AtomicI32::new(0);
 
-pub(crate) fn paramtab_hashed_storage(
-) -> &'static Mutex<HashMap<String, IndexMap<String, String>>> {
+pub(crate) fn paramtab_hashed_storage() -> &'static Mutex<HashMap<String, IndexMap<String, String>>>
+{
     PARAMTAB_HASHED_STORAGE_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -8410,12 +8361,9 @@ fn cached_username_lock() -> &'static Mutex<String> {
 //   c:639  static char **paramvals;
 //   c:640  static Param foundparam;   <-- exposed earlier as FOUNDPARAM
 pub static NUMPARAMVALS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); // c:626
-pub static SCANPROG: OnceLock<Mutex<Option<String>>> =
-    OnceLock::new(); // c:637
-pub static SCANSTR: OnceLock<Mutex<Option<String>>> =
-    OnceLock::new(); // c:638
-pub static PARAMVALS: OnceLock<Mutex<Vec<String>>> =
-    OnceLock::new(); // c:639
+pub static SCANPROG: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // c:637
+pub static SCANSTR: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // c:638
+pub static PARAMVALS: OnceLock<Mutex<Vec<String>>> = OnceLock::new(); // c:639
 
 /// Resolve the current user's name. Mirrors C's `get_username()`
 /// init at Src/init.c which reads `getpwuid(getuid())->pw_name`
@@ -9031,65 +8979,29 @@ mod gsu_tests {
             .unwrap_or_else(|e| e.into_inner());
         // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
         histcharssetfn(Some("Q".to_string()));
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'Q' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'Q' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), 0);
         assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 2-char: bangchar=='X', hatchar=='Y', hashchar=='\0'.
         histcharssetfn(Some("XY".to_string()));
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'X' as i32
-        );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            b'Y' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'X' as i32);
+        assert_eq!(hatchar.load(Ordering::SeqCst), b'Y' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 3-char: bangchar=='A', hatchar=='B', hashchar=='C'.
         histcharssetfn(Some("ABC".to_string()));
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'A' as i32
-        );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            b'B' as i32
-        );
-        assert_eq!(
-            hashchar.load(Ordering::SeqCst),
-            b'C' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'A' as i32);
+        assert_eq!(hatchar.load(Ordering::SeqCst), b'B' as i32);
+        assert_eq!(hashchar.load(Ordering::SeqCst), b'C' as i32);
         // 4+ char: c:5087-5088 truncates to 3.
         histcharssetfn(Some("WXYZ".to_string()));
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'W' as i32
-        );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            b'X' as i32
-        );
-        assert_eq!(
-            hashchar.load(Ordering::SeqCst),
-            b'Y' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'W' as i32);
+        assert_eq!(hatchar.load(Ordering::SeqCst), b'X' as i32);
+        assert_eq!(hashchar.load(Ordering::SeqCst), b'Y' as i32);
         // Reset to default.
         histcharssetfn(None);
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'!' as i32
-        );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            b'^' as i32
-        );
-        assert_eq!(
-            hashchar.load(Ordering::SeqCst),
-            b'#' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
+        assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
     }
 }
 
@@ -9160,6 +9072,7 @@ fn paramvals_lock() -> &'static Mutex<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::zsh_h::hashnode;
 
     /// `setscope_base` pushes the param name onto `SCOPEREFS[base]`
     /// when `base > pm.level` (c:6440). Grows the SCOPEREFS Vec as
@@ -9332,7 +9245,11 @@ mod tests {
         );
         // The PM_UNIQUE flag must persist through the assignment.
         let pm_check = paramtab().read().unwrap().get("aa_uniq").cloned().unwrap();
-        assert_ne!(pm_check.node.flags as u32 & PM_UNIQUE, 0, "PM_UNIQUE flag preserved across assignment");
+        assert_ne!(
+            pm_check.node.flags as u32 & PM_UNIQUE,
+            0,
+            "PM_UNIQUE flag preserved across assignment"
+        );
         unsetparam("aa_uniq");
         opt_state_set("exec", false);
     }
@@ -9554,7 +9471,11 @@ mod tests {
             pm_after.base, 5,
             "c:5891 — PM_UPPER nameref base MUST be preserved (was 5, must stay 5)"
         );
-        assert_ne!(pm_after.node.flags as u32 & PM_UPPER, 0, "PM_UPPER flag itself must persist");
+        assert_ne!(
+            pm_after.node.flags as u32 & PM_UPPER,
+            0,
+            "PM_UPPER flag itself must persist"
+        );
 
         paramtab().write().unwrap().remove("up_ref");
         set_locallevel(0);
@@ -10124,13 +10045,10 @@ mod tests {
         assert_eq!(
             // c:3076
             getsparam(name).as_deref(), // c:3076
-            Some("test_value_42")                              // c:3076
+            Some("test_value_42")       // c:3076
         ); // c:3076
            // Cleanup so other tests don't see leaked param.
-        let _ = paramtab()
-            .write()
-            .unwrap()
-            .remove(name); // c:3819
+        let _ = paramtab().write().unwrap().remove(name); // c:3819
         opt_state_set("exec", saved_exec); // c:2697
     }
 
@@ -10154,10 +10072,7 @@ mod tests {
             getsparam(name).is_some(),
             "param must be set before remove path"
         );
-        let _ = paramtab()
-            .write()
-            .unwrap()
-            .remove(name);
+        let _ = paramtab().write().unwrap().remove(name);
         assert!(
             getsparam(name).is_none(),
             "after remove, getsparam must return None"
@@ -10172,9 +10087,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_ARR_X";
         assignaparam(name, vec!["a".into(), "b".into(), "c".into()], 0);
-        let tab = paramtab()
-            .read()
-            .expect("paramtab poisoned");
+        let tab = paramtab().read().expect("paramtab poisoned");
         let pm = tab.get(name).expect("param installed");
         assert_eq!(
             pm.u_arr.as_deref(),
@@ -10182,10 +10095,7 @@ mod tests {
             "assignaparam stores all three elements"
         );
         drop(tab);
-        let _ = paramtab()
-            .write()
-            .unwrap()
-            .remove(name);
+        let _ = paramtab().write().unwrap().remove(name);
     }
 
     // Use the module-scope HISTCHARS_TEST_LOCK_SHARED (declared
@@ -10206,18 +10116,9 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         // Default state.
         histcharssetfn(None);
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'!' as i32
-        );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            b'^' as i32
-        );
-        assert_eq!(
-            hashchar.load(Ordering::SeqCst),
-            b'#' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
+        assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
         // Set HISTCHARS to "@:%".
         histcharssetfn(Some("@:%".to_string()));
         assert_eq!(
@@ -10237,14 +10138,8 @@ mod tests {
         );
         // Restore.
         histcharssetfn(None);
-        assert_eq!(
-            bangchar.load(Ordering::SeqCst),
-            b'!' as i32
-        );
-        assert_eq!(
-            hashchar.load(Ordering::SeqCst),
-            b'#' as i32
-        );
+        assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
+        assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
     }
 
     /// `Src/params.c:5064-5074` — `histcharsgetfn` reads from the
@@ -10296,11 +10191,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved = homegetfn();
         homesetfn(String::new());
-        assert_eq!(
-            homegetfn(),
-            "",
-            "c:5126 — empty x stores empty (no panic)"
-        );
+        assert_eq!(homegetfn(), "", "c:5126 — empty x stores empty (no panic)");
         homesetfn(saved);
     }
 
@@ -10365,10 +10256,7 @@ mod tests {
             bang_before,
             "c:5092 — bangchar unchanged after non-ASCII rejection"
         );
-        assert_eq!(
-            hatchar.load(Ordering::SeqCst),
-            hat_before
-        );
+        assert_eq!(hatchar.load(Ordering::SeqCst), hat_before);
     }
 
     /// Shared mutex for tests that mutate argzero/posixzero — both
@@ -10425,10 +10313,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Inject zunderscore containing a Pound token byte (\u{84})
         // and verify it gets stripped by untokenize in the return.
-        let saved = zunderscore_lock()
-            .lock()
-            .unwrap()
-            .clone();
+        let saved = zunderscore_lock().lock().unwrap().clone();
 
         // Set zunderscore to a string containing a Pound token byte
         // surrounded by literals.
@@ -11171,7 +11056,7 @@ mod tests {
             mnumber {
                 l: 999,
                 d: 0.0,
-                type_: MN_INT,
+                type_: MN_INTEGER,
             },
         );
         assert!(r.is_some(), "setnparam returns Some for new param");
@@ -11192,7 +11077,7 @@ mod tests {
             mnumber {
                 l: 0,
                 d: 3.14,
-                type_: MN_FLT,
+                type_: MN_FLOAT,
             },
         );
         assert!(r.is_some(), "setnparam returns Some for new float param");
