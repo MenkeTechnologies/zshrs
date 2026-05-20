@@ -20,25 +20,34 @@ use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::Ordering;
 
 use crate::ported::builtin::LOCALLEVEL;
-use crate::ported::glob::{remnulargs, tokenize};
+use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
 use crate::ported::lex::untokenize;
 use crate::ported::mem::ztrdup;
-use crate::ported::params::{setaparam, setsparam};
-use crate::ported::pattern::{haswilds, patcompile, pattry};
+use crate::ported::params::{
+    getstrvalue, getvalue, getvaluearr, paramtab, setaparam, setarrvalue, sethparam, setiparam,
+    setsparam, setstrvalue,
+};
+use crate::ported::pattern::{haswilds, patcompile, pattry, Patprog};
 use crate::ported::string::tricat;
 use crate::ported::utils::{
     adjustcolumns, inittyptab, niceztrlen, quotestring, set_noerrs, strpfx, zwarnnam, ztrlen,
 };
-use crate::ported::zle::comp_h::{Cmatcher, CMF_LEFT, CMF_RIGHT};
-use crate::ported::zle::compcore::{comppatmatch, rembslash};
-use crate::ported::zle::compmatch::pattern_match;
+use crate::ported::zle::comp_h::{
+    Cmatcher, Cpattern, CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON, CMF_LEFT, CMF_RIGHT, CPAT_ANY,
+    CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
+};
+use crate::ported::zle::compcore::{begcmgroup, comppatmatch, endcmgroup, get_user_var, rembslash};
+use crate::ported::zle::compmatch::{pattern_match, pattern_match1, pattern_match_equivalence};
 use crate::ported::zle::complete::{
-    ignore_prefix, ignore_suffix, parse_cmatcher, COMPCURRENT, COMPPREFIX, COMPQSTACK, COMPSUFFIX,
-    COMPWORDS, INCOMPFUNC,
+    ignore_prefix, ignore_suffix, parse_cmatcher, restrict_range, COMPCURRENT, COMPPREFIX,
+    COMPQSTACK, COMPSUFFIX, COMPWORDS, INCOMPFUNC,
 };
 use crate::ported::zle::compresult::ztat;
-use crate::ported::zsh_h::{options, MAX_OPS, OPT_ISSET, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH};
-use crate::ported::ztype_h::{iblank, idigit, inblank};
+use crate::ported::zsh_h::{
+    options, unset, value, Comma, Inbrace, Outbrace, GLOBDOTS, MAX_OPS, OPT_ISSET, PM_ARRAY,
+    PM_TYPE, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH, QT_BACKSLASH_PATTERN,
+};
+use crate::ported::ztype_h::{iblank, idigit, imeta, inblank};
 
 // =====================================================================
 // CRT_* — `_describe` row-type discriminator from `computil.c:79-83`.
@@ -963,7 +972,6 @@ pub fn cd_init(
     args: &[String],
     disp: i32,
 ) -> i32 {
-    use crate::ported::zle::compcore::{get_user_var, rembslash};
 
     // c:485 — discard prior parsed state.
     if cd_parsed.load(std::sync::atomic::Ordering::Relaxed) != 0 {
@@ -1510,8 +1518,6 @@ pub fn bin_compdescribe(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::params::paramtab;
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:850
@@ -4341,7 +4347,6 @@ pub fn ca_set_data(
     optdef: Option<&caopt>,
     single: i32,
 ) {
-    use crate::ported::zle::complete::restrict_range;
 
     let mut arg: Option<Box<caarg>> = start_arg;
     let mut opt = opt.map(|s| s.to_string());
@@ -4546,9 +4551,6 @@ pub fn bin_comparguments(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::params::{setaparam, sethparam, setiparam, setsparam};
-    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:2590
@@ -5889,8 +5891,6 @@ pub fn bin_compvalues(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::params::{setaparam, sethparam, setsparam};
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3479
@@ -6168,9 +6168,6 @@ pub fn bin_compquote(
     ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::params::{getstrvalue, getvalue, getvaluearr, setarrvalue, setstrvalue};
-    use crate::ported::zsh_h::{value, PM_ARRAY, PM_TYPE};
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3685
@@ -6377,10 +6374,6 @@ pub fn bin_comptags(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::builtin::LOCALLEVEL;
-    use crate::ported::params::{setaparam, setsparam};
-    use crate::ported::utils::strpfx;
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3835
@@ -6608,11 +6601,6 @@ pub fn bin_comptry(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::glob::{hasbraces, tokenize, xpandbraces};
-    use crate::ported::pattern::{patcompile, pattry};
-    use crate::ported::zsh_h::{Comma, Inbrace, Outbrace};
-    use crate::ported::ztype_h::{iblank, inblank};
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3963
@@ -6893,11 +6881,6 @@ pub fn cfp_test_exact(
     accept: &[String], // c:4160
     skipped: &str,
 ) -> Option<Vec<String>> {
-    use crate::ported::glob::tokenize;
-    use crate::ported::pattern::{patcompile, pattry, Patprog};
-    use crate::ported::zle::compcore::rembslash;
-    use crate::ported::zle::complete::{COMPPREFIX, COMPSUFFIX};
-    use crate::ported::zle::compresult::ztat;
 
     let compprefix = COMPPREFIX
         .get()
@@ -6999,10 +6982,6 @@ pub fn cfp_matcher_range(
     ms: &[Option<Box<Cmatcher>>], // c:4307
     add: &str,
 ) -> String {
-    use crate::ported::zle::comp_h::{Cpattern, CMF_RIGHT};
-    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
-    use crate::ported::zle::compmatch::{pattern_match1, pattern_match_equivalence};
-    use crate::ported::ztype_h::imeta; // c:60
 
     // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
     // / pattern_match_equivalence. Walks an encoded char-range byte
@@ -7505,8 +7484,6 @@ pub fn cfp_bld_pats(
     skipped: &str, // c:4704
     pats: &[String],
 ) -> Vec<String> {
-    use crate::ported::zle::complete::COMPPREFIX;
-    use crate::ported::zsh_h::{unset, GLOBDOTS};
 
     let compprefix = COMPPREFIX
         .get()
@@ -7783,10 +7760,6 @@ pub fn bin_compfiles(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::params::{paramtab, setaparam};
-    use crate::ported::utils::quotestring;
-    use crate::ported::zsh_h::QT_BACKSLASH_PATTERN;
-    use std::sync::atomic::Ordering;
 
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:4972
@@ -7927,8 +7900,6 @@ pub fn bin_compgroups(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::zle::comp_h::{CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON};
-    use crate::ported::zle::compcore::{begcmgroup, endcmgroup};
 
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {
         // c:5078
