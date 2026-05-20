@@ -2579,10 +2579,13 @@ pub fn paramsubst(
                                         // octal (`\NNN` even without leading `0`), or extended
                                         // ctrl (`\^X`). Direct port of subst.c:1811's
                                         // `int getkeys = -1` initialization.
-        let mut flag_g_seen: bool = false; // c:2410
-        let mut flag_g_emacs: bool = false; // c:2418
-        let mut flag_g_octal: bool = false; // c:2421
-        let mut flag_g_ctrl: bool = false; // c:2424
+        // c:1811 — `int getkeys = -1;`. (g) flag sets `getkeys = 0`
+        // then ORs in GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL
+        // bits per sub-letter. Consumer at c:3955 tests `getkeys >= 0`.
+        // The previous Rust port decomposed into 4 separate bools
+        // (flag_g_seen / flag_g_emacs / flag_g_octal / flag_g_ctrl) —
+        // Rule D bag-of-globals.
+        let mut getkeys: i32 = -1;                                            // c:1811
         let mut flag_pct_prompt: u32 = 0; // c:2405 (% prompt count)
         let mut multi_width: u32 = 0; // c:2376 (m count)
         let mut flnum: u32 = 0; // c:1786 (I:N:)
@@ -2951,50 +2954,34 @@ pub fn paramsubst(
                         // via the `(p)` flag's separator arg or
                         // via `(g)` itself promoted to whole-value
                         // decoding when no `(p)` is present).
-                        idx += 1; // c:2410
-                        flag_g_seen = true; // c:2411 (`getkeys = 0`)
-                        let mut want_emacs = false; // c:2418
-                        let mut want_octal = false; // c:2421
-                        let mut want_ctrl = false; // c:2424
-                        if idx < body_chars.len() {
-                            // c:2410
-                            let del = body_chars[idx]; // c:2410
-                            idx += 1; // c:2410
-                            while idx < body_chars.len()    // c:2410
+                        idx += 1;                                             // c:2410 ++s
+                        if getkeys < 0 {                                      // c:2411
+                            getkeys = 0;                                      // c:2412
+                        }                                                     // c:2412
+                        if idx < body_chars.len() {                          // c:2413 if (*t)
+                            let del = body_chars[idx];                       // c:2414 sav = *t
+                            idx += 1;                                         // c:2416 while (*++s)
+                            while idx < body_chars.len()                     // c:2416
                                 && body_chars[idx] != del
-                            // c:2410
-                            {
-                                // c:2410
-                                match body_chars[idx] {
-                                    // c:2415
-                                    'e' => want_emacs = true, // c:2418
-                                    'o' => want_octal = true, // c:2421
-                                    'c' => want_ctrl = true,  // c:2424
-                                    _ => {
-                                        // c:2429 (flagerr)
+                            {                                                 // c:2416
+                                match body_chars[idx] {                      // c:2417 switch (*s)
+                                    'e' => getkeys |= crate::ported::utils::GETKEY_EMACS as i32, // c:2418-2419
+                                    'o' => getkeys |= crate::ported::utils::GETKEY_OCTAL_ESC as i32, // c:2421-2422
+                                    'c' => getkeys |= crate::ported::utils::GETKEY_CTRL as i32, // c:2424-2425
+                                    _ => {                                    // c:2428 default
+                                        // c:2430 goto flagerr — emit bad-subst.
                                         zerr("bad substitution");
                                         errflag_set_error();
                                         return (String::new(), new_pos, vec![]);
-                                    }
-                                }
-                                idx += 1; // c:2410
-                            } // c:2410
-                            if idx < body_chars.len() {
+                                    }                                         // c:2431
+                                }                                             // c:2432
+                                idx += 1;                                     // c:2416
+                            }                                                 // c:2432
+                            if idx < body_chars.len() {                       // c:2410 skip closing del
                                 idx += 1;
-                            } // c:2410
-                        } // c:2410
-                          // Apply sub-flag bits to the existing
-                          // getkeystring escape path. zshrs's
-                          // getkeystring wraps the same Src/utils.c
-                          // function — toggling these flags makes the
-                          // `(p)` route honor the requested decoding
-                          // sub-set. When no (p) is present, fold the
-                          // (g) effect onto the value at the end of
-                          // flag-loop processing via flag_g_*.
-                        flag_g_emacs |= want_emacs;
-                        flag_g_octal |= want_octal;
-                        flag_g_ctrl |= want_ctrl;
-                        continue; // c:2410
+                            }
+                        }                                                     // c:2413
+                        continue;                                             // c:2410
                     } // c:2409 (g)
                     '~' => {
                         tok_arg = !tok_arg;
@@ -5591,9 +5578,13 @@ pub fn paramsubst(
         // >= 0)` block which fires whenever `getkeys` was set, even
         // to 0 (bare `(g::)` with no sub-letters means "default
         // getkeystring decoding"). Per-element on arrays.
-        if flag_g_seen {
-            // c:3955
-            let _ = (flag_g_emacs, flag_g_octal, flag_g_ctrl); // sub-bits reserved for future GETKEY_* flags
+        if getkeys >= 0 {                                                    // c:3955 if (getkeys >= 0)
+            // GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL bits in
+            // `getkeys` are honored by getkeystring directly; passing
+            // `getkeys` through would require getkeystring_with(s,
+            // getkeys as u32) at c:6915 (utils.c). Default call here
+            // produces the same byte-string for the unsuffixed (g::)
+            // case (bare flag with no sub-letters).
             let decode_one = |s: &str| -> String { crate::ported::utils::getkeystring(s).0 };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
