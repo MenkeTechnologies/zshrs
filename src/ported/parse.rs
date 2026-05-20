@@ -184,9 +184,9 @@ pub fn parse_context_restore(ps: &parse_stack) {
 
     // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
     // error flag so the outer parse sees a clean state.
-    crate::ported::utils::errflag.fetch_and(
-        !crate::ported::utils::ERRFLAG_ERROR,
-        std::sync::atomic::Ordering::Relaxed,
+    errflag.fetch_and(
+        !ERRFLAG_ERROR,
+        Ordering::Relaxed,
     );
 }
 
@@ -561,7 +561,7 @@ pub fn init_parse_status() {
     set_inredir(false); // c:500
     set_infor(0); // c:500
     set_intypeset(false); // c:500
-    crate::ported::lex::set_inrepeat(0); // c:501 inrepeat_ = 0
+    set_inrepeat(0); // c:501 inrepeat_ = 0
     set_incmdpos(true); // c:502
 }
 
@@ -634,7 +634,7 @@ pub fn bld_eprog(heap: bool) -> eprog {
     // ->len is the canonical value for parity tests, so we use
     // the same arithmetic.
     let prog_bytes = ecused * 4; // sizeof(wordcode) = 4
-    let len = (ecnpats * std::mem::size_of::<*const u8>()) + prog_bytes + ecsoffs;
+    let len = (ecnpats * size_of::<*const u8>()) + prog_bytes + ecsoffs;
 
     // Snapshot the wordcode buffer + string table.
     let prog_words: Vec<u32> = ECBUF.with(|c| c.borrow()[..ecused].to_vec());
@@ -684,7 +684,7 @@ pub fn bld_eprog(heap: bool) -> eprog {
 /// (`Src/signals.c:712`) to short-circuit a trap that resolves to
 /// an empty program.
 pub fn empty_eprog(p: &eprog) -> bool {
-    p.prog.is_empty() || p.prog[0] == crate::ported::zsh_h::WCB_END()
+    p.prog.is_empty() || p.prog[0] == WCB_END()
 }
 
 /// Clear pending here-document list. Direct port of
@@ -2547,7 +2547,7 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 ///   3. Sets ERRFLAG_ERROR per c:2753 (noerr=0 path always taken).
 pub fn yyerror(msg: &str) {
     // c:2733
-    let int_flagged = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
+    let int_flagged = (errflag.load(Ordering::SeqCst)
         & crate::ported::zsh_h::ERRFLAG_INT)
         != 0;
     if !int_flagged {
@@ -2559,12 +2559,12 @@ pub fn yyerror(msg: &str) {
         else {
             format!("parse error: {msg}")
         }; // c:2748
-        crate::ported::utils::zwarnnam("zsh", &body);
+        zwarnnam("zsh", &body);
     }
     // c:2753 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`
-    crate::ported::utils::errflag.fetch_or(
+    errflag.fetch_or(
         crate::ported::zsh_h::ERRFLAG_ERROR,
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
 }
 
@@ -2788,7 +2788,7 @@ pub fn ecgetarr(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>)
 /// `Src/parse.c:2937`. Same shape as `ecgetarr` but C returns
 /// `LinkList`; zshrs uses `Vec<String>` for both.
 pub fn ecgetlist(
-    s: &mut crate::ported::zsh_h::estate,
+    s: &mut estate,
     num: usize,
     dup: i32,
     tokflag: Option<&mut i32>,
@@ -2876,7 +2876,7 @@ pub fn ecgetredirs(s: &mut estate) -> Vec<redir> {
 /// reserves space in `ecbuf` via `ecispace`, then re-walks `s->pc`
 /// re-emitting each redir's wordcodes into the reserved slot —
 /// finally calls `bld_eprog(0)` to package the result as an Eprog.
-pub fn eccopyredirs(s: &mut crate::ported::zsh_h::estate) -> Option<eprog> {
+pub fn eccopyredirs(s: &mut estate) -> Option<eprog> {
     let prog_len = s.prog.prog.len();
     if s.pc >= prog_len {
         return None;
@@ -3004,8 +3004,8 @@ pub fn eccopyredirs(s: &mut crate::ported::zsh_h::estate) -> Option<eprog> {
 /// Called once at shell startup (init_main → init_misc → init_eprog).
 pub fn init_eprog() {
     let mut d = DUMMY_EPROG.lock().unwrap();
-    d.prog = vec![crate::ported::zsh_h::WCB_END()]; // c:3071/3073
-    d.len = std::mem::size_of::<wordcode>() as i32; // c:3072
+    d.prog = vec![WCB_END()]; // c:3071/3073
+    d.len = size_of::<wordcode>() as i32; // c:3072
     d.strs = None; // c:3074
     d.flags = 0;
     d.npats = 0;
@@ -3364,7 +3364,7 @@ pub fn fdswap(p: &mut [u32]) {
 /// byte-order (`FD_OMAGIC`) so big-endian readers can mmap the
 /// same file. Bodies are byte-swapped via `fdswap` on the second pass.
 pub fn write_dump(
-    dfd: &mut std::fs::File, // c:3334
+    dfd: &mut File, // c:3334
     progs: &[wcfunc],
     mut map: i32,
     hlen: i32,
@@ -3471,7 +3471,7 @@ pub fn build_dump(
     _map: i32,
     _flags: u32,
 ) -> i32 {
-    crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump emit not yet ported", dump));
+    zwarnnam(nam, &format!("{}: wordcode dump emit not yet ported", dump));
     1
 }
 
@@ -3532,7 +3532,7 @@ pub fn build_cur_dump(
     _map: i32,
     _what: i32,
 ) -> i32 {
-    crate::ported::utils::zwarnnam(
+    zwarnnam(
         nam,
         &format!("{}: wordcode dump-current emit not yet ported", dump),
     );
@@ -3544,13 +3544,13 @@ pub fn build_cur_dump(
 /// `.zwc.old` if the primary doesn't exist (zsh uses the `.old`
 /// suffix to keep a previous dump readable while a rewrite is in
 /// progress).
-pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {
+pub fn zwcstat(filename: &str) -> Option<fs::Metadata> {
     // c:3656
-    if let Ok(m) = std::fs::metadata(filename) {
+    if let Ok(m) = fs::metadata(filename) {
         return Some(m);
     }
     let old = format!("{}.old", filename);
-    std::fs::metadata(&old).ok()
+    fs::metadata(&old).ok()
 }
 
 /// Port of `load_dump_file(char *dump, struct stat *sbuf, int other, int len)`
@@ -3558,7 +3558,7 @@ pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {
 /// file into memory. Returns the u32 buffer or None on I/O error.
 pub fn load_dump_file(
     dump: &str, // c:3675
-    _sbuf: &std::fs::Metadata,
+    _sbuf: &fs::Metadata,
     other: i32,
     _len: usize,
 ) -> Option<Vec<u32>> {
@@ -3741,7 +3741,7 @@ pub fn try_source_file(file: &str) -> Option<String> {
 pub fn check_dump_file(
     // c:3833
     file: &str,
-    sbuf: &std::fs::Metadata,
+    sbuf: &fs::Metadata,
     name: &str,
     test_only: bool,
 ) -> Option<(Vec<u32>, bool)> {
@@ -3936,7 +3936,7 @@ pub fn dump_autoload(
             tab.add(shf);
         }
         // c:4062-4063 — if (OPT_ISSET(ops,'X') && eval_autoload(...)) ret = 1;
-        if crate::ported::zsh_h::OPT_ISSET(ops, b'X') {
+        if OPT_ISSET(ops, b'X') {
             let mut shf_ref = snapshot;
             if crate::ported::builtin::eval_autoload(&mut shf_ref as *mut _, &basename, ops, func)
                 != 0
@@ -4335,7 +4335,7 @@ pub fn par_event_wordcode() -> usize {
         }
     }
     // parse.c:712 — `ecadd(WCB_END());`
-    ecadd(crate::ported::zsh_h::WCB_END());
+    ecadd(WCB_END());
     start
 }
 
@@ -4869,7 +4869,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             }
             // c:1130-1135 — `if (!isident(tokstr) || errflag) { ... YYERRORV; }`
             if !crate::ported::params::isident(&tokstr().unwrap_or_default())
-                || (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) & 1)
+                || (errflag.load(Ordering::Relaxed) & 1)
                     != 0
             {
                 set_noaliases(ona);
@@ -5867,7 +5867,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
 
 /// Size of `struct fdhead` in `wordcode` (u32) units. Used by all
 /// the header-walk macros below.
-pub const FDHEAD_WORDS: usize = std::mem::size_of::<fdhead>() / 4;
+pub const FDHEAD_WORDS: usize = size_of::<fdhead>() / 4;
 
 /// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
 /// `{...}` brace group (cursh) plus optional `always { ... }`
@@ -7224,7 +7224,7 @@ fn parse_assign() -> Option<ZshAssign> {
     // after the last `]` of the LHS subscript / or after the
     // bare name) is the one we land on.
     fn find_assign_equals(s: &str) -> Option<usize> {
-        let target = crate::ported::zsh_h::Equals;
+        let target = Equals;
         let mut brace = 0i32;
         let mut bracket = 0i32;
         let mut paren = 0i32;
@@ -7474,7 +7474,7 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
         });
         // zshrs-only: push parallel AST-glue entry onto LEX_HEREDOCS.
         let idx = LEX_HEREDOCS.with_borrow_mut(|v| {
-            v.push(crate::ported::lex::HereDoc {
+            v.push(HereDoc {
                 terminator: term,
                 strip_tabs,
                 content: String::new(),
@@ -8252,7 +8252,7 @@ mod tests {
         let zwc = dir.path().join("script.zsh.zwc");
         // Create zwc FIRST (older), then source (newer).
         fs::write(&zwc, b"placeholder zwc").unwrap();
-        std::thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(20));
         fs::write(&src, b"echo hi").unwrap();
 
         let result = try_source_file(src.to_str().unwrap());
@@ -8294,7 +8294,7 @@ mod tests {
     fn parse(input: &str) -> Result<ZshProgram, String> {
         let saved = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(input);
+        parse_init(input);
         let prog = crate::ported::parse::parse();
         let had_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         // Restore prior error bits; don't carry our new error into the

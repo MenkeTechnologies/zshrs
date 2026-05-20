@@ -307,14 +307,14 @@ pub fn patcompcharsset() {
     }
 
     // c:480-483 — `if (!isset(EXTENDEDGLOB))` mask Tilde/Hat/Hash.
-    if !crate::ported::zsh_h::isset(EXTENDEDGLOB) {
+    if !isset(EXTENDEDGLOB) {
         sp[ZPC_TILDE_C as usize] = marker_byte;
         sp[ZPC_HAT_C as usize] = marker_byte;
         sp[ZPC_HASH_C as usize] = marker_byte;
     }
 
     // c:485-491 — `if (!isset(KSHGLOB))` mask the six KSH_* slots.
-    if !crate::ported::zsh_h::isset(KSHGLOB) {
+    if !isset(KSHGLOB) {
         sp[ZPC_KSH_QUEST as usize] = marker_byte;
         sp[ZPC_KSH_STAR as usize] = marker_byte;
         sp[ZPC_KSH_PLUS as usize] = marker_byte;
@@ -325,7 +325,7 @@ pub fn patcompcharsset() {
 
     // c:499-505 — `if (isset(SHGLOB))` mask Inpar/Inang (case/numeric
     // ranges not valid under sh-emulation).
-    if crate::ported::zsh_h::isset(SHGLOB) {
+    if isset(SHGLOB) {
         sp[ZPC_INPAR_C as usize] = marker_byte;
         sp[ZPC_INANG_C as usize] = marker_byte;
     }
@@ -2621,6 +2621,7 @@ pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool 
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
     use crate::options::{opt_state_get, opt_state_set};
     use super::*;
 
@@ -2629,7 +2630,7 @@ mod tests {
     // C source. `patcompile` clones the globals into prog.1
     // before returning, so we only need the mutex held during
     // compile — pattry() reads from prog.1 with no global state.
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn compile(p: &str) -> Patprog {
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -2828,7 +2829,7 @@ mod tests {
     fn patgetglobflags_case_insensitive() {
         let _g = crate::test_util::global_state_lock();
         let (bits, _, n) = patgetglobflags("(#i)foo").unwrap();
-        assert!((bits & GF_IGNCASE) != 0);
+        assert_ne!((bits & GF_IGNCASE), 0);
         assert_eq!(n, 4); // length of "(#i)"
     }
 
@@ -2836,7 +2837,7 @@ mod tests {
     fn patgetglobflags_backref() {
         let _g = crate::test_util::global_state_lock();
         let (bits, _, _) = patgetglobflags("(#b)").unwrap();
-        assert!((bits & GF_BACKREF) != 0);
+        assert_ne!((bits & GF_BACKREF), 0);
     }
 
     #[test]
@@ -3121,7 +3122,7 @@ mod tests {
             eprintln!("  [{:3}] {:#04x}", i, b);
         }
         let mut state = rpat::new();
-        let r = super::patmatch_internal(&prog.1, 0, "b", 0, &mut state, prog.0.flags);
+        let r = patmatch_internal(&prog.1, 0, "b", 0, &mut state, prog.0.flags);
         eprintln!("match result: {:?}", r);
         assert!(pattry(&prog, "b"));
     }
@@ -3224,7 +3225,7 @@ mod tests {
         opt_state_set("casepaths", true);
         opt_state_set("multibyte", true);
         patcompstart();
-        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        let f = patglobflags.load(Ordering::Relaxed);
         assert_eq!(f & GF_IGNCASE, 0, "c:521 — CASEGLOB on → GF_IGNCASE off");
         assert_ne!(
             f & GF_MULTIBYTE,
@@ -3236,7 +3237,7 @@ mod tests {
         opt_state_set("caseglob", false);
         opt_state_set("casepaths", false);
         patcompstart();
-        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        let f = patglobflags.load(Ordering::Relaxed);
         assert_ne!(
             f & GF_IGNCASE,
             0,
@@ -3246,7 +3247,7 @@ mod tests {
         // 3. MULTIBYTE OFF → GF_MULTIBYTE bit cleared.
         opt_state_set("multibyte", false);
         patcompstart();
-        let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
+        let f = patglobflags.load(Ordering::Relaxed);
         assert_eq!(
             f & GF_MULTIBYTE,
             0,

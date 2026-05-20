@@ -19,7 +19,9 @@
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use super::zle_main::ZleString;
+use super::zle_main::{ZleString, BUFSTACK, MULT};
+use super::zle_misc::DONE;
+use crate::ported::options::opt_state_set;
 use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
 
 // =====================================================================
@@ -376,21 +378,21 @@ impl History {
     }
 }
 
-/// Move cursor up by `crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst)` lines within the multi-line buffer.
+/// Move cursor up by `MULT.load(std::sync::atomic::Ordering::SeqCst)` lines within the multi-line buffer.
 /// Returns leftover count (positive = hit top of buffer before completing).
 /// Port of upline(char **args) from Src/Zle/zle_hist.c:243.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn upline() -> i32 {
     // c:243
-    let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
+    let mut n = MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
-        crate::ported::zle::zle_main::MULT.store(
-            -crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+        MULT.store(
+            -MULT.load(std::sync::atomic::Ordering::SeqCst),
             std::sync::atomic::Ordering::SeqCst,
         );
         let r = -downline();
-        crate::ported::zle::zle_main::MULT.store(
-            -crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+        MULT.store(
+            -MULT.load(std::sync::atomic::Ordering::SeqCst),
             std::sync::atomic::Ordering::SeqCst,
         );
         return r;
@@ -437,17 +439,17 @@ pub fn uplineorhistory() -> i32 {
             return 1;
         }
         let saved_mult =
-            crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+            MULT.load(std::sync::atomic::Ordering::SeqCst);
+        MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         let ret = if zle_goto_hist(
-            -crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+            -MULT.load(std::sync::atomic::Ordering::SeqCst),
             false,
         ) {
             0
         } else {
             1
         };
-        crate::ported::zle::zle_main::MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         ret
     } else {
@@ -473,30 +475,30 @@ pub fn uplineorsearch() -> i32 {
     let n = upline();
     if n != 0 {
         ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
-        let saved = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+        let saved = MULT.load(std::sync::atomic::Ordering::SeqCst);
+        MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         let r = historysearchbackward();
-        crate::ported::zle::zle_main::MULT.store(saved, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(saved, std::sync::atomic::Ordering::SeqCst);
         return r;
     }
     0
 }
 
-/// Move cursor down by `crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst)` lines.
+/// Move cursor down by `MULT.load(std::sync::atomic::Ordering::SeqCst)` lines.
 /// Returns leftover count (positive = hit bottom before completing).
 /// Port of downline(char **args) from Src/Zle/zle_hist.c:332.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn downline() -> i32 {
     // c:332
-    let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
+    let mut n = MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
-        crate::ported::zle::zle_main::MULT.store(
-            -crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+        MULT.store(
+            -MULT.load(std::sync::atomic::Ordering::SeqCst),
             std::sync::atomic::Ordering::SeqCst,
         );
         let r = -upline();
-        crate::ported::zle::zle_main::MULT.store(
-            -crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+        MULT.store(
+            -MULT.load(std::sync::atomic::Ordering::SeqCst),
             std::sync::atomic::Ordering::SeqCst,
         );
         return r;
@@ -542,17 +544,17 @@ pub fn downlineorhistory() -> i32 {
             return 1;
         }
         let saved_mult =
-            crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+            MULT.load(std::sync::atomic::Ordering::SeqCst);
+        MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         let ret = if zle_goto_hist(
-            crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst),
+            MULT.load(std::sync::atomic::Ordering::SeqCst),
             false,
         ) {
             0
         } else {
             1
         };
-        crate::ported::zle::zle_main::MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         ret
     } else {
@@ -578,10 +580,10 @@ pub fn downlineorsearch() -> i32 {
     let n = downline();
     if n != 0 {
         ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
-        let saved = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+        let saved = MULT.load(std::sync::atomic::Ordering::SeqCst);
+        MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         let r = historysearchforward();
-        crate::ported::zle::zle_main::MULT.store(saved, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(saved, std::sync::atomic::Ordering::SeqCst);
         return r;
     }
     0
@@ -593,7 +595,7 @@ pub fn acceptlineanddownhistory() -> i32 {
     // C body (c:716-738): mark for accept; on next prompt, fetch the
     //                    history entry one position later than the
     //                    one currently displayed.
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::STACKHIST.store(
         (history().lock().unwrap().cursor as i32) + 1,
         std::sync::atomic::Ordering::SeqCst,
@@ -895,7 +897,7 @@ pub fn pushline() -> i32 {
     });
     ZLELINE.lock().unwrap().clear();
     ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -915,7 +917,7 @@ pub fn pushlineoredit() -> i32 {
     });
     ZLELINE.lock().unwrap().clear();
     ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1198,7 +1200,7 @@ pub fn acceptandinfernexthistory() -> i32 {
     // C body (c:691-715): mark line for accept then queue infer-next.
     //                    The actual infer happens after acceptline
     //                    when the next prompt is drawn.
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     history().lock().unwrap().search_pattern.clear();
     0
 }
@@ -1625,18 +1627,18 @@ pub fn beginning_of_history(hist: &mut History) {
 /// zleread() so the user gets to compose a quick command and have
 /// the prior text restored afterwards.
 pub fn push_line() {
-    let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
+    let n = MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         return;
     }
     let line: String = ZLELINE.lock().unwrap().iter().collect();
-    crate::ported::zle::zle_main::BUFSTACK
+    BUFSTACK
         .lock()
         .unwrap()
         .push(line);
     let mut remaining = n - 1;
     while remaining > 0 {
-        crate::ported::zle::zle_main::BUFSTACK
+        BUFSTACK
             .lock()
             .unwrap()
             .push(String::new());
@@ -1915,7 +1917,7 @@ mod tests {
         ZMOD.lock().unwrap().mult = 1;
 
         // Turn HISTIGNOREDUPS on so the skipdups path fires.
-        crate::ported::options::opt_state_set("histignoredups", true);
+        opt_state_set("histignoredups", true);
 
         let rc = super::uphistory();
         assert_eq!(rc, 0);
@@ -1924,7 +1926,7 @@ mod tests {
             "unique",
             "with HISTIGNOREDUPS on, up must skip the 'dup' twins and land on 'unique'"
         );
-        crate::ported::options::opt_state_set("histignoredups", false);
+        opt_state_set("histignoredups", false);
     }
 
     #[test]
@@ -1938,10 +1940,10 @@ mod tests {
         history().lock().unwrap().cursor = 0;
         ZMOD.lock().unwrap().mult = 1;
 
-        crate::ported::options::opt_state_set("histbeep", true);
+        opt_state_set("histbeep", true);
         let rc = super::uphistory();
         assert_eq!(rc, 1, "exhausted up + HISTBEEP must return 1 (beep signal)");
-        crate::ported::options::opt_state_set("histbeep", false);
+        opt_state_set("histbeep", false);
     }
 
     #[test]
@@ -1953,7 +1955,7 @@ mod tests {
         history().lock().unwrap().cursor = 0;
         ZMOD.lock().unwrap().mult = 1;
 
-        crate::ported::options::opt_state_set("histbeep", false);
+        opt_state_set("histbeep", false);
         let rc = super::uphistory();
         assert_eq!(rc, 0, "exhausted up + !HISTBEEP must return 0");
     }
@@ -2080,7 +2082,7 @@ mod tests {
         );
         ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         let leftover = upline();
-        // Single-line buffer: can't go up, leftover == crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst) (1).
+        // Single-line buffer: can't go up, leftover == MULT.load(std::sync::atomic::Ordering::SeqCst) (1).
         assert_eq!(leftover, 1);
     }
 
@@ -2155,10 +2157,10 @@ mod tests {
         *ZLELINE.lock().unwrap() = "in flight".chars().collect();
         ZLELL.store(9, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(1, std::sync::atomic::Ordering::SeqCst);
         push_line();
         assert_eq!(
-            *crate::ported::zle::zle_main::BUFSTACK.lock().unwrap(),
+            *BUFSTACK.lock().unwrap(),
             vec!["in flight".to_string()]
         );
         assert!(ZLELINE.lock().unwrap().is_empty());
@@ -2179,23 +2181,23 @@ mod tests {
         let mut zle = zle_with_history(&[]);
         *ZLELINE.lock().unwrap() = "x".chars().collect();
         ZLELL.store(1, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(3, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(3, std::sync::atomic::Ordering::SeqCst);
         push_line();
         // mult=3 → push line then 2 empties.
         assert_eq!(
-            crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().len(),
+            BUFSTACK.lock().unwrap().len(),
             3
         );
         assert_eq!(
-            crate::ported::zle::zle_main::BUFSTACK.lock().unwrap()[0],
+            BUFSTACK.lock().unwrap()[0],
             "x"
         );
         assert_eq!(
-            crate::ported::zle::zle_main::BUFSTACK.lock().unwrap()[1],
+            BUFSTACK.lock().unwrap()[1],
             ""
         );
         assert_eq!(
-            crate::ported::zle::zle_main::BUFSTACK.lock().unwrap()[2],
+            BUFSTACK.lock().unwrap()[2],
             ""
         );
     }
@@ -2207,9 +2209,9 @@ mod tests {
         let mut zle = zle_with_history(&[]);
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MULT.store(-1, std::sync::atomic::Ordering::SeqCst);
+        MULT.store(-1, std::sync::atomic::Ordering::SeqCst);
         push_line();
-        assert!(crate::ported::zle::zle_main::BUFSTACK
+        assert!(BUFSTACK
             .lock()
             .unwrap()
             .is_empty());
@@ -2287,7 +2289,7 @@ mod tests {
         let next_idx = history().lock().unwrap().cursor + 1;
         if next_idx < len {
             if let Some(entry) = history().lock().unwrap().entries.get(next_idx) {
-                crate::ported::zle::zle_main::BUFSTACK
+                BUFSTACK
                     .lock()
                     .unwrap()
                     .push(entry.line.clone());
@@ -2297,10 +2299,10 @@ mod tests {
                 );
             }
         }
-        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
-        assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
+        DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         assert_eq!(
-            *crate::ported::zle::zle_main::BUFSTACK.lock().unwrap(),
+            *BUFSTACK.lock().unwrap(),
             vec!["two".to_string()]
         );
     }
