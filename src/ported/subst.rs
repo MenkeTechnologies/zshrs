@@ -2478,9 +2478,16 @@ pub fn paramsubst(
         // (the previous flag_lower/flag_upper/flag_caps bag-of-globals
         // decomposition of a single C int — Rule D violation).
         let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE;             // c:1732
-        let mut flag_qcount: u32 = 0; // c:2237 (q)
-        let mut flag_qmin = false; // c:2245 (q-)
-        let mut flag_qplus = false; // c:2245 (q+)
+        // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr
+        // = 0;`. quotemod tri-state: 0 = none, positive = quote (q/b),
+        // negative = unquote (Q). quotetype counts q's (QT_SINGLE,
+        // QT_DOUBLE, QT_DOLLARS, QT_BACKSLASH_PATTERN,
+        // QT_SINGLE_OPTIONAL, QT_QUOTEDZPUTS). The previous Rust port
+        // decomposed into flag_qcount / flag_qmin / flag_qplus /
+        // flag_unquote / flag_b_pattern bools — Rule D bag-of-globals.
+        let mut quotemod: i32 = 0;                                            // c:1739
+        let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE;              // c:1739
+        // quoteerr declared at c:1739 too — already at line 2525.
         let mut flag_at = false; // c:2167 (@)
                                  // Temp state.arrays slot holding a nested-expansion array
                                  // result (see line ~1755). Set when `${(@)${(@)…}…}` with
@@ -2521,7 +2528,8 @@ pub fn paramsubst(
         let mut sort_index_order = false; // c:2225 (a)
         let mut unique = false; // c:2476 (u)
         let mut eval = false; // c:2268 (e)
-        let mut flag_unquote = false; // c:2261 (Q)
+        // (Q) flag at c:2261-2262 decrements quotemod; folded into the
+        // tri-state quotemod above (c:1739). No separate flag_unquote.
         let mut quoteerr = false; // c:2264 (X)
         // c:1746 — `int mods = 0;` single int with bit 0 = (D) flag,
         // bit 1 = (V) flag. The previous Rust port decomposed this
@@ -2535,7 +2543,9 @@ pub fn paramsubst(
         // Previous Rust port decomposed into 3 bools — Rule D
         // bag-of-globals. Consumed by ${#pm} length-computation arm.
         let mut whichlen: i32 = 0;                                            // c:1679
-        let mut flag_b_pattern = false; // c:2255 (b)
+        // (b) flag at c:2255-2259 sets quotemod=1, quotetype =
+        // QT_BACKSLASH_PATTERN. Folded into the tri-state vars above
+        // (c:1739). No separate flag_b_pattern.
                                         // SUB_* flag bits accumulated by M/R/B/E/N/S/I/* in the
                                         // flag-loop. Direct port of subst.c:2169-2199 — passed
                                         // through to getmatch() / igetmatch() to alter the
@@ -2610,28 +2620,29 @@ pub fn paramsubst(
                     'C' => {                                                  // c:2203
                         casmod = crate::ported::zsh_h::CASMOD_CAPS;          // c:2204
                     }                                                         // c:2205
-                    'q' => {
-                        // c:2237
-                        // (q-) → SINGLE_OPTIONAL: bslashquote only if
-                        // needed (whitespace / metachar present);
-                        // (q+) → QUOTEDZPUTS: print -V style.
-                        // Without next char or with another q,
-                        // bump the count for the (qq)/(qqq)/(qqqq)
-                        // cascade. Direct port of subst.c:2236-2253.
-                        let next = body_chars.get(idx + 1).copied();
-                        if next == Some('-') {
-                            // c:2240
-                            idx += 1; // c:2243 (s++)
-                            flag_qmin = true; // c:2245 (QT_SINGLE_OPTIONAL)
-                        } else if next == Some('+') {
-                            // c:2240
-                            idx += 1; // c:2243
-                            flag_qplus = true; // c:2245 (QT_QUOTEDZPUTS)
-                        } else {
-                            // c:2247
-                            flag_qcount += 1; // c:2252
-                        } // c:2253
-                    } // c:2253
+                    'q' => {                                                  // c:2236
+                        // c:2237 — `if (quotetype == QT_DOLLARS ||
+                        // quotetype == QT_BACKSLASH_PATTERN) goto flagerr;`
+                        // (skipped here — flag-error tracking not yet
+                        // ported; full goto-flagerr arm is c:2237-2239).
+                        let next = body_chars.get(idx + 1).copied();         // c:2240 IS_DASH(s[1]) || s[1]=='+'
+                        if next == Some('-') || next == Some('+') {          // c:2240
+                            // c:2241-2242 — `if (quotemod) goto flagerr;`
+                            // (flagerr not yet ported; skipped).
+                            idx += 1;                                         // c:2243 s++
+                            quotemod = 1;                                     // c:2244
+                            quotetype = if next == Some('+') {                // c:2245
+                                crate::ported::zsh_h::QT_QUOTEDZPUTS         // c:2245
+                            } else {                                          // c:2246
+                                crate::ported::zsh_h::QT_SINGLE_OPTIONAL     // c:2246
+                            };                                                // c:2246
+                        } else {                                              // c:2247
+                            // c:2248-2251 — `if (quotetype ==
+                            // QT_SINGLE_OPTIONAL) goto flagerr;` (skipped).
+                            quotemod += 1;                                    // c:2252 quotemod++
+                            quotetype += 1;                                   // c:2252 quotetype++
+                        }                                                     // c:2253
+                    }                                                         // c:2254
                     'A' => {
                         arrasg += 1;
                     } // c:2161 (A array-assign; AA associative-assign)
@@ -2840,9 +2851,9 @@ pub fn paramsubst(
                     'e' => {
                         eval = true;
                     } // c:2268 (e)
-                    'Q' => {
-                        flag_unquote = true;
-                    } // c:2261 (Q)
+                    'Q' => {                                                  // c:2261
+                        quotemod -= 1;                                        // c:2262
+                    }                                                         // c:2263
                     'X' => {
                         quoteerr = true;
                     } // c:2264 (X)
@@ -2852,9 +2863,13 @@ pub fn paramsubst(
                     'V' => {                                                  // c:2232
                         mods |= 2;                                            // c:2233
                     }                                                         // c:2234
-                    'b' => {
-                        flag_b_pattern = true;
-                    } // c:2255 (b)
+                    'b' => {                                                  // c:2255
+                        // c:2256-2257 — `if (quotemod || quotetype !=
+                        // QT_NONE) goto flagerr;` (flagerr not yet
+                        // ported; skipped).
+                        quotemod = 1;                                         // c:2258
+                        quotetype = crate::ported::zsh_h::QT_BACKSLASH_PATTERN; // c:2259
+                    }                                                         // c:2260
                     'c' => {                                                  // c:2275
                         whichlen = 1;                                         // c:2276
                     }                                                         // c:2277
@@ -5366,8 +5381,7 @@ pub fn paramsubst(
             }
             out
         };
-        if flag_b_pattern {
-            // c:2255
+        if quotemod > 0 && quotetype == crate::ported::zsh_h::QT_BACKSLASH_PATTERN { // c:4034 (b)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
                 value = new_parts.join(" ");
@@ -5428,8 +5442,7 @@ pub fn paramsubst(
             }
             out
         };
-        if flag_unquote {
-            // c:2261
+        if quotemod < 0 {                                                    // c:4030 if (quotemod) — negative arm (Q)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
@@ -5508,68 +5521,52 @@ pub fn paramsubst(
             value = parts.len().to_string();                                  // c:2282
         }
 
-        // Quote flags operate per-element when array-shaped — direct
-        // port of subst.c quotemod arm which iterates aval.
-        let quote_one = |s: &str| -> String {
-            // c:2237
-            if flag_qmin {
-                // c:2245 (q-)
-                let needs = s.chars().any(|c| {
-                    c.is_whitespace()
-                        || matches!(
-                            c,
-                            '*' | '?'
-                                | '['
-                                | ']'
-                                | '('
-                                | ')'
-                                | '|'
-                                | '&'
-                                | ';'
-                                | '<'
-                                | '>'
-                                | '$'
-                                | '`'
-                                | '\\'
-                                | '"'
-                                | '\''
-                                | '#'
-                                | '~'
-                        )
-                });
-                if needs {
-                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
-                } else {
-                    s.to_string()
-                }
-            } else if flag_qplus {
-                // c:2245 (q+)
-                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_DOLLARS)
-            } else if flag_qcount > 0 {
-                // c:2237
-                match flag_qcount {
-                    1 => crate::ported::utils::quotestring(
-                        s,
-                        crate::ported::zsh_h::QT_BACKSLASH,
-                    ),
-                    2 => crate::ported::utils::quotestring(
-                        s,
-                        crate::ported::zsh_h::QT_SINGLE,
-                    ),
-                    3 => crate::ported::utils::quotestring(
-                        s,
-                        crate::ported::zsh_h::QT_DOUBLE,
-                    ),
-                    _ => crate::ported::utils::quotestring(
-                        s,
-                        crate::ported::zsh_h::QT_DOLLARS,
-                    ),
-                }
-            } else {
-                s.to_string()
-            }
-        };
-        if flag_qmin || flag_qplus || flag_qcount > 0 {
+        // Quote flags (q/qq/qqq/qqqq/q-/q+) operate per-element when
+        // array-shaped. Direct port of subst.c:4030+ quotemod > 0 arm
+        // which dispatches by quotetype.
+        let quote_one = |s: &str| -> String {                                // c:4030
+            if quotetype == crate::ported::zsh_h::QT_SINGLE_OPTIONAL {       // c:2245 (q-)
+                let needs = s.chars().any(|c| {                              // c:2245
+                    c.is_whitespace()                                         // c:2245
+                        || matches!(                                          // c:2245
+                            c,                                                // c:2245
+                            '*' | '?'                                         // c:2245
+                                | '['                                         // c:2245
+                                | ']'                                         // c:2245
+                                | '('                                         // c:2245
+                                | ')'                                         // c:2245
+                                | '|'                                         // c:2245
+                                | '&'                                         // c:2245
+                                | ';'                                         // c:2245
+                                | '<'                                         // c:2245
+                                | '>'                                         // c:2245
+                                | '$'                                         // c:2245
+                                | '`'                                         // c:2245
+                                | '\\'                                        // c:2245
+                                | '"'                                         // c:2245
+                                | '\''                                        // c:2245
+                                | '#'                                         // c:2245
+                                | '~'                                         // c:2245
+                        )                                                     // c:2245
+                });                                                           // c:2245
+                if needs {                                                    // c:2245
+                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE) // c:2245
+                } else {                                                      // c:2245
+                    s.to_string()                                             // c:2245
+                }                                                             // c:2245
+            } else if quotetype == crate::ported::zsh_h::QT_QUOTEDZPUTS {    // c:2245 (q+)
+                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
+            } else if quotemod > 0 {                                         // c:4033 if (quotemod > 0)
+                // c:2252 — quotemod++ and quotetype++ cascade for
+                // (q)/(qq)/(qqq)/(qqqq). quotetype starts at QT_NONE=0
+                // and is incremented per q: QT_BACKSLASH(1) /
+                // QT_SINGLE(2) / QT_DOUBLE(3) / QT_DOLLARS(4).
+                crate::ported::utils::quotestring(s, quotetype)              // c:4070
+            } else {                                                          // c:4034
+                s.to_string()                                                 // c:4034
+            }                                                                 // c:4034
+        };                                                                    // c:4034
+        if quotemod > 0 && quotetype != crate::ported::zsh_h::QT_BACKSLASH_PATTERN { // c:4033 (already-applied b above)
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 // c:2237
