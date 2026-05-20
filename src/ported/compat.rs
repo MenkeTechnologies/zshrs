@@ -11,11 +11,6 @@
 use std::env;
 use std::fs;
 
-// `TimeSpec` Rust-only struct deleted — C uses `struct timespec`
-// directly (Src/compat.c:101 `zgettime(struct timespec *ts)`).
-// The canonical type port lives at
-// `crate::ported::zsh_system_h::timespec` (Src/zsh_system.h:245).
-
 use crate::ported::zsh_system_h::timespec;
 use std::os::unix::fs::MetadataExt;
 use crate::params::getsparam;

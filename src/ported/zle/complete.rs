@@ -31,9 +31,8 @@
 
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
-use crate::ported::zle::comp_h::Cmatcher;
-use crate::ported::zle::comp_h::CAF_MATSORT;
 use crate::ported::zle::comp_h::{
+    CAF_MATSORT, Cmatcher,
     Cpattern, CMF_HIDE, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_CCLASS, CPAT_CHAR,
     CPAT_EQUIV, CPAT_NCLASS,
 };
