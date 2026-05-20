@@ -27,6 +27,8 @@ use std::path::Component::*;
 // idiom. They stay as `crate::ported::input::inbufflags` until
 // the shadowing pattern is refactored.
 use crate::ported::input::{ingetc, inungetc};
+use crate::ported::zle::compcore::ZLEMETACS;
+use crate::ported::zsh_h::hashnode;
 use crate::ported::lex::LEX_ISFIRSTCH;
 // Names lifted out of inside-fn `use` statements (PORT.md
 // 'no imports inside FNs ever').
@@ -302,7 +304,7 @@ pub fn iaddtoline(c: i32) {
     // The previous Rust port omitted the entire block — typing
     // `!str` mid-line would leave the ZLE cursor at the wrong
     // position after expansion.
-    let zlemetacs_v = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let zlemetacs_v = ZLEMETACS.load(Ordering::SeqCst);
     let excs_v = excs.load(Ordering::SeqCst);
     if excs_v > zlemetacs_v {
         // c:405
@@ -3069,7 +3071,7 @@ pub fn checkcurline(he: &histent) {
         // aliasing — name = chline, nwords = chwordpos/2,
         // words = chwords.
         *cl = Some(histent {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: chline_val, // c:2425
                 flags: 0,
@@ -3333,7 +3335,7 @@ pub fn ihungetc(c: i32) {
         }
         if crate::ported::hist::expanding.load(SeqCst) != 0 {
             // c:1004 if (expanding)
-            crate::ported::zle::compcore::ZLEMETACS.fetch_sub(1, SeqCst); // c:1005 zlemetacs--
+            ZLEMETACS.fetch_sub(1, SeqCst); // c:1005 zlemetacs--
             crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst); // c:1006 zlemetall--
             crate::ported::hist::exlast.fetch_add(1, SeqCst); // c:1007 exlast++
         }
@@ -4376,7 +4378,7 @@ fn ring_get(ev: i64) -> Option<histent> {
 
 fn clone_histent(h: &histent) -> histent {
     histent {
-        node: crate::ported::zsh_h::hashnode {
+        node: hashnode {
             next: None,
             nam: h.node.nam.clone(),
             flags: h.node.flags,
@@ -4427,7 +4429,7 @@ fn make_histent(num: i64, text: String) -> histent {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     histent {
-        node: crate::ported::zsh_h::hashnode {
+        node: hashnode {
             next: None,
             nam: text,
             flags: 0,
@@ -5683,7 +5685,7 @@ mod subst_modifier_tests {
                 ("entry3", 3i64, 0i32),
             ] {
                 ring.push(histent {
-                    node: crate::ported::zsh_h::hashnode {
+                    node: hashnode {
                         next: None,
                         nam: nam.to_string(),
                         flags,
@@ -5726,7 +5728,7 @@ mod subst_modifier_tests {
             ring.clear();
             for (nam, num, flags) in saved_ring {
                 ring.push(histent {
-                    node: crate::ported::zsh_h::hashnode {
+                    node: hashnode {
                         next: None,
                         nam,
                         flags,
@@ -5757,7 +5759,7 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_excs = excs.load(Ordering::SeqCst);
-        let saved_zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+        let saved_zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
         let saved_expanding = expanding.load(Ordering::SeqCst);
         let saved_lexstop = lexstop.load(Ordering::SeqCst);
         let saved_qbang = qbang.load(Ordering::SeqCst);
@@ -5770,7 +5772,7 @@ mod subst_modifier_tests {
         lexstop.store(false, Ordering::SeqCst);
         qbang.store(false, Ordering::SeqCst);
         excs.store(10, Ordering::SeqCst); // > zlemetacs
-        crate::ported::zle::compcore::ZLEMETACS.store(5, Ordering::SeqCst);
+        ZLEMETACS.store(5, Ordering::SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(3));
         exlast.store(2, Ordering::SeqCst);
 
@@ -5792,7 +5794,7 @@ mod subst_modifier_tests {
         // excs=25, zlemetacs=20, inbufct=1, exlast=10 →
         // new_excs = 25+1+1-10 = 17; 17 < 20 → clamp to 20.
         excs.store(25, Ordering::SeqCst);
-        crate::ported::zle::compcore::ZLEMETACS.store(20, Ordering::SeqCst);
+        ZLEMETACS.store(20, Ordering::SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(1));
         exlast.store(10, Ordering::SeqCst);
         iaddtoline(b'y' as i32);
@@ -5804,7 +5806,7 @@ mod subst_modifier_tests {
 
         // No adjustment when excs <= zlemetacs.
         excs.store(3, Ordering::SeqCst);
-        crate::ported::zle::compcore::ZLEMETACS.store(10, Ordering::SeqCst);
+        ZLEMETACS.store(10, Ordering::SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(1));
         exlast.store(0, Ordering::SeqCst);
         iaddtoline(b'z' as i32);
@@ -5817,7 +5819,7 @@ mod subst_modifier_tests {
         // Restore.
         *chline.lock().unwrap() = saved_chline;
         excs.store(saved_excs, Ordering::SeqCst);
-        crate::ported::zle::compcore::ZLEMETACS.store(saved_zlemetacs, Ordering::SeqCst);
+        ZLEMETACS.store(saved_zlemetacs, Ordering::SeqCst);
         expanding.store(saved_expanding, Ordering::SeqCst);
         lexstop.store(saved_lexstop, Ordering::SeqCst);
         qbang.store(saved_qbang, Ordering::SeqCst);
@@ -5925,7 +5927,7 @@ mod subst_modifier_tests {
         // Build a histent for "echo hello world" with 3 words.
         // C nwords=3, words=[0,4,5,10,11,16] (start/end pairs).
         let he = histent {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: "echo hello world".to_string(),
                 flags: 0,
@@ -5992,7 +5994,7 @@ mod subst_modifier_tests {
         // >32KB history line). Use nwords=2 with arg1=0,arg2=0 so the
         // c:2466 full-event fast path doesn't trigger.
         let overflow = histent {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: "ab cd".to_string(),
                 flags: 0,
@@ -6014,7 +6016,7 @@ mod subst_modifier_tests {
 
         // c:2476 — `pos1 < arg1` detection (pos must be ≥ word index).
         let underflow = histent {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: "a b c d".to_string(),
                 flags: 0,
@@ -6070,7 +6072,7 @@ mod subst_modifier_tests {
             let mut ring = hist_ring.lock().unwrap();
             ring.clear();
             ring.push(histent {
-                node: crate::ported::zsh_h::hashnode {
+                node: hashnode {
                     next: None,
                     nam: "echo hello world".to_string(),
                     flags: 0,
@@ -6120,7 +6122,7 @@ mod subst_modifier_tests {
             let mut ring = hist_ring.lock().unwrap();
             ring.clear();
             ring.push(histent {
-                node: crate::ported::zsh_h::hashnode {
+                node: hashnode {
                     next: None,
                     nam: "skip me".to_string(),
                     flags: HIST_FOREIGN as i32,
@@ -6147,7 +6149,7 @@ mod subst_modifier_tests {
             ring.clear();
             for (nam, histnum, words, nwords, flags) in saved_ring {
                 ring.push(histent {
-                    node: crate::ported::zsh_h::hashnode {
+                    node: hashnode {
                         next: None,
                         nam,
                         flags,
@@ -6192,7 +6194,7 @@ mod subst_modifier_tests {
 
         // Case 1: matching histnum + active → flushes.
         let he = histent {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: "ignored-by-checkcurline".to_string(),
                 flags: 0,
@@ -6241,7 +6243,7 @@ mod subst_modifier_tests {
         let he2 = histent {
             histnum: 99,
             ..histent {
-                node: crate::ported::zsh_h::hashnode {
+                node: hashnode {
                     next: None,
                     nam: String::new(),
                     flags: 0,
