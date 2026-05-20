@@ -2592,11 +2592,24 @@ pub fn paramsubst(
             0                                                                 // c:1817
         };                                                                    // c:1817
 
+        // c:1823 — `char inbrace = 0;` 1 if `${...}`, 0 if bare `$...`.
+        // Set to 1 here because we entered the brace arm at line 2437.
+        // C sets it later (around c:2076-2079) after parsing the
+        // leading `{`; effect is identical because all body code
+        // below this point only runs in the brace arm.
+        let mut inbrace: i32 = 1;                                             // c:1823 set to 1 since in-brace arm
+        let _ = &mut inbrace;  // suppress unused-mut until consumer-site wiring lands
+
         // c:1828 — `int hkeys = 0;` (k) flag SCANPM_WANTKEYS bits.
         let mut hkeys: u32 = 0;                                               // c:1828
 
         // c:1835 — `int hvals = 0;` (v) flag SCANPM_WANTVALS bits.
         let mut hvals: u32 = 0;                                               // c:1835
+
+        // c:1843 — `int subexp;` 1 if the body started with `$`/`(`/
+        // `{` (nested sub-expression), 0 otherwise. Read by the
+        // fetchvalue dispatch at c:2767 + the (P)-flag arm.
+        let mut subexp: i32 = 0;                                              // c:1843
 
         // c:2140 — `int escapes = 0;` (p) flag; declared inside
         // flag-loop in C, hoisted to function scope here.
