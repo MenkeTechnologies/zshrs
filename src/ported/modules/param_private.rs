@@ -33,7 +33,7 @@
 
 use crate::ported::params::locallevel as LOCALLEVEL;
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{param, OPT_ISSET, PM_DECLARED, PM_UNSET};
+use crate::ported::zsh_h::{param, OPT_ISSET, PM_DECLARED, PM_HIDE, PM_REMOVABLE, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET};
 use std::sync::atomic::Ordering;
 
 /// Port of `struct gsu_closure` from `Src/Modules/param_private.c:34`.
@@ -99,8 +99,8 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
     let pm_flags = unsafe { (*hn).node.flags };
     let pm_ename = unsafe { (*hn).ename.is_some() };
     let has_old = unsafe { (*hn).old.is_some() };
-    let pm_special = (pm_flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0;
-    let pm_removable = (pm_flags & crate::ported::zsh_h::PM_REMOVABLE as i32) != 0;
+    let pm_special = (pm_flags & PM_SPECIAL as i32) != 0;
+    let pm_removable = (pm_flags & PM_REMOVABLE as i32) != 0;
     let pm_norestore = (pm_flags & crate::ported::zsh_h::PM_NORESTORE as i32) != 0;
 
     // c:84-89 — outer rejection branch: hn has ename, or PM_NORESTORE,
@@ -145,10 +145,10 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
 
     // c:174 — `hn->node.flags |= (PM_HIDE|PM_SPECIAL|PM_REMOVABLE|PM_RO_BY_DESIGN);`
     unsafe {
-        (*hn).node.flags |= (crate::ported::zsh_h::PM_HIDE
-            | crate::ported::zsh_h::PM_SPECIAL
-            | crate::ported::zsh_h::PM_REMOVABLE
-            | crate::ported::zsh_h::PM_RO_BY_DESIGN) as i32;
+        (*hn).node.flags |= (PM_HIDE
+            | PM_SPECIAL
+            | PM_REMOVABLE
+            | PM_RO_BY_DESIGN) as i32;
     }
     // c:175 — `hn->level -= 1;`  (move into the surrounding scope)
     unsafe {

@@ -18,6 +18,10 @@ use std::fs;
 
 use crate::ported::zsh_system_h::timespec;
 use std::os::unix::fs::MetadataExt;
+use crate::params::getsparam;
+use crate::ported::zsh_h::dirsav;
+use crate::utils::{unmeta, zwarn};
+use crate::zsh_system_h::{OPEN_MAX, ZSH_INITIAL_OPEN_MAX};
 
 /// Provide clock time with nanoseconds.
 ///
@@ -34,7 +38,7 @@ pub fn zgettime(ts: &mut timespec) -> i32 {
         if libc::clock_gettime(libc::CLOCK_REALTIME, &mut dts) < 0 {
             // c:107
             // c:108 — `zwarn("unable to retrieve time: %e", errno)`.
-            crate::ported::utils::zwarn(&format!(
+            zwarn(&format!(
                 "unable to retrieve time: {}",
                 std::io::Error::last_os_error()
             ));
@@ -83,7 +87,7 @@ pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {
         if libc::clock_gettime(clk, &mut dts) < 0 {
             // c:148/150
             // c:152 — `zwarn("unable to retrieve CLOCK_MONOTONIC time: %e", errno)`.
-            crate::ported::utils::zwarn(&format!(
+            zwarn(&format!(
                 "unable to retrieve CLOCK_MONOTONIC time: {}",
                 std::io::Error::last_os_error()
             ));
@@ -161,26 +165,23 @@ pub fn zopenmax() -> i64 {
     // `ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307` — 64 (NOT 1024).
     // Canonical port lives in `crate::ported::zsh_system_h`; use it
     // directly so any future C-source bump propagates here.
-    const ZSH_INITIAL_OPEN_MAX: i64 = crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX as i64; // c:307
                                                                                                 // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
                                                                                                 // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
                                                                                                 // C body's `j = OPEN_MAX` starting point is the host's NOFILE
                                                                                                 // (typically 1024 on Linux, 10240 on macOS) when available;
                                                                                                 // otherwise it collapses to 64. Use the canonical port.
-    const OPEN_MAX: i64 = crate::ported::zsh_system_h::OPEN_MAX as i64; // c:313
-
     #[cfg(unix)]
     {
         unsafe {
             let mut openmax = libc::sysconf(libc::_SC_OPEN_MAX);
             if openmax < 1 {
-                openmax = OPEN_MAX;
-            } else if openmax > OPEN_MAX {
+                openmax = OPEN_MAX as i64;
+            } else if openmax > OPEN_MAX as i64 {
                 // compat.c:314-324 — walk fds to find highest open.
-                if openmax > ZSH_INITIAL_OPEN_MAX {
-                    openmax = ZSH_INITIAL_OPEN_MAX;
+                if openmax > ZSH_INITIAL_OPEN_MAX as i64 {
+                    openmax = ZSH_INITIAL_OPEN_MAX as i64;
                 }
-                let mut j = OPEN_MAX;
+                let mut j = OPEN_MAX as i64;
                 let mut i = j;
                 while i < openmax {
                     let r = libc::fcntl(i as i32, libc::F_GETFL, 0);
@@ -228,7 +229,7 @@ pub fn zopenmax() -> i64 {
 /// C signature: `char *zgetdir(struct dirsav *d)`. Rust port keeps
 /// the out-arg shape but adds `Option<&mut>` so callers can pass
 /// `None` (matching the `NULL` legal value the C body checks for).
-pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
+pub fn zgetdir(d: Option<&mut dirsav>) -> Option<String> {
     // c:355
     let cwd = env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?.to_string();
@@ -287,9 +288,9 @@ pub fn zgetcwd() -> String {
     // the canonical paramtab accessor (uppercase — that's the
     // export name; the lowercase `pwd` is a C-internal symbol
     // with no Rust-side counterpart in paramtab).
-    if let Some(pwd) = crate::ported::params::getsparam("PWD") {
+    if let Some(pwd) = getsparam("PWD") {
         // c:563
-        let unmeta_pwd = crate::ported::utils::unmeta(&pwd); // c:563
+        let unmeta_pwd = unmeta(&pwd); // c:563
         if !unmeta_pwd.is_empty() {
             // c:564
             return unmeta_pwd;
@@ -1006,12 +1007,12 @@ mod tests {
     #[test]
     fn zchdir_existing_path_succeeds_without_fallback() {
         let _g = crate::test_util::global_state_lock();
-        let saved = std::env::current_dir().unwrap();
+        let saved = env::current_dir().unwrap();
         // c:585 — direct chdir success.
         let rc = zchdir("/");
         assert_eq!(rc, 0, "c:585 — zchdir(\"/\") direct success");
         // Restore for downstream tests.
-        std::env::set_current_dir(&saved).unwrap();
+        env::set_current_dir(&saved).unwrap();
     }
 
     /// `Src/compat.c:579-594` — direct chdir failure with a
@@ -1023,7 +1024,7 @@ mod tests {
     #[test]
     fn zchdir_nonexistent_path_returns_minus_one_without_fallback() {
         let _g = crate::test_util::global_state_lock();
-        let saved = std::env::current_dir().unwrap();
+        let saved = env::current_dir().unwrap();
         // Path that exists up to /tmp but not the last component →
         // chdir fails with ENOENT. C returns -1 without trying the
         // chunked descent (path < PATH_MAX so c:593 fails the gate).
@@ -1034,7 +1035,7 @@ mod tests {
         );
         // cwd unchanged.
         assert_eq!(
-            std::env::current_dir().unwrap(),
+            env::current_dir().unwrap(),
             saved,
             "no chdir side-effect on non-recoverable failure"
         );

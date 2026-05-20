@@ -547,7 +547,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // c:284-289 — declarations at function top (PORT.md Rule 5: same
     // names, same order, same scope as C).
     let value: String; // c:286 char *value
-    let shf: crate::ported::hashtable::ShFunc; // c:287 Shfunc shf
+    let shf: shfunc; // c:287 Shfunc shf
                                                // c:288 — Eprog prog (skipped: parse_string not yet ported)
                                                // c:289 — int sn (used inside the TRAP branch only)
 
@@ -572,7 +572,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // c:300 — shf = zshcalloc(sizeof(*shf));
     // c:301 — shf->funcdef = dupeprog(prog, 0); (deferred — ShFunc.body)
     // c:302 — shf->node.flags = dis;
-    shf = crate::ported::hashtable::ShFunc {
+    shf = shfunc {
         node: hashnode {
             next: None,
             nam: name.to_string(),
@@ -3417,7 +3417,7 @@ fn make_empty_special_pm(name: &str) -> Param {
 }
 
 use crate::ported::zsh_h::features as features_t;
-use crate::zsh_h::HASHED;
+use crate::zsh_h::{shfunc, HASHED};
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();

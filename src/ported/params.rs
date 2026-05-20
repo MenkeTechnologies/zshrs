@@ -1513,8 +1513,8 @@ pub fn createparamtable() {
     // load special_params_sh (scalar versions). Otherwise load
     // special_params zsh-only section (the continuation past the
     // inner NULL sentinel).
-    let is_sh_ksh = crate::ported::zsh_h::EMULATION(
-        crate::ported::zsh_h::EMULATE_SH | crate::ported::zsh_h::EMULATE_KSH,
+    let is_sh_ksh = EMULATION(
+        EMULATE_SH | EMULATE_KSH,
     );
     {
         let mut tab = paramtab().write().unwrap();
@@ -1669,7 +1669,7 @@ pub fn createparamtable() {
     // c:938-945 — HOME. EMULATE_ZSH path clears PM_UNSET and
     // addenv(home) when not already exported; non-zsh path sets
     // PM_UNSET when `home` is empty/unset.
-    let is_zsh = crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH);
+    let is_zsh = EMULATION(EMULATE_ZSH);
     let home_val = home_lock().lock().expect("home poisoned").clone();
     let home_action: Option<bool> = {
         let mut tab = paramtab().write().unwrap();
@@ -2094,7 +2094,7 @@ pub fn createspecialhash(name: &str, flags: i32) -> Option<Param> {
     // hash/empty/add/get/get2/remove/disable/enable/free/print
     // callbacks (c:1210-1221) which in our Rust model are implicit
     // (HashMap handles add/get/remove; freenode is Drop).
-    let ht = Box::new(crate::ported::zsh_h::hashtable {
+    let ht = Box::new(hashtable {
         hsize: 0,
         ct: 0,
         nodes: Vec::new(),
@@ -4259,7 +4259,7 @@ pub fn check_warn_pm(
     };
     for frame in stack.iter().rev() {
         // c:3180 walk most-recent-first
-        if frame.tp == crate::ported::zsh_h::FS_FUNC {
+        if frame.tp == FS_FUNC {
             // c:3181 FS_FUNC
             let msg = if created != 0 {
                 // c:3185
@@ -4621,9 +4621,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // ===========================================================
 
 use crate::config_h::DEFAULT_TMPPREFIX;
-use crate::zsh_h::{
-    paramdef, ERRFLAG_ERROR, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL,
-};
+use crate::zsh_h::{hashtable, paramdef, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 // -----------------------------------------------------------
@@ -9279,10 +9277,7 @@ mod tests {
 
         // PM_NAMEREF flag should still be present (not stripped).
         let pm = paramtab().read().unwrap().get("aa_nr").cloned().unwrap();
-        assert!(
-            pm.node.flags as u32 & PM_NAMEREF != 0,
-            "PM_NAMEREF preserved"
-        );
+        assert_ne!(pm.node.flags as u32 & PM_NAMEREF, 0, "PM_NAMEREF preserved");
 
         unsetparam("aa_nr");
         opt_state_set("exec", false);
@@ -9352,10 +9347,7 @@ mod tests {
         );
         // The PM_UNIQUE flag must persist through the assignment.
         let pm_check = paramtab().read().unwrap().get("aa_uniq").cloned().unwrap();
-        assert!(
-            pm_check.node.flags as u32 & PM_UNIQUE != 0,
-            "PM_UNIQUE flag preserved across assignment"
-        );
+        assert_ne!(pm_check.node.flags as u32 & PM_UNIQUE, 0, "PM_UNIQUE flag preserved across assignment");
         unsetparam("aa_uniq");
         opt_state_set("exec", false);
     }
@@ -9577,10 +9569,7 @@ mod tests {
             pm_after.base, 5,
             "c:5891 — PM_UPPER nameref base MUST be preserved (was 5, must stay 5)"
         );
-        assert!(
-            pm_after.node.flags as u32 & PM_UPPER != 0,
-            "PM_UPPER flag itself must persist"
-        );
+        assert_ne!(pm_after.node.flags as u32 & PM_UPPER, 0, "PM_UPPER flag itself must persist");
 
         paramtab().write().unwrap().remove("up_ref");
         set_locallevel(0);

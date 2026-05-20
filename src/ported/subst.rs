@@ -307,7 +307,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // Routes through canonical
                 // crate::ported::glob::xpandbraces; treats >1
                 // result as a positive hasbraces hit.
-                if !isset(crate::ported::zsh_h::IGNOREBRACES) && (flags & PREFORK_SINGLE == 0) {
+                if !isset(IGNOREBRACES) && (flags & PREFORK_SINGLE == 0) {
                     // c:166
                     if !keep {
                         // c:168
@@ -7881,15 +7881,15 @@ mod tests {
         assert_eq!(getkeystring("\\u0041").0, "A"); // utils.c:6915
     } // utils.c:6915
 
-    #[test] // utils.c:6915
+    #[test]
     fn test_simple_param_expansion() {
         let _g = crate::test_util::global_state_lock();
-        // utils.c:6915
-        vars_insert("FOO".to_string(), "bar".to_string()); // utils.c:6915
+        errflag.store(0, Ordering::Relaxed);
+        vars_insert("FOO".to_string(), "bar".to_string());
 
-        let (result, _, _) = paramsubst("$FOO", 0, false, 0, &mut 0); // utils.c:6915
-        assert_eq!(result, "bar"); // utils.c:6915
-    } // utils.c:6915
+        let (result, _, _) = paramsubst("$FOO", 0, false, 0, &mut 0);
+        assert_eq!(result, "bar");
+    }
 
     #[test] // utils.c:6915
     fn test_modify_head() {
@@ -8670,7 +8670,7 @@ pub fn sub_flags_get() -> i32 {
 // `crate::ported::zsh_h` at the top of this file (Dnull) and
 // available there (Bnullkeep). Bringing Bnullkeep into scope.
 use crate::ported::zsh_h::Bnullkeep;
-use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED};
+use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, IGNOREBRACES};
 
 /// Write the paramsubst flag bitmask. Equivalent to C's
 /// `sub_flags = X` at `Src/subst.c:2169`.

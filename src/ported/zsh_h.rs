@@ -1231,7 +1231,7 @@ pub struct process {
     pub pid: i32,                            // c:1119 pid_t
     pub text: String,                        // c:1120 char text[JOBTEXTSIZE]
     pub status: i32,                         // c:1121
-    pub ti: crate::ported::zsh_h::timeinfo,  // c:1122 child_times_t ti
+    pub ti: timeinfo,  // c:1122 child_times_t ti
     pub bgtime: Option<std::time::Instant>,  // c:1123 struct timespec bgtime
     pub endtime: Option<std::time::Instant>, // c:1124 struct timespec endtime
 }

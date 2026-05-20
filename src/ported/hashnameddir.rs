@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::zsh_h::{nameddir, ND_USERNAME, PRINT_LIST, PRINT_NAMEONLY};
+use crate::utils::{errflag, quotedzputs};
 
 // != 0 if all the usernames have already been *
 // added to the named directory hash table.    *                           // c:59-51
@@ -83,7 +84,7 @@ pub fn fillnameddirtable() {
             if pw.is_null() {
                 break;
             }
-            if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            if errflag.load(Ordering::Relaxed) != 0 {
                 break;
             }
             let name = std::ffi::CStr::from_ptr((*pw).pw_name)
@@ -177,8 +178,8 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {
     let _ = write!(
         out,
         "{}={}",
-        crate::ported::utils::quotedzputs(&hn.node.nam), // c:178
-        crate::ported::utils::quotedzputs(&hn.dir),      // c:180
+        quotedzputs(&hn.node.nam), // c:178
+        quotedzputs(&hn.dir),      // c:180
     );
     let _ = writeln!(out); // c:181
 }
@@ -226,8 +227,8 @@ pub fn nameddirtab() -> &'static Mutex<HashMap<String, nameddir>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::hashnode;
     use super::*;
-    use crate::ported::zsh_h::{hashnode, nameddir};
 
     /// Process-wide lock serialising tests that mutate the global
     /// `nameddirtab`. Without this, parallel `cargo test` invocations
