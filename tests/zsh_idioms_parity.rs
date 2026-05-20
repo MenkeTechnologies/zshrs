@@ -24,7 +24,11 @@ fn zsh_path() -> &'static str {
     }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 struct ShellResult {
     stdout: String,
@@ -33,17 +37,39 @@ struct ShellResult {
     exit: i32,
 }
 fn run_zsh(s: &str) -> ShellResult {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    ShellResult { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> ShellResult {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-c", s]).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    ShellResult { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
-    let z = run_zsh(s); let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", s, z.stdout, r.stdout);
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh(s);
+    let r = run_zshrs(s);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        s, z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit, "exit divergence on:\n{}", s);
 }
 
@@ -116,8 +142,10 @@ mod glob_quals {
     /// `(N)` nullglob — no error if no match.
     #[test]
     fn n_qualifier_nullglob() {
-        assert_parity(r#"print -l -- /nonexistent-dir-xyz/*(N) 2>/dev/null
-echo done"#);
+        assert_parity(
+            r#"print -l -- /nonexistent-dir-xyz/*(N) 2>/dev/null
+echo done"#,
+        );
     }
 
     /// `(*)` executable files only.
@@ -134,10 +162,7 @@ echo done"#);
     #[test]
     fn dash_dot_qualifier_follow_symlinks() {
         let d = setup_glob_dir("zshrs_glob_follow_sym");
-        let _ = std::os::unix::fs::symlink(
-            d.join("regular.txt"),
-            d.join("link.txt"),
-        );
+        let _ = std::os::unix::fs::symlink(d.join("regular.txt"), d.join("link.txt"));
         let script = format!("cd {0} && print -l -- *(-.) | sort", d.display());
         assert_parity(&script);
         let _ = std::fs::remove_dir_all(&d);
@@ -148,10 +173,7 @@ echo done"#);
     #[test]
     fn dot_qualifier_no_follow() {
         let d = setup_glob_dir("zshrs_glob_no_follow");
-        let _ = std::os::unix::fs::symlink(
-            d.join("regular.txt"),
-            d.join("link.txt"),
-        );
+        let _ = std::os::unix::fs::symlink(d.join("regular.txt"), d.join("link.txt"));
         let script = format!("cd {0} && print -l -- *(.) | sort", d.display());
         assert_parity(&script);
         let _ = std::fs::remove_dir_all(&d);
@@ -182,13 +204,17 @@ mod math_ops {
     /// Logical AND/OR.
     #[test]
     fn arith_logical_and() {
-        assert_parity(r#"echo $((1 && 0))
-echo $((1 && 1))"#);
+        assert_parity(
+            r#"echo $((1 && 0))
+echo $((1 && 1))"#,
+        );
     }
     #[test]
     fn arith_logical_or() {
-        assert_parity(r#"echo $((0 || 1))
-echo $((0 || 0))"#);
+        assert_parity(
+            r#"echo $((0 || 1))
+echo $((0 || 0))"#,
+        );
     }
 
     /// Ternary `cond ? a : b`.
@@ -264,8 +290,10 @@ mod cond_tests {
     /// `[[ a == b ]]` string equality.
     #[test]
     fn cond_string_eq() {
-        assert_parity(r#"[[ "hello" == "hello" ]] && echo yes
-[[ "hello" == "world" ]] || echo neq"#);
+        assert_parity(
+            r#"[[ "hello" == "hello" ]] && echo yes
+[[ "hello" == "world" ]] || echo neq"#,
+        );
     }
 
     /// `[[ a < b ]]` lexicographic compare.
@@ -350,23 +378,29 @@ mod hook_idiom {
     /// chpwd hook function.
     #[test]
     fn chpwd_function_runs() {
-        assert_parity(r#"chpwd() { echo "now in $PWD"; }
-cd /tmp"#);
+        assert_parity(
+            r#"chpwd() { echo "now in $PWD"; }
+cd /tmp"#,
+        );
     }
 
     /// precmd runs before each prompt — but not in -fc mode. Just
     /// verify it can be defined without erroring.
     #[test]
     fn precmd_definition_ok() {
-        assert_parity(r#"precmd() { :; }
-echo done"#);
+        assert_parity(
+            r#"precmd() { :; }
+echo done"#,
+        );
     }
 
     /// preexec runs before each command — same as precmd.
     #[test]
     fn preexec_definition_ok() {
-        assert_parity(r#"preexec() { :; }
-echo done"#);
+        assert_parity(
+            r#"preexec() { :; }
+echo done"#,
+        );
     }
 }
 
@@ -443,9 +477,11 @@ mod specials {
     /// `$?` — last status.
     #[test]
     fn dollar_question_last_status() {
-        assert_parity(r#"true; echo $?
+        assert_parity(
+            r#"true; echo $?
 false; echo $?
-(exit 7); echo $?"#);
+(exit 7); echo $?"#,
+        );
     }
 
     /// `$$` matches process pid (consistent across reads).
@@ -466,8 +502,10 @@ false; echo $?
     /// `$LINENO` increments.
     #[test]
     fn dollar_lineno() {
-        assert_parity(r#"echo $LINENO
-echo $LINENO"#);
+        assert_parity(
+            r#"echo $LINENO
+echo $LINENO"#,
+        );
     }
 
     /// `$HOST` (from libc::gethostname). zsh uses `$HOST`, not
@@ -489,26 +527,32 @@ mod word_splitting {
     /// `IFS=:; for w in $a; do …` splits on `:`.
     #[test]
     fn ifs_colon_split() {
-        assert_parity(r#"a="x:y:z"
+        assert_parity(
+            r#"a="x:y:z"
 IFS=:
-for w in $a; do echo "$w"; done"#);
+for w in $a; do echo "$w"; done"#,
+        );
     }
 
     /// `IFS=$'\n'` line-split.
     #[test]
     fn ifs_newline_split() {
-        assert_parity(r#"a="x
+        assert_parity(
+            r#"a="x
 y
 z"
 IFS=$'\n'
-for w in $a; do echo "$w"; done"#);
+for w in $a; do echo "$w"; done"#,
+        );
     }
 
     /// Quoted "$@" preserves elements (no further split).
     #[test]
     fn at_quoted_preserves_elements() {
-        assert_parity(r#"set -- "a b" c "d e"
-for x in "$@"; do echo "[$x]"; done"#);
+        assert_parity(
+            r#"set -- "a b" c "d e"
+for x in "$@"; do echo "[$x]"; done"#,
+        );
     }
 }
 
@@ -520,19 +564,23 @@ mod heredocs_extra {
     /// Heredoc into pipeline.
     #[test]
     fn heredoc_into_pipe() {
-        assert_parity(r#"cat <<EOF | wc -l | tr -d ' '
+        assert_parity(
+            r#"cat <<EOF | wc -l | tr -d ' '
 a
 b
 c
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Heredoc with command substitution inside.
     #[test]
     fn heredoc_cmd_subst() {
-        assert_parity(r#"cat <<EOF
+        assert_parity(
+            r#"cat <<EOF
 result=$(echo subbed)
-EOF"#);
+EOF"#,
+        );
     }
 }
 
@@ -546,16 +594,20 @@ mod coproc {
     /// without hanging.
     #[test]
     fn coproc_smoke() {
-        let z = run_zsh(r#"coproc cat
+        let z = run_zsh(
+            r#"coproc cat
 echo hello >&p
 read -p line
 echo "got:$line"
-exec >&p-"#);
-        let r = run_zshrs(r#"coproc cat
+exec >&p-"#,
+        );
+        let r = run_zshrs(
+            r#"coproc cat
 echo hello >&p
 read -p line
 echo "got:$line"
-exec >&p-"#);
+exec >&p-"#,
+        );
         // Only assert that BOTH terminate; the protocol is fragile.
         assert_eq!(z.exit == 0, r.exit == 0 || r.exit == 1);
     }

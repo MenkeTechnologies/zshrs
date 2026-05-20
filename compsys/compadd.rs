@@ -299,10 +299,9 @@ pub fn compadd_execute(
     // Process each match
     for (idx, m) in match_strings.iter().enumerate() {
         // Check against PREFIX unless -U
-        if !opts.no_match
-            && !matches_prefix(m, &params.prefix, opts.match_spec.as_deref()) {
-                continue;
-            }
+        if !opts.no_match && !matches_prefix(m, &params.prefix, opts.match_spec.as_deref()) {
+            continue;
+        }
 
         // Check against ignore patterns
         if let Some(ref igns) = ignores {

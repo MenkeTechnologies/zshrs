@@ -247,14 +247,16 @@ fn probe_cond_shape() {
 
 #[test]
 fn probe_arith_shape() {
-    zsh::parse::parse_init("(( i < 3 ))");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("(( i < 3 ))");
+    let prog = zsh::parse::parse();
     eprintln!("(()) AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_compile_arith() {
     use zsh::compile_zsh::ZshCompiler;
-    zsh::parse::parse_init("(( x = 2 + 3 )); echo $x");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("(( x = 2 + 3 )); echo $x");
+    let prog = zsh::parse::parse();
     eprintln!("AST: {:#?}", prog);
     let comp = ZshCompiler::new();
     let chunk = comp.compile(&prog);
@@ -273,7 +275,8 @@ fn probe_unary_test_op() {
 
 #[test]
 fn probe_case_pattern() {
-    zsh::parse::parse_init("case foo in *) echo def ;; esac");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("case foo in *) echo def ;; esac");
+    let prog = zsh::parse::parse();
     eprintln!("CASE AST: {:#?}", prog);
 }
 
@@ -308,7 +311,8 @@ fn probe_dollar_single() {
 #[test]
 fn probe_funcdef_compile() {
     use zsh::compile_zsh::ZshCompiler;
-    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("greet() { echo hi; }; greet");
+    let prog = zsh::parse::parse();
     let comp = ZshCompiler::new();
     let chunk = comp.compile(&prog);
     eprintln!("ops: {}", chunk.ops.len());
@@ -327,7 +331,8 @@ fn probe_funcdef_compile() {
 
 #[test]
 fn probe_funcdef_ast() {
-    zsh::parse::parse_init("greet() { echo hi; }; greet");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("greet() { echo hi; }; greet");
+    let prog = zsh::parse::parse();
     eprintln!("FUNC AST: {:#?}", prog);
 }
 
@@ -341,11 +346,14 @@ fn probe_assoc_two_in_dquote() {
 #[test]
 fn probe_lex_pure_funcdef() {
     use zsh::tokens::lextok;
-    zsh::lex::lex_init("f() { :; }; f");    for _ in 0..15 {
+    zsh::lex::lex_init("f() { :; }; f");
+    for _ in 0..15 {
         zsh::lex::zshlex();
         eprintln!(
             "tok={:?} tokstr={:?} incmdpos={}",
-            zsh::lex::tok(), zsh::lex::tokstr(), zsh::lex::incmdpos()
+            zsh::lex::tok(),
+            zsh::lex::tokstr(),
+            zsh::lex::incmdpos()
         );
         if zsh::lex::tok() == zsh::tokens::ENDINPUT {
             break;
@@ -381,7 +389,8 @@ fn probe_lex_printf() {
 
 #[test]
 fn probe_cmdsub_inner() {
-    zsh::parse::parse_init(r#"echo $(printf "a\nb")"#);    let prog = zsh::parse::parse();
+    zsh::parse::parse_init(r#"echo $(printf "a\nb")"#);
+    let prog = zsh::parse::parse();
     eprintln!("CMDSUB AST: {:#?}", prog);
 }
 
@@ -394,13 +403,15 @@ fn probe_array_then_funcdef() {
 
 #[test]
 fn probe_anon_fn() {
-    zsh::parse::parse_init("() { echo anon; }");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("() { echo anon; }");
+    let prog = zsh::parse::parse();
     eprintln!("ANON-FN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_for_implicit_pos() {
-    zsh::parse::parse_init(r#"f() { for x; do echo "[$x]"; done; }"#);    let prog = zsh::parse::parse();
+    zsh::parse::parse_init(r#"f() { for x; do echo "[$x]"; done; }"#);
+    let prog = zsh::parse::parse();
     eprintln!("FOR-IMPL AST: {:#?}", prog);
 }
 
@@ -413,7 +424,9 @@ fn probe_lex_regex_paren() {
         zsh::lex::zshlex();
         eprintln!(
             "tok={:?} tokstr={:?} incondpat={}",
-            zsh::lex::tok(), zsh::lex::tokstr(), zsh::lex::LEX_INCONDPAT.with(|c| c.get())
+            zsh::lex::tok(),
+            zsh::lex::tokstr(),
+            zsh::lex::LEX_INCONDPAT.with(|c| c.get())
         );
         if zsh::lex::tok() == zsh::tokens::ENDINPUT {
             break;
@@ -423,13 +436,15 @@ fn probe_lex_regex_paren() {
 
 #[test]
 fn probe_regex_with_paren() {
-    zsh::parse::parse_init(r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]] && echo y"#);    let prog = zsh::parse::parse();
+    zsh::parse::parse_init(r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]] && echo y"#);
+    let prog = zsh::parse::parse();
     eprintln!("REGEX-PAREN AST: {:#?}", prog);
 }
 
 #[test]
 fn probe_proc_sub_input() {
-    zsh::parse::parse_init("/bin/cat <(echo line)");    let prog = zsh::parse::parse();
+    zsh::parse::parse_init("/bin/cat <(echo line)");
+    let prog = zsh::parse::parse();
     eprintln!("PROC-SUB AST: {:#?}", prog);
 }
 

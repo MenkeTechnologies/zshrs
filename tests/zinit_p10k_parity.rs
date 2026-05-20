@@ -269,9 +269,7 @@ mod p10k_local_typed {
     /// `local -F NAME=VAL` — float-typed local.
     #[test]
     fn local_dash_f_float() {
-        assert_parity(
-            r#"f() { local -F x=3.14; print -- "$x"; }; f"#,
-        );
+        assert_parity(r#"f() { local -F x=3.14; print -- "$x"; }; f"#);
     }
 
     /// `local -i N=expr` — integer-typed local.
@@ -283,17 +281,13 @@ mod p10k_local_typed {
     /// `local -A a=(...)` — assoc local.
     #[test]
     fn local_dash_a_assoc() {
-        assert_parity(
-            r#"f() { local -A m=(k1 v1); print -- "${m[k1]}"; }; f"#,
-        );
+        assert_parity(r#"f() { local -A m=(k1 v1); print -- "${m[k1]}"; }; f"#);
     }
 
     /// `local -a arr=(...)` — indexed-array local.
     #[test]
     fn local_dash_lower_a_array() {
-        assert_parity(
-            r#"f() { local -a arr=(x y z); print -- "${arr[2]}"; }; f"#,
-        );
+        assert_parity(r#"f() { local -a arr=(x y z); print -- "${arr[2]}"; }; f"#);
     }
 }
 
@@ -353,7 +347,9 @@ mod p10k_conditionals {
     /// `[[ ${X} =~ regex ]]` — regex match.
     #[test]
     fn double_bracket_regex_match() {
-        assert_parity(r#"x=hello123; [[ "$x" =~ '([a-z]+)([0-9]+)' ]] && echo "match $match[1] $match[2]""#);
+        assert_parity(
+            r#"x=hello123; [[ "$x" =~ '([a-z]+)([0-9]+)' ]] && echo "match $match[1] $match[2]""#,
+        );
     }
 
     /// `[[ -n $a && -z $b ]]` — combined.
@@ -427,7 +423,9 @@ mod zinit_glob {
     /// listings (sorted).
     #[test]
     fn star_glob_listing() {
-        assert_parity(r#"cd /tmp 2>/dev/null && setopt nullglob && ls -d /etc/*conf* 2>/dev/null | sort | head -3"#);
+        assert_parity(
+            r#"cd /tmp 2>/dev/null && setopt nullglob && ls -d /etc/*conf* 2>/dev/null | sort | head -3"#,
+        );
     }
 
     /// Glob qualifier `(.)` — regular files only.
@@ -473,10 +471,7 @@ mod zinit_glob {
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(tmp.join("a/b"));
         let _ = std::fs::write(tmp.join("a/b/file.txt"), "");
-        let script = format!(
-            "cd {0} && print -l -- **/*.txt 2>/dev/null",
-            tmp.display()
-        );
+        let script = format!("cd {0} && print -l -- **/*.txt 2>/dev/null", tmp.display());
         let z = run_zsh(&script);
         let r = run_zshrs(&script);
         // Both must emit the canonical relative match.
@@ -536,9 +531,7 @@ mod zinit_version_check {
     /// `[[ "${ZSH_VERSION%%.*}" -ge 5 ]]` — major version test.
     #[test]
     fn version_major_ge_5() {
-        assert_parity(
-            r#"[[ "${ZSH_VERSION%%.*}" -ge 5 ]] && echo ok-zsh5"#,
-        );
+        assert_parity(r#"[[ "${ZSH_VERSION%%.*}" -ge 5 ]] && echo ok-zsh5"#);
     }
 
     /// `[[ "$ZSH_VERSION" == 5.* ]]` — string-pattern test.
@@ -696,8 +689,10 @@ mod tied_path_arrays {
         // to a directory that doesn't have it. Test exit code parity
         // rather than exact stderr (different `command not found`
         // wording).
-        let real = super::run_zsh(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
-        let rs = super::run_zshrs(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
+        let real =
+            super::run_zsh(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
+        let rs =
+            super::run_zshrs(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
         assert_eq!(real.stdout, rs.stdout);
     }
 

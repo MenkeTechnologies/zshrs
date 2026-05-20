@@ -17,20 +17,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use crate::ported::utils::zerr;
-use std::env;
-use crate::ported::vm_helper::{
-    self,
-};
 
-/// Re-export of `MN_INTEGER` (defined in zsh_h.rs as the Src/zsh.h:103 port).
-pub use crate::ported::zsh_h::MN_INTEGER;
-/// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
-pub use crate::ported::zsh_h::MN_FLOAT;
-/// Re-export of `MN_UNSET` (defined in zsh_h.rs as the Src/zsh.h:105 port).
-pub use crate::ported::zsh_h::MN_UNSET;
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
 pub use crate::ported::zsh_h::mnumber;
+/// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
+pub use crate::ported::zsh_h::MN_FLOAT;
+/// Re-export of `MN_INTEGER` (defined in zsh_h.rs as the Src/zsh.h:103 port).
+pub use crate::ported::zsh_h::MN_INTEGER;
+/// Re-export of `MN_UNSET` (defined in zsh_h.rs as the Src/zsh.h:105 port).
+pub use crate::ported::zsh_h::MN_UNSET;
 
 /// Port of `struct mathvalue` from `Src/math.c`:
 ///
@@ -70,59 +65,59 @@ const OP_OPF: u16 = 0x0100; // followed by operator (after this, next is operato
 /// `#define`s; the Rust port mirrors as `pub const` ints so
 /// `static int mtok` (math.c:305) can be a plain `i32` and the
 /// C precedence/type tables index by the literal numbers.
-pub const M_INPAR: i32 = 0;       // c:109  '('
-pub const M_OUTPAR: i32 = 1;      // c:110  ')'
-pub const NOT: i32 = 2;           // c:111  '!'
-pub const COMP: i32 = 3;          // c:112  '~'
-pub const POSTPLUS: i32 = 4;      // c:113  x++
-pub const POSTMINUS: i32 = 5;     // c:114  x--
-pub const UPLUS: i32 = 6;         // c:115  +x
-pub const UMINUS: i32 = 7;        // c:116  -x
-pub const AND: i32 = 8;           // c:117  &
-pub const XOR: i32 = 9;           // c:118  ^
-pub const OR: i32 = 10;           // c:119  |
-pub const MUL: i32 = 11;          // c:120  *
-pub const DIV: i32 = 12;          // c:121  /
-pub const MOD: i32 = 13;          // c:122  %
-pub const PLUS: i32 = 14;         // c:123  +
-pub const MINUS: i32 = 15;        // c:124  -
-pub const SHLEFT: i32 = 16;       // c:125  <<
-pub const SHRIGHT: i32 = 17;      // c:126  >>
-pub const LES: i32 = 18;          // c:127  <
-pub const LEQ: i32 = 19;          // c:128  <=
-pub const GRE: i32 = 20;          // c:129  >
-pub const GEQ: i32 = 21;          // c:130  >=
-pub const DEQ: i32 = 22;          // c:131  ==
-pub const NEQ: i32 = 23;          // c:132  !=
-pub const DAND: i32 = 24;         // c:133  &&
-pub const DOR: i32 = 25;          // c:134  ||
-pub const DXOR: i32 = 26;         // c:135  ^^
-pub const QUEST: i32 = 27;        // c:136  ? (ternary)
-pub const COLON: i32 = 28;        // c:137  :
-pub const EQ: i32 = 29;           // c:138  =
-pub const PLUSEQ: i32 = 30;       // c:139  +=
-pub const MINUSEQ: i32 = 31;      // c:140  -=
-pub const MULEQ: i32 = 32;        // c:141  *=
-pub const DIVEQ: i32 = 33;        // c:142  /=
-pub const MODEQ: i32 = 34;        // c:143  %=
-pub const ANDEQ: i32 = 35;        // c:144  &=
-pub const XOREQ: i32 = 36;        // c:145  ^=
-pub const OREQ: i32 = 37;         // c:146  |=
-pub const SHLEFTEQ: i32 = 38;     // c:147  <<=
-pub const SHRIGHTEQ: i32 = 39;    // c:148  >>=
-pub const DANDEQ: i32 = 40;       // c:149  &&=
-pub const DOREQ: i32 = 41;        // c:150  ||=
-pub const DXOREQ: i32 = 42;       // c:151  ^^=
-pub const COMMA: i32 = 43;        // c:152  ,
-pub const EOI: i32 = 44;          // c:153  end of input
-pub const PREPLUS: i32 = 45;      // c:154  ++x
-pub const PREMINUS: i32 = 46;     // c:155  --x
-pub const NUM: i32 = 47;          // c:156  number literal
-pub const ID: i32 = 48;           // c:157  identifier
-pub const POWER: i32 = 49;        // c:158  **
-pub const CID: i32 = 50;          // c:159  #identifier (char value)
-pub const POWEREQ: i32 = 51;      // c:160  **=
-pub const FUNC: i32 = 52;         // c:161  function call
+pub const M_INPAR: i32 = 0; // c:109  '('
+pub const M_OUTPAR: i32 = 1; // c:110  ')'
+pub const NOT: i32 = 2; // c:111  '!'
+pub const COMP: i32 = 3; // c:112  '~'
+pub const POSTPLUS: i32 = 4; // c:113  x++
+pub const POSTMINUS: i32 = 5; // c:114  x--
+pub const UPLUS: i32 = 6; // c:115  +x
+pub const UMINUS: i32 = 7; // c:116  -x
+pub const AND: i32 = 8; // c:117  &
+pub const XOR: i32 = 9; // c:118  ^
+pub const OR: i32 = 10; // c:119  |
+pub const MUL: i32 = 11; // c:120  *
+pub const DIV: i32 = 12; // c:121  /
+pub const MOD: i32 = 13; // c:122  %
+pub const PLUS: i32 = 14; // c:123  +
+pub const MINUS: i32 = 15; // c:124  -
+pub const SHLEFT: i32 = 16; // c:125  <<
+pub const SHRIGHT: i32 = 17; // c:126  >>
+pub const LES: i32 = 18; // c:127  <
+pub const LEQ: i32 = 19; // c:128  <=
+pub const GRE: i32 = 20; // c:129  >
+pub const GEQ: i32 = 21; // c:130  >=
+pub const DEQ: i32 = 22; // c:131  ==
+pub const NEQ: i32 = 23; // c:132  !=
+pub const DAND: i32 = 24; // c:133  &&
+pub const DOR: i32 = 25; // c:134  ||
+pub const DXOR: i32 = 26; // c:135  ^^
+pub const QUEST: i32 = 27; // c:136  ? (ternary)
+pub const COLON: i32 = 28; // c:137  :
+pub const EQ: i32 = 29; // c:138  =
+pub const PLUSEQ: i32 = 30; // c:139  +=
+pub const MINUSEQ: i32 = 31; // c:140  -=
+pub const MULEQ: i32 = 32; // c:141  *=
+pub const DIVEQ: i32 = 33; // c:142  /=
+pub const MODEQ: i32 = 34; // c:143  %=
+pub const ANDEQ: i32 = 35; // c:144  &=
+pub const XOREQ: i32 = 36; // c:145  ^=
+pub const OREQ: i32 = 37; // c:146  |=
+pub const SHLEFTEQ: i32 = 38; // c:147  <<=
+pub const SHRIGHTEQ: i32 = 39; // c:148  >>=
+pub const DANDEQ: i32 = 40; // c:149  &&=
+pub const DOREQ: i32 = 41; // c:150  ||=
+pub const DXOREQ: i32 = 42; // c:151  ^^=
+pub const COMMA: i32 = 43; // c:152  ,
+pub const EOI: i32 = 44; // c:153  end of input
+pub const PREPLUS: i32 = 45; // c:154  ++x
+pub const PREMINUS: i32 = 46; // c:155  --x
+pub const NUM: i32 = 47; // c:156  number literal
+pub const ID: i32 = 48; // c:157  identifier
+pub const POWER: i32 = 49; // c:158  **
+pub const CID: i32 = 50; // c:159  #identifier (char value)
+pub const POWEREQ: i32 = 51; // c:160  **=
+pub const FUNC: i32 = 52; // c:161  function call
 /// Total token count — Src/math.c:162 `#define TOKCOUNT 53`. The
 /// `c_prec`/`z_prec`/`type` arrays are sized by this.
 pub const TOKCOUNT: usize = 53;
@@ -150,158 +145,212 @@ pub enum prec_type {
 /// WARNING: param names don't match C — Rust=() vs C=(mptr)
 pub(crate) fn getmathparam(name: &str) -> mnumber {
     // Strip array subscript if present
-        let base_name = if let Some(bracket) = name.find('[') {
-            &name[..bracket]
-        } else {
-            name
-        };
-        if let Some(v) = m_variables_get(base_name) {
-            return v;
-        }
-        // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
-        // which parses the full subscript syntax (params.c:2180).
-        // The Rust port previously required callers to seed
-        // `with_string_variables` (a pre-populate pattern that
-        // diverged from C). Read paramtab + array subscripts here
-        // so matheval works without seeding.
-        if let Some(bracket) = name.find('[') {
-            let close = name.rfind(']').unwrap_or(name.len());
-            let arr_name = &name[..bracket];
-            let idx_str = &name[bracket + 1..close];
-            // Recursively eval the index (so a[i+1], h[$k], etc work).
-            let idx_val = matheval(idx_str)
-                .map(|n| if n.type_ == crate::ported::zsh_h::MN_FLOAT { n.d as i64 } else { n.l })
-                .unwrap_or(0);
-            // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
-            if let Ok(tab) = crate::ported::params::paramtab().read() {
-                if let Some(pm) = tab.get(arr_name) {
-                    if let Some(arr) = &pm.u_arr {
-                        let len = arr.len() as i64;
-                        let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
-                        if pos >= 0 && (pos as usize) < arr.len() {
-                            let raw = &arr[pos as usize];
-                            if let Ok(n) = raw.parse::<i64>() {
-                                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-                            }
-                            if let Ok(f) = raw.parse::<f64>() {
-                                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-                            }
-                        }
-                    }
-                }
-            }
-            // PM_HASHED via paramtab_hashed_storage.
-            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                if let Some(map) = m.get(arr_name) {
-                    if let Some(v) = map.get(idx_str) {
-                        if let Ok(n) = v.parse::<i64>() {
-                            return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-                        }
-                        if let Ok(f) = v.parse::<f64>() {
-                            return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-                        }
-                    }
-                }
-            }
-            return mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-        }
-        if let Some(raw) = crate::ported::params::getsparam(base_name) {
-            if let Ok(n) = raw.parse::<i64>() {
-                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-            }
-            if let Ok(f) = raw.parse::<f64>() {
-                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-            }
-            // Non-numeric string: fall through to recursive-eval below.
-        }
-        // Recursive eval: if the var holds a non-numeric string, evaluate
-        // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
-        // to one level of indirection — fresh evaluator each call so we
-        // don't accidentally pollute s.variables.
-        if let Some(raw) = m_string_variables_get(base_name) {
-            // Save parent's eval state — `new(&raw)` resets thread_locals
-            // for the sub-eval, which would otherwise clobber the parent.
-            // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
-            let saved = save_state();
-            // Inherit caller's variables/string_variables/prec into the
-            // sub-eval, with `base_name` removed from the indirect map to
-            // prevent infinite recursion on `a="$a"`-style cycles.
-            let inherited_vars = saved.variables.clone();
-            let mut inherited_strs = saved.string_variables.clone();
-            inherited_strs.remove(base_name);
-            let inherited_prec = saved.prec;
-            let inherited_c_prec = saved.c_precedences;
-
-            new(&raw);
-            m_variables_set(inherited_vars);
-            m_string_variables_set(inherited_strs);
-            m_prec_set(inherited_prec);
-            m_c_precedences_set(inherited_c_prec);
-
-            let result = mathevall();
-            restore_state(saved);
-            if let Ok(r) = result {
-                return r;
-            }
-        }
-        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    let base_name = if let Some(bracket) = name.find('[') {
+        &name[..bracket]
+    } else {
+        name
+    };
+    if let Some(v) = m_variables_get(base_name) {
+        return v;
     }
+    // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
+    // which parses the full subscript syntax (params.c:2180).
+    // The Rust port previously required callers to seed
+    // `with_string_variables` (a pre-populate pattern that
+    // diverged from C). Read paramtab + array subscripts here
+    // so matheval works without seeding.
+    if let Some(bracket) = name.find('[') {
+        let close = name.rfind(']').unwrap_or(name.len());
+        let arr_name = &name[..bracket];
+        let idx_str = &name[bracket + 1..close];
+        // Recursively eval the index (so a[i+1], h[$k], etc work).
+        let idx_val = matheval(idx_str)
+            .map(|n| {
+                if n.type_ == crate::ported::zsh_h::MN_FLOAT {
+                    n.d as i64
+                } else {
+                    n.l
+                }
+            })
+            .unwrap_or(0);
+        // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
+        if let Ok(tab) = crate::ported::params::paramtab().read() {
+            if let Some(pm) = tab.get(arr_name) {
+                if let Some(arr) = &pm.u_arr {
+                    let len = arr.len() as i64;
+                    let pos = if idx_val < 0 {
+                        len + idx_val
+                    } else {
+                        idx_val - 1
+                    };
+                    if pos >= 0 && (pos as usize) < arr.len() {
+                        let raw = &arr[pos as usize];
+                        if let Ok(n) = raw.parse::<i64>() {
+                            return mnumber {
+                                l: n,
+                                d: 0.0,
+                                type_: crate::ported::zsh_h::MN_INTEGER,
+                            };
+                        }
+                        if let Ok(f) = raw.parse::<f64>() {
+                            return mnumber {
+                                l: 0,
+                                d: f,
+                                type_: crate::ported::zsh_h::MN_FLOAT,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        // PM_HASHED via paramtab_hashed_storage.
+        if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+            if let Some(map) = m.get(arr_name) {
+                if let Some(v) = map.get(idx_str) {
+                    if let Ok(n) = v.parse::<i64>() {
+                        return mnumber {
+                            l: n,
+                            d: 0.0,
+                            type_: crate::ported::zsh_h::MN_INTEGER,
+                        };
+                    }
+                    if let Ok(f) = v.parse::<f64>() {
+                        return mnumber {
+                            l: 0,
+                            d: f,
+                            type_: crate::ported::zsh_h::MN_FLOAT,
+                        };
+                    }
+                }
+            }
+        }
+        return mnumber {
+            l: 0,
+            d: 0.0,
+            type_: crate::ported::zsh_h::MN_INTEGER,
+        };
+    }
+    if let Some(raw) = crate::ported::params::getsparam(base_name) {
+        if let Ok(n) = raw.parse::<i64>() {
+            return mnumber {
+                l: n,
+                d: 0.0,
+                type_: crate::ported::zsh_h::MN_INTEGER,
+            };
+        }
+        if let Ok(f) = raw.parse::<f64>() {
+            return mnumber {
+                l: 0,
+                d: f,
+                type_: crate::ported::zsh_h::MN_FLOAT,
+            };
+        }
+        // Non-numeric string: fall through to recursive-eval below.
+    }
+    // Recursive eval: if the var holds a non-numeric string, evaluate
+    // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
+    // to one level of indirection — fresh evaluator each call so we
+    // don't accidentally pollute s.variables.
+    if let Some(raw) = m_string_variables_get(base_name) {
+        // Save parent's eval state — `new(&raw)` resets thread_locals
+        // for the sub-eval, which would otherwise clobber the parent.
+        // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
+        let saved = save_state();
+        // Inherit caller's variables/string_variables/prec into the
+        // sub-eval, with `base_name` removed from the indirect map to
+        // prevent infinite recursion on `a="$a"`-style cycles.
+        let inherited_vars = saved.variables.clone();
+        let mut inherited_strs = saved.string_variables.clone();
+        inherited_strs.remove(base_name);
+        let inherited_prec = saved.prec;
+        let inherited_c_prec = saved.c_precedences;
 
-    /// Evaluate the expression
+        new(&raw);
+        m_variables_set(inherited_vars);
+        m_string_variables_set(inherited_strs);
+        m_prec_set(inherited_prec);
+        m_c_precedences_set(inherited_c_prec);
+
+        let result = mathevall();
+        restore_state(saved);
+        if let Ok(r) = result {
+            return r;
+        }
+    }
+    mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    }
+}
+
+/// Evaluate the expression
 /// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
-    /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
-    pub(crate) fn mathevall() -> Result<mnumber, String> {
-        m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
+/// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
+pub(crate) fn mathevall() -> Result<mnumber, String> {
+    m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
-        // Skip leading whitespace and Nularg
-        while let Some(c) = peek() {
-            if c.is_whitespace() || c == '\u{a1}' {
-                advance();
-            } else {
-                break;
-            }
-        }
-
-        if m_pos() >= m_input_len() {
-            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-        }
-
-        mathparse(top_prec());
-
-        if let Some(err) = m_error_take() {
-            return Err(err);
-        }
-
-        // Check for trailing characters
-        while let Some(c) = peek() {
-            if c.is_whitespace() {
-                advance();
-            } else if c == ')' {
-                // zsh's specific wording for the unmatched-close
-                // case: `bad math expression: unexpected ')'`.
-                return Err("bad math expression: unexpected ')'".to_string());
-            } else {
-                return Err(format!("illegal character: {}", c));
-            }
-        }
-
-        if m_stack_is_empty() {
-            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-        }
-
-        let mv = m_stack_pop().unwrap();
-        let result = if (mv.val.type_ == MN_UNSET) {
-            if let Some(ref name) = mv.lval {
-                getmathparam(name)
-            } else {
-                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-            }
+    // Skip leading whitespace and Nularg
+    while let Some(c) = peek() {
+        if c.is_whitespace() || c == '\u{a1}' {
+            advance();
         } else {
-            mv.val
-        };
-
-        Ok(result)
+            break;
+        }
     }
+
+    if m_pos() >= m_input_len() {
+        return Ok(mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        });
+    }
+
+    mathparse(top_prec());
+
+    if let Some(err) = m_error_take() {
+        return Err(err);
+    }
+
+    // Check for trailing characters
+    while let Some(c) = peek() {
+        if c.is_whitespace() {
+            advance();
+        } else if c == ')' {
+            // zsh's specific wording for the unmatched-close
+            // case: `bad math expression: unexpected ')'`.
+            return Err("bad math expression: unexpected ')'".to_string());
+        } else {
+            return Err(format!("illegal character: {}", c));
+        }
+    }
+
+    if m_stack_is_empty() {
+        return Ok(mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        });
+    }
+
+    let mv = m_stack_pop().unwrap();
+    let result = if (mv.val.type_ == MN_UNSET) {
+        if let Some(ref name) = mv.lval {
+            getmathparam(name)
+        } else {
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            }
+        }
+    } else {
+        mv.val
+    };
+
+    Ok(result)
+}
 
 /// Port of `lexconstant()` from `Src/math.c:462`.
 ///
@@ -313,250 +362,302 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
 /// for greedy base parsing (consume valid digits only, leave the
 /// rest as the next token).
 pub(crate) fn lexconstant() -> i32 {
-        let _start = m_pos();
-        let mut is_neg = false;
+    let _start = m_pos();
+    let mut is_neg = false;
 
-        // Handle leading minus for unary context
-        if peek() == Some('-') {
-            is_neg = true;
-            advance();
-        }
+    // Handle leading minus for unary context
+    if peek() == Some('-') {
+        is_neg = true;
+        advance();
+    }
 
-        // Check for hex/binary/octal
-        if peek() == Some('0') {
-            advance();
-            match peek().map(|c| c.to_ascii_lowercase()) {
-                Some('x') => {
-                    // Hex: 0xFF
-                    advance();
-                    let hex_start = m_pos();
-                    while let Some(c) = peek() {
-                        if c.is_ascii_hexdigit() || c == '_' {
-                            advance();
-                        } else {
-                            break;
-                        }
-                    }
-                    let hex_str: String = m_input_clone()[hex_start..m_pos()]
-                        .chars()
-                        .filter(|&c| c != '_')
-                        .collect();
-                    let val = i64::from_str_radix(&hex_str, 16).unwrap_or(0);
-                    m_lastbase_set(16);
-                    m_yyval_set(if m_force_float() {
-                        mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
-                    } else {
-                        mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
-                    });
-                    return NUM;
-                }
-                Some('b') => {
-                    // Binary: 0b1010
-                    advance();
-                    let bin_start = m_pos();
-                    while let Some(c) = peek() {
-                        if c == '0' || c == '1' || c == '_' {
-                            advance();
-                        } else {
-                            break;
-                        }
-                    }
-                    let bin_str: String = m_input_clone()[bin_start..m_pos()]
-                        .chars()
-                        .filter(|&c| c != '_')
-                        .collect();
-                    let val = i64::from_str_radix(&bin_str, 2).unwrap_or(0);
-                    m_lastbase_set(2);
-                    m_yyval_set(if m_force_float() {
-                        mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
-                    } else {
-                        mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
-                    });
-                    return NUM;
-                }
-                Some('o') | Some('O') => {
-                    // zsh rejects `0o…` octal-prefix (Rust/Python form).
-                    // Only `0x` (hex), `0b` (binary), and bare-leading-0
-                    // (with `setopt octalzeroes`) are recognized. Emit
-                    // the same diagnostic zsh produces — set s.error
-                    // and return a stub Num so the caller's
-                    // error-propagation path picks up the failure.
-                    m_error_set(format!(
-                        "bad math expression: operator expected at `{}'",
-                        &m_input_clone()[m_pos()..]
-                    ));
-                    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-                    return NUM;
-                }
-                _ => {
-                    // Could be octal or just 0
-                    if m_octal_zeroes() {
-                        // Check if this looks like octal
-                        let oct_start = m_pos();
-                        let mut is_octal = true;
-                        while let Some(c) = peek() {
-                            if c.is_ascii_digit() || c == '_' {
-                                if ('8'..='9').contains(&c) {
-                                    is_octal = false;
-                                }
-                                advance();
-                            } else if c == '.' || c == 'e' || c == 'E' || c == '#' {
-                                is_octal = false;
-                                break;
-                            } else {
-                                break;
-                            }
-                        }
-                        if is_octal && m_pos() > oct_start {
-                            let oct_str: String = m_input_clone()[oct_start..m_pos()]
-                                .chars()
-                                .filter(|&c| c != '_')
-                                .collect();
-                            let val = i64::from_str_radix(&oct_str, 8).unwrap_or(0);
-                            m_lastbase_set(8);
-                            m_yyval_set(if m_force_float() {
-                                mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
-                            } else {
-                                mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
-                            });
-                            return NUM;
-                        }
-                        m_pos_set(oct_start);
-                    }
-                    // Put back the 0
-                    m_pos_sub(1);
-                }
-            }
-        }
-
-        // Parse decimal integer or float
-        let num_start = m_pos();
-        while let Some(c) = peek() {
-            if is_digit(c) || c == '_' {
+    // Check for hex/binary/octal
+    if peek() == Some('0') {
+        advance();
+        match peek().map(|c| c.to_ascii_lowercase()) {
+            Some('x') => {
+                // Hex: 0xFF
                 advance();
-            } else {
-                break;
-            }
-        }
-
-        // Check for float
-        if peek() == Some('.') || peek() == Some('e') || peek() == Some('E') {
-            // Float
-            if peek() == Some('.') {
-                advance();
+                let hex_start = m_pos();
                 while let Some(c) = peek() {
-                    if is_digit(c) || c == '_' {
+                    if c.is_ascii_hexdigit() || c == '_' {
                         advance();
                     } else {
                         break;
                     }
                 }
-            }
-            if peek() == Some('e') || peek() == Some('E') {
-                advance();
-                if peek() == Some('+') || peek() == Some('-') {
-                    advance();
-                }
-                while let Some(c) = peek() {
-                    if is_digit(c) || c == '_' {
-                        advance();
-                    } else {
-                        break;
+                let hex_str: String = m_input_clone()[hex_start..m_pos()]
+                    .chars()
+                    .filter(|&c| c != '_')
+                    .collect();
+                let val = i64::from_str_radix(&hex_str, 16).unwrap_or(0);
+                m_lastbase_set(16);
+                m_yyval_set(if m_force_float() {
+                    mnumber {
+                        l: 0,
+                        d: if is_neg { -(val as f64) } else { val as f64 },
+                        type_: MN_FLOAT,
                     }
-                }
-            }
-            let float_str: String = m_input_clone()[num_start..m_pos()]
-                .chars()
-                .filter(|&c| c != '_')
-                .collect();
-            let val: f64 = float_str.parse().unwrap_or(0.0);
-            m_yyval_set(mnumber { l: 0, d: if is_neg { -val } else { val }, type_: MN_FLOAT });
-            return NUM;
-        }
-
-        // Check for base#value syntax (e.g., 16#FF)
-        if peek() == Some('#') {
-            advance();
-            let base_str: String = m_input_clone()[num_start..m_pos() - 1]
-                .chars()
-                .filter(|&c| c != '_')
-                .collect();
-            let base: u32 = base_str.parse().unwrap_or(10);
-            // zsh: `1#X` errors with "invalid base (must be 2 to 36 inclusive)".
-            // i64::from_str_radix panics on out-of-range base; reject early.
-            if !(2..=36).contains(&base) {
-                m_error_set(format!(
-                    "invalid base (must be 2 to 36 inclusive): {}",
-                    base
-                ));
-                m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+                } else {
+                    mnumber {
+                        l: if is_neg { -val } else { val },
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    }
+                });
                 return NUM;
             }
-            m_lastbase_set(base as i32);
-
-            // Mirror zsh's `zstrtol_underscore(ptr, &ptr, base, 1)`
-            // semantics: consume ONLY chars valid for the base
-            // (greedy), stopping at the first invalid digit.
-            // Underscore-as-thousands-separator is allowed
-            // mid-number. The remaining input becomes the next
-            // token, which the parser will then trip on as
-            // "operator expected at `<rest>'" via the regular
-            // checkunary/parser path.
-            //
-            // Earlier version used Rust's `from_str_radix` which
-            // is all-or-nothing — a single bad digit nuked the
-            // entire literal. For `2#1011x` zsh consumes the
-            // valid `1011` (= 11) and errors on the trailing `x`;
-            // ours errored on the whole `1011x` as one chunk.
-            // Same for `2#10112` (zsh: at `2`, ours: at `10112`).
-            //
-            // Empty-digit-sequence case (`10#`, `2#`) silently
-            // yields 0, matching zsh's `zstrtol` returning 0 when
-            // no valid digits follow.
-            let mut val: i64 = 0;
-            let base_i64 = base as i64;
-            while let Some(c) = peek() {
-                if c == '_' {
-                    advance();
-                    continue;
+            Some('b') => {
+                // Binary: 0b1010
+                advance();
+                let bin_start = m_pos();
+                while let Some(c) = peek() {
+                    if c == '0' || c == '1' || c == '_' {
+                        advance();
+                    } else {
+                        break;
+                    }
                 }
-                let digit_val: Option<u32> = if c.is_ascii_digit() {
-                    Some(c as u32 - '0' as u32)
-                } else if c.is_ascii_alphabetic() {
-                    Some(c.to_ascii_lowercase() as u32 - 'a' as u32 + 10)
+                let bin_str: String = m_input_clone()[bin_start..m_pos()]
+                    .chars()
+                    .filter(|&c| c != '_')
+                    .collect();
+                let val = i64::from_str_radix(&bin_str, 2).unwrap_or(0);
+                m_lastbase_set(2);
+                m_yyval_set(if m_force_float() {
+                    mnumber {
+                        l: 0,
+                        d: if is_neg { -(val as f64) } else { val as f64 },
+                        type_: MN_FLOAT,
+                    }
                 } else {
-                    None
-                };
-                let Some(d) = digit_val else {
-                    break;
-                };
-                if d >= base {
+                    mnumber {
+                        l: if is_neg { -val } else { val },
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    }
+                });
+                return NUM;
+            }
+            Some('o') | Some('O') => {
+                // zsh rejects `0o…` octal-prefix (Rust/Python form).
+                // Only `0x` (hex), `0b` (binary), and bare-leading-0
+                // (with `setopt octalzeroes`) are recognized. Emit
+                // the same diagnostic zsh produces — set s.error
+                // and return a stub Num so the caller's
+                // error-propagation path picks up the failure.
+                m_error_set(format!(
+                    "bad math expression: operator expected at `{}'",
+                    &m_input_clone()[m_pos()..]
+                ));
+                m_yyval_set(mnumber {
+                    l: 0,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                });
+                return NUM;
+            }
+            _ => {
+                // Could be octal or just 0
+                if m_octal_zeroes() {
+                    // Check if this looks like octal
+                    let oct_start = m_pos();
+                    let mut is_octal = true;
+                    while let Some(c) = peek() {
+                        if c.is_ascii_digit() || c == '_' {
+                            if ('8'..='9').contains(&c) {
+                                is_octal = false;
+                            }
+                            advance();
+                        } else if c == '.' || c == 'e' || c == 'E' || c == '#' {
+                            is_octal = false;
+                            break;
+                        } else {
+                            break;
+                        }
+                    }
+                    if is_octal && m_pos() > oct_start {
+                        let oct_str: String = m_input_clone()[oct_start..m_pos()]
+                            .chars()
+                            .filter(|&c| c != '_')
+                            .collect();
+                        let val = i64::from_str_radix(&oct_str, 8).unwrap_or(0);
+                        m_lastbase_set(8);
+                        m_yyval_set(if m_force_float() {
+                            mnumber {
+                                l: 0,
+                                d: if is_neg { -(val as f64) } else { val as f64 },
+                                type_: MN_FLOAT,
+                            }
+                        } else {
+                            mnumber {
+                                l: if is_neg { -val } else { val },
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        });
+                        return NUM;
+                    }
+                    m_pos_set(oct_start);
+                }
+                // Put back the 0
+                m_pos_sub(1);
+            }
+        }
+    }
+
+    // Parse decimal integer or float
+    let num_start = m_pos();
+    while let Some(c) = peek() {
+        if is_digit(c) || c == '_' {
+            advance();
+        } else {
+            break;
+        }
+    }
+
+    // Check for float
+    if peek() == Some('.') || peek() == Some('e') || peek() == Some('E') {
+        // Float
+        if peek() == Some('.') {
+            advance();
+            while let Some(c) = peek() {
+                if is_digit(c) || c == '_' {
+                    advance();
+                } else {
                     break;
                 }
-                val = val.saturating_mul(base_i64).saturating_add(d as i64);
+            }
+        }
+        if peek() == Some('e') || peek() == Some('E') {
+            advance();
+            if peek() == Some('+') || peek() == Some('-') {
                 advance();
             }
-            m_yyval_set(if m_force_float() {
-                mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
-            } else {
-                mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
-            });
-            return NUM;
+            while let Some(c) = peek() {
+                if is_digit(c) || c == '_' {
+                    advance();
+                } else {
+                    break;
+                }
+            }
         }
-
-        // Plain integer
-        let int_str: String = m_input_clone()[num_start..m_pos()]
+        let float_str: String = m_input_clone()[num_start..m_pos()]
             .chars()
             .filter(|&c| c != '_')
             .collect();
-        let val: i64 = int_str.parse().unwrap_or(0);
-        m_yyval_set(if m_force_float() {
-            mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
-        } else {
-            mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+        let val: f64 = float_str.parse().unwrap_or(0.0);
+        m_yyval_set(mnumber {
+            l: 0,
+            d: if is_neg { -val } else { val },
+            type_: MN_FLOAT,
         });
-        NUM
+        return NUM;
     }
+
+    // Check for base#value syntax (e.g., 16#FF)
+    if peek() == Some('#') {
+        advance();
+        let base_str: String = m_input_clone()[num_start..m_pos() - 1]
+            .chars()
+            .filter(|&c| c != '_')
+            .collect();
+        let base: u32 = base_str.parse().unwrap_or(10);
+        // zsh: `1#X` errors with "invalid base (must be 2 to 36 inclusive)".
+        // i64::from_str_radix panics on out-of-range base; reject early.
+        if !(2..=36).contains(&base) {
+            m_error_set(format!(
+                "invalid base (must be 2 to 36 inclusive): {}",
+                base
+            ));
+            m_yyval_set(mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            });
+            return NUM;
+        }
+        m_lastbase_set(base as i32);
+
+        // Mirror zsh's `zstrtol_underscore(ptr, &ptr, base, 1)`
+        // semantics: consume ONLY chars valid for the base
+        // (greedy), stopping at the first invalid digit.
+        // Underscore-as-thousands-separator is allowed
+        // mid-number. The remaining input becomes the next
+        // token, which the parser will then trip on as
+        // "operator expected at `<rest>'" via the regular
+        // checkunary/parser path.
+        //
+        // Earlier version used Rust's `from_str_radix` which
+        // is all-or-nothing — a single bad digit nuked the
+        // entire literal. For `2#1011x` zsh consumes the
+        // valid `1011` (= 11) and errors on the trailing `x`;
+        // ours errored on the whole `1011x` as one chunk.
+        // Same for `2#10112` (zsh: at `2`, ours: at `10112`).
+        //
+        // Empty-digit-sequence case (`10#`, `2#`) silently
+        // yields 0, matching zsh's `zstrtol` returning 0 when
+        // no valid digits follow.
+        let mut val: i64 = 0;
+        let base_i64 = base as i64;
+        while let Some(c) = peek() {
+            if c == '_' {
+                advance();
+                continue;
+            }
+            let digit_val: Option<u32> = if c.is_ascii_digit() {
+                Some(c as u32 - '0' as u32)
+            } else if c.is_ascii_alphabetic() {
+                Some(c.to_ascii_lowercase() as u32 - 'a' as u32 + 10)
+            } else {
+                None
+            };
+            let Some(d) = digit_val else {
+                break;
+            };
+            if d >= base {
+                break;
+            }
+            val = val.saturating_mul(base_i64).saturating_add(d as i64);
+            advance();
+        }
+        m_yyval_set(if m_force_float() {
+            mnumber {
+                l: 0,
+                d: if is_neg { -(val as f64) } else { val as f64 },
+                type_: MN_FLOAT,
+            }
+        } else {
+            mnumber {
+                l: if is_neg { -val } else { val },
+                d: 0.0,
+                type_: MN_INTEGER,
+            }
+        });
+        return NUM;
+    }
+
+    // Plain integer
+    let int_str: String = m_input_clone()[num_start..m_pos()]
+        .chars()
+        .filter(|&c| c != '_')
+        .collect();
+    let val: i64 = int_str.parse().unwrap_or(0);
+    m_yyval_set(if m_force_float() {
+        mnumber {
+            l: 0,
+            d: if is_neg { -(val as f64) } else { val as f64 },
+            type_: MN_FLOAT,
+        }
+    } else {
+        mnumber {
+            l: if is_neg { -val } else { val },
+            d: 0.0,
+            type_: MN_INTEGER,
+        }
+    });
+    NUM
+}
 
 // ===========================================================
 // Remaining stubs from Src/math.c that don't yet have a faithful
@@ -571,7 +672,9 @@ pub(crate) fn lexconstant() -> i32 {
 /// Port of `isinf(double x)` from Src/math.c:588 — IEEE +/-Infinity test.
 /// Wraps Rust's `f64::is_infinite`.
 /// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
+pub(crate) fn isinf(x: f64) -> bool {
+    x.is_infinite()
+}
 
 /// Port of `isnan(double x)` from Src/math.c:608 — IEEE NaN test. C
 /// implements it as `store(&x) != store(&x)` to defeat compiler
@@ -579,7 +682,9 @@ pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
 /// `store` for parity, but Rust's `f64::is_nan` is the
 /// correctness path.
 /// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
+pub(crate) fn isnan(x: f64) -> bool {
+    store(x) != store(x) || x.is_nan()
+}
 
 /// Port of `notzero(mnumber a)` from Src/math.c:1142 — error-on-zero check
 /// used by `/` and `%` operators. Returns true when `a` is non-
@@ -692,115 +797,263 @@ thread_local! {
 // Accessor helpers — each thread_local reads/writes via these so the
 // migration from `s.X` → free-fn-only access is mechanical.
 
-#[inline] fn m_input_clone() -> String { M_INPUT.with(|c| c.borrow().clone()) }
-#[inline] fn m_input_set(v: String) { M_INPUT.with(|c| *c.borrow_mut() = v) }
-#[inline] fn m_input_len() -> usize { M_INPUT.with(|c| c.borrow().len()) }
-#[inline] fn m_input_byte(i: usize) -> u8 {
+#[inline]
+fn m_input_clone() -> String {
+    M_INPUT.with(|c| c.borrow().clone())
+}
+#[inline]
+fn m_input_set(v: String) {
+    M_INPUT.with(|c| *c.borrow_mut() = v)
+}
+#[inline]
+fn m_input_len() -> usize {
+    M_INPUT.with(|c| c.borrow().len())
+}
+#[inline]
+fn m_input_byte(i: usize) -> u8 {
     M_INPUT.with(|c| c.borrow().as_bytes().get(i).copied().unwrap_or(0))
 }
-#[inline] fn m_input_slice_from(start: usize) -> String {
+#[inline]
+fn m_input_slice_from(start: usize) -> String {
     M_INPUT.with(|c| c.borrow()[start..].to_string())
 }
-#[inline] fn m_input_slice(start: usize, end: usize) -> String {
+#[inline]
+fn m_input_slice(start: usize, end: usize) -> String {
     M_INPUT.with(|c| c.borrow()[start..end].to_string())
 }
 
-#[inline] fn m_pos() -> usize { M_POS.with(|c| c.get()) }
-#[inline] fn m_pos_set(v: usize) { M_POS.with(|c| c.set(v)) }
-#[inline] fn m_pos_sub(n: usize) { M_POS.with(|c| c.set(c.get() - n)) }
-#[inline] fn m_pos_add(n: usize) { M_POS.with(|c| c.set(c.get() + n)) }
+#[inline]
+fn m_pos() -> usize {
+    M_POS.with(|c| c.get())
+}
+#[inline]
+fn m_pos_set(v: usize) {
+    M_POS.with(|c| c.set(v))
+}
+#[inline]
+fn m_pos_sub(n: usize) {
+    M_POS.with(|c| c.set(c.get() - n))
+}
+#[inline]
+fn m_pos_add(n: usize) {
+    M_POS.with(|c| c.set(c.get() + n))
+}
 
-#[inline] fn m_tok_start() -> usize { M_TOK_START.with(|c| c.get()) }
-#[inline] fn m_tok_start_set(v: usize) { M_TOK_START.with(|c| c.set(v)) }
+#[inline]
+fn m_tok_start() -> usize {
+    M_TOK_START.with(|c| c.get())
+}
+#[inline]
+fn m_tok_start_set(v: usize) {
+    M_TOK_START.with(|c| c.set(v))
+}
 
-#[inline] fn m_yyval() -> mnumber { M_YYVAL.with(|c| c.get()) }
-#[inline] fn m_yyval_set(v: mnumber) { M_YYVAL.with(|c| c.set(v)) }
+#[inline]
+fn m_yyval() -> mnumber {
+    M_YYVAL.with(|c| c.get())
+}
+#[inline]
+fn m_yyval_set(v: mnumber) {
+    M_YYVAL.with(|c| c.set(v))
+}
 
-#[inline] fn m_yylval_clone() -> String { M_YYLVAL.with(|c| c.borrow().clone()) }
-#[inline] fn m_yylval_set(v: String) { M_YYLVAL.with(|c| *c.borrow_mut() = v) }
+#[inline]
+fn m_yylval_clone() -> String {
+    M_YYLVAL.with(|c| c.borrow().clone())
+}
+#[inline]
+fn m_yylval_set(v: String) {
+    M_YYLVAL.with(|c| *c.borrow_mut() = v)
+}
 
-#[inline] fn m_mtok() -> i32 { M_MTOK.with(|c| c.get()) }
-#[inline] fn m_mtok_set(t: i32) { M_MTOK.with(|c| c.set(t)) }
+#[inline]
+fn m_mtok() -> i32 {
+    M_MTOK.with(|c| c.get())
+}
+#[inline]
+fn m_mtok_set(t: i32) {
+    M_MTOK.with(|c| c.set(t))
+}
 
-#[inline] fn m_unary() -> bool { M_UNARY.with(|c| c.get()) }
-#[inline] fn m_unary_set(v: bool) { M_UNARY.with(|c| c.set(v)) }
+#[inline]
+fn m_unary() -> bool {
+    M_UNARY.with(|c| c.get())
+}
+#[inline]
+fn m_unary_set(v: bool) {
+    M_UNARY.with(|c| c.set(v))
+}
 
-#[inline] fn m_noeval() -> i32 { M_NOEVAL.with(|c| c.get()) }
-#[inline] fn m_noeval_set(v: i32) { M_NOEVAL.with(|c| c.set(v)) }
-#[inline] fn m_noeval_inc() { M_NOEVAL.with(|c| c.set(c.get() + 1)) }
-#[inline] fn m_noeval_dec() { M_NOEVAL.with(|c| c.set(c.get() - 1)) }
+#[inline]
+fn m_noeval() -> i32 {
+    M_NOEVAL.with(|c| c.get())
+}
+#[inline]
+fn m_noeval_set(v: i32) {
+    M_NOEVAL.with(|c| c.set(v))
+}
+#[inline]
+fn m_noeval_inc() {
+    M_NOEVAL.with(|c| c.set(c.get() + 1))
+}
+#[inline]
+fn m_noeval_dec() {
+    M_NOEVAL.with(|c| c.set(c.get() - 1))
+}
 
-#[inline] fn m_lastbase_set(v: i32) { M_LASTBASE.with(|c| c.set(v)) }
+#[inline]
+fn m_lastbase_set(v: i32) {
+    M_LASTBASE.with(|c| c.set(v))
+}
 
 /// Public getter for `lastbase` — used by `assignstrvalue` in
 /// params.rs to inherit the input numeric base when a freshly
 /// assigned integer parameter has none of its own.
-pub fn lastbase() -> i32 { M_LASTBASE.with(|c| c.get()) }
+pub fn lastbase() -> i32 {
+    M_LASTBASE.with(|c| c.get())
+}
 
-#[inline] fn m_prec() -> &'static [u8; TOKCOUNT] { M_PREC.with(|c| c.get()) }
-#[inline] fn m_prec_set(p: &'static [u8; TOKCOUNT]) { M_PREC.with(|c| c.set(p)) }
+#[inline]
+fn m_prec() -> &'static [u8; TOKCOUNT] {
+    M_PREC.with(|c| c.get())
+}
+#[inline]
+fn m_prec_set(p: &'static [u8; TOKCOUNT]) {
+    M_PREC.with(|c| c.set(p))
+}
 
-#[inline] fn m_c_precedences() -> bool { M_C_PRECEDENCES.with(|c| c.get()) }
-#[inline] fn m_c_precedences_set(v: bool) { M_C_PRECEDENCES.with(|c| c.set(v)) }
-#[inline] fn m_force_float() -> bool { M_FORCE_FLOAT.with(|c| c.get()) }
-#[inline] fn m_force_float_set(v: bool) { M_FORCE_FLOAT.with(|c| c.set(v)) }
-#[inline] fn m_octal_zeroes() -> bool { M_OCTAL_ZEROES.with(|c| c.get()) }
-#[inline] fn m_octal_zeroes_set(v: bool) { M_OCTAL_ZEROES.with(|c| c.set(v)) }
+#[inline]
+fn m_c_precedences() -> bool {
+    M_C_PRECEDENCES.with(|c| c.get())
+}
+#[inline]
+fn m_c_precedences_set(v: bool) {
+    M_C_PRECEDENCES.with(|c| c.set(v))
+}
+#[inline]
+fn m_force_float() -> bool {
+    M_FORCE_FLOAT.with(|c| c.get())
+}
+#[inline]
+fn m_force_float_set(v: bool) {
+    M_FORCE_FLOAT.with(|c| c.set(v))
+}
+#[inline]
+fn m_octal_zeroes() -> bool {
+    M_OCTAL_ZEROES.with(|c| c.get())
+}
+#[inline]
+fn m_octal_zeroes_set(v: bool) {
+    M_OCTAL_ZEROES.with(|c| c.set(v))
+}
 
-#[inline] fn m_lastval_set(v: i32) { M_LASTVAL.with(|c| c.set(v)) }
-#[inline] fn m_lastval() -> i32 { M_LASTVAL.with(|c| c.get()) }
-#[inline] fn m_pid() -> i64 { M_PID.with(|c| c.get()) }
-#[inline] fn m_pid_set(v: i64) { M_PID.with(|c| c.set(v)) }
+#[inline]
+fn m_lastval_set(v: i32) {
+    M_LASTVAL.with(|c| c.set(v))
+}
+#[inline]
+fn m_lastval() -> i32 {
+    M_LASTVAL.with(|c| c.get())
+}
+#[inline]
+fn m_pid() -> i64 {
+    M_PID.with(|c| c.get())
+}
+#[inline]
+fn m_pid_set(v: i64) {
+    M_PID.with(|c| c.set(v))
+}
 
-#[inline] fn m_error_take() -> Option<String> { M_ERROR.with(|c| c.borrow_mut().take()) }
-#[inline] fn m_error_some() -> bool { M_ERROR.with(|c| c.borrow().is_some()) }
-#[inline] fn m_error_set(msg: String) {
+#[inline]
+fn m_error_take() -> Option<String> {
+    M_ERROR.with(|c| c.borrow_mut().take())
+}
+#[inline]
+fn m_error_some() -> bool {
+    M_ERROR.with(|c| c.borrow().is_some())
+}
+#[inline]
+fn m_error_set(msg: String) {
     M_ERROR.with(|c| {
         if c.borrow().is_none() {
             *c.borrow_mut() = Some(msg);
         }
     })
 }
-#[inline] fn m_error_set_force(msg: String) {
+#[inline]
+fn m_error_set_force(msg: String) {
     M_ERROR.with(|c| *c.borrow_mut() = Some(msg))
 }
-#[inline] fn m_error_clear() { M_ERROR.with(|c| *c.borrow_mut() = None) }
+#[inline]
+fn m_error_clear() {
+    M_ERROR.with(|c| *c.borrow_mut() = None)
+}
 
 // Stack helpers — mathvalue stack operations.
-#[inline] fn m_stack_push(v: mathvalue) { M_STACK.with(|c| c.borrow_mut().push(v)) }
-#[inline] fn m_stack_pop() -> Option<mathvalue> { M_STACK.with(|c| c.borrow_mut().pop()) }
-#[inline] fn m_stack_len() -> usize { M_STACK.with(|c| c.borrow().len()) }
-#[inline] fn m_stack_is_empty() -> bool { M_STACK.with(|c| c.borrow().is_empty()) }
-#[inline] fn m_stack_top_clone() -> Option<mathvalue> { M_STACK.with(|c| c.borrow().last().cloned()) }
+#[inline]
+fn m_stack_push(v: mathvalue) {
+    M_STACK.with(|c| c.borrow_mut().push(v))
+}
+#[inline]
+fn m_stack_pop() -> Option<mathvalue> {
+    M_STACK.with(|c| c.borrow_mut().pop())
+}
+#[inline]
+fn m_stack_len() -> usize {
+    M_STACK.with(|c| c.borrow().len())
+}
+#[inline]
+fn m_stack_is_empty() -> bool {
+    M_STACK.with(|c| c.borrow().is_empty())
+}
+#[inline]
+fn m_stack_top_clone() -> Option<mathvalue> {
+    M_STACK.with(|c| c.borrow().last().cloned())
+}
 
 // Variable map helpers.
-#[inline] fn m_variables_get(name: &str) -> Option<mnumber> {
+#[inline]
+fn m_variables_get(name: &str) -> Option<mnumber> {
     M_VARIABLES.with(|c| c.borrow().get(name).copied())
 }
-#[inline] fn m_variables_insert(k: String, v: mnumber) {
-    M_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
+#[inline]
+fn m_variables_insert(k: String, v: mnumber) {
+    M_VARIABLES.with(|c| {
+        c.borrow_mut().insert(k, v);
+    })
 }
-#[inline] fn m_variables_clone() -> HashMap<String, mnumber> {
+#[inline]
+fn m_variables_clone() -> HashMap<String, mnumber> {
     M_VARIABLES.with(|c| c.borrow().clone())
 }
-#[inline] fn m_variables_set(map: HashMap<String, mnumber>) {
+#[inline]
+fn m_variables_set(map: HashMap<String, mnumber>) {
     M_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
 
-#[inline] fn m_string_variables_get(name: &str) -> Option<String> {
+#[inline]
+fn m_string_variables_get(name: &str) -> Option<String> {
     M_STRING_VARIABLES.with(|c| c.borrow().get(name).cloned())
 }
-#[inline] fn m_string_variables_remove(name: &str) {
-    M_STRING_VARIABLES.with(|c| { c.borrow_mut().remove(name); })
+#[inline]
+fn m_string_variables_remove(name: &str) {
+    M_STRING_VARIABLES.with(|c| {
+        c.borrow_mut().remove(name);
+    })
 }
-#[inline] fn m_string_variables_clone() -> HashMap<String, String> {
+#[inline]
+fn m_string_variables_clone() -> HashMap<String, String> {
     M_STRING_VARIABLES.with(|c| c.borrow().clone())
 }
-#[inline] fn m_string_variables_set(map: HashMap<String, String>) {
+#[inline]
+fn m_string_variables_set(map: HashMap<String, String>) {
     M_STRING_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
-#[inline] fn m_string_variables_insert(k: String, v: String) {
-    M_STRING_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
+#[inline]
+fn m_string_variables_insert(k: String, v: String) {
+    M_STRING_VARIABLES.with(|c| {
+        c.borrow_mut().insert(k, v);
+    })
 }
 
 /// Save/restore container — mirrors C `mathevall()` (Src/math.c:367)'s
@@ -864,7 +1117,9 @@ fn save_state() -> xyy_locals {
 /// so `isnan()` can route through it (matching the C source's
 /// `store(&x) != store(&x)` idiom).
 /// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn store(x: f64) -> f64 { x }
+pub(crate) fn store(x: f64) -> f64 {
+    x
+}
 
 /// Port of `getcvar(char *s)` from Src/math.c:943 — character-constant
 /// lookup. Reads the named shell variable and returns the
@@ -874,22 +1129,42 @@ pub(crate) fn store(x: f64) -> f64 { x }
 /// WARNING: param names don't match C — Rust=() vs C=(s)
 pub(crate) fn getcvar(name: &str) -> mnumber {
     if let Some(raw) = m_string_variables_get(name) {
-        return mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+        return mnumber {
+            l: raw.chars().next().map(|c| c as i64).unwrap_or(0),
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
     }
     if let Some(v) = m_variables_get(name) {
         let s = match v.type_ {
             MN_INTEGER => v.l.to_string(),
             MN_FLOAT => {
                 let f = v.d;
-                if isnan(f) { "NaN".to_string() }
-                else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
-                else { format!("{:.10}", f) }
+                if isnan(f) {
+                    "NaN".to_string()
+                } else if isinf(f) {
+                    if f > 0.0 {
+                        "Inf".to_string()
+                    } else {
+                        "-Inf".to_string()
+                    }
+                } else {
+                    format!("{:.10}", f)
+                }
             }
             _ => "0".to_string(),
         };
-        return mnumber { l: s.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+        return mnumber {
+            l: s.chars().next().map(|c| c as i64).unwrap_or(0),
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
     }
-    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    }
 }
 
 /// Port of `zzlex()` from `Src/math.c:617`.
@@ -901,300 +1176,333 @@ pub(crate) fn getcvar(name: &str) -> mnumber {
 /// constants (`#x`, `##varname`), and dispatches numeric literals
 /// to `lexconstant()`.
 pub(crate) fn zzlex() -> i32 {
-        m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+    m_yyval_set(mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    });
 
-        loop {
-            let pre_pos = m_pos();
-            let c = match advance() {
-                Some(c) => c,
-                None => {
-                    m_tok_start_set(pre_pos);
-                    return EOI;
-                }
-            };
-
-            if matches!(c, ' ' | '\t' | '\n' | '"') {
-                continue;
+    loop {
+        let pre_pos = m_pos();
+        let c = match advance() {
+            Some(c) => c,
+            None => {
+                m_tok_start_set(pre_pos);
+                return EOI;
             }
-            // Record where this token began (post-whitespace) so error
-            // formatters can produce zsh-style "at `<remaining>`" messages.
-            m_tok_start_set(pre_pos);
+        };
 
-            match c {
-                '+' => {
-                    if peek() == Some('+') {
-                        advance();
-                        return if m_unary() {
-                            PREPLUS
-                        } else {
-                            POSTPLUS
-                        };
-                    }
-                    if peek() == Some('=') {
-                        advance();
-                        return PLUSEQ;
-                    }
-                    return if m_unary() {
-                        UPLUS
-                    } else {
-                        PLUS
-                    };
+        if matches!(c, ' ' | '\t' | '\n' | '"') {
+            continue;
+        }
+        // Record where this token began (post-whitespace) so error
+        // formatters can produce zsh-style "at `<remaining>`" messages.
+        m_tok_start_set(pre_pos);
+
+        match c {
+            '+' => {
+                if peek() == Some('+') {
+                    advance();
+                    return if m_unary() { PREPLUS } else { POSTPLUS };
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return PLUSEQ;
+                }
+                return if m_unary() { UPLUS } else { PLUS };
+            }
 
-                '-' => {
-                    if peek() == Some('-') {
-                        advance();
-                        return if m_unary() {
-                            PREMINUS
-                        } else {
-                            POSTMINUS
-                        };
-                    }
-                    if peek() == Some('=') {
-                        advance();
-                        return MINUSEQ;
-                    }
-                    if m_unary() {
-                        // Check if followed by digit for negative number
-                        if let Some(next) = peek() {
-                            if is_digit(next) || next == '.' {
-                                m_pos_sub(1); // Put back the -
-                                return lexconstant();
-                            }
+            '-' => {
+                if peek() == Some('-') {
+                    advance();
+                    return if m_unary() { PREMINUS } else { POSTMINUS };
+                }
+                if peek() == Some('=') {
+                    advance();
+                    return MINUSEQ;
+                }
+                if m_unary() {
+                    // Check if followed by digit for negative number
+                    if let Some(next) = peek() {
+                        if is_digit(next) || next == '.' {
+                            m_pos_sub(1); // Put back the -
+                            return lexconstant();
                         }
-                        return UMINUS;
                     }
-                    return MINUS;
+                    return UMINUS;
                 }
+                return MINUS;
+            }
 
-                '(' => return M_INPAR,
-                ')' => return M_OUTPAR,
+            '(' => return M_INPAR,
+            ')' => return M_OUTPAR,
 
-                '!' => {
+            '!' => {
+                if peek() == Some('=') {
+                    advance();
+                    return NEQ;
+                }
+                return NOT;
+            }
+
+            '~' => return COMP,
+
+            '&' => {
+                if peek() == Some('&') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return NEQ;
+                        return DANDEQ;
                     }
-                    return NOT;
+                    return DAND;
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return ANDEQ;
+                }
+                return AND;
+            }
 
-                '~' => return COMP,
-
-                '&' => {
-                    if peek() == Some('&') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return DANDEQ;
-                        }
-                        return DAND;
-                    }
+            '|' => {
+                if peek() == Some('|') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return ANDEQ;
+                        return DOREQ;
                     }
-                    return AND;
+                    return DOR;
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return OREQ;
+                }
+                return OR;
+            }
 
-                '|' => {
-                    if peek() == Some('|') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return DOREQ;
-                        }
-                        return DOR;
-                    }
+            '^' => {
+                if peek() == Some('^') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return OREQ;
+                        return DXOREQ;
                     }
-                    return OR;
+                    return DXOR;
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return XOREQ;
+                }
+                return XOR;
+            }
 
-                '^' => {
-                    if peek() == Some('^') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return DXOREQ;
-                        }
-                        return DXOR;
-                    }
+            '*' => {
+                if peek() == Some('*') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return XOREQ;
+                        return POWEREQ;
                     }
-                    return XOR;
+                    return POWER;
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return MULEQ;
+                }
+                return MUL;
+            }
 
-                '*' => {
-                    if peek() == Some('*') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return POWEREQ;
-                        }
-                        return POWER;
-                    }
+            '/' => {
+                if peek() == Some('=') {
+                    advance();
+                    return DIVEQ;
+                }
+                return DIV;
+            }
+
+            '%' => {
+                if peek() == Some('=') {
+                    advance();
+                    return MODEQ;
+                }
+                return MOD;
+            }
+
+            '<' => {
+                if peek() == Some('<') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return MULEQ;
+                        return SHLEFTEQ;
                     }
-                    return MUL;
+                    return SHLEFT;
                 }
+                if peek() == Some('=') {
+                    advance();
+                    return LEQ;
+                }
+                return LES;
+            }
 
-                '/' => {
+            '>' => {
+                if peek() == Some('>') {
+                    advance();
                     if peek() == Some('=') {
                         advance();
-                        return DIVEQ;
+                        return SHRIGHTEQ;
                     }
-                    return DIV;
+                    return SHRIGHT;
                 }
-
-                '%' => {
-                    if peek() == Some('=') {
-                        advance();
-                        return MODEQ;
-                    }
-                    return MOD;
+                if peek() == Some('=') {
+                    advance();
+                    return GEQ;
                 }
+                return GRE;
+            }
 
-                '<' => {
-                    if peek() == Some('<') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return SHLEFTEQ;
-                        }
-                        return SHLEFT;
-                    }
-                    if peek() == Some('=') {
-                        advance();
-                        return LEQ;
-                    }
-                    return LES;
+            '=' => {
+                if peek() == Some('=') {
+                    advance();
+                    return DEQ;
                 }
+                return EQ;
+            }
 
-                '>' => {
-                    if peek() == Some('>') {
-                        advance();
-                        if peek() == Some('=') {
-                            advance();
-                            return SHRIGHTEQ;
-                        }
-                        return SHRIGHT;
-                    }
-                    if peek() == Some('=') {
-                        advance();
-                        return GEQ;
-                    }
-                    return GRE;
-                }
+            '$' => {
+                // $$ = pid
+                m_yyval_set(mnumber {
+                    l: m_pid(),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                });
+                return NUM;
+            }
 
-                '=' => {
-                    if peek() == Some('=') {
-                        advance();
-                        return DEQ;
-                    }
-                    return EQ;
-                }
-
-                '$' => {
-                    // $$ = pid
-                    m_yyval_set(mnumber { l: m_pid(), d: 0.0, type_: MN_INTEGER });
+            '?' => {
+                if m_unary() {
+                    // $? = lastval
+                    m_yyval_set(mnumber {
+                        l: m_lastval() as i64,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    });
                     return NUM;
                 }
+                return QUEST;
+            }
 
-                '?' => {
-                    if m_unary() {
-                        // $? = lastval
-                        m_yyval_set(mnumber { l: m_lastval() as i64, d: 0.0, type_: MN_INTEGER });
-                        return NUM;
-                    }
-                    return QUEST;
-                }
+            ':' => return COLON,
+            ',' => return COMMA,
 
-                ':' => return COLON,
-                ',' => return COMMA,
-
-                '[' => {
-                    // [base]value or output format [#base]
-                    if is_digit(peek().unwrap_or('\0')) {
-                        // [base]value
-                        let base_start = m_pos();
-                        while let Some(c) = peek() {
-                            if is_digit(c) {
-                                advance();
-                            } else {
-                                break;
-                            }
-                        }
-                        if peek() != Some(']') {
-                            m_error_set("bad base syntax".to_string());
-                            return EOI;
-                        }
-                        let base_str: String = m_input_clone()[base_start..m_pos()].to_string();
-                        let base: u32 = base_str.parse().unwrap_or(10);
-                        advance(); // skip ]
-
-                        if !is_digit(peek().unwrap_or('\0'))
-                            && !is_ident_start(peek().unwrap_or('\0'))
-                        {
-                            m_error_set("bad base syntax".to_string());
-                            return EOI;
-                        }
-                        // Reject out-of-range bases; from_str_radix panics
-                        // on bases outside [2, 36].
-                        if !(2..=36).contains(&base) {
-                            m_error_set(format!(
-                                "invalid base (must be 2 to 36 inclusive): {}",
-                                base
-                            ));
-                            m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-                            return NUM;
-                        }
-
-                        let val_start = m_pos();
-                        while let Some(c) = peek() {
-                            if c.is_ascii_alphanumeric() {
-                                advance();
-                            } else {
-                                break;
-                            }
-                        }
-                        let val_str = &m_input_clone()[val_start..m_pos()];
-                        let val = i64::from_str_radix(val_str, base).unwrap_or(0);
-                        m_lastbase_set(base as i32);
-                        m_yyval_set(mnumber { l: val, d: 0.0, type_: MN_INTEGER });
-                        return NUM;
-                    }
-                    // Output format specifier [#base] - skip for now
-                    if peek() == Some('#') {
-                        while let Some(c) = peek() {
-                            if c == ']' {
-                                advance();
-                                break;
-                            }
+            '[' => {
+                // [base]value or output format [#base]
+                if is_digit(peek().unwrap_or('\0')) {
+                    // [base]value
+                    let base_start = m_pos();
+                    while let Some(c) = peek() {
+                        if is_digit(c) {
                             advance();
+                        } else {
+                            break;
                         }
-                        continue;
                     }
-                    m_error_set("bad output format specification".to_string());
-                    return EOI;
+                    if peek() != Some(']') {
+                        m_error_set("bad base syntax".to_string());
+                        return EOI;
+                    }
+                    let base_str: String = m_input_clone()[base_start..m_pos()].to_string();
+                    let base: u32 = base_str.parse().unwrap_or(10);
+                    advance(); // skip ]
+
+                    if !is_digit(peek().unwrap_or('\0')) && !is_ident_start(peek().unwrap_or('\0'))
+                    {
+                        m_error_set("bad base syntax".to_string());
+                        return EOI;
+                    }
+                    // Reject out-of-range bases; from_str_radix panics
+                    // on bases outside [2, 36].
+                    if !(2..=36).contains(&base) {
+                        m_error_set(format!(
+                            "invalid base (must be 2 to 36 inclusive): {}",
+                            base
+                        ));
+                        m_yyval_set(mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        });
+                        return NUM;
+                    }
+
+                    let val_start = m_pos();
+                    while let Some(c) = peek() {
+                        if c.is_ascii_alphanumeric() {
+                            advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    let val_str = &m_input_clone()[val_start..m_pos()];
+                    let val = i64::from_str_radix(val_str, base).unwrap_or(0);
+                    m_lastbase_set(base as i32);
+                    m_yyval_set(mnumber {
+                        l: val,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    });
+                    return NUM;
+                }
+                // Output format specifier [#base] - skip for now
+                if peek() == Some('#') {
+                    while let Some(c) = peek() {
+                        if c == ']' {
+                            advance();
+                            break;
+                        }
+                        advance();
+                    }
+                    continue;
+                }
+                m_error_set("bad output format specification".to_string());
+                return EOI;
+            }
+
+            '#' => {
+                // Character code: #\x or ##string
+                if peek() == Some('\\') || peek() == Some('#') {
+                    advance();
+                    if let Some(ch) = advance() {
+                        m_yyval_set(mnumber {
+                            l: ch as i64,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        });
+                        return NUM;
+                    }
+                }
+                // #varname - get first char value
+                let id_start = m_pos();
+                while let Some(c) = peek() {
+                    if is_ident(c) {
+                        advance();
+                    } else {
+                        break;
+                    }
+                }
+                if m_pos() > id_start {
+                    m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
+                    return CID;
+                }
+                continue;
+            }
+
+            _ => {
+                if is_digit(c) || (c == '.' && is_digit(peek().unwrap_or('\0'))) {
+                    m_pos_sub(c.len_utf8());
+                    return lexconstant();
                 }
 
-                '#' => {
-                    // Character code: #\x or ##string
-                    if peek() == Some('\\') || peek() == Some('#') {
-                        advance();
-                        if let Some(ch) = advance() {
-                            m_yyval_set(mnumber { l: ch as i64, d: 0.0, type_: MN_INTEGER });
-                            return NUM;
-                        }
-                    }
-                    // #varname - get first char value
-                    let id_start = m_pos();
+                if is_ident_start(c) {
+                    let id_start = m_pos() - c.len_utf8();
                     while let Some(c) = peek() {
                         if is_ident(c) {
                             advance();
@@ -1202,96 +1510,84 @@ pub(crate) fn zzlex() -> i32 {
                             break;
                         }
                     }
-                    if m_pos() > id_start {
-                        m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
-                        return CID;
-                    }
-                    continue;
-                }
 
-                _ => {
-                    if is_digit(c)
-                        || (c == '.' && is_digit(peek().unwrap_or('\0')))
-                    {
-                        m_pos_sub(c.len_utf8());
-                        return lexconstant();
+                    let id = &m_input_clone()[id_start..m_pos()];
+
+                    // Check for Inf/NaN
+                    let id_lower = id.to_lowercase();
+                    if id_lower == "nan" {
+                        m_yyval_set(mnumber {
+                            l: 0,
+                            d: f64::NAN,
+                            type_: MN_FLOAT,
+                        });
+                        return NUM;
+                    }
+                    if id_lower == "inf" {
+                        m_yyval_set(mnumber {
+                            l: 0,
+                            d: f64::INFINITY,
+                            type_: MN_FLOAT,
+                        });
+                        return NUM;
                     }
 
-                    if is_ident_start(c) {
-                        let id_start = m_pos() - c.len_utf8();
+                    // Check for function call
+                    if peek() == Some('(') {
+                        // Skip to closing paren
+                        let func_start = id_start;
+                        advance(); // (
+                        let mut depth = 1;
                         while let Some(c) = peek() {
-                            if is_ident(c) {
-                                advance();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let id = &m_input_clone()[id_start..m_pos()];
-
-                        // Check for Inf/NaN
-                        let id_lower = id.to_lowercase();
-                        if id_lower == "nan" {
-                            m_yyval_set(mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT });
-                            return NUM;
-                        }
-                        if id_lower == "inf" {
-                            m_yyval_set(mnumber { l: 0, d: f64::INFINITY, type_: MN_FLOAT });
-                            return NUM;
-                        }
-
-                        // Check for function call
-                        if peek() == Some('(') {
-                            // Skip to closing paren
-                            let func_start = id_start;
-                            advance(); // (
-                            let mut depth = 1;
-                            while let Some(c) = peek() {
-                                advance();
-                                if c == '(' {
-                                    depth += 1;
-                                } else if c == ')' {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
-                                }
-                            }
-                            m_yylval_set(m_input_clone()[func_start..m_pos()].to_string());
-                            return FUNC;
-                        }
-
-                        // Check for array subscript
-                        if peek() == Some('[') {
-                            advance(); // [
-                            let mut depth = 1;
-                            while let Some(c) = peek() {
-                                advance();
-                                if c == '[' {
-                                    depth += 1;
-                                } else if c == ']' {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
+                            advance();
+                            if c == '(' {
+                                depth += 1;
+                            } else if c == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
                                 }
                             }
                         }
-
-                        m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
-                        return ID;
+                        m_yylval_set(m_input_clone()[func_start..m_pos()].to_string());
+                        return FUNC;
                     }
 
-                    return EOI;
+                    // Check for array subscript
+                    if peek() == Some('[') {
+                        advance(); // [
+                        let mut depth = 1;
+                        while let Some(c) = peek() {
+                            advance();
+                            if c == '[' {
+                                depth += 1;
+                            } else if c == ']' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
+                    return ID;
                 }
+
+                return EOI;
             }
         }
     }
+}
 
 impl Default for mathvalue {
     fn default() -> Self {
         mathvalue {
-            val: mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
+            val: mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
             lval: None,
             pval: (),
         }
@@ -1305,7 +1601,11 @@ impl Default for mathvalue {
 /// reference; needed for `++`/`--`/assignment-op write-back).
 /// WARNING: param names don't match C — Rust=(lval) vs C=(val, lval, getme)
 pub(crate) fn push(val: mnumber, lval: Option<String>) {
-    m_stack_push(mathvalue { val, lval, pval: () });
+    m_stack_push(mathvalue {
+        val,
+        lval,
+        pval: (),
+    });
 }
 
 /// Port of `pop(int noget)` from `Src/math.c:931`.
@@ -1326,9 +1626,13 @@ pub(crate) fn pop() -> mnumber {
         mv.val
     } else {
         m_error_set("stack underflow".to_string());
-        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+        mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        }
     }
-    }
+}
 
 /// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
 ///
@@ -1336,12 +1640,17 @@ pub(crate) fn pop() -> mnumber {
 /// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
 /// Calls `setnparam` (the canonical param-set) and returns the value
 /// re-typed to match the parameter's type (C c:1014-1027).
-pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {              // c:972
-    use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT};
+pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
+    // c:972
+    use crate::ported::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
     // c:996-1001 — bad-lvalue check (empty name).
     if name.is_empty() {
         crate::ported::utils::zerr("bad math expression: lvalue required");
-        return mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+        return mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
     }
     // c:1002-1003 — `if (noeval) return v;`
     if M_NOEVAL.with(|n| n.get()) != 0 {
@@ -1365,142 +1674,186 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {              // 
     if let Some(pm) = pm {
         let flags = pm.node.flags as u32;
         if flags & PM_INTEGER != 0 {
-            let l = if val.type_ == MN_FLOAT { val.d as i64 } else { val.l };
-            return mnumber { l, d: 0.0, type_: MN_INTEGER };
+            let l = if val.type_ == MN_FLOAT {
+                val.d as i64
+            } else {
+                val.l
+            };
+            return mnumber {
+                l,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
         }
         if flags & (PM_EFLOAT | PM_FFLOAT) != 0 {
-            let d = if val.type_ == MN_INTEGER { val.l as f64 } else { val.d };
-            return mnumber { l: 0, d, type_: MN_FLOAT };
+            let d = if val.type_ == MN_INTEGER {
+                val.l as f64
+            } else {
+                val.d
+            };
+            return mnumber {
+                l: 0,
+                d,
+                type_: MN_FLOAT,
+            };
         }
     }
     val
 }
 
-    /// Call a math function
+/// Call a math function
 /// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
-    /// WARNING: param names don't match C — Rust=() vs C=(o)
-    pub(crate) fn callmathfunc(call: &str) -> mnumber {
-        // Parse function name and args
-        let paren = call.find('(').unwrap_or(call.len());
-        let name = &call[..paren];
-        let args_str = if paren < call.len() {
-            &call[paren + 1..call.len() - 1]
-        } else {
-            ""
+/// WARNING: param names don't match C — Rust=() vs C=(o)
+pub(crate) fn callmathfunc(call: &str) -> mnumber {
+    // Parse function name and args
+    let paren = call.find('(').unwrap_or(call.len());
+    let name = &call[..paren];
+    let args_str = if paren < call.len() {
+        &call[paren + 1..call.len() - 1]
+    } else {
+        ""
+    };
+
+    // Parse arguments. Keep both the float view (for trig) and the
+    // original mnumber so int-preserving functions (abs/min/max/
+    // int/floor/ceil/trunc) can return integer when all inputs
+    // were integer.
+    let arg_nums: Vec<mnumber> = if args_str.is_empty() {
+        vec![]
+    } else {
+        args_str
+            .split(',')
+            .filter_map(|arg| {
+                // Save caller's eval state, sub-eval each arg in a
+                // fresh state inheriting caller's variables, restore.
+                // C `mathevall()` xyy* save/restore (math.c:367).
+                let saved = save_state();
+                let inherited_vars = saved.variables.clone();
+                new(arg.trim());
+                m_variables_set(inherited_vars);
+                let result = mathevall().ok();
+                restore_state(saved);
+                result
+            })
+            .collect()
+    };
+    let args: Vec<f64> = arg_nums
+        .iter()
+        .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+        .collect();
+    let all_int = !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
+
+    // Functions that preserve int-ness: when all args are int,
+    // return mnumber::Integer instead of Float to avoid the
+    // trailing "." in the string output ("5." instead of "5").
+    //
+    // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
+    // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
+    // not "2.". The truncation to int happens regardless of
+    // whether the input was already an integer. `abs`/`min`/`max`
+    // preserve the input type (int args → int result, float arg
+    // anywhere → float result) since their semantics don't
+    // inherently change the value's representation.
+    let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
+    if always_int {
+        let i = match name {
+            "int" | "trunc" => arg_nums
+                .first()
+                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+                .unwrap_or(0),
+            "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
+            "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
+            _ => 0,
         };
-
-        // Parse arguments. Keep both the float view (for trig) and the
-        // original mnumber so int-preserving functions (abs/min/max/
-        // int/floor/ceil/trunc) can return integer when all inputs
-        // were integer.
-        let arg_nums: Vec<mnumber> = if args_str.is_empty() {
-            vec![]
-        } else {
-            args_str
-                .split(',')
-                .filter_map(|arg| {
-                    // Save caller's eval state, sub-eval each arg in a
-                    // fresh state inheriting caller's variables, restore.
-                    // C `mathevall()` xyy* save/restore (math.c:367).
-                    let saved = save_state();
-                    let inherited_vars = saved.variables.clone();
-                    new(arg.trim());
-                    m_variables_set(inherited_vars);
-                    let result = mathevall().ok();
-                    restore_state(saved);
-                    result
-                })
-                .collect()
+        return mnumber {
+            l: i,
+            d: 0.0,
+            type_: MN_INTEGER,
         };
-        let args: Vec<f64> = arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).collect();
-        let all_int =
-            !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
-
-        // Functions that preserve int-ness: when all args are int,
-        // return mnumber::Integer instead of Float to avoid the
-        // trailing "." in the string output ("5." instead of "5").
-        //
-        // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
-        // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
-        // not "2.". The truncation to int happens regardless of
-        // whether the input was already an integer. `abs`/`min`/`max`
-        // preserve the input type (int args → int result, float arg
-        // anywhere → float result) since their semantics don't
-        // inherently change the value's representation.
-        let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
-        if always_int {
-            let i = match name {
-                "int" | "trunc" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0),
-                "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
-                "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
-                _ => 0,
-            };
-            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
-        }
-        let int_preserving = matches!(name, "abs" | "min" | "max");
-        if all_int && int_preserving {
-            let i = match name {
-                "abs" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs()).unwrap_or(0),
-                "min" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).min().unwrap_or(0),
-                "max" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).max().unwrap_or(0),
-                _ => 0,
-            };
-            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
-        }
-
-        // Built-in math functions
-        let result = match name {
-            "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
-            "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
-            "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
-            "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
-            "atan2" => {
-                let y = args.first().copied().unwrap_or(0.0);
-                let x = args.get(1).copied().unwrap_or(1.0);
-                y.atan2(x)
-            }
-            "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
-            "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
-            "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
-            "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
-            "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
-            "hypot" => {
-                let x = args.first().copied().unwrap_or(0.0);
-                let y = args.get(1).copied().unwrap_or(0.0);
-                x.hypot(y)
-            }
-            "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
-            "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
-            "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
-            "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
-            "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
-            "pow" => {
-                let base = args.first().copied().unwrap_or(0.0);
-                let exp = args.get(1).copied().unwrap_or(1.0);
-                base.powf(exp)
-            }
-            "rand" => rand::random::<f64>(),
-            "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
-            "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
-            "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
-            "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
-            "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
-            "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
-            "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
-            // `float(x)` — widen int/float to float. Identity on
-            // floats; on ints, returns same value tagged as float so
-            // `printf "%.4f"` prints "3.0000" instead of "3". Direct
-            // port of mathfunc.c's `to_float()`.
-            "float" => args.first().copied().unwrap_or(0.0),
-            _ => {
-                m_error_set(format!("unknown function: {}", name));
-                0.0
-            }
-        };
-
-        mnumber { l: 0, d: result, type_: MN_FLOAT }
     }
+    let int_preserving = matches!(name, "abs" | "min" | "max");
+    if all_int && int_preserving {
+        let i = match name {
+            "abs" => arg_nums
+                .first()
+                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs())
+                .unwrap_or(0),
+            "min" => arg_nums
+                .iter()
+                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+                .min()
+                .unwrap_or(0),
+            "max" => arg_nums
+                .iter()
+                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        return mnumber {
+            l: i,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    }
+
+    // Built-in math functions
+    let result = match name {
+        "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
+        "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
+        "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
+        "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
+        "atan2" => {
+            let y = args.first().copied().unwrap_or(0.0);
+            let x = args.get(1).copied().unwrap_or(1.0);
+            y.atan2(x)
+        }
+        "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
+        "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
+        "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
+        "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
+        "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
+        "hypot" => {
+            let x = args.first().copied().unwrap_or(0.0);
+            let y = args.get(1).copied().unwrap_or(0.0);
+            x.hypot(y)
+        }
+        "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+        "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
+        "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
+        "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
+        "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
+        "pow" => {
+            let base = args.first().copied().unwrap_or(0.0);
+            let exp = args.get(1).copied().unwrap_or(1.0);
+            base.powf(exp)
+        }
+        "rand" => rand::random::<f64>(),
+        "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
+        "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
+        "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
+        "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
+        "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
+        "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
+        "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+        // `float(x)` — widen int/float to float. Identity on
+        // floats; on ints, returns same value tagged as float so
+        // `printf "%.4f"` prints "3.0000" instead of "3". Direct
+        // port of mathfunc.c's `to_float()`.
+        "float" => args.first().copied().unwrap_or(0.0),
+        _ => {
+            m_error_set(format!("unknown function: {}", name));
+            0.0
+        }
+    };
+
+    mnumber {
+        l: 0,
+        d: result,
+        type_: MN_FLOAT,
+    }
+}
 
 /// Port of `op(int what)` from `Src/math.c:1154`.
 ///
@@ -1511,341 +1864,638 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {              // 
 /// with the same lvalue so chained assigns work.
 /// WARNING: param names don't match C — Rust=() vs C=(what)
 pub(crate) fn op(what: i32) {
-        if m_error_some() {
-            return;
-        }
+    if m_error_some() {
+        return;
+    }
 
-        let tp = OP_TYPE[what as usize];
+    let tp = OP_TYPE[what as usize];
 
-        // Binary operators
-        if (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0 {
-            if m_stack_len() < 2 {
-                // zsh's exact wording for the same condition is
-                // `bad math expression: operand expected at end of
-                // string`. Matching it here means `let "1+"` and
-                // `$((5+))` produce the same diagnostic shape that
-                // scripts grep for.
-                m_error_set("bad math expression: operand expected at end of string".to_string());
-                return;
-            }
-
-            let b = pop();
-            let mv_a = pop_with_lval();
-            let a = if (mv_a.val.type_ == MN_UNSET) {
-                if let Some(ref name) = mv_a.lval {
-                    getmathparam(name)
-                } else {
-                    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-                }
-            } else {
-                mv_a.val
-            };
-
-            // Coerce types
-            let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
-                // Must be integers
-                (mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }), d: 0.0, type_: MN_INTEGER }, mnumber { l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER })
-            } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
-                // Different types, coerce to float
-                (mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }), type_: MN_FLOAT }, mnumber { l: 0, d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT })
-            } else {
-                (a, b)
-            };
-
-            let result = if m_noeval() > 0 {
-                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-            } else {
-                let is_float = (a.type_ == MN_FLOAT);
-                match what {
-                    AND | ANDEQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) & (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
-                    XOR | XOREQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) ^ (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
-                    OR | OREQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) | (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
-
-                    MUL | MULEQ => {
-                        if is_float {
-                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) * (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
-                        } else {
-                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_mul((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
-                        }
-                    }
-
-                    DIV | DIVEQ => {
-                        // Float div-by-zero is NOT an error in zsh —
-                        // it produces IEEE Inf/-Inf/NaN per IEEE 754.
-                        // Only INTEGER div-by-zero raises the error.
-                        // Without this gate `1/0.0` errored out instead
-                        // of returning `Inf`.
-                        if is_float {
-                            // Let f64 semantics handle 0.0, -0.0, NaN.
-                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) / (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
-                        } else {
-                            if !notzero(b) {
-                                m_error_set("division by zero".to_string());
-                                return;
-                            }
-                            let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
-                            if bi == -1 {
-                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_neg(), d: 0.0, type_: MN_INTEGER }
-                            } else {
-                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) / bi, d: 0.0, type_: MN_INTEGER }
-                            }
-                        }
-                    }
-
-                    MOD | MODEQ => {
-                        if is_float {
-                            // float % 0.0 → NaN per IEEE; let it fall
-                            // through to f64 semantics rather than
-                            // raising the integer-only error.
-                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) % (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
-                        } else if !notzero(b) {
-                            m_error_set("division by zero".to_string());
-                            return;
-                        } else {
-                            let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
-                            if bi == -1 {
-                                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-                            } else {
-                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) % bi, d: 0.0, type_: MN_INTEGER }
-                            }
-                        }
-                    }
-
-                    PLUS | PLUSEQ => {
-                        if is_float {
-                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) + (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
-                        } else {
-                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_add((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
-                        }
-                    }
-
-                    MINUS | MINUSEQ => {
-                        if is_float {
-                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) - (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
-                        } else {
-                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_sub((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
-                        }
-                    }
-
-                    SHLEFT | SHLEFTEQ => {
-                        mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) << ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
-                    }
-                    SHRIGHT | SHRIGHTEQ => {
-                        mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) >> ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
-                    }
-
-                    LES => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) < (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) < (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-                    LEQ => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) <= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) <= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-                    GRE => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) > (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) > (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-                    GEQ => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) >= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) >= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-                    DEQ => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) == (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) == (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-                    NEQ => mnumber { l: if is_float {
-                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) != (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
-                    } else {
-                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
-                    }, d: 0.0, type_: MN_INTEGER },
-
-                    DAND | DANDEQ => {
-                        mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 && (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
-                    }
-                    DOR | DOREQ => {
-                        mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 || (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
-                    }
-                    DXOR | DXOREQ => {
-                        let ai = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0;
-                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0;
-                        mnumber { l: (ai != bi) as i64, d: 0.0, type_: MN_INTEGER }
-                    }
-
-                    POWER | POWEREQ => {
-                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
-                        if !is_float && bi >= 0 {
-                            let mut result = 1i64;
-                            let base = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l });
-                            for _ in 0..bi {
-                                result = result.wrapping_mul(base);
-                            }
-                            mnumber { l: result, d: 0.0, type_: MN_INTEGER }
-                        } else {
-                            let af = (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 });
-                            let bf = (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 });
-                            if bf <= 0.0 && af == 0.0 {
-                                m_error_set("division by zero".to_string());
-                                return;
-                            }
-                            if af < 0.0 && bf != bf.trunc() {
-                                m_error_set("imaginary power".to_string());
-                                return;
-                            }
-                            mnumber { l: 0, d: af.powf(bf), type_: MN_FLOAT }
-                        }
-                    }
-
-                    COMMA => b,
-                    EQ => b,
-
-                    _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
-                }
-            };
-
-            // Handle assignment
-            if (tp & (OP_E2 | OP_E2IO)) != 0 {
-                if let Some(ref name) = mv_a.lval {
-                    let final_val = setmathvar(name, result);
-                    push(final_val, Some(name.clone()));
-                } else {
-                    m_error_set("lvalue required".to_string());
-                    push(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, None);
-                }
-            } else {
-                push(result, None);
-            }
-            return;
-        }
-
-        // Unary operators
-        if m_stack_is_empty() {
-            // zsh: unary op with empty stack -> `bad math
-            // expression: operand expected at end of string`.
-            // zshrs's bare `stack empty` had no match for scripts
-            // grepping zsh's canonical wording.
+    // Binary operators
+    if (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0 {
+        if m_stack_len() < 2 {
+            // zsh's exact wording for the same condition is
+            // `bad math expression: operand expected at end of
+            // string`. Matching it here means `let "1+"` and
+            // `$((5+))` produce the same diagnostic shape that
+            // scripts grep for.
             m_error_set("bad math expression: operand expected at end of string".to_string());
             return;
         }
 
-        let mv = pop_with_lval();
-        let val = if (mv.val.type_ == MN_UNSET) {
-            if let Some(ref name) = mv.lval {
+        let b = pop();
+        let mv_a = pop_with_lval();
+        let a = if (mv_a.val.type_ == MN_UNSET) {
+            if let Some(ref name) = mv_a.lval {
                 getmathparam(name)
             } else {
-                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                mnumber {
+                    l: 0,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
             }
         } else {
-            mv.val
+            mv_a.val
         };
 
-        match what {
-            NOT => {
-                let result = mnumber { l: if ((val.type_ == MN_INTEGER && val.l == 0) || (val.type_ == MN_FLOAT && val.d == 0.0) || val.type_ == MN_UNSET) { 1 } else { 0 }, d: 0.0, type_: MN_INTEGER };
-                push(result, None);
+        // Coerce types
+        let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
+            // Must be integers
+            (
+                mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                mnumber {
+                    l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+            )
+        } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
+            // Different types, coerce to float
+            (
+                mnumber {
+                    l: 0,
+                    d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }),
+                    type_: MN_FLOAT,
+                },
+                mnumber {
+                    l: 0,
+                    d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                    type_: MN_FLOAT,
+                },
+            )
+        } else {
+            (a, b)
+        };
+
+        let result = if m_noeval() > 0 {
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
             }
-            COMP => {
-                let result = mnumber { l: !(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER };
-                push(result, None);
-            }
-            UPLUS => {
-                push(val, None);
-            }
-            UMINUS => {
-                let result = if (val.type_ == MN_FLOAT) {
-                    mnumber { l: 0, d: -(if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }), type_: MN_FLOAT }
-                } else {
-                    mnumber { l: -(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER }
-                };
-                push(result, None);
-            }
-            POSTPLUS => {
-                // ++/-- on a literal (`5++`, `--5`) is a zsh error:
-                // "bad math expression: lvalue required". Without the
-                // mv.lval guard, zshrs silently incremented the
-                // literal value and returned it, masking the bug.
-                if mv.lval.is_none() {
-                    m_error_set("bad math expression: lvalue required".to_string());
-                    return;
+        } else {
+            let is_float = (a.type_ == MN_FLOAT);
+            match what {
+                AND | ANDEQ => mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                        & (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                XOR | XOREQ => mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                        ^ (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                OR | OREQ => mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                        | (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+
+                MUL | MULEQ => {
+                    if is_float {
+                        mnumber {
+                            l: 0,
+                            d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                                * (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                            type_: MN_FLOAT,
+                        }
+                    } else {
+                        mnumber {
+                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                                .wrapping_mul((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        }
+                    }
                 }
-                let name = mv.lval.as_ref().unwrap();
-                let new_val = if (val.type_ == MN_FLOAT) {
-                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
-                } else {
-                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
-                };
-                setmathvar(name, new_val);
-                push(val, None); // Return original value
-            }
-            POSTMINUS => {
-                if mv.lval.is_none() {
-                    m_error_set("bad math expression: lvalue required".to_string());
-                    return;
+
+                DIV | DIVEQ => {
+                    // Float div-by-zero is NOT an error in zsh —
+                    // it produces IEEE Inf/-Inf/NaN per IEEE 754.
+                    // Only INTEGER div-by-zero raises the error.
+                    // Without this gate `1/0.0` errored out instead
+                    // of returning `Inf`.
+                    if is_float {
+                        // Let f64 semantics handle 0.0, -0.0, NaN.
+                        mnumber {
+                            l: 0,
+                            d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                                / (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                            type_: MN_FLOAT,
+                        }
+                    } else {
+                        if !notzero(b) {
+                            m_error_set("division by zero".to_string());
+                            return;
+                        }
+                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
+                        if bi == -1 {
+                            mnumber {
+                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                                    .wrapping_neg(),
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        } else {
+                            mnumber {
+                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) / bi,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        }
+                    }
                 }
-                let name = mv.lval.as_ref().unwrap();
-                let new_val = if (val.type_ == MN_FLOAT) {
-                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
-                } else {
-                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
-                };
-                setmathvar(name, new_val);
-                push(val, None);
-            }
-            PREPLUS => {
-                if mv.lval.is_none() {
-                    m_error_set("bad math expression: lvalue required".to_string());
-                    return;
+
+                MOD | MODEQ => {
+                    if is_float {
+                        // float % 0.0 → NaN per IEEE; let it fall
+                        // through to f64 semantics rather than
+                        // raising the integer-only error.
+                        mnumber {
+                            l: 0,
+                            d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                                % (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                            type_: MN_FLOAT,
+                        }
+                    } else if !notzero(b) {
+                        m_error_set("division by zero".to_string());
+                        return;
+                    } else {
+                        let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
+                        if bi == -1 {
+                            mnumber {
+                                l: 0,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        } else {
+                            mnumber {
+                                l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) % bi,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        }
+                    }
                 }
-                let name = mv.lval.as_ref().unwrap();
-                let new_val = if (val.type_ == MN_FLOAT) {
-                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
-                } else {
-                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
-                };
-                setmathvar(name, new_val);
-                push(new_val, mv.lval);
-            }
-            PREMINUS => {
-                if mv.lval.is_none() {
-                    m_error_set("bad math expression: lvalue required".to_string());
-                    return;
+
+                PLUS | PLUSEQ => {
+                    if is_float {
+                        mnumber {
+                            l: 0,
+                            d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                                + (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                            type_: MN_FLOAT,
+                        }
+                    } else {
+                        mnumber {
+                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                                .wrapping_add((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        }
+                    }
                 }
-                let name = mv.lval.as_ref().unwrap();
-                let new_val = if (val.type_ == MN_FLOAT) {
-                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
-                } else {
-                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
-                };
-                setmathvar(name, new_val);
-                push(new_val, mv.lval);
-            }
-            QUEST => {
-                // Ternary: stack has [cond, true_val, false_val]
-                // val already popped = false_val
-                // Need to pop true_val and cond
-                if m_stack_len() < 2 {
-                    m_error_set("?: needs 3 operands".to_string());
-                    return;
+
+                MINUS | MINUSEQ => {
+                    if is_float {
+                        mnumber {
+                            l: 0,
+                            d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                                - (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }),
+                            type_: MN_FLOAT,
+                        }
+                    } else {
+                        mnumber {
+                            l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                                .wrapping_sub((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })),
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        }
+                    }
                 }
-                let false_val = val;
-                let true_val = pop();
-                let cond = pop();
-                let result = if !((cond.type_ == MN_INTEGER && cond.l == 0) || (cond.type_ == MN_FLOAT && cond.d == 0.0) || cond.type_ == MN_UNSET) { true_val } else { false_val };
-                push(result, None);
+
+                SHLEFT | SHLEFTEQ => mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                        << ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                SHRIGHT | SHRIGHTEQ => mnumber {
+                    l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                        >> ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+
+                LES => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            < (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            < (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                LEQ => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            <= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            <= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                GRE => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            > (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            > (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                GEQ => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            >= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            >= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                DEQ => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            == (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            == (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                NEQ => mnumber {
+                    l: if is_float {
+                        ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
+                            != (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
+                            as i64
+                    } else {
+                        ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l })
+                            != (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }))
+                            as i64
+                    },
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+
+                DAND | DANDEQ => mnumber {
+                    l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0
+                        && (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0)
+                        as i64,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                DOR | DOREQ => mnumber {
+                    l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0
+                        || (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0)
+                        as i64,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+                DXOR | DXOREQ => {
+                    let ai = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0;
+                    let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0;
+                    mnumber {
+                        l: (ai != bi) as i64,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    }
+                }
+
+                POWER | POWEREQ => {
+                    let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
+                    if !is_float && bi >= 0 {
+                        let mut result = 1i64;
+                        let base = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l });
+                        for _ in 0..bi {
+                            result = result.wrapping_mul(base);
+                        }
+                        mnumber {
+                            l: result,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        }
+                    } else {
+                        let af = (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 });
+                        let bf = (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 });
+                        if bf <= 0.0 && af == 0.0 {
+                            m_error_set("division by zero".to_string());
+                            return;
+                        }
+                        if af < 0.0 && bf != bf.trunc() {
+                            m_error_set("imaginary power".to_string());
+                            return;
+                        }
+                        mnumber {
+                            l: 0,
+                            d: af.powf(bf),
+                            type_: MN_FLOAT,
+                        }
+                    }
+                }
+
+                COMMA => b,
+                EQ => b,
+
+                _ => mnumber {
+                    l: 0,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
             }
-            COLON => {
-                m_error_set("':' without '?'".to_string());
+        };
+
+        // Handle assignment
+        if (tp & (OP_E2 | OP_E2IO)) != 0 {
+            if let Some(ref name) = mv_a.lval {
+                let final_val = setmathvar(name, result);
+                push(final_val, Some(name.clone()));
+            } else {
+                m_error_set("lvalue required".to_string());
+                push(
+                    mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    },
+                    None,
+                );
             }
-            _ => {
-                m_error_set("unknown operator".to_string());
+        } else {
+            push(result, None);
+        }
+        return;
+    }
+
+    // Unary operators
+    if m_stack_is_empty() {
+        // zsh: unary op with empty stack -> `bad math
+        // expression: operand expected at end of string`.
+        // zshrs's bare `stack empty` had no match for scripts
+        // grepping zsh's canonical wording.
+        m_error_set("bad math expression: operand expected at end of string".to_string());
+        return;
+    }
+
+    let mv = pop_with_lval();
+    let val = if (mv.val.type_ == MN_UNSET) {
+        if let Some(ref name) = mv.lval {
+            getmathparam(name)
+        } else {
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
             }
         }
+    } else {
+        mv.val
+    };
+
+    match what {
+        NOT => {
+            let result = mnumber {
+                l: if ((val.type_ == MN_INTEGER && val.l == 0)
+                    || (val.type_ == MN_FLOAT && val.d == 0.0)
+                    || val.type_ == MN_UNSET)
+                {
+                    1
+                } else {
+                    0
+                },
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+            push(result, None);
+        }
+        COMP => {
+            let result = mnumber {
+                l: !(if val.type_ == MN_FLOAT {
+                    val.d as i64
+                } else {
+                    val.l
+                }),
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+            push(result, None);
+        }
+        UPLUS => {
+            push(val, None);
+        }
+        UMINUS => {
+            let result = if (val.type_ == MN_FLOAT) {
+                mnumber {
+                    l: 0,
+                    d: -(if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }),
+                    type_: MN_FLOAT,
+                }
+            } else {
+                mnumber {
+                    l: -(if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
+            };
+            push(result, None);
+        }
+        POSTPLUS => {
+            // ++/-- on a literal (`5++`, `--5`) is a zsh error:
+            // "bad math expression: lvalue required". Without the
+            // mv.lval guard, zshrs silently incremented the
+            // literal value and returned it, masking the bug.
+            if mv.lval.is_none() {
+                m_error_set("bad math expression: lvalue required".to_string());
+                return;
+            }
+            let name = mv.lval.as_ref().unwrap();
+            let new_val = if (val.type_ == MN_FLOAT) {
+                mnumber {
+                    l: 0,
+                    d: (if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }) + 1.0,
+                    type_: MN_FLOAT,
+                }
+            } else {
+                mnumber {
+                    l: (if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }) + 1,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
+            };
+            setmathvar(name, new_val);
+            push(val, None); // Return original value
+        }
+        POSTMINUS => {
+            if mv.lval.is_none() {
+                m_error_set("bad math expression: lvalue required".to_string());
+                return;
+            }
+            let name = mv.lval.as_ref().unwrap();
+            let new_val = if (val.type_ == MN_FLOAT) {
+                mnumber {
+                    l: 0,
+                    d: (if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }) - 1.0,
+                    type_: MN_FLOAT,
+                }
+            } else {
+                mnumber {
+                    l: (if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }) - 1,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
+            };
+            setmathvar(name, new_val);
+            push(val, None);
+        }
+        PREPLUS => {
+            if mv.lval.is_none() {
+                m_error_set("bad math expression: lvalue required".to_string());
+                return;
+            }
+            let name = mv.lval.as_ref().unwrap();
+            let new_val = if (val.type_ == MN_FLOAT) {
+                mnumber {
+                    l: 0,
+                    d: (if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }) + 1.0,
+                    type_: MN_FLOAT,
+                }
+            } else {
+                mnumber {
+                    l: (if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }) + 1,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
+            };
+            setmathvar(name, new_val);
+            push(new_val, mv.lval);
+        }
+        PREMINUS => {
+            if mv.lval.is_none() {
+                m_error_set("bad math expression: lvalue required".to_string());
+                return;
+            }
+            let name = mv.lval.as_ref().unwrap();
+            let new_val = if (val.type_ == MN_FLOAT) {
+                mnumber {
+                    l: 0,
+                    d: (if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }) - 1.0,
+                    type_: MN_FLOAT,
+                }
+            } else {
+                mnumber {
+                    l: (if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }) - 1,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                }
+            };
+            setmathvar(name, new_val);
+            push(new_val, mv.lval);
+        }
+        QUEST => {
+            // Ternary: stack has [cond, true_val, false_val]
+            // val already popped = false_val
+            // Need to pop true_val and cond
+            if m_stack_len() < 2 {
+                m_error_set("?: needs 3 operands".to_string());
+                return;
+            }
+            let false_val = val;
+            let true_val = pop();
+            let cond = pop();
+            let result = if !((cond.type_ == MN_INTEGER && cond.l == 0)
+                || (cond.type_ == MN_FLOAT && cond.d == 0.0)
+                || cond.type_ == MN_UNSET)
+            {
+                true_val
+            } else {
+                false_val
+            };
+            push(result, None);
+        }
+        COLON => {
+            m_error_set("':' without '?'".to_string());
+        }
+        _ => {
+            m_error_set("unknown operator".to_string());
+        }
     }
+}
 
 /// Port of `bop(int tk)` from `Src/math.c:1454`.
 ///
@@ -1855,31 +2505,37 @@ pub(crate) fn op(what: i32) {
 /// happens after `mathparse` recurses for the RHS.
 /// WARNING: param names don't match C — Rust=() vs C=(tk)
 pub(crate) fn bop(tk: i32) {
-        if m_stack_is_empty() {
-            return;
-        }
-        let mv = m_stack_top_clone().unwrap();
-        let val = if (mv.val.type_ == MN_UNSET) {
-            if let Some(ref name) = mv.lval {
-                getmathparam(name)
-            } else {
-                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-            }
-        } else {
-            mv.val
-        };
-
-        let tst = !((val.type_ == MN_INTEGER && val.l == 0) || (val.type_ == MN_FLOAT && val.d == 0.0) || val.type_ == MN_UNSET);
-        match tk {
-            DAND | DANDEQ if !tst => {
-                m_noeval_inc();
-            }
-            DOR | DOREQ if tst => {
-                m_noeval_inc();
-            }
-            _ => {}
-        }
+    if m_stack_is_empty() {
+        return;
     }
+    let mv = m_stack_top_clone().unwrap();
+    let val = if (mv.val.type_ == MN_UNSET) {
+        if let Some(ref name) = mv.lval {
+            getmathparam(name)
+        } else {
+            mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            }
+        }
+    } else {
+        mv.val
+    };
+
+    let tst = !((val.type_ == MN_INTEGER && val.l == 0)
+        || (val.type_ == MN_FLOAT && val.d == 0.0)
+        || val.type_ == MN_UNSET);
+    match tk {
+        DAND | DANDEQ if !tst => {
+            m_noeval_inc();
+        }
+        DOR | DOREQ if tst => {
+            m_noeval_inc();
+        }
+        _ => {}
+    }
+}
 
 /// Port of `mnumber matheval(char *s)` from `Src/math.c:1480`.
 ///
@@ -1917,26 +2573,33 @@ pub(crate) fn bop(tk: i32) {
 ///   3. Missing mtok save/restore around mathevall (c:1483, c:1496) —
 ///      recursive math calls (e.g. `$((f($((g)))))`) overwrote the
 ///      outer call's mtok mid-parse.
-pub fn matheval(s: &str) -> Result<mnumber, String> {                       // c:1480
+pub fn matheval(s: &str) -> Result<mnumber, String> {
+    // c:1480
     use crate::ported::zsh_h::Nularg;
     // c:1483 — `int xmtok = mtok;` save.
-    let xmtok = M_MTOK.with(|c| c.get());                                    // c:1483
+    let xmtok = M_MTOK.with(|c| c.get()); // c:1483
 
     // c:1489-1490 — `if (*s == Nularg) s++;`. The 0xa1 sentinel byte
     // can prefix expressions emerging from the parser; skip it.
-    let s = if let Some(rest) = s.strip_prefix(Nularg) {                     // c:1489
+    let s = if let Some(rest) = s.strip_prefix(Nularg) {
+        // c:1489
         rest
     } else {
         s
     };
     // c:1491-1495 — empty expression returns MN_INTEGER 0.
-    if s.is_empty() {                                                        // c:1491
-        return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });               // c:1493-1494
+    if s.is_empty() {
+        // c:1491
+        return Ok(mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        }); // c:1493-1494
     }
     new(s);
     let result = mathevall();
     // c:1496 — `mtok = xmtok;` restore. Done even on error path.
-    M_MTOK.with(|c| c.set(xmtok));                                           // c:1496
+    M_MTOK.with(|c| c.set(xmtok)); // c:1496
     result
 }
 
@@ -1954,9 +2617,10 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {                       // c
 /// did `n.type_ == MN_FLOAT` (strict equality) — which misclassifies
 /// any result where MN_FLOAT is set alongside another flag (e.g. an
 /// uninitialized-then-set result might carry MN_FLOAT|MN_UNSET = 6).
-pub fn mathevali(s: &str) -> Result<i64, String> {                          // c:1505
+pub fn mathevali(s: &str) -> Result<i64, String> {
+    // c:1505
     matheval(s).map(|n|                                                      // c:1506
-        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l })            // c:1508
+        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }) // c:1508
 }
 
 /// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.
@@ -1993,20 +2657,23 @@ pub fn mathevali(s: &str) -> Result<i64, String> {                          // c
 /// `MPREC_ARG` vs `MPREC_TOP` distinction. (The MPREC distinction
 /// is structural — Rust mathevall doesn't yet thread the prec_tp
 /// arg; flagged for follow-up.)
-pub(crate) fn mathevalarg(expr: &str) -> i64 {                              // c:1514
+pub(crate) fn mathevalarg(expr: &str) -> i64 {
+    // c:1514
     use crate::ported::zsh_h::Nularg;
     // c:1517 — `int xmtok = mtok;` save.
-    let xmtok = M_MTOK.with(|c| c.get());                                    // c:1517
-    // c:1528-1529 — `if (*s == Nularg) s++;`. Skip the parser sentinel.
-    let s = if let Some(rest) = expr.strip_prefix(Nularg) {                  // c:1528
+    let xmtok = M_MTOK.with(|c| c.get()); // c:1517
+                                          // c:1528-1529 — `if (*s == Nularg) s++;`. Skip the parser sentinel.
+    let s = if let Some(rest) = expr.strip_prefix(Nularg) {
+        // c:1528
         rest
     } else {
         expr
     };
     // c:1530-1532 — empty after Nularg-skip is a HARD error here.
-    if s.is_empty() {                                                        // c:1530
-        crate::ported::utils::zerr("bad math expression: empty string");     // c:1531
-        return 0;                                                            // c:1532
+    if s.is_empty() {
+        // c:1530
+        crate::ported::utils::zerr("bad math expression: empty string"); // c:1531
+        return 0; // c:1532
     }
     // c:1534 — `mathevall(s, MPREC_ARG, ss)`. The Rust port doesn't yet
     // thread the prec_tp arg through mathevall (uses C_PREC/Z_PREC toggle
@@ -2018,7 +2685,7 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {                              // c
         if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }
     ).unwrap_or(0);
     // c:1537 — `mtok = xmtok;` restore.
-    M_MTOK.with(|c| c.set(xmtok));                                           // c:1537
+    M_MTOK.with(|c| c.set(xmtok)); // c:1537
     result
 }
 
@@ -2034,224 +2701,248 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {                              // c
 /// WARNING: param names don't match C — Rust=() vs C=(mtokc, mptr)
 pub(crate) fn checkunary() {
     // Direct port of zsh math.c checkunary() (line 1548).
-        // Two roles:
-        //   1. Validate that the just-lexed token (`m_mtok()`)
-        //      matches the parser's expectation (operator vs
-        //      operand). Mismatch emits zsh's
-        //      "bad math expression: <kind> expected at <ctx>"
-        //      with `<kind>` = `operator` (errmsg=2) or `operand`
-        //      (errmsg=1). zshrs previously only did step 2,
-        //      which left e.g. `let "5 5"` and `$((2#1011x))`
-        //      silently accepting bogus input.
-        //   2. Update `m_unary()` for the next iteration.
-        let tp = OP_TYPE[m_mtok() as usize];
-        let is_op_token = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO | OP_OP)) != 0;
-        let errmsg = if is_op_token {
-            if m_unary() {
-                1
-            } else {
-                0
-            }
-        } else if !m_unary() {
-            2
+    // Two roles:
+    //   1. Validate that the just-lexed token (`m_mtok()`)
+    //      matches the parser's expectation (operator vs
+    //      operand). Mismatch emits zsh's
+    //      "bad math expression: <kind> expected at <ctx>"
+    //      with `<kind>` = `operator` (errmsg=2) or `operand`
+    //      (errmsg=1). zshrs previously only did step 2,
+    //      which left e.g. `let "5 5"` and `$((2#1011x))`
+    //      silently accepting bogus input.
+    //   2. Update `m_unary()` for the next iteration.
+    let tp = OP_TYPE[m_mtok() as usize];
+    let is_op_token = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO | OP_OP)) != 0;
+    let errmsg = if is_op_token {
+        if m_unary() {
+            1
         } else {
             0
-        };
-        if errmsg != 0 && !m_error_some() {
-            let errtype = if errmsg == 2 { "operator" } else { "operand" };
-            // zsh's `mptr` is the input position BEFORE zzlex
-            // consumed the bad token. We track the same via
-            // `tok_start` which zzlex updates after whitespace
-            // skip. Walk forward past whitespace (mirrors zsh's
-            // `inblank` skip) so the error context starts at
-            // the first visible char.
-            let input_owned = m_input_clone();
-            let bytes = input_owned.as_bytes();
-            let mut start = m_tok_start();
-            while start < bytes.len() && matches!(bytes[start], b' ' | b'\t' | b'\n') {
-                start += 1;
-            }
-            // zsh truncates after 10 chars and appends `...` if
-            // there's more remaining (the over flag in the C
-            // source). Mirror that to keep error messages
-            // bounded for long bogus expressions.
-            let remaining = m_input_slice_from(start);
-            let (ctx, over) = if remaining.chars().count() > 10 {
-                let truncated: String = remaining.chars().take(10).collect();
-                (truncated, true)
-            } else {
-                (remaining.to_string(), false)
-            };
-            if ctx.is_empty() {
-                m_error_set(format!(
-                    "bad math expression: {} expected at end of string",
-                    errtype
-                ));
-            } else {
-                m_error_set(format!(
-                    "bad math expression: {} expected at `{}{}'",
-                    errtype,
-                    ctx,
-                    if over { "..." } else { "" }
-                ));
-            }
         }
-        m_unary_set((tp & OP_OPF) == 0);
+    } else if !m_unary() {
+        2
+    } else {
+        0
+    };
+    if errmsg != 0 && !m_error_some() {
+        let errtype = if errmsg == 2 { "operator" } else { "operand" };
+        // zsh's `mptr` is the input position BEFORE zzlex
+        // consumed the bad token. We track the same via
+        // `tok_start` which zzlex updates after whitespace
+        // skip. Walk forward past whitespace (mirrors zsh's
+        // `inblank` skip) so the error context starts at
+        // the first visible char.
+        let input_owned = m_input_clone();
+        let bytes = input_owned.as_bytes();
+        let mut start = m_tok_start();
+        while start < bytes.len() && matches!(bytes[start], b' ' | b'\t' | b'\n') {
+            start += 1;
+        }
+        // zsh truncates after 10 chars and appends `...` if
+        // there's more remaining (the over flag in the C
+        // source). Mirror that to keep error messages
+        // bounded for long bogus expressions.
+        let remaining = m_input_slice_from(start);
+        let (ctx, over) = if remaining.chars().count() > 10 {
+            let truncated: String = remaining.chars().take(10).collect();
+            (truncated, true)
+        } else {
+            (remaining.to_string(), false)
+        };
+        if ctx.is_empty() {
+            m_error_set(format!(
+                "bad math expression: {} expected at end of string",
+                errtype
+            ));
+        } else {
+            m_error_set(format!(
+                "bad math expression: {} expected at `{}{}'",
+                errtype,
+                ctx,
+                if over { "..." } else { "" }
+            ));
+        }
+    }
+    m_unary_set((tp & OP_OPF) == 0);
+}
+
+/// Operator-precedence parser - closely follows zsh math.c mathparse()
+/// Port of `mathparse(int pc)` from `Src/math.c:1594`.
+/// WARNING: param names don't match C — Rust=() vs C=(pc)
+pub(crate) fn mathparse(pc: u8) {
+    if m_error_some() {
+        return;
     }
 
-    /// Operator-precedence parser - closely follows zsh math.c mathparse()
-/// Port of `mathparse(int pc)` from `Src/math.c:1594`.
-    /// WARNING: param names don't match C — Rust=() vs C=(pc)
-    pub(crate) fn mathparse(pc: u8) {
+    m_mtok_set(zzlex());
+
+    // Handle empty input
+    if pc == top_prec() && m_mtok() == EOI {
+        return;
+    }
+
+    checkunary();
+
+    while m_prec()[m_mtok() as usize] <= pc {
         if m_error_some() {
             return;
         }
 
+        match m_mtok() {
+            NUM => {
+                push(m_yyval(), None);
+            }
+            ID => {
+                let lval = m_yylval_clone();
+                if m_noeval() > 0 {
+                    push(
+                        mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        },
+                        Some(lval),
+                    );
+                } else {
+                    push(
+                        mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_UNSET,
+                        },
+                        Some(lval),
+                    );
+                }
+            }
+            CID => {
+                let lval = m_yylval_clone();
+                let val = if m_noeval() > 0 {
+                    mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    }
+                } else {
+                    getcvar(&lval)
+                };
+                push(val, Some(lval));
+            }
+            FUNC => {
+                let func_call = m_yylval_clone();
+                let val = if m_noeval() > 0 {
+                    mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    }
+                } else {
+                    callmathfunc(&func_call)
+                };
+                push(val, None);
+            }
+            M_INPAR => {
+                mathparse(top_prec());
+                if m_mtok() != M_OUTPAR {
+                    if !m_error_some() {
+                        // Match zsh's `bad math expression: ')'
+                        // expected` so error diagnostics align.
+                        m_error_set("bad math expression: ')' expected".to_string());
+                    }
+                    return;
+                }
+            }
+            QUEST => {
+                // Ternary operator
+                if m_stack_is_empty() {
+                    m_error_set("bad math expression".to_string());
+                    return;
+                }
+                let mv = m_stack_top_clone().unwrap();
+                let cond = get_value(&mv);
+
+                let q = !((cond.type_ == MN_INTEGER && cond.l == 0)
+                    || (cond.type_ == MN_FLOAT && cond.d == 0.0)
+                    || cond.type_ == MN_UNSET);
+                if !q {
+                    m_noeval_inc();
+                }
+                let colon_prec = m_prec()[COLON as usize];
+                let stack_before = m_stack_len();
+                mathparse(colon_prec - 1);
+                if !q {
+                    m_noeval_dec();
+                }
+
+                if m_mtok() != COLON {
+                    if !m_error_some() {
+                        // Distinguish whether the inner parse
+                        // produced an operand: stack grew →
+                        // colon expected; stack same → operand
+                        // missing (input ran out at end of
+                        // string after `?`).
+                        if m_stack_len() > stack_before {
+                            m_error_set("bad math expression: ':' expected".to_string());
+                        } else {
+                            m_error_set(
+                                "bad math expression: operand expected at end of string"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    return;
+                }
+
+                if q {
+                    m_noeval_inc();
+                }
+                let quest_prec = m_prec()[QUEST as usize];
+                mathparse(quest_prec);
+                if q {
+                    m_noeval_dec();
+                }
+
+                op(QUEST);
+                continue;
+            }
+            _ => {
+                // Binary/unary operator
+                let otok = m_mtok();
+                let onoeval = m_noeval();
+                let tp = OP_TYPE[otok as usize];
+                // Orphan binary at start: `let "*"`, `let "*5"`,
+                // `let "/"`. zsh keeps its input pointer at the
+                // start of the bad operator and emits `operand
+                // expected at \`<remaining>'`. zshrs previously
+                // collapsed every operand-missing case into "at
+                // end of string" which lost the operator
+                // location for orphan-at-start expressions.
+                let is_binary = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0;
+                if m_stack_is_empty() && is_binary {
+                    let remaining = m_input_slice_from(m_tok_start());
+                    m_error_set(format!(
+                        "bad math expression: operand expected at `{}'",
+                        remaining
+                    ));
+                    return;
+                }
+                if (tp & 0x03) == BOOL {
+                    bop(otok);
+                }
+                let otok_prec = m_prec()[otok as usize];
+                // Right-to-left gets same prec, left-to-right gets prec-1
+                let adjust = if (tp & 0x01) != RL { 1 } else { 0 };
+                mathparse(otok_prec - adjust);
+                m_noeval_set(onoeval);
+                op(otok);
+                continue;
+            }
+        }
+
+        // After operand (Num, Id, Func, InPar), get next token
         m_mtok_set(zzlex());
-
-        // Handle empty input
-        if pc == top_prec() && m_mtok() == EOI {
-            return;
-        }
-
         checkunary();
-
-        while m_prec()[m_mtok() as usize] <= pc {
-            if m_error_some() {
-                return;
-            }
-
-            match m_mtok() {
-                NUM => {
-                    push(m_yyval(), None);
-                }
-                ID => {
-                    let lval = m_yylval_clone();
-                    if m_noeval() > 0 {
-                        push(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, Some(lval));
-                    } else {
-                        push(mnumber { l: 0, d: 0.0, type_: MN_UNSET }, Some(lval));
-                    }
-                }
-                CID => {
-                    let lval = m_yylval_clone();
-                    let val = if m_noeval() > 0 {
-                        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-                    } else {
-                        getcvar(&lval)
-                    };
-                    push(val, Some(lval));
-                }
-                FUNC => {
-                    let func_call = m_yylval_clone();
-                    let val = if m_noeval() > 0 {
-                        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-                    } else {
-                        callmathfunc(&func_call)
-                    };
-                    push(val, None);
-                }
-                M_INPAR => {
-                    mathparse(top_prec());
-                    if m_mtok() != M_OUTPAR {
-                        if !m_error_some() {
-                            // Match zsh's `bad math expression: ')'
-                            // expected` so error diagnostics align.
-                            m_error_set("bad math expression: ')' expected".to_string());
-                        }
-                        return;
-                    }
-                }
-                QUEST => {
-                    // Ternary operator
-                    if m_stack_is_empty() {
-                        m_error_set("bad math expression".to_string());
-                        return;
-                    }
-                    let mv = m_stack_top_clone().unwrap();
-                    let cond = get_value(&mv);
-
-                    let q = !((cond.type_ == MN_INTEGER && cond.l == 0) || (cond.type_ == MN_FLOAT && cond.d == 0.0) || cond.type_ == MN_UNSET);
-                    if !q {
-                        m_noeval_inc();
-                    }
-                    let colon_prec = m_prec()[COLON as usize];
-                    let stack_before = m_stack_len();
-                    mathparse(colon_prec - 1);
-                    if !q {
-                        m_noeval_dec();
-                    }
-
-                    if m_mtok() != COLON {
-                        if !m_error_some() {
-                            // Distinguish whether the inner parse
-                            // produced an operand: stack grew →
-                            // colon expected; stack same → operand
-                            // missing (input ran out at end of
-                            // string after `?`).
-                            if m_stack_len() > stack_before {
-                                m_error_set("bad math expression: ':' expected".to_string());
-                            } else {
-                                m_error_set(
-                                    "bad math expression: operand expected at end of string"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                        return;
-                    }
-
-                    if q {
-                        m_noeval_inc();
-                    }
-                    let quest_prec = m_prec()[QUEST as usize];
-                    mathparse(quest_prec);
-                    if q {
-                        m_noeval_dec();
-                    }
-
-                    op(QUEST);
-                    continue;
-                }
-                _ => {
-                    // Binary/unary operator
-                    let otok = m_mtok();
-                    let onoeval = m_noeval();
-                    let tp = OP_TYPE[otok as usize];
-                    // Orphan binary at start: `let "*"`, `let "*5"`,
-                    // `let "/"`. zsh keeps its input pointer at the
-                    // start of the bad operator and emits `operand
-                    // expected at \`<remaining>'`. zshrs previously
-                    // collapsed every operand-missing case into "at
-                    // end of string" which lost the operator
-                    // location for orphan-at-start expressions.
-                    let is_binary = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0;
-                    if m_stack_is_empty() && is_binary {
-                        let remaining = m_input_slice_from(m_tok_start());
-                        m_error_set(format!(
-                            "bad math expression: operand expected at `{}'",
-                            remaining
-                        ));
-                        return;
-                    }
-                    if (tp & 0x03) == BOOL {
-                        bop(otok);
-                    }
-                    let otok_prec = m_prec()[otok as usize];
-                    // Right-to-left gets same prec, left-to-right gets prec-1
-                    let adjust = if (tp & 0x01) != RL { 1 } else { 0 };
-                    mathparse(otok_prec - adjust);
-                    m_noeval_set(onoeval);
-                    op(otok);
-                    continue;
-                }
-            }
-
-            // After operand (Num, Id, Func, InPar), get next token
-            m_mtok_set(zzlex());
-            checkunary();
-        }
     }
+}
 /// Zsh precedence table (default)
 static Z_PREC: [u8; TOKCOUNT] = [
     1, 137, 2, 2, 2, // InPar OutPar Not Comp PostPlus
@@ -2376,9 +3067,15 @@ pub(crate) fn new(input: &str) {
     m_input_set(input.to_string());
     m_pos_set(0);
     m_tok_start_set(0);
-    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+    m_yyval_set(mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    });
     m_yylval_set(String::new());
-    M_STACK.with(|c| { c.borrow_mut().clear(); });
+    M_STACK.with(|c| {
+        c.borrow_mut().clear();
+    });
     m_mtok_set(EOI);
     m_unary_set(true);
     m_noeval_set(0);
@@ -2408,9 +3105,23 @@ pub(crate) fn with_variables(vars: HashMap<String, mnumber>) {
 pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
     for (k, v) in vars {
         if let Ok(i) = v.parse::<i64>() {
-            m_variables_insert(k.clone(), mnumber { l: i, d: 0.0, type_: MN_INTEGER });
+            m_variables_insert(
+                k.clone(),
+                mnumber {
+                    l: i,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
+            );
         } else if let Ok(f) = v.parse::<f64>() {
-            m_variables_insert(k.clone(), mnumber { l: 0, d: f, type_: MN_FLOAT });
+            m_variables_insert(
+                k.clone(),
+                mnumber {
+                    l: 0,
+                    d: f,
+                    type_: MN_FLOAT,
+                },
+            );
         } else if !v.is_empty() {
             // Non-numeric string — keep raw so getmathparam can
             // recursively evaluate it as an arith expression.
@@ -2429,16 +3140,29 @@ pub(crate) fn extract_string_variables() -> HashMap<String, String> {
     M_VARIABLES.with(|c| {
         c.borrow()
             .iter()
-            .map(|(k, v)| (k.clone(), match v.type_ {
-                MN_INTEGER => v.l.to_string(),
-                MN_FLOAT => {
-                    let f = v.d;
-                    if isnan(f) { "NaN".to_string() }
-                    else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
-                    else { format!("{:.10}", f) }
-                }
-                _ => "0".to_string(),
-            }))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    match v.type_ {
+                        MN_INTEGER => v.l.to_string(),
+                        MN_FLOAT => {
+                            let f = v.d;
+                            if isnan(f) {
+                                "NaN".to_string()
+                            } else if isinf(f) {
+                                if f > 0.0 {
+                                    "Inf".to_string()
+                                } else {
+                                    "-Inf".to_string()
+                                }
+                            } else {
+                                format!("{:.10}", f)
+                            }
+                        }
+                        _ => "0".to_string(),
+                    },
+                )
+            })
             .collect()
     })
 }
@@ -2469,68 +3193,66 @@ pub(crate) fn with_lastval(val: i32) {
     m_lastval_set(val);
 }
 
-    // WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
-    // directly without an fn-shaped wrapper.
-    pub(crate) fn peek() -> Option<char> {
-        m_input_clone()[m_pos()..].chars().next()
-    }
+// WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
+// directly without an fn-shaped wrapper.
+pub(crate) fn peek() -> Option<char> {
+    m_input_clone()[m_pos()..].chars().next()
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
-    // `*ptr++` directly.
-    pub(crate) fn advance() -> Option<char> {
-        let c = peek()?;
-        m_pos_add(c.len_utf8());
-        Some(c)
-    }
+// WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
+// `*ptr++` directly.
+pub(crate) fn advance() -> Option<char> {
+    let c = peek()?;
+    m_pos_add(c.len_utf8());
+    Some(c)
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // ctype.h `idigit()` macro directly.
-    fn is_digit(c: char) -> bool {
-        c.is_ascii_digit()
-    }
+// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// ctype.h `idigit()` macro directly.
+fn is_digit(c: char) -> bool {
+    c.is_ascii_digit()
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // `iident()` / `isalpha()` macros directly.
-    fn is_ident_start(c: char) -> bool {
-        c.is_ascii_alphabetic() || c == '_'
-    }
+// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// `iident()` / `isalpha()` macros directly.
+fn is_ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // `iident()` macro directly.
-    fn is_ident(c: char) -> bool {
-        c.is_ascii_alphanumeric() || c == '_'
-    }
+// WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+// `iident()` macro directly.
+fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
-    // this inside `pop()` (math.c:931) — its `noget` flag controls
-    // whether to resolve the deferred Unset+lval read; zshrs splits
-    // the two paths into separate fns so the resolved-vs-raw choice
-    // is at the call site.
-    pub(crate) fn pop_with_lval() -> mathvalue {
-        m_stack_pop().unwrap_or_default()
-    }
+// WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
+// this inside `pop()` (math.c:931) — its `noget` flag controls
+// whether to resolve the deferred Unset+lval read; zshrs splits
+// the two paths into separate fns so the resolved-vs-raw choice
+// is at the call site.
+pub(crate) fn pop_with_lval() -> mathvalue {
+    m_stack_pop().unwrap_or_default()
+}
 
-
-
-    // WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
-    // the deferred-variable-read pattern inside `pop()` and `op()`
-    // (math.c:931, 1154); the Rust port factors it out for `bop`
-    // and `mathparse` to inspect-without-consuming.
-    pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
-        if (mv.val.type_ == MN_UNSET) {
-            if let Some(ref name) = mv.lval {
-                return getmathparam(name);
-            }
+// WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
+// the deferred-variable-read pattern inside `pop()` and `op()`
+// (math.c:931, 1154); the Rust port factors it out for `bop`
+// and `mathparse` to inspect-without-consuming.
+pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
+    if (mv.val.type_ == MN_UNSET) {
+        if let Some(ref name) = mv.lval {
+            return getmathparam(name);
         }
-        mv.val
     }
+    mv.val
+}
 
-    // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
-    // expression `prec[COMMA] + 1` directly in mathparse() and
-    // mathevall() everywhere it's needed (math.c:1594, 367).
-    pub(crate) fn top_prec() -> u8 {
-        m_prec()[COMMA as usize] + 1
-    }
+// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// expression `prec[COMMA] + 1` directly in mathparse() and
+// mathevall() everywhere it's needed (math.c:1594, 367).
+pub(crate) fn top_prec() -> u8 {
+    m_prec()[COMMA as usize] + 1
+}
 
 // WARNING: NOT IN MATH.C — Rust-only accessor (note plural — singular
 // `getmathparam` IS in math.c:337). zsh C's caller reads the param
@@ -2765,7 +3487,6 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // Mirror Src/math.c / Src/utils.c base+digit-grouping logic.
 // ===========================================================
 
-
 // WARNING: NOT IN MATH.C — `convbase` lives in `Src/params.c:5632`
 // (called from math.c:1089). This file holds a duplicate that
 // predates the params.rs port; canonical home is
@@ -2794,17 +3515,29 @@ mod tests {
         crate::ported::params::unsetparam("mvar1_baseline");
         crate::ported::params::setiparam("mvar1_baseline", 42);
         let baseline = crate::ported::params::getsparam("mvar1_baseline");
-        assert_eq!(baseline.as_deref(), Some("42"),
-            "baseline setiparam path; got {:?}", baseline);
+        assert_eq!(
+            baseline.as_deref(),
+            Some("42"),
+            "baseline setiparam path; got {:?}",
+            baseline
+        );
         crate::ported::params::unsetparam("mvar1_baseline");
 
         crate::ported::params::unsetparam("mvar1");
-        let v = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let v = mnumber {
+            l: 42,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let returned = setmathvar("mvar1", v);
         assert_eq!(returned.l, 42);
         let stored = crate::ported::params::getsparam("mvar1");
-        assert_eq!(stored.as_deref(), Some("42"),
-            "setmathvar should write through; got {:?}", stored);
+        assert_eq!(
+            stored.as_deref(),
+            Some("42"),
+            "setmathvar should write through; got {:?}",
+            stored
+        );
         crate::ported::params::unsetparam("mvar1");
         crate::ported::options::opt_state_set("exec", false);
     }
@@ -2813,7 +3546,11 @@ mod tests {
     #[test]
     fn setmathvar_empty_name_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        let v = mnumber { l: 99, d: 0.0, type_: MN_INTEGER };
+        let v = mnumber {
+            l: 99,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let returned = setmathvar("", v);
         assert_eq!(returned.l, 0);
         assert_eq!(returned.type_, MN_INTEGER);
@@ -2831,20 +3568,32 @@ mod tests {
         crate::ported::params::unsetparam("rt_float");
 
         // Integer roundtrip
-        let n_in = mnumber { l: 123, d: 0.0, type_: MN_INTEGER };
+        let n_in = mnumber {
+            l: 123,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         setmathvar("rt_int", n_in);
         let n_out = getmathparam("rt_int");
         assert_eq!(n_out.type_, MN_INTEGER);
         assert_eq!(n_out.l, 123);
 
         // Float roundtrip
-        let f_in = mnumber { l: 0, d: 3.14, type_: MN_FLOAT };
+        let f_in = mnumber {
+            l: 0,
+            d: 3.14,
+            type_: MN_FLOAT,
+        };
         setmathvar("rt_float", f_in);
         let f_out = getmathparam("rt_float");
         // Stored as paramtab PM_FFLOAT (per setnparam c:3687); read
         // back as MN_FLOAT.
         assert_eq!(f_out.type_, MN_FLOAT);
-        assert!((f_out.d - 3.14).abs() < 1e-9, "expected ~3.14, got {}", f_out.d);
+        assert!(
+            (f_out.d - 3.14).abs() < 1e-9,
+            "expected ~3.14, got {}",
+            f_out.d
+        );
 
         crate::ported::params::unsetparam("rt_int");
         crate::ported::params::unsetparam("rt_float");
@@ -2858,7 +3607,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::ported::options::opt_state_set("exec", true);
         crate::ported::params::unsetparam("mvar2");
-        let v = mnumber { l: 7, d: 0.0, type_: MN_INTEGER };
+        let v = mnumber {
+            l: 7,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         setmathvar("mvar2[5]", v);
         let stored = crate::ported::params::getsparam("mvar2");
         // The base "mvar2" got the value; subscript element handling
@@ -2887,12 +3640,21 @@ mod tests {
         // Set the math-local noeval counter.
         M_NOEVAL.with(|n| n.set(1));
 
-        let v = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let v = mnumber {
+            l: 42,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let ret = setmathvar("ne_var", v);
-        assert_eq!(ret.l, 42, "c:1003 — `return v` so the stack still sees the value");
+        assert_eq!(
+            ret.l, 42,
+            "c:1003 — `return v` so the stack still sees the value"
+        );
         // The paramtab MUST NOT have a new entry.
-        assert!(crate::ported::params::getsparam("ne_var").is_none(),
-            "c:1002-1003 — noeval suppresses the paramtab write");
+        assert!(
+            crate::ported::params::getsparam("ne_var").is_none(),
+            "c:1002-1003 — noeval suppresses the paramtab write"
+        );
 
         // Restore noeval so subsequent tests aren't affected.
         M_NOEVAL.with(|n| n.set(0));
@@ -2914,12 +3676,20 @@ mod tests {
         crate::ported::params::setiparam("intvar", 0);
 
         // Assign a float; expect integer return with truncated value.
-        let v = mnumber { l: 0, d: 3.7, type_: MN_FLOAT };
+        let v = mnumber {
+            l: 0,
+            d: 3.7,
+            type_: MN_FLOAT,
+        };
         let ret = setmathvar("intvar", v);
-        assert_eq!(ret.type_, MN_INTEGER,
-            "c:1016-1020 — PM_INTEGER target must return MN_INTEGER");
-        assert_eq!(ret.l, 3,
-            "c:1018 — float→int truncates (3.7 → 3, not rounded)");
+        assert_eq!(
+            ret.type_, MN_INTEGER,
+            "c:1016-1020 — PM_INTEGER target must return MN_INTEGER"
+        );
+        assert_eq!(
+            ret.l, 3,
+            "c:1018 — float→int truncates (3.7 → 3, not rounded)"
+        );
 
         crate::ported::params::unsetparam("intvar");
         crate::ported::options::opt_state_set("exec", false);
@@ -2940,8 +3710,10 @@ mod tests {
         // Nularg-only → also empty after skip, returns 0.
         let nularg_only: String = "\u{a1}".to_string();
         let r = mathevalarg(&nularg_only);
-        assert_eq!(r, 0,
-            "c:1528-1532 — Nularg-only is empty after skip, returns 0");
+        assert_eq!(
+            r, 0,
+            "c:1528-1532 — Nularg-only is empty after skip, returns 0"
+        );
 
         // Valid expression → real evaluation.
         let r = mathevalarg("1 + 2");
@@ -2950,8 +3722,10 @@ mod tests {
         // Nularg-prefixed expression → skipped, then evaluated.
         let nularg_plus: String = "\u{a1}5 * 5".to_string();
         let r = mathevalarg(&nularg_plus);
-        assert_eq!(r, 25,
-            "c:1529 — Nularg skipped, then `5 * 5` evaluates to 25");
+        assert_eq!(
+            r, 25,
+            "c:1529 — Nularg skipped, then `5 * 5` evaluates to 25"
+        );
     }
 
     /// Pin `matheval` empty + Nularg fast paths per c:1489-1495.
@@ -2963,27 +3737,28 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Empty string → MN_INTEGER 0 (c:1491-1494).
         let r = matheval("").expect("empty string must return 0, not error");
-        assert_eq!(r.type_, MN_INTEGER,
-            "c:1493 — empty input returns MN_INTEGER");
-        assert_eq!(r.l, 0,
-            "c:1494 — empty input value is 0");
+        assert_eq!(
+            r.type_, MN_INTEGER,
+            "c:1493 — empty input returns MN_INTEGER"
+        );
+        assert_eq!(r.l, 0, "c:1494 — empty input value is 0");
 
         // Nularg-only string → also returns 0 (c:1489-1494).
         let nularg_only: String = "\u{a1}".to_string();
         let r = matheval(&nularg_only)
             .expect("Nularg-only must return 0 (treated as empty after skip)");
-        assert_eq!(r.type_, MN_INTEGER,
-            "c:1489-1493 — Nularg-only input treated as empty → MN_INTEGER");
-        assert_eq!(r.l, 0,
-            "c:1494 — Nularg-only input value is 0");
+        assert_eq!(
+            r.type_, MN_INTEGER,
+            "c:1489-1493 — Nularg-only input treated as empty → MN_INTEGER"
+        );
+        assert_eq!(r.l, 0, "c:1494 — Nularg-only input value is 0");
 
         // Nularg + expression → evaluates the expression (c:1490 skip).
         let nularg_plus: String = "\u{a1}1 + 2".to_string();
-        let r = matheval(&nularg_plus)
-            .expect("Nularg prefix must be skipped and expression evaluated");
+        let r =
+            matheval(&nularg_plus).expect("Nularg prefix must be skipped and expression evaluated");
         let v = if r.type_ == MN_FLOAT { r.d as i64 } else { r.l };
-        assert_eq!(v, 3,
-            "c:1490 — Nularg skipped, then `1 + 2` evaluates to 3");
+        assert_eq!(v, 3, "c:1490 — Nularg skipped, then `1 + 2` evaluates to 3");
     }
 
     #[test]
@@ -3050,14 +3825,35 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(mathevali("2 ** 10").unwrap(), 1024);
         assert_eq!(mathevali("3 ** 3").unwrap(), 27);
-        assert!((matheval("2.0 ** 0.5").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
+        assert!(
+            (matheval("2.0 ** 0.5")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - std::f64::consts::SQRT_2)
+                .abs()
+                < 0.0001
+        );
     }
 
     #[test]
     fn test_float() {
         let _g = crate::test_util::global_state_lock();
-        assert!((matheval("3.14 + 0.01").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.15).abs() < 0.0001);
-        assert!((matheval("1.5 * 2.0").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
+        assert!(
+            (matheval("3.14 + 0.01")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 3.15)
+                .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("1.5 * 2.0")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 3.0)
+                .abs()
+                < 0.0001
+        );
     }
 
     #[test]
@@ -3083,12 +3879,36 @@ mod tests {
     fn test_variables() {
         let _g = crate::test_util::global_state_lock();
         let mut vars = HashMap::new();
-        vars.insert("x".to_string(), mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
-        vars.insert("y".to_string(), mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
+        vars.insert(
+            "x".to_string(),
+            mnumber {
+                l: 10,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+        );
+        vars.insert(
+            "y".to_string(),
+            mnumber {
+                l: 20,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+        );
 
         new("x + y");
         with_variables(vars);
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 30);
+        assert_eq!(
+            ({
+                let __m = mathevall().unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            30
+        );
     }
 
     #[test]
@@ -3096,46 +3916,157 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         new("x = 5");
         mathevall().unwrap();
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
+        assert_eq!(
+            ({
+                let __m = m_variables_get("x").unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            5
+        );
 
         new("x = 5, x += 3");
         let result = mathevall().unwrap();
-        assert_eq!((if result.type_ == MN_FLOAT { result.d as i64 } else { result.l }), 8);
+        assert_eq!(
+            (if result.type_ == MN_FLOAT {
+                result.d as i64
+            } else {
+                result.l
+            }),
+            8
+        );
     }
 
     #[test]
     fn test_increment() {
         let _g = crate::test_util::global_state_lock();
         let mut vars = HashMap::new();
-        vars.insert("x".to_string(), mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
+        vars.insert(
+            "x".to_string(),
+            mnumber {
+                l: 5,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+        );
 
         new("++x");
         with_variables(vars.clone());
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
+        assert_eq!(
+            ({
+                let __m = mathevall().unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            6
+        );
+        assert_eq!(
+            ({
+                let __m = m_variables_get("x").unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            6
+        );
 
         new("x++");
         with_variables(vars.clone());
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
+        assert_eq!(
+            ({
+                let __m = mathevall().unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            5
+        );
+        assert_eq!(
+            ({
+                let __m = m_variables_get("x").unwrap();
+                if __m.type_ == MN_FLOAT {
+                    __m.d as i64
+                } else {
+                    __m.l
+                }
+            }),
+            6
+        );
     }
 
     #[test]
     fn test_functions() {
         let _g = crate::test_util::global_state_lock();
-        assert!((matheval("sqrt(4)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 2.0).abs() < 0.0001);
-        assert!((matheval("sin(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap()).abs() < 0.0001);
-        assert!((matheval("cos(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 1.0).abs() < 0.0001);
-        assert!((matheval("abs(-5)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 5.0).abs() < 0.0001);
-        assert!((matheval("floor(3.7)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
-        assert!((matheval("ceil(3.2)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 4.0).abs() < 0.0001);
+        assert!(
+            (matheval("sqrt(4)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 2.0)
+                .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("sin(0)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap())
+            .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("cos(0)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 1.0)
+                .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("abs(-5)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 5.0)
+                .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("floor(3.7)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 3.0)
+                .abs()
+                < 0.0001
+        );
+        assert!(
+            (matheval("ceil(3.2)")
+                .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+                .unwrap()
+                - 4.0)
+                .abs()
+                < 0.0001
+        );
     }
 
     #[test]
     fn test_special_values() {
         let _g = crate::test_util::global_state_lock();
-        assert!(matheval("Inf").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_infinite());
-        assert!(matheval("NaN").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_nan());
+        assert!(matheval("Inf")
+            .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+            .unwrap()
+            .is_infinite());
+        assert!(matheval("NaN")
+            .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
+            .unwrap()
+            .is_nan());
     }
 
     #[test]
@@ -3183,10 +4114,10 @@ mod tests {
     fn mathevali_truncates_float_via_bitmask_not_strict_eq() {
         let _g = crate::test_util::global_state_lock();
         // Float expression → truncated toward zero (3.7 → 3, -3.7 → -3).
-        assert_eq!(mathevali("3.7").unwrap(),    3);
-        assert_eq!(mathevali("-3.7").unwrap(),  -3);
+        assert_eq!(mathevali("3.7").unwrap(), 3);
+        assert_eq!(mathevali("-3.7").unwrap(), -3);
         // Pure integer expression → MN_INTEGER path, no truncation.
-        assert_eq!(mathevali("42").unwrap(),   42);
+        assert_eq!(mathevali("42").unwrap(), 42);
     }
 
     /// c:1480 — mod-by-zero is also an error (matches POSIX).
@@ -3202,7 +4133,7 @@ mod tests {
     #[test]
     fn mathevali_respects_multiplicative_over_additive_precedence() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(mathevali("1 + 2 * 3").unwrap(),  7);
+        assert_eq!(mathevali("1 + 2 * 3").unwrap(), 7);
         assert_eq!(mathevali("(1 + 2) * 3").unwrap(), 9);
         assert_eq!(mathevali("10 - 2 * 3").unwrap(), 4);
     }
@@ -3212,7 +4143,7 @@ mod tests {
     #[test]
     fn mathevali_bitshift_operators() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(mathevali("1 << 4").unwrap(),  16);
+        assert_eq!(mathevali("1 << 4").unwrap(), 16);
         assert_eq!(mathevali("256 >> 3").unwrap(), 32);
     }
 
@@ -3253,15 +4184,18 @@ mod tests {
     fn mathevali_parses_hex_and_binary_literals() {
         let _g = crate::test_util::global_state_lock();
         // Hex literals at c:471 (lowchar 'x').
-        assert_eq!(mathevali("0xff").unwrap(),  255);
-        assert_eq!(mathevali("0x10").unwrap(),  16);
+        assert_eq!(mathevali("0xff").unwrap(), 255);
+        assert_eq!(mathevali("0x10").unwrap(), 16);
         assert_eq!(mathevali("0xff + 1").unwrap(), 256);
         // Binary literals at c:471 (lowchar 'b').
         assert_eq!(mathevali("0b1010").unwrap(), 10);
         assert_eq!(mathevali("0b11111111").unwrap(), 255);
         // Default-OCTALZEROES-off: `0777` is decimal 777, NOT octal 511.
-        assert_eq!(mathevali("0777").unwrap(), 777,
-            "c:489 — leading-zero parses as decimal when OCTALZEROES off");
+        assert_eq!(
+            mathevali("0777").unwrap(),
+            777,
+            "c:489 — leading-zero parses as decimal when OCTALZEROES off"
+        );
     }
 
     /// c:1505 — bitwise AND/OR/XOR. Each operator has its own
@@ -3272,12 +4206,15 @@ mod tests {
     fn mathevali_bitwise_operators_and_or_xor() {
         let _g = crate::test_util::global_state_lock();
         // Boolean truth-table cases.
-        assert_eq!(mathevali("12 & 10").unwrap(), 8,   "1100 & 1010 = 1000");
-        assert_eq!(mathevali("12 | 10").unwrap(), 14,  "1100 | 1010 = 1110");
-        assert_eq!(mathevali("12 ^ 10").unwrap(), 6,   "1100 ^ 1010 = 0110");
+        assert_eq!(mathevali("12 & 10").unwrap(), 8, "1100 & 1010 = 1000");
+        assert_eq!(mathevali("12 | 10").unwrap(), 14, "1100 | 1010 = 1110");
+        assert_eq!(mathevali("12 ^ 10").unwrap(), 6, "1100 ^ 1010 = 0110");
         // Precedence: `&` > `^` > `|`, so `a & b | c` == `(a&b) | c`.
-        assert_eq!(mathevali("12 & 10 | 1").unwrap(), 9,
-            "c:1505 — & binds tighter than | : (12 & 10) | 1 = 8 | 1 = 9");
+        assert_eq!(
+            mathevali("12 & 10 | 1").unwrap(),
+            9,
+            "c:1505 — & binds tighter than | : (12 & 10) | 1 = 8 | 1 = 9"
+        );
     }
 
     /// c:1505 — comparison ops produce 0 or 1 (Boolean semantics).
@@ -3285,10 +4222,10 @@ mod tests {
     #[test]
     fn mathevali_comparison_operators_return_zero_or_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(mathevali("1 < 2").unwrap(),  1);
-        assert_eq!(mathevali("2 < 1").unwrap(),  0);
-        assert_eq!(mathevali("2 > 1").unwrap(),  1);
-        assert_eq!(mathevali("1 > 2").unwrap(),  0);
+        assert_eq!(mathevali("1 < 2").unwrap(), 1);
+        assert_eq!(mathevali("2 < 1").unwrap(), 0);
+        assert_eq!(mathevali("2 > 1").unwrap(), 1);
+        assert_eq!(mathevali("1 > 2").unwrap(), 0);
         assert_eq!(mathevali("2 <= 2").unwrap(), 1);
         assert_eq!(mathevali("2 >= 2").unwrap(), 1);
         assert_eq!(mathevali("2 == 2").unwrap(), 1);
@@ -3312,12 +4249,12 @@ mod tests {
     #[test]
     fn mathevali_logical_not() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(mathevali("!0").unwrap(),  1);
-        assert_eq!(mathevali("!1").unwrap(),  0);
+        assert_eq!(mathevali("!0").unwrap(), 1);
+        assert_eq!(mathevali("!1").unwrap(), 0);
         assert_eq!(mathevali("!42").unwrap(), 0);
         // Double-NOT normalises to 0/1.
         assert_eq!(mathevali("!!42").unwrap(), 1);
-        assert_eq!(mathevali("!!0").unwrap(),  0);
+        assert_eq!(mathevali("!!0").unwrap(), 0);
     }
 
     /// `Src/math.c:109-161` — math token IDs are `#define`d as a
@@ -3332,72 +4269,82 @@ mod tests {
     fn math_token_ids_match_c_source_position_for_position() {
         let _g = crate::test_util::global_state_lock();
         let table = [
-            ("M_INPAR",    M_INPAR,    0),
-            ("M_OUTPAR",   M_OUTPAR,   1),
-            ("NOT",        NOT,        2),
-            ("COMP",       COMP,       3),
-            ("POSTPLUS",   POSTPLUS,   4),
-            ("POSTMINUS",  POSTMINUS,  5),
-            ("UPLUS",      UPLUS,      6),
-            ("UMINUS",     UMINUS,     7),
-            ("AND",        AND,        8),
-            ("XOR",        XOR,        9),
-            ("OR",         OR,         10),
-            ("MUL",        MUL,        11),
-            ("DIV",        DIV,        12),
-            ("MOD",        MOD,        13),
-            ("PLUS",       PLUS,       14),
-            ("MINUS",      MINUS,      15),
-            ("SHLEFT",     SHLEFT,     16),
-            ("SHRIGHT",    SHRIGHT,    17),
-            ("LES",        LES,        18),
-            ("LEQ",        LEQ,        19),
-            ("GRE",        GRE,        20),
-            ("GEQ",        GEQ,        21),
-            ("DEQ",        DEQ,        22),
-            ("NEQ",        NEQ,        23),
-            ("DAND",       DAND,       24),
-            ("DOR",        DOR,        25),
-            ("DXOR",       DXOR,       26),
-            ("QUEST",      QUEST,      27),  // c:136 — was Title-case Quest, divergent
-            ("COLON",      COLON,      28),
-            ("EQ",         EQ,         29),
-            ("PLUSEQ",     PLUSEQ,     30),
-            ("MINUSEQ",    MINUSEQ,    31),
-            ("MULEQ",      MULEQ,      32),
-            ("DIVEQ",      DIVEQ,      33),
-            ("MODEQ",      MODEQ,      34),
-            ("ANDEQ",      ANDEQ,      35),
-            ("XOREQ",      XOREQ,      36),
-            ("OREQ",       OREQ,       37),
-            ("SHLEFTEQ",   SHLEFTEQ,   38),
-            ("SHRIGHTEQ",  SHRIGHTEQ,  39),
-            ("DANDEQ",     DANDEQ,     40),
-            ("DOREQ",      DOREQ,      41),
-            ("DXOREQ",     DXOREQ,     42),
-            ("COMMA",      COMMA,      43),  // c:152 — was Title-case Comma, divergent
-            ("EOI",        EOI,        44),
-            ("PREPLUS",    PREPLUS,    45),
-            ("PREMINUS",   PREMINUS,   46),
-            ("NUM",        NUM,        47),
-            ("ID",         ID,         48),
-            ("POWER",      POWER,      49),
-            ("CID",        CID,        50),
-            ("POWEREQ",    POWEREQ,    51),
-            ("FUNC",       FUNC,       52),
+            ("M_INPAR", M_INPAR, 0),
+            ("M_OUTPAR", M_OUTPAR, 1),
+            ("NOT", NOT, 2),
+            ("COMP", COMP, 3),
+            ("POSTPLUS", POSTPLUS, 4),
+            ("POSTMINUS", POSTMINUS, 5),
+            ("UPLUS", UPLUS, 6),
+            ("UMINUS", UMINUS, 7),
+            ("AND", AND, 8),
+            ("XOR", XOR, 9),
+            ("OR", OR, 10),
+            ("MUL", MUL, 11),
+            ("DIV", DIV, 12),
+            ("MOD", MOD, 13),
+            ("PLUS", PLUS, 14),
+            ("MINUS", MINUS, 15),
+            ("SHLEFT", SHLEFT, 16),
+            ("SHRIGHT", SHRIGHT, 17),
+            ("LES", LES, 18),
+            ("LEQ", LEQ, 19),
+            ("GRE", GRE, 20),
+            ("GEQ", GEQ, 21),
+            ("DEQ", DEQ, 22),
+            ("NEQ", NEQ, 23),
+            ("DAND", DAND, 24),
+            ("DOR", DOR, 25),
+            ("DXOR", DXOR, 26),
+            ("QUEST", QUEST, 27), // c:136 — was Title-case Quest, divergent
+            ("COLON", COLON, 28),
+            ("EQ", EQ, 29),
+            ("PLUSEQ", PLUSEQ, 30),
+            ("MINUSEQ", MINUSEQ, 31),
+            ("MULEQ", MULEQ, 32),
+            ("DIVEQ", DIVEQ, 33),
+            ("MODEQ", MODEQ, 34),
+            ("ANDEQ", ANDEQ, 35),
+            ("XOREQ", XOREQ, 36),
+            ("OREQ", OREQ, 37),
+            ("SHLEFTEQ", SHLEFTEQ, 38),
+            ("SHRIGHTEQ", SHRIGHTEQ, 39),
+            ("DANDEQ", DANDEQ, 40),
+            ("DOREQ", DOREQ, 41),
+            ("DXOREQ", DXOREQ, 42),
+            ("COMMA", COMMA, 43), // c:152 — was Title-case Comma, divergent
+            ("EOI", EOI, 44),
+            ("PREPLUS", PREPLUS, 45),
+            ("PREMINUS", PREMINUS, 46),
+            ("NUM", NUM, 47),
+            ("ID", ID, 48),
+            ("POWER", POWER, 49),
+            ("CID", CID, 50),
+            ("POWEREQ", POWEREQ, 51),
+            ("FUNC", FUNC, 52),
         ];
         for (name, got, want) in table {
-            assert_eq!(got, want,
-                "c:109-161 — {} must be {} (C source value)", name, want);
+            assert_eq!(
+                got, want,
+                "c:109-161 — {} must be {} (C source value)",
+                name, want
+            );
         }
         // TOKCOUNT = 53 must equal the table length (no holes).
-        assert_eq!(TOKCOUNT, table.len() + 0,
-            "c:162 — TOKCOUNT must match the number of tokens");
+        assert_eq!(
+            TOKCOUNT,
+            table.len() + 0,
+            "c:162 — TOKCOUNT must match the number of tokens"
+        );
         // QUEST sits between DXOR and COLON; gap was 26→28 BEFORE the
         // QUEST=27 fix, exposing a missing index. Pin the ordering.
         assert_eq!(QUEST, DXOR + 1, "c:136 — QUEST immediately follows DXOR");
         assert_eq!(COLON, QUEST + 1, "c:137 — COLON immediately follows QUEST");
-        assert_eq!(COMMA, DXOREQ + 1, "c:152 — COMMA immediately follows DXOREQ");
+        assert_eq!(
+            COMMA,
+            DXOREQ + 1,
+            "c:152 — COMMA immediately follows DXOREQ"
+        );
         assert_eq!(EOI, COMMA + 1, "c:153 — EOI immediately follows COMMA");
     }
 
@@ -3407,11 +4354,20 @@ mod tests {
     #[test]
     fn math_dispatch_tables_match_tokcount() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(Z_PREC.len(), TOKCOUNT,
-            "Z_PREC must have one slot per math token");
-        assert_eq!(C_PREC.len(), TOKCOUNT,
-            "C_PREC must have one slot per math token");
-        assert_eq!(OP_TYPE.len(), TOKCOUNT,
-            "OP_TYPE must have one slot per math token");
+        assert_eq!(
+            Z_PREC.len(),
+            TOKCOUNT,
+            "Z_PREC must have one slot per math token"
+        );
+        assert_eq!(
+            C_PREC.len(),
+            TOKCOUNT,
+            "C_PREC must have one slot per math token"
+        );
+        assert_eq!(
+            OP_TYPE.len(),
+            TOKCOUNT,
+            "OP_TYPE must have one slot per math token"
+        );
     }
 }

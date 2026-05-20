@@ -27,9 +27,9 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(unix)]
 use libc::{
-    geteuid, getrlimit, rlim_t, rlimit, setrlimit, RLIMIT_AS, RLIMIT_CORE, RLIMIT_CPU,
-    RLIMIT_DATA, RLIMIT_FSIZE, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_NPROC, RLIMIT_RSS,
-    RLIMIT_STACK, RLIM_INFINITY, RLIM_NLIMITS,
+    geteuid, getrlimit, rlim_t, rlimit, setrlimit, RLIMIT_AS, RLIMIT_CORE, RLIMIT_CPU, RLIMIT_DATA,
+    RLIMIT_FSIZE, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_NPROC, RLIMIT_RSS, RLIMIT_STACK,
+    RLIM_INFINITY, RLIM_NLIMITS,
 };
 
 use crate::ported::utils::{zstrtol, zwarnnam};
@@ -289,8 +289,9 @@ pub(crate) fn zstrtorlimt(s: &str, base: i32) -> (rlim_t, usize) {
     // which incorrectly treated `"unlimited_garbage"` or `"unlimitedX"`
     // as unlimited, then advanced pos to 9 — leaving trailing junk
     // unconsumed. C only matches the exact 9-char word.
-    if s == "unlimited" {                                                    // c:277 strcmp == 0
-        return (RLIM_INFINITY, "unlimited".len());                          // c:279 *t = s + 9
+    if s == "unlimited" {
+        // c:277 strcmp == 0
+        return (RLIM_INFINITY, "unlimited".len()); // c:279 *t = s + 9
     }
     let bytes = s.as_bytes();
     let mut pos: usize = 0;
@@ -304,15 +305,16 @@ pub(crate) fn zstrtorlimt(s: &str, base: i32) -> (rlim_t, usize) {
         // by `pos < bytes.len()`; on empty input the short-circuit
         // evaluated `else` and incremented pos to 1, leaving pos past-end.
         // Match C: treat past-end the same as "not '0'" (base=10, no advance).
-        if pos >= bytes.len() || bytes[pos] != b'0' {                        // c:285 *s != '0' (with NUL semantics)
-            base = 10;                                                       // c:286
+        if pos >= bytes.len() || bytes[pos] != b'0' {
+            // c:285 *s != '0' (with NUL semantics)
+            base = 10; // c:286
         } else {
-            pos += 1;                                                        // c:287 ++s
+            pos += 1; // c:287 ++s
             if pos < bytes.len() && (bytes[pos] == b'x' || bytes[pos] == b'X') {
-                base = 16;                                                   // c:288
+                base = 16; // c:288
                 pos += 1;
             } else {
-                base = 8;                                                    // c:289
+                base = 8; // c:289
             }
         }
     }
@@ -383,12 +385,7 @@ pub(crate) fn showlimitvalue(lim: i32, val: rlim_t) {
     } else if let Some(info) = info {
         match info.r#type {
             zlimtype::ZLIMTYPE_TIME => {
-                println!(
-                    "{}:{:02}:{:02}",
-                    val / 3600,
-                    (val / 60) % 60,
-                    val % 60
-                );
+                println!("{}:{:02}:{:02}", val / 3600, (val / 60) % 60, val % 60);
             }
             zlimtype::ZLIMTYPE_MICROSECONDS => printrlim(val, "us\n"),
             zlimtype::ZLIMTYPE_NUMBER | zlimtype::ZLIMTYPE_UNKNOWN => printrlim(val, "\n"),
@@ -433,7 +430,8 @@ fn lookup_resinfo(lim: i32) -> Option<resinfo_T> {
 /// direct `getrlimit(2)` for resources the table doesn't know.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(hard, lim) vs C=(nam, hard, lim)
-pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {          // c:346
+pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {
+    // c:346
     ensure_limits_initialized();
     if (lim as usize) >= nlimits() && lim != -1 {
         let mut vals = rlimit {
@@ -441,7 +439,10 @@ pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {          // c
             rlim_max: 0,
         };
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
-            zwarnnam(nam, &format!("can't read limit: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
         showlimitvalue(lim, if hard { vals.rlim_max } else { vals.rlim_cur });
@@ -482,7 +483,8 @@ pub(crate) fn showlimits(_nam: &str, _hard: bool, _lim: i32) -> i32 {
 /// a direct `getrlimit(2)`.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(lim, hard, head) vs C=(nam, lim, hard, head)
-pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 { // c:386
+pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 {
+    // c:386
     ensure_limits_initialized();
     let limit: rlim_t = if (lim as usize) >= nlimits() {
         let mut vals = rlimit {
@@ -490,10 +492,17 @@ pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 { 
             rlim_max: 0,
         };
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
-            zwarnnam(nam, &format!("can't read limit: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
-        if hard { vals.rlim_max } else { vals.rlim_cur }
+        if hard {
+            vals.rlim_max
+        } else {
+            vals.rlim_cur
+        }
     } else {
         let limits = match LIMITS.get() {
             Some(l) => l,
@@ -501,7 +510,11 @@ pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 { 
         };
         let v = limits.lock().unwrap();
         let r = &v[lim as usize];
-        if hard { r.rlim_max } else { r.rlim_cur }
+        if hard {
+            r.rlim_max
+        } else {
+            r.rlim_cur
+        }
     };
     if head {
         if (lim as usize) < nlimits() {
@@ -546,7 +559,8 @@ pub(crate) fn printulimit(_nam: &str, _lim: i32, _hard: bool, _head: bool) -> i3
 /// limits-array is updated but `setrlimit(2)` is not called.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(lim, val, hard, soft, set) vs C=(nam, lim, val, hard, soft, set)
-pub(crate) fn do_limit(                                                     // c:431
+pub(crate) fn do_limit(
+    // c:431
     nam: &str,
     lim: i32,
     val: rlim_t,
@@ -561,7 +575,10 @@ pub(crate) fn do_limit(                                                     // c
             rlim_max: 0,
         };
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
-            zwarnnam(nam, &format!("can't read limit: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
         if hard {
@@ -582,10 +599,16 @@ pub(crate) fn do_limit(                                                     // c
             vals.rlim_cur = val;
         }
         if !set {
-            zwarnnam(nam, &format!("warning: unrecognised limit {}, use -s to set", lim));
+            zwarnnam(
+                nam,
+                &format!("warning: unrecognised limit {}, use -s to set", lim),
+            );
             return 1;
         } else if unsafe { setrlimit(lim as _, &vals) } < 0 {
-            zwarnnam(nam, &format!("setrlimit failed: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
     } else {
@@ -668,7 +691,8 @@ pub(crate) fn do_limit(
 /// keeps the parameter for callsite compatibility.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(argv, ops, _func) vs C=(nam, argv, ops, func)
-pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:519
+pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+    // c:519
     // c:519-524 — locals
     let hard: bool;
     let mut limnum: i32;
@@ -683,7 +707,8 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
     if OPT_ISSET(ops, b's') && argv.is_empty() {
         return setlimits(""); // c:527-528 — C passes NULL
     }
-    /* without arguments, display limits */ // c:529
+    /* without arguments, display limits */
+    // c:529
     if argv.is_empty() {
         return showlimits(nam, hard, -1); // c:531
     }
@@ -692,7 +717,8 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
         let s: &str = s_owned.as_str(); // c:532
         let sb = s.as_bytes();
         // Search for the appropriate resource name. (c:533-547)
-        if !sb.is_empty() && sb[0].is_ascii_digit() { // c:536 idigit(*s)
+        if !sb.is_empty() && sb[0].is_ascii_digit() {
+            // c:536 idigit(*s)
             // c:538 — lim = (int)zstrtol(s, NULL, 10);
             lim = zstrtol(s, 10).0 as i32;
         } else {
@@ -702,7 +728,8 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
             let resinfo_lock = RESINFO.get().unwrap();
             let v = resinfo_lock.lock().unwrap();
             while (limnum as usize) < v.len() {
-                if v[limnum as usize].name.starts_with(s) { // c:542 strncmp
+                if v[limnum as usize].name.starts_with(s) {
+                    // c:542 strncmp
                     if lim != -1 {
                         lim = -2;
                     } else {
@@ -724,14 +751,17 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
             );
             return 1;
         }
-        /* without value for limit, display the current limit */ // c:556
+        /* without value for limit, display the current limit */
+        // c:556
         let s_val: &str = match argi.next() {
             None => return showlimits(nam, hard, lim), // c:557-558
             Some(t) => t.as_str(),
         };
-        if (lim as usize) >= RLIM_NLIMITS as usize { // c:559
+        if (lim as usize) >= RLIM_NLIMITS as usize {
+            // c:559
             let (v, consumed) = zstrtorlimt(s_val, 10); // c:561
-            if consumed != s_val.len() { // c:562 *s
+            if consumed != s_val.len() {
+                // c:562 *s
                 /* unknown limit, no idea how to scale */ // c:564
                 zwarnnam(
                     nam,
@@ -750,15 +780,20 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
                     let (mut v, consumed) = zstrtorlimt(s_val, 10); // c:574
                     let rest = &s_val[consumed..];
                     let rb = rest.as_bytes();
-                    if !rest.is_empty() { // c:575
-                        if (rb[0] == b'h' || rb[0] == b'H') && rb.len() == 1 { // c:576
+                    if !rest.is_empty() {
+                        // c:575
+                        if (rb[0] == b'h' || rb[0] == b'H') && rb.len() == 1 {
+                            // c:576
                             v = v.saturating_mul(3600);
-                        } else if (rb[0] == b'm' || rb[0] == b'M') && rb.len() == 1 { // c:578
+                        } else if (rb[0] == b'm' || rb[0] == b'M') && rb.len() == 1 {
+                            // c:578
                             v = v.saturating_mul(60);
-                        } else if rb[0] == b':' { // c:580
+                        } else if rb[0] == b':' {
+                            // c:580
                             let (more, _) = zstrtorlimt(&rest[1..], 10);
                             v = v.saturating_mul(60).saturating_add(more); // c:581
-                        } else { // c:582
+                        } else {
+                            // c:582
                             zwarnnam(nam, &format!("unknown scaling factor: {}", rest));
                             return 1;
                         }
@@ -771,7 +806,8 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
                     /* pure numeric resource (c:587-597) */
                     let t = s_val; // c:592
                     let (v, consumed) = zstrtorlimt(t, 10); // c:593
-                    if consumed == 0 { // c:594 s == t
+                    if consumed == 0 {
+                        // c:594 s == t
                         zwarnnam(nam, "limit must be a number"); // c:595
                         return 1;
                     }
@@ -782,15 +818,20 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -
                     let (mut v, consumed) = zstrtorlimt(s_val, 10); // c:601
                     let rest = &s_val[consumed..];
                     let rb = rest.as_bytes();
-                    if rest.is_empty() || ((rb[0] == b'k' || rb[0] == b'K') && rb.len() == 1) { // c:602
-                        if v != RLIM_INFINITY { // c:603
+                    if rest.is_empty() || ((rb[0] == b'k' || rb[0] == b'K') && rb.len() == 1) {
+                        // c:602
+                        if v != RLIM_INFINITY {
+                            // c:603
                             v = v.saturating_mul(1024); // c:604
                         }
-                    } else if (rb[0] == b'M' || rb[0] == b'm') && rb.len() == 1 { // c:605
+                    } else if (rb[0] == b'M' || rb[0] == b'm') && rb.len() == 1 {
+                        // c:605
                         v = v.saturating_mul(1024 * 1024); // c:606
-                    } else if (rb[0] == b'G' || rb[0] == b'g') && rb.len() == 1 { // c:607
+                    } else if (rb[0] == b'G' || rb[0] == b'g') && rb.len() == 1 {
+                        // c:607
                         v = v.saturating_mul(1024 * 1024 * 1024); // c:608
-                    } else { // c:609
+                    } else {
+                        // c:609
                         zwarnnam(nam, &format!("unknown scaling factor: {}", rest));
                         return 1;
                     }
@@ -811,7 +852,6 @@ pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32
     0
 }
 
-
 // =====================================================================
 // Port of `do_unlimit(char *nam, int lim, int hard, int soft, int set, int euid)` from Src/Builtins/rlimits.c:622.
 // =====================================================================
@@ -819,7 +859,8 @@ pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32
 /// Port of `do_unlimit(char *nam, int lim, int hard, int soft, int set, int euid)` from `Src/Builtins/rlimits.c:622`.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(lim, hard, soft, set, euid) vs C=(nam, lim, hard, soft, set, euid)
-pub(crate) fn do_unlimit(                                                   // c:622
+pub(crate) fn do_unlimit(
+    // c:622
     nam: &str,
     lim: i32,
     hard: bool,
@@ -834,7 +875,10 @@ pub(crate) fn do_unlimit(                                                   // c
             rlim_max: 0,
         };
         if unsafe { getrlimit(lim as _, &mut vals) } < 0 {
-            zwarnnam(nam, &format!("can't read limit: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("can't read limit: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
         if hard {
@@ -848,10 +892,16 @@ pub(crate) fn do_unlimit(                                                   // c
             vals.rlim_cur = vals.rlim_max;
         }
         if !set {
-            zwarnnam(nam, &format!("warning: unrecognised limit {}, use -s to set", lim));
+            zwarnnam(
+                nam,
+                &format!("warning: unrecognised limit {}, use -s to set", lim),
+            );
             return 1;
         } else if unsafe { setrlimit(lim as _, &vals) } < 0 {
-            zwarnnam(nam, &format!("setrlimit failed: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+            );
             return 1;
         }
     } else {
@@ -907,7 +957,8 @@ pub(crate) fn do_unlimit(
 /// ```
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(argv, ops, _func) vs C=(nam, argv, ops, func)
-pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:670
+pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+    // c:670
     // c:670-674 — locals
     let hard: bool;
     let mut limnum: i32;
@@ -919,33 +970,39 @@ pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32)
     set_resinfo();
 
     hard = OPT_ISSET(ops, b'h'); // c:676
-    /* Without arguments, remove all limits. */ // c:677
+                                 /* Without arguments, remove all limits. */ // c:677
     if argv.is_empty() {
         // c:679 — for (limnum = 0; limnum != RLIM_NLIMITS; limnum++)
         limnum = 0;
         while limnum != RLIM_NLIMITS as i32 {
-            if hard { // c:680
+            if hard {
+                // c:680
                 let cur_max = CURRENT_LIMITS
                     .get()
                     .and_then(|l| l.lock().ok())
                     .map(|v| v[limnum as usize].rlim_max)
                     .unwrap_or(0);
-                if euid != 0 && cur_max != RLIM_INFINITY { // c:681
+                if euid != 0 && cur_max != RLIM_INFINITY {
+                    // c:681
                     ret += 1; // c:682
-                } else if let Some(lock) = LIMITS.get() { // c:684
+                } else if let Some(lock) = LIMITS.get() {
+                    // c:684
                     let mut v = lock.lock().unwrap();
                     v[limnum as usize].rlim_max = RLIM_INFINITY;
                 }
-            } else if let Some(lock) = LIMITS.get() { // c:685-686
+            } else if let Some(lock) = LIMITS.get() {
+                // c:685-686
                 let mut v = lock.lock().unwrap();
                 v[limnum as usize].rlim_cur = v[limnum as usize].rlim_max;
             }
             limnum += 1;
         }
-        if OPT_ISSET(ops, b's') { // c:688
+        if OPT_ISSET(ops, b's') {
+            // c:688
             ret += setlimits(nam); // c:689
         }
-        if ret != 0 { // c:690
+        if ret != 0 {
+            // c:690
             zwarnnam(nam, "can't remove hard limits"); // c:691
         }
     } else {
@@ -955,7 +1012,8 @@ pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32)
             let s: &str = arg.as_str();
             let sb = s.as_bytes();
             // c:698-707 — Search for the appropriate resource name
-            if !sb.is_empty() && sb[0].is_ascii_digit() { // c:698 idigit(**argv)
+            if !sb.is_empty() && sb[0].is_ascii_digit() {
+                // c:698 idigit(**argv)
                 lim = zstrtol(s, 10).0 as i32; // c:699
             } else {
                 lim = -1; // c:701
@@ -963,7 +1021,8 @@ pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32)
                 let resinfo_lock = RESINFO.get().unwrap();
                 let v = resinfo_lock.lock().unwrap();
                 while (limnum as usize) < v.len() {
-                    if v[limnum as usize].name.starts_with(s) { // c:702 strncmp
+                    if v[limnum as usize].name.starts_with(s) {
+                        // c:702 strncmp
                         if lim != -1 {
                             lim = -2; // c:704
                         } else {
@@ -1012,12 +1071,7 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i
 /// for callsite compatibility.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(name, argv, ops, func)
-pub(crate) fn bin_ulimit(
-    name: &str,
-    argv: &[String],
-    _ops: &options,
-    _func: i32,
-) -> i32 {
+pub(crate) fn bin_ulimit(name: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:731 — locals
     let mut res: i32;
     let mut resmask: u64 = 0;
@@ -1044,8 +1098,11 @@ pub(crate) fn bin_ulimit(
             }
         }
         res = -1; // c:740
-        // c:741 — if (options && *options == '-')
-        if options.map(|o| o.starts_with('-') && o.len() > 1).unwrap_or(false) {
+                  // c:741 — if (options && *options == '-')
+        if options
+            .map(|o| o.starts_with('-') && o.len() > 1)
+            .unwrap_or(false)
+        {
             argi += 1; // c:742 argv++
             let opt_str = options.unwrap().clone();
             let opt_bytes = opt_str.as_bytes();
@@ -1059,17 +1116,20 @@ pub(crate) fn bin_ulimit(
                 res = -1; // c:746
                 let mut continue_outer = false;
                 match c {
-                    b'H' => { // c:748
+                    b'H' => {
+                        // c:748
                         hard = true;
                         p += 1;
                         continue_outer = true;
                     }
-                    b'S' => { // c:751
+                    b'S' => {
+                        // c:751
                         soft = true;
                         p += 1;
                         continue_outer = true;
                     }
-                    b'N' => { // c:754
+                    b'N' => {
+                        // c:754
                         // c:755-762 — number after -N
                         let number: String = if p + 1 < opt_bytes.len() {
                             let n = std::str::from_utf8(&opt_bytes[p + 1..])
@@ -1089,10 +1149,13 @@ pub(crate) fn bin_ulimit(
                         let mut consumed = 0;
                         let mut acc: i64 = 0;
                         while consumed < nb.len() && nb[consumed].is_ascii_digit() {
-                            acc = acc.saturating_mul(10).saturating_add((nb[consumed] - b'0') as i64);
+                            acc = acc
+                                .saturating_mul(10)
+                                .saturating_add((nb[consumed] - b'0') as i64);
                             consumed += 1;
                         }
-                        if consumed != nb.len() { // c:764 *eptr
+                        if consumed != nb.len() {
+                            // c:764 *eptr
                             zwarnnam(name, &format!("invalid number: {}", number));
                             return 1;
                         }
@@ -1100,7 +1163,8 @@ pub(crate) fn bin_ulimit(
                         // c:771 — fake it so it looks like we just finished an option
                         p = opt_bytes.len();
                     }
-                    b'a' => { // c:774
+                    b'a' => {
+                        // c:774
                         if resmask != 0 {
                             zwarnnam(name, "no limits allowed with -a"); // c:776
                             return 1;
@@ -1111,10 +1175,12 @@ pub(crate) fn bin_ulimit(
                         p += 1;
                         continue_outer = true;
                     }
-                    _ => { // c:783
+                    _ => {
+                        // c:783
                         res = find_resource(c as char); // c:784
                         if res < 0 {
-                            /* unrecognised limit */ // c:786
+                            /* unrecognised limit */
+                            // c:786
                             zwarnnam(name, &format!("bad option: -{}", c as char));
                             return 1;
                         }
@@ -1123,11 +1189,13 @@ pub(crate) fn bin_ulimit(
                 if continue_outer {
                     continue;
                 }
-                if p + 1 < opt_bytes.len() { // c:792 options[1]
+                if p + 1 < opt_bytes.len() {
+                    // c:792 options[1]
                     resmask |= 1u64 << res; // c:793
                     nres += 1; // c:794
                 }
-                if all && res != -1 { // c:796
+                if all && res != -1 {
+                    // c:796
                     zwarnnam(name, "no limits allowed with -a"); // c:797
                     return 1;
                 }
@@ -1139,18 +1207,17 @@ pub(crate) fn bin_ulimit(
                 // Actually, we need to break out of inner `while` and
                 // continue outer do-while when we hit end of `options`.
                 let _ = c; // suppress unused if N path
-                c = 0;     // discard
+                c = 0; // discard
                 let _ = c;
             }
         }
         // c:802 — if (!*argv || **argv == '-')
-        let next_is_dash = argv
-            .get(argi)
-            .map(|a| a.starts_with('-'))
-            .unwrap_or(true);
+        let next_is_dash = argv.get(argi).map(|a| a.starts_with('-')).unwrap_or(true);
         if next_is_dash {
-            if res < 0 { // c:803
-                if argi < argv.len() || nres != 0 { // c:804
+            if res < 0 {
+                // c:803
+                if argi < argv.len() || nres != 0 {
+                    // c:804
                     if argi >= argv.len() {
                         // *argv == NULL, fall through to break (do-while)
                         break;
@@ -1167,22 +1234,30 @@ pub(crate) fn bin_ulimit(
             }
             continue; // c:811
         }
-        if all { // c:813
+        if all {
+            // c:813
             zwarnnam(name, "no arguments allowed after -a"); // c:814
             return 1;
         }
-        if res < 0 { // c:817
+        if res < 0 {
+            // c:817
             res = RLIMIT_FSIZE as i32; // c:818
         }
         // c:819 — if (strcmp(*argv, "unlimited"))
         let arg = argv[argi].clone();
         argi += 1; // c:851 argv++
         if arg != "unlimited" {
-            /* set limit to specified value */ // c:820
+            /* set limit to specified value */
+            // c:820
             let limit: rlim_t;
-            if arg == "hard" { // c:823
-                let mut vals = rlimit { rlim_cur: 0, rlim_max: 0 }; // c:824
-                if unsafe { getrlimit(res as _, &mut vals) } < 0 { // c:826
+            if arg == "hard" {
+                // c:823
+                let mut vals = rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                }; // c:824
+                if unsafe { getrlimit(res as _, &mut vals) } < 0 {
+                    // c:826
                     zwarnnam(
                         name,
                         &format!("can't read limit: {}", std::io::Error::last_os_error()),
@@ -1192,23 +1267,29 @@ pub(crate) fn bin_ulimit(
                 limit = vals.rlim_max; // c:833
             } else {
                 let (mut v, consumed) = zstrtorlimt(&arg, 10); // c:836
-                if consumed != arg.len() { // c:837 *eptr
+                if consumed != arg.len() {
+                    // c:837 *eptr
                     zwarnnam(name, &format!("invalid number: {}", arg)); // c:838
                     return 1;
                 }
-                /* scale appropriately */ // c:841
-                if (res as usize) < RLIM_NLIMITS as usize { // c:842
+                /* scale appropriately */
+                // c:841
+                if (res as usize) < RLIM_NLIMITS as usize {
+                    // c:842
                     let resinfo_lock = RESINFO.get().unwrap();
                     let unit = resinfo_lock.lock().unwrap()[res as usize].unit as rlim_t;
                     v = v.saturating_mul(unit); // c:843
                 }
                 limit = v;
             }
-            if do_limit(name, res, limit, hard, soft, true) != 0 { // c:845
+            if do_limit(name, res, limit, hard, soft, true) != 0 {
+                // c:845
                 ret += 1; // c:846
             }
-        } else { // c:847
-            if do_unlimit(name, res, hard, soft, true, unsafe { geteuid() }) != 0 { // c:848
+        } else {
+            // c:847
+            if do_unlimit(name, res, hard, soft, true, unsafe { geteuid() }) != 0 {
+                // c:848
                 ret += 1; // c:849
             }
         }
@@ -1220,7 +1301,8 @@ pub(crate) fn bin_ulimit(
     // c:853 — for (res = 0; resmask; res++, resmask >>= 1)
     res = 0;
     while resmask != 0 {
-        if (resmask & 1) != 0 && printulimit(name, res, hard, nres > 1) != 0 { // c:854
+        if (resmask & 1) != 0 && printulimit(name, res, hard, nres > 1) != 0 {
+            // c:854
             ret += 1; // c:855
         }
         res += 1;
@@ -1230,12 +1312,7 @@ pub(crate) fn bin_ulimit(
 }
 
 #[cfg(not(unix))]
-pub(crate) fn bin_ulimit(
-    _name: &str,
-    _argv: &[String],
-    _ops: &options,
-    _func: i32,
-) -> i32 {
+pub(crate) fn bin_ulimit(_name: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
 }
 
@@ -1246,41 +1323,41 @@ pub(crate) fn bin_ulimit(
 /// Port of `setup_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:883`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {
-    0                                                                    // c:898
+    0 // c:898
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Builtins/rlimits.c:890`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = featuresarray(m, module_features());                     // c:898
-    0                                                                    // c:905
+    *features = featuresarray(m, module_features()); // c:898
+    0 // c:905
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Builtins/rlimits.c:898`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables)                        // c:905
+    handlefeatures(m, module_features(), enables) // c:905
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:905`.
 /// C body: `set_resinfo(); return 0;`
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
-    set_resinfo();                                                        // c:913
-    0                                                                    // c:921
+    set_resinfo(); // c:913
+    0 // c:921
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:913`.
 /// C body: `free_resinfo(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
-    free_resinfo();                                                       // c:921
-    setfeatureenables(m, module_features(), None)                        // c:921
+    free_resinfo(); // c:921
+    setfeatureenables(m, module_features(), None) // c:921
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:921`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
-    0                                                                    // c:921
+    0 // c:921
 }
 
 #[cfg(unix)]
@@ -1369,7 +1446,7 @@ pub(crate) fn set_resinfo() {
     // then always rebuild the Vec inside the existing Mutex.
     let lock = RESINFO.get_or_init(|| Mutex::new(Vec::with_capacity(nlimits())));
     let mut v = lock.lock().unwrap_or_else(|e| e.into_inner());
-    v.clear();                                                            // c:194 fresh zshcalloc
+    v.clear(); // c:194 fresh zshcalloc
     v.reserve(nlimits());
     for i in 0..nlimits() as i32 {
         let entry = known_resources
@@ -1377,10 +1454,10 @@ pub(crate) fn set_resinfo() {
             .find(|r| r.res == i)
             .cloned()
             .unwrap_or_else(|| resinfo_T {
-                res: -1,                                                  // c:209
-                name: leak_unknown_name(i),                               // c:210
-                r#type: zlimtype::ZLIMTYPE_UNKNOWN,                       // c:211
-                unit: 1,                                                  // c:212
+                res: -1,                            // c:209
+                name: leak_unknown_name(i),         // c:210
+                r#type: zlimtype::ZLIMTYPE_UNKNOWN, // c:211
+                unit: 1,                            // c:212
                 opt: 'N',
                 descr: leak_unknown_name(i),
             });
@@ -1422,7 +1499,10 @@ fn zsetlimit(limnum: i32, nam: &str) -> i32 {
     drop(cur);
     if limits_v.rlim_max != cur_v.rlim_max || limits_v.rlim_cur != cur_v.rlim_cur {
         if unsafe { setrlimit(limnum as _, &limits_v) } < 0 {
-            zwarnnam(nam, &format!("setrlimit failed: {}", std::io::Error::last_os_error()));
+            zwarnnam(
+                nam,
+                &format!("setrlimit failed: {}", std::io::Error::last_os_error()),
+            );
             // restore in-memory copy from current
             let mut limits = limits_lock.lock().unwrap();
             limits[limnum as usize] = cur_v;
@@ -1458,7 +1538,6 @@ fn setlimits(_nam: &str) -> i32 {
     0
 }
 
-
 // =====================================================================
 // External fns from Src/module.c. Stubbed locally with C-faithful
 // signatures pending the module.c port from `&Module`/`&Features`
@@ -1471,7 +1550,11 @@ fn setlimits(_nam: &str) -> i32 {
 // Stub builds the descriptor list inline since the existing
 // `crate::ported::module::featuresarray` takes wrong-typed args.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:limit".to_string(), "b:ulimit".to_string(), "b:unlimit".to_string()]
+    vec![
+        "b:limit".to_string(),
+        "b:ulimit".to_string(),
+        "b:unlimit".to_string(),
+    ]
 }
 
 // `handlefeatures` lives in `Src/module.c:3388`. C signature:
@@ -1538,15 +1621,15 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| {
         Mutex::new(features_t {
-            bn_list: None,                                                // c:874 bintab
-            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
-            cd_list: None,                                                // c:875
+            bn_list: None, // c:874 bintab
+            bn_size: 3,    // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
+            cd_list: None, // c:875
             cd_size: 0,
-            mf_list: None,                                                // c:876
+            mf_list: None, // c:876
             mf_size: 0,
-            pd_list: None,                                                // c:877
+            pd_list: None, // c:877
             pd_size: 0,
-            n_abstract: 0,                                                // c:883
+            n_abstract: 0, // c:883
         })
     })
 }
@@ -1622,8 +1705,7 @@ mod tests {
     fn zstrtorlimt_empty_input_consumed_is_zero() {
         let _g = crate::test_util::global_state_lock();
         let (_v, consumed) = zstrtorlimt("", 10);
-        assert_eq!(consumed, 0,
-            "empty input must report 0 chars consumed");
+        assert_eq!(consumed, 0, "empty input must report 0 chars consumed");
     }
 
     /// c:286 — `zstrtorlimt` stops at the first non-digit and
@@ -1635,8 +1717,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (v, consumed) = zstrtorlimt("42abc", 10);
         assert_eq!(v, 42);
-        assert_eq!(consumed, 2,
-            "must consume only the digit prefix, not the alpha suffix");
+        assert_eq!(
+            consumed, 2,
+            "must consume only the digit prefix, not the alpha suffix"
+        );
     }
 
     /// c:286 — `zstrtorlimt("unlimited", base)` ignores `base` and
@@ -1647,8 +1731,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for base in [0, 8, 10, 16] {
             let (v, consumed) = zstrtorlimt("unlimited", base);
-            assert_eq!(v, RLIM_INFINITY,
-                "base={} must still recognize 'unlimited'", base);
+            assert_eq!(
+                v, RLIM_INFINITY,
+                "base={} must still recognize 'unlimited'",
+                base
+            );
             assert_eq!(consumed, "unlimited".len());
         }
     }
@@ -1672,8 +1759,7 @@ mod tests {
     fn find_resource_unknown_char_returns_negative() {
         let _g = crate::test_util::global_state_lock();
         set_resinfo();
-        assert!(find_resource('z') < 0,
-            "unknown limit char must return < 0");
+        assert!(find_resource('z') < 0, "unknown limit char must return < 0");
         assert!(find_resource(' ') < 0);
         assert!(find_resource('@') < 0);
     }
@@ -1688,8 +1774,11 @@ mod tests {
         let lower_t = find_resource('t');
         let upper_t = find_resource('T');
         assert!(lower_t >= 0, "'t' (cpu time) must resolve");
-        assert_ne!(lower_t, upper_t,
-            "case-sensitivity collision: 't' and 'T' both index {}", lower_t);
+        assert_ne!(
+            lower_t, upper_t,
+            "case-sensitivity collision: 't' and 'T' both index {}",
+            lower_t
+        );
     }
 
     /// c:139 — `set_resinfo` is idempotent: calling it twice
@@ -1704,8 +1793,7 @@ mod tests {
         let len_first = RESINFO.get().unwrap().lock().unwrap().len();
         set_resinfo();
         let len_second = RESINFO.get().unwrap().lock().unwrap().len();
-        assert_eq!(len_first, len_second,
-            "set_resinfo must be idempotent");
+        assert_eq!(len_first, len_second, "set_resinfo must be idempotent");
     }
 
     /// c:1235-1276 — module-lifecycle stubs all return 0 in C.
@@ -1728,8 +1816,10 @@ mod tests {
         let m: *const module = std::ptr::null();
         let mut features: Vec<String> = Vec::new();
         assert_eq!(features_(m, &mut features), 0);
-        assert!(!features.is_empty(),
-            "rlimits module must advertise at least one feature");
+        assert!(
+            !features.is_empty(),
+            "rlimits module must advertise at least one feature"
+        );
     }
 
     /// c:913-921 — `boot_/cleanup_` re-init cycle. The C source
@@ -1750,16 +1840,21 @@ mod tests {
         let m: *const module = std::ptr::null();
         let _ = boot_(m);
         let after_first_boot = RESINFO.get().unwrap().lock().unwrap().len();
-        assert_eq!(after_first_boot, nlimits(),
-            "first boot must fully populate");
+        assert_eq!(
+            after_first_boot,
+            nlimits(),
+            "first boot must fully populate"
+        );
         let _ = cleanup_(m);
         let after_cleanup = RESINFO.get().unwrap().lock().unwrap().len();
-        assert_eq!(after_cleanup, 0,
-            "cleanup must empty the table");
+        assert_eq!(after_cleanup, 0, "cleanup must empty the table");
         let _ = boot_(m);
         let after_second_boot = RESINFO.get().unwrap().lock().unwrap().len();
-        assert_eq!(after_second_boot, nlimits(),
-            "second boot must re-populate (port bug fixed 2026-05)");
+        assert_eq!(
+            after_second_boot,
+            nlimits(),
+            "second boot must re-populate (port bug fixed 2026-05)"
+        );
     }
 
     /// `Src/Builtins/rlimits.c:277-281` — `zstrtorlimt("unlimited")` uses
@@ -1781,12 +1876,12 @@ mod tests {
         // "unlimitedX" → C strcmp fails → falls through to digit parse;
         // digit parse on 'u' fails (not 0-9) → returns (0, 0).
         let (v, n) = zstrtorlimt("unlimitedX", 10);
-        assert_ne!(v, RLIM_INFINITY,
-            "c:277 — strcmp requires exact match, not prefix");
-        assert_eq!(v, 0,
-            "non-digit prefix → no consumption, ret=0");
-        assert_eq!(n, 0,
-            "c:294 — digit loop exits immediately on 'u'");
+        assert_ne!(
+            v, RLIM_INFINITY,
+            "c:277 — strcmp requires exact match, not prefix"
+        );
+        assert_eq!(v, 0, "non-digit prefix → no consumption, ret=0");
+        assert_eq!(n, 0, "c:294 — digit loop exits immediately on 'u'");
     }
 
     /// `Src/Builtins/rlimits.c:283-291` — `if (!base)` block reads `*s`
@@ -1801,8 +1896,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (v, n) = zstrtorlimt("", 0);
         assert_eq!(v, 0, "empty → no digits → 0");
-        assert_eq!(n, 0,
-            "c:285 — past-end NUL behaves like 'not 0' → base=10 path, no advance");
+        assert_eq!(
+            n, 0,
+            "c:285 — past-end NUL behaves like 'not 0' → base=10 path, no advance"
+        );
     }
 
     /// `Src/Builtins/rlimits.c:283-291` — base==0 detects `0x` hex
@@ -1830,10 +1927,11 @@ mod tests {
         assert_eq!(n, 4);
         // Leading 0 then digit out of octal range stops at the digit.
         let (v, n) = zstrtorlimt("089", 0);
-        assert_eq!(v, 0,
-            "c:289 — base 8 doesn't accept '8'/'9'; stops immediately");
-        assert_eq!(n, 1,
-            "consumed only the leading '0'");
+        assert_eq!(
+            v, 0,
+            "c:289 — base 8 doesn't accept '8'/'9'; stops immediately"
+        );
+        assert_eq!(n, 1, "consumed only the leading '0'");
     }
 
     /// `Src/Builtins/rlimits.c:294` — base<=10 loop accepts digits in

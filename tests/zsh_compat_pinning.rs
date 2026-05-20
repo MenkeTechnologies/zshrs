@@ -127,7 +127,8 @@ fn assert_parity_with_trailing_args(script: &str, trailing: &[&str]) {
     };
     let r = {
         let mut c = Command::new(zshrs_bin());
-        c.args(["--zsh", "-f", "-c", script]).env_remove("ZSHRS_CACHE");
+        c.args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE");
         for a in trailing {
             c.arg(a);
         }
@@ -138,7 +139,11 @@ fn assert_parity_with_trailing_args(script: &str, trailing: &[&str]) {
             exit: out.status.code().unwrap_or(-1),
         }
     };
-    assert_eq!(z.stdout, r.stdout, "script={} trailing={trailing:?}", script);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "script={} trailing={trailing:?}",
+        script
+    );
     assert_eq!(z.stderr, r.stderr);
     assert_eq!(z.exit, r.exit);
 }
@@ -197,10 +202,7 @@ mod posix_c_positionals {
 
     #[test]
     fn explicit_zero_and_rest() {
-        assert_parity_with_trailing_args(
-            r#"echo "$0-$1-$2-$3""#,
-            &["nom", "aa", "bb", "cc"],
-        );
+        assert_parity_with_trailing_args(r#"echo "$0-$1-$2-$3""#, &["nom", "aa", "bb", "cc"]);
     }
 
     #[test]

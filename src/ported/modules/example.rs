@@ -28,15 +28,15 @@
 #![allow(non_snake_case)]
 
 use std::io::Write;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::ported::compat::output64;
 use crate::ported::cond::{cond_str, cond_val};
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::string::dyncat;
-use crate::ported::zsh_h::{module, options, Eprog, FuncWrap, OPT_ISSET};
+use crate::ported::zsh_h::{module, options, OPT_ISSET};
 
 // =====================================================================
 // /* parameters */                                                  c:33
@@ -44,17 +44,17 @@ use crate::ported::zsh_h::{module, options, Eprog, FuncWrap, OPT_ISSET};
 
 /// Port of `static zlong intparam;` from `Src/Modules/example.c:35`.
 /// Bound to the `exint` integer paramdef at c:175.
-pub static intparam: AtomicI64 = AtomicI64::new(0);                  // c:35
+pub static intparam: AtomicI64 = AtomicI64::new(0); // c:35
 
 /// Port of `static char *strparam;` from `Src/Modules/example.c:36`.
 /// Bound to the `exstr` string paramdef at c:176. `None` mirrors C's
 /// initial NULL which `bin_example` prints as the empty string at c:63.
-pub static strparam: Mutex<Option<String>> = Mutex::new(None);       // c:36
+pub static strparam: Mutex<Option<String>> = Mutex::new(None); // c:36
 
 /// Port of `static char **arrparam;` from `Src/Modules/example.c:37`.
 /// Bound to the `exarr` array paramdef at c:174. `None` mirrors C's
 /// initial NULL.
-pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
+pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None); // c:37
 
 // =====================================================================
 // bin_example(char *nam, char **args, Options ops, UNUSED(int func))  c:42
@@ -68,74 +68,77 @@ pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 /// bin_example(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
 #[allow(unused_variables)]
-pub fn bin_example(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:42
+pub fn bin_example(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
+    // c:42
     let mut stdout = std::io::stdout().lock();
     // c:44 — `unsigned char c;`
     let mut c: u8;
     // c:45 — `char **oargs = args, **p = arrparam;`
-    let oargs = args;                                                 // c:45
-    // `p` walks `arrparam` below; lock acquired in the print block.
-    // c:46 — `long i = 0;`
-    let mut i: i64 = 0;                                               // c:46
+    let oargs = args; // c:45
+                      // `p` walks `arrparam` below; lock acquired in the print block.
+                      // c:46 — `long i = 0;`
+    let mut i: i64 = 0; // c:46
 
-    let _ = write!(stdout, "Options: ");                              // c:48
-    // c:49-51 — `for (c = 32; ++c < 128;) if (OPT_ISSET(ops,c)) putchar(c);`
-    c = 32;                                                           // c:49
+    let _ = write!(stdout, "Options: "); // c:48
+                                         // c:49-51 — `for (c = 32; ++c < 128;) if (OPT_ISSET(ops,c)) putchar(c);`
+    c = 32; // c:49
     loop {
         c += 1;
-        if c >= 128 { break; }
-        if OPT_ISSET(ops, c) {                                        // c:50
-            let _ = write!(stdout, "{}", c as char);                  // c:51
+        if c >= 128 {
+            break;
+        }
+        if OPT_ISSET(ops, c) {
+            // c:50
+            let _ = write!(stdout, "{}", c as char); // c:51
         }
     }
-    let _ = write!(stdout, "\nArguments:");                           // c:52
-    // c:53-56 — `for (; *args; i++, args++) { putchar(' '); fputs(*args, stdout); }`
+    let _ = write!(stdout, "\nArguments:"); // c:52
+                                            // c:53-56 — `for (; *args; i++, args++) { putchar(' '); fputs(*args, stdout); }`
     for a in args {
-        let _ = write!(stdout, " ");                                  // c:54
-        let _ = write!(stdout, "{}", a);                              // c:55
-        i += 1;                                                       // c:53
+        let _ = write!(stdout, " "); // c:54
+        let _ = write!(stdout, "{}", a); // c:55
+        i += 1; // c:53
     }
-    let _ = writeln!(stdout, "\nName: {}", nam);                      // c:57
-    // c:58-62 — `#ifdef ZSH_64_BIT_TYPE` branch is taken on every
-    // modern platform; port that branch.
+    let _ = writeln!(stdout, "\nName: {}", nam); // c:57
+                                                 // c:58-62 — `#ifdef ZSH_64_BIT_TYPE` branch is taken on every
+                                                 // modern platform; port that branch.
     let _ = writeln!(
         stdout,
         "\nInteger Parameter: {}",
         output64(intparam.load(Ordering::Relaxed))
-    );                                                                 // c:59
+    ); // c:59
     {
         let sp = strparam.lock().unwrap();
-        let _ = writeln!(
-            stdout,
-            "String Parameter: {}",
-            sp.as_deref().unwrap_or("")
-        );                                                             // c:63
+        let _ = writeln!(stdout, "String Parameter: {}", sp.as_deref().unwrap_or(""));
+        // c:63
     }
-    let _ = write!(stdout, "Array Parameter:");                       // c:64
+    let _ = write!(stdout, "Array Parameter:"); // c:64
     {
         let p = arrparam.lock().unwrap();
-        if let Some(arr) = p.as_ref() {                               // c:65 if (p)
-            for s in arr {                                            // c:66 while (*p)
-                let _ = write!(stdout, " {}", s);                     // c:66
+        if let Some(arr) = p.as_ref() {
+            // c:65 if (p)
+            for s in arr {
+                // c:66 while (*p)
+                let _ = write!(stdout, " {}", s); // c:66
             }
         }
     }
-    let _ = writeln!(stdout);                                         // c:67
+    let _ = writeln!(stdout); // c:67
 
-    intparam.store(i, Ordering::Relaxed);                             // c:69 intparam = i;
-    // c:70 — zsfree(strparam);
-    // c:71 — strparam = ztrdup(*oargs ? *oargs : "");
+    intparam.store(i, Ordering::Relaxed); // c:69 intparam = i;
+                                          // c:70 — zsfree(strparam);
+                                          // c:71 — strparam = ztrdup(*oargs ? *oargs : "");
     let new_sp = if let Some(first) = oargs.first() {
         first.clone()
     } else {
         String::new()
     };
-    *strparam.lock().unwrap() = Some(new_sp);                         // c:71
-    // c:72-74 — if (arrparam) freearray(arrparam); arrparam = zarrdup(oargs);
-    let new_ap: Vec<String> = oargs.to_vec();                          // c:80
-    *arrparam.lock().unwrap() = Some(new_ap);                          // c:80
+    *strparam.lock().unwrap() = Some(new_sp); // c:71
+                                              // c:72-74 — if (arrparam) freearray(arrparam); arrparam = zarrdup(oargs);
+    let new_ap: Vec<String> = oargs.to_vec(); // c:80
+    *arrparam.lock().unwrap() = Some(new_ap); // c:80
 
-    0                                                                 // c:80
+    0 // c:80
 }
 
 // =====================================================================
@@ -144,16 +147,27 @@ pub fn bin_example(nam: &str, args: &[String], ops: &options, func: i32) -> i32 
 
 /// Port of `cond_p_len(char **a, UNUSED(int id))` from `Src/Modules/example.c:80`.
 #[allow(unused_variables)]
-pub fn cond_p_len(a: &[String], id: i32) -> i32 {                           // c:80
+pub fn cond_p_len(a: &[String], id: i32) -> i32 {
+    // c:80
     // c:80 — `char *s1 = cond_str(a, 0, 0);`
-    let s1: String = cond_str(a, 0, false);                            // c:82
-    if a.len() > 1 {                                                   // c:84 if (a[1])
-        let v: i64 = cond_val(a, 1);                                   // c:85 zlong v = cond_val(a, 1);
-        // c:87 — `return strlen(s1) == v;`
-        if (s1.len() as i64) == v { 1 } else { 0 }
-    } else {                                                           // c:95
+    let s1: String = cond_str(a, 0, false); // c:82
+    if a.len() > 1 {
+        // c:84 if (a[1])
+        let v: i64 = cond_val(a, 1); // c:85 zlong v = cond_val(a, 1);
+                                     // c:87 — `return strlen(s1) == v;`
+        if (s1.len() as i64) == v {
+            1
+        } else {
+            0
+        }
+    } else {
+        // c:95
         // c:95 — `return !s1[0];`
-        if s1.is_empty() { 1 } else { 0 }
+        if s1.is_empty() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -163,12 +177,17 @@ pub fn cond_p_len(a: &[String], id: i32) -> i32 {                           // c
 
 /// Port of `cond_i_ex(char **a, UNUSED(int id))` from `Src/Modules/example.c:95`.
 #[allow(unused_variables)]
-pub fn cond_i_ex(a: &[String], id: i32) -> i32 {                            // c:95
+pub fn cond_i_ex(a: &[String], id: i32) -> i32 {
+    // c:95
     // c:95 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
-    let s1: String = cond_str(a, 0, false);                            // c:104
-    let s2: String = cond_str(a, 1, false);                            // c:104
-    // c:104 — `return !strcmp("example", dyncat(s1, s2));`
-    if dyncat(&s1, &s2) == "example" { 1 } else { 0 }                  // c:104
+    let s1: String = cond_str(a, 0, false); // c:104
+    let s2: String = cond_str(a, 1, false); // c:104
+                                            // c:104 — `return !strcmp("example", dyncat(s1, s2));`
+    if dyncat(&s1, &s2) == "example" {
+        1
+    } else {
+        0
+    } // c:104
 }
 
 // =====================================================================
@@ -177,39 +196,50 @@ pub fn cond_i_ex(a: &[String], id: i32) -> i32 {                            // c
 
 /// Port of `math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))` from `Src/Modules/example.c:104`.
 #[allow(unused_variables)]
-pub fn math_sum(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber { // c:104
+pub fn math_sum(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
+    // c:104
     // c:104 — `mnumber ret;`
-    let mut ret = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+    let mut ret = mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    };
     // c:107 — `int f = 0;`
     let mut f: i32 = 0;
     // c:109 — `ret.u.l = 0;`
     ret.l = 0;
     let mut argc = argc;
     let mut p: usize = 0; // emulates argv++ pointer walk (c:124)
-    while {                                                            // c:110 while (argc--)
+    while {
+        // c:110 while (argc--)
         let go = argc > 0;
         argc -= 1;
         go
     } {
-        if argv[p].type_ == MN_INTEGER {                               // c:111
-            if f != 0 {                                                // c:112
-                ret.d += argv[p].l as f64;                             // c:113
+        if argv[p].type_ == MN_INTEGER {
+            // c:111
+            if f != 0 {
+                // c:112
+                ret.d += argv[p].l as f64; // c:113
             } else {
-                ret.l += argv[p].l;                                    // c:115
+                ret.l += argv[p].l; // c:115
             }
-        } else {                                                       // c:116
-            if f != 0 {                                                // c:117
-                ret.d += argv[p].d;                                    // c:118
-            } else {                                                   // c:119
-                ret.d = (ret.l as f64) + argv[p].d;                    // c:120
-                f = 1;                                                 // c:121
+        } else {
+            // c:116
+            if f != 0 {
+                // c:117
+                ret.d += argv[p].d; // c:118
+            } else {
+                // c:119
+                ret.d = (ret.l as f64) + argv[p].d; // c:120
+                f = 1; // c:121
             }
         }
-        p += 1;                                                        // c:124 argv++
+        p += 1; // c:124 argv++
     }
     // c:133 — `ret.type = (f ? MN_FLOAT : MN_INTEGER);`
     ret.type_ = if f != 0 { MN_FLOAT } else { MN_INTEGER };
-    ret                                                                 // c:133
+    ret // c:133
 }
 
 // =====================================================================
@@ -218,7 +248,8 @@ pub fn math_sum(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber { /
 
 /// Port of `math_length(UNUSED(char *name), char *arg, UNUSED(int id))` from `Src/Modules/example.c:133`.
 #[allow(unused_variables)]
-pub fn math_length(name: &str, arg: &str, id: i32) -> mnumber {            // c:133
+pub fn math_length(name: &str, arg: &str, id: i32) -> mnumber {
+    // c:133
     // c:133 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
@@ -240,12 +271,14 @@ pub fn math_length(name: &str, arg: &str, id: i32) -> mnumber {            // c:
 /// `*const funcwrap` since the C body never derefs `prog`/`w` beyond
 /// passing them to `runshfunc`.
 /// WARNING: param names don't match C — Rust=(prog, name) vs C=(prog, w, name)
-pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // c:145
-                  w: *const crate::ported::zsh_h::funcwrap,
-                  name: &str) -> i32 {
+pub fn ex_wrapper(
+    prog: *const crate::ported::zsh_h::eprog, // c:145
+    w: *const crate::ported::zsh_h::funcwrap,
+    name: &str,
+) -> i32 {
     // c:147 — `if (strncmp(name, "example", 7)) return 1;`
     if !name.starts_with("example") {
-        return 1;                                                       // c:148
+        return 1; // c:148
     }
     // c:149-156 — else branch:
     //   int ogd = opts[GLOBDOTS];
@@ -258,7 +291,7 @@ pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // 
     // invoked through addwrapper, so the body stays a no-op besides
     // the prefix-match contract.
     let _ = (prog, w);
-    0                                                                   // c:156
+    0 // c:156
 }
 
 // =====================================================================
@@ -286,8 +319,8 @@ pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // 
 pub fn setup_(m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "The example module has now been set up."); // c:207
-    let _ = stdout.flush();                                              // c:207
-    0                                                                    // c:207
+    let _ = stdout.flush(); // c:207
+    0 // c:207
 }
 
 // =====================================================================
@@ -298,7 +331,7 @@ pub fn setup_(m: *const module) -> i32 {
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
-    0                                                                   // c:215
+    0 // c:215
 }
 
 // =====================================================================
@@ -319,11 +352,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 /// C body sets the demo paramdef-bound statics then calls
 /// `addwrapper(m, wrapper)`.
 pub fn boot_(m: *const module) -> i32 {
-    intparam.store(42, Ordering::Relaxed);                              // c:222
-    *strparam.lock().unwrap() = Some("example".to_string());             // c:225
-    *arrparam.lock().unwrap() = Some(vec![                              // c:226-228
-        "example".to_string(),                                          // c:227
-        "array".to_string(),                                            // c:228
+    intparam.store(42, Ordering::Relaxed); // c:222
+    *strparam.lock().unwrap() = Some("example".to_string()); // c:225
+    *arrparam.lock().unwrap() = Some(vec![
+        // c:226-228
+        "example".to_string(), // c:227
+        "array".to_string(),   // c:228
     ]);
     // c:230 — addwrapper(m, wrapper); registers ex_wrapper into the
     // global wrappers linked list (Src/module.c:577). zshrs's fusevm
@@ -357,9 +391,9 @@ pub fn finish_(m: *const module) -> i32 {
     let _ = writeln!(
         stdout,
         "Thank you for using the example module.  Have a nice day."
-    );                                                                  // c:245
-    let _ = stdout.flush();                                              // c:246
-    0                                                                    // c:247
+    ); // c:245
+    let _ = stdout.flush(); // c:246
+    0 // c:247
 }
 
 // =====================================================================
@@ -369,29 +403,21 @@ pub fn finish_(m: *const module) -> i32 {
 // `deletewrapper` from `Src/module.c`.
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (example.c:182).
-
 
 // `cotab` — port of `static struct conddef cotab[]` (example.c).
 // `CONDDEF("ex", CONDF_INFIX|CONDF_ADDED, …)` + `CONDDEF("len", 0, …)`.
 
-
 // `mftab` — port of `static struct mathfunc mftab[]` (example.c).
 
-
 // `patab` — port of `static struct paramdef patab[]` (example.c).
-
 
 // `module_features` — port of `static struct features module_features`
 // from example.c:188.
 
-
-
 use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -403,7 +429,16 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:example".to_string(), "c:ex".to_string(), "c:len".to_string(), "f:length".to_string(), "f:sum".to_string(), "p:exarr".to_string(), "p:exint".to_string(), "p:exstr".to_string()]
+    vec![
+        "b:example".to_string(),
+        "c:ex".to_string(),
+        "c:len".to_string(),
+        "f:length".to_string(),
+        "f:sum".to_string(),
+        "p:exarr".to_string(),
+        "p:exint".to_string(),
+        "p:exstr".to_string(),
+    ]
 }
 
 // WARNING: NOT IN EXAMPLE.C — Rust-only module-framework shim.
@@ -425,11 +460,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -460,17 +491,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 2,
-        mf_list: None,
-        mf_size: 2,
-        pd_list: None,
-        pd_size: 3,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 2,
+            mf_list: None,
+            mf_size: 2,
+            pd_list: None,
+            pd_size: 3,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -479,9 +512,16 @@ mod tests {
     use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
-    fn s(x: &str) -> String { x.to_string() }
+    fn s(x: &str) -> String {
+        x.to_string()
+    }
 
     /// Serialises tests that mutate `intparam` / `strparam` / `arrparam`
     /// (paramdef bindings at `Src/Modules/example.c:208-218`). The C
@@ -536,12 +576,44 @@ mod tests {
     #[test]
     fn math_sum_int_then_float_promotion() {
         let _g = crate::test_util::global_state_lock();
-        let ints = [mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, mnumber { l: 2, d: 0.0, type_: MN_INTEGER }, mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
+        let ints = [
+            mnumber {
+                l: 1,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 2,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+        ];
         let r = math_sum("sum", 3, &ints, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 6);
 
-        let mixed = [mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, mnumber { l: 0, d: 2.5, type_: MN_FLOAT }, mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
+        let mixed = [
+            mnumber {
+                l: 1,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 0,
+                d: 2.5,
+                type_: MN_FLOAT,
+            },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+        ];
         let r = math_sum("sum", 3, &mixed, 0);
         assert_eq!(r.type_, MN_FLOAT);
         assert!((r.d - 6.5).abs() < 1e-9);
@@ -564,7 +636,10 @@ mod tests {
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "foo"), 1);
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "exampl"), 1);
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example"), 0);
-        assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example_func"), 0);
+        assert_eq!(
+            ex_wrapper(std::ptr::null(), std::ptr::null(), "example_func"),
+            0
+        );
     }
 
     /// Port of `bin_example(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/example.c:42`.
@@ -599,7 +674,11 @@ mod tests {
     #[test]
     fn math_sum_single_int_arg_is_identity() {
         let _g = crate::test_util::global_state_lock();
-        let argv = [mnumber { l: 42, d: 0.0, type_: MN_INTEGER }];
+        let argv = [mnumber {
+            l: 42,
+            d: 0.0,
+            type_: MN_INTEGER,
+        }];
         let r = math_sum("sum", 1, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 42);
@@ -612,8 +691,16 @@ mod tests {
     fn math_sum_all_floats_preserves_float_type() {
         let _g = crate::test_util::global_state_lock();
         let argv = [
-            mnumber { l: 0, d: 1.5, type_: MN_FLOAT },
-            mnumber { l: 0, d: 2.5, type_: MN_FLOAT },
+            mnumber {
+                l: 0,
+                d: 1.5,
+                type_: MN_FLOAT,
+            },
+            mnumber {
+                l: 0,
+                d: 2.5,
+                type_: MN_FLOAT,
+            },
         ];
         let r = math_sum("sum", 2, &argv, 0);
         assert_eq!(r.type_, MN_FLOAT);
@@ -625,8 +712,16 @@ mod tests {
     fn math_sum_handles_negative_ints() {
         let _g = crate::test_util::global_state_lock();
         let argv = [
-            mnumber { l: -5, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: -5,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         ];
         let r = math_sum("sum", 2, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER);
@@ -650,8 +745,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // "café" = "caf" + "é" (é = 2 bytes in UTF-8) = 5 bytes
         let r = math_length("length", "café", 0);
-        assert_eq!(r.l, 5,
-            "math_length must count bytes, not chars — got {}", r.l);
+        assert_eq!(
+            r.l, 5,
+            "math_length must count bytes, not chars — got {}",
+            r.l
+        );
     }
 
     /// c:95 — `cond_i_ex` (no-arg demo) returns 0 (false). Pin so a
@@ -660,8 +758,7 @@ mod tests {
     fn cond_i_ex_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let r = cond_i_ex(&[], 0);
-        assert_eq!(r, 0,
-            "cond_i_ex demo condition must return 0 (false)");
+        assert_eq!(r, 0, "cond_i_ex demo condition must return 0 (false)");
     }
 
     /// c:286-335 — module-lifecycle stubs return 0.

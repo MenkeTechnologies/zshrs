@@ -45,11 +45,7 @@ fn run(file: &str) -> BTreeMap<String, usize> {
 fn run_with_home(file: &str, home_subdir: Option<&str>) -> BTreeMap<String, usize> {
     let bin = env!("CARGO_BIN_EXE_zshrs-recorder");
     let path: PathBuf = Path::new(CORPUS_DIR).join(file);
-    assert!(
-        path.exists(),
-        "corpus file missing: {}",
-        path.display()
-    );
+    assert!(path.exists(), "corpus file missing: {}", path.display());
 
     let mut cmd = Command::new(bin);
     cmd.arg("--no-daemon").arg("--file").arg(&path);
@@ -153,10 +149,8 @@ fn assert_counts_inner(file: &str, actual: BTreeMap<String, usize>, expected: &[
     // the same `mkdir` succeeds and the script reaches line ~657's
     // 43-setopt block. Exact-match assertions whipsaw between the two
     // platforms; lower-bound holds steady on both.
-    let expected: BTreeMap<String, usize> = expected
-        .iter()
-        .map(|(k, v)| (k.to_string(), *v))
-        .collect();
+    let expected: BTreeMap<String, usize> =
+        expected.iter().map(|(k, v)| (k.to_string(), *v)).collect();
     let mut shortfalls: Vec<(String, usize, usize)> = Vec::new();
     for (k, &e) in &expected {
         let a = actual.get(k).copied().unwrap_or(0);
@@ -173,7 +167,13 @@ fn assert_counts_inner(file: &str, actual: BTreeMap<String, usize>, expected: &[
         for k in all_keys {
             let e = expected.get(k).copied().unwrap_or(0);
             let a = actual.get(k).copied().unwrap_or(0);
-            let mark = if a < e { "!!" } else if a > e { "+ " } else { "  " };
+            let mark = if a < e {
+                "!!"
+            } else if a > e {
+                "+ "
+            } else {
+                "  "
+            };
             msg.push_str(&format!("  {mark} {k:<10} expected>={e}  actual={a}\n"));
         }
         panic!("{msg}");
@@ -362,10 +362,7 @@ fn replay_types_full_matrix() {
     //     count=42                   [integer]
     //     pi=3.14                    [float]
     //     RO=ro_val                  [scalar,readonly]
-    assert_counts(
-        "24_replay_types.zsh",
-        &[("assign", 4), ("typeset", 5)],
-    );
+    assert_counts("24_replay_types.zsh", &[("assign", 4), ("typeset", 5)]);
 }
 
 /// Beyond bare counts: this test inspects the realtime stderr to
@@ -460,10 +457,7 @@ fn zle_widgets_capture() {
     //
     //   function×2   underlying handlers (`fzf-history-widget`, `fzf-cd-widget`)
     //   zle×4        2 self-bound `-N`, 1 `-N` with explicit handler, 1 `-A` alias
-    assert_counts(
-        "22_zle_widgets.zsh",
-        &[("function", 2), ("zle", 4)],
-    );
+    assert_counts("22_zle_widgets.zsh", &[("function", 2), ("zle", 4)]);
 }
 
 #[test]
@@ -475,12 +469,7 @@ fn unalias_unset_emit_removal_events() {
     // site for a given name.
     assert_counts(
         "19_unalias_unset.zsh",
-        &[
-            ("alias", 2),
-            ("assign", 2),
-            ("unalias", 2),
-            ("unset", 2),
-        ],
+        &[("alias", 2), ("assign", 2), ("unalias", 2), ("unset", 2)],
     );
 }
 

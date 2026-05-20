@@ -22,8 +22,8 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use zsh::ported::params::{getsparam, setsparam};
 use zsh::ported::options::{opt_state_get, opt_state_set};
+use zsh::ported::params::{getsparam, setsparam};
 
 const N_WORKERS: usize = 8;
 
@@ -158,7 +158,8 @@ fn paramtab_parallel_read_write_stress() {
         }));
     }
     for h in handles {
-        h.join().expect("stress worker panicked — possible deadlock");
+        h.join()
+            .expect("stress worker panicked — possible deadlock");
     }
 
     // Final visibility check: at least the last-written key from each

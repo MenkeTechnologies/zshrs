@@ -223,8 +223,9 @@ pub fn op_scope(op: &str) -> &'static str {
         // ---- meta.read (introspection / status) ----
         "info" | "ping" | "daemon" | "doctor" | "verify" | "metrics" | "log_stats"
         | "config_get" | "config_list" | "keys" | "complete" | "suggest" | "highlight"
-        | "source_resolve" | "replay_log" | "cmd_result" | "cmd_started"
-        | "subscribe_shard" => "meta.read",
+        | "source_resolve" | "replay_log" | "cmd_result" | "cmd_started" | "subscribe_shard" => {
+            "meta.read"
+        }
 
         // ---- meta.admin (mutating admin ops) ----
         "clean" | "compact" | "stats_flush" | "log_level" | "log_rotate" | "config_set" => {

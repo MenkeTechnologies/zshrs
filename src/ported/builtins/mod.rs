@@ -21,9 +21,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = super::rlimits::bin_ulimit("ulimit", &[], &ops, 0);
-        assert_eq!(r, 0, "`ulimit` with no args must succeed (POSIX listing path)");
+        assert_eq!(
+            r, 0,
+            "`ulimit` with no args must succeed (POSIX listing path)"
+        );
     }
 }

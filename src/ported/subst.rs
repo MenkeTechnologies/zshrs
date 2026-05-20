@@ -47,22 +47,6 @@
 //! from `/opt/homebrew/bin/zsh -fc` for the in-scope substitution
 //! shapes is treated as a bug — file an issue + add a parity test.
 
-#[allow(unused_imports)]
-use crate::ported::vm_helper::{
-    cached_regex, slice_array_zero_based, slice_positionals,
-};
-use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
-use crate::ported::zsh_h::PM_HASHED;
-use std::sync::atomic::AtomicUsize;
-use crate::ported::modules::parameter::*;
-use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED, PM_UNIQUE, PM_TIED, PM_SPECIAL, PM_NAMEREF};
-use std::ffi::CString;
-// Bulk-import the most-used cross-module names so the bodies below
-// stay close to the C source visually instead of being drowned in
-// fully-qualified `crate::ported::*::` paths.
-use crate::ported::pattern::patmatch;
-use crate::ported::string::dyncat;
-use crate::ported::utils::{getkeystring, quotestring};
 // `subst.rs` does NOT reach into `ShellExecutor` — every shell-state
 // read/write goes through the canonical C-named accessor (paramtab,
 // hashtable, options globals, etc.). Command-substitution `$(...)`
@@ -74,8 +58,28 @@ use crate::ported::utils::{getkeystring, quotestring};
 // arms and the parity tests can reference by bare name.
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
-use crate::ported::hist::{casemodify, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
+use crate::ported::hist::{
+    casemodify, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER,
+};
+use crate::ported::modules::parameter::*;
+// Bulk-import the most-used cross-module names so the bodies below
+// stay close to the C source visually instead of being drowned in
+// fully-qualified `crate::ported::*::` paths.
+use crate::ported::pattern::patmatch;
+use crate::ported::string::dyncat;
+use crate::ported::utils::{getkeystring, quotestring};
 use crate::ported::utils::{xsymlinks, zerr};
+#[allow(unused_imports)]
+use crate::ported::vm_helper::{cached_regex, slice_array_zero_based, slice_positionals};
+use crate::ported::zsh_h::PM_HASHED;
+use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
+use crate::ported::zsh_h::{
+    PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER,
+    PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE,
+    PM_UPPER,
+};
+use std::ffi::CString;
+use std::sync::atomic::AtomicUsize;
 
 use std::sync::atomic::Ordering;
 
@@ -83,7 +87,7 @@ use std::sync::atomic::Ordering;
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
 /// LinkList carries when the expansion produced multiple words.
 /// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
-pub const LF_ARRAY: u32 = 1;                                                 // c:33
+pub const LF_ARRAY: u32 = 1; // c:33
 
 /// Check for array assignment with entries like [key]=val
 /// Port of `keyvalpairelement(LinkList list, LinkNode node)` from `Src/subst.c:49`.
@@ -177,7 +181,8 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 // Do substitutions before fork.                                            // c:100
-pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
+pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
+    // c:100
     // c:100
     let mut node_idx = 0; // c:100
     let mut stop_idx: Option<usize> = None; // c:100
@@ -217,7 +222,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
                 // c:100
                 let new_data = filesub(
                     // c:100
-                    data,                                                     // c:100
+                    data,                                       // c:100
                     flags & (PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                 ); // c:100
                 list.setdata(node_idx, new_data); // c:100
@@ -227,11 +232,11 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
             // Do string substitution
             if let Some(new_idx) = stringsubst(
                 // c:100
-                list,                                                      // c:100
-                node_idx,                                                  // c:100
+                list,                                        // c:100
+                node_idx,                                    // c:100
                 flags & !(PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
-                ret_flags,                                                 // c:100
-                asssub,                                                    // c:100
+                ret_flags,                                   // c:100
+                asssub,                                      // c:100
             ) {
                 // c:100
                 node_idx = new_idx; // c:100
@@ -252,11 +257,11 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
             // c:100
             if let Some(new_idx) = stringsubst(
                 // c:100
-                list,                                                      // c:100
-                node_idx,                                                  // c:100
+                list,                                        // c:100
+                node_idx,                                    // c:100
                 flags & !(PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
-                ret_flags,                                                 // c:100
-                asssub,                                                    // c:100
+                ret_flags,                                   // c:100
+                asssub,                                      // c:100
             ) {
                 // c:100
                 node_idx = new_idx + 1; // c:100
@@ -326,13 +331,14 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
                 // entirely when state.skip_filesub is set — used
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
-                if !isset(crate::ported::zsh_h::SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get()) {
+                if !isset(crate::ported::zsh_h::SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get())
+                {
                     // c:100
                     if let Some(data) = list.getdata(node_idx) {
                         // c:100
                         let new_data = filesub(
                             // c:100
-                            data,                                                     // c:100
+                            data,                                       // c:100
                             flags & (PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                         ); // c:100
                         list.setdata(node_idx, new_data); // c:100
@@ -366,11 +372,11 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
 // `OUTANGPROC` → canonical `OutangProc`. All other constants
 // matched bit-for-bit but living in two places invited future drift.
 use crate::ported::zsh_h::{
-    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker,
-    Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound,
-    Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, Snull,
-    Stringg, Tick,
-}; // c:zsh.h:159-224 + scan flags c:1953-1973
+    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang,
+    OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Snull, Stringg,
+    Tick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS,
+};
+// c:zsh.h:159-224 + scan flags c:1953-1973
 
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
@@ -477,11 +483,11 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
 /// Port of stringsubst(LinkList list, LinkNode node, int pf_flags, int *ret_flags, int asssub) from subst.c lines 227-421
 fn stringsubst(
     // c:237
-    list: &mut LinkList,    // c:237
-    node_idx: usize,        // c:237
-    pf_flags: i32,          // c:237
-    ret_flags: &mut i32,    // c:237
-    asssub: bool,           // c:237
+    list: &mut LinkList, // c:237
+    node_idx: usize,     // c:237
+    pf_flags: i32,       // c:237
+    ret_flags: &mut i32, // c:237
+    asssub: bool,        // c:237
 ) -> Option<usize> {
     // c:237
     let mut str3 = list.getdata(node_idx)?.to_string(); // c:237
@@ -925,7 +931,7 @@ fn stringsubst(
                 // glob expansion must be suppressed). Use the fallible
                 // variant so the unit-test path that calls paramsubst
                 // without a live executor doesn't panic.
-                IN_PARAMSUBST_NEST.with(|c| c.set(c.get() + 1));             // c:237 paramsub_nest++
+                IN_PARAMSUBST_NEST.with(|c| c.set(c.get() + 1)); // c:237 paramsub_nest++
                 let (new_str, new_pos, new_nodes) = paramsubst(
                     // c:237
                     &str3, // c:237
@@ -937,7 +943,7 @@ fn stringsubst(
                             | PREFORK_SUBEXP), // c:237
                     ret_flags, // c:237
                 ); // c:237
-                IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1));             // c:237 paramsub_nest--
+                IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1)); // c:237 paramsub_nest--
 
                 if errflag_set() {
                     // c:237
@@ -1004,7 +1010,7 @@ fn stringsubst(
             if end < chars.len() {
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
-                // c:exec.c:4712 — `getoutput(cmd, 0)`.
+                                                                          // c:exec.c:4712 — `getoutput(cmd, 0)`.
                 let output = crate::ported::exec::getoutput(&cmd);
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
@@ -1053,7 +1059,8 @@ fn stringsubst(
 /// The trailing `remnulargs()` strips Bnull tokens so this is
 /// consistent with the other substitution forms (indicating quotes
 /// have been fully processed).
-pub fn quotesubst(str: &str) -> String {              // c:463
+pub fn quotesubst(str: &str) -> String {
+    // c:463
     // c:463
     let mut result = str.to_string(); // c:465
     let mut pos = 0_usize; // c:466
@@ -1098,7 +1105,8 @@ pub fn quotesubst(str: &str) -> String {              // c:463
 use crate::ported::zsh_h::{
     PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
     PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
-}; // c:zsh.h:2020-2042
+};
+// c:zsh.h:2020-2042
 
 /// Glob entries in a linked list
 /// Port of `globlist(LinkList list, int flags)` from `Src/subst.c:489`.
@@ -1113,7 +1121,8 @@ use crate::ported::zsh_h::{
 ///
 /// Routes through `ShellExecutor::expand_glob` (the canonical
 /// glob.rs port of zsh's zglob) for filesystem matching.
-pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
+pub fn globlist(list: &mut LinkList, flags: i32) {
+    // c:489
     // c:489
     // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
     // (we don't track this; csh-glob option is rare).
@@ -1147,10 +1156,10 @@ pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
         let _ = no_untok; // C plumbs through;
                           // expand_glob handles
                           // tokens internally.
-        // c:501 — canonical glob expansion (mirrors zglob driver
-        // at glob.c:1214 with alternation + extendedglob pre-passes
-        // inlined). Reads canonical option state directly, no
-        // executor needed.
+                          // c:501 — canonical glob expansion (mirrors zglob driver
+                          // at glob.c:1214 with alternation + extendedglob pre-passes
+                          // inlined). Reads canonical option state directly, no
+                          // executor needed.
         let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
 
         if expanded.is_empty() {
@@ -1186,27 +1195,31 @@ pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
 /// Single-string substitution.
 /// Port of `singsub(char **s)` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:514
-pub fn singsub(s: &str) -> String {                  // c:514
+pub fn singsub(s: &str) -> String {
+    // c:514
     // c:516 — `local_list1(foo);` (Rust analogue: stack-local list).
-    let mut list = LinkList::default();                                       // c:516
-    // c:518 — `init_list1(foo, *s);` (push the single input element).
-    list.push_back(s.to_string());                                            // c:518
-    let mut ret_flags = 0i32;                                                 // c:520 NULL ret_flags
+    let mut list = LinkList::default(); // c:516
+                                        // c:518 — `init_list1(foo, *s);` (push the single input element).
+    list.push_back(s.to_string()); // c:518
+    let mut ret_flags = 0i32; // c:520 NULL ret_flags
 
-    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags);                       // c:520
+    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags); // c:520
 
-    if errflag_set() {                                                        // c:521 if (errflag)
-        return String::new();                                                 // c:522 return
+    if errflag_set() {
+        // c:521 if (errflag)
+        return String::new(); // c:522 return
     }
 
     // c:523 `*s = (char *) ugetnode(&foo);` — pull first node.
-    let result = list.getdata(0).cloned().unwrap_or_default();               // c:523
-    // c:524 — DPUTS asserts the list is now empty (singsub never
-    // produces more than one word). Rust port wires the canonical
-    // DPUTS macro from zsh_h.rs.
-    crate::DPUTS!(list.nodes.len() > 1,                                       // c:524
-        "BUG: singsub() produced more than one word!");                       // c:524
-    result                                                                    // c:523
+    let result = list.getdata(0).cloned().unwrap_or_default(); // c:523
+                                                               // c:524 — DPUTS asserts the list is now empty (singsub never
+                                                               // produces more than one word). Rust port wires the canonical
+                                                               // DPUTS macro from zsh_h.rs.
+    crate::DPUTS!(
+        list.nodes.len() > 1, // c:524
+        "BUG: singsub() produced more than one word!"
+    ); // c:524
+    result // c:523
 }
 
 /// Substitution with possible multiple results
@@ -1228,15 +1241,15 @@ pub fn singsub(s: &str) -> String {                  // c:514
 /// carries (joined-scalar, array, isarr, ms_flags).
 /// Port of `multsub(char **s, int pf_flags, char ***a, int *isarr, char *sep, int *ms_flags)` from `Src/subst.c:544`.
 /// WARNING: param names don't match C — Rust=(s, pf_flags) vs C=(s, pf_flags, a, isarr, sep, ms_flags)
-pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
+pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
+    // c:544
     // c:544
     let mut ms_flags = 0i32; // c:551
     let mut x = s.to_string(); // c:550 (`x = *s`)
 
     // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
     // mark MULTSUB_WS_AT_START.
-    let ifs = vars_get("IFS")
-        .unwrap_or_else(|| " \t\n\0".to_string()); // c:N/A (zsh default IFS includes NUL)
+    let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n\0".to_string()); // c:N/A (zsh default IFS includes NUL)
     let is_ifs_sep = |c: char| -> bool {
         // c:556
         ifs.contains(c) // c:556
@@ -1366,9 +1379,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // 
     if l > 1 || (list.flags & LF_ARRAY != 0) {
         // c:633
         let arr: Vec<String> = list.iter().cloned().collect(); // c:635-637
-                                                                                    // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
-                                                                                    // when sep is NULL. Use first IFS char as join separator,
-                                                                                    // matching zsh's sepjoin defaults.
+                                                               // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
+                                                               // when sep is NULL. Use first IFS char as join separator,
+                                                               // matching zsh's sepjoin defaults.
         let join_sep = ifs.chars().next().map(String::from).unwrap_or_default(); // c:649
         let joined = arr.join(&join_sep); // c:649
         return (joined, arr, true, ms_flags); // c:642-647 (array path)
@@ -1478,7 +1491,7 @@ fn filesub(namptr: &str, assign: i32) -> String {
     } // c:701
     namptr // c:702
 } // c:703
-// c:zsh.h:200
+  // c:zsh.h:200
 
 /// Equal substitution (=cmd)
 /// Port of `equalsubstr(char *str, int assign, int nomatch)` from `Src/subst.c:715`.
@@ -1560,7 +1573,8 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
 /// Faithful port of the C ladder — covers `~`, `~+`, `~-`, `~N`/`~-N`
 /// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
 /// equalsubstr).
-pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
+pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
+    // c:737
     // c:737
     if namptr.is_empty() {
         // c:737
@@ -1594,8 +1608,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
         // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
         // while `~$xxx` (Stringg, which should NOT isend) would.
         let isend = |c: char| -> bool {
-            c == '\0' || c == '/' || c == crate::ported::zsh_h::Inpar
-                || (assign && c == ':')
+            c == '\0' || c == '/' || c == crate::ported::zsh_h::Inpar || (assign && c == ':')
         };
 
         // `~/...` and `~` (isend(str[1])) — bare HOME
@@ -1644,8 +1657,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
                     .parse()
                     .unwrap_or(0);
                 let val = if neg { -val } else { val };
-                let pwd = crate::ported::params::getsparam("PWD")
-                    .unwrap_or_default();
+                let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
                 // Direct port of subst.c filesub'namptr tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
                 // c:4902 — read from canonical DIRSTACK global (mirrors
@@ -1760,7 +1772,8 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
 /// segment. The Rust version returns the full concatenation; callers
 /// can recover the post-src position via prefix.len() + src.len().
 /// WARNING: param names don't match C — Rust=(prefix, src, suffix, glob_subst) vs C=(d, pb, pe, src, l, s, glbsub, copied)
-pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
+pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String {
+    // c:814
     // c:814
     // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
     //     dupstring(src)); if (glbsub) shtokenize(dest); }`
@@ -1823,7 +1836,8 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
 ///   0 → always 1 (legacy / no multibyte)
 ///   1 → u9_wcwidth(wc); zero if negative
 ///   * → boolean: 1 if u9_wcwidth>0 else 0
-pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // c:848
+pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {
+    // c:848
     // c:848
     // u9_wcwidth fallback lives in utils.rs (canonical port of
     // Src/utils.c::zwcwidth). Use the unicode_width-backed
@@ -1860,7 +1874,8 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 ///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
 ///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
 /// WARNING: param names don't match C — Rust=() vs C=(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif)
-pub fn dopadding(                                                            // c:893
+pub fn dopadding(
+    // c:893
     // c:893
     s: &str,               // c:893
     prenum: usize,         // c:893
@@ -2054,7 +2069,8 @@ pub fn dopadding(                                                            // 
 /// pairs. `rest_start = byte_offset + char.len_utf8()` correctly
 /// advances past the close-delim regardless of width.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, lenp)
-pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
+pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
+    // c:1348
     let mut iter = s.char_indices();
 
     // Get delimiter (and its byte width).
@@ -2073,7 +2089,7 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
 
     // Collect content until closing delimiter.
     let mut content = String::new();
-    let mut rest_start = s.len();  // default: no close-delim found → rest = ""
+    let mut rest_start = s.len(); // default: no close-delim found → rest = ""
     for (byte_off, c) in iter {
         if c == close_del {
             rest_start = byte_off + c.len_utf8();
@@ -2100,7 +2116,8 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
 /// Body: get_strarg → parsestr → singsub → mathevali, then absolute
 /// value. The math eval lets `(l:$n:)` etc. work.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, delmatchp)
-pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // c:1428
+pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
+    // c:1428
     // c:1428
     // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
     // expression text + delimiter length.
@@ -2170,7 +2187,8 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 ///   3. If !single, walk buffer: outside Dnull (`"`) regions convert
 ///      `Qstring` → `String` and `Qtick` → `Tick`. Dnull toggles qt.
 /// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
-pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { // c:1460
+pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
+    // c:1460
     // c:1460
     let _ = err; // c:1466 (parsestr error path
                  //         deferred — full C
@@ -2187,29 +2205,32 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
         // c:1469
         let mut chars: Vec<char> = buf.chars().collect(); // c:1469
         let mut qt = false; // c:1470
-        // The previous Rust port had FAKE token-byte values in the
-        // comment block here: STRING=\u{81}, Qstring=\u{82}, Tick=\u{83},
-        // Qtick=\u{84}, Dnull=\u{97}. NONE of these match `Src/zsh.h:159-194`.
-        // Canonical values:
-        //   Stringg = \u{85} (c:160), Qstring = \u{8c} (c:167),
-        //   Tick    = \u{93} (c:174), Qtick   = \u{99} (c:180),
-        //   Dnull   = \u{9e} (c:194).
-        // With the wrong literals, this Qstring/Qtick→String/Tick
-        // rewrite + Dnull-toggle loop NEVER fired on real input —
-        // every `$'...'` and `` $`...` `` expansion produced wrong
-        // tokenization downstream. Now uses canonical consts.
+                            // The previous Rust port had FAKE token-byte values in the
+                            // comment block here: STRING=\u{81}, Qstring=\u{82}, Tick=\u{83},
+                            // Qtick=\u{84}, Dnull=\u{97}. NONE of these match `Src/zsh.h:159-194`.
+                            // Canonical values:
+                            //   Stringg = \u{85} (c:160), Qstring = \u{8c} (c:167),
+                            //   Tick    = \u{93} (c:174), Qtick   = \u{99} (c:180),
+                            //   Dnull   = \u{9e} (c:194).
+                            // With the wrong literals, this Qstring/Qtick→String/Tick
+                            // rewrite + Dnull-toggle loop NEVER fired on real input —
+                            // every `$'...'` and `` $`...` `` expansion produced wrong
+                            // tokenization downstream. Now uses canonical consts.
         for c in chars.iter_mut() {
             // c:1472
             if !qt {
                 // c:1473
-                if *c == crate::ported::zsh_h::Qstring {                     // c:1474
-                    *c = crate::ported::zsh_h::Stringg;                      // c:1475
-                } else if *c == crate::ported::zsh_h::Qtick {                // c:1476
-                    *c = crate::ported::zsh_h::Tick;                         // c:1477
+                if *c == crate::ported::zsh_h::Qstring {
+                    // c:1474
+                    *c = crate::ported::zsh_h::Stringg; // c:1475
+                } else if *c == crate::ported::zsh_h::Qtick {
+                    // c:1476
+                    *c = crate::ported::zsh_h::Tick; // c:1477
                 }
             }
-            if *c == crate::ported::zsh_h::Dnull {                            // c:1480
-                qt = !qt;                                                     // c:1481
+            if *c == crate::ported::zsh_h::Dnull {
+                // c:1480
+                qt = !qt; // c:1481
             }
         }
         buf = chars.iter().collect(); // c:1483
@@ -2217,7 +2238,6 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
     // C: `return 0;` — success path returns the buffer.
     Some(buf) // c:1483
 } // c:1486
-
 
 /// Evaluate character from number (for (#) flag)
 /// Port of `substevalchar(char *ptr)` from `Src/subst.c:1490`.
@@ -2341,8 +2361,8 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
         // c:1549
         // shtokenize call elided — same as c:823 / c:830 above (the
         // tokenized form isn't consumed by current zshrs pipeline).
-                                                          // Result kept as-is; tok_arg is a hint for downstream glob
-                                                          // engines that consume the tokenized form directly.
+        // Result kept as-is; tok_arg is a hint for downstream glob
+        // engines that consume the tokenized form directly.
     }
     result // c:1553
 } // c:1554
@@ -2394,12 +2414,16 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
         // labeled Outpar — both wrong. `\u{85}` is Stringg ($), `\u{86}`
         // is Hat (^). Canonical Inpar/Outpar are 0x88/0x8a per
         // `Src/zsh.h:163,165`. Use the canonical consts.
-        match c {                                           // c:1579
-            '[' | crate::ported::zsh_h::Inbrack => depth += 1,  // c:1579
+        match c {
+            // c:1579
+            '[' | crate::ported::zsh_h::Inbrack => depth += 1, // c:1579
             ']' | crate::ported::zsh_h::Outbrack => depth -= 1, // c:1579
-            '(' | crate::ported::zsh_h::Inpar => depth += 1,    // c:1579
-            ')' | crate::ported::zsh_h::Outpar => depth -= 1,   // c:1579
-            ':' if depth == 0 => { end = Some(i); break; }  // c:1579
+            '(' | crate::ported::zsh_h::Inpar => depth += 1,   // c:1579
+            ')' | crate::ported::zsh_h::Outpar => depth -= 1,  // c:1579
+            ':' if depth == 0 => {
+                end = Some(i);
+                break;
+            } // c:1579
             _ => {}
         }
     }
@@ -2426,11 +2450,11 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 // parameter substitution                                                   // c:1601
 pub fn paramsubst(
     // c:1625
-    s: &str,                // c:1625
-    start_pos: usize,       // c:1625
-    qt: bool,               // c:1625
-    pf_flags: i32,          // c:1625
-    ret_flags: &mut i32,    // c:1625
+    s: &str,             // c:1625
+    start_pos: usize,    // c:1625
+    qt: bool,            // c:1625
+    pf_flags: i32,       // c:1625
+    ret_flags: &mut i32, // c:1625
 ) -> (String, usize, Vec<String>) {
     // c:1625
     let chars: Vec<char> = s.chars().collect(); // c:1625
@@ -2498,24 +2522,24 @@ pub fn paramsubst(
         // full LinkList-based rewrite.
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
-        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM);          // c:1663
+        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM); // c:1663
 
         // c:1669 — `int globsubst = isset(GLOBSUBST);` (handled inline
         // at use sites via opt_state_set rather than tracked here).
 
         // c:1673 — `int evalchar = 0;` (#) char-eval flag.
-        let mut evalchar = false;                                             // c:1673
+        let mut evalchar = false; // c:1673
 
         // c:1678 — `int getlen = 0;` (handled via prefix-# arm).
         // c:1679 — `int whichlen = 0;` (c)/(w)/(W) length-flavor int.
-        let mut whichlen: i32 = 0;                                            // c:1679
+        let mut whichlen: i32 = 0; // c:1679
 
         // c:1683 — `int chkset = 0;` (${+pm} flag) — see chkset
         // handling in the body; declared locally there for now.
 
         // c:1691 — `int vunset = 0;` — value-was-unset flag.
         // c:1697 — `int wantt = 0;` (t) typeinfo flag.
-        let mut wantt = false;                                                // c:1697
+        let mut wantt = false; // c:1697
 
         // c:1705 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
         // !(pf_flags & PREFORK_SINGLE) && !qt;`
@@ -2528,110 +2552,116 @@ pub fn paramsubst(
         // directly until LinkList rewrite lands).
 
         // c:1720 — `int flags = 0;` SUB_* match flag bitmask.
-        let mut sub_flags_bits: i32 = 0;                                      // c:1720
+        let mut sub_flags_bits: i32 = 0; // c:1720
 
         // c:1722 — `int flnum = 0;` (I:N:) match-index flag.
-        let mut flnum: u32 = 0;                                               // c:1722
+        let mut flnum: u32 = 0; // c:1722
 
         // c:1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
-        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW;        // c:1728
-        let mut indord: i32 = 0;                                              // c:1728
+        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW; // c:1728
+        let mut indord: i32 = 0; // c:1728
 
         // c:1730 — `int unique = 0;` (u) flag.
-        let mut unique = false;                                               // c:1730
+        let mut unique = false; // c:1730
 
         // c:1732 — `int casmod = CASMOD_NONE;`
-        let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE;             // c:1732
+        let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE; // c:1732
 
         // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr = 0;`
-        let mut quotemod: i32 = 0;                                            // c:1739
-        let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE;              // c:1739
-        let mut quoteerr = false;                                             // c:1739
+        let mut quotemod: i32 = 0; // c:1739
+        let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE; // c:1739
+        let mut quoteerr = false; // c:1739
 
         // c:1746 — `int mods = 0;` bit0=D, bit1=V.
-        let mut mods: i32 = 0;                                                // c:1746
+        let mut mods: i32 = 0; // c:1746
 
         // c:1754 — `int shsplit = 0;` LEXFLAGS_* bitmask.
-        let mut shsplit: i32 = 0;                                             // c:1754
+        let mut shsplit: i32 = 0; // c:1754
 
         // c:1759 — `int ssub = (pf_flags & PREFORK_SINGLE);` (read at
         // call sites; not tracked as a local in current port).
 
         // c:1766 — `char *sep = NULL, *spsep = NULL;`
-        let mut spsep: Option<String> = None;                                 // c:1766
-        let mut sep: Option<String> = None;                                   // c:1766
+        let mut spsep: Option<String> = None; // c:1766
+        let mut sep: Option<String> = None; // c:1766
 
         // c:1772 — `char *premul = NULL, *postmul = NULL,
         //                *preone = NULL, *postone = NULL;`
-        let mut premul: Option<String> = None;                                // c:1772
-        let mut postmul: Option<String> = None;                               // c:1772
-        let mut preone: Option<String> = None;                                // c:1772
-        let mut postone: Option<String> = None;                               // c:1772
+        let mut premul: Option<String> = None; // c:1772
+        let mut postmul: Option<String> = None; // c:1772
+        let mut preone: Option<String> = None; // c:1772
+        let mut postone: Option<String> = None; // c:1772
 
         // c:1774 — `char *replstr = NULL;` (replacement string for
         // ${var/pat/repl}) — handled inline in the replace arm.
 
         // c:1776 — `zlong prenum = 0, postnum = 0;`
-        let mut prenum: i64 = 0;                                              // c:1776
-        let mut postnum: i64 = 0;                                             // c:1776
+        let mut prenum: i64 = 0; // c:1776
+        let mut postnum: i64 = 0; // c:1776
 
         // c:1779 — `int multi_width = 0;` (MULTIBYTE_SUPPORT).
-        let mut multi_width: u32 = 0;                                         // c:1779
+        let mut multi_width: u32 = 0; // c:1779
 
         // c:1787 — `int copied = 0;` (handled per-arm).
 
         // c:1793 — `int arrasg = 0;` (A)/(AA) array-assign flag.
-        let mut arrasg: i32 = 0;                                              // c:1793
+        let mut arrasg: i32 = 0; // c:1793
 
         // c:1798 — `int eval = 0;` (e) flag.
-        let mut eval = false;                                                 // c:1798
+        let mut eval = false; // c:1798
 
         // c:1803 — `int aspar = 0;` (P) flag.
-        let mut aspar = false;                                                // c:1803
+        let mut aspar = false; // c:1803
 
         // c:1807 — `int presc = 0;` (%) flag counter.
-        let mut presc: i32 = 0;                                               // c:1807
+        let mut presc: i32 = 0; // c:1807
 
         // c:1811 — `int getkeys = -1;` (g) flag GETKEY_* bitmask
         // (-1 = not seen).
-        let mut getkeys: i32 = -1;                                            // c:1811
+        let mut getkeys: i32 = -1; // c:1811
 
         // c:1817 — `int nojoin = (pf_flags & PREFORK_SHWORDSPLIT) ?
         // !(ifs && *ifs) && !qt : 0;` (@) flag tri-state.
-        let mut nojoin: i32 = if (pf_flags & PREFORK_SHWORDSPLIT) != 0 {     // c:1817
-            let ifs = vars_get("IFS").unwrap_or_default();                   // c:1817
-            if ifs.is_empty() && !qt { 1 } else { 0 }                        // c:1817
-        } else {                                                              // c:1817
-            0                                                                 // c:1817
-        };                                                                    // c:1817
+        let mut nojoin: i32 = if (pf_flags & PREFORK_SHWORDSPLIT) != 0 {
+            // c:1817
+            let ifs = vars_get("IFS").unwrap_or_default(); // c:1817
+            if ifs.is_empty() && !qt {
+                1
+            } else {
+                0
+            } // c:1817
+        } else {
+            // c:1817
+            0 // c:1817
+        }; // c:1817
 
         // c:1823 — `char inbrace = 0;` 1 if `${...}`, 0 if bare `$...`.
         // Set to 1 here because we entered the brace arm at line 2437.
         // C sets it later (around c:2076-2079) after parsing the
         // leading `{`; effect is identical because all body code
         // below this point only runs in the brace arm.
-        let mut inbrace: i32 = 1;                                             // c:1823 set to 1 since in-brace arm
-        let _ = &mut inbrace;  // suppress unused-mut until consumer-site wiring lands
+        let mut inbrace: i32 = 1; // c:1823 set to 1 since in-brace arm
+        let _ = &mut inbrace; // suppress unused-mut until consumer-site wiring lands
 
         // c:1828 — `int hkeys = 0;` (k) flag SCANPM_WANTKEYS bits.
-        let mut hkeys: u32 = 0;                                               // c:1828
+        let mut hkeys: u32 = 0; // c:1828
 
         // c:1835 — `int hvals = 0;` (v) flag SCANPM_WANTVALS bits.
-        let mut hvals: u32 = 0;                                               // c:1835
+        let mut hvals: u32 = 0; // c:1835
 
         // c:1843 — `int subexp;` 1 if the body started with `$`/`(`/
         // `{` (nested sub-expression), 0 otherwise. Read by the
         // fetchvalue dispatch at c:2767 + the (P)-flag arm.
-        let mut subexp: i32 = 0;                                              // c:1843
+        let mut subexp: i32 = 0; // c:1843
 
         // c:2140 — `int escapes = 0;` (p) flag; declared inside
         // flag-loop in C, hoisted to function scope here.
-        let mut escapes: bool = false;                                        // c:2140
+        let mut escapes: bool = false; // c:2140
 
         // Rust-port-only: temp slot for nested-expansion array result
         // — NOT IN C. Set when `${(@)${(@)…}…}` outer (@) triggers
         // multsub on the inner; cleared at end of paramsubst.
-        let mut subexp_array_temp: Option<String> = None;                    // c:N/A (Rust-only)
+        let mut subexp_array_temp: Option<String> = None; // c:N/A (Rust-only)
         if body_chars.first() == Some(&'(') {
             // c:2147
             // `~` inside `(flags)` toggles tok_arg for untok_and_escape on
@@ -2664,44 +2694,53 @@ pub fn paramsubst(
                             break;
                         }
                     } // c:2147
-                    'L' => {                                                  // c:2197
-                        casmod = crate::ported::zsh_h::CASMOD_LOWER;         // c:2198
-                    }                                                         // c:2199
-                    'U' => {                                                  // c:2200
-                        casmod = crate::ported::zsh_h::CASMOD_UPPER;         // c:2201
-                    }                                                         // c:2202
-                    'C' => {                                                  // c:2203
-                        casmod = crate::ported::zsh_h::CASMOD_CAPS;          // c:2204
-                    }                                                         // c:2205
-                    'q' => {                                                  // c:2236
+                    'L' => {
+                        // c:2197
+                        casmod = crate::ported::zsh_h::CASMOD_LOWER; // c:2198
+                    } // c:2199
+                    'U' => {
+                        // c:2200
+                        casmod = crate::ported::zsh_h::CASMOD_UPPER; // c:2201
+                    } // c:2202
+                    'C' => {
+                        // c:2203
+                        casmod = crate::ported::zsh_h::CASMOD_CAPS; // c:2204
+                    } // c:2205
+                    'q' => {
+                        // c:2236
                         // c:2237 — `if (quotetype == QT_DOLLARS ||
                         // quotetype == QT_BACKSLASH_PATTERN) goto flagerr;`
                         // (skipped here — flag-error tracking not yet
                         // ported; full goto-flagerr arm is c:2237-2239).
-                        let next = body_chars.get(idx + 1).copied();         // c:2240 IS_DASH(s[1]) || s[1]=='+'
-                        if next == Some('-') || next == Some('+') {          // c:2240
+                        let next = body_chars.get(idx + 1).copied(); // c:2240 IS_DASH(s[1]) || s[1]=='+'
+                        if next == Some('-') || next == Some('+') {
+                            // c:2240
                             // c:2241-2242 — `if (quotemod) goto flagerr;`
                             // (flagerr not yet ported; skipped).
-                            idx += 1;                                         // c:2243 s++
-                            quotemod = 1;                                     // c:2244
-                            quotetype = if next == Some('+') {                // c:2245
-                                crate::ported::zsh_h::QT_QUOTEDZPUTS         // c:2245
-                            } else {                                          // c:2246
-                                crate::ported::zsh_h::QT_SINGLE_OPTIONAL     // c:2246
-                            };                                                // c:2246
-                        } else {                                              // c:2247
+                            idx += 1; // c:2243 s++
+                            quotemod = 1; // c:2244
+                            quotetype = if next == Some('+') {
+                                // c:2245
+                                crate::ported::zsh_h::QT_QUOTEDZPUTS // c:2245
+                            } else {
+                                // c:2246
+                                crate::ported::zsh_h::QT_SINGLE_OPTIONAL // c:2246
+                            }; // c:2246
+                        } else {
+                            // c:2247
                             // c:2248-2251 — `if (quotetype ==
                             // QT_SINGLE_OPTIONAL) goto flagerr;` (skipped).
-                            quotemod += 1;                                    // c:2252 quotemod++
-                            quotetype += 1;                                   // c:2252 quotetype++
-                        }                                                     // c:2253
-                    }                                                         // c:2254
+                            quotemod += 1; // c:2252 quotemod++
+                            quotetype += 1; // c:2252 quotetype++
+                        } // c:2253
+                    } // c:2254
                     'A' => {
                         arrasg += 1;
                     } // c:2161 (A array-assign; AA associative-assign)
-                    '@' => {                                                  // c:2164
-                        nojoin = 2;  // c:2165 nojoin = 2 means force
-                    }                                                         // c:2166
+                    '@' => {
+                        // c:2164
+                        nojoin = 2; // c:2165 nojoin = 2 means force
+                    } // c:2166
                     'P' => {
                         aspar = true;
                     } // c:2295
@@ -2802,27 +2841,35 @@ pub fn paramsubst(
                         }
                         continue; // c:2374 (loop continues from idx)
                     }
-                    'o' => {                                                  // c:2207
-                        if sortit == 0 {                                      // c:2208 if (!sortit)
-                            sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW;  // c:2209
-                        }                                                     // c:2209
-                    }                                                         // c:2210
-                    'O' => {                                                  // c:2211
-                        sortit |= crate::ported::zsh_h::SORTIT_BACKWARDS;    // c:2212
-                    }                                                         // c:2213
-                    'i' => {                                                  // c:2214
+                    'o' => {
+                        // c:2207
+                        if sortit == 0 {
+                            // c:2208 if (!sortit)
+                            sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW; // c:2209
+                        } // c:2209
+                    } // c:2210
+                    'O' => {
+                        // c:2211
+                        sortit |= crate::ported::zsh_h::SORTIT_BACKWARDS; // c:2212
+                    } // c:2213
+                    'i' => {
+                        // c:2214
                         sortit |= crate::ported::zsh_h::SORTIT_IGNORING_CASE; // c:2215
-                    }                                                         // c:2216
-                    'n' => {                                                  // c:2217
-                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY;  // c:2218
-                    }                                                         // c:2219
-                    '-' => {                                                  // c:2220 case '-': case Dash:
-                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY_SIGNED; // c:2222
-                    }                                                         // c:2223
-                    'a' => {                                                  // c:2224
-                        sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW;      // c:2225
-                        indord = 1;                                           // c:2226
-                    }                                                         // c:2227
+                    } // c:2216
+                    'n' => {
+                        // c:2217
+                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY; // c:2218
+                    } // c:2219
+                    '-' => {
+                        // c:2220 case '-': case Dash:
+                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY_SIGNED;
+                        // c:2222
+                    } // c:2223
+                    'a' => {
+                        // c:2224
+                        sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW; // c:2225
+                        indord = 1; // c:2226
+                    } // c:2227
                     'u' => {
                         unique = true;
                     } // c:2476
@@ -2902,62 +2949,79 @@ pub fn paramsubst(
                     'e' => {
                         eval = true;
                     } // c:2268 (e)
-                    'Q' => {                                                  // c:2261
-                        quotemod -= 1;                                        // c:2262
-                    }                                                         // c:2263
+                    'Q' => {
+                        // c:2261
+                        quotemod -= 1; // c:2262
+                    } // c:2263
                     'X' => {
                         quoteerr = true;
                     } // c:2264 (X)
-                    'D' => {                                                  // c:2229
-                        mods |= 1;                                            // c:2230
-                    }                                                         // c:2231
-                    'V' => {                                                  // c:2232
-                        mods |= 2;                                            // c:2233
-                    }                                                         // c:2234
-                    'b' => {                                                  // c:2255
+                    'D' => {
+                        // c:2229
+                        mods |= 1; // c:2230
+                    } // c:2231
+                    'V' => {
+                        // c:2232
+                        mods |= 2; // c:2233
+                    } // c:2234
+                    'b' => {
+                        // c:2255
                         // c:2256-2257 — `if (quotemod || quotetype !=
                         // QT_NONE) goto flagerr;` (flagerr not yet
                         // ported; skipped).
-                        quotemod = 1;                                         // c:2258
+                        quotemod = 1; // c:2258
                         quotetype = crate::ported::zsh_h::QT_BACKSLASH_PATTERN; // c:2259
-                    }                                                         // c:2260
-                    'c' => {                                                  // c:2275
-                        whichlen = 1;                                         // c:2276
-                    }                                                         // c:2277
-                    'w' => {                                                  // c:2278
-                        whichlen = 2;                                         // c:2279
-                    }                                                         // c:2280
-                    'W' => {                                                  // c:2281
-                        whichlen = 3;                                         // c:2282
-                    }                                                         // c:2283
-                    'z' => {                                                  // c:2439
-                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE;     // c:2440
-                    }                                                         // c:2441
-                    'Z' => {                                                  // c:2443
+                    } // c:2260
+                    'c' => {
+                        // c:2275
+                        whichlen = 1; // c:2276
+                    } // c:2277
+                    'w' => {
+                        // c:2278
+                        whichlen = 2; // c:2279
+                    } // c:2280
+                    'W' => {
+                        // c:2281
+                        whichlen = 3; // c:2282
+                    } // c:2283
+                    'z' => {
+                        // c:2439
+                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE; // c:2440
+                    } // c:2441
+                    'Z' => {
+                        // c:2443
                         // (Z:cCn:) — shell-tokenize with sub-flags:
                         //   c: keep comments (LEXFLAGS_COMMENTS_KEEP)
                         //   C: strip comments (LEXFLAGS_COMMENTS_STRIP)
                         //   n: treat newlines as whitespace (LEXFLAGS_NEWLINE)
                         // Direct port of subst.c:2443-2473 — bare (Z) sets
                         // ACTIVE; sub-letters OR additional bits.
-                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE;     // c:2443 (implicit from Z arm)
-                        idx += 1;                                             // c:2444 ++s
-                        if idx < body_chars.len() {                          // c:2445 if (*t)
-                            let del = body_chars[idx];                       // c:2446 sav = *t
-                            idx += 1;                                         // c:2448 while (*++s)
+                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
+                        idx += 1; // c:2444 ++s
+                        if idx < body_chars.len() {
+                            // c:2445 if (*t)
+                            let del = body_chars[idx]; // c:2446 sav = *t
+                            idx += 1; // c:2448 while (*++s)
                             while idx < body_chars.len()                     // c:2448
                                 && body_chars[idx] != del
-                            {                                                 // c:2448
-                                let ch = body_chars[idx];                    // c:2449 switch (*s)
-                                if ch == 'c' {                                // c:2450
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP; // c:2452
-                                } else if ch == 'C' {                         // c:2455
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP; // c:2457
-                                } else if ch == 'n' {                         // c:2460
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_NEWLINE; // c:2462
-                                }                                             // c:2463
-                                idx += 1;                                     // c:2448
-                            }                                                 // c:2469
+                            {
+                                // c:2448
+                                let ch = body_chars[idx]; // c:2449 switch (*s)
+                                if ch == 'c' {
+                                    // c:2450
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP;
+                                // c:2452
+                                } else if ch == 'C' {
+                                    // c:2455
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP;
+                                // c:2457
+                                } else if ch == 'n' {
+                                    // c:2460
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_NEWLINE;
+                                    // c:2462
+                                } // c:2463
+                                idx += 1; // c:2448
+                            } // c:2469
                             if idx < body_chars.len() {
                                 idx += 1;
                             } // c:2444
@@ -2980,34 +3044,40 @@ pub fn paramsubst(
                         // via the `(p)` flag's separator arg or
                         // via `(g)` itself promoted to whole-value
                         // decoding when no `(p)` is present).
-                        idx += 1;                                             // c:2410 ++s
-                        if getkeys < 0 {                                      // c:2411
-                            getkeys = 0;                                      // c:2412
-                        }                                                     // c:2412
-                        if idx < body_chars.len() {                          // c:2413 if (*t)
-                            let del = body_chars[idx];                       // c:2414 sav = *t
-                            idx += 1;                                         // c:2416 while (*++s)
+                        idx += 1; // c:2410 ++s
+                        if getkeys < 0 {
+                            // c:2411
+                            getkeys = 0; // c:2412
+                        } // c:2412
+                        if idx < body_chars.len() {
+                            // c:2413 if (*t)
+                            let del = body_chars[idx]; // c:2414 sav = *t
+                            idx += 1; // c:2416 while (*++s)
                             while idx < body_chars.len()                     // c:2416
                                 && body_chars[idx] != del
-                            {                                                 // c:2416
-                                match body_chars[idx] {                      // c:2417 switch (*s)
+                            {
+                                // c:2416
+                                match body_chars[idx] {
+                                    // c:2417 switch (*s)
                                     'e' => getkeys |= crate::ported::utils::GETKEY_EMACS as i32, // c:2418-2419
                                     'o' => getkeys |= crate::ported::utils::GETKEY_OCTAL_ESC as i32, // c:2421-2422
                                     'c' => getkeys |= crate::ported::utils::GETKEY_CTRL as i32, // c:2424-2425
-                                    _ => {                                    // c:2428 default
+                                    _ => {
+                                        // c:2428 default
                                         // c:2430 goto flagerr — emit bad-subst.
                                         zerr("bad substitution");
                                         errflag_set_error();
                                         return (String::new(), new_pos, vec![]);
-                                    }                                         // c:2431
-                                }                                             // c:2432
-                                idx += 1;                                     // c:2416
-                            }                                                 // c:2432
-                            if idx < body_chars.len() {                       // c:2410 skip closing del
+                                    } // c:2431
+                                } // c:2432
+                                idx += 1; // c:2416
+                            } // c:2432
+                            if idx < body_chars.len() {
+                                // c:2410 skip closing del
                                 idx += 1;
                             }
-                        }                                                     // c:2413
-                        continue;                                             // c:2410
+                        } // c:2413
+                        continue; // c:2410
                     } // c:2409 (g)
                     '~' => {
                         tok_arg = !tok_arg;
@@ -3107,9 +3177,7 @@ pub fn paramsubst(
                 let after_next = body_chars.get(idx + 2).copied();
                 let next_is_name_start = match next {
                     Some(ch) if ch.is_ascii_alphanumeric() => true,
-                    Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '!' | '$' | '-' | '0') => {
-                        true
-                    }
+                    Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '!' | '$' | '-' | '0') => true,
                     Some(':') if after_next == Some('-') => true,
                     Some(ch) if ch == STRING || ch == Qstring => matches!(
                         body_chars.get(idx + 2).copied(),
@@ -3138,8 +3206,9 @@ pub fn paramsubst(
                 }
                 continue;
             }
-            if c == '+' {                                                    // c:2199
-                let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0');  // c:2199
+            if c == '+' {
+                // c:2199
+                let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0'); // c:2199
                 let ok = nxt.is_ascii_alphanumeric()
                     || nxt == '_'
                     || matches!(nxt, '@' | '*' | '#' | '?')
@@ -3549,33 +3618,35 @@ pub fn paramsubst(
                 let nul = std::ptr::null_mut();
                 let is_splice = sub == "@" || sub == "*";
                 let pm: Option<crate::ported::zsh_h::Param> = if is_splice {
-                    None    // splice form — handled below.
-                } else { match var_name.as_str() {
-                    "aliases"             => getpmralias(nul, sub),       // c:1923
-                    "galiases"            => getpmgalias(nul, sub),       // c:1937
-                    "saliases"            => getpmsalias(nul, sub),       // c:1951
-                    "dis_aliases"         => getpmdisralias(nul, sub),    // c:1930
-                    "dis_galiases"        => getpmdisgalias(nul, sub),    // c:1944
-                    "dis_saliases"        => getpmdissalias(nul, sub),    // c:1958
-                    "builtins"            => getpmbuiltin(nul, sub),      // c:799
-                    "dis_builtins"        => getpmdisbuiltin(nul, sub),   // c:806
-                    "commands"            => getpmcommand(nul, sub),      // c:213
-                    "functions"           => getpmfunction(nul, sub),     // c:444
-                    "dis_functions"       => getpmdisfunction(nul, sub),  // c:451
-                    "functions_source"    => getpmfunction_source(nul, sub),     // c:591
-                    "dis_functions_source"=> getpmdisfunction_source(nul, sub),  // c:600
-                    "nameddirs"           => getpmnameddir(nul, sub),     // c:1597
-                    "userdirs"            => getpmuserdir(nul, sub),      // c:1646
-                    "options"             => getpmoption(nul, sub),       // c:988
-                    "parameters"          => getpmparameter(nul, sub),    // c:99
-                    "history"             => getpmhistory(nul, sub),      // c:1156
-                    "modules"             => getpmmodule(nul, sub),       // c:1040
-                    "jobdirs"             => getpmjobdir(nul, sub),       // c:1457
-                    "jobstates"           => getpmjobstate(nul, sub),     // c:1385
-                    "jobtexts"            => getpmjobtext(nul, sub),      // c:1277
-                    "usergroups"          => getpmusergroups(nul, sub),   // c:2102
-                    _ => None,
-                }};
+                    None // splice form — handled below.
+                } else {
+                    match var_name.as_str() {
+                        "aliases" => getpmralias(nul, sub),                   // c:1923
+                        "galiases" => getpmgalias(nul, sub),                  // c:1937
+                        "saliases" => getpmsalias(nul, sub),                  // c:1951
+                        "dis_aliases" => getpmdisralias(nul, sub),            // c:1930
+                        "dis_galiases" => getpmdisgalias(nul, sub),           // c:1944
+                        "dis_saliases" => getpmdissalias(nul, sub),           // c:1958
+                        "builtins" => getpmbuiltin(nul, sub),                 // c:799
+                        "dis_builtins" => getpmdisbuiltin(nul, sub),          // c:806
+                        "commands" => getpmcommand(nul, sub),                 // c:213
+                        "functions" => getpmfunction(nul, sub),               // c:444
+                        "dis_functions" => getpmdisfunction(nul, sub),        // c:451
+                        "functions_source" => getpmfunction_source(nul, sub), // c:591
+                        "dis_functions_source" => getpmdisfunction_source(nul, sub), // c:600
+                        "nameddirs" => getpmnameddir(nul, sub),               // c:1597
+                        "userdirs" => getpmuserdir(nul, sub),                 // c:1646
+                        "options" => getpmoption(nul, sub),                   // c:988
+                        "parameters" => getpmparameter(nul, sub),             // c:99
+                        "history" => getpmhistory(nul, sub),                  // c:1156
+                        "modules" => getpmmodule(nul, sub),                   // c:1040
+                        "jobdirs" => getpmjobdir(nul, sub),                   // c:1457
+                        "jobstates" => getpmjobstate(nul, sub),               // c:1385
+                        "jobtexts" => getpmjobtext(nul, sub),                 // c:1277
+                        "usergroups" => getpmusergroups(nul, sub),            // c:2102
+                        _ => None,
+                    }
+                };
                 // c:`scanpm<X>` paths — splice form `${(...)var[@]}`
                 // walks the backing table directly and joins values.
                 pm.and_then(|p| p.u_str).or_else(|| {
@@ -3717,8 +3788,7 @@ pub fn paramsubst(
             // exactly one location.
             exec_getsparam(&var_name)
                 .or_else(|| {
-                    assoc_get(&var_name)
-                        .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    assoc_get(&var_name).map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
                 })
                 .or_else(|| {
                     if is_special_name {
@@ -3755,7 +3825,8 @@ pub fn paramsubst(
                 || assoc_get(&var_name)
                     .map(|m| m.contains_key(sub))
                     .unwrap_or(false)
-                || arrays_get(&var_name).as_ref()
+                || arrays_get(&var_name)
+                    .as_ref()
                     .map(|a| {
                         sub.parse::<i64>().ok().is_some_and(|i| {
                             let len = a.len() as i64;
@@ -3875,38 +3946,37 @@ pub fn paramsubst(
                     // (hashtable.c:594).
                     match var_name.as_str() {
                         // c:2247
-                        "aliases" => crate::ported::hashtable::aliastab_lock()
-                            .read()
-                            .ok()
-                            .map(|t| {
-                                let mut names: Vec<String> = t.iter()
-                                    .map(|(k, _)| k.clone())
-                                    .collect();
-                                names.sort();
-                                names.join(" ")
-                            }),
-                        "functions" | "dis_functions" =>
-                            crate::ported::hashtable::shfunctab_lock()
+                        "aliases" => {
+                            crate::ported::hashtable::aliastab_lock()
                                 .read()
                                 .ok()
                                 .map(|t| {
-                                    let mut names: Vec<String> = t.iter()
-                                        .map(|(k, _)| k.clone())
-                                        .collect();
+                                    let mut names: Vec<String> =
+                                        t.iter().map(|(k, _)| k.clone()).collect();
                                     names.sort();
                                     names.join(" ")
-                                }),
-                        "commands" =>
+                                })
+                        }
+                        "functions" | "dis_functions" => crate::ported::hashtable::shfunctab_lock()
+                            .read()
+                            .ok()
+                            .map(|t| {
+                                let mut names: Vec<String> =
+                                    t.iter().map(|(k, _)| k.clone()).collect();
+                                names.sort();
+                                names.join(" ")
+                            }),
+                        "commands" => {
                             crate::ported::hashtable::cmdnamtab_lock()
                                 .read()
                                 .ok()
                                 .map(|t| {
-                                    let mut names: Vec<String> = t.iter()
-                                        .map(|(k, _)| k.clone())
-                                        .collect();
+                                    let mut names: Vec<String> =
+                                        t.iter().map(|(k, _)| k.clone()).collect();
                                     names.sort();
                                     names.join(" ")
-                                }),
+                                })
+                        }
                         _ => None, // c:2247
                     } // c:2247
                 }) // c:2247
@@ -3921,7 +3991,8 @@ pub fn paramsubst(
             // (@) array splat — preserve element shape via space-join.
             // For full splat into multiple result_nodes, the
             // multsub-aware caller handles it; we emit space-joined here.
-            value = arrays_get(&var_name).as_ref()
+            value = arrays_get(&var_name)
+                .as_ref()
                 .map(|a| a.join(" "))
                 .unwrap_or_else(|| raw_value.clone());
         } else {
@@ -3954,18 +4025,16 @@ pub fn paramsubst(
                 let cur_sub_flags = sub_flags_get(); // c:2171
                 let invert = (cur_sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
                 sub_flags_set(0); // c:2169 (consume)
-                                     // Direct port of subst.c:3422 `if (!vunset && isarr)` —
-                                     // the array iteration only fires when `isarr` is set.
-                                     // After getindex computes a single-slot subscript, isarr
-                                     // is cleared at line 2915 (`v->scanflags ? 1 : 0`) and
-                                     // the C source falls through to getmatch on `val`
-                                     // (line 3451). Mirror that here: when subscript was
-                                     // applied, treat raw_value as the scalar `val` and
-                                     // skip the per-element arr loop.
+                                  // Direct port of subst.c:3422 `if (!vunset && isarr)` —
+                                  // the array iteration only fires when `isarr` is set.
+                                  // After getindex computes a single-slot subscript, isarr
+                                  // is cleared at line 2915 (`v->scanflags ? 1 : 0`) and
+                                  // the C source falls through to getmatch on `val`
+                                  // (line 3451). Mirror that here: when subscript was
+                                  // applied, treat raw_value as the scalar `val` and
+                                  // skip the per-element arr loop.
                 let has_subscript = subscript.is_some();
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_subscript)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
                         .filter(|elem| {
@@ -4024,8 +4093,7 @@ pub fn paramsubst(
                 value = singsub(default);
                 if arrasg == 1 {
                     // c:3263 (A)
-                    let ifs = vars_get("IFS")
-                        .unwrap_or_else(|| " \t\n".to_string());
+                    let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<String> = value
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
@@ -4034,8 +4102,7 @@ pub fn paramsubst(
                     exec_assignaparam(&var_name, parts);
                 } else if arrasg == 2 {
                     // c:3263 (AA)
-                    let ifs = vars_get("IFS")
-                        .unwrap_or_else(|| " \t\n".to_string());
+                    let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<String> = value
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
@@ -4056,8 +4123,7 @@ pub fn paramsubst(
                     value = singsub(default);
                     if arrasg == 1 {
                         // c:3263 (A)
-                        let ifs = vars_get("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
+                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
@@ -4066,8 +4132,7 @@ pub fn paramsubst(
                         exec_assignaparam(&var_name, parts);
                     } else if arrasg == 2 {
                         // c:3263 (AA)
-                        let ifs = vars_get("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
+                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
@@ -4092,8 +4157,7 @@ pub fn paramsubst(
                     value = singsub(default);
                     if arrasg == 1 {
                         // c:3263 (A)
-                        let ifs = vars_get("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
+                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
@@ -4102,8 +4166,7 @@ pub fn paramsubst(
                         exec_assignaparam(&var_name, parts);
                     } else if arrasg == 2 {
                         // c:3263 (AA)
-                        let ifs = vars_get("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
+                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
@@ -4309,9 +4372,7 @@ pub fn paramsubst(
                     })
                     .unwrap_or(false);
                 let has_subscript = has_scalar_subscript;
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_subscript)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870 (auto-splat)
@@ -4485,9 +4546,7 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_subscript_one)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript_one) {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
@@ -4530,9 +4589,7 @@ pub fn paramsubst(
                         _ => val.to_string(),
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_scalar_sub)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -4560,9 +4617,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_scalar_sub)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -4595,9 +4650,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_scalar_sub)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -4625,9 +4678,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = arrays_get(&var_name)
-                    .filter(|_| !has_scalar_sub)
-                {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -4732,11 +4783,9 @@ pub fn paramsubst(
                     // c:4531
                     // Per-element on arrays.
                     let mod_str = format!(":{}", slice);
-                    let mod_one =
-                        |s: &str| -> String { modify(s, &mod_str) };
+                    let mod_one = |s: &str| -> String { modify(s, &mod_str) };
                     if let Some(parts) = split_parts.clone() {
-                        let new_parts: Vec<String> =
-                            parts.iter().map(|s| mod_one(s)).collect();
+                        let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
                     } else if let Some(arr) = arrays_get(&var_name) {
@@ -4758,9 +4807,8 @@ pub fn paramsubst(
                     // result like filter/sort) → state.arrays → joined
                     // value. Direct port of zsh's getarrvalue → slice
                     // dispatch which uses aval if isarr is set.
-                    let array_source: Option<Vec<String>> = split_parts
-                        .clone()
-                        .or_else(|| arrays_get(&var_name));
+                    let array_source: Option<Vec<String>> =
+                        split_parts.clone().or_else(|| arrays_get(&var_name));
                     if let Some(mut arr) = array_source {
                         // Positional-param slice (`@`/`*`/`argv`) — zsh
                         // counts offset 0 as $0 (script/function name),
@@ -4803,9 +4851,7 @@ pub fn paramsubst(
                         } else {
                             off.min(total)
                         } as usize;
-                        let len = parts
-                            .get(1)
-                            .map(|s| singsub(s).parse::<i64>().unwrap_or(0));
+                        let len = parts.get(1).map(|s| singsub(s).parse::<i64>().unwrap_or(0));
                         value = match len {
                             Some(l) if l >= 0 => {
                                 raw_value.chars().skip(start).take(l as usize).collect()
@@ -4832,61 +4878,166 @@ pub fn paramsubst(
             // c:2814 — read PM_* flags directly from paramtab and
             // synthesize the type tag. Mirrors C `pm->node.flags &
             // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = crate::ported::params::paramtab().read()                  // c:2814
-                .ok()                                                           // c:2814
-                .and_then(|tab| tab.get(&var_name).map(|pm| {                  // c:2814
-                    let f = pm.node.flags as u32;                              // c:2814
-                    let val = if f & PM_HASHED != 0 { "association" }          // c:2823 case PM_HASHED
-                          else if f & PM_ARRAY != 0 { "array" }                // c:2819 case PM_ARRAY
-                          else if f & PM_INTEGER != 0 { "integer" }            // c:2820 case PM_INTEGER
-                          else if f & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" } // c:2821-2822 PM_EFLOAT|PM_FFLOAT
-                          else if f & PM_NAMEREF != 0 { "nameref" }            // c:2818 case PM_NAMEREF
-                          else { "scalar" };                                   // c:2817 case PM_SCALAR
-                    let val = crate::ported::string::dupstring(val);           // c:2825 val = dupstring(val)
-                    let val = if pm.level != 0                                  // c:2826
-                        { dyncat(&val, "-local") }       // c:2827
-                        else { val };                                           // c:2826
-                    let val = if f & PM_LEFT != 0                               // c:2828
-                        { dyncat(&val, "-left") }        // c:2829
-                        else { val };                                           // c:2828
-                    let val = if f & PM_RIGHT_B != 0                            // c:2830
-                        { dyncat(&val, "-right_blanks") } // c:2831
-                        else { val };                                           // c:2830
-                    let val = if f & PM_RIGHT_Z != 0                            // c:2832
-                        { dyncat(&val, "-right_zeros") } // c:2833
-                        else { val };                                           // c:2832
-                    let val = if f & PM_LOWER != 0                              // c:2834
-                        { dyncat(&val, "-lower") }       // c:2835
-                        else { val };                                           // c:2834
-                    let val = if f & PM_UPPER != 0                              // c:2836
-                        { dyncat(&val, "-upper") }       // c:2837
-                        else { val };                                           // c:2836
-                    let val = if f & PM_READONLY != 0                           // c:2838
-                        { dyncat(&val, "-readonly") }    // c:2839
-                        else { val };                                           // c:2838
-                    let val = if f & PM_TAGGED != 0                             // c:2840
-                        { dyncat(&val, "-tag") }         // c:2841
-                        else { val };                                           // c:2840
-                    let val = if f & PM_TIED != 0                               // c:2842
-                        { dyncat(&val, "-tied") }        // c:2843
-                        else { val };                                           // c:2842
-                    let val = if f & PM_EXPORTED != 0                           // c:2844
-                        { dyncat(&val, "-export") }      // c:2845
-                        else { val };                                           // c:2844
-                    let val = if f & PM_UNIQUE != 0                             // c:2846
-                        { dyncat(&val, "-unique") }      // c:2847
-                        else { val };                                           // c:2846
-                    let val = if f & PM_HIDE != 0                               // c:2848
-                        { dyncat(&val, "-hide") }        // c:2849
-                        else { val };                                           // c:2848
-                    let val = if f & PM_HIDEVAL != 0                            // c:2850
-                        { dyncat(&val, "-hideval") }     // c:2851
-                        else { val };                                           // c:2850
-                    let val = if f & PM_SPECIAL != 0                            // c:2852
-                        { dyncat(&val, "-special") }     // c:2853
-                        else { val };                                           // c:2852
-                    val                                                         // c:2854
-                }))
+            value = crate::ported::params::paramtab()
+                .read() // c:2814
+                .ok() // c:2814
+                .and_then(|tab| {
+                    tab.get(&var_name).map(|pm| {
+                        // c:2814
+                        let f = pm.node.flags as u32; // c:2814
+                        let val = if f & PM_HASHED != 0 {
+                            "association"
+                        }
+                        // c:2823 case PM_HASHED
+                        else if f & PM_ARRAY != 0 {
+                            "array"
+                        }
+                        // c:2819 case PM_ARRAY
+                        else if f & PM_INTEGER != 0 {
+                            "integer"
+                        }
+                        // c:2820 case PM_INTEGER
+                        else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                            "float"
+                        }
+                        // c:2821-2822 PM_EFLOAT|PM_FFLOAT
+                        else if f & PM_NAMEREF != 0 {
+                            "nameref"
+                        }
+                        // c:2818 case PM_NAMEREF
+                        else {
+                            "scalar"
+                        }; // c:2817 case PM_SCALAR
+                        let val = crate::ported::string::dupstring(val); // c:2825 val = dupstring(val)
+                        let val = if pm.level != 0
+                        // c:2826
+                        {
+                            dyncat(&val, "-local")
+                        }
+                        // c:2827
+                        else {
+                            val
+                        }; // c:2826
+                        let val = if f & PM_LEFT != 0
+                        // c:2828
+                        {
+                            dyncat(&val, "-left")
+                        }
+                        // c:2829
+                        else {
+                            val
+                        }; // c:2828
+                        let val = if f & PM_RIGHT_B != 0
+                        // c:2830
+                        {
+                            dyncat(&val, "-right_blanks")
+                        }
+                        // c:2831
+                        else {
+                            val
+                        }; // c:2830
+                        let val = if f & PM_RIGHT_Z != 0
+                        // c:2832
+                        {
+                            dyncat(&val, "-right_zeros")
+                        }
+                        // c:2833
+                        else {
+                            val
+                        }; // c:2832
+                        let val = if f & PM_LOWER != 0
+                        // c:2834
+                        {
+                            dyncat(&val, "-lower")
+                        }
+                        // c:2835
+                        else {
+                            val
+                        }; // c:2834
+                        let val = if f & PM_UPPER != 0
+                        // c:2836
+                        {
+                            dyncat(&val, "-upper")
+                        }
+                        // c:2837
+                        else {
+                            val
+                        }; // c:2836
+                        let val = if f & PM_READONLY != 0
+                        // c:2838
+                        {
+                            dyncat(&val, "-readonly")
+                        }
+                        // c:2839
+                        else {
+                            val
+                        }; // c:2838
+                        let val = if f & PM_TAGGED != 0
+                        // c:2840
+                        {
+                            dyncat(&val, "-tag")
+                        }
+                        // c:2841
+                        else {
+                            val
+                        }; // c:2840
+                        let val = if f & PM_TIED != 0
+                        // c:2842
+                        {
+                            dyncat(&val, "-tied")
+                        }
+                        // c:2843
+                        else {
+                            val
+                        }; // c:2842
+                        let val = if f & PM_EXPORTED != 0
+                        // c:2844
+                        {
+                            dyncat(&val, "-export")
+                        }
+                        // c:2845
+                        else {
+                            val
+                        }; // c:2844
+                        let val = if f & PM_UNIQUE != 0
+                        // c:2846
+                        {
+                            dyncat(&val, "-unique")
+                        }
+                        // c:2847
+                        else {
+                            val
+                        }; // c:2846
+                        let val = if f & PM_HIDE != 0
+                        // c:2848
+                        {
+                            dyncat(&val, "-hide")
+                        }
+                        // c:2849
+                        else {
+                            val
+                        }; // c:2848
+                        let val = if f & PM_HIDEVAL != 0
+                        // c:2850
+                        {
+                            dyncat(&val, "-hideval")
+                        }
+                        // c:2851
+                        else {
+                            val
+                        }; // c:2850
+                        let val = if f & PM_SPECIAL != 0
+                        // c:2852
+                        {
+                            dyncat(&val, "-special")
+                        }
+                        // c:2853
+                        else {
+                            val
+                        }; // c:2852
+                        val // c:2854
+                    })
+                })
                 .unwrap_or_else(|| {
                     if assoc_contains(&var_name) {
                         "association".to_string() // c:2814
@@ -4953,16 +5104,21 @@ pub fn paramsubst(
             }
             out
         };
-        if casmod != crate::ported::zsh_h::CASMOD_NONE {                     // c:3937 if (casmod != CASMOD_NONE)
-            let transform = |s: &str| -> String {                            // c:3937
-                if casmod == crate::ported::zsh_h::CASMOD_LOWER {            // c:3937 CASMOD_LOWER
-                    s.to_lowercase()                                          // c:3937
-                } else if casmod == crate::ported::zsh_h::CASMOD_UPPER {     // c:3937 CASMOD_UPPER
-                    s.to_uppercase()                                          // c:3937
-                } else {                                                      // c:3937 CASMOD_CAPS
-                    cap_word(s)                                               // c:3937
-                }                                                             // c:3937
-            };                                                                // c:3937
+        if casmod != crate::ported::zsh_h::CASMOD_NONE {
+            // c:3937 if (casmod != CASMOD_NONE)
+            let transform = |s: &str| -> String {
+                // c:3937
+                if casmod == crate::ported::zsh_h::CASMOD_LOWER {
+                    // c:3937 CASMOD_LOWER
+                    s.to_lowercase() // c:3937
+                } else if casmod == crate::ported::zsh_h::CASMOD_UPPER {
+                    // c:3937 CASMOD_UPPER
+                    s.to_uppercase() // c:3937
+                } else {
+                    // c:3937 CASMOD_CAPS
+                    cap_word(s) // c:3937
+                } // c:3937
+            }; // c:3937
             if let Some(parts) = split_parts.clone() {
                 // c:3937
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
@@ -4979,55 +5135,68 @@ pub fn paramsubst(
         // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
         // subst.c:4180-4253 array sortit/unique post-processing.
         // Applies on space-joined value; reassembles after.
-        if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW || unique {     // c:4290 if (sortit != SORTIT_ANYOLDHOW)
+        if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW || unique {
+            // c:4290 if (sortit != SORTIT_ANYOLDHOW)
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
             // assoc-splat) so sort applies to the actual element
             // list, not a whitespace re-split of the joined view.
-            let parts: Vec<String> = if let Some(sp) = split_parts.clone() { // c:4290
-                sp                                                            // c:4290 (operator-result)
-            } else if let Some(arr) = arrays_get(&var_name) {                // c:4290
-                arr.clone()                                                   // c:4290 (real array)
-            } else if let Some(map) = assoc_get(&var_name) {                 // c:4290
-                map.values().cloned().collect()                               // c:4290 (assoc values)
-            } else {                                                          // c:4290
-                value.split_whitespace().map(String::from).collect()          // c:4290 (fallback)
-            };                                                                // c:4290
-            let mut sorted: Vec<String> = parts;                              // c:4290
-            if unique {                                                       // c:4253
-                let mut seen = std::collections::HashSet::new();              // c:4253
-                sorted.retain(|s| seen.insert(s.clone()));                    // c:4253
-            }                                                                 // c:4253
-            if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW {            // c:4290
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
+                // c:4290
+                sp // c:4290 (operator-result)
+            } else if let Some(arr) = arrays_get(&var_name) {
+                // c:4290
+                arr.clone() // c:4290 (real array)
+            } else if let Some(map) = assoc_get(&var_name) {
+                // c:4290
+                map.values().cloned().collect() // c:4290 (assoc values)
+            } else {
+                // c:4290
+                value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
+            }; // c:4290
+            let mut sorted: Vec<String> = parts; // c:4290
+            if unique {
+                // c:4253
+                let mut seen = std::collections::HashSet::new(); // c:4253
+                sorted.retain(|s| seen.insert(s.clone())); // c:4253
+            } // c:4253
+            if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW {
+                // c:4290
                 // (a) flag (indord=1, c:2226) preserves insertion order
                 // — skip sort entirely.
-                if indord == 0 {                                              // c:4292 if (!indord)
-                    if (sortit & crate::ported::zsh_h::SORTIT_NUMERICALLY) != 0 { // c:4189 SORTIT_NUMERICALLY
+                if indord == 0 {
+                    // c:4292 if (!indord)
+                    if (sortit & crate::ported::zsh_h::SORTIT_NUMERICALLY) != 0 {
+                        // c:4189 SORTIT_NUMERICALLY
                         // SORTIT_NUMERICALLY_SIGNED (c:2222) is a
                         // bit-OR on top of NUMERICALLY; f64 parse
                         // already handles signed values uniformly so
                         // (n) and (n-) produce the same compare here.
-                        sorted.sort_by(|a, b| {                              // c:4189
-                            let na: f64 = a.parse().unwrap_or(0.0);          // c:4189
-                            let nb: f64 = b.parse().unwrap_or(0.0);          // c:4189
+                        sorted.sort_by(|a, b| {
+                            // c:4189
+                            let na: f64 = a.parse().unwrap_or(0.0); // c:4189
+                            let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
                             na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-                        });                                                   // c:4189
-                    } else if (sortit & crate::ported::zsh_h::SORTIT_IGNORING_CASE) != 0 { // c:4187 SORTIT_IGNORING_CASE
-                        sorted.sort_by_key(|a| a.to_lowercase());            // c:4187
-                    } else {                                                  // c:4180 (default)
-                        sorted.sort();                                        // c:4180
-                    }                                                         // c:4187
-                }                                                             // c:4292
-                if (sortit & crate::ported::zsh_h::SORTIT_BACKWARDS) != 0 {  // c:4294 SORTIT_BACKWARDS
-                    sorted.reverse();                                         // c:4191
-                }                                                             // c:4294
-            }                                                                 // c:4290
-            let join_with = sep.as_deref().unwrap_or(" ");                   // c:4313
-            value = sorted.join(join_with);                                   // c:4313
-            // Update split_parts so downstream operators (case mods,
-            // padding, splat) see the sorted/uniq list.
-            split_parts = Some(sorted);                                       // c:4313
-        }                                                                     // c:4290
+                        }); // c:4189
+                    } else if (sortit & crate::ported::zsh_h::SORTIT_IGNORING_CASE) != 0 {
+                        // c:4187 SORTIT_IGNORING_CASE
+                        sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
+                    } else {
+                        // c:4180 (default)
+                        sorted.sort(); // c:4180
+                    } // c:4187
+                } // c:4292
+                if (sortit & crate::ported::zsh_h::SORTIT_BACKWARDS) != 0 {
+                    // c:4294 SORTIT_BACKWARDS
+                    sorted.reverse(); // c:4191
+                } // c:4294
+            } // c:4290
+            let join_with = sep.as_deref().unwrap_or(" "); // c:4313
+            value = sorted.join(join_with); // c:4313
+                                            // Update split_parts so downstream operators (case mods,
+                                            // padding, splat) see the sorted/uniq list.
+            split_parts = Some(sorted); // c:4313
+        } // c:4290
 
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/bslashquote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
@@ -5264,7 +5433,9 @@ pub fn paramsubst(
                         cur.push(ch);
                         in_dq = true;
                     } // c:2439
-                    '#' if cur.is_empty() && !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 => {
+                    '#' if cur.is_empty()
+                        && !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 =>
+                    {
                         // c:2451
                         // Start of comment word — keep or skip.
                         in_comment = !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
@@ -5272,7 +5443,9 @@ pub fn paramsubst(
                             cur.push(ch);
                         } // c:2451
                     } // c:2451
-                    '#' if cur.is_empty() && (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 => {
+                    '#' if cur.is_empty()
+                        && (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 =>
+                    {
                         // c:2456
                         in_comment = true; // c:2456
                     } // c:2456
@@ -5299,18 +5472,23 @@ pub fn paramsubst(
         // Without ZLE's nameddir hash, this reduces to plain $HOME.
         // (D) per-element dir-magic. Direct port of subst.c:2229
         // mods bit 1 → modify()'s tilde-contraction iterating aval.
-        if (mods & 1) != 0 {                                                 // c:4155 if (mods & 1)
-            let home_opt = crate::ported::params::getsparam("HOME");         // c:4155
-            // Pull named-dirs (~name) hash into a [(name, path)]
-            // sorted by path-length-descending so the LONGEST match
-            // wins (zsh canonical: most-specific tilde-contraction).
-            // Direct port of subst.c → modify dir-handling which
-            // walks the nameddirtab in length-desc order.
-            // c:2229 — canonical nameddirtab read (mirrors C's
-            // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
+        if (mods & 1) != 0 {
+            // c:4155 if (mods & 1)
+            let home_opt = crate::ported::params::getsparam("HOME"); // c:4155
+                                                                     // Pull named-dirs (~name) hash into a [(name, path)]
+                                                                     // sorted by path-length-descending so the LONGEST match
+                                                                     // wins (zsh canonical: most-specific tilde-contraction).
+                                                                     // Direct port of subst.c → modify dir-handling which
+                                                                     // walks the nameddirtab in length-desc order.
+                                                                     // c:2229 — canonical nameddirtab read (mirrors C's
+                                                                     // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
             let mut named: Vec<(String, String)> = crate::ported::hashnameddir::nameddirtab()
                 .lock()
-                .map(|t| t.iter().map(|(k, nd)| (k.clone(), nd.dir.clone())).collect())
+                .map(|t| {
+                    t.iter()
+                        .map(|(k, nd)| (k.clone(), nd.dir.clone()))
+                        .collect()
+                })
                 .unwrap_or_default();
             named.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
             let dir_one = |s: &str| -> String {
@@ -5398,7 +5576,8 @@ pub fn paramsubst(
             }
             out
         };
-        if quotemod > 0 && quotetype == crate::ported::zsh_h::QT_BACKSLASH_PATTERN { // c:4034 (b)
+        if quotemod > 0 && quotetype == crate::ported::zsh_h::QT_BACKSLASH_PATTERN {
+            // c:4034 (b)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
                 value = new_parts.join(" ");
@@ -5459,7 +5638,8 @@ pub fn paramsubst(
             }
             out
         };
-        if quotemod < 0 {                                                    // c:4030 if (quotemod) — negative arm (Q)
+        if quotemod < 0 {
+            // c:4030 if (quotemod) — negative arm (Q)
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
@@ -5500,8 +5680,10 @@ pub fn paramsubst(
             }
             out
         };
-        if (mods & 2) != 0 {                                                 // c:4157 if (mods & 2)
-            if let Some(parts) = split_parts.clone() {                       // c:4157
+        if (mods & 2) != 0 {
+            // c:4157 if (mods & 2)
+            if let Some(parts) = split_parts.clone() {
+                // c:4157
                 let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
@@ -5518,32 +5700,40 @@ pub fn paramsubst(
         // (whitespace-split), word count (W = WS_NULL). Single
         // tri-state `whichlen` int per c:1679. Switch arms below
         // mirror C's whichlen == 1/2/3 dispatch in ${#pm}'s body.
-        if whichlen == 1 {                                                    // c:2276 whichlen == 1 (c)
+        if whichlen == 1 {
+            // c:2276 whichlen == 1 (c)
             // (m) flag, when set, counts cells via wcpadwidth (so
             // wide chars count 2). Without (m): plain chars.count().
-            value = if multi_width > 0 {                                      // c:2276
-                value                                                          // c:2376
-                    .chars()                                                   // c:2376
-                    .map(|c| wcpadwidth(c, multi_width as i32) as usize)      // c:2376
-                    .sum::<usize>()                                            // c:2376
-                    .to_string()                                               // c:2376
-            } else {                                                           // c:2276
-                value.chars().count().to_string()                             // c:2276
-            };                                                                 // c:2276
-        } else if whichlen == 2 {                                             // c:2279 whichlen == 2 (w)
-            value = value.split_whitespace().count().to_string();             // c:2279
-        } else if whichlen == 3 {                                             // c:2282 whichlen == 3 (W)
+            value = if multi_width > 0 {
+                // c:2276
+                value // c:2376
+                    .chars() // c:2376
+                    .map(|c| wcpadwidth(c, multi_width as i32) as usize) // c:2376
+                    .sum::<usize>() // c:2376
+                    .to_string() // c:2376
+            } else {
+                // c:2276
+                value.chars().count().to_string() // c:2276
+            }; // c:2276
+        } else if whichlen == 2 {
+            // c:2279 whichlen == 2 (w)
+            value = value.split_whitespace().count().to_string(); // c:2279
+        } else if whichlen == 3 {
+            // c:2282 whichlen == 3 (W)
             // (W) — count words including empty fields.
             let parts: Vec<&str> = value.split(|c: char| c.is_whitespace()).collect(); // c:2282
-            value = parts.len().to_string();                                  // c:2282
+            value = parts.len().to_string(); // c:2282
         }
 
         // Quote flags (q/qq/qqq/qqqq/q-/q+) operate per-element when
         // array-shaped. Direct port of subst.c:4030+ quotemod > 0 arm
         // which dispatches by quotetype.
-        let quote_one = |s: &str| -> String {                                // c:4030
-            if quotetype == crate::ported::zsh_h::QT_SINGLE_OPTIONAL {       // c:2245 (q-)
-                let needs = s.chars().any(|c| {                              // c:2245
+        let quote_one = |s: &str| -> String {
+            // c:4030
+            if quotetype == crate::ported::zsh_h::QT_SINGLE_OPTIONAL {
+                // c:2245 (q-)
+                let needs = s.chars().any(|c| {
+                    // c:2245
                     c.is_whitespace()                                         // c:2245
                         || matches!(                                          // c:2245
                             c,                                                // c:2245
@@ -5564,26 +5754,32 @@ pub fn paramsubst(
                                 | '\''                                        // c:2245
                                 | '#'                                         // c:2245
                                 | '~'                                         // c:2245
-                        )                                                     // c:2245
-                });                                                           // c:2245
-                if needs {                                                    // c:2245
+                        ) // c:2245
+                }); // c:2245
+                if needs {
+                    // c:2245
                     quotestring(s, crate::ported::zsh_h::QT_SINGLE) // c:2245
-                } else {                                                      // c:2245
-                    s.to_string()                                             // c:2245
-                }                                                             // c:2245
-            } else if quotetype == crate::ported::zsh_h::QT_QUOTEDZPUTS {    // c:2245 (q+)
+                } else {
+                    // c:2245
+                    s.to_string() // c:2245
+                } // c:2245
+            } else if quotetype == crate::ported::zsh_h::QT_QUOTEDZPUTS {
+                // c:2245 (q+)
                 quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
-            } else if quotemod > 0 {                                         // c:4033 if (quotemod > 0)
+            } else if quotemod > 0 {
+                // c:4033 if (quotemod > 0)
                 // c:2252 — quotemod++ and quotetype++ cascade for
                 // (q)/(qq)/(qqq)/(qqqq). quotetype starts at QT_NONE=0
                 // and is incremented per q: QT_BACKSLASH(1) /
                 // QT_SINGLE(2) / QT_DOUBLE(3) / QT_DOLLARS(4).
-                quotestring(s, quotetype)              // c:4070
-            } else {                                                          // c:4034
-                s.to_string()                                                 // c:4034
-            }                                                                 // c:4034
-        };                                                                    // c:4034
-        if quotemod > 0 && quotetype != crate::ported::zsh_h::QT_BACKSLASH_PATTERN { // c:4033 (already-applied b above)
+                quotestring(s, quotetype) // c:4070
+            } else {
+                // c:4034
+                s.to_string() // c:4034
+            } // c:4034
+        }; // c:4034
+        if quotemod > 0 && quotetype != crate::ported::zsh_h::QT_BACKSLASH_PATTERN {
+            // c:4033 (already-applied b above)
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 // c:2237
@@ -5604,7 +5800,8 @@ pub fn paramsubst(
         // >= 0)` block which fires whenever `getkeys` was set, even
         // to 0 (bare `(g::)` with no sub-letters means "default
         // getkeystring decoding"). Per-element on arrays.
-        if getkeys >= 0 {                                                    // c:3955 if (getkeys >= 0)
+        if getkeys >= 0 {
+            // c:3955 if (getkeys >= 0)
             // GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL bits in
             // `getkeys` are honored by getkeystring directly; passing
             // `getkeys` through would require getkeystring_with(s,
@@ -5630,13 +5827,16 @@ pub fn paramsubst(
         // with `~name` for each named directory; (V) renders
         // non-printable bytes as `^X` / `\n` / `\t` / `\M-X`. Both
         // apply per-element when array-shaped.
-        if mods != 0 {                                                       // c:4155 if (mods != 0)
-            let render_d = |s: &str| -> String {                             // c:4155
-                if (mods & 1) == 0 {                                          // c:4155 if (mods & 1)
-                    return s.to_string();                                     // c:4156
-                }                                                             // c:4156
-                // Replace $HOME with `~`; replace each named-dir
-                // path with `~name`. Direct port of substnamedir.
+        if mods != 0 {
+            // c:4155 if (mods != 0)
+            let render_d = |s: &str| -> String {
+                // c:4155
+                if (mods & 1) == 0 {
+                    // c:4155 if (mods & 1)
+                    return s.to_string(); // c:4156
+                } // c:4156
+                  // Replace $HOME with `~`; replace each named-dir
+                  // path with `~name`. Direct port of substnamedir.
                 let mut out = s.to_string();
                 if let Some(home) = crate::ported::params::getsparam("HOME") {
                     if !home.is_empty() && out.starts_with(&home) {
@@ -5648,7 +5848,8 @@ pub fn paramsubst(
                 // shadowing. Mirrors C's `mod_export HashTable
                 // nameddirtab` (hashnameddir.c:48).
                 if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
-                    let mut entries: Vec<(String, String)> = t.iter()
+                    let mut entries: Vec<(String, String)> = t
+                        .iter()
                         .map(|(k, nd)| (k.clone(), nd.dir.clone()))
                         .collect();
                     entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.len()));
@@ -5661,13 +5862,15 @@ pub fn paramsubst(
                 }
                 out
             };
-            let render_v = |s: &str| -> String {                             // c:4157
-                if (mods & 2) == 0 {                                          // c:4157 if (mods & 2)
-                    return s.to_string();                                     // c:4158
-                }                                                             // c:4158
-                // Direct port of nicechar / nicedupstring per
-                // Src/utils.c:462 — render non-printables as
-                // `\n`, `\t`, `^X`, `\M-X`, `^?` etc.
+            let render_v = |s: &str| -> String {
+                // c:4157
+                if (mods & 2) == 0 {
+                    // c:4157 if (mods & 2)
+                    return s.to_string(); // c:4158
+                } // c:4158
+                  // Direct port of nicechar / nicedupstring per
+                  // Src/utils.c:462 — render non-printables as
+                  // `\n`, `\t`, `^X`, `\M-X`, `^?` etc.
                 let mut out = String::with_capacity(s.len());
                 for ch in s.chars() {
                     let code = ch as u32;
@@ -5731,8 +5934,7 @@ pub fn paramsubst(
         // IFS chars from the executor; default IFS is " \t\n".
         let in_ssub = pf_flags & PREFORK_SINGLE != 0;
         if force_split && !in_ssub && split_parts.is_none() {
-            let ifs = vars_get("IFS")
-                .unwrap_or_else(|| " \t\n".to_string());
+            let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
             let parts: Vec<String> = value
                 .split(|c: char| ifs.contains(c))
                 .filter(|s| !s.is_empty())
@@ -5807,7 +6009,8 @@ pub fn paramsubst(
                 if let Some((lo, hi)) = sub.split_once(',') {
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                     let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
-                    arrays_get(&var_name).as_ref() // c:3950
+                    arrays_get(&var_name)
+                        .as_ref() // c:3950
                         .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
                         .unwrap_or_default()
                 } else if let Some(arr) = arrays_get(&var_name) {
@@ -6035,32 +6238,34 @@ pub fn paramsubst(
                 let nul = std::ptr::null_mut();
                 let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
                     None
-                } else { match var_name.as_str() {
-                    "aliases"             => getpmralias(nul, sub),
-                    "galiases"            => getpmgalias(nul, sub),
-                    "saliases"            => getpmsalias(nul, sub),
-                    "dis_aliases"         => getpmdisralias(nul, sub),
-                    "dis_galiases"        => getpmdisgalias(nul, sub),
-                    "dis_saliases"        => getpmdissalias(nul, sub),
-                    "builtins"            => getpmbuiltin(nul, sub),
-                    "dis_builtins"        => getpmdisbuiltin(nul, sub),
-                    "commands"            => getpmcommand(nul, sub),
-                    "functions"           => getpmfunction(nul, sub),
-                    "dis_functions"       => getpmdisfunction(nul, sub),
-                    "functions_source"    => getpmfunction_source(nul, sub),
-                    "dis_functions_source"=> getpmdisfunction_source(nul, sub),
-                    "nameddirs"           => getpmnameddir(nul, sub),
-                    "userdirs"            => getpmuserdir(nul, sub),
-                    "options"             => getpmoption(nul, sub),
-                    "parameters"          => getpmparameter(nul, sub),
-                    "history"             => getpmhistory(nul, sub),
-                    "modules"             => getpmmodule(nul, sub),
-                    "jobdirs"             => getpmjobdir(nul, sub),
-                    "jobstates"           => getpmjobstate(nul, sub),
-                    "jobtexts"            => getpmjobtext(nul, sub),
-                    "usergroups"          => getpmusergroups(nul, sub),
-                    _ => None,
-                }};
+                } else {
+                    match var_name.as_str() {
+                        "aliases" => getpmralias(nul, sub),
+                        "galiases" => getpmgalias(nul, sub),
+                        "saliases" => getpmsalias(nul, sub),
+                        "dis_aliases" => getpmdisralias(nul, sub),
+                        "dis_galiases" => getpmdisgalias(nul, sub),
+                        "dis_saliases" => getpmdissalias(nul, sub),
+                        "builtins" => getpmbuiltin(nul, sub),
+                        "dis_builtins" => getpmdisbuiltin(nul, sub),
+                        "commands" => getpmcommand(nul, sub),
+                        "functions" => getpmfunction(nul, sub),
+                        "dis_functions" => getpmdisfunction(nul, sub),
+                        "functions_source" => getpmfunction_source(nul, sub),
+                        "dis_functions_source" => getpmdisfunction_source(nul, sub),
+                        "nameddirs" => getpmnameddir(nul, sub),
+                        "userdirs" => getpmuserdir(nul, sub),
+                        "options" => getpmoption(nul, sub),
+                        "parameters" => getpmparameter(nul, sub),
+                        "history" => getpmhistory(nul, sub),
+                        "modules" => getpmmodule(nul, sub),
+                        "jobdirs" => getpmjobdir(nul, sub),
+                        "jobstates" => getpmjobstate(nul, sub),
+                        "jobtexts" => getpmjobtext(nul, sub),
+                        "usergroups" => getpmusergroups(nul, sub),
+                        _ => None,
+                    }
+                };
                 // c:`scanpm<X>` splice paths from Modules/parameter.c.
                 pm.and_then(|p| p.u_str).or_else(|| {
                     if sub == "@" || sub == "*" {
@@ -6112,8 +6317,7 @@ pub fn paramsubst(
             // Same single-funnel pattern as subst.rs:2120.
             exec_getsparam(&var_name)
                 .or_else(|| {
-                    assoc_get(&var_name)
-                        .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    assoc_get(&var_name).map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
                 })
                 .unwrap_or_default() // c:1625
         }; // c:1625
@@ -6187,7 +6391,8 @@ pub fn paramsubst(
                         // c:3950
                         let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                         let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
-                        arrays_get(&var_name).as_ref()
+                        arrays_get(&var_name)
+                            .as_ref()
                             .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
                     } else {
                         None
@@ -6206,10 +6411,7 @@ pub fn paramsubst(
             } else {
                 None
             }; // c:3950
-            if let Some(arr) = slice_arr
-                .or(assoc_vals)
-                .or_else(|| arrays_get(&var_name))
-            {
+            if let Some(arr) = slice_arr.or(assoc_vals).or_else(|| arrays_get(&var_name)) {
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
@@ -6278,16 +6480,17 @@ pub fn paramsubst(
         '*' | '@' => {
             // c:1625
             let values = arrays_get("@").unwrap_or_default(); // c:1625
-                                                                             // zsh semantics:
-                                                                             //   $* / "$*" — join with IFS first char
-                                                                             //   $@        — splat into separate words
-                                                                             //   "$@"      — preserve array shape (still splat)
-                                                                             // Our port: $@ (qt or unqt) → splat; $* → join.
-                                                                             // Direct port of subst.c c:1625 dispatch — only $* with
-                                                                             // any quoting joins; $@ always preserves array shape.
+                                                              // zsh semantics:
+                                                              //   $* / "$*" — join with IFS first char
+                                                              //   $@        — splat into separate words
+                                                              //   "$@"      — preserve array shape (still splat)
+                                                              // Our port: $@ (qt or unqt) → splat; $* → join.
+                                                              // Direct port of subst.c c:1625 dispatch — only $* with
+                                                              // any quoting joins; $@ always preserves array shape.
             let value = if c == '*' {
                 // c:1625
-                let join_sep = vars_get("IFS").as_ref()
+                let join_sep = vars_get("IFS")
+                    .as_ref()
                     .and_then(|s| s.chars().next())
                     .map(String::from)
                     .unwrap_or_else(|| " ".to_string());
@@ -6438,9 +6641,14 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // matching the same data the executor exposes through env_var
     // bridges (the from_executor snapshot already mirrored shell
     // params into env vars). No ShellExecutor reach.
-    let v = match crate::math::matheval(&expanded) {                         // c:4490 matheval
+    let v = match crate::math::matheval(&expanded) {
+        // c:4490 matheval
         Ok(n) => n,
-        Err(_) => crate::math::mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_UNSET },
+        Err(_) => crate::math::mnumber {
+            l: 0,
+            d: 0.0,
+            type_: crate::ported::zsh_h::MN_UNSET,
+        },
     };
 
     // c: math.c:580-583 — `outputradix` / `outputunderscore` are set while
@@ -6448,7 +6656,8 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // yet thread `outputunderscore` back to callers; keep 0 (no `_` grouping)
     // until that lands. `OUTPUT_RADIX` shell-style override is a zshrs bridge.
     let outputunderscore: i32 = 0; // c:583 equivalent when no `[#…_…]` active
-    let outputradix = vars_get("OUTPUT_RADIX").as_ref()
+    let outputradix = vars_get("OUTPUT_RADIX")
+        .as_ref()
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0); // c:4492
     let b: String = if v.type_ == crate::ported::zsh_h::MN_UNSET {
@@ -6481,7 +6690,8 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
 /// Port of `modify(char **str, char **ptr, int inbrace)` from Src/subst.c:4531.
 /// WARNING: param names don't match C — Rust=(s, modifiers) vs C=(str, ptr, inbrace)
-pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
+pub fn modify(s: &str, modifiers: &str) -> String {
+    // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
     let mut chars: std::iter::Peekable<std::str::Chars> = modifiers.chars().peekable(); // c:4531
@@ -6769,10 +6979,11 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
             };
             *crate::ported::hist::hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
             *crate::ported::hist::hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
-            crate::ported::hist::hsubpatopt.store(mode as i32, std::sync::atomic::Ordering::Relaxed); // c:4673
-                                                                            // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
-                                                                            // rejoins. Pull through the same code path :& uses
-                                                                            // below by deferring to a shared `apply_subst` closure.
+            crate::ported::hist::hsubpatopt
+                .store(mode as i32, std::sync::atomic::Ordering::Relaxed); // c:4673
+                                                                           // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
+                                                                           // rejoins. Pull through the same code path :& uses
+                                                                           // below by deferring to a shared `apply_subst` closure.
             if wall {
                 // c:4665
                 let separator = sep.as_deref().unwrap_or(" "); // c:4665
@@ -6811,7 +7022,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                 let r_opt = crate::ported::hist::hsubr.lock().unwrap().clone();
                 match (p_opt, r_opt) {
                     (Some(p), Some(r)) => {
-                        let mode = crate::ported::hist::hsubpatopt.load(std::sync::atomic::Ordering::Relaxed) as u8;
+                        let mode = crate::ported::hist::hsubpatopt
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            as u8;
                         Some((p, r, mode))
                     }
                     _ => None,
@@ -6886,8 +7099,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                 //   rembutext = "remove all BUT extension" → keeps ext → :e
                 // The previous dispatch had these flipped, so `${path:r}`
                 // returned the extension and `${path:e}` returned the root.
-                'r' => Some(remtext(w)),   // c:4585 (:r root)
-                'e' => Some(rembutext(w)), // c:4585 (:e ext)
+                'r' => Some(remtext(w)),                  // c:4585 (:r root)
+                'e' => Some(rembutext(w)),                // c:4585 (:e ext)
                 'l' => Some(casemodify(w, CASMOD_LOWER)), // c:4585 (:l)
                 'u' => Some(casemodify(w, CASMOD_UPPER)), // c:4585 (:u)
                 'q' => Some(quotestring(
@@ -7038,7 +7251,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
 /// table). Returns Option.
 /// Port of `dstackent(char ch, int val)` from `Src/subst.c:4902`.
 /// WARNING: param names don't match C — Rust=(val, dirstack, pwd, pushdminus_set) vs C=(ch, val)
-pub fn dstackent(                                                            // c:4902
+pub fn dstackent(
+    // c:4902
     ch: char,
     val: i32,
     dirstack: &[String],
@@ -7145,10 +7359,7 @@ fn errflag_set() -> bool {
 /// where parameter / glob / arith error is reported.
 #[inline]
 fn errflag_set_error() {
-    crate::ported::utils::errflag.fetch_or(
-        crate::ported::zsh_h::ERRFLAG_ERROR,
-        Ordering::Relaxed,
-    );
+    crate::ported::utils::errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
 }
 
 // =====================================================================
@@ -7176,40 +7387,55 @@ fn errflag_set_error() {
 /// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
 /// Walks `aliastab` for regular (non-global, non-suffix) aliases.
 fn scanpmraliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) == 0
-                    && (f & ALIAS_SUFFIX as i32) == 0
-                    && (f & DISABLED as i32) == 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::aliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| {
+                    let f = a.node.flags;
+                    (f & ALIAS_GLOBAL as i32) == 0
+                        && (f & ALIAS_SUFFIX as i32) == 0
+                        && (f & DISABLED as i32) == 0
+                })
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
 fn scanpmgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::aliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| {
+                    let f = a.node.flags;
+                    (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
+                })
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
 fn scanpmsaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::sufaliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 // =====================================================================
@@ -7262,80 +7488,111 @@ thread_local! {
 /// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
 /// Disabled regular-aliases arm.
 fn scanpmdisraliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) == 0
-                    && (f & ALIAS_SUFFIX as i32) == 0
-                    && (f & DISABLED as i32) != 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::aliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| {
+                    let f = a.node.flags;
+                    (f & ALIAS_GLOBAL as i32) == 0
+                        && (f & ALIAS_SUFFIX as i32) == 0
+                        && (f & DISABLED as i32) != 0
+                })
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmdisgaliases` — disabled-global-aliases arm.
 fn scanpmdisgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| {
-                let f = a.node.flags;
-                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
-            })
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::aliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| {
+                    let f = a.node.flags;
+                    (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
+                })
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmdissaliases` — disabled-suffix-aliases arm.
 fn scanpmdissaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
-            .map(|(_, a)| a.text.clone())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::sufaliastab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
+                .map(|(_, a)| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmcommands` — port of `Src/Modules/parameter.c:245`.
 /// HASHED arm reads `cmd` (resolved path); unhashed reads first
 /// path segment in `name` (Vec<String>) joined with the cmd name.
 fn scanpmcommands() -> String {
-    crate::ported::hashtable::cmdnamtab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter_map(|(nm, c)| {
-                let hashed = (c.node.flags & HASHED as i32) != 0;
-                if hashed {
-                    c.cmd.clone()
-                } else {
-                    c.name.as_ref()
-                        .and_then(|v| v.first())
-                        .map(|seg| format!("{}/{}", seg, nm))
-                }
-            })
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::cmdnamtab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter_map(|(nm, c)| {
+                    let hashed = (c.node.flags & HASHED as i32) != 0;
+                    if hashed {
+                        c.cmd.clone()
+                    } else {
+                        c.name
+                            .as_ref()
+                            .and_then(|v| v.first())
+                            .map(|seg| format!("{}/{}", seg, nm))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
 fn scanpmfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-            .map(|(_, f)| f.body.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+                .map(|(_, f)| f.body.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmdisfunctions` — disabled-functions arm.
 fn scanpmdisfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-            .map(|(_, f)| f.body.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+                .map(|(_, f)| f.body.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmfunction_source` — port of `Src/Modules/parameter.c:609`.
@@ -7343,37 +7600,57 @@ fn scanpmdisfunctions() -> String {
 /// function was loaded from). C delegates to `scanfunctions_source`
 /// with `dis=0`; the Rust port inlines the filtered iteration.
 fn scanpmfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-            .map(|(_, f)| f.filename.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+                .map(|(_, f)| f.filename.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmdisfunction_source` — port of `Src/Modules/parameter.c:618`.
 /// `$dis_functions_source` arm (delegates to `scanfunctions_source`
 /// with `dis=DISABLED` in C).
 fn scanpmdisfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock().read().ok()
-        .map(|t| t.iter()
-            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-            .map(|(_, f)| f.filename.clone().unwrap_or_default())
-            .collect::<Vec<_>>().join(" ")
-        ).unwrap_or_default()
+    crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+                .map(|(_, f)| f.filename.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }
 
 /// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
 fn scanpmnameddirs() -> String {
-    crate::ported::hashnameddir::nameddirtab().lock().ok()
-        .map(|t| t.iter().map(|(_, d)| d.dir.clone()).collect::<Vec<_>>().join(" "))
+    crate::ported::hashnameddir::nameddirtab()
+        .lock()
+        .ok()
+        .map(|t| {
+            t.iter()
+                .map(|(_, d)| d.dir.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .unwrap_or_default()
 }
 
 /// `scanpmbuiltins` — port of `Src/Modules/parameter.c:843`.
 fn scanpmbuiltins() -> String {
-    crate::ported::builtin::createbuiltintable().keys().cloned()
-        .collect::<Vec<_>>().join(" ")
+    crate::ported::builtin::createbuiltintable()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // `convbase` lives in src/ported/utils.rs (canonical port of
@@ -7383,19 +7660,25 @@ fn scanpmbuiltins() -> String {
 // `pub mod multsub_flags { … }` — DELETED per user directive; was
 // a Rust-only u32 wrapper duplicating the canonical i32 constants
 // in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
-use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START}; // c:zsh.h:2046-2059
+use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START};
+// c:zsh.h:2046-2059
 
 /// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
 fn scanpmparameters() -> String {
-    crate::ported::params::paramtab().read().ok()
+    crate::ported::params::paramtab()
+        .read()
+        .ok()
         .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
         .unwrap_or_default()
 }
 
 /// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
 fn scanpmoptions() -> String {
-    crate::ported::options::ZSH_OPTIONS_SET.iter()
-        .map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+    crate::ported::options::ZSH_OPTIONS_SET
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Dispatcher routing magic-assoc parameter name → `scanpm*` fn.
@@ -7406,21 +7689,21 @@ fn scanpmoptions() -> String {
 /// usergroups/userdirs/...).
 fn splice_magic_assoc(name: &str) -> Option<String> {
     let v = match name {
-        "aliases"               => scanpmraliases(),         // c:parameter.c:1990
-        "galiases"              => scanpmgaliases(),
-        "saliases"              => scanpmsaliases(),
-        "dis_aliases"           => scanpmdisraliases(),
-        "dis_galiases"          => scanpmdisgaliases(),
-        "dis_saliases"          => scanpmdissaliases(),
-        "commands"              => scanpmcommands(),         // c:parameter.c:245
-        "functions"             => scanpmfunctions(),        // c:parameter.c:519
-        "dis_functions"         => scanpmdisfunctions(),
-        "functions_source"      => scanpmfunction_source(),
-        "dis_functions_source"  => scanpmdisfunction_source(),
-        "nameddirs"             => scanpmnameddirs(),        // c:parameter.c:1618
-        "builtins"              => scanpmbuiltins(),         // c:parameter.c:843
-        "parameters"            => scanpmparameters(),       // c:parameter.c:124
-        "options"               => scanpmoptions(),          // c:parameter.c:1016
+        "aliases" => scanpmraliases(), // c:parameter.c:1990
+        "galiases" => scanpmgaliases(),
+        "saliases" => scanpmsaliases(),
+        "dis_aliases" => scanpmdisraliases(),
+        "dis_galiases" => scanpmdisgaliases(),
+        "dis_saliases" => scanpmdissaliases(),
+        "commands" => scanpmcommands(),   // c:parameter.c:245
+        "functions" => scanpmfunctions(), // c:parameter.c:519
+        "dis_functions" => scanpmdisfunctions(),
+        "functions_source" => scanpmfunction_source(),
+        "dis_functions_source" => scanpmdisfunction_source(),
+        "nameddirs" => scanpmnameddirs(),   // c:parameter.c:1618
+        "builtins" => scanpmbuiltins(),     // c:parameter.c:843
+        "parameters" => scanpmparameters(), // c:parameter.c:124
+        "options" => scanpmoptions(),       // c:parameter.c:1016
         _ => return None,
     };
     Some(v)
@@ -7436,7 +7719,8 @@ fn vars_get(name: &str) -> Option<String> {
 
 /// True if `name` exists in `paramtab` (any type).
 fn vars_contains(name: &str) -> bool {
-    crate::ported::params::paramtab().read()
+    crate::ported::params::paramtab()
+        .read()
         .map_or(false, |tab| tab.contains_key(name))
 }
 
@@ -7457,7 +7741,8 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
-    crate::ported::params::paramtab().read()
+    crate::ported::params::paramtab()
+        .read()
         .map_or(false, |tab| {
             tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
         })
@@ -7481,10 +7766,23 @@ fn arrays_insert(name: String, value: Vec<String>) {
                 nam: name.clone(),
                 flags: PM_ARRAY as i32,
             },
-            u_data: 0, u_arr: Some(value), u_str: None, u_val: 0,
-            u_dval: 0.0, u_hash: None,
-            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            u_data: 0,
+            u_arr: Some(value),
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         });
         tab.insert(name, pm);
     }
@@ -7519,9 +7817,10 @@ fn assoc_contains(name: &str) -> bool {
 // (u32 vs C `int`) drifted; usage sites mixed with `exec.sub_flags:
 // i32` caused silent coercion bugs. Use canonical defs directly.
 use crate::ported::zsh_h::{
-    SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN,
-    SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
-}; // c:zsh.h:1981-1996
+    SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST,
+    SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
+};
+// c:zsh.h:1981-1996
 
 /// Array assignment via paramtab. Equivalent to C's
 /// `assignaparam(name, parts)` (`Src/params.c:3357`).
@@ -7551,11 +7850,12 @@ mod tests {
     fn nulstring_matches_canonical_nularg_byte() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::Nularg;
-        assert_eq!(Nularg as u32, 0xa1,
-            "Src/zsh.h:206 — Nularg must be 0xa1");
+        assert_eq!(Nularg as u32, 0xa1, "Src/zsh.h:206 — Nularg must be 0xa1");
         // NULSTRING is the str form of just the Nularg char.
-        assert_eq!(NULSTRING, "\u{a1}",
-            "Src/subst.c:36 — NULSTRING must be the single Nularg sentinel char");
+        assert_eq!(
+            NULSTRING, "\u{a1}",
+            "Src/subst.c:36 — NULSTRING must be the single Nularg sentinel char"
+        );
         let chars: Vec<char> = NULSTRING.chars().collect();
         assert_eq!(chars.len(), 1, "NULSTRING is a single char");
         assert_eq!(chars[0], Nularg, "NULSTRING's single char IS Nularg");
@@ -7566,10 +7866,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         assert_eq!(getkeystring("hello").0, "hello"); // utils.c:6915
-        assert_eq!(
-            getkeystring("hello\\nworld").0,
-            "hello\nworld"
-        ); // utils.c:6915
+        assert_eq!(getkeystring("hello\\nworld").0, "hello\nworld"); // utils.c:6915
         assert_eq!(getkeystring("\\t\\r\\n").0, "\t\r\n"); // utils.c:6915
         assert_eq!(getkeystring("\\x41").0, "A"); // utils.c:6915
         assert_eq!(getkeystring("\\u0041").0, "A"); // utils.c:6915
@@ -7637,10 +7934,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         vars_insert("X".to_string(), "value".to_string()); // utils.c:6915
-                                                                      // singsub currently doesn't process $ - it's a high-level wrapper
-                                                                      // that needs prefork to be fully working
+                                                           // singsub currently doesn't process $ - it's a high-level wrapper
+                                                           // that needs prefork to be fully working
         let result = singsub("X"); // utils.c:6915
-                                               // For now, just test that it returns something
+                                   // For now, just test that it returns something
         assert!(!result.is_empty() || result.is_empty()); // utils.c:6915
     } // utils.c:6915
 
@@ -7824,7 +8121,7 @@ mod tests {
         assert_eq!(getkeystring("\\t").0, "\t"); // utils.c:6915
         assert_eq!(getkeystring("\\r").0, "\r"); // utils.c:6915
         assert_eq!(getkeystring("\\\\").0, "\\"); // utils.c:6915
-                                                                        // Trailing literal — no escape consumed.
+                                                  // Trailing literal — no escape consumed.
         assert_eq!(getkeystring("plain").0, "plain"); // utils.c:6915
     } // utils.c:6915
 
@@ -7859,8 +8156,7 @@ mod tests {
         // with other tests that share the global params::paramtab().
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        crate::ported::utils::errflag
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
         let (result, _, _) =                                // c:3202
             paramsubst("${__default_unset_var:-fallback}", 0, false, 0, &mut 0); // c:3202
         assert_eq!(result, "fallback"); // c:3202
@@ -7877,8 +8173,7 @@ mod tests {
         // bridges no-op and the slot never appears in `arrays_get`.
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        crate::ported::utils::errflag
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
         let name = format!(
             "__sub_arr_{}_{}",
             module_path!().replace("::", "_"),
@@ -7897,7 +8192,6 @@ mod tests {
         assert_eq!(arr[1], ""); // c:3296
     } // c:3296
 
-
     #[test] // c:3193
     fn paramsubst_alternative_when_unset() {
         let _g = crate::test_util::global_state_lock();
@@ -7912,7 +8206,7 @@ mod tests {
     // ─── paramsubst — length operator ${#var} ───────────────────────
     // ─── multsub / singsub ──────────────────────────────────────────
 
-      // ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────
     // Real-world `${…}` torture cases pulled from MenkeTechnologies'
     // installed plugins:
     //   ~/.zinit/bin/zinit.zsh
@@ -7960,8 +8254,11 @@ mod tests {
     fn get_strarg_extracts_paren_delimited_content() {
         let _g = crate::test_util::global_state_lock();
         let r = get_strarg("(foo)rest");
-        assert_eq!(r, Some(('(', "foo".to_string(), "rest")),
-            "(foo)rest must split into delim=( , content='foo', tail='rest'");
+        assert_eq!(
+            r,
+            Some(('(', "foo".to_string(), "rest")),
+            "(foo)rest must split into delim=( , content='foo', tail='rest'"
+        );
     }
 
     /// c:1348 — `get_strarg("")` returns None (no delimiter).
@@ -7983,8 +8280,11 @@ mod tests {
         // on suite ordering.
         crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         let r = get_intarg("(42)rest");
-        assert_eq!(r, Some((42, "rest")),
-            "(42)rest must yield 42 + tail 'rest'");
+        assert_eq!(
+            r,
+            Some((42, "rest")),
+            "(42)rest must yield 42 + tail 'rest'"
+        );
     }
 
     /// c:1428 — `get_intarg("")` returns None.
@@ -8002,7 +8302,7 @@ mod tests {
     fn strcatsub_concatenates_three_parts_plain() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(strcatsub("a", "b", "c", false), "abc");
-        assert_eq!(strcatsub("", "X", "",  false), "X");
+        assert_eq!(strcatsub("", "X", "", false), "X");
         assert_eq!(strcatsub("[", "y", "]", false), "[y]");
     }
 
@@ -8034,8 +8334,8 @@ mod tests {
     fn filesubstr_non_tilde_input_returns_none() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(filesubstr("/literal/path", false), None);
-        assert_eq!(filesubstr("relative",     false), None);
-        assert_eq!(filesubstr("",             false), None);
+        assert_eq!(filesubstr("relative", false), None);
+        assert_eq!(filesubstr("", false), None);
     }
 
     /// c:737 — `~` with no following path or user-name resolves to
@@ -8045,8 +8345,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         if let Ok(home) = std::env::var("HOME") {
             let r = filesubstr("~", false);
-            assert_eq!(r.as_deref(), Some(home.as_str()),
-                "`~` must expand to $HOME");
+            assert_eq!(
+                r.as_deref(),
+                Some(home.as_str()),
+                "`~` must expand to $HOME"
+            );
         }
     }
 
@@ -8074,7 +8377,7 @@ mod tests {
     fn modify_r_strips_extension() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(modify("foo.txt", ":r"), "foo");
-        assert_eq!(modify("foo",     ":r"), "foo", "no ext = no change");
+        assert_eq!(modify("foo", ":r"), "foo", "no ext = no change");
     }
 
     /// c:4531 — `:e` returns just the extension. Counterpart to `:r`.
@@ -8132,11 +8435,14 @@ mod tests {
     #[test]
     fn check_colon_subscript_returns_none_on_modifier_letter() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(check_colon_subscript("h"),  None);
-        assert_eq!(check_colon_subscript("t"),  None);
-        assert_eq!(check_colon_subscript("r"),  None);
-        assert_eq!(check_colon_subscript("&5"), None,
-            "`&` is the history-modifier prefix, not a subscript");
+        assert_eq!(check_colon_subscript("h"), None);
+        assert_eq!(check_colon_subscript("t"), None);
+        assert_eq!(check_colon_subscript("r"), None);
+        assert_eq!(
+            check_colon_subscript("&5"),
+            None,
+            "`&` is the history-modifier prefix, not a subscript"
+        );
     }
 
     /// c:1574-1576 — bare `::` (empty subscript) returns Some("0").
@@ -8158,7 +8464,7 @@ mod tests {
     fn quotesubst_passes_plain_ascii_unchanged() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(quotesubst("hello world"), "hello world");
-        assert_eq!(quotesubst(""),            "");
+        assert_eq!(quotesubst(""), "");
     }
 
     /// c:514 — `singsub` runs `${...}` substitution on its input
@@ -8166,8 +8472,8 @@ mod tests {
     #[test]
     fn singsub_passes_plain_text_unchanged() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(singsub("hello"),  "hello");
-        assert_eq!(singsub(""),       "");
+        assert_eq!(singsub("hello"), "hello");
+        assert_eq!(singsub(""), "");
         assert_eq!(singsub("no var"), "no var");
     }
 
@@ -8182,36 +8488,47 @@ mod tests {
     fn token_byte_constants_match_zsh_h_canonical_values() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{
-            Dnull, Equals, Hat, Inbrack, Inpar, Outbrack, Outpar,
-            Snull, Stringg, Tick, Tilde,
+            Dnull, Equals, Hat, Inbrack, Inpar, Outbrack, Outpar, Snull, Stringg, Tick, Tilde,
         };
         assert_eq!(Stringg as u32, 0x85, "Src/zsh.h:160 Stringg = $");
-        assert_eq!(Hat as u32,     0x86, "Src/zsh.h:161 Hat = ^");
-        assert_eq!(Inpar as u32,   0x88, "Src/zsh.h:163 Inpar = (");
-        assert_eq!(Outpar as u32,  0x8a, "Src/zsh.h:165 Outpar = )");
-        assert_eq!(Equals as u32,  0x8d, "Src/zsh.h:168 Equals = =");
+        assert_eq!(Hat as u32, 0x86, "Src/zsh.h:161 Hat = ^");
+        assert_eq!(Inpar as u32, 0x88, "Src/zsh.h:163 Inpar = (");
+        assert_eq!(Outpar as u32, 0x8a, "Src/zsh.h:165 Outpar = )");
+        assert_eq!(Equals as u32, 0x8d, "Src/zsh.h:168 Equals = =");
         assert_eq!(Inbrack as u32, 0x91, "Src/zsh.h:172 Inbrack = [");
         assert_eq!(Outbrack as u32, 0x92, "Src/zsh.h:173 Outbrack = ]");
-        assert_eq!(Tick as u32,    0x93, "Src/zsh.h:174 Tick = `");
-        assert_eq!(Tilde as u32,   0x98, "Src/zsh.h:179 Tilde = ~");
-        assert_eq!(Snull as u32,   0x9d, "Src/zsh.h:193 Snull");
-        assert_eq!(Dnull as u32,   0x9e, "Src/zsh.h:194 Dnull");
+        assert_eq!(Tick as u32, 0x93, "Src/zsh.h:174 Tick = `");
+        assert_eq!(Tilde as u32, 0x98, "Src/zsh.h:179 Tilde = ~");
+        assert_eq!(Snull as u32, 0x9d, "Src/zsh.h:193 Snull");
+        assert_eq!(Dnull as u32, 0x9e, "Src/zsh.h:194 Dnull");
 
         // Cross-pinning: confirm the WRONG mappings the previous port
         // had can NEVER match the canonical const. (If a future
         // regression revives `\u{85}` as Inpar, this would fail.)
-        assert_ne!(Inpar as u32, 0x85,
-            "Inpar must NOT equal 0x85 (that's Stringg)");
-        assert_ne!(Outpar as u32, 0x86,
-            "Outpar must NOT equal 0x86 (that's Hat)");
-        assert_ne!(Equals as u32, 0x86,
-            "Equals must NOT equal 0x86 (that's Hat)");
-        assert_ne!(Tick as u32, 0x83,
-            "Tick must NOT equal 0x83 (that's Meta lead byte)");
-        assert_ne!(Snull as u32, 0x98,
-            "Snull must NOT equal 0x98 (that's Tilde)");
-        assert_ne!(Dnull as u32, 0x97,
-            "Dnull must NOT equal 0x97 (that's Quest)");
+        assert_ne!(
+            Inpar as u32, 0x85,
+            "Inpar must NOT equal 0x85 (that's Stringg)"
+        );
+        assert_ne!(
+            Outpar as u32, 0x86,
+            "Outpar must NOT equal 0x86 (that's Hat)"
+        );
+        assert_ne!(
+            Equals as u32, 0x86,
+            "Equals must NOT equal 0x86 (that's Hat)"
+        );
+        assert_ne!(
+            Tick as u32, 0x83,
+            "Tick must NOT equal 0x83 (that's Meta lead byte)"
+        );
+        assert_ne!(
+            Snull as u32, 0x98,
+            "Snull must NOT equal 0x98 (that's Tilde)"
+        );
+        assert_ne!(
+            Dnull as u32, 0x97,
+            "Dnull must NOT equal 0x97 (that's Quest)"
+        );
     }
 
     /// `Src/subst.c:1348` — `get_strarg(":STR:rest")` walks until
@@ -8239,10 +8556,11 @@ mod tests {
         // wrong rest.
         let r = get_strarg(":é:rest").unwrap();
         assert_eq!(r.0, ':');
-        assert_eq!(r.1, "é",
-            "c:1348 — multibyte content preserved verbatim");
-        assert_eq!(r.2, "rest",
-            "c:1348 — rest starts AFTER close-delim (not mid-codepoint)");
+        assert_eq!(r.1, "é", "c:1348 — multibyte content preserved verbatim");
+        assert_eq!(
+            r.2, "rest",
+            "c:1348 — rest starts AFTER close-delim (not mid-codepoint)"
+        );
 
         // Bracket pair: `(...)` form with multibyte inside.
         let r = get_strarg("(héllo)tail").unwrap();
@@ -8261,8 +8579,7 @@ mod tests {
         let r = get_strarg("(unclosed_content").unwrap();
         assert_eq!(r.0, '(');
         assert_eq!(r.1, "unclosed_content");
-        assert_eq!(r.2, "",
-            "c:1348 — no close-delim → rest is empty");
+        assert_eq!(r.2, "", "c:1348 — no close-delim → rest is empty");
     }
 } // c:3193
 
@@ -8295,10 +8612,23 @@ fn exec_sethparam(name: &str, parts: Vec<String>) {
                     nam: name.to_string(),
                     flags: PM_HASHED as i32,
                 },
-                u_data: 0, u_arr: None, u_str: None, u_val: 0,
-                u_dval: 0.0, u_hash: None,
-                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                u_data: 0,
+                u_arr: None,
+                u_str: None,
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
             });
             tab.insert(name.to_string(), pm);
         }
@@ -8321,7 +8651,6 @@ pub fn sub_flags_get() -> i32 {
     SUB_FLAGS.with(|c| c.get())
 }
 
-
 // ============================================================================
 // Final functions for complete subst.c coverage
 // ============================================================================
@@ -8342,7 +8671,6 @@ use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED};
 pub fn sub_flags_set(v: i32) {
     SUB_FLAGS.with(|c| c.set(v));
 }
-
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their

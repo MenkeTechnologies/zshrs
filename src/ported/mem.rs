@@ -18,22 +18,24 @@ use std::cell::RefCell;
 
 /// Port of `new_heap_id()` from Src/mem.c:182.
 /// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
-pub fn new_heap_id() -> u64 {                                                // c:182
-    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:182
+pub fn new_heap_id() -> u64 {
+    // c:182
+    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) // c:182
 }
 
 // Use new heaps from now on. This returns the old heap-list.               // c:194
 /// Port of `new_heaps()` from Src/mem.c:194.
 /// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
 ///   reset both to NULL, return the saved head for later restoration.
-pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
-    queue_signals();                                                         // c:194
-    // c:199 — `h = heaps;`
-    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
-    // c:220 — `fheap = heaps = NULL;`
+pub fn new_heaps() -> *mut std::ffi::c_void {
+    // c:194
+    queue_signals(); // c:194
+                     // c:199 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed); // c:199
+                                                              // c:220 — `fheap = heaps = NULL;`
     HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:220
     FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
-    unqueue_signals();                                                       // c:220
+    unqueue_signals(); // c:220
     h
 }
 
@@ -125,26 +127,28 @@ thread_local! {
 /// Port of `old_heaps(Heap old)` from Src/mem.c:220.
 /// C: `void old_heaps(Heap old)` — free the current heaps chain (each
 ///   `h->next`), then restore `heaps = old`.
-pub fn old_heaps(old: *mut std::ffi::c_void) {                               // c:220
-    queue_signals();                                                         // c:220
-    // c:226-264 — walk current heaps freeing each (DPUTS guards against
-    // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
-    // pointer chain managed by heap_arena above; just restore.
-    HEAPS.store(old, std::sync::atomic::Ordering::Relaxed);                  // c:267
-    unqueue_signals();                                                       // c:267
+pub fn old_heaps(old: *mut std::ffi::c_void) {
+    // c:220
+    queue_signals(); // c:220
+                     // c:226-264 — walk current heaps freeing each (DPUTS guards against
+                     // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
+                     // pointer chain managed by heap_arena above; just restore.
+    HEAPS.store(old, std::sync::atomic::Ordering::Relaxed); // c:267
+    unqueue_signals(); // c:267
 }
 
 // Temporarily switch to other heaps (or back again).                       // c:267
 /// Port of `switch_heaps(Heap new)` from Src/mem.c:267.
 /// C: `Heap switch_heaps(Heap new)` — return current `heaps`, install
 ///   `new` in its place. Used to enter a different heap-arena scope.
-pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {   // c:267
-    queue_signals();                                                         // c:267
-    // c:272 — `h = heaps;`
-    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:272
-    HEAPS.store(new, std::sync::atomic::Ordering::Relaxed);                  // c:282
+pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+    // c:267
+    queue_signals(); // c:267
+                     // c:272 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed); // c:272
+    HEAPS.store(new, std::sync::atomic::Ordering::Relaxed); // c:282
     FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
-    unqueue_signals();                                                       // c:284
+    unqueue_signals(); // c:284
     h
 }
 
@@ -152,21 +156,24 @@ pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {   // 
 // save states of zsh heaps                                                 // c:291
 /// Port of `pushheap()` from Src/mem.c:291 — the global entry-point
 /// version that operates on the thread-local arena.
-pub fn pushheap() {                                                          // c:291
+pub fn pushheap() {
+    // c:291
     HEAP.with(|h| h.borrow_mut().push());
 }
 
 // reset heaps to previous state                                            // c:325
 /// Free current heap allocations but keep state.
 /// Port of `freeheap()` from Src/mem.c:325.
-pub fn freeheap() {                                                          // c:325
+pub fn freeheap() {
+    // c:325
     HEAP.with(|h| h.borrow_mut().free_current());
 }
 
 // reset heap to previous state and destroy state information               // c:443
 /// Pop heap state and free allocations.
 /// Port of `popheap()` from Src/mem.c:443.
-pub fn popheap() {                                                           // c:443
+pub fn popheap() {
+    // c:443
     HEAP.with(|h| h.borrow_mut().pop());
 }
 
@@ -174,19 +181,23 @@ pub fn popheap() {                                                           // 
 /// C: `static Heap mmap_heap_alloc(size_t *n)` — round `*n` up to the
 ///   page size, mmap an anonymous region of that size, write back the
 ///   actual allocation in `*n`. Returns the Heap header.
-pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // c:526
+pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {
+    // c:526
     // c:526 — `static size_t pgsz = 0;`
-    let pgsz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;        // c:533-535
+    let pgsz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize; // c:533-535
     let pgsz = if pgsz == 0 { 4096 } else { pgsz };
     // c:540 — round up to a multiple of pgsz.
     *n = (*n + pgsz - 1) & !(pgsz - 1);
     // c:543 — mmap(NULL, *n, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0).
     unsafe {
         libc::mmap(
-            std::ptr::null_mut(), *n,
+            std::ptr::null_mut(),
+            *n,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
-        )                                                                    // c:543
+            libc::MAP_ANON | libc::MAP_PRIVATE,
+            -1,
+            0,
+        ) // c:543
     }
 }
 
@@ -196,7 +207,8 @@ pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // 
 /// has different freeing rules). Rust's borrow-checker subsumes
 /// this distinction; the function is kept for call-site parity but
 /// always returns true.
-pub fn zheapptr<T>(p: &T) -> bool {                                       // c:561
+pub fn zheapptr<T>(p: &T) -> bool {
+    // c:561
     true
 }
 
@@ -210,7 +222,9 @@ pub fn zheapptr<T>(p: &T) -> bool {                                       // c:5
 /// shim. Box goes out of scope at the end of the surrounding fn,
 /// achieving the same `popheap`-bounded lifetime.
 #[allow(unused_variables)]
-pub fn zhalloc(size: usize) -> usize { 0 }                                  // c:577
+pub fn zhalloc(size: usize) -> usize {
+    0
+} // c:577
 
 /// Port of `int memory_validate(Heapid heap_id)` from `Src/mem.c:896`.
 /// Under `ZSH_MEM_DEBUG`, walks the heap chain to verify `heap_id` is
@@ -224,9 +238,11 @@ pub fn zhalloc(size: usize) -> usize { 0 }                                  // c
 /// String goes out of scope, so a heap-id check would always
 /// succeed for any handle the caller actually holds. Static-link
 /// path: return 0 (valid).
-pub fn memory_validate(heap_id: u64) -> i32 {                                // c:896
+pub fn memory_validate(heap_id: u64) -> i32 {
+    // c:896
     const HEAPID_PERMANENT: u64 = 0;
-    if heap_id == HEAPID_PERMANENT {                                         // c:903
+    if heap_id == HEAPID_PERMANENT {
+        // c:903
         return 0;
     }
     // c:905-940 — walk heaps chain comparing heap->heap_id; not modeled
@@ -241,7 +257,8 @@ pub fn memory_validate(heap_id: u64) -> i32 {                                // 
 /// `Vec::resize` covers the C arena copy + free-of-old + zero-pad
 /// in one call; `old` size arg drops since Vec tracks its own len.
 /// WARNING: param names don't match C — Rust=(old, new_size) vs C=(p, old, new)
-pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c:687
+pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {
+    // c:687
     let mut v = old;
     v.resize(new_size, 0);
     v
@@ -250,7 +267,9 @@ pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c
 /// Port of `hcalloc(size_t size)` from Src/mem.c:946 — heap-arena `calloc`
 /// (zero-fill `zhalloc`). Shim.
 #[allow(unused_variables)]
-pub fn hcalloc(size: usize) -> usize { 0 }                                  // c:946
+pub fn hcalloc(size: usize) -> usize {
+    0
+} // c:946
 
 /// Port of `void *malloc(size_t size)` from `Src/mem.c:1862` —
 /// the non-ZSH_MEM wrapper that just returns `libc::malloc(size)`.
@@ -260,15 +279,17 @@ pub fn hcalloc(size: usize) -> usize { 0 }                                  // c
 /// Drop happens automatically. This entry exists for C-ABI parity;
 /// no zshrs caller invokes raw `malloc()`.
 #[allow(unused_variables)]
-pub fn malloc(size: usize) -> usize { 0 }                                    // c:1862
+pub fn malloc(size: usize) -> usize {
+    0
+} // c:1862
 
 /// Port of `free(void *p)` from Src/mem.c:1631.
 /// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
 ///   to free owned allocations; this shim documents the C name parity.
 #[allow(unused_variables)]
-pub fn free(p: *mut std::ffi::c_void) {                                     // c:1631
-    // c:1648 — `zfree(p, 0);` — size unknown. Static-link path: nothing
-    // to free since Rust drop manages memory.
+pub fn free(p: *mut std::ffi::c_void) { // c:1631
+                                        // c:1648 — `zfree(p, 0);` — size unknown. Static-link path: nothing
+                                        // to free since Rust drop manages memory.
 }
 
 /// Allocate memory.
@@ -277,7 +298,8 @@ pub fn free(p: *mut std::ffi::c_void) {                                     // c
 /// rather than `malloc(3)`; the type-default initialization stands
 /// in for the C source's uninitialized buffer.
 /// WARNING: param names don't match C — Rust=() vs C=(size)
-pub fn zalloc<T: Default>() -> Box<T> {                                      // c:959
+pub fn zalloc<T: Default>() -> Box<T> {
+    // c:959
     Box::default()
 }
 
@@ -287,7 +309,8 @@ pub fn zalloc<T: Default>() -> Box<T> {                                      // 
 /// `zalloc()` with `memset(0)`; Rust's `Box::default()` handles
 /// both.
 /// WARNING: param names don't match C — Rust=() vs C=(size)
-pub fn zshcalloc<T: Default>() -> Box<T> {                                  // c:977
+pub fn zshcalloc<T: Default>() -> Box<T> {
+    // c:977
     Box::default()
 }
 
@@ -296,7 +319,8 @@ pub fn zshcalloc<T: Default>() -> Box<T> {                                  // c
 /// gap with `T::default()`, mirroring the C source's "old contents
 /// preserved, new bytes uninitialized" semantics.
 /// WARNING: param names don't match C — Rust=() vs C=(ptr, size)
-pub fn zrealloc<T>(v: &mut Vec<T>, new_size: usize)                          // c:994
+pub fn zrealloc<T>(v: &mut Vec<T>, new_size: usize)
+// c:994
 where
     T: Default + Clone,
 {
@@ -341,19 +365,20 @@ where
 /// the C source ships only because zsh historically ran on
 /// platforms with broken libc malloc; modern Rust doesn't need it.
 #[allow(clippy::boxed_local)]
-pub fn zfree<T>(p: Box<T>) {                                                 // c:1869
+pub fn zfree<T>(p: Box<T>) {
+    // c:1869
     // c:1871 — `free(p);`
     // Rust path: `Box::drop` calls `__rust_dealloc` → libc::free
     // (verified against alloc::alloc::dealloc). End-of-scope drop.
-    drop(p);                                                                 // c:1871
+    drop(p); // c:1871
 }
 
 /// Free a string.
 /// Port of `zsfree(char *p)` from Src/mem.c:1641 — the C source's
 /// `free(NULL)`-tolerant string-specific deallocator. In Rust the
 /// Drop impl on `String` handles the actual free.
-pub fn zsfree(p: String) {                                                  // c:1641
-    // Drop happens automatically
+pub fn zsfree(p: String) { // c:1641
+                           // Drop happens automatically
 }
 
 /// Port of `realloc(void *p, size_t size)` from Src/mem.c:1648 — wrapped `realloc`.
@@ -362,13 +387,16 @@ pub fn zsfree(p: String) {                                                  // c
 /// C source wraps libc realloc for the heap-arena fallback path
 /// that zshrs replaces entirely. Shim is name-parity only.
 /// WARNING: param names don't match C — Rust=(_size) vs C=(p, size)
-pub fn realloc(_size: usize) -> usize { 0 }
+pub fn realloc(_size: usize) -> usize {
+    0
+}
 
 /// Port of `calloc(size_t n, size_t size)` from Src/mem.c:1697 — wrapped `calloc`.
 /// Shim.
 #[allow(unused_variables)]
-pub fn calloc(n: usize, size: usize) -> usize { 0 }
-
+pub fn calloc(n: usize, size: usize) -> usize {
+    0
+}
 
 /// Port of `int bin_mem(char *name, char **argv, Options ops, int func)`
 /// from `Src/mem.c:1722` (ZSH_MEM_DEBUG-gated). Reads zsh's custom
@@ -377,29 +405,38 @@ pub fn calloc(n: usize, size: usize) -> usize { 0 }
 /// the system allocator, so these counters are always 0; the output
 /// shape matches C for parity with debug scripts.
 /// WARNING: param names don't match C — Rust=(_name, _argv, ops, _func) vs C=(name, argv, ops, func)
-pub fn bin_mem(                                                              // c:1722
+pub fn bin_mem(
+    // c:1722
     _name: &str,
     _argv: &[String],
     ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    let m_l: i64 = 0;                                                        // c:1727 low addr
-    let m_high: i64 = 0;                                                     // c:1727 high addr
-    let m_s: i32 = 0;                                                        // c:1742 sbrk total
-    let m_b: i32 = 0;                                                        // c:1742 brk total
-    crate::ported::signals::queue_signals();                                 // c:1729
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1730
+    let m_l: i64 = 0; // c:1727 low addr
+    let m_high: i64 = 0; // c:1727 high addr
+    let m_s: i32 = 0; // c:1742 sbrk total
+    let m_b: i32 = 0; // c:1742 brk total
+    crate::ported::signals::queue_signals(); // c:1729
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1730
         println!("The lower and the upper addresses of the heap. Diff gives");
         println!("the difference between them, i.e. the size of the heap.\n");
     }
-    println!("low mem {}\t high mem {}\t diff {}", m_l, m_high, m_high - m_l);// c:1734
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1737
+    println!(
+        "low mem {}\t high mem {}\t diff {}",
+        m_l,
+        m_high,
+        m_high - m_l
+    ); // c:1734
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1737
         println!("\nThe number of bytes that were allocated using sbrk() and");
         println!("the number of bytes that were given back to the system");
         println!("via brk().");
     }
-    println!("\nsbrk {}\tbrk {}", m_s, m_b);                                 // c:1742
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1744
+    println!("\nsbrk {}\tbrk {}", m_s, m_b); // c:1742
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1744
         println!("\nInformation about the sizes that were allocated or freed.");
         println!("For each size that were used the number of mallocs and");
         println!("frees is shown. Diff gives the difference between these");
@@ -409,9 +446,10 @@ pub fn bin_mem(                                                              // 
         println!("this size. The last field gives the accumulated number of");
         println!("bytes for all sizes.");
     }
-    println!("\nsize\tmalloc\tfree\tdiff\ttotal\tcum");                      // c:1754
-    // c:1755-1761 m_m[i]/m_f[i] histogram — all zero with system allocator.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1766
+    println!("\nsize\tmalloc\tfree\tdiff\ttotal\tcum"); // c:1754
+                                                        // c:1755-1761 m_m[i]/m_f[i] histogram — all zero with system allocator.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1766
         println!("\nThe list of memory blocks. For each block the following");
         println!("information is shown:\n");
         println!("num\tthe number of this block");
@@ -430,33 +468,36 @@ pub fn bin_mem(                                                              // 
         println!("blocks is shown. For otherwise used blocks the first few");
         println!("bytes are shown as an ASCII dump.");
     }
-    println!("\nblock list:\nnum\ttnum\taddr\t\tlen\tstate\tcum");            // c:1785
-    // c:1786-1816 block-list walk — empty under system allocator.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1818
+    println!("\nblock list:\nnum\ttnum\taddr\t\tlen\tstate\tcum"); // c:1785
+                                                                   // c:1786-1816 block-list walk — empty under system allocator.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1818
         println!("\nHere is some information about the small blocks used.");
         println!("For each size the arrays with the number of free and the");
         println!("number of used blocks are shown.");
     }
-    println!("\nsmall blocks:\nsize\tblocks (free/used)");                   // c:1823
-    // c:1825-1836 — m_small histogram, all zero.
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1837
+    println!("\nsmall blocks:\nsize\tblocks (free/used)"); // c:1823
+                                                           // c:1825-1836 — m_small histogram, all zero.
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1837
         println!("\n\nBelow is some information about the allocation");
         println!("behaviour of the zsh heaps. First the number of times");
         println!("pushheap(), popheap(), and freeheap() were called.");
     }
-    println!("\nzsh heaps:\n");                                              // c:1842
-    let h_push: i32 = 0;                                                     // c:1844 — debug counter
+    println!("\nzsh heaps:\n"); // c:1842
+    let h_push: i32 = 0; // c:1844 — debug counter
     let h_pop: i32 = 0;
     let h_free: i32 = 0;
-    println!("push {}\tpop {}\tfree {}\n", h_push, h_pop, h_free);           // c:1844
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {                 // c:1846
+    println!("push {}\tpop {}\tfree {}\n", h_push, h_pop, h_free); // c:1844
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'v') {
+        // c:1846
         println!("\nThe next list shows for several sizes the number of times");
         println!("memory of this size were taken from heaps.\n");
     }
-    println!("size\tmalloc\ttotal");                                         // c:1850
-    // c:1851-1856 h_m[] histogram — all zero.
-    crate::ported::signals::unqueue_signals();                               // c:1858
-    0                                                                        // c:1859
+    println!("size\tmalloc\ttotal"); // c:1850
+                                     // c:1851-1856 h_m[] histogram — all zero.
+    crate::ported::signals::unqueue_signals(); // c:1858
+    0 // c:1859
 }
 
 // list of zsh heaps                                                        // c:127
@@ -490,7 +531,8 @@ struct Generation {
 /// Port of `dupstring(const char *s)` from Src/string.c:33 — the heap-arena
 /// variant of `ztrdup()`. In Rust both collapse to `String::clone`
 /// since `String` always owns its allocation.
-pub fn dupstring(s: &str) -> String {                                       // c:33
+pub fn dupstring(s: &str) -> String {
+    // c:33
     s.to_string()
 }
 
@@ -506,7 +548,8 @@ pub fn dupstring(s: &str) -> String {                                       // c
 /// length BUT off-by-one on multibyte boundaries). Byte-based slicing
 /// matches C exactly; `from_utf8_lossy` keeps the no-panic guarantee
 /// at mid-codepoint cuts.
-pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c:48
+pub fn dupstring_wlen(s: &str, len: usize) -> String {
+    // c:48
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..n]).into_owned()
@@ -514,7 +557,8 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c
 
 /// Duplicate an array of strings.
 /// Port of `zarrdup(char **s)` from Src/utils.c:4532.
-pub fn zarrdup(s: &[String]) -> Vec<String> {                             // c:4532
+pub fn zarrdup(s: &[String]) -> Vec<String> {
+    // c:4532
     s.to_vec()
 }
 
@@ -537,34 +581,39 @@ pub fn zarrdup(s: &[String]) -> Vec<String> {                             // c:4
 /// across the `s < send` loop. `Vec<String>` replaces the
 /// `char**` heap array; Drop replaces the explicit `NULL`
 /// terminator.
-pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {              // c:4508
-    arr.iter().take(max).cloned().collect()                                 // c:4517-4524
+pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
+    // c:4508
+    arr.iter().take(max).cloned().collect() // c:4517-4524
 }
 
 /// Get array length.
 /// Port of `arrlen(char **s)` from Src/utils.c:2357 — the C source's
 /// canonical NULL-terminated `char**` length walker. Rust slices
 /// already know their length, so this collapses to `arr.len()`.
-pub fn arrlen<T>(s: &[T]) -> usize {                                      // c:2357
+pub fn arrlen<T>(s: &[T]) -> usize {
+    // c:2357
     s.len()
 }
 
 /// Check if array length is less than n.
 /// Port of `arrlen_lt(char **s, unsigned upper_bound)` from Src/utils.c:2400 — short-circuit
 /// version that stops walking once the bound is exceeded.
-pub fn arrlen_lt<T>(s: &[T], upper_bound: usize) -> bool {                          // c:2400
+pub fn arrlen_lt<T>(s: &[T], upper_bound: usize) -> bool {
+    // c:2400
     s.len() < upper_bound
 }
 
 /// Check if array length is less than or equal to n.
 /// Port of `arrlen_le(char **s, unsigned upper_bound)` from Src/utils.c:2391.
-pub fn arrlen_le<T>(s: &[T], upper_bound: usize) -> bool {                          // c:2391
+pub fn arrlen_le<T>(s: &[T], upper_bound: usize) -> bool {
+    // c:2391
     s.len() <= upper_bound
 }
 
 /// Check if array length is greater than n.
 /// Port of `arrlen_gt(char **s, unsigned lower_bound)` from Src/utils.c:2382.
-pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {                          // c:2382
+pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {
+    // c:2382
     s.len() > lower_bound
 }
 
@@ -573,7 +622,8 @@ pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {                      
 /// driven array→string join. Default separator is space, matching
 /// the C source's `sep ? sep : " "` fallback.
 /// WARNING: param names don't match C — Rust=(arr, sep) vs C=(s, sep, heap)
-pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {               // c:3928
+pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
+    // c:3928
     arr.join(sep.unwrap_or(" "))
 }
 
@@ -594,14 +644,13 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {               // c
 // queueing state, which was wrong).
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
-
-
 /// Split string by separator.
 /// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's
 /// `IFS`-driven splitter. `allow_empty` mirrors the `allownull`
 /// argument the C function takes.
 /// WARNING: param names don't match C — Rust=(s, sep, allow_empty) vs C=(s, sep, allownull, heap)
-pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {     // c:3962
+pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
+    // c:3962
     if allow_empty {
         s.split(sep).map(|s| s.to_string()).collect()
     } else {
@@ -614,21 +663,20 @@ pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {     // c
 
 // `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
 // for heap-arena identification under ZSH_MEM_DEBUG.
-pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Port of `mod_export Heapid last_heap_id` from `Src/mem.c:194`.
 /// Tracks the most recently created heap arena id — used by
 /// `memory_validate` (ZSH_MEM_DEBUG path) to recognize cross-arena
 /// pointer use. Without ZSH_MEM_DEBUG this is set but never read.
-pub static LAST_HEAP_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);                                    // c:153
+pub static LAST_HEAP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:153
 
 /// Duplicate a string to permanent storage.
 /// Port of `ztrdup(const char *s)` from Src/string.c:62 — C zsh's canonical
 /// `strdup(3)` analog tied to the zsh allocator. In Rust both heap
 /// and permanent storage are the same (`String` owns its buffer).
-pub fn ztrdup(s: &str) -> String {                                          // c:62
+pub fn ztrdup(s: &str) -> String {
+    // c:62
     s.to_string()
 }
 
@@ -641,7 +689,8 @@ pub fn ztrdup(s: &str) -> String {                                          // c
 /// C body (c:175-177): `r = zalloc(len+1); memcpy(r, s, len); r[len]='\0';`.
 /// Byte-counted copy — the previous Rust port used `chars().take(len)`
 /// which counts codepoints, diverging from C on any multibyte input.
-pub fn ztrduppfx(s: &str, len: usize) -> String {                           // c:172
+pub fn ztrduppfx(s: &str, len: usize) -> String {
+    // c:172
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..n]).into_owned()
@@ -649,7 +698,8 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {                           // c
 
 /// Concatenate two strings into a new permanent string.
 /// Port of `bicat(const char *s1, const char *s2)` from Src/string.c:145.
-pub fn bicat(s1: &str, s2: &str) -> String {                                // c:145
+pub fn bicat(s1: &str, s2: &str) -> String {
+    // c:145
     format!("{}{}", s1, s2)
 }
 
@@ -664,7 +714,8 @@ pub static FHEAP: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
 /// Concatenate three strings into a new permanent string.
 /// Port of `tricat(char const *s1, char const *s2, char const *s3)` from Src/string.c:98 — used heavily by the
 /// completion machinery for "prefix + match + suffix" assembly.
-pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                     // c:98
+pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
+    // c:98
     format!("{}{}{}", s1, s2, s3)
 }
 
@@ -673,7 +724,8 @@ pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                     // c
 /// Concatenate two strings into a new heap-arena string.
 /// Port of `dyncat(const char *s1, const char *s2)` from Src/string.c:131 — heap-arena variant
 /// of `bicat()`.
-pub fn dyncat(s1: &str, s2: &str) -> String {                               // c:131
+pub fn dyncat(s1: &str, s2: &str) -> String {
+    // c:131
     format!("{}{}", s1, s2)
 }
 
@@ -681,7 +733,8 @@ pub fn dyncat(s1: &str, s2: &str) -> String {                               // c
 /// Port of `strend(char *str)` from Src/string.c:196 — C source returns the
 /// pointer to the NUL terminator's predecessor; Rust returns the
 /// char.
-pub fn strend(str: &str) -> Option<char> {                                    // c:196
+pub fn strend(str: &str) -> Option<char> {
+    // c:196
     str.chars().last()
 }
 
@@ -689,7 +742,8 @@ pub fn strend(str: &str) -> Option<char> {                                    //
 /// Append a string in-place.
 /// Port of `appstr(char *base, char const *append)` from Src/string.c:186 — the C source uses
 /// `strcat(3)` with realloc; Rust's `String::push_str` does both.
-pub fn appstr(base: &mut String, append: &str) {                            // c:186
+pub fn appstr(base: &mut String, append: &str) {
+    // c:186
     base.push_str(append);
 }
 
@@ -777,8 +831,14 @@ mod tests {
     #[test]
     fn sepjoin_with_explicit_separator() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("-")), "a-b-c");
-        assert_eq!(sepjoin(&["a".into(), "b".into(), "c".into()], Some("")),  "abc");
+        assert_eq!(
+            sepjoin(&["a".into(), "b".into(), "c".into()], Some("-")),
+            "a-b-c"
+        );
+        assert_eq!(
+            sepjoin(&["a".into(), "b".into(), "c".into()], Some("")),
+            "abc"
+        );
     }
 
     /// c:3928 — `sepjoin(arr, None)` defaults separator to space (matches
@@ -795,7 +855,7 @@ mod tests {
     fn sepjoin_empty_array_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(sepjoin(&[], Some("-")), "");
-        assert_eq!(sepjoin(&[], None),      "");
+        assert_eq!(sepjoin(&[], None), "");
     }
 
     /// c:3962 — `sepsplit("a/b/c", "/", false)` → `["a","b","c"]`.
@@ -838,7 +898,10 @@ mod tests {
         let a = new_heap_id();
         let b = new_heap_id();
         let c = new_heap_id();
-        assert!(a < b && b < c, "heap-id sequence must be strictly increasing: {a} < {b} < {c}");
+        assert!(
+            a < b && b < c,
+            "heap-id sequence must be strictly increasing: {a} < {b} < {c}"
+        );
     }
 
     /// c:291/443 — `pushheap`/`popheap` are nest-balanced. Two pushes
@@ -890,20 +953,31 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // "café" = `c-a-f-é` where é is 2 bytes (0xC3 0xA9) → 5 bytes total.
         // Byte-count 5 → exactly "café" (whole string).
-        assert_eq!(dupstring_wlen("café", 5), "café",
-            "c:55 — memcpy is byte-counted; 5 bytes of 'café' is the whole string");
+        assert_eq!(
+            dupstring_wlen("café", 5),
+            "café",
+            "c:55 — memcpy is byte-counted; 5 bytes of 'café' is the whole string"
+        );
         // Char-count 5 would walk past the end, but byte-count clamps
         // at the actual byte length.
-        assert_eq!(dupstring_wlen("café", 100), "café",
-            "c:55 — len > strlen clamps (Rust safety) instead of UB");
+        assert_eq!(
+            dupstring_wlen("café", 100),
+            "café",
+            "c:55 — len > strlen clamps (Rust safety) instead of UB"
+        );
         // Byte-count 4 → "caf" + replacement char (mid-codepoint cut).
         let r = dupstring_wlen("café", 4);
-        assert!(r.starts_with("caf"),
-            "c:55 — byte cut at codepoint boundary uses from_utf8_lossy");
+        assert!(
+            r.starts_with("caf"),
+            "c:55 — byte cut at codepoint boundary uses from_utf8_lossy"
+        );
         // Empty input → empty output.
         assert_eq!(dupstring_wlen("", 0), "");
-        assert_eq!(dupstring_wlen("hello", 0), "",
-            "c:55 — len 0 → empty result");
+        assert_eq!(
+            dupstring_wlen("hello", 0),
+            "",
+            "c:55 — len 0 → empty result"
+        );
     }
 
     /// `Src/string.c:172-178` — `ztrduppfx` is the permanent-storage
@@ -913,14 +987,16 @@ mod tests {
     #[test]
     fn ztrduppfx_is_byte_counted_not_char_counted() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(ztrduppfx("café", 5), "café",
-            "c:175 — 5 bytes copies whole 'café' (é=2 bytes)");
+        assert_eq!(
+            ztrduppfx("café", 5),
+            "café",
+            "c:175 — 5 bytes copies whole 'café' (é=2 bytes)"
+        );
         assert_eq!(ztrduppfx("hello", 3), "hel");
         // Multibyte 字 = 3 bytes (0xE5 0xAD 0x97). len=3 copies whole.
         assert_eq!(ztrduppfx("字", 3), "字");
-        assert_eq!(ztrduppfx("",  5), "");
-        assert_eq!(ztrduppfx("ab", 100), "ab",
-            "c:175 — len > strlen clamps");
+        assert_eq!(ztrduppfx("", 5), "");
+        assert_eq!(ztrduppfx("ab", 100), "ab", "c:175 — len > strlen clamps");
     }
 
     /// `Src/string.c:33-42` — `dupstring(s)` returns an independent
@@ -931,8 +1007,10 @@ mod tests {
         let mut src = String::from("original");
         let dup = dupstring(&src);
         src.clear();
-        assert_eq!(dup, "original",
-            "c:38-40 — dup must survive source-side mutation");
+        assert_eq!(
+            dup, "original",
+            "c:38-40 — dup must survive source-side mutation"
+        );
     }
 
     /// `Src/utils.c:4532` — `zarrdup(s)` duplicates a NULL-terminated
@@ -966,7 +1044,12 @@ mod tests {
     #[test]
     fn arrdup_max_truncates_at_bound() {
         let _g = crate::test_util::global_state_lock();
-        let src = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let src = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         // Truncate.
         let r = arrdup_max(&src, 2);
         assert_eq!(r, vec!["a".to_string(), "b".to_string()]);
@@ -1001,10 +1084,10 @@ mod tests {
     fn arrlen_lt_boundary_semantics() {
         let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
-        assert!(arrlen_lt(&arr, 4),   "3 < 4");
-        assert!(!arrlen_lt(&arr, 3),  "3 < 3 is false (strict)");
-        assert!(!arrlen_lt(&arr, 2),  "3 < 2 is false");
-        assert!(!arrlen_lt(&arr, 0),  "3 < 0 is false");
+        assert!(arrlen_lt(&arr, 4), "3 < 4");
+        assert!(!arrlen_lt(&arr, 3), "3 < 3 is false (strict)");
+        assert!(!arrlen_lt(&arr, 2), "3 < 2 is false");
+        assert!(!arrlen_lt(&arr, 0), "3 < 0 is false");
     }
 
     /// `Src/utils.c:2391` — `arrlen_le(arr, n)` is `arrlen(arr) <= n`.
@@ -1014,10 +1097,10 @@ mod tests {
     fn arrlen_le_boundary_semantics() {
         let _g = crate::test_util::global_state_lock();
         let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
-        assert!(arrlen_le(&arr, 4),   "3 <= 4");
-        assert!(arrlen_le(&arr, 3),   "3 <= 3 is TRUE (non-strict)");
-        assert!(!arrlen_le(&arr, 2),  "3 <= 2 is false");
-        assert!(!arrlen_le(&arr, 0),  "3 <= 0 is false");
+        assert!(arrlen_le(&arr, 4), "3 <= 4");
+        assert!(arrlen_le(&arr, 3), "3 <= 3 is TRUE (non-strict)");
+        assert!(!arrlen_le(&arr, 2), "3 <= 2 is false");
+        assert!(!arrlen_le(&arr, 0), "3 <= 0 is false");
     }
 
     /// `Src/string.c:33` + `Src/string.c:48` — `dupstring` and

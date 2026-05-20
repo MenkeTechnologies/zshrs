@@ -27,7 +27,8 @@ use std::collections::VecDeque;
 
 // Get an empty linked list header                                         // c:116
 /// Port of `newlinklist()` (`Src/linklist.c:103`).
-pub fn newlinklist() -> LinkList<String> {                                   // c:103
+pub fn newlinklist() -> LinkList<String> {
+    // c:103
     LinkList::new()
 }
 
@@ -41,40 +42,50 @@ impl<T> LinkList<T> {
     // Get an empty linked list header                                        // c:99
     /// Port of `znewlinklist()` from Src/linklist.c:116 — heap-arena
     /// fresh empty list. Rust uses `LinkList::new()`.
-    pub fn new() -> Self {                                                      // c:116
-        LinkList { nodes: VecDeque::new(), flags: 0 }
+    pub fn new() -> Self {
+        // c:116
+        LinkList {
+            nodes: VecDeque::new(),
+            flags: 0,
+        }
     }
 
     /// Port of the C macro `empty(list)` (`Src/zsh.h:583`) —
     /// `firstnode(list) == NULL`.
-    pub fn is_empty(&self) -> bool {                                            // c:zsh.h:583
+    pub fn is_empty(&self) -> bool {
+        // c:zsh.h:583
         self.nodes.is_empty()
     }
 
     // Count the number of nodes in a linked list                             // c:300
     /// Port of `countlinknodes(LinkList list)` from Src/linklist.c:304.
-    pub fn len(&self) -> usize {                                                // c:304
+    pub fn len(&self) -> usize {
+        // c:304
         self.nodes.len()
     }
 
     /// Push at the head. Port of the C macro `pushnode()` (`Src/zsh.h`).
-    pub fn push_front(&mut self, data: T) {                                     // c:151
+    pub fn push_front(&mut self, data: T) {
+        // c:151
         self.nodes.push_front(data);
     }
 
     /// Push at the tail. Port of `addlinknode()` (`Src/zsh.h`) /
     /// `zaddlinknode()` (`Src/linklist.c:151`).
-    pub fn push_back(&mut self, data: T) {                                      // c:151
+    pub fn push_back(&mut self, data: T) {
+        // c:151
         self.nodes.push_back(data);
     }
 
     /// Pop the head. Port of `getlinknode(LinkList list)` (`Src/linklist.c:210`).
-    pub fn pop_front(&mut self) -> Option<T> {                                  // c:210
+    pub fn pop_front(&mut self) -> Option<T> {
+        // c:210
         self.nodes.pop_front()
     }
 
     /// Pop the tail. Port of `remnode(list, lastnode(list))` idiom.
-    pub fn pop_back(&mut self) -> Option<T> {                                   // c:251
+    pub fn pop_back(&mut self) -> Option<T> {
+        // c:251
         self.nodes.pop_back()
     }
 
@@ -108,13 +119,15 @@ impl<T> LinkList<T> {
 
     /// Append `other` onto the tail; drains `other`. Port of
     /// `joinlists()` (`Src/linklist.c:360`).
-    pub fn append(&mut self, other: &mut LinkList<T>) {                         // c:360
+    pub fn append(&mut self, other: &mut LinkList<T>) {
+        // c:360
         self.nodes.append(&mut other.nodes);
     }
 
     /// Drop every node. Port of `freelinklist(list, NULL)`
     /// (`Src/linklist.c:287`).
-    pub fn clear(&mut self) {                                                   // c:287
+    pub fn clear(&mut self) {
+        // c:287
         self.nodes.clear();
     }
 
@@ -130,39 +143,62 @@ impl<T> LinkList<T> {
     /// Port of `firstnode(X)` macro (`Src/zsh.h:576`) — head node
     /// handle. Rust uses `usize` indices since the `VecDeque` backing
     /// gives O(1) random access matching C's pointer walk.
-    pub fn firstnode(&self) -> Option<usize> {                                  // c:zsh.h:576
-        if self.nodes.is_empty() { None } else { Some(0) }
+    pub fn firstnode(&self) -> Option<usize> {
+        // c:zsh.h:576
+        if self.nodes.is_empty() {
+            None
+        } else {
+            Some(0)
+        }
     }
 
     /// Port of `lastnode(X)` macro (`Src/zsh.h:577`).
-    pub fn lastnode(&self) -> Option<usize> {                                   // c:zsh.h:577
-        if self.nodes.is_empty() { None } else { Some(self.nodes.len() - 1) }
+    pub fn lastnode(&self) -> Option<usize> {
+        // c:zsh.h:577
+        if self.nodes.is_empty() {
+            None
+        } else {
+            Some(self.nodes.len() - 1)
+        }
     }
 
     /// Port of `nextnode(X)` macro (`Src/zsh.h:588`).
-    pub fn nextnode(&self, idx: usize) -> Option<usize> {                       // c:zsh.h:588
-        if idx + 1 < self.nodes.len() { Some(idx + 1) } else { None }
+    pub fn nextnode(&self, idx: usize) -> Option<usize> {
+        // c:zsh.h:588
+        if idx + 1 < self.nodes.len() {
+            Some(idx + 1)
+        } else {
+            None
+        }
     }
 
     /// Port of `prevnode(X)` macro (`Src/zsh.h:589`).
-    pub fn prevnode(&self, idx: usize) -> Option<usize> {                       // c:zsh.h:589
-        if idx > 0 && idx <= self.nodes.len() { Some(idx - 1) } else { None }
+    pub fn prevnode(&self, idx: usize) -> Option<usize> {
+        // c:zsh.h:589
+        if idx > 0 && idx <= self.nodes.len() {
+            Some(idx - 1)
+        } else {
+            None
+        }
     }
 
     /// Port of `getdata(X)` macro (`Src/zsh.h:586`).
-    pub fn getdata(&self, idx: usize) -> Option<&T> {                           // c:zsh.h:586
+    pub fn getdata(&self, idx: usize) -> Option<&T> {
+        // c:zsh.h:586
         self.nodes.get(idx)
     }
 
     /// Port of `setdata(X,Y)` macro (`Src/zsh.h:587`).
-    pub fn setdata(&mut self, idx: usize, data: T) {                            // c:zsh.h:587
+    pub fn setdata(&mut self, idx: usize, data: T) {
+        // c:zsh.h:587
         if let Some(slot) = self.nodes.get_mut(idx) {
             *slot = data;
         }
     }
 
     /// Port of `empty(X)` macro (`Src/zsh.h:583`).
-    pub fn empty(&self) -> bool {                                               // c:zsh.h:583
+    pub fn empty(&self) -> bool {
+        // c:zsh.h:583
         self.nodes.is_empty()
     }
 
@@ -171,7 +207,8 @@ impl<T> LinkList<T> {
     /// — insert after the supplied node index, return the index of the
     /// inserted node.
     /// WARNING: param names don't match C — Rust=(after_idx, data) vs C=(list, node, dat)
-    pub fn insertlinknode(&mut self, after_idx: usize, data: T) -> usize {      // c:linklist.c:133
+    pub fn insertlinknode(&mut self, after_idx: usize, data: T) -> usize {
+        // c:linklist.c:133
         let new_idx = after_idx + 1;
         if new_idx >= self.nodes.len() {
             self.nodes.push_back(data);
@@ -183,7 +220,8 @@ impl<T> LinkList<T> {
     }
 
     /// Remove + free a node. Port of `remnode(LinkList list, LinkNode nd)` (`Src/linklist.c:251`).
-    pub fn delete_node(&mut self, idx: usize) -> Option<T> {                    // c:251
+    pub fn delete_node(&mut self, idx: usize) -> Option<T> {
+        // c:251
         self.nodes.remove(idx)
     }
 
@@ -199,7 +237,10 @@ impl<T> LinkList<T> {
 
 impl<T: Clone> Clone for LinkList<T> {
     fn clone(&self) -> Self {
-        LinkList { nodes: self.nodes.clone(), flags: self.flags }
+        LinkList {
+            nodes: self.nodes.clone(),
+            flags: self.flags,
+        }
     }
 }
 
@@ -241,13 +282,15 @@ impl<'a, T> IntoIterator for &'a LinkList<T> {
 }
 
 /// Port of `znewlinklist()` (`Src/linklist.c:116`).
-pub fn znewlinklist() -> LinkList<String> {                                  // c:116
+pub fn znewlinklist() -> LinkList<String> {
+    // c:116
     LinkList::new()
 }
 
 // Insert a node in a linked list after a given node                       // c:151
 /// Port of `insertlinknode(LinkList list, LinkNode node, void *dat)` (`Src/linklist.c:133`).
-pub fn insertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize { // c:133
+pub fn insertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize {
+    // c:133
     list.insertlinknode(node, dat)
 }
 
@@ -275,59 +318,69 @@ pub fn uinsertlinknode(list: &mut LinkList<String>, node: usize, new: String) ->
 /// return;`). Param names + positions match C exactly so callers
 /// reading `insertlinklist(sub.in, lastnode(result->in), result->in)`
 /// (the canonical zutil.c:1324 pattern) translate 1:1.
-pub fn insertlinklist<T: Clone>(                                              // c:190
+pub fn insertlinklist<T: Clone>(
+    // c:190
     l: &LinkList<T>,
     where_idx: usize,
     x: &mut LinkList<T>,
 ) {
-    if l.is_empty() {                                                         // c:194
+    if l.is_empty() {
+        // c:194
         return;
     }
     let mut idx = where_idx;
-    for v in l.iter() {                                                       // c:196 walk l, splice into x
+    for v in l.iter() {
+        // c:196 walk l, splice into x
         idx = x.insertlinknode(idx, v.clone());
     }
 }
 
 // Pop the top node off a linked list and free it.                         // c:210
 /// Port of `getlinknode(LinkList list)` (`Src/linklist.c:210`).
-pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {                 // c:210
+pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {
+    // c:210
     list.pop_front()
 }
 
 // Pop the top node off a linked list without freeing it.                  // c:251
 /// Port of `ugetnode(LinkList list)` (`Src/linklist.c:231`).
-pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {                    // c:231
+pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {
+    // c:231
     list.pop_front()
 }
 
 // Remove a node from a linked list                                        // c:270
 /// Port of `remnode(LinkList list, LinkNode nd)` (`Src/linklist.c:251`).
-pub fn remnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {         // c:251
+pub fn remnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {
+    // c:251
     list.delete_node(nd)
 }
 
 /// Port of `uremnode(LinkList list, LinkNode nd)` (`Src/linklist.c:270`).
-pub fn uremnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {        // c:270
+pub fn uremnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {
+    // c:270
     list.delete_node(nd)
 }
 
 // Free a linked list                                                       // c:304
 /// Port of `freelinklist(LinkList list, FreeFunc freefunc)` (`Src/linklist.c:287`).
 /// WARNING: param names don't match C — Rust=(list) vs C=(list, freefunc)
-pub fn freelinklist<T>(list: &mut LinkList<T>) {                             // c:287
+pub fn freelinklist<T>(list: &mut LinkList<T>) {
+    // c:287
     list.clear();
 }
 
 // Count the number of nodes in a linked list                              // c:317
 /// Port of `countlinknodes(LinkList list)` (`Src/linklist.c:304`).
-pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {                      // c:304
+pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {
+    // c:304
     list.len()
 }
 
 // Make specified node first, moving preceding nodes to end                // c:317
 /// Port of `rolllist(LinkList l, LinkNode nd)` (`Src/linklist.c:317`).
-pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:317
+pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {
+    // c:317
     let len = l.len();
     if len > 0 {
         let nd = nd % len;
@@ -350,46 +403,53 @@ pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:
 /// The previous Rust port returned an empty list (ignoring `size`),
 /// so any caller expecting `size` placeholder slots would iterate
 /// over nothing. Fix by pushing `size` default-constructed nodes.
-pub fn newsizedlist<T: Default>(size: usize) -> LinkList<T> {                // c:331
+pub fn newsizedlist<T: Default>(size: usize) -> LinkList<T> {
+    // c:331
     let mut list = LinkList::new();
-    for _ in 0..size {                                                       // c:339-341
+    for _ in 0..size {
+        // c:339-341
         list.push_back(T::default());
     }
     list
 }
 
 /// Port of `joinlists(LinkList first, LinkList second)` (`Src/linklist.c:360`).
-pub fn joinlists<T>(first: &mut LinkList<T>, second: &mut LinkList<T>) {              // c:360
+pub fn joinlists<T>(first: &mut LinkList<T>, second: &mut LinkList<T>) {
+    // c:360
     first.append(second);
 }
 
 /// Port of `linknodebydatum(LinkList list, void *dat)` (`Src/linklist.c:386`).
-pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, dat: &T) -> Option<usize> { // c:386
+pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, dat: &T) -> Option<usize> {
+    // c:386
     list.iter().position(|v| v == dat)
 }
 
 /// Port of `linknodebystring(LinkList list, char *dat)` (`Src/linklist.c:403`).
-pub fn linknodebystring(list: &LinkList<String>, dat: &str) -> Option<usize> { // c:403
+pub fn linknodebystring(list: &LinkList<String>, dat: &str) -> Option<usize> {
+    // c:403
     list.iter().position(|v| v == dat)
 }
 
 /// Convert a linked list of strings to a `Vec`. Port of
 /// `hlinklist2array()` (`Src/linklist.c:423`).
-pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {                // c:423
+pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {
+    // c:423
     list.iter().cloned().collect()
 }
 
 /// Port of `zlinklist2array(LinkList list, int copy)` (`Src/linklist.c:449`).
 /// WARNING: param names don't match C — Rust=(list) vs C=(list, copy)
-pub fn zlinklist2array(list: &LinkList<String>) -> Vec<String> {             // c:449
+pub fn zlinklist2array(list: &LinkList<String>) -> Vec<String> {
+    // c:449
     list.iter().cloned().collect()
 }
 
 /// A doubly-ended list, port of `struct linklist` (`Src/zsh.h:563`).
 /// `flags` carries `LF_ARRAY` and friends from `Src/subst.c:33`.
 pub struct LinkList<T> {
-    pub nodes: VecDeque<T>,                                                 // c:zsh.h:565,566
-    pub flags: u32,                                                          // c:zsh.h:567
+    pub nodes: VecDeque<T>, // c:zsh.h:565,566
+    pub flags: u32,         // c:zsh.h:567
 }
 
 #[cfg(test)]
@@ -413,16 +473,18 @@ mod tests {
     fn newsizedlist_preallocates_n_slots() {
         let _g = crate::test_util::global_state_lock();
         let list: LinkList<i32> = newsizedlist(5);
-        assert_eq!(list.len(), 5,
-            "c:339-341 — newsizedlist(5) must pre-allocate 5 nodes");
+        assert_eq!(
+            list.len(),
+            5,
+            "c:339-341 — newsizedlist(5) must pre-allocate 5 nodes"
+        );
         // Default-constructed i32 is 0; every slot ready for assign.
         for v in list.iter() {
             assert_eq!(*v, 0, "pre-allocated slots default to 0");
         }
 
         let zero_list: LinkList<String> = newsizedlist(0);
-        assert_eq!(zero_list.len(), 0,
-            "newsizedlist(0) is the same as new()");
+        assert_eq!(zero_list.len(), 0, "newsizedlist(0) is the same as new()");
     }
 
     #[test]
@@ -555,8 +617,11 @@ mod tests {
     fn linknodebydatum_finds_first_match() {
         let _g = crate::test_util::global_state_lock();
         let list: LinkList<i32> = vec![10, 20, 30, 20].into_iter().collect();
-        assert_eq!(linknodebydatum(&list, &20), Some(1),
-            "must return FIRST match index");
+        assert_eq!(
+            linknodebydatum(&list, &20),
+            Some(1),
+            "must return FIRST match index"
+        );
         assert_eq!(linknodebydatum(&list, &99), None);
     }
 
@@ -565,7 +630,9 @@ mod tests {
     #[test]
     fn linknodebystring_finds_first_match() {
         let _g = crate::test_util::global_state_lock();
-        let list: LinkList<String> = vec!["a".into(), "b".into(), "a".into()].into_iter().collect();
+        let list: LinkList<String> = vec!["a".into(), "b".into(), "a".into()]
+            .into_iter()
+            .collect();
         assert_eq!(linknodebystring(&list, "a"), Some(0));
         assert_eq!(linknodebystring(&list, "b"), Some(1));
         assert_eq!(linknodebystring(&list, "x"), None);
@@ -576,7 +643,9 @@ mod tests {
     #[test]
     fn hlinklist2array_preserves_order() {
         let _g = crate::test_util::global_state_lock();
-        let list: LinkList<String> = vec!["a".into(), "b".into(), "c".into()].into_iter().collect();
+        let list: LinkList<String> = vec!["a".into(), "b".into(), "c".into()]
+            .into_iter()
+            .collect();
         let arr = hlinklist2array(&list);
         assert_eq!(arr, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     }
@@ -587,8 +656,11 @@ mod tests {
     fn countlinknodes_returns_len_for_arbitrary_lists() {
         let _g = crate::test_util::global_state_lock();
         let empty: LinkList<i32> = LinkList::new();
-        assert_eq!(countlinknodes(&empty), 0,
-            "c:309 — empty list traversal yields 0");
+        assert_eq!(
+            countlinknodes(&empty),
+            0,
+            "c:309 — empty list traversal yields 0"
+        );
         let one: LinkList<i32> = vec![42].into_iter().collect();
         assert_eq!(countlinknodes(&one), 1);
         let many: LinkList<i32> = (0..100).collect();
@@ -605,8 +677,11 @@ mod tests {
         // c:319-324 — rotate so nd-th element becomes first.
         let mut list: LinkList<i32> = vec![10, 20, 30, 40].into_iter().collect();
         rolllist(&mut list, 2);
-        assert_eq!(list.to_vec(), vec![30, 40, 10, 20],
-            "c:321 — `list.first = nd` then preceding nodes append at end");
+        assert_eq!(
+            list.to_vec(),
+            vec![30, 40, 10, 20],
+            "c:321 — `list.first = nd` then preceding nodes append at end"
+        );
     }
 
     /// c:316-325 — rolllist by 0 is the identity. Pin so an off-by-one
@@ -649,10 +724,16 @@ mod tests {
         let source: LinkList<i32> = vec![100, 200, 300].into_iter().collect();
         let mut dest: LinkList<i32> = vec![10, 20, 30].into_iter().collect();
         insertlinklist(&source, 0, &mut dest);
-        assert_eq!(dest.to_vec(), vec![10, 100, 200, 300, 20, 30],
-            "c:194-202 — source spliced into dest after node 0");
-        assert_eq!(source.to_vec(), vec![100, 200, 300],
-            "c:188-206 — source list is NOT modified (read-only)");
+        assert_eq!(
+            dest.to_vec(),
+            vec![10, 100, 200, 300, 20, 30],
+            "c:194-202 — source spliced into dest after node 0"
+        );
+        assert_eq!(
+            source.to_vec(),
+            vec![100, 200, 300],
+            "c:188-206 — source list is NOT modified (read-only)"
+        );
     }
 
     /// `Src/linklist.c:193-194` — `if (!firstnode(l)) return;` — empty
@@ -664,8 +745,11 @@ mod tests {
         let source: LinkList<i32> = LinkList::new();
         let mut dest: LinkList<i32> = vec![1, 2, 3].into_iter().collect();
         insertlinklist(&source, 1, &mut dest);
-        assert_eq!(dest.to_vec(), vec![1, 2, 3],
-            "c:193-194 — empty l returns early; dest unchanged");
+        assert_eq!(
+            dest.to_vec(),
+            vec![1, 2, 3],
+            "c:193-194 — empty l returns early; dest unchanged"
+        );
     }
 
     /// `Src/linklist.c:188-206` — canonical zutil.c:1324 pattern:
@@ -680,7 +764,10 @@ mod tests {
         let mut dest: LinkList<&str> = vec!["a", "b", "c"].into_iter().collect();
         let last = dest.len() - 1;
         insertlinklist(&source, last, &mut dest);
-        assert_eq!(dest.to_vec(), vec!["a", "b", "c", "x", "y"],
-            "c:188-206 zutil.c:1324 — lastnode anchor → tail-append");
+        assert_eq!(
+            dest.to_vec(),
+            vec!["a", "b", "c", "x", "y"],
+            "c:188-206 zutil.c:1324 — lastnode anchor → tail-append"
+        );
     }
 }

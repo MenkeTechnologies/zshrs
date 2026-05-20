@@ -72,7 +72,12 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
             // string-only value column doesn't have to special-case.
             let map: serde_json::Map<String, Value> = opts_snap
                 .iter()
-                .map(|(k, v)| (k.clone(), Value::String(if *v { "on" } else { "off" }.into())))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        Value::String(if *v { "on" } else { "off" }.into()),
+                    )
+                })
                 .collect();
             out.push(("setopt".into(), Value::Object(map)));
         }
@@ -144,7 +149,8 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
         // named_dir: hash -d entries from canonical `nameddirtab`
         // (port of `Src/hashnameddir.c`).
         let nd_snap: Vec<(String, String)> = crate::ported::hashnameddir::nameddirtab()
-            .lock().ok()
+            .lock()
+            .ok()
             .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
             .unwrap_or_default();
         if !nd_snap.is_empty() {

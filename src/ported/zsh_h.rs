@@ -129,39 +129,69 @@ pub const DEFAULT_IFS_SH: &str = " \t\n"; // c:153
 // Byte-token constants — names match C `Src/zsh.h:159-224` exactly
 // (PascalCase). One exception: C `String` (`0x85`) would shadow Rust's
 // `std::string::String`, so we use `Stringg` for that single token.
-#[allow(non_upper_case_globals)] pub const Pound: char      = '\u{84}'; // c:159 #
+#[allow(non_upper_case_globals)]
+pub const Pound: char = '\u{84}'; // c:159 #
 pub const Stringg: char = '\u{85}'; // c:160 $ — C `String` (renamed: collides with std::string::String)
-#[allow(non_upper_case_globals)] pub const Hat: char        = '\u{86}'; // c:161 ^
-#[allow(non_upper_case_globals)] pub const Star: char       = '\u{87}'; // c:162 *
-#[allow(non_upper_case_globals)] pub const Inpar: char      = '\u{88}'; // c:163 (
-#[allow(non_upper_case_globals)] pub const Inparmath: char  = '\u{89}'; // c:164 ((
-#[allow(non_upper_case_globals)] pub const Outpar: char     = '\u{8a}'; // c:165 )
-#[allow(non_upper_case_globals)] pub const Outparmath: char = '\u{8b}'; // c:166 ))
-#[allow(non_upper_case_globals)] pub const Qstring: char    = '\u{8c}'; // c:167 "$"
-#[allow(non_upper_case_globals)] pub const Equals: char     = '\u{8d}'; // c:168 =
-#[allow(non_upper_case_globals)] pub const Bar: char        = '\u{8e}'; // c:169 |
-#[allow(non_upper_case_globals)] pub const Inbrace: char    = '\u{8f}'; // c:170 {
-#[allow(non_upper_case_globals)] pub const Outbrace: char   = '\u{90}'; // c:171 }
-#[allow(non_upper_case_globals)] pub const Inbrack: char    = '\u{91}'; // c:172 [
-#[allow(non_upper_case_globals)] pub const Outbrack: char   = '\u{92}'; // c:173 ]
-#[allow(non_upper_case_globals)] pub const Tick: char       = '\u{93}'; // c:174 `
-#[allow(non_upper_case_globals)] pub const Inang: char      = '\u{94}'; // c:175 <
-#[allow(non_upper_case_globals)] pub const Outang: char     = '\u{95}'; // c:176 >
-#[allow(non_upper_case_globals)] pub const OutangProc: char = '\u{96}'; // c:177 >(...)
-#[allow(non_upper_case_globals)] pub const Quest: char      = '\u{97}'; // c:178 ?
-#[allow(non_upper_case_globals)] pub const Tilde: char      = '\u{98}'; // c:179 ~
-#[allow(non_upper_case_globals)] pub const Qtick: char      = '\u{99}'; // c:180 "`"
-#[allow(non_upper_case_globals)] pub const Comma: char      = '\u{9a}'; // c:181 ,
-#[allow(non_upper_case_globals)] pub const Dash: char       = '\u{9b}'; // c:182 -
-#[allow(non_upper_case_globals)] pub const Bang: char       = '\u{9c}'; // c:183 !
+#[allow(non_upper_case_globals)]
+pub const Hat: char = '\u{86}'; // c:161 ^
+#[allow(non_upper_case_globals)]
+pub const Star: char = '\u{87}'; // c:162 *
+#[allow(non_upper_case_globals)]
+pub const Inpar: char = '\u{88}'; // c:163 (
+#[allow(non_upper_case_globals)]
+pub const Inparmath: char = '\u{89}'; // c:164 ((
+#[allow(non_upper_case_globals)]
+pub const Outpar: char = '\u{8a}'; // c:165 )
+#[allow(non_upper_case_globals)]
+pub const Outparmath: char = '\u{8b}'; // c:166 ))
+#[allow(non_upper_case_globals)]
+pub const Qstring: char = '\u{8c}'; // c:167 "$"
+#[allow(non_upper_case_globals)]
+pub const Equals: char = '\u{8d}'; // c:168 =
+#[allow(non_upper_case_globals)]
+pub const Bar: char = '\u{8e}'; // c:169 |
+#[allow(non_upper_case_globals)]
+pub const Inbrace: char = '\u{8f}'; // c:170 {
+#[allow(non_upper_case_globals)]
+pub const Outbrace: char = '\u{90}'; // c:171 }
+#[allow(non_upper_case_globals)]
+pub const Inbrack: char = '\u{91}'; // c:172 [
+#[allow(non_upper_case_globals)]
+pub const Outbrack: char = '\u{92}'; // c:173 ]
+#[allow(non_upper_case_globals)]
+pub const Tick: char = '\u{93}'; // c:174 `
+#[allow(non_upper_case_globals)]
+pub const Inang: char = '\u{94}'; // c:175 <
+#[allow(non_upper_case_globals)]
+pub const Outang: char = '\u{95}'; // c:176 >
+#[allow(non_upper_case_globals)]
+pub const OutangProc: char = '\u{96}'; // c:177 >(...)
+#[allow(non_upper_case_globals)]
+pub const Quest: char = '\u{97}'; // c:178 ?
+#[allow(non_upper_case_globals)]
+pub const Tilde: char = '\u{98}'; // c:179 ~
+#[allow(non_upper_case_globals)]
+pub const Qtick: char = '\u{99}'; // c:180 "`"
+#[allow(non_upper_case_globals)]
+pub const Comma: char = '\u{9a}'; // c:181 ,
+#[allow(non_upper_case_globals)]
+pub const Dash: char = '\u{9b}'; // c:182 -
+#[allow(non_upper_case_globals)]
+pub const Bang: char = '\u{9c}'; // c:183 !
 pub const LAST_NORMAL_TOK: char = Bang; // c:188
 
-#[allow(non_upper_case_globals)] pub const Snull: char     = '\u{9d}'; // c:193
-#[allow(non_upper_case_globals)] pub const Dnull: char     = '\u{9e}'; // c:194
-#[allow(non_upper_case_globals)] pub const Bnull: char     = '\u{9f}'; // c:195
-#[allow(non_upper_case_globals)] pub const Bnullkeep: char = '\u{a0}'; // c:200
-#[allow(non_upper_case_globals)] pub const Nularg: char    = '\u{a1}'; // c:206
-#[allow(non_upper_case_globals)] pub const Marker: char    = '\u{a2}'; // c:224
+#[allow(non_upper_case_globals)]
+pub const Snull: char = '\u{9d}'; // c:193
+#[allow(non_upper_case_globals)]
+pub const Dnull: char = '\u{9e}'; // c:194
+#[allow(non_upper_case_globals)]
+pub const Bnull: char = '\u{9f}'; // c:195
+#[allow(non_upper_case_globals)]
+pub const Bnullkeep: char = '\u{a0}'; // c:200
+#[allow(non_upper_case_globals)]
+pub const Nularg: char = '\u{a1}'; // c:206
+#[allow(non_upper_case_globals)]
+pub const Marker: char = '\u{a2}'; // c:224
 
 pub const SPECCHARS: &str = "#$^*()=|{}[]`<>?~;&\n\t \\\'\""; // c:228
 pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
@@ -413,10 +443,10 @@ pub type Alias = Box<alias>; // c:510
 pub type Asgment = Box<asgment>; // c:511
 pub type Builtin = Box<builtin>; // c:512
 pub type Cmdnam = Box<cmdnam>; // c:513
-// `struct complist` body lives in `crate::ported::glob` (mirrors
-// C: declared in zsh.h via typedef alias, body defined in glob.c).
-// The `Complist` alias here resolves to that struct.
-pub type Complist = Box<crate::ported::glob::complist>;                      // c:514
+                               // `struct complist` body lives in `crate::ported::glob` (mirrors
+                               // C: declared in zsh.h via typedef alias, body defined in glob.c).
+                               // The `Complist` alias here resolves to that struct.
+pub type Complist = Box<crate::ported::glob::complist>; // c:514
 pub type Conddef = Box<conddef>; // c:515
 pub type Dirsav = Box<dirsav>; // c:516
 pub type Emulation_options = Box<emulation_options>; // c:517
@@ -593,10 +623,10 @@ pub struct alias {
 #[allow(non_camel_case_types)]
 pub struct asgment {
     // c:1267
-    pub node: linknode,                                          // c:1268
-    pub name: String,                                            // c:1269
-    pub flags: i32,                                              // c:1270 ASG_*
-    pub scalar: Option<String>,                                  // c:1272 union value.scalar
+    pub node: linknode,                                           // c:1268
+    pub name: String,                                             // c:1269
+    pub flags: i32,                                               // c:1270 ASG_*
+    pub scalar: Option<String>,                                   // c:1272 union value.scalar
     pub array: Option<crate::ported::linklist::LinkList<String>>, // c:1273 union value.array (LinkList of char *)
 }
 
@@ -699,13 +729,13 @@ pub struct execcmd_params {
 #[derive(Debug)]
 pub struct module {
     // c:1503
-    pub node: hashnode,              // c:1504
-    pub handle: Option<usize>,       // c:1506 union.handle (void *)
-    pub linked: Option<Linkedmod>,   // c:1507 union.linked
-    pub alias: Option<String>,       // c:1508 union.alias
+    pub node: hashnode,                                               // c:1504
+    pub handle: Option<usize>,     // c:1506 union.handle (void *)
+    pub linked: Option<Linkedmod>, // c:1507 union.linked
+    pub alias: Option<String>,     // c:1508 union.alias
     pub autoloads: Option<crate::ported::linklist::LinkList<String>>, // c:1510
-    pub deps: Option<crate::ported::linklist::LinkList<String>>,      // c:1511
-    pub wrapper: i32,                // c:1512
+    pub deps: Option<crate::ported::linklist::LinkList<String>>, // c:1511
+    pub wrapper: i32,              // c:1512
 }
 
 impl module {
@@ -732,8 +762,7 @@ impl module {
     /// Mirrors C's `MOD_BUSY`/`MOD_UNLOAD` checks at `Src/module.c:1703`
     /// (`module_loaded`): the module exists and `MOD_UNLOAD` is clear.
     pub fn is_loaded(&self) -> bool {
-        (self.node.flags & MOD_LINKED) != 0
-            && (self.node.flags & MOD_UNLOAD) == 0
+        (self.node.flags & MOD_LINKED) != 0 && (self.node.flags & MOD_UNLOAD) == 0
     }
 }
 
@@ -776,7 +805,7 @@ pub struct features {
 #[allow(non_camel_case_types)]
 pub struct feature_enables {
     // c:1573
-    pub str: String,         // c:1575 (Rust keyword `str`)
+    pub str: String,          // c:1575 (Rust keyword `str`)
     pub pat: Option<Patprog>, // c:1577
 }
 
@@ -794,11 +823,11 @@ pub type Hookfn = fn(h: *mut hookdef, d: *mut std::ffi::c_void) -> i32;
 #[allow(non_camel_case_types)]
 pub struct hookdef {
     // c:1584
-    pub next: *mut hookdef,      // c:1585 — struct hookdef *
-    pub name: String,            // c:1586 — char *
-    pub def: Option<Hookfn>,     // c:1587 — Hookfn (NULL = None)
-    pub flags: i32,              // c:1588
-    pub funcs: *mut linklist,    // c:1589 — LinkList (struct linklist *)
+    pub next: *mut hookdef,   // c:1585 — struct hookdef *
+    pub name: String,         // c:1586 — char *
+    pub def: Option<Hookfn>,  // c:1587 — Hookfn (NULL = None)
+    pub flags: i32,           // c:1588
+    pub funcs: *mut linklist, // c:1589 — LinkList (struct linklist *)
 }
 // SAFETY: hookdef contains raw pointers. C zsh is single-threaded;
 // zshrs serializes hook operations via the module-level `hooktab`
@@ -1151,7 +1180,7 @@ pub struct heredocs {
     pub next: Option<Box<heredocs>>, // c:1153
     pub typ: i32,                    // c:1154 (Rust keyword `type`)
     pub pc: i32,                     // c:1155
-    pub str: Option<String>,        // c:1156
+    pub str: Option<String>,         // c:1156
 }
 
 /// Port of `struct execstack` from `Src/zsh.h:1127-1150`.
@@ -1199,12 +1228,12 @@ pub struct execstack {
 #[derive(Debug, Clone)]
 pub struct process {
     // c:1117
-    pub pid: i32,                                // c:1119 pid_t
-    pub text: String,                            // c:1120 char text[JOBTEXTSIZE]
-    pub status: i32,                             // c:1121
-    pub ti: crate::ported::zsh_h::timeinfo,      // c:1122 child_times_t ti
-    pub bgtime: Option<std::time::Instant>,      // c:1123 struct timespec bgtime
-    pub endtime: Option<std::time::Instant>,     // c:1124 struct timespec endtime
+    pub pid: i32,                            // c:1119 pid_t
+    pub text: String,                        // c:1120 char text[JOBTEXTSIZE]
+    pub status: i32,                         // c:1121
+    pub ti: crate::ported::zsh_h::timeinfo,  // c:1122 child_times_t ti
+    pub bgtime: Option<std::time::Instant>,  // c:1123 struct timespec bgtime
+    pub endtime: Option<std::time::Instant>, // c:1124 struct timespec endtime
 }
 
 /// Port of `struct job` from `Src/zsh.h:1058-1071`.
@@ -1284,7 +1313,7 @@ pub struct eccstr {
     // c:836
     pub left: Option<Eccstr>,  // c:838
     pub right: Option<Eccstr>, // c:838
-    pub str: Option<String>,  // c:841
+    pub str: Option<String>,   // c:841
     pub offs: wordcode,        // c:844
     pub aoffs: wordcode,       // c:847
     pub nfunc: i32,            // c:854
@@ -1795,9 +1824,9 @@ pub const NULLBINCMD: Option<HandlerFunc> = None; // c:1438
 /// static from `crate::ported::options::emulation` directly.
 #[inline]
 #[allow(non_snake_case)]
-pub fn EMULATION(x: i32) -> bool {                                           // c:2347
-    let emul = crate::ported::options::emulation
-        .load(std::sync::atomic::Ordering::Relaxed);
+pub fn EMULATION(x: i32) -> bool {
+    // c:2347
+    let emul = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
     (emul & x) != 0
 }
 
@@ -1806,9 +1835,9 @@ pub fn EMULATION(x: i32) -> bool {                                           // 
 /// `emulation` static directly.
 #[inline]
 #[allow(non_snake_case)]
-pub fn SHELL_EMULATION() -> i32 {                                            // c:2350
-    let emul = crate::ported::options::emulation
-        .load(std::sync::atomic::Ordering::Relaxed);
+pub fn SHELL_EMULATION() -> i32 {
+    // c:2350
+    let emul = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
     emul & ((1 << 5) - 1)
 }
 
@@ -1820,7 +1849,8 @@ pub fn SHELL_EMULATION() -> i32 {                                            // 
 /// `signals::traplocallevel`, `params::locallevel`) inside.
 #[inline]
 #[allow(non_snake_case)]
-pub fn IN_EVAL_TRAP() -> bool {                                              // c:2962
+pub fn IN_EVAL_TRAP() -> bool {
+    // c:2962
     crate::ported::signals::intrap.load(Ordering::Relaxed) != 0
         && crate::ported::signals::trapisfunc.load(Ordering::Relaxed) == 0
         && crate::ported::signals::traplocallevel.load(Ordering::Relaxed)
@@ -1951,18 +1981,25 @@ macro_rules! HEAP_ERROR {
 /// — Rust's analogue to C's `#ifdef DEBUG`. The file:line prefix
 /// uses `file!()` / `line!()` to mirror `__FILE__:__LINE__`.
 #[macro_export]
-macro_rules! DPUTS {                                                          // c:2918
-    ($x:expr, $y:expr) => {                                                  // c:2918
-        #[cfg(debug_assertions)]                                              // c:2918 ifdef DEBUG
+macro_rules! DPUTS {
+    // c:2918
+    ($x:expr, $y:expr) => {
+        // c:2918
+        #[cfg(debug_assertions)] // c:2918 ifdef DEBUG
         {
-            if $x {                                                           // c:2918 if (X)
-                crate::ported::utils::dputs(&format!(                        // c:2918 dputs(ERRMSG(Y))
-                    "{}:{}: {}", file!(), line!(), $y                        // c:2917 ERRMSG
-                ));                                                           // c:2918
-            }                                                                 // c:2918
-        }                                                                     // c:2914 ifdef DEBUG
-    };                                                                        // c:2918
-}                                                                             // c:2918
+            if $x {
+                // c:2918 if (X)
+                crate::ported::utils::dputs(&format!(
+                    // c:2918 dputs(ERRMSG(Y))
+                    "{}:{}: {}",
+                    file!(),
+                    line!(),
+                    $y // c:2917 ERRMSG
+                )); // c:2918
+            } // c:2918
+        } // c:2914 ifdef DEBUG
+    }; // c:2918
+} // c:2918
 
 /// Port of `#define DPUTS1(X, Y, Z1)` macro from `Src/zsh.h:2919` (macro).
 ///
@@ -1976,54 +2013,75 @@ macro_rules! DPUTS {                                                          //
 /// format strings (`"BUG: x = {}"`) instead of C printf strings
 /// (`"BUG: x = %d"`).
 #[macro_export]
-macro_rules! DPUTS1 {                                                         // c:2919
-    ($x:expr, $y:expr, $z1:expr) => {                                         // c:2919
-        #[cfg(debug_assertions)]                                              // c:2919
+macro_rules! DPUTS1 {
+    // c:2919
+    ($x:expr, $y:expr, $z1:expr) => {
+        // c:2919
+        #[cfg(debug_assertions)] // c:2919
         {
-            if $x {                                                           // c:2919
-                crate::ported::utils::dputs(&format!(                        // c:2919
-                    "{}:{}: {}", file!(), line!(), format!($y, $z1)          // c:2917
-                ));                                                           // c:2919
-            }                                                                 // c:2919
-        }                                                                     // c:2914
-    };                                                                        // c:2919
-}                                                                             // c:2919
+            if $x {
+                // c:2919
+                crate::ported::utils::dputs(&format!(
+                    // c:2919
+                    "{}:{}: {}",
+                    file!(),
+                    line!(),
+                    format!($y, $z1) // c:2917
+                )); // c:2919
+            } // c:2919
+        } // c:2914
+    }; // c:2919
+} // c:2919
 
 /// Port of `#define DPUTS2(X, Y, Z1, Z2)` macro from `Src/zsh.h:2920` (macro).
 ///
 /// Two-arg printf-style variant. Same shape as DPUTS1 but with two
 /// substitution arguments.
 #[macro_export]
-macro_rules! DPUTS2 {                                                         // c:2920
-    ($x:expr, $y:expr, $z1:expr, $z2:expr) => {                              // c:2920
-        #[cfg(debug_assertions)]                                              // c:2920
+macro_rules! DPUTS2 {
+    // c:2920
+    ($x:expr, $y:expr, $z1:expr, $z2:expr) => {
+        // c:2920
+        #[cfg(debug_assertions)] // c:2920
         {
-            if $x {                                                           // c:2920
-                crate::ported::utils::dputs(&format!(                        // c:2920
-                    "{}:{}: {}", file!(), line!(), format!($y, $z1, $z2)     // c:2917
-                ));                                                           // c:2920
-            }                                                                 // c:2920
-        }                                                                     // c:2914
-    };                                                                        // c:2920
-}                                                                             // c:2920
+            if $x {
+                // c:2920
+                crate::ported::utils::dputs(&format!(
+                    // c:2920
+                    "{}:{}: {}",
+                    file!(),
+                    line!(),
+                    format!($y, $z1, $z2) // c:2917
+                )); // c:2920
+            } // c:2920
+        } // c:2914
+    }; // c:2920
+} // c:2920
 
 /// Port of `#define DPUTS3(X, Y, Z1, Z2, Z3)` macro from `Src/zsh.h:2921` (macro).
 ///
 /// Three-arg printf-style variant. Same shape as DPUTS1/DPUTS2 but
 /// with three substitution arguments.
 #[macro_export]
-macro_rules! DPUTS3 {                                                         // c:2921
-    ($x:expr, $y:expr, $z1:expr, $z2:expr, $z3:expr) => {                    // c:2921
-        #[cfg(debug_assertions)]                                              // c:2921
+macro_rules! DPUTS3 {
+    // c:2921
+    ($x:expr, $y:expr, $z1:expr, $z2:expr, $z3:expr) => {
+        // c:2921
+        #[cfg(debug_assertions)] // c:2921
         {
-            if $x {                                                           // c:2921
-                crate::ported::utils::dputs(&format!(                        // c:2921
-                    "{}:{}: {}", file!(), line!(), format!($y, $z1, $z2, $z3) // c:2917
-                ));                                                           // c:2921
-            }                                                                 // c:2921
-        }                                                                     // c:2914
-    };                                                                        // c:2921
-}                                                                             // c:2921
+            if $x {
+                // c:2921
+                crate::ported::utils::dputs(&format!(
+                    // c:2921
+                    "{}:{}: {}",
+                    file!(),
+                    line!(),
+                    format!($y, $z1, $z2, $z3) // c:2917
+                )); // c:2921
+            } // c:2921
+        } // c:2914
+    }; // c:2921
+} // c:2921
 
 /// Port of `#define SGTTYFLAG` from `Src/zsh.h:2614/2616`. Termios
 /// flag accessor — `shttyinfo.tio.c_oflag` (HAVE_TERMIOS) or
@@ -2282,11 +2340,11 @@ pub const STAT_DISOWN: i32 = 0x10000; // c:1095
 pub const SP_RUNNING: i32 = -1; // c:1097
 
 pub const JOBTEXTSIZE: usize = 80; // c:1104
-// C: `#define MAXJOBS_ALLOC 50` (Src/zsh.h:1107) — an int literal.
-// Stored as `usize` so callers using it for Vec capacity / slice
-// indexing don't need `as usize` casts everywhere. Matches the
-// adjacent `MAX_PIPESTATS: usize` type choice (both are array
-// sizes in C).
+                                   // C: `#define MAXJOBS_ALLOC 50` (Src/zsh.h:1107) — an int literal.
+                                   // Stored as `usize` so callers using it for Vec capacity / slice
+                                   // indexing don't need `as usize` casts everywhere. Matches the
+                                   // adjacent `MAX_PIPESTATS: usize` type choice (both are array
+                                   // sizes in C).
 pub const MAXJOBS_ALLOC: usize = 50; // c:1107
 pub const MAX_PIPESTATS: usize = 256; // c:1166
 
@@ -2330,8 +2388,12 @@ pub struct timeinfo {
 }
 
 impl timeinfo {
-    pub fn user_dur(&self) -> std::time::Duration { std::time::Duration::from_micros(self.ut as u64) }
-    pub fn sys_dur(&self)  -> std::time::Duration { std::time::Duration::from_micros(self.st as u64) }
+    pub fn user_dur(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.ut as u64)
+    }
+    pub fn sys_dur(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.st as u64)
+    }
 
     /// Populate this `timeinfo` from a `libc::rusage` snapshot.
     /// On macOS `ru_maxrss` is in bytes; on Linux it's KB — caller
@@ -2463,25 +2525,25 @@ pub fn OPT_HASARG(ops: &options, c: u8) -> bool {
 
 pub type HandlerFunc = fn(name: &str, args: &[String], ops: &options, funcid: i32) -> i32;
 
-pub const BINF_PLUSOPTS:        u32 = 1 << 1;                            // c:1457
-pub const BINF_PRINTOPTS:       u32 = 1 << 2;                            // c:1458
-pub const BINF_ADDED:           u32 = 1 << 3;                            // c:1459
-pub const BINF_MAGICEQUALS:     u32 = 1 << 4;                            // c:1460
-pub const BINF_PREFIX:          u32 = 1 << 5;                            // c:1461
-pub const BINF_DASH:            u32 = 1 << 6;                            // c:1462
-pub const BINF_BUILTIN:         u32 = 1 << 7;                            // c:1463
-pub const BINF_COMMAND:         u32 = 1 << 8;                            // c:1464
-pub const BINF_EXEC:            u32 = 1 << 9;                            // c:1465
-pub const BINF_NOGLOB:          u32 = 1 << 10;                           // c:1466
-pub const BINF_PSPECIAL:        u32 = 1 << 11;                           // c:1467
-pub const BINF_SKIPINVALID:     u32 = 1 << 12;                           // c:1469
-pub const BINF_KEEPNUM:         u32 = 1 << 13;                           // c:1470
-pub const BINF_SKIPDASH:        u32 = 1 << 14;                           // c:1471
-pub const BINF_DASHDASHVALID:   u32 = 1 << 15;                           // c:1472
-pub const BINF_CLEARENV:        u32 = 1 << 16;                           // c:1473
-pub const BINF_AUTOALL:         u32 = 1 << 17;                           // c:1474
-pub const BINF_HANDLES_OPTS:    u32 = 1 << 18;                           // c:1480
-pub const BINF_ASSIGN:          u32 = 1 << 19;                           // c:1486
+pub const BINF_PLUSOPTS: u32 = 1 << 1; // c:1457
+pub const BINF_PRINTOPTS: u32 = 1 << 2; // c:1458
+pub const BINF_ADDED: u32 = 1 << 3; // c:1459
+pub const BINF_MAGICEQUALS: u32 = 1 << 4; // c:1460
+pub const BINF_PREFIX: u32 = 1 << 5; // c:1461
+pub const BINF_DASH: u32 = 1 << 6; // c:1462
+pub const BINF_BUILTIN: u32 = 1 << 7; // c:1463
+pub const BINF_COMMAND: u32 = 1 << 8; // c:1464
+pub const BINF_EXEC: u32 = 1 << 9; // c:1465
+pub const BINF_NOGLOB: u32 = 1 << 10; // c:1466
+pub const BINF_PSPECIAL: u32 = 1 << 11; // c:1467
+pub const BINF_SKIPINVALID: u32 = 1 << 12; // c:1469
+pub const BINF_KEEPNUM: u32 = 1 << 13; // c:1470
+pub const BINF_SKIPDASH: u32 = 1 << 14; // c:1471
+pub const BINF_DASHDASHVALID: u32 = 1 << 15; // c:1472
+pub const BINF_CLEARENV: u32 = 1 << 16; // c:1473
+pub const BINF_AUTOALL: u32 = 1 << 17; // c:1474
+pub const BINF_HANDLES_OPTS: u32 = 1 << 18; // c:1480
+pub const BINF_ASSIGN: u32 = 1 << 19; // c:1486
 
 // =============================================================================
 // 22. Module flags (zsh.h:1516-1532).
@@ -3716,8 +3778,6 @@ pub fn OPT_ARG_SAFE<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
     }
 }
 
-
-
 // Suppress dead-code warnings for the AtomicI32 we don't use yet.
 #[allow(dead_code)]
 const _MARKER_KEEP: AtomicI32 = AtomicI32::new(0);
@@ -3933,10 +3993,10 @@ mod tests {
     #[test]
     fn is_dash_recognises_both_ascii_and_lexed_token() {
         let _g = crate::test_util::global_state_lock();
-        assert!(IS_DASH('-'),       "ASCII '-' is dash");
-        assert!(IS_DASH('\u{9b}'),  "lexed Dash token is dash");
-        assert!(!IS_DASH('+'),      "non-dash chars must NOT match");
-        assert!(!IS_DASH(' '),      "space is not dash");
+        assert!(IS_DASH('-'), "ASCII '-' is dash");
+        assert!(IS_DASH('\u{9b}'), "lexed Dash token is dash");
+        assert!(!IS_DASH('+'), "non-dash chars must NOT match");
+        assert!(!IS_DASH(' '), "space is not dash");
     }
 
     /// c:1408 — `OPT_ISSET(ops, c)` returns true iff `ops.ind[c] != 0`.
@@ -3945,12 +4005,23 @@ mod tests {
     #[test]
     fn opt_isset_reads_ind_array_directly() {
         let _g = crate::test_util::global_state_lock();
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         assert!(!OPT_ISSET(&ops, b'x'));
         ops.ind[b'x' as usize] = 1;
-        assert!(OPT_ISSET(&ops, b'x'),  "after setting ind, OPT_ISSET must be true");
+        assert!(
+            OPT_ISSET(&ops, b'x'),
+            "after setting ind, OPT_ISSET must be true"
+        );
         ops.ind[b'x' as usize] = 0;
-        assert!(!OPT_ISSET(&ops, b'x'), "clearing ind must make OPT_ISSET false");
+        assert!(
+            !OPT_ISSET(&ops, b'x'),
+            "clearing ind must make OPT_ISSET false"
+        );
     }
 
     /// `PM_TYPE` masks just the type-bits of a flag word (PM_SCALAR /
@@ -3974,31 +4045,35 @@ mod tests {
     #[test]
     fn pm_flags_match_c_zsh_h_canonical_values() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(PM_SCALAR,         0,        "c:1878");
-        assert_eq!(PM_ARRAY,          1 << 0,   "c:1879");
-        assert_eq!(PM_INTEGER,        1 << 1,   "c:1880");
-        assert_eq!(PM_EFLOAT,         1 << 2,   "c:1881");
-        assert_eq!(PM_FFLOAT,         1 << 3,   "c:1882");
-        assert_eq!(PM_HASHED,         1 << 4,   "c:1883");
-        assert_eq!(PM_LEFT,           1 << 5,   "c:1888");
-        assert_eq!(PM_RIGHT_B,        1 << 6,   "c:1889");
-        assert_eq!(PM_RIGHT_Z,        1 << 7,   "c:1890");
-        assert_eq!(PM_LOWER,          1 << 8,   "c:1891");
-        assert_eq!(PM_UPPER,          1 << 9,   "c:1895");
-        assert_eq!(PM_UNDEFINED,      1 << 9,   "c:1896 (aliases PM_UPPER for funcs)");
-        assert_eq!(PM_READONLY,       1 << 10,  "c:1898");
-        assert_eq!(PM_TAGGED,         1 << 11,  "c:1899");
-        assert_eq!(PM_EXPORTED,       1 << 12,  "c:1900");
-        assert_eq!(PM_ABSPATH_USED,   1 << 12,  "c:1901 (aliases EXPORTED for funcs)");
-        assert_eq!(PM_UNIQUE,         1 << 13,  "c:1905");
-        assert_eq!(PM_HIDE,           1 << 14,  "c:1908");
-        assert_eq!(PM_HIDEVAL,        1 << 15,  "c:1910");
-        assert_eq!(PM_TIED,           1 << 16,  "c:1912");
-        assert_eq!(PM_SPECIAL,        1 << 20,  "c:1922");
-        assert_eq!(PM_RO_BY_DESIGN,   1 << 21,  "c:1924");
-        assert_eq!(PM_LOCAL,          1 << 19,  "c:1920");
-        assert_eq!(PM_UNSET,          1 << 24,  "c:1930");
-        assert_eq!(PM_NAMEREF,        1 << 30,  "c:1944");
+        assert_eq!(PM_SCALAR, 0, "c:1878");
+        assert_eq!(PM_ARRAY, 1 << 0, "c:1879");
+        assert_eq!(PM_INTEGER, 1 << 1, "c:1880");
+        assert_eq!(PM_EFLOAT, 1 << 2, "c:1881");
+        assert_eq!(PM_FFLOAT, 1 << 3, "c:1882");
+        assert_eq!(PM_HASHED, 1 << 4, "c:1883");
+        assert_eq!(PM_LEFT, 1 << 5, "c:1888");
+        assert_eq!(PM_RIGHT_B, 1 << 6, "c:1889");
+        assert_eq!(PM_RIGHT_Z, 1 << 7, "c:1890");
+        assert_eq!(PM_LOWER, 1 << 8, "c:1891");
+        assert_eq!(PM_UPPER, 1 << 9, "c:1895");
+        assert_eq!(PM_UNDEFINED, 1 << 9, "c:1896 (aliases PM_UPPER for funcs)");
+        assert_eq!(PM_READONLY, 1 << 10, "c:1898");
+        assert_eq!(PM_TAGGED, 1 << 11, "c:1899");
+        assert_eq!(PM_EXPORTED, 1 << 12, "c:1900");
+        assert_eq!(
+            PM_ABSPATH_USED,
+            1 << 12,
+            "c:1901 (aliases EXPORTED for funcs)"
+        );
+        assert_eq!(PM_UNIQUE, 1 << 13, "c:1905");
+        assert_eq!(PM_HIDE, 1 << 14, "c:1908");
+        assert_eq!(PM_HIDEVAL, 1 << 15, "c:1910");
+        assert_eq!(PM_TIED, 1 << 16, "c:1912");
+        assert_eq!(PM_SPECIAL, 1 << 20, "c:1922");
+        assert_eq!(PM_RO_BY_DESIGN, 1 << 21, "c:1924");
+        assert_eq!(PM_LOCAL, 1 << 19, "c:1920");
+        assert_eq!(PM_UNSET, 1 << 24, "c:1930");
+        assert_eq!(PM_NAMEREF, 1 << 30, "c:1944");
     }
 
     /// `Src/zsh.h:1953-1965` — `SCANPM_*` flag values for parameter
@@ -4007,16 +4082,16 @@ mod tests {
     #[test]
     fn scanpm_flags_match_c_zsh_h_canonical_values() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(SCANPM_WANTVALS,   1 << 0, "c:1953");
-        assert_eq!(SCANPM_WANTKEYS,   1 << 1, "c:1954");
-        assert_eq!(SCANPM_WANTINDEX,  1 << 2, "c:1955");
-        assert_eq!(SCANPM_MATCHKEY,   1 << 3, "c:1956");
-        assert_eq!(SCANPM_MATCHVAL,   1 << 4, "c:1957");
-        assert_eq!(SCANPM_MATCHMANY,  1 << 5, "c:1958");
-        assert_eq!(SCANPM_ASSIGNING,  1 << 6, "c:1959");
-        assert_eq!(SCANPM_KEYMATCH,   1 << 7, "c:1960");
-        assert_eq!(SCANPM_DQUOTED,    1 << 8, "c:1961");
-        assert_eq!(SCANPM_ARRONLY,    1 << 9, "c:1965");
+        assert_eq!(SCANPM_WANTVALS, 1 << 0, "c:1953");
+        assert_eq!(SCANPM_WANTKEYS, 1 << 1, "c:1954");
+        assert_eq!(SCANPM_WANTINDEX, 1 << 2, "c:1955");
+        assert_eq!(SCANPM_MATCHKEY, 1 << 3, "c:1956");
+        assert_eq!(SCANPM_MATCHVAL, 1 << 4, "c:1957");
+        assert_eq!(SCANPM_MATCHMANY, 1 << 5, "c:1958");
+        assert_eq!(SCANPM_ASSIGNING, 1 << 6, "c:1959");
+        assert_eq!(SCANPM_KEYMATCH, 1 << 7, "c:1960");
+        assert_eq!(SCANPM_DQUOTED, 1 << 8, "c:1961");
+        assert_eq!(SCANPM_ARRONLY, 1 << 9, "c:1965");
     }
 
     /// `Src/zsh.h:144-224` — parser token byte values. These are
@@ -4027,39 +4102,39 @@ mod tests {
     #[test]
     fn token_byte_values_match_c_zsh_h() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(META,        '\u{83}',  "c:144");
-        assert_eq!(Pound,       '\u{84}',  "c:159");
-        assert_eq!(Stringg,     '\u{85}',  "c:160");
-        assert_eq!(Hat,         '\u{86}',  "c:161");
-        assert_eq!(Star,        '\u{87}',  "c:162");
-        assert_eq!(Inpar,       '\u{88}',  "c:163");
-        assert_eq!(Inparmath,   '\u{89}',  "c:164");
-        assert_eq!(Outpar,      '\u{8a}',  "c:165");
-        assert_eq!(Outparmath,  '\u{8b}',  "c:166");
-        assert_eq!(Qstring,     '\u{8c}',  "c:167");
-        assert_eq!(Equals,      '\u{8d}',  "c:168");
-        assert_eq!(Bar,         '\u{8e}',  "c:169");
-        assert_eq!(Inbrace,     '\u{8f}',  "c:170");
-        assert_eq!(Outbrace,    '\u{90}',  "c:171");
-        assert_eq!(Inbrack,     '\u{91}',  "c:172");
-        assert_eq!(Outbrack,    '\u{92}',  "c:173");
-        assert_eq!(Tick,        '\u{93}',  "c:174");
-        assert_eq!(Inang,       '\u{94}',  "c:175");
-        assert_eq!(Outang,      '\u{95}',  "c:176");
-        assert_eq!(OutangProc,  '\u{96}',  "c:177");
-        assert_eq!(Quest,       '\u{97}',  "c:178");
-        assert_eq!(Tilde,       '\u{98}',  "c:179");
-        assert_eq!(Qtick,       '\u{99}',  "c:180");
-        assert_eq!(Comma,       '\u{9a}',  "c:181");
-        assert_eq!(Dash,        '\u{9b}',  "c:182");
-        assert_eq!(Bang,        '\u{9c}',  "c:183");
-        assert_eq!(LAST_NORMAL_TOK, Bang,  "c:188 == Bang");
-        assert_eq!(Snull,       '\u{9d}',  "c:193");
-        assert_eq!(Dnull,       '\u{9e}',  "c:194");
-        assert_eq!(Bnull,       '\u{9f}',  "c:195");
-        assert_eq!(Bnullkeep,   '\u{a0}',  "c:200");
-        assert_eq!(Nularg,      '\u{a1}',  "c:206");
-        assert_eq!(Marker,      '\u{a2}',  "c:224");
+        assert_eq!(META, '\u{83}', "c:144");
+        assert_eq!(Pound, '\u{84}', "c:159");
+        assert_eq!(Stringg, '\u{85}', "c:160");
+        assert_eq!(Hat, '\u{86}', "c:161");
+        assert_eq!(Star, '\u{87}', "c:162");
+        assert_eq!(Inpar, '\u{88}', "c:163");
+        assert_eq!(Inparmath, '\u{89}', "c:164");
+        assert_eq!(Outpar, '\u{8a}', "c:165");
+        assert_eq!(Outparmath, '\u{8b}', "c:166");
+        assert_eq!(Qstring, '\u{8c}', "c:167");
+        assert_eq!(Equals, '\u{8d}', "c:168");
+        assert_eq!(Bar, '\u{8e}', "c:169");
+        assert_eq!(Inbrace, '\u{8f}', "c:170");
+        assert_eq!(Outbrace, '\u{90}', "c:171");
+        assert_eq!(Inbrack, '\u{91}', "c:172");
+        assert_eq!(Outbrack, '\u{92}', "c:173");
+        assert_eq!(Tick, '\u{93}', "c:174");
+        assert_eq!(Inang, '\u{94}', "c:175");
+        assert_eq!(Outang, '\u{95}', "c:176");
+        assert_eq!(OutangProc, '\u{96}', "c:177");
+        assert_eq!(Quest, '\u{97}', "c:178");
+        assert_eq!(Tilde, '\u{98}', "c:179");
+        assert_eq!(Qtick, '\u{99}', "c:180");
+        assert_eq!(Comma, '\u{9a}', "c:181");
+        assert_eq!(Dash, '\u{9b}', "c:182");
+        assert_eq!(Bang, '\u{9c}', "c:183");
+        assert_eq!(LAST_NORMAL_TOK, Bang, "c:188 == Bang");
+        assert_eq!(Snull, '\u{9d}', "c:193");
+        assert_eq!(Dnull, '\u{9e}', "c:194");
+        assert_eq!(Bnull, '\u{9f}', "c:195");
+        assert_eq!(Bnullkeep, '\u{a0}', "c:200");
+        assert_eq!(Nularg, '\u{a1}', "c:206");
+        assert_eq!(Marker, '\u{a2}', "c:224");
     }
 
     /// `Src/zsh.h:226-232` — SPECCHARS / PATCHARS string literals.
@@ -4070,15 +4145,25 @@ mod tests {
     fn specchars_patchars_match_c_zsh_h() {
         let _g = crate::test_util::global_state_lock();
         // c:228 — `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`.
-        assert_eq!(SPECCHARS, "#$^*()=|{}[]`<>?~;&\n\t \\\'\"",
-            "c:228 — SPECCHARS literal must match C verbatim");
-        assert_eq!(SPECCHARS.chars().count(), 25,
-            "c:228 — SPECCHARS has 25 chars");
+        assert_eq!(
+            SPECCHARS, "#$^*()=|{}[]`<>?~;&\n\t \\\'\"",
+            "c:228 — SPECCHARS literal must match C verbatim"
+        );
+        assert_eq!(
+            SPECCHARS.chars().count(),
+            25,
+            "c:228 — SPECCHARS has 25 chars"
+        );
         // c:232 — `PATCHARS "#^*()|[]<>?~\\"`.
-        assert_eq!(PATCHARS, "#^*()|[]<>?~\\",
-            "c:232 — PATCHARS literal must match C verbatim");
-        assert_eq!(PATCHARS.chars().count(), 13,
-            "c:232 — PATCHARS has 13 chars");
+        assert_eq!(
+            PATCHARS, "#^*()|[]<>?~\\",
+            "c:232 — PATCHARS literal must match C verbatim"
+        );
+        assert_eq!(
+            PATCHARS.chars().count(),
+            13,
+            "c:232 — PATCHARS has 13 chars"
+        );
     }
 
     /// `Src/zsh.h:149-153` — DEFAULT_IFS and DEFAULT_IFS_SH literals.
@@ -4086,13 +4171,20 @@ mod tests {
     fn default_ifs_strings_match_c_zsh_h() {
         let _g = crate::test_util::global_state_lock();
         // c:149 — `DEFAULT_IFS " \t\n\203 "` (5 chars; \203 is Meta).
-        assert_eq!(DEFAULT_IFS, " \t\n\u{83} ",
-            "c:149 — DEFAULT_IFS = space + tab + newline + Meta + space");
-        assert_eq!(DEFAULT_IFS.chars().count(), 5,
-            "c:149 — DEFAULT_IFS is 5 chars");
+        assert_eq!(
+            DEFAULT_IFS, " \t\n\u{83} ",
+            "c:149 — DEFAULT_IFS = space + tab + newline + Meta + space"
+        );
+        assert_eq!(
+            DEFAULT_IFS.chars().count(),
+            5,
+            "c:149 — DEFAULT_IFS is 5 chars"
+        );
         // c:153 — `DEFAULT_IFS_SH " \t\n"` (3 chars, POSIX sh).
-        assert_eq!(DEFAULT_IFS_SH, " \t\n",
-            "c:153 — DEFAULT_IFS_SH = POSIX 3-char set");
+        assert_eq!(
+            DEFAULT_IFS_SH, " \t\n",
+            "c:153 — DEFAULT_IFS_SH = POSIX 3-char set"
+        );
     }
 
     /// `Src/zsh.h:1879-1883` — `PM_TYPE_MASK` covers the 5 type bits
@@ -4104,11 +4196,24 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED;
         // Modifier flags MUST be outside the type-mask range.
-        for modifier in &[PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER,
-                           PM_READONLY, PM_EXPORTED, PM_LOCAL, PM_UNSET] {
-            assert_eq!(modifier & type_mask, 0,
+        for modifier in &[
+            PM_LEFT,
+            PM_RIGHT_B,
+            PM_RIGHT_Z,
+            PM_LOWER,
+            PM_UPPER,
+            PM_READONLY,
+            PM_EXPORTED,
+            PM_LOCAL,
+            PM_UNSET,
+        ] {
+            assert_eq!(
+                modifier & type_mask,
+                0,
                 "modifier flag 0x{:x} must NOT overlap type mask 0x{:x}",
-                modifier, type_mask);
+                modifier,
+                type_mask
+            );
         }
     }
 
@@ -4121,15 +4226,30 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:298-299 — write-file family: 0..=8 inclusive.
         for x in REDIR_WRITE..=REDIR_READWRITE {
-            assert!(IS_WRITE_FILE(x),
-                "redir-type {} ({}) must be IS_WRITE_FILE", x, x);
+            assert!(
+                IS_WRITE_FILE(x),
+                "redir-type {} ({}) must be IS_WRITE_FILE",
+                x,
+                x
+            );
         }
         // Outside the range — NOT write-file.
-        for x in [REDIR_READ, REDIR_HEREDOC, REDIR_HEREDOCDASH,
-                  REDIR_HERESTR, REDIR_MERGEIN, REDIR_MERGEOUT,
-                  REDIR_CLOSE, REDIR_INPIPE, REDIR_OUTPIPE] {
-            assert!(!IS_WRITE_FILE(x),
-                "redir-type {} must NOT be IS_WRITE_FILE", x);
+        for x in [
+            REDIR_READ,
+            REDIR_HEREDOC,
+            REDIR_HEREDOCDASH,
+            REDIR_HERESTR,
+            REDIR_MERGEIN,
+            REDIR_MERGEOUT,
+            REDIR_CLOSE,
+            REDIR_INPIPE,
+            REDIR_OUTPIPE,
+        ] {
+            assert!(
+                !IS_WRITE_FILE(x),
+                "redir-type {} must NOT be IS_WRITE_FILE",
+                x
+            );
         }
     }
 
@@ -4141,17 +4261,32 @@ mod tests {
     fn is_append_redir_pins_bit_1() {
         let _g = crate::test_util::global_state_lock();
         // c:303-304 — true ONLY for 2/3/6/7 in the write-file family.
-        assert!(IS_APPEND_REDIR(REDIR_APP),         "REDIR_APP=2 is append");
-        assert!(IS_APPEND_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is append");
-        assert!(IS_APPEND_REDIR(REDIR_ERRAPP),      "REDIR_ERRAPP=6 is append");
-        assert!(IS_APPEND_REDIR(REDIR_ERRAPPNOW),   "REDIR_ERRAPPNOW=7 is append");
+        assert!(IS_APPEND_REDIR(REDIR_APP), "REDIR_APP=2 is append");
+        assert!(IS_APPEND_REDIR(REDIR_APPNOW), "REDIR_APPNOW=3 is append");
+        assert!(IS_APPEND_REDIR(REDIR_ERRAPP), "REDIR_ERRAPP=6 is append");
+        assert!(
+            IS_APPEND_REDIR(REDIR_ERRAPPNOW),
+            "REDIR_ERRAPPNOW=7 is append"
+        );
         // NOT append.
-        assert!(!IS_APPEND_REDIR(REDIR_WRITE),      "REDIR_WRITE=0 is not append");
-        assert!(!IS_APPEND_REDIR(REDIR_WRITENOW),   "REDIR_WRITENOW=1 is not append");
-        assert!(!IS_APPEND_REDIR(REDIR_ERRWRITE),   "REDIR_ERRWRITE=4 is not append");
-        assert!(!IS_APPEND_REDIR(REDIR_ERRWRITENOW), "REDIR_ERRWRITENOW=5 is not append");
+        assert!(!IS_APPEND_REDIR(REDIR_WRITE), "REDIR_WRITE=0 is not append");
+        assert!(
+            !IS_APPEND_REDIR(REDIR_WRITENOW),
+            "REDIR_WRITENOW=1 is not append"
+        );
+        assert!(
+            !IS_APPEND_REDIR(REDIR_ERRWRITE),
+            "REDIR_ERRWRITE=4 is not append"
+        );
+        assert!(
+            !IS_APPEND_REDIR(REDIR_ERRWRITENOW),
+            "REDIR_ERRWRITENOW=5 is not append"
+        );
         // Outside the write-file family — never append.
-        assert!(!IS_APPEND_REDIR(REDIR_READ),       "REDIR_READ=9 is not write-file");
+        assert!(
+            !IS_APPEND_REDIR(REDIR_READ),
+            "REDIR_READ=9 is not write-file"
+        );
     }
 
     /// `Src/zsh.h` IS_CLOBBER_REDIR — `IS_WRITE_FILE && (X & 1)`. Bit 0
@@ -4162,10 +4297,19 @@ mod tests {
     fn is_clobber_redir_pins_bit_0() {
         let _g = crate::test_util::global_state_lock();
         // c:308-309 — true ONLY for 1/3/5/7 in the write-file family.
-        assert!(IS_CLOBBER_REDIR(REDIR_WRITENOW),    "REDIR_WRITENOW=1 is clobber");
-        assert!(IS_CLOBBER_REDIR(REDIR_APPNOW),      "REDIR_APPNOW=3 is clobber");
-        assert!(IS_CLOBBER_REDIR(REDIR_ERRWRITENOW), "REDIR_ERRWRITENOW=5 is clobber");
-        assert!(IS_CLOBBER_REDIR(REDIR_ERRAPPNOW),   "REDIR_ERRAPPNOW=7 is clobber");
+        assert!(
+            IS_CLOBBER_REDIR(REDIR_WRITENOW),
+            "REDIR_WRITENOW=1 is clobber"
+        );
+        assert!(IS_CLOBBER_REDIR(REDIR_APPNOW), "REDIR_APPNOW=3 is clobber");
+        assert!(
+            IS_CLOBBER_REDIR(REDIR_ERRWRITENOW),
+            "REDIR_ERRWRITENOW=5 is clobber"
+        );
+        assert!(
+            IS_CLOBBER_REDIR(REDIR_ERRAPPNOW),
+            "REDIR_ERRAPPNOW=7 is clobber"
+        );
         // NOT clobber.
         assert!(!IS_CLOBBER_REDIR(REDIR_WRITE));
         assert!(!IS_CLOBBER_REDIR(REDIR_APP));
@@ -4181,14 +4325,24 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:313-314 — true ONLY for 4..=7.
         for x in REDIR_ERRWRITE..=REDIR_ERRAPPNOW {
-            assert!(IS_ERROR_REDIR(x),
-                "redir-type {} must be IS_ERROR_REDIR", x);
+            assert!(IS_ERROR_REDIR(x), "redir-type {} must be IS_ERROR_REDIR", x);
         }
         // Outside — never error.
-        for x in [REDIR_WRITE, REDIR_WRITENOW, REDIR_APP, REDIR_APPNOW,
-                  REDIR_READWRITE, REDIR_READ, REDIR_HEREDOC, REDIR_INPIPE] {
-            assert!(!IS_ERROR_REDIR(x),
-                "redir-type {} must NOT be IS_ERROR_REDIR", x);
+        for x in [
+            REDIR_WRITE,
+            REDIR_WRITENOW,
+            REDIR_APP,
+            REDIR_APPNOW,
+            REDIR_READWRITE,
+            REDIR_READ,
+            REDIR_HEREDOC,
+            REDIR_INPIPE,
+        ] {
+            assert!(
+                !IS_ERROR_REDIR(x),
+                "redir-type {} must NOT be IS_ERROR_REDIR",
+                x
+            );
         }
     }
 
@@ -4201,11 +4355,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:318-319 — true for 8..=13 INCLUSIVE plus INPIPE=16.
         for x in REDIR_READWRITE..=REDIR_MERGEIN {
-            assert!(IS_READFD(x),
-                "redir-type {} must be IS_READFD", x);
+            assert!(IS_READFD(x), "redir-type {} must be IS_READFD", x);
         }
-        assert!(IS_READFD(REDIR_INPIPE),
-            "REDIR_INPIPE=16 must be IS_READFD (special-case OR arm)");
+        assert!(
+            IS_READFD(REDIR_INPIPE),
+            "REDIR_INPIPE=16 must be IS_READFD (special-case OR arm)"
+        );
         // Outside — not readfd.
         assert!(!IS_READFD(REDIR_WRITE));
         assert!(!IS_READFD(REDIR_MERGEOUT));
@@ -4220,24 +4375,24 @@ mod tests {
     #[test]
     fn redir_constants_have_exact_canonical_values() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(REDIR_WRITE,        0);
-        assert_eq!(REDIR_WRITENOW,     1);
-        assert_eq!(REDIR_APP,          2);
-        assert_eq!(REDIR_APPNOW,       3);
-        assert_eq!(REDIR_ERRWRITE,     4);
-        assert_eq!(REDIR_ERRWRITENOW,  5);
-        assert_eq!(REDIR_ERRAPP,       6);
-        assert_eq!(REDIR_ERRAPPNOW,    7);
-        assert_eq!(REDIR_READWRITE,    8);
-        assert_eq!(REDIR_READ,         9);
-        assert_eq!(REDIR_HEREDOC,     10);
+        assert_eq!(REDIR_WRITE, 0);
+        assert_eq!(REDIR_WRITENOW, 1);
+        assert_eq!(REDIR_APP, 2);
+        assert_eq!(REDIR_APPNOW, 3);
+        assert_eq!(REDIR_ERRWRITE, 4);
+        assert_eq!(REDIR_ERRWRITENOW, 5);
+        assert_eq!(REDIR_ERRAPP, 6);
+        assert_eq!(REDIR_ERRAPPNOW, 7);
+        assert_eq!(REDIR_READWRITE, 8);
+        assert_eq!(REDIR_READ, 9);
+        assert_eq!(REDIR_HEREDOC, 10);
         assert_eq!(REDIR_HEREDOCDASH, 11);
-        assert_eq!(REDIR_HERESTR,     12);
-        assert_eq!(REDIR_MERGEIN,     13);
-        assert_eq!(REDIR_MERGEOUT,    14);
-        assert_eq!(REDIR_CLOSE,       15);
-        assert_eq!(REDIR_INPIPE,      16);
-        assert_eq!(REDIR_OUTPIPE,     17);
+        assert_eq!(REDIR_HERESTR, 12);
+        assert_eq!(REDIR_MERGEIN, 13);
+        assert_eq!(REDIR_MERGEOUT, 14);
+        assert_eq!(REDIR_CLOSE, 15);
+        assert_eq!(REDIR_INPIPE, 16);
+        assert_eq!(REDIR_OUTPIPE, 17);
     }
 
     /// `Src/zsh.h` REDIR_TYPE_MASK / REDIR_VARID_MASK /
@@ -4248,15 +4403,18 @@ mod tests {
     #[test]
     fn redir_masks_have_no_overlap() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(REDIR_TYPE_MASK,         0x1f);
-        assert_eq!(REDIR_VARID_MASK,        0x20);
+        assert_eq!(REDIR_TYPE_MASK, 0x1f);
+        assert_eq!(REDIR_VARID_MASK, 0x20);
         assert_eq!(REDIR_FROM_HEREDOC_MASK, 0x40);
         // Masks must be pairwise disjoint.
-        assert_eq!(REDIR_TYPE_MASK  & REDIR_VARID_MASK,         0);
-        assert_eq!(REDIR_TYPE_MASK  & REDIR_FROM_HEREDOC_MASK,  0);
-        assert_eq!(REDIR_VARID_MASK & REDIR_FROM_HEREDOC_MASK,  0);
+        assert_eq!(REDIR_TYPE_MASK & REDIR_VARID_MASK, 0);
+        assert_eq!(REDIR_TYPE_MASK & REDIR_FROM_HEREDOC_MASK, 0);
+        assert_eq!(REDIR_VARID_MASK & REDIR_FROM_HEREDOC_MASK, 0);
         // Type-mask must cover the largest REDIR_* value (17 = 0x11).
-        assert_eq!(REDIR_OUTPIPE & REDIR_TYPE_MASK, REDIR_OUTPIPE,
-            "type-mask must include every REDIR_* up to OUTPIPE=17");
+        assert_eq!(
+            REDIR_OUTPIPE & REDIR_TYPE_MASK,
+            REDIR_OUTPIPE,
+            "type-mask must include every REDIR_* up to OUTPIPE=17"
+        );
     }
 }

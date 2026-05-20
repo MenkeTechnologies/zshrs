@@ -21,42 +21,42 @@ use crate::zftp::zftp_globals;
 use crate::zutil::style_table;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use indexmap::IndexMap;
 
-use crate::ported::vm_helper::*;
 use crate::exec_jobs::JobState;
-use crate::intercepts::{AdviceKind, Intercept, intercept_matches};
+use crate::intercepts::{intercept_matches, AdviceKind, Intercept};
+use crate::ported::vm_helper::*;
 use std::io::Write;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Thread-local executor context for VM builtin dispatch
 // ═══════════════════════════════════════════════════════════════════════════
 
-use std::cell::{Cell, RefCell};
+use crate::ported::zle::zle_thingy::getwidgettarget;
+use crate::ported::zsh_h::{options, MAX_OPS};
 use crate::socket::bin_zsocket;
+use fusevm::op::redirect_op as r;
 use fusevm::shell_builtins::*;
 use fusevm::Value;
-use crate::ported::zsh_h::{options, MAX_OPS};
-use std::io::BufRead;
-use crate::ported::zle::zle_thingy::getwidgettarget;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::time::Instant;
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::FileTypeExt;
-use std::io::Write as _;
-use std::os::unix::io::AsRawFd;
 use std::ffi::CString;
+use std::fs;
+use std::io::BufRead;
 use std::io::Read;
+use std::io::Write as _;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::AsRawFd;
 use std::os::unix::io::IntoRawFd;
-use fusevm::op::redirect_op as r;
+use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 thread_local! {
     /// Mirror of C zsh's `doneps4` local in execcmd_exec
@@ -111,7 +111,6 @@ impl Drop for ExecutorContext {
     }
 }
 
-
 /// Access the current executor from a builtin handler.
 /// # Safety
 /// Only call this from within a VM execution context (after ExecutorContext::enter).
@@ -145,9 +144,6 @@ where
 // in BUILTIN_EVAL dispatcher. Lastval reads from canonical LASTVAL
 // atomic that exec.set_last_status keeps current.
 
-
-
-
 /// Look up a canonical builtin by name in `BUILTINS` and dispatch
 /// via `execbuiltin` (Src/builtin.c:250). Mirrors the C pattern
 /// `bn = gethashnode2(builtintab, name); execbuiltin(args, redirs,
@@ -155,7 +151,8 @@ where
 /// to None (legacy stub entry — the wrapper on ShellExecutor still
 /// covers those until their handler is wired into BUILTINS).
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
-    let bn_idx = crate::ported::builtin::BUILTINS.iter()
+    let bn_idx = crate::ported::builtin::BUILTINS
+        .iter()
         .position(|b| b.node.nam == name);
     if let Some(idx) = bn_idx {
         let bn_static: &'static crate::ported::zsh_h::builtin =
@@ -167,10 +164,8 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     }
 }
 
-
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
-
     // Macro for builtins that user functions are allowed to shadow.
     // zsh dispatch order is alias → function → builtin; without the
     // try_user_fn_override probe a `cat() { ... }; cat` would silently
@@ -412,10 +407,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // current executor — the same VM that's mid-dispatch.
         let args = pop_args(vm, argc);
         if args.is_empty() {
-            return Value::Status(0);                                         // c:6160
+            return Value::Status(0); // c:6160
         }
-        let src = args.join(" ");                                            // c:6166
-        let status = with_executor(|exec| {                                  // c:6175 execode
+        let src = args.join(" "); // c:6166
+        let status = with_executor(|exec| {
+            // c:6175 execode
             exec.execute_script(&src).unwrap_or(1)
         });
         Value::Status(status)
@@ -509,19 +505,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // Canonical bin_setopt per options.c:580 — `isun` discriminant
         // flips the action polarity; setopt → 0, unsetopt → 1.
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-        let status = crate::ported::options::bin_setopt(
-            "setopt", &args, &ops, 0);
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let status = crate::ported::options::bin_setopt("setopt", &args, &ops, 0);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-        let status = crate::ported::options::bin_setopt(
-            "unsetopt", &args, &ops, 1);
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let status = crate::ported::options::bin_setopt("unsetopt", &args, &ops, 1);
         Value::Status(status)
     });
 
@@ -606,8 +608,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // through `execbuiltin` so the correct funcid + optstr propagate
     // — earlier wiring passed funcid=0 unconditionally and `unalias`
     // silently no-op'd on the cmdnamtab path.
-    fn unhash_via_execbuiltin(name: &str,    args: Vec<String>) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+    fn unhash_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
+        let bn_idx = crate::ported::builtin::BUILTINS
+            .iter()
             .position(|b| b.node.nam == name);
         if let Some(idx) = bn_idx {
             let bn_static: &'static crate::ported::zsh_h::builtin =
@@ -802,10 +805,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
         let args = pop_args(vm, argc);
         // Canonical bin_sync per files.c:53 — `sync(); return 0;`.
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-        let status = crate::ported::modules::files::bin_sync(
-            "sync", &args, &ops, 0);
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let status = crate::ported::modules::files::bin_sync("sync", &args, &ops, 0);
         Value::Status(status)
     });
 
@@ -821,11 +827,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Canonical bin_strftime takes (nam, argv, ops, func) per
         // Src/Modules/datetime.c:187. Adapt &[String] → &[&str] +
         // empty options inline (datetime parses no flags).
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let status = crate::ported::modules::datetime::bin_strftime(
-            "strftime", &argv, &ops, 0);
+        let status = crate::ported::modules::datetime::bin_strftime("strftime", &argv, &ops, 0);
         Value::Status(status)
     });
 
@@ -841,7 +850,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (name, args, ops, func) per Src/Modules/system.c:806.
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _ = with_executor(|_exec| ());
         let status = crate::modules::system::bin_zsystem("zsystem", &args, &ops, 0);
@@ -970,9 +981,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // bin_zprof now takes the canonical C signature
         // (name, args, ops, func) per Src/Modules/zprof.c:139.
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        if args.iter().any(|a| a == "-c") { ops.ind[b'c' as usize] = 1; }
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        if args.iter().any(|a| a == "-c") {
+            ops.ind[b'c' as usize] = 1;
+        }
         let _ = with_executor(|_exec| ());
         let status = crate::modules::zprof::bin_zprof("zprof", &args, &ops, 0);
         Value::Status(status)
@@ -1218,8 +1235,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // With `setopt pipefail` (or `set -o pipefail`), use the
         // first non-zero stage status (so failures earlier in the
         // pipeline propagate even if the last stage succeeded).
-        let pipefail_on =
-            with_executor(|exec| crate::ported::options::opt_state_get("pipefail").unwrap_or(false));
+        let pipefail_on = with_executor(|exec| {
+            crate::ported::options::opt_state_get("pipefail").unwrap_or(false)
+        });
         let last_status = if pipefail_on {
             pipestatus
                 .iter()
@@ -1294,11 +1312,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // bare-pid job so a no-args `wait` can synchronize.
                 with_executor(|exec| {
                     exec.set_scalar("!".to_string(), pid.to_string());
-                    exec.jobs.add_pid_job(
-                        pid,
-                        String::new(),
-                        crate::exec_jobs::JobState::Running,
-                    );
+                    exec.jobs
+                        .add_pid_job(pid, String::new(), crate::exec_jobs::JobState::Running);
                 });
                 Value::Status(0)
             }
@@ -1494,10 +1509,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             exec.set_array(name.clone(), target);
             if let Some((scalar_name, sep)) = tied_scalar {
-                let joined = exec
-                    .array(&name)
-                    .map(|a| a.join(&sep))
-                    .unwrap_or_default();
+                let joined = exec.array(&name).map(|a| a.join(&sep)).unwrap_or_default();
                 exec.set_scalar(scalar_name.clone(), joined.clone());
                 // Keep the env var (PATH / FPATH / MANPATH / …) in
                 // sync with the scalar so child processes see the
@@ -1535,7 +1547,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // follow-up.
     //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
-
         if argc < 2 {
             return Value::Status(1);
         }
@@ -1567,10 +1578,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             None => return Value::Status(1),
         };
 
-        let prompt = with_executor(|exec| {
-            exec.scalar("PROMPT3")
-                .unwrap_or_else(|| "?# ".to_string())
-        });
+        let prompt =
+            with_executor(|exec| exec.scalar("PROMPT3").unwrap_or_else(|| "?# ".to_string()));
 
         let stdin = std::io::stdin();
         let mut reader = stdin.lock();
@@ -1740,22 +1749,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let close = rest.find(')')?;
             let flags = rest[..close].to_string();
             let pat = rest[close + 1..].to_string();
-            if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
+            if flags.chars().next().is_some_and(|c| {
+                matches!(
+                    c,
+                    'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's'
+                )
+            }) {
                 Some((flags, pat))
-            } else { None }
+            } else {
+                None
+            }
         })(idx);
         if let Some((flags, pat)) = parsed_flags.clone() {
             let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
                 let keys = crate::vm_helper::scan_magic_assoc_keys(name)?;
-                Some(keys
-                    .into_iter()
-                    .map(|k| {
-                        let v = exec
-                            .get_special_array_value(name, &k)
-                            .unwrap_or_default();
-                        (k, v)
-                    })
-                    .collect())
+                Some(
+                    keys.into_iter()
+                        .map(|k| {
+                            let v = exec.get_special_array_value(name, &k).unwrap_or_default();
+                            (k, v)
+                        })
+                        .collect(),
+                )
             });
             if let Some(pairs) = pairs {
                 let by_key = flags.contains('I') || flags.contains('i');
@@ -1765,7 +1780,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let hay = if by_key { k } else { v };
                     if crate::vm_helper::glob_match_static(hay, &pat) {
                         out.push(if by_key { k.clone() } else { v.clone() });
-                        if !return_all { break; }
+                        if !return_all {
+                            break;
+                        }
                     }
                 }
                 return Some(Value::str(out.join(" ")));
@@ -1779,16 +1796,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let tab = crate::ported::hashtable::cmdnamtab_lock();
                     if idx == "@" || idx == "*" {
                         return Some(Value::Array(
-                            tab.read().ok()
-                                .map(|t| t.iter()
-                                    .filter_map(|(_, c)| c.cmd.clone())
-                                    .map(Value::str)
-                                    .collect())
+                            tab.read()
+                                .ok()
+                                .map(|t| {
+                                    t.iter()
+                                        .filter_map(|(_, c)| c.cmd.clone())
+                                        .map(Value::str)
+                                        .collect()
+                                })
                                 .unwrap_or_default(),
                         ));
                     }
                     Some(Value::str(
-                        tab.read().ok()
+                        tab.read()
+                            .ok()
                             .and_then(|t| t.get_full_path(idx).map(|p| p.display().to_string()))
                             .unwrap_or_else(|| {
                                 // Fall back to PATH scan for first match
@@ -1954,7 +1975,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // canonical paramtab entry.
                     Some(Value::str(
                         exec.get_special_array_value("parameters", idx)
-                            .unwrap_or_default()))
+                            .unwrap_or_default(),
+                    ))
                 }
                 "jobtexts" => {
                     let job_id: usize = idx.parse().ok()?;
@@ -1991,7 +2013,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 "nameddirs" => Some(Value::str(
                     crate::ported::hashnameddir::nameddirtab()
-                        .lock().ok()
+                        .lock()
+                        .ok()
                         .and_then(|g| g.get(idx).map(|nd| nd.dir.clone()))
                         .unwrap_or_default(),
                 )),
@@ -2352,11 +2375,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let cached = exec.array(&name);
                 let last = exec.last_status().to_string();
                 match cached {
-                    Some(arr)
-                        if arr.last().map(|s| s.as_str()) == Some(last.as_str()) =>
-                    {
-                        arr
-                    }
+                    Some(arr) if arr.last().map(|s| s.as_str()) == Some(last.as_str()) => arr,
                     _ => vec![last],
                 }
             });
@@ -2443,8 +2462,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // special-parameter table entry when no existing assoc with
         // that name exists. Mirroring: skip the magic path if
         // `name` is already in `assoc_arrays`.
-        let user_defined_assoc =
-            with_executor(|exec| exec.assoc(&name).is_some());
+        let user_defined_assoc = with_executor(|exec| exec.assoc(&name).is_some());
         if !user_defined_assoc {
             if let Some(v) = magic_assoc_lookup(&name, &idx) {
                 // Magic-assoc with `(I)pat` glob-match returned an
@@ -2456,8 +2474,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // splice and emitting one arg per matching key.
                 if dq_compile {
                     if let Value::Array(items) = &v {
-                        let strs: Vec<String> =
-                            items.iter().map(|i| i.to_str()).collect();
+                        let strs: Vec<String> = items.iter().map(|i| i.to_str()).collect();
                         let sep = with_executor(|exec| {
                             exec.scalar("IFS")
                                 .and_then(|s| s.chars().next())
@@ -2490,7 +2507,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // delegation to the canonical port reader.
                 if crate::vm_helper::scan_magic_assoc_keys(&name).is_some() {
                     return Value::str(
-                        exec.get_special_array_value(&name, &idx).unwrap_or_default());
+                        exec.get_special_array_value(&name, &idx)
+                            .unwrap_or_default(),
+                    );
                 }
                 if let Some(map) = exec.assoc(&name) {
                     if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
@@ -2502,16 +2521,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let close = rest.find(')')?;
                         let flags = rest[..close].to_string();
                         let pat = rest[close + 1..].to_string();
-                        if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
+                        if flags.chars().next().is_some_and(|c| {
+                            matches!(
+                                c,
+                                'I' | 'R'
+                                    | 'i'
+                                    | 'r'
+                                    | 'k'
+                                    | 'K'
+                                    | 'n'
+                                    | 'e'
+                                    | 'b'
+                                    | 'w'
+                                    | 'f'
+                                    | 'p'
+                                    | 's'
+                            )
+                        }) {
                             Some((flags, pat))
-                        } else { None }
-                    })(&idx) {
+                        } else {
+                            None
+                        }
+                    })(&idx)
+                    {
                         // (v)+(I)/(i): subscript searches keys but
                         // outer wants values. Iterate the assoc and
                         // return values for keys that match `pat`.
-                        if flip_to_values
-                            && (flags.contains('I') || flags.contains('i'))
-                        {
+                        if flip_to_values && (flags.contains('I') || flags.contains('i')) {
                             let return_all = flags.contains('I');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
@@ -2527,9 +2563,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // (k)+(R)/(r): subscript searches values but
                         // outer wants keys. Iterate the assoc and
                         // return keys whose values match.
-                        if flip_to_keys
-                            && (flags.contains('R') || flags.contains('r'))
-                        {
+                        if flip_to_keys && (flags.contains('R') || flags.contains('r')) {
                             let return_all = flags.contains('R');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
@@ -2573,24 +2607,43 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // by a `[chars]` set treated as IFS for this
                         // operation.
                         if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
-                        // Port of subst.c subscript-flag parser:
-                        // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
-                        // Special-case `(s<delim>...<delim>)` per
-                        // params.c:1458-1476 — `s` introduces a
-                        // delimited separator block.
-                        // Returns (flags_chars, pattern_after).
-                        let s = s.trim_start();
-                        let rest = s.strip_prefix('(')?;
-                        let close = rest.find(')')?;
-                        let flags = rest[..close].to_string();
-                        let pat = rest[close + 1..].to_string();
-                        if flags.starts_with('s') {
-                            return Some((flags, pat));
-                        }
-                        if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
-                            Some((flags, pat))
-                        } else { None }
-                    })(&idx) {
+                            // Port of subst.c subscript-flag parser:
+                            // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
+                            // Special-case `(s<delim>...<delim>)` per
+                            // params.c:1458-1476 — `s` introduces a
+                            // delimited separator block.
+                            // Returns (flags_chars, pattern_after).
+                            let s = s.trim_start();
+                            let rest = s.strip_prefix('(')?;
+                            let close = rest.find(')')?;
+                            let flags = rest[..close].to_string();
+                            let pat = rest[close + 1..].to_string();
+                            if flags.starts_with('s') {
+                                return Some((flags, pat));
+                            }
+                            if flags.chars().next().is_some_and(|c| {
+                                matches!(
+                                    c,
+                                    'I' | 'R'
+                                        | 'i'
+                                        | 'r'
+                                        | 'k'
+                                        | 'K'
+                                        | 'n'
+                                        | 'e'
+                                        | 'b'
+                                        | 'w'
+                                        | 'f'
+                                        | 'p'
+                                        | 's'
+                                )
+                            }) {
+                                Some((flags, pat))
+                            } else {
+                                None
+                            }
+                        })(&idx)
+                        {
                             if flags.contains('w') {
                                 if let Ok(n) = pat.parse::<i64>() {
                                     let words: Vec<&str> = scalar.split_whitespace().collect();
@@ -2622,8 +2675,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // through to char slicing.
                             if flags.starts_with('s') {
                                 if let Ok(i) = pat.parse::<i64>() {
-                                    let s_chars: Vec<String> = scalar.chars().map(|c| c.to_string()).collect();
-                                    return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
+                                    let s_chars: Vec<String> =
+                                        scalar.chars().map(|c| c.to_string()).collect();
+                                    return Value::str(
+                                        crate::ported::params::getarrvalue(&s_chars, i, i).concat(),
+                                    );
                                 }
                             }
                             // (i)/(I)/(r)/(R) on scalar — route
@@ -2632,7 +2688,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // port lives in src/ported/params.rs;
                             // this branch defers to it to avoid
                             // duplicated drift.
-                            if flags.chars().all(|c| matches!(c, 'i' | 'I' | 'r' | 'R' | 'e')) {
+                            if flags
+                                .chars()
+                                .all(|c| matches!(c, 'i' | 'I' | 'r' | 'R' | 'e'))
+                            {
                                 let _ = &pat;
                                 if let Some(crate::ported::params::getarg_out::Value(v)) =
                                     crate::ported::params::getarg(&idx, None, None, Some(&scalar))
@@ -2649,21 +2708,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if let Some((start_s, end_s)) = idx.split_once(',') {
                             let parse_one = |s: &str, exec: &mut ShellExecutor| -> Option<i64> {
                                 let t = s.trim();
-                                if t.is_empty() { return None; }
-                                if let Ok(i) = t.parse::<i64>() { return Some(i); }
-                                Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(t)).unwrap_or(0))
+                                if t.is_empty() {
+                                    return None;
+                                }
+                                if let Ok(i) = t.parse::<i64>() {
+                                    return Some(i);
+                                }
+                                Some(
+                                    crate::ported::math::mathevali(&crate::ported::subst::singsub(
+                                        t,
+                                    ))
+                                    .unwrap_or(0),
+                                )
                             };
                             let s_opt = parse_one(start_s, exec);
                             let e_opt = parse_one(end_s, exec);
                             let s_i = s_opt.unwrap_or(1);
                             let e_i = e_opt.unwrap_or(s_chars.len() as i64);
-                            return Value::str(crate::ported::params::getarrvalue(&s_chars, s_i, e_i).concat());
+                            return Value::str(
+                                crate::ported::params::getarrvalue(&s_chars, s_i, e_i).concat(),
+                            );
                         }
                         let i = match idx.parse::<i64>() {
                             Ok(i) => i,
-                            Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx)).unwrap_or(0),
+                            Err(_) => {
+                                crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx))
+                                    .unwrap_or(0)
+                            }
                         };
-                        return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
+                        return Value::str(
+                            crate::ported::params::getarrvalue(&s_chars, i, i).concat(),
+                        );
                     }
                 };
 
@@ -2676,10 +2751,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let close = rest.find(')')?;
                     let flags = rest[..close].to_string();
                     let pat = rest[close + 1..].to_string();
-                    if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
+                    if flags.chars().next().is_some_and(|c| {
+                        matches!(
+                            c,
+                            'I' | 'R'
+                                | 'i'
+                                | 'r'
+                                | 'k'
+                                | 'K'
+                                | 'n'
+                                | 'e'
+                                | 'b'
+                                | 'w'
+                                | 'f'
+                                | 'p'
+                                | 's'
+                        )
+                    }) {
                         Some((flags, pat))
-                    } else { None }
-                })(&idx) {
+                    } else {
+                        None
+                    }
+                })(&idx)
+                {
                     // Route to getarg's array-search arm
                     // (params.c:1672-1719).
                     let _ = (&flags, &pat); // silence unused if any
@@ -2705,9 +2799,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // mathevalarg fallback (params.c:1567).
                     let parse_one = |s: &str, exec: &mut ShellExecutor| -> Option<i64> {
                         let t = s.trim();
-                        if t.is_empty() { return None; }
-                        if let Ok(i) = t.parse::<i64>() { return Some(i); }
-                        Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(t)).unwrap_or(0))
+                        if t.is_empty() {
+                            return None;
+                        }
+                        if let Ok(i) = t.parse::<i64>() {
+                            return Some(i);
+                        }
+                        Some(
+                            crate::ported::math::mathevali(&crate::ported::subst::singsub(t))
+                                .unwrap_or(0),
+                        )
                     };
                     let start = parse_one(start_s, exec);
                     let end = parse_one(end_s, exec);
@@ -2716,7 +2817,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // positive values up by 1 before the (1-based)
                         // slicer runs. zsh: `setopt ksh_arrays;
                         // a=(a b c d); echo $a[1,2]` → `b c`.
-                        let ksh = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
+                        let ksh =
+                            crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
                         let s = if ksh && s >= 0 { s + 1 } else { s };
                         let e = if ksh && e >= 0 { e + 1 } else { e };
                         let sliced = getarrvalue(&arr, s, e);
@@ -2733,9 +2835,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 .to_string();
                             return Value::str(sliced.join(&ifs_first));
                         }
-                        return Value::Array(
-                            sliced.into_iter().map(Value::str).collect(),
-                        );
+                        return Value::Array(sliced.into_iter().map(Value::str).collect());
                     }
                 }
 
@@ -2748,7 +2848,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // "before first" per the standard 1-based path).
                 let i = match idx.parse::<i64>() {
                     Ok(i) => i,
-                    Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx)).unwrap_or(0),
+                    Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx))
+                        .unwrap_or(0),
                 };
                 let len = arr.len() as i64;
                 let ksh = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
@@ -2801,13 +2902,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let full = format!("${{{}}}", body);
         let result = with_executor(|exec| {
             let mut ret_flags: i32 = 0;
-            let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst(
-                &full,
-                0,
-                false,
-                0i32,
-                &mut ret_flags,
-            );
+            let (_full_str, _new_pos, nodes) =
+                crate::ported::subst::paramsubst(&full, 0, false, 0i32, &mut ret_flags);
             // c:Src/subst.c errflag bail — propagate to caller's
             // exit status the way `subst_state_commit_to_executor`
             // used to.
@@ -2866,8 +2962,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `(z)` produce the original scalar verbatim. Consulted at
         // each split flag's effect site below (the flag char itself
         // is not removed; instead the split is skipped).
-        let ssub_runtime = ssub_compile
-            || with_executor(|exec| exec.in_scalar_assign > 0);
+        let ssub_runtime = ssub_compile || with_executor(|exec| exec.in_scalar_assign > 0);
         // `[@]` / `[*]` subscript on the name overrides the DQ
         // strip — explicit `[@]` marks the array as splice-
         // expanded so array-only flags (`o`/`O`/`n`/`i`/`u`)
@@ -2992,9 +3087,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // list. Direct port of paramsubst's per-special
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
-                    if let Some(keys) =
-                        crate::vm_helper::scan_magic_assoc_keys(&name)
-                    {
+                    if let Some(keys) = crate::vm_helper::scan_magic_assoc_keys(&name) {
                         St::A(keys)
                     } else {
                         St::S(exec.get_variable(&name))
@@ -3006,9 +3099,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // earlier (k) branch covered the keys but the
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
-                    if let Some(keys) =
-                        crate::vm_helper::scan_magic_assoc_keys(&name)
-                    {
+                    if let Some(keys) = crate::vm_helper::scan_magic_assoc_keys(&name) {
                         let values: Vec<String> = keys
                             .iter()
                             .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
@@ -3159,10 +3250,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             state = match state {
                 St::S(name) => with_executor(|exec| resolve_indirect_target(&name, exec)),
                 St::A(names) => with_executor(|exec| {
-                    let resolved: Vec<String> = names
-                        .into_iter()
-                        .map(|n| exec.get_variable(&n))
-                        .collect();
+                    let resolved: Vec<String> =
+                        names.into_iter().map(|n| exec.get_variable(&n)).collect();
                     St::A(resolved)
                 }),
             };
@@ -3264,7 +3353,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     //   if MULTIBYTE && ires>127: ucs4tomb           // 1508-1511
                     //   else: single-byte sprintf                    // 1514-1518
                     let to_char = |s: &str| -> String {
-                        let n = with_executor(|exec| crate::ported::math::mathevali(&crate::ported::subst::singsub(s)).unwrap_or(0));
+                        let n = with_executor(|exec| {
+                            crate::ported::math::mathevali(&crate::ported::subst::singsub(s))
+                                .unwrap_or(0)
+                        });
                         // zsh subst.c:1504-1518 — negative WARNS but
                         // STILL outputs the low byte (truncated cast
                         // through `(int)ires` + `%c` sprintf at line
@@ -3342,7 +3434,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         n
                     } else {
                         let arith_str = crate::ported::subst::arithsubst(&width_str, "", "");
-                        arith_str.parse::<i64>().map(|v| v.unsigned_abs() as usize).unwrap_or(0)
+                        arith_str
+                            .parse::<i64>()
+                            .map(|v| v.unsigned_abs() as usize)
+                            .unwrap_or(0)
                     };
                     // Optional `:fill:` after the width.
                     let mut fill = String::from(" ");
@@ -3553,18 +3648,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // to a meta-encoded NUL. We split on the literal
                     // `\0` character. Same flat-map behaviour as `(f)`.
                     // Same ssub gate.
-                    if !ssub_runtime { state = match state {
-                        St::S(s) => St::A(s.split('\0').map(String::from).collect()),
-                        St::A(a) => {
-                            let mut out: Vec<String> = Vec::with_capacity(a.len());
-                            for elem in a {
-                                for piece in elem.split('\0') {
-                                    out.push(piece.to_string());
+                    if !ssub_runtime {
+                        state = match state {
+                            St::S(s) => St::A(s.split('\0').map(String::from).collect()),
+                            St::A(a) => {
+                                let mut out: Vec<String> = Vec::with_capacity(a.len());
+                                for elem in a {
+                                    for piece in elem.split('\0') {
+                                        out.push(piece.to_string());
+                                    }
                                 }
+                                St::A(out)
                             }
-                            St::A(out)
-                        }
-                    }; }
+                        };
+                    }
                 }
                 'F' => {
                     // (F) — join array elements with newlines (mirror
@@ -3746,12 +3843,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // chars, NOT just whitespace) as a word boundary
                     // and lowercases mid-word uppercase letters.
                     state = match state {
-                        St::S(s) => {
-                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CASMOD_CAPS))
-                        }
+                        St::S(s) => St::S(crate::ported::hist::casemodify(
+                            &s,
+                            crate::ported::hist::CASMOD_CAPS,
+                        )),
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CASMOD_CAPS))
+                                .map(|s| {
+                                    crate::ported::hist::casemodify(
+                                        &s,
+                                        crate::ported::hist::CASMOD_CAPS,
+                                    )
+                                })
                                 .collect(),
                         ),
                     };
@@ -3800,20 +3903,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // First the longer named dirs.
                             let mut entries: Vec<(String, std::path::PathBuf)> =
                                 crate::ported::hashnameddir::nameddirtab()
-                                    .lock().ok()
-                                    .map(|g| g.iter()
-                                        .map(|(k, nd)| (k.clone(), std::path::PathBuf::from(&nd.dir)))
-                                        .collect())
+                                    .lock()
+                                    .ok()
+                                    .map(|g| {
+                                        g.iter()
+                                            .map(|(k, nd)| {
+                                                (k.clone(), std::path::PathBuf::from(&nd.dir))
+                                            })
+                                            .collect()
+                                    })
                                     .unwrap_or_default();
                             entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
                             for (name, path) in &entries {
                                 let path_s = path.to_string_lossy();
                                 if !path_s.is_empty() && out.starts_with(path_s.as_ref()) {
-                                    return format!(
-                                        "~{}{}",
-                                        name,
-                                        &out[path_s.len()..]
-                                    );
+                                    return format!("~{}{}", name, &out[path_s.len()..]);
                                 }
                             }
                             // Then $HOME — only if no named-dir matched.
@@ -3907,8 +4011,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                crate::vm_helper::scan_magic_assoc_keys(&name)
-                                    .unwrap_or_default()
+                                crate::vm_helper::scan_magic_assoc_keys(&name).unwrap_or_default()
                             }
                         });
                         state = St::A(keys);
@@ -3938,9 +4041,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
-                                    let v = exec
-                                        .get_special_array_value(&name, &k)
-                                        .unwrap_or_default();
+                                    let v =
+                                        exec.get_special_array_value(&name, &k).unwrap_or_default();
                                     out.push(v);
                                     out.push(k);
                                 }
@@ -3959,8 +4061,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             {
                                 keys.iter()
                                     .map(|k| {
-                                        exec.get_special_array_value(&name, k)
-                                            .unwrap_or_default()
+                                        exec.get_special_array_value(&name, k).unwrap_or_default()
                                     })
                                     .collect()
                             } else {
@@ -4001,7 +4102,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     let mut strip_trailing_newlines = false;
                     let mut wrap_only_if_needed = false;
-                    let escape_glob_chars = false;     // c:2235 (no q* in zsh)
+                    let escape_glob_chars = false; // c:2235 (no q* in zsh)
                     let explicit_delim: Option<String> = None; // c:2235 (no q:str: in zsh)
                     while i < chars.len() {
                         match chars[i] {
@@ -4410,8 +4511,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // on the resulting word". Apply expand_string so
                     // `\$var` (literal `$var` in the value) becomes
                     // the value of $var, `\$(cmd)` runs the cmd, etc.
-                    let eval_one =
-                        |s: &str| -> String { crate::ported::subst::singsub(s) };
+                    let eval_one = |s: &str| -> String { crate::ported::subst::singsub(s) };
                     state = match state {
                         St::S(s) => St::S(eval_one(&s)),
                         St::A(a) => St::A(a.into_iter().map(|s| eval_one(&s)).collect()),
@@ -4589,8 +4689,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Canonical paramsubst-nest counter — `IN_PARAMSUBST_NEST`
         // thread_local in `subst.rs` (mirrors `paramsub_nest` global
         // in `Src/subst.c`).
-        let is_nested = crate::ported::subst::IN_PARAMSUBST_NEST
-            .with(|c| c.get() > 1);
+        let is_nested = crate::ported::subst::IN_PARAMSUBST_NEST.with(|c| c.get() > 1);
         if (dq_compile || dq_runtime) && !has_at_subscript && !is_nested && !split_flag_active {
             if let St::A(a) = state {
                 // Pick the join separator. `(F)` (the last F seen) is
@@ -4604,7 +4703,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 } else {
                     with_executor(|exec| {
                         let ifs = exec.get_variable("IFS");
-                        ifs.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string())
+                        ifs.chars()
+                            .next()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string())
                     })
                 };
                 return Value::str(a.join(&sep));
@@ -4656,7 +4758,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // For an existing indexed array, fall back to arith eval so
             // `a[i+1]=v` works when `i` is set.
             let key_int_for_indexed = if is_indexed {
-                key_literal_int.or_else(|| Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(&key)).unwrap_or(0)))
+                key_literal_int.or_else(|| {
+                    Some(
+                        crate::ported::math::mathevali(&crate::ported::subst::singsub(&key))
+                            .unwrap_or(0),
+                    )
+                })
             } else {
                 key_literal_int
             };
@@ -4708,10 +4815,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // implemented for the pre-fusevm executor). Returns Value::Array.
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
-        let ifs = with_executor(|exec| {
-            exec.scalar("IFS")
-                .unwrap_or_else(|| " \t\n".to_string())
-        });
+        let ifs = with_executor(|exec| exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string()));
         // Direct port of multsub's IFS-split path (src/zsh/Src/subst.c:
         // 567-680). zsh distinguishes WHITESPACE IFS (default) from
         // NON-WHITESPACE IFS:
@@ -4760,8 +4864,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Direct call to the canonical brace expander (port of
         // Src/glob.c::xpandbraces at glob.rs:1678). Was stubbed
         // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
-        let brace_ccl = with_executor(|exec|
-            crate::ported::options::opt_state_get("braceccl").unwrap_or(false));
+        let brace_ccl = with_executor(|exec| {
+            crate::ported::options::opt_state_get("braceccl").unwrap_or(false)
+        });
         let parts = crate::ported::glob::xpandbraces(&s, brace_ccl);
         if parts.len() == 1 {
             fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
@@ -5093,17 +5198,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scalar value. Word-splitting requires either
                     // sh_word_split option or explicit `${(s.,.)scalar}`.
                     let val = exec.get_variable(&name);
-                    if val.is_empty()
-                        && !exec.has_scalar(&name)
-                        && std::env::var(&name).is_err()
-                    {
+                    if val.is_empty() && !exec.has_scalar(&name) && std::env::var(&name).is_err() {
                         Value::Array(vec![])
-                    } else if crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false) {
+                    } else if crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false)
+                    {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
-                        let ifs = exec
-                            .scalar("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
+                        let ifs = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<Value> = val
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
@@ -5241,12 +5342,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if name == "@" || name == "*" {
             return with_executor(|exec| {
                 sync_status(exec);
-                fusevm::Value::Array(
-                    exec.pparams()
-                        .iter()
-                        .map(fusevm::Value::str)
-                        .collect(),
-                )
+                fusevm::Value::Array(exec.pparams().iter().map(fusevm::Value::str).collect())
             });
         }
         // RC_EXPAND_PARAM: when the option is set and `name` refers to
@@ -5254,8 +5350,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_CONCAT_DISTRIBUTE distributes element-wise. Without
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
-        let rc_expand =
-            with_executor(|exec| crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false));
+        let rc_expand = with_executor(|exec| {
+            crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false)
+        });
         if rc_expand {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
@@ -5316,10 +5413,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if let Some(map) = exec.assoc(&name) {
                 let mut keys: Vec<&String> = map.keys().collect();
                 keys.sort();
-                let values: Vec<String> = keys
-                    .iter()
-                    .filter_map(|k| map.get(*k).cloned())
-                    .collect();
+                let values: Vec<String> =
+                    keys.iter().filter_map(|k| map.get(*k).cloned()).collect();
                 if ksh_arrays {
                     return Some((vec![values.into_iter().next().unwrap_or_default()], in_dq));
                 }
@@ -5392,7 +5487,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if is_integer {
                 let prev = exec.get_variable(&name);
                 let prev_n: i64 = prev.parse().unwrap_or(0);
-                let added = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value)).unwrap_or(0);
+                let added = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value))
+                    .unwrap_or(0);
                 let new_val = (prev_n + added).to_string();
                 exec.set_scalar(name.clone(), new_val.clone());
                 // PFA-SMR aspect: integer-typed append. The append
@@ -5423,13 +5519,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     lower.as_str(),
                     "path" | "fpath" | "manpath" | "module_path" | "cdpath"
                 ) {
-                    emit_path_or_assign(
-                        &name,
-                        std::slice::from_ref(&combined),
-                        attrs,
-                        true,
-                        &ctx,
-                    );
+                    emit_path_or_assign(&name, std::slice::from_ref(&combined), attrs, true, &ctx);
                 } else {
                     crate::recorder::emit_assign_typed(&name, &combined, attrs, ctx);
                 }
@@ -5452,10 +5542,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // ZSH_ARGZERO is also writable in zsh per Src/params.c
             // (uses PM_SCALAR without PM_READONLY); zinit's startup
             // line `ZSH_ARGZERO=$0` relies on this.
-            let is_intrinsic_ro = matches!(
-                name.as_str(),
-                "PPID" | "LINENO" | "argv0" | "ARGC"
-            );
+            let is_intrinsic_ro = matches!(name.as_str(), "PPID" | "LINENO" | "argv0" | "ARGC");
             let is_ro = is_intrinsic_ro || exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
@@ -5472,15 +5559,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // (Src/zsh.h:1860 — int print base). Per C convfloat /
             // convbase in params.c, base==0 means default decimal.
             let int_base: Option<u32> = if is_integer {
-                let b = crate::ported::params::paramtab().read().ok()
+                let b = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
                     .and_then(|t| t.get(&name).map(|pm| pm.base))
                     .unwrap_or(0);
-                if b > 0 { Some(b as u32) } else { None }
+                if b > 0 {
+                    Some(b as u32)
+                } else {
+                    None
+                }
             } else {
                 None
             };
             let stored = if is_integer && !value.is_empty() {
-                let evaluated = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value)).unwrap_or(0).to_string();
+                let evaluated =
+                    crate::ported::math::mathevali(&crate::ported::subst::singsub(&value))
+                        .unwrap_or(0)
+                        .to_string();
                 if let Some(base) = int_base {
                     evaluated
                         .parse::<i64>()
@@ -5568,12 +5664,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // variable path returns empty. paramtab IS the C-source
             // canonical scalar store; this mirror keeps it coherent
             // with the parallel `exec.variables` HashMap.
-            crate::ported::params::setsparam(&name, &stored);                 // c:params.c:3350
-            // `set -o allexport`: every assignment auto-exports the var.
-            // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
-            // Without this, env didn't see user-set scalars.
+            crate::ported::params::setsparam(&name, &stored); // c:params.c:3350
+                                                              // `set -o allexport`: every assignment auto-exports the var.
+                                                              // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
+                                                              // Without this, env didn't see user-set scalars.
             let allexport = crate::ported::options::opt_state_get("allexport").unwrap_or(false);
-            let already_exported = (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
+            let already_exported =
+                (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
                 std::env::set_var(&name, &stored);
             }
@@ -5885,10 +5982,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `OPTS_LIVE` via `opt_state_set`). Routing through the canonical
         // C port restores the single-store invariant: one `opts[]`,
         // shared between setopt/unsetopt and `[[ -o ]]`.
-        let r = crate::ported::cond::optison("test", &name);                  // c:cond.c:502
+        let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
         match r {
-            0 => fusevm::Value::Bool(true),                                  // c:cond.c:520 set
-            1 => fusevm::Value::Bool(false),                                 // c:cond.c:518/520 unset
+            0 => fusevm::Value::Bool(true),  // c:cond.c:520 set
+            1 => fusevm::Value::Bool(false), // c:cond.c:518/520 unset
             _ => {
                 // c:cond.c:514 — unknown option: zwarnnam emitted by
                 // optison itself when POSIXBUILTINS is unset; mirror to
@@ -5939,17 +6036,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // of subst.c's SUB_MATCH bit which getmatch consults to
         // pick the "matched" disposition over the "rest" default.
         let invert = {
-            let sf = crate::ported::subst::sub_flags_get();  // c:2171
-            let inv = (sf & 0x0008) != 0;                    // c:2171 SUB_MATCH
-            crate::ported::subst::sub_flags_set(0);          // c:2169 (consume)
+            let sf = crate::ported::subst::sub_flags_get(); // c:2171
+            let inv = (sf & 0x0008) != 0; // c:2171 SUB_MATCH
+            crate::ported::subst::sub_flags_set(0); // c:2169 (consume)
             inv
         };
         if let Some(arr) = arr_val {
             let kept: Vec<fusevm::Value> = arr
                 .into_iter()
-                .filter(|elem| {                             // c:2171
-                    let m = matches_glob(elem, &pattern);   // c:2171
-                    if invert { m } else { !m }              // c:2171
+                .filter(|elem| {
+                    // c:2171
+                    let m = matches_glob(elem, &pattern); // c:2171
+                    if invert {
+                        m
+                    } else {
+                        !m
+                    } // c:2171
                 })
                 .map(fusevm::Value::str)
                 .collect();
@@ -5957,8 +6059,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         let val = with_executor(|exec| exec.get_variable(&name));
         let m = matches_glob(&val, &pattern);
-        if invert {                                          // c:2171
-            if m { fusevm::Value::str(val) } else { fusevm::Value::str(String::new()) } // c:2171
+        if invert {
+            // c:2171
+            if m {
+                fusevm::Value::str(val)
+            } else {
+                fusevm::Value::str(String::new())
+            } // c:2171
         } else if m {
             fusevm::Value::str(String::new())
         } else {
@@ -6466,8 +6573,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // simple commands route to BUILTIN_XTRACE_ARGS instead. So
         // this handler always emits when xtrace is on — no prefix-
         // string heuristic.
-        let on = with_executor(|exec|
-            crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+        let on =
+            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -6495,7 +6602,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+        let on =
+            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
@@ -6563,7 +6671,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // no newline; trailing `\n` comes from XTRACE_ARGS (cmd path)
     // or XTRACE_NEWLINE (assignment-only path).
     vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
-        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+        let on =
+            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             // PEEK [..., name, value] — argc==2 by contract.
             let len = vm.stack.len();
@@ -6588,7 +6697,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // C's `fputc('\n', xtrerr); fflush(xtrerr);` at exec.c:3398
     // (the assignment-only path through execcmd_exec).
     vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
-        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+        let on =
+            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
@@ -6641,8 +6751,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `opts[ERREXIT]` per Src/options.c:46). Older paths still
             // populate `exec.options`. Check both — agree when EITHER
             // says on.
-            let on_canonical = crate::ported::zsh_h::isset(
-                crate::ported::zsh_h::ERREXIT);
+            let on_canonical = crate::ported::zsh_h::isset(crate::ported::zsh_h::ERREXIT);
             let on_legacy = crate::ported::options::opt_state_get("errexit").unwrap_or(false);
             (on_canonical || on_legacy)
                 && exec.local_scope_depth == 0
@@ -6817,10 +6926,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let direct_set = with_executor(|exec| {
                             // Numeric index: 1-based, must be in range.
                             if let Ok(n) = key.parse::<i64>() {
-                                let len = exec
-                                    .array(arr_name)
-                                    .map(|a| a.len() as i64)
-                                    .unwrap_or(0);
+                                let len = exec.array(arr_name).map(|a| a.len() as i64).unwrap_or(0);
                                 if n > 0 && n <= len {
                                     return Some(true);
                                 }
@@ -6834,17 +6940,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 return Some(map.contains_key(key));
                             }
                             if let Some(arr) = exec.array(arr_name) {
-                                let pat = if let Some(p) = key
-                                    .strip_prefix("(r)")
-                                    .or_else(|| key.strip_prefix("(R)"))
+                                let pat = if let Some(p) =
+                                    key.strip_prefix("(r)").or_else(|| key.strip_prefix("(R)"))
                                 {
                                     p
                                 } else {
                                     key
                                 };
-                                return Some(arr.iter().any(|el| {
-                                    crate::vm_helper::glob_match_static(el, pat)
-                                }));
+                                return Some(
+                                    arr.iter()
+                                        .any(|el| crate::vm_helper::glob_match_static(el, pat)),
+                                );
                             }
                             None
                         });
@@ -6966,9 +7072,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Arr(Vec<String>),
         }
         let result = with_executor(|exec| {
-            let offset = crate::ported::math::mathevali(&crate::ported::subst::singsub(&off_expr)).unwrap_or(0);
+            let offset = crate::ported::math::mathevali(&crate::ported::subst::singsub(&off_expr))
+                .unwrap_or(0);
             let length_opt: Option<i64> = if has_len {
-                Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(&len_expr)).unwrap_or(0))
+                Some(
+                    crate::ported::math::mathevali(&crate::ported::subst::singsub(&len_expr))
+                        .unwrap_or(0),
+                )
             } else {
                 None
             };
@@ -7062,20 +7172,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // remove it (default — keep parts before+after the match).
             // Direct port of subst.c:2186 SUB_SUBSTR bit which
             // getmatch routes through pat_substr_match.
-            if sub_substr {                                  // c:2186
-                let longest = matches!(op, 1 | 3);          // c:2186 (## / %% want longest)
+            if sub_substr {
+                // c:2186
+                let longest = matches!(op, 1 | 3); // c:2186 (## / %% want longest)
                 let mut best: Option<(usize, usize)> = None; // c:2186 (start, end in chars)
-                // Slide a window across v; for each start index
-                // try every (longest|shortest) length that matches.
-                for start in 0..=n {                        // c:2186
-                    let end_iter: Box<dyn Iterator<Item = usize>> = if longest { // c:2186
-                        Box::new((start..=n).rev())          // c:2186
-                    } else {                                 // c:2186
-                        Box::new(start..=n)                  // c:2186
-                    };                                       // c:2186
-                    for end in end_iter {                    // c:2186
+                                                             // Slide a window across v; for each start index
+                                                             // try every (longest|shortest) length that matches.
+                for start in 0..=n {
+                    // c:2186
+                    let end_iter: Box<dyn Iterator<Item = usize>> = if longest {
+                        // c:2186
+                        Box::new((start..=n).rev()) // c:2186
+                    } else {
+                        // c:2186
+                        Box::new(start..=n) // c:2186
+                    }; // c:2186
+                    for end in end_iter {
+                        // c:2186
                         let sub: String = chars[start..end].iter().collect(); // c:2186
-                        if crate::vm_helper::glob_match_static(&sub, pattern) { // c:2186
+                        if crate::vm_helper::glob_match_static(&sub, pattern) {
+                            // c:2186
                             // (S) prefers the leftmost match
                             // for # / ##, and the rightmost for
                             // % / %%. # / ## scan left-to-right;
@@ -7085,88 +7201,123 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // record EVERY match and pick the
                             // last one for %/%%, first for #/##.
                             let suffix_op = matches!(op, 2 | 3); // c:2186
-                            if best.is_none() || suffix_op {  // c:2186
-                                best = Some((start, end));   // c:2186
-                            }                                 // c:2186
-                            if !suffix_op { break; }          // c:2186 (#/## stop at first)
-                        }                                    // c:2186
-                    }                                        // c:2186
-                    if best.is_some() && !matches!(op, 2 | 3) { break; } // c:2186
-                }                                            // c:2186
-                if let Some((s, e)) = best {                 // c:2186
+                            if best.is_none() || suffix_op {
+                                // c:2186
+                                best = Some((start, end)); // c:2186
+                            } // c:2186
+                            if !suffix_op {
+                                break;
+                            } // c:2186 (#/## stop at first)
+                        } // c:2186
+                    } // c:2186
+                    if best.is_some() && !matches!(op, 2 | 3) {
+                        break;
+                    } // c:2186
+                } // c:2186
+                if let Some((s, e)) = best {
+                    // c:2186
                     let matched: String = chars[s..e].iter().collect(); // c:2186
-                    if sub_match {                           // c:2171
-                        return matched;                      // c:2171
-                    }                                        // c:2171
-                    let mut out = String::new();             // c:2186
-                    out.extend(chars[..s].iter());           // c:2186
-                    out.extend(chars[e..].iter());           // c:2186
-                    return out;                              // c:2186
-                }                                            // c:2186
-                return if sub_match { String::new() } else { v.to_string() }; // c:2186
-            }                                                // c:2186
-            // (M) inverted-disposition helper: when sub_match is set,
-            // return the MATCHED portion instead of the post-strip
-            // string. Used by zsh idioms like \${(M)path#*/} which
-            // returns the leading "/segment" rather than the rest.
-            // Direct port of getmatch's SUB_MATCH branch — it picks
-            // the matched-portion view from the same scan.
+                    if sub_match {
+                        // c:2171
+                        return matched; // c:2171
+                    } // c:2171
+                    let mut out = String::new(); // c:2186
+                    out.extend(chars[..s].iter()); // c:2186
+                    out.extend(chars[e..].iter()); // c:2186
+                    return out; // c:2186
+                } // c:2186
+                return if sub_match {
+                    String::new()
+                } else {
+                    v.to_string()
+                }; // c:2186
+            } // c:2186
+              // (M) inverted-disposition helper: when sub_match is set,
+              // return the MATCHED portion instead of the post-strip
+              // string. Used by zsh idioms like \${(M)path#*/} which
+              // returns the leading "/segment" rather than the rest.
+              // Direct port of getmatch's SUB_MATCH branch — it picks
+              // the matched-portion view from the same scan.
             match op {
                 0 => {
                     // shortest prefix strip — try k = 0, 1, ...
                     for k in 0..=n {
                         let prefix: String = chars[..k].iter().collect();
                         if crate::vm_helper::glob_match_static(&prefix, pattern) {
-                            return if sub_match {            // c:2171
-                                prefix                       // c:2171
-                            } else {                         // c:2171
+                            return if sub_match {
+                                // c:2171
+                                prefix // c:2171
+                            } else {
+                                // c:2171
                                 chars[k..].iter().collect()
                             };
                         }
                     }
-                    if sub_match { String::new() } else { v.to_string() } // c:2171
+                    if sub_match {
+                        String::new()
+                    } else {
+                        v.to_string()
+                    } // c:2171
                 }
                 1 => {
                     // longest prefix strip — try k = n down to 0
                     for k in (0..=n).rev() {
                         let prefix: String = chars[..k].iter().collect();
                         if crate::vm_helper::glob_match_static(&prefix, pattern) {
-                            return if sub_match {            // c:2171
-                                prefix                       // c:2171
-                            } else {                         // c:2171
+                            return if sub_match {
+                                // c:2171
+                                prefix // c:2171
+                            } else {
+                                // c:2171
                                 chars[k..].iter().collect()
                             };
                         }
                     }
-                    if sub_match { String::new() } else { v.to_string() } // c:2171
+                    if sub_match {
+                        String::new()
+                    } else {
+                        v.to_string()
+                    } // c:2171
                 }
                 2 => {
                     // shortest suffix strip
                     for k in 0..=n {
                         let suffix: String = chars[n - k..].iter().collect();
                         if crate::vm_helper::glob_match_static(&suffix, pattern) {
-                            return if sub_match {            // c:2171
-                                suffix                       // c:2171
-                            } else {                         // c:2171
+                            return if sub_match {
+                                // c:2171
+                                suffix // c:2171
+                            } else {
+                                // c:2171
                                 chars[..n - k].iter().collect()
                             };
                         }
                     }
-                    if sub_match { String::new() } else { v.to_string() } // c:2171
+                    if sub_match {
+                        String::new()
+                    } else {
+                        v.to_string()
+                    } // c:2171
                 }
                 3 => {
                     // longest suffix strip
                     for k in (0..=n).rev() {
                         let suffix: String = chars[n - k..].iter().collect();
                         if crate::vm_helper::glob_match_static(&suffix, pattern) {
-                            return if sub_match {            // c:2171
-                                suffix                       // c:2171
-                            } else {                         // c:2171
+                            return if sub_match {
+                                // c:2171
+                                suffix // c:2171
+                            } else {
+                                // c:2171
                                 chars[..n - k].iter().collect()
                             };
                         }
                     }
-                    if sub_match { String::new() } else { v.to_string() } // c:2171
+                    if sub_match {
+                        String::new()
+                    } else {
+                        v.to_string()
+                    } // c:2171
                 }
                 _ => v.to_string(),
             }
@@ -7204,10 +7355,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let joined = arr.join(" ");
                     return StripResult::Scalar(strip_one(&joined, op, &pattern));
                 }
-                let stripped: Vec<String> = arr
-                    .iter()
-                    .map(|e| strip_one(e, op, &pattern))
-                    .collect();
+                let stripped: Vec<String> =
+                    arr.iter().map(|e| strip_one(e, op, &pattern)).collect();
                 return StripResult::Array(stripped);
             }
             let val = exec.get_variable(&name);
@@ -7359,9 +7508,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if exec.in_dq_context > 0 {
                     fusevm::Value::str(trimmed.to_string())
                 } else {
-                    let ifs = exec
-                        .scalar("IFS")
-                        .unwrap_or_else(|| " \t\n".to_string());
+                    let ifs = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<fusevm::Value> = trimmed
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
@@ -7420,7 +7567,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
                 let noglob = crate::ported::options::opt_state_get("noglob").unwrap_or(false)
-                    || crate::ported::options::opt_state_get("GLOB").map(|v| !v).unwrap_or(false)
+                    || crate::ported::options::opt_state_get("GLOB")
+                        .map(|v| !v)
+                        .unwrap_or(false)
                     || !crate::ported::options::opt_state_get("glob").unwrap_or(true);
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
@@ -7473,9 +7622,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // can apply the appropriate filter. Both require
                         // `setopt extendedglob` — runtime falls through
                         // to literal if that's off.
-                        let extglob_meta =
-                            crate::ported::options::opt_state_get("extendedglob").unwrap_or(false)
-                                && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
+                        let extglob_meta = crate::ported::options::opt_state_get("extendedglob")
+                            .unwrap_or(false)
+                            && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !crate::ported::pattern::extract_numeric_ranges(&s).is_empty();
@@ -7554,7 +7703,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if let Some(arr) = exec.array(bare) {
                         if let Ok(n) = resolved_idx.trim().parse::<i64>() {
                             let len = arr.len() as i64;
-                            let idx = if n > 0 { n - 1 } else if n < 0 { len + n } else { -1 };
+                            let idx = if n > 0 {
+                                n - 1
+                            } else if n < 0 {
+                                len + n
+                            } else {
+                                -1
+                            };
                             if idx >= 0 && (idx as usize) < arr.len() {
                                 return arr[idx as usize].clone();
                             }
@@ -7590,8 +7745,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             match name.as_str() {
                 "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
                 "epochtime" => return 2, // [seconds, nanoseconds]
-                "commands" => return crate::ported::hashtable::cmdnamtab_lock()
-                    .read().map(|t| t.len()).unwrap_or(0),
+                "commands" => {
+                    return crate::ported::hashtable::cmdnamtab_lock()
+                        .read()
+                        .map(|t| t.len())
+                        .unwrap_or(0)
+                }
                 "aliases" => return exec.alias_entries().len(),
                 "galiases" => return exec.global_alias_entries().len(),
                 "saliases" => return exec.suffix_alias_entries().len(),
@@ -7603,9 +7762,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // each scan callback emits one entry per node, so the
                 // count is the length of the scan_magic_assoc_keys
                 // collected list.
-                "builtins" | "dis_builtins"
-                | "dis_functions" | "dis_aliases"
-                | "dis_galiases" | "dis_saliases" => {
+                "builtins" | "dis_builtins" | "dis_functions" | "dis_aliases" | "dis_galiases"
+                | "dis_saliases" => {
                     return crate::vm_helper::scan_magic_assoc_keys(&name)
                         .map(|v| v.len())
                         .unwrap_or(0);
@@ -7647,12 +7805,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let f = crate::ported::subst::sub_flags_get();
             crate::ported::subst::sub_flags_set(0);
             (
-                (f & 0x0008) != 0,                       // c:2171 M
-                (f & 0x0010) != 0,                       // c:2174 R
-                (f & 0x0020) != 0,                       // c:2177 B
-                (f & 0x0040) != 0,                       // c:2180 E
-                (f & 0x0080) != 0,                       // c:2183 N
-                (f & 0x0004) != 0,                       // c:2186 S
+                (f & 0x0008) != 0, // c:2171 M
+                (f & 0x0010) != 0, // c:2174 R
+                (f & 0x0020) != 0, // c:2177 B
+                (f & 0x0040) != 0, // c:2180 E
+                (f & 0x0080) != 0, // c:2183 N
+                (f & 0x0004) != 0, // c:2186 S
             )
         };
         // Both pattern and replacement get parameter / cmd-subst /
@@ -7788,28 +7946,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // pattern.c Pound/POUND2 cases. Used by zinit's
             // main-message-formatter pattern `[^\}]##` (one-or-
             // more non-`}`).
-            let consume_postfix = |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
-                if chars.peek() == Some(&'#') {
-                    chars.next();
+            let consume_postfix =
+                |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
                     if chars.peek() == Some(&'#') {
                         chars.next();
-                        Some("+")
+                        if chars.peek() == Some(&'#') {
+                            chars.next();
+                            Some("+")
+                        } else {
+                            Some("*")
+                        }
                     } else {
-                        Some("*")
+                        None
                     }
-                } else {
-                    None
-                }
-            };
+                };
             while let Some(c) = chars.next() {
                 match c {
                     '?' => {
                         re.push('.');
-                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                        if let Some(q) = consume_postfix(&mut chars) {
+                            re.push_str(q);
+                        }
                     }
                     '*' => {
                         re.push_str(".*");
-                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                        if let Some(q) = consume_postfix(&mut chars) {
+                            re.push_str(q);
+                        }
                     }
                     '[' => {
                         // Pass through to the closing ']' (already
@@ -7851,7 +8014,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             re.push(cc);
                             first = false;
                         }
-                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                        if let Some(q) = consume_postfix(&mut chars) {
+                            re.push_str(q);
+                        }
                     }
                     '\\' => {
                         // `\\(#e)` / `\\(#s)` — escaped backslash
@@ -7879,7 +8044,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             && p4 == Some(')')
                         {
                             re.push_str("\\\\");
-                            chars.next(); chars.next(); chars.next(); chars.next();
+                            chars.next();
+                            chars.next();
+                            chars.next();
+                            chars.next();
                             re.push(if p3 == Some('e') { '$' } else { '^' });
                             continue;
                         }
@@ -7898,9 +8066,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let p1 = peek.next();
                         let p2 = peek.next();
                         let p3 = peek.next();
-                        p1 == Some('#')
-                            && (p2 == Some('e') || p2 == Some('s'))
-                            && p3 == Some(')')
+                        p1 == Some('#') && (p2 == Some('e') || p2 == Some('s')) && p3 == Some(')')
                     } =>
                     {
                         chars.next(); // consume '#'
@@ -7916,7 +8082,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     '(' | '|' => re.push(c),
                     ')' => {
                         re.push(c);
-                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                        if let Some(q) = consume_postfix(&mut chars) {
+                            re.push_str(q);
+                        }
                     }
                     // Regex meta chars that are NOT glob metas — escape
                     // so the regex compiler treats them literally.
@@ -7926,7 +8094,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     _ => {
                         re.push(c);
-                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                        if let Some(q) = consume_postfix(&mut chars) {
+                            re.push_str(q);
+                        }
                     }
                 }
             }
@@ -7953,25 +8123,49 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if any_disposition {
                 if let Some(ref rx) = glob_re {
                     if let Some(m) = rx.find(&val) {
-                        if sub_match { return m.as_str().to_string(); }
-                        if sub_rest  { return val[m.end()..].to_string(); }
-                        if sub_bind  { return (m.start() + 1).to_string(); }
-                        if sub_eind  { return m.end().to_string(); }
-                        if sub_len   { return (m.end() - m.start()).to_string(); }
+                        if sub_match {
+                            return m.as_str().to_string();
+                        }
+                        if sub_rest {
+                            return val[m.end()..].to_string();
+                        }
+                        if sub_bind {
+                            return (m.start() + 1).to_string();
+                        }
+                        if sub_eind {
+                            return m.end().to_string();
+                        }
+                        if sub_len {
+                            return (m.end() - m.start()).to_string();
+                        }
                     } else {
                         // No match: M/R return empty, B/E/N return 0.
-                        if sub_match || sub_rest { return String::new(); }
+                        if sub_match || sub_rest {
+                            return String::new();
+                        }
                         return "0".to_string();
                     }
                 } else if let Some(pos) = val.find(pattern.as_str()) {
                     let end = pos + pattern.len();
-                    if sub_match { return pattern.clone(); }
-                    if sub_rest  { return val[end..].to_string(); }
-                    if sub_bind  { return (pos + 1).to_string(); }
-                    if sub_eind  { return end.to_string(); }
-                    if sub_len   { return pattern.len().to_string(); }
+                    if sub_match {
+                        return pattern.clone();
+                    }
+                    if sub_rest {
+                        return val[end..].to_string();
+                    }
+                    if sub_bind {
+                        return (pos + 1).to_string();
+                    }
+                    if sub_eind {
+                        return end.to_string();
+                    }
+                    if sub_len {
+                        return pattern.len().to_string();
+                    }
                 } else {
-                    if sub_match || sub_rest { return String::new(); }
+                    if sub_match || sub_rest {
+                        return String::new();
+                    }
                     return "0".to_string();
                 }
             }
@@ -8151,7 +8345,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Ok(chunk) => with_executor(|exec| {
                 let def_file = exec.scriptfilename.clone();
                 if !body_source.is_empty() {
-                    exec.function_source.insert(name.clone(), body_source.clone());
+                    exec.function_source
+                        .insert(name.clone(), body_source.clone());
                 }
                 exec.function_line_base.insert(name.clone(), line_base);
                 exec.function_def_file.insert(name.clone(), def_file);
@@ -8171,13 +8366,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Mirror into canonical shfunctab so scanfunctions /
                 // ${(k)functions} / functions builtin see user defs.
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
-                if let Ok(mut tab) =
-                    crate::ported::hashtable::shfunctab_lock().write()
-                {
-                    let shf = crate::ported::hashtable::shfunc_with_body(
-                        &name,
-                        &body_source,
-                    );
+                if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                    let shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
                     tab.add(shf);
                 }
                 exec.functions_compiled.insert(name, chunk);
@@ -8759,8 +8949,9 @@ impl fusevm::ShellHost for ZshrsHost {
         //
         // brace_ccl: respect the BRACE_CCL option which the bracket-
         // class form `{a-z}` requires. Pull from executor options.
-        let brace_ccl = with_executor(|exec|
-            crate::ported::options::opt_state_get("braceccl").unwrap_or(false));
+        let brace_ccl = with_executor(|exec| {
+            crate::ported::options::opt_state_get("braceccl").unwrap_or(false)
+        });
         crate::ported::glob::xpandbraces(s, brace_ccl)
     }
 
@@ -8770,7 +8961,12 @@ impl fusevm::ShellHost for ZshrsHost {
         crate::vm_helper::glob_match_static(s, pattern)
     }
 
-    fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[fusevm::Value]) -> fusevm::Value {
+    fn expand_param(
+        &mut self,
+        name: &str,
+        _modifier: u8,
+        _args: &[fusevm::Value],
+    ) -> fusevm::Value {
         // Sole funnel: route through `getsparam` matching C zsh's
         // `getsparam(name)` → `getvalue` → `getstrvalue` →
         // `Param.gsu->getfn` dispatch (Src/params.c:3076 / 2335).
@@ -8789,8 +8985,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // of this fetch — matching C's split between getsparam
         // (value fetch) and paramsubst's modifier-walk loop. This
         // bridge is the value-fetch step only.
-        let val_str = crate::ported::params::getsparam(name)
-            .unwrap_or_default();
+        let val_str = crate::ported::params::getsparam(name).unwrap_or_default();
         fusevm::Value::str(val_str)
     }
 
@@ -8969,11 +9164,14 @@ impl fusevm::ShellHost for ZshrsHost {
             // store unification mirrors writes there; restoring only
             // the HashMaps leaks subshell-scoped writes to the parent
             // via paramtab readers like `paramsubst → vars_get`).
-            let paramtab_snap = crate::ported::params::paramtab().read().ok()
+            let paramtab_snap = crate::ported::params::paramtab()
+                .read()
+                .ok()
                 .map(|t| t.clone())
                 .unwrap_or_default();
             let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
-                .lock().ok()
+                .lock()
+                .ok()
                 .map(|m| m.clone())
                 .unwrap_or_default();
             exec.subshell_snapshots.push(SubshellSnapshot {
@@ -8989,7 +9187,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dest into `pwd`. Falling back to current_dir() only
                 // when PWD is unset matches `setupvals` at
                 // `Src/init.c:1100+`.
-                cwd: std::env::var("PWD").ok()
+                cwd: std::env::var("PWD")
+                    .ok()
                     .map(std::path::PathBuf::from)
                     .or_else(|| std::env::current_dir().ok()),
                 umask: cur_umask,
@@ -9029,11 +9228,18 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
-                if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
+                if let Some(tab) = crate::ported::params::paramtab()
+                    .write()
+                    .ok()
+                    .as_deref_mut()
+                {
                     *tab = snap.paramtab;
                 }
                 if let Some(m) = crate::ported::params::paramtab_hashed_storage()
-                    .lock().ok().as_deref_mut() {
+                    .lock()
+                    .ok()
+                    .as_deref_mut()
+                {
                     *m = snap.paramtab_hashed_storage;
                 }
                 exec.set_pparams(snap.positional_params);
@@ -9243,11 +9449,15 @@ impl fusevm::ShellHost for ZshrsHost {
             };
             // Bump inuse → run → clear, matching C's lexer behavior.
             if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                if let Some(a) = tab.get_mut(name) { a.inuse += 1; }
+                if let Some(a) = tab.get_mut(name) {
+                    a.inuse += 1;
+                }
             }
             let status = with_executor(|exec| exec.execute_script(&combined).unwrap_or(1));
             if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                if let Some(a) = tab.get_mut(name) { a.inuse = (a.inuse - 1).max(0); }
+                if let Some(a) = tab.get_mut(name) {
+                    a.inuse = (a.inuse - 1).max(0);
+                }
             }
             return Some(status);
         }
@@ -9313,97 +9523,73 @@ impl fusevm::ShellHost for ZshrsHost {
         // to the caller, breaking p10k/zinit's per-function emulate
         // -L sticky-mode pattern.
         let saved_options = crate::ported::options::opt_state_snapshot();
-        let (
-            saved_params,
-            saved_zero,
-            saved_scriptname,
-            saved_funcstack,
-            saved_exit_trap,
-        ) = with_executor(|exec| {
-            let prev = exec.pparams();
-            exec.set_pparams(args.clone());
-            exec.local_scope_depth += 1;
-            // c:Src/exec.c doshfunc startparamscope() — bump
-            // canonical locallevel before the function body runs
-            // so any inner `local`/`typeset` writes Params at the
-            // right scope. endparamscope at exit restores.
-            crate::ported::params::locallevel
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            // Save and clear EXIT trap before function body
-            // runs. Direct port of zsh's exec.c
-            // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
-            // — an EXIT trap set INSIDE a function fires on
-            // function return (NOT shell exit), and the outer
-            // EXIT trap is preserved across the call. Without
-            // this save/restore, `foo() { trap "echo X" EXIT; }`
-            // either fired X at SHELL exit (if no outer trap)
-            // or polluted the parent's EXIT trap.
-            let saved = exec.traps.remove("EXIT");
-            // zsh's `$0` inside a function returns the function name
-            // (under the FUNCTION_ARGZERO option, default on). Save
-            // the previous `$0` and install the function name.
-            // Anonymous functions get the cosmetic name `(anon)` —
-            // zshrs's parser synthesizes `_zshrs_anon_N` /
-            // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
-            // so users would see the internal name otherwise.
-            let display_name = if fn_name.starts_with("_zshrs_anon_") {
-                "(anon)".to_string()
-            } else {
-                fn_name.clone()
-            };
-            let prev_zero = crate::ported::params::getsparam("0");
-            exec.set_scalar("0".to_string(), display_name.clone());
-            // scriptname: PS4's `%N` and error-message prefix both
-            // read `exec.scriptname`. Inside a function, C zsh sets
-            // `scriptname = dupstring(name)` at Src/exec.c:5903 so
-            // `%N` shows the function name. Save the outer
-            // scriptname before overwrite; restored on return.
-            let prev_scriptname = std::mem::replace(
-                &mut exec.scriptname,
-                Some(display_name.clone()),
-            );
-            // funcstack: prepend the function name; outermost call
-            // is at the END of the stack per zsh.
-            let prev_stack = exec.array("funcstack");
-            let mut new_stack = vec![fn_name.clone()];
-            if let Some(ref s) = prev_stack {
-                new_stack.extend_from_slice(s);
-            }
-            exec.set_array("funcstack".to_string(), new_stack);
-            let line_base = exec
-                .function_line_base
-                .get(&fn_name)
-                .copied()
-                .unwrap_or(0);
-            let def_file = exec
-                .function_def_file
-                .get(&fn_name)
-                .cloned()
-                .flatten();
-            exec.prompt_funcstack
-                .push((fn_name.clone(), line_base, def_file));
-            // Set `$_` BEFORE the function body runs. zsh: inside
-            // a function, `echo $_` reads the function name (when
-            // called with no args) or the last call-arg.
-            // Without this, internal builtins that ran before
-            // (like REGISTER_COMPILED_FN) leaked their last arg
-            // (the function body source!) as $_.
-            let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            exec.set_scalar("_".to_string(), dollar_underscore.clone());
-            exec.pending_underscore = Some(dollar_underscore);
-            (
-                prev,
-                prev_zero,
-                prev_scriptname,
-                prev_stack,
-                saved,
-            )
-        });
+        let (saved_params, saved_zero, saved_scriptname, saved_funcstack, saved_exit_trap) =
+            with_executor(|exec| {
+                let prev = exec.pparams();
+                exec.set_pparams(args.clone());
+                exec.local_scope_depth += 1;
+                // c:Src/exec.c doshfunc startparamscope() — bump
+                // canonical locallevel before the function body runs
+                // so any inner `local`/`typeset` writes Params at the
+                // right scope. endparamscope at exit restores.
+                crate::ported::params::locallevel
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Save and clear EXIT trap before function body
+                // runs. Direct port of zsh's exec.c
+                // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
+                // — an EXIT trap set INSIDE a function fires on
+                // function return (NOT shell exit), and the outer
+                // EXIT trap is preserved across the call. Without
+                // this save/restore, `foo() { trap "echo X" EXIT; }`
+                // either fired X at SHELL exit (if no outer trap)
+                // or polluted the parent's EXIT trap.
+                let saved = exec.traps.remove("EXIT");
+                // zsh's `$0` inside a function returns the function name
+                // (under the FUNCTION_ARGZERO option, default on). Save
+                // the previous `$0` and install the function name.
+                // Anonymous functions get the cosmetic name `(anon)` —
+                // zshrs's parser synthesizes `_zshrs_anon_N` /
+                // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
+                // so users would see the internal name otherwise.
+                let display_name = if fn_name.starts_with("_zshrs_anon_") {
+                    "(anon)".to_string()
+                } else {
+                    fn_name.clone()
+                };
+                let prev_zero = crate::ported::params::getsparam("0");
+                exec.set_scalar("0".to_string(), display_name.clone());
+                // scriptname: PS4's `%N` and error-message prefix both
+                // read `exec.scriptname`. Inside a function, C zsh sets
+                // `scriptname = dupstring(name)` at Src/exec.c:5903 so
+                // `%N` shows the function name. Save the outer
+                // scriptname before overwrite; restored on return.
+                let prev_scriptname =
+                    std::mem::replace(&mut exec.scriptname, Some(display_name.clone()));
+                // funcstack: prepend the function name; outermost call
+                // is at the END of the stack per zsh.
+                let prev_stack = exec.array("funcstack");
+                let mut new_stack = vec![fn_name.clone()];
+                if let Some(ref s) = prev_stack {
+                    new_stack.extend_from_slice(s);
+                }
+                exec.set_array("funcstack".to_string(), new_stack);
+                let line_base = exec.function_line_base.get(&fn_name).copied().unwrap_or(0);
+                let def_file = exec.function_def_file.get(&fn_name).cloned().flatten();
+                exec.prompt_funcstack
+                    .push((fn_name.clone(), line_base, def_file));
+                // Set `$_` BEFORE the function body runs. zsh: inside
+                // a function, `echo $_` reads the function name (when
+                // called with no args) or the last call-arg.
+                // Without this, internal builtins that ran before
+                // (like REGISTER_COMPILED_FN) leaked their last arg
+                // (the function body source!) as $_.
+                let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+                exec.set_scalar("_".to_string(), dollar_underscore.clone());
+                exec.pending_underscore = Some(dollar_underscore);
+                (prev, prev_zero, prev_scriptname, prev_stack, saved)
+            });
 
-        crate::fusevm_disasm::maybe_print_stdout(
-            &format!("host.call_function:{fn_name}"),
-            &chunk,
-        );
+        crate::fusevm_disasm::maybe_print_stdout(&format!("host.call_function:{fn_name}"), &chunk);
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
         // Seed the function-body VM with the parent's `$?` so a
@@ -9473,9 +9659,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
             }
             let _ = exec; // exec still used below for other restores
-            // Restore `$0`, scriptname, and `$funcstack` to their
-            // pre-call values. scriptname mirrors C exec.c:5907
-            // `scriptname = oldscriptname;` after execode returns.
+                          // Restore `$0`, scriptname, and `$funcstack` to their
+                          // pre-call values. scriptname mirrors C exec.c:5907
+                          // `scriptname = oldscriptname;` after execode returns.
             match saved_zero {
                 Some(v) => {
                     exec.set_scalar("0".to_string(), v);
@@ -9818,8 +10004,12 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // crate::ported::modules::socket::bin_zsocket whose
                 // signature matches C `bin_zsocket(nam, args, ops,
                 // func)` exactly.
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 let mut positional: Vec<String> = Vec::new();
                 let mut i = 0;
                 while i < rest_vec.len() {
@@ -9830,7 +10020,11 @@ impl crate::ported::vm_helper::ShellExecutor {
                         break;
                     }
                     if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        if rest.is_empty() {
+                            positional.push(a.clone());
+                            i += 1;
+                            continue;
+                        }
                         let chars: Vec<char> = rest.chars().collect();
                         let mut j = 0;
                         while j < chars.len() {
@@ -9847,7 +10041,9 @@ impl crate::ported::vm_helper::ShellExecutor {
                                 ops.argscount = ops.args.len() as i32;
                                 break;
                             }
-                            if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                            if c.is_ascii_alphabetic() {
+                                ops.ind[c as usize] = 1;
+                            }
                             j += 1;
                         }
                     } else {
@@ -9861,14 +10057,27 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // bin_private now takes the canonical C signature
                 // (name, args, ops, func, assigns) per Src/Modules/
                 // param_private.c:217.
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 let mut assigns: Vec<(String, String)> = Vec::new();
-                return crate::modules::param_private::bin_private("private",
-                    &rest_vec, &mut ops, 0, &mut assigns);
+                return crate::modules::param_private::bin_private(
+                    "private",
+                    &rest_vec,
+                    &mut ops,
+                    0,
+                    &mut assigns,
+                );
             }
-            "zformat" => return crate::fusevm_bridge::dispatch_builtin("zformat", rest_vec.clone()),
-            "zregexparse" => return crate::fusevm_bridge::dispatch_builtin("zregexparse", rest_vec.clone()),
+            "zformat" => {
+                return crate::fusevm_bridge::dispatch_builtin("zformat", rest_vec.clone())
+            }
+            "zregexparse" => {
+                return crate::fusevm_bridge::dispatch_builtin("zregexparse", rest_vec.clone())
+            }
             // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
             // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
             // BIN_UNFUNCTION) in the BUILTINS table. Route through
@@ -9879,14 +10088,14 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // opcode registered for the name (e.g. shell-builtin
                 // table mismatch). Route through execbuiltin with the
                 // correct entry from BUILTINS.
-                let bn_idx = crate::ported::builtin::BUILTINS.iter()
+                let bn_idx = crate::ported::builtin::BUILTINS
+                    .iter()
                     .position(|b| b.node.nam == cmd.as_str());
                 if let Some(idx) = bn_idx {
                     let bn_static: &'static crate::ported::zsh_h::builtin =
                         &crate::ported::builtin::BUILTINS[idx];
                     let bn_ptr = bn_static as *const _ as *mut _;
-                    return crate::ported::builtin::execbuiltin(
-                        rest_vec, Vec::new(), bn_ptr);
+                    return crate::ported::builtin::execbuiltin(rest_vec, Vec::new(), bn_ptr);
                 }
                 return 1;
             }
@@ -9902,10 +10111,13 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // (nam, args, ops, func); the C source parses its
                 // own option string inline, so an empty Options is
                 // sufficient at this call site.
-                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                    argscount: 0, argsalloc: 0 };
-                return crate::ported::modules::zselect::bin_zselect(
-                    "zselect", &rest_vec, &ops, 0);
+                let ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
+                return crate::ported::modules::zselect::bin_zselect("zselect", &rest_vec, &ops, 0);
             }
             "cap" => return crate::fusevm_bridge::dispatch_builtin("cap", rest_vec.clone()),
             "getcap" => return crate::fusevm_bridge::dispatch_builtin("getcap", rest_vec.clone()),
@@ -9918,18 +10130,32 @@ impl crate::ported::vm_helper::ShellExecutor {
             "chgrp" => {
                 // Canonical bin_chown per files.c:725 with func=BIN_CHGRP
                 // per the bintab entry at c:805. BUILTIN spec "hRs".
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 let mut positional: Vec<String> = Vec::new();
                 let mut i = 0;
                 while i < rest_vec.len() {
                     let a = &rest_vec[i];
-                    if a == "--" { i += 1; positional.extend_from_slice(&rest_vec[i..]); break; }
+                    if a == "--" {
+                        i += 1;
+                        positional.extend_from_slice(&rest_vec[i..]);
+                        break;
+                    }
                     if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        if rest.is_empty() {
+                            positional.push(a.clone());
+                            i += 1;
+                            continue;
+                        }
                         for c in rest.chars() {
                             let cb = c as u8;
-                            if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                            if cb.is_ascii_alphabetic() {
+                                ops.ind[cb as usize] = 1;
+                            }
                         }
                     } else {
                         positional.push(a.clone());
@@ -9937,8 +10163,11 @@ impl crate::ported::vm_helper::ShellExecutor {
                     i += 1;
                 }
                 return crate::ported::modules::files::bin_chown(
-                    "chgrp", &positional, &ops,
-                    crate::ported::modules::files::BIN_CHGRP);
+                    "chgrp",
+                    &positional,
+                    &ops,
+                    crate::ported::modules::files::BIN_CHGRP,
+                );
             }
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
@@ -9977,8 +10206,12 @@ impl crate::ported::vm_helper::ShellExecutor {
             // free-fn port of Src/Modules/files.c, parsing the BUILTIN
             // optstr inline since the framework doesn't pre-parse.
             "zf_mkdir" | "mkdir" => {
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 let mut positional: Vec<String> = Vec::new();
                 let mut i = 0;
                 while i < rest_vec.len() {
@@ -9989,7 +10222,11 @@ impl crate::ported::vm_helper::ShellExecutor {
                         break;
                     }
                     if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        if rest.is_empty() {
+                            positional.push(a.clone());
+                            i += 1;
+                            continue;
+                        }
                         let chars: Vec<char> = rest.chars().collect();
                         let mut j = 0;
                         while j < chars.len() {
@@ -10006,7 +10243,9 @@ impl crate::ported::vm_helper::ShellExecutor {
                                 ops.argscount = ops.args.len() as i32;
                                 break;
                             }
-                            if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                            if c.is_ascii_alphabetic() {
+                                ops.ind[c as usize] = 1;
+                            }
                             j += 1;
                         }
                     } else {
@@ -10014,12 +10253,15 @@ impl crate::ported::vm_helper::ShellExecutor {
                     }
                     i += 1;
                 }
-                return crate::ported::modules::files::bin_mkdir(
-                    cmd, &positional, &ops, 0);
+                return crate::ported::modules::files::bin_mkdir(cmd, &positional, &ops, 0);
             }
             "zf_rm" => {
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 let mut positional: Vec<String> = Vec::new();
                 let mut i = 0;
                 while i < rest_vec.len() {
@@ -10030,24 +10272,32 @@ impl crate::ported::vm_helper::ShellExecutor {
                         break;
                     }
                     if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        if rest.is_empty() {
+                            positional.push(a.clone());
+                            i += 1;
+                            continue;
+                        }
                         for c in rest.chars() {
                             let cb = c as u8;
-                            if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                            if cb.is_ascii_alphabetic() {
+                                ops.ind[cb as usize] = 1;
+                            }
                         }
                     } else {
                         positional.push(a.clone());
                     }
                     i += 1;
                 }
-                return crate::ported::modules::files::bin_rm(
-                    "zf_rm", &positional, &ops, 0);
+                return crate::ported::modules::files::bin_rm("zf_rm", &positional, &ops, 0);
             }
             "zf_rmdir" => {
-                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                    argscount: 0, argsalloc: 0 };
-                return crate::ported::modules::files::bin_rmdir(
-                    "zf_rmdir", &rest_vec, &ops, 0);
+                let ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
+                return crate::ported::modules::files::bin_rmdir("zf_rmdir", &rest_vec, &ops, 0);
             }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
             // BUILTIN("zstat", …)). Returns file metadata as
@@ -10063,8 +10313,12 @@ impl crate::ported::vm_helper::ShellExecutor {
             "zstat" => {
                 // bin_stat now takes the canonical C signature
                 // (name, args, ops, func) per Src/Modules/stat.c:368.
-                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                    argscount: 0, argsalloc: 0 };
+                let ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 return crate::modules::stat::bin_stat("zstat", &rest_vec, &ops, 0);
             }
             _ => {}

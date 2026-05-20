@@ -4,6 +4,12 @@
 
 use super::zle_thingy::Thingy;
 
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
 /// Parse a bindkey-style key sequence string into raw bytes.
 ///
 /// Bindkey-vocabulary subset of `getkeystring` (Src/utils.c) —
@@ -30,27 +36,22 @@ use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
-pub fn getkeystring(s: &str) -> Vec<u8> {                                    // c:utils.c:6915
+pub fn getkeystring(s: &str) -> Vec<u8> {
+    // c:utils.c:6915
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
 
@@ -193,21 +194,27 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
 /// `bind_seq` and the multi-char `domulti` branch; the KM_IMMUTABLE
 /// and empty-seq early returns are checked here.
 /// WARNING: param names don't match C — Rust=(keymap, seq, widget) vs C=(km, seq, bind, str)
-pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {              // c:566
+pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {
+    // c:566
     use crate::ported::zle::zle_keymap::KM_IMMUTABLE;
-    let seq_bytes = getkeystring(seq);                                       // c:569 seq[0]
-    let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
-    let node = match tab.get_mut(keymap) {                                   // c:566 Keymap km
+    let seq_bytes = getkeystring(seq); // c:569 seq[0]
+    let mut tab = crate::ported::zle::zle_keymap::keymapnamtab()
+        .lock()
+        .unwrap();
+    let node = match tab.get_mut(keymap) {
+        // c:566 Keymap km
         Some(n) => n,
-        None => return false,                                                // C: caller resolves Keymap
+        None => return false, // C: caller resolves Keymap
     };
     // c:572 — KM_IMMUTABLE check
-    if (node.keymap.flags & KM_IMMUTABLE) != 0 {                             // c:572
-        return false;                                                        // c:573 return 1
+    if (node.keymap.flags & KM_IMMUTABLE) != 0 {
+        // c:572
+        return false; // c:573 return 1
     }
     // c:574 — !*seq check
-    if seq_bytes.is_empty() {                                                // c:574
-        return false;                                                        // c:575 return 2
+    if seq_bytes.is_empty() {
+        // c:574
+        return false; // c:575 return 2
     }
     let inner = std::sync::Arc::make_mut(&mut node.keymap);
     // c:576 — single-vs-multi byte dispatch delegates to
@@ -215,14 +222,15 @@ pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {              // 
     // trie insert (c:631-641), and `km->first[f]` single-byte
     // fast-path (c:600).
     inner.bind_seq(&seq_bytes, Thingy::new(widget));
-    true                                                                     // c:650 return 0
+    true // c:650 return 0
 }
 
 /// Enumerate every (key-sequence, widget-name) pair in `keymap`.
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
-pub fn bindlistout(keymap: &str) -> Vec<(String, String)> { // c:zle_keymap.c:1094
+pub fn bindlistout(keymap: &str) -> Vec<(String, String)> {
+    // c:zle_keymap.c:1094
     let mut bindings = Vec::new();
 
     if let Some(map) = crate::ported::zle::zle_keymap::openkeymap(keymap) {
@@ -599,8 +607,6 @@ pub static VICMDBIND: [&str; 128] = [
     /* ^? */ "vi-backward-char",
 ];
 
-
-
 /// Lookup the canonical fn pointer for a built-in widget name.
 /// Direct port of the dispatch achieved by C's
 /// `Src/Zle/zle_bindings.c:55-60 widgets[]` table generated from
@@ -637,8 +643,12 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "expand-or-complete" => Some(|_| super::zle_tricky::expandorcomplete()),
         "forward-char" => Some(|_| super::zle_move::forwardchar()),
         "forward-word" => Some(super::zle_word::forwardword),
-        "history-incremental-search-backward" => Some(|_| super::zle_hist::historyincrementalsearchbackward()),
-        "history-incremental-search-forward" => Some(|_| super::zle_hist::historyincrementalsearchforward()),
+        "history-incremental-search-backward" => {
+            Some(|_| super::zle_hist::historyincrementalsearchbackward())
+        }
+        "history-incremental-search-forward" => {
+            Some(|_| super::zle_hist::historyincrementalsearchforward())
+        }
         "history-search-backward" => Some(|_| super::zle_hist::historysearchbackward()),
         "history-search-forward" => Some(|_| super::zle_hist::historysearchforward()),
         "insert-last-word" => Some(|_| super::zle_hist::insertlastword()),
@@ -756,20 +766,27 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
             0
         }),
         "redisplay" => Some(|_| {
-            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED
+                .store(1, std::sync::atomic::Ordering::SeqCst);
             0
         }),
         "yank" => Some(|_| {
             let ring = crate::ported::zle::zle_main::KILLRING.lock().unwrap();
-            let text = match ring.front() { Some(t) => t.clone(), None => return 1 };
+            let text = match ring.front() {
+                Some(t) => t.clone(),
+                None => return 1,
+            };
             drop(ring);
             let cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
             let mut line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
-            for (i, c) in text.iter().enumerate() { line.insert(cs + i, *c); }
+            for (i, c) in text.iter().enumerate() {
+                line.insert(cs + i, *c);
+            }
             let new_ll = line.len();
             drop(line);
             crate::ported::zle::zle_main::ZLELL.store(new_ll, std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLECS.store(cs + text.len(), std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS
+                .store(cs + text.len(), std::sync::atomic::Ordering::SeqCst);
             0
         }),
         "vi-yank" => Some(super::zle_vi::viyank),
@@ -819,7 +836,9 @@ mod tests {
         );
         // Now remove it (inline of the deleted unbindkey helper).
         let seq_bytes = getkeystring("\\ez");
-        let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
+        let mut tab = crate::ported::zle::zle_keymap::keymapnamtab()
+            .lock()
+            .unwrap();
         let node = tab.get_mut("emacs").unwrap();
         let inner = std::sync::Arc::make_mut(&mut node.keymap);
         inner.unbind_seq(&seq_bytes);
@@ -838,10 +857,10 @@ mod tests {
     #[test]
     fn getkeystring_decodes_canonical_escapes() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(getkeystring("\\e"),  vec![0x1b]);                  // ESC
-        assert_eq!(getkeystring("\\t"),  vec![0x09]);                  // TAB
-        assert_eq!(getkeystring("\\n"),  vec![0x0a]);                  // LF
-        assert_eq!(getkeystring("\\r"),  vec![0x0d]);                  // CR
+        assert_eq!(getkeystring("\\e"), vec![0x1b]); // ESC
+        assert_eq!(getkeystring("\\t"), vec![0x09]); // TAB
+        assert_eq!(getkeystring("\\n"), vec![0x0a]); // LF
+        assert_eq!(getkeystring("\\r"), vec![0x0d]); // CR
     }
 
     /// `\C-x` shorthand maps to control-byte `x & 0x1f` (the ASCII
@@ -919,8 +938,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let lower = getkeystring("\\C-a");
         let upper = getkeystring("\\C-A");
-        assert_eq!(lower, upper,
-            r#"\\C-a and \\C-A must decode identically"#);
+        assert_eq!(lower, upper, r#"\\C-a and \\C-A must decode identically"#);
         assert_eq!(lower, vec![0x01]);
     }
 
@@ -930,8 +948,10 @@ mod tests {
     #[test]
     fn iwidget_lookup_resolves_accept_line() {
         let _g = crate::test_util::global_state_lock();
-        assert!(iwidget_lookup("accept-line").is_some(),
-            "accept-line is the canonical Enter-key widget; must resolve");
+        assert!(
+            iwidget_lookup("accept-line").is_some(),
+            "accept-line is the canonical Enter-key widget; must resolve"
+        );
     }
 
     /// `iwidget_lookup` for empty string returns None. Defensive
@@ -952,8 +972,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let ok = bindkey("main", "\\C-x", "user-widget-not-yet-defined");
-        assert!(ok,
+        assert!(
+            ok,
             "C source resolves widgets at trigger time, so bind-time \
-             unknowns must SUCCEED");
+             unknowns must SUCCEED"
+        );
     }
 }

@@ -47,7 +47,12 @@ impl LspHandle {
             .expect("spawn zshrs --lsp");
         let stdin = child.stdin.take().expect("stdin");
         let stdout = BufReader::new(child.stdout.take().expect("stdout"));
-        Self { child, stdin, stdout, next_id: 1 }
+        Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
     }
 
     fn send(&mut self, msg: &Value) {
@@ -110,8 +115,12 @@ impl LspHandle {
         loop {
             let mut line = String::new();
             let n = self.stdout.read_line(&mut line).ok()?;
-            if n == 0 { return None; }
-            if line == "\r\n" || line == "\n" { break; }
+            if n == 0 {
+                return None;
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
             if let Some(rest) = line.strip_prefix("Content-Length:") {
                 content_length = rest.trim().parse().ok();
             }
@@ -135,9 +144,12 @@ impl LspHandle {
 #[test]
 fn initialize_advertises_expected_capabilities() {
     let mut lsp = LspHandle::spawn();
-    let caps = lsp.request("initialize", json!({
-        "processId": 1, "capabilities": {}, "rootUri": null,
-    }));
+    let caps = lsp.request(
+        "initialize",
+        json!({
+            "processId": 1, "capabilities": {}, "rootUri": null,
+        }),
+    );
     let c = &caps["capabilities"];
     assert!(c["completionProvider"].is_object(), "no completionProvider");
     assert_eq!(c["hoverProvider"], json!(true));
@@ -157,18 +169,25 @@ fn didopen_publishes_diagnostics_for_unclosed_brace() {
     let mut lsp = LspHandle::spawn();
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///broken.zsh",
-            "languageId": "zshrs",
-            "version": 1,
-            "text": "function f {\n  echo hi\n",
-        }
-    }));
-    let d = lsp.wait_diagnostics(Duration::from_secs(3)).expect("no diagnostics emitted");
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///broken.zsh",
+                "languageId": "zshrs",
+                "version": 1,
+                "text": "function f {\n  echo hi\n",
+            }
+        }),
+    );
+    let d = lsp
+        .wait_diagnostics(Duration::from_secs(3))
+        .expect("no diagnostics emitted");
     let arr = d["diagnostics"].as_array().expect("diagnostics array");
     assert!(!arr.is_empty(), "expected at least one diagnostic");
-    assert!(arr.iter().any(|x| x["message"].as_str().unwrap_or("").contains("unclosed")));
+    assert!(arr
+        .iter()
+        .any(|x| x["message"].as_str().unwrap_or("").contains("unclosed")));
     lsp.shutdown();
 }
 
@@ -177,17 +196,26 @@ fn didopen_clean_file_publishes_zero_diagnostics() {
     let mut lsp = LspHandle::spawn();
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///clean.zsh",
-            "languageId": "zshrs",
-            "version": 1,
-            "text": "function f { echo hi }\nfor i in 1 2 3; do echo $i; done\n",
-        }
-    }));
-    let d = lsp.wait_diagnostics(Duration::from_secs(3)).expect("no diagnostics emitted");
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///clean.zsh",
+                "languageId": "zshrs",
+                "version": 1,
+                "text": "function f { echo hi }\nfor i in 1 2 3; do echo $i; done\n",
+            }
+        }),
+    );
+    let d = lsp
+        .wait_diagnostics(Duration::from_secs(3))
+        .expect("no diagnostics emitted");
     let arr = d["diagnostics"].as_array().expect("diagnostics array");
-    assert!(arr.is_empty(), "expected zero diagnostics for clean file, got: {:?}", arr);
+    assert!(
+        arr.is_empty(),
+        "expected zero diagnostics for clean file, got: {:?}",
+        arr
+    );
     lsp.shutdown();
 }
 
@@ -197,20 +225,26 @@ fn hover_returns_markdown_for_builtin() {
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
     let text = "cd /tmp\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///hover.zsh",
-            "languageId": "zshrs",
-            "version": 1,
-            "text": text,
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///hover.zsh",
+                "languageId": "zshrs",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
     // Drain the post-open diagnostics push
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/hover", json!({
-        "textDocument": { "uri": "file:///hover.zsh" },
-        "position": { "line": 0, "character": 1 },
-    }));
+    let r = lsp.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": "file:///hover.zsh" },
+            "position": { "line": 0, "character": 1 },
+        }),
+    );
     assert_eq!(r["contents"]["kind"], json!("markdown"));
     let v = r["contents"]["value"].as_str().expect("value");
     assert!(v.contains("**cd**"));
@@ -224,18 +258,24 @@ fn document_symbols_returns_functions() {
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
     let text = "function greet {\n  echo hi\n}\nbar() { echo bye }\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///syms.zsh",
-            "languageId": "zshrs",
-            "version": 1,
-            "text": text,
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///syms.zsh",
+                "languageId": "zshrs",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/documentSymbol", json!({
-        "textDocument": { "uri": "file:///syms.zsh" },
-    }));
+    let r = lsp.request(
+        "textDocument/documentSymbol",
+        json!({
+            "textDocument": { "uri": "file:///syms.zsh" },
+        }),
+    );
     let arr = r.as_array().expect("symbol array");
     let names: Vec<&str> = arr.iter().filter_map(|s| s["name"].as_str()).collect();
     assert!(names.contains(&"greet"), "names: {:?}", names);
@@ -247,23 +287,33 @@ fn completion_returns_builtins_for_short_prefix() {
     let mut lsp = LspHandle::spawn();
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///comp.zsh",
-            "languageId": "zshrs",
-            "version": 1,
-            "text": "ec",
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///comp.zsh",
+                "languageId": "zshrs",
+                "version": 1,
+                "text": "ec",
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/completion", json!({
-        "textDocument": { "uri": "file:///comp.zsh" },
-        "position": { "line": 0, "character": 2 },
-    }));
+    let r = lsp.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": "file:///comp.zsh" },
+            "position": { "line": 0, "character": 2 },
+        }),
+    );
     let items = r["items"].as_array().expect("items");
     let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
     // `echo` should be there (prefix `ec`)
-    assert!(labels.contains(&"echo"), "labels missing echo: {:?}", labels);
+    assert!(
+        labels.contains(&"echo"),
+        "labels missing echo: {:?}",
+        labels
+    );
 }
 
 #[test]
@@ -272,26 +322,40 @@ fn definition_and_references_round_trip() {
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
     let text = "function greet {\n  echo hi\n}\ngreet\ngreet world\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///refs.zsh", "languageId": "zshrs",
-            "version": 1, "text": text,
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///refs.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
 
     // Cursor on "greet" call at line 3
     let pos = json!({ "line": 3, "character": 2 });
-    let def = lsp.request("textDocument/definition", json!({
-        "textDocument": { "uri": "file:///refs.zsh" }, "position": pos.clone(),
-    }));
-    assert_eq!(def["range"]["start"]["line"], json!(0), "definition: {:?}", def);
+    let def = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": "file:///refs.zsh" }, "position": pos.clone(),
+        }),
+    );
+    assert_eq!(
+        def["range"]["start"]["line"],
+        json!(0),
+        "definition: {:?}",
+        def
+    );
 
-    let refs = lsp.request("textDocument/references", json!({
-        "textDocument": { "uri": "file:///refs.zsh" },
-        "position": pos,
-        "context": { "includeDeclaration": true },
-    }));
+    let refs = lsp.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": "file:///refs.zsh" },
+            "position": pos,
+            "context": { "includeDeclaration": true },
+        }),
+    );
     let arr = refs.as_array().expect("ref array");
     assert_eq!(arr.len(), 3, "expected decl+2 calls, got: {:?}", arr);
 }
@@ -302,20 +366,27 @@ fn folding_ranges_finds_block() {
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
     let text = "function f {\n  echo a\n  echo b\n}\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///fold.zsh", "languageId": "zshrs",
-            "version": 1, "text": text,
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///fold.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/foldingRange", json!({
-        "textDocument": { "uri": "file:///fold.zsh" },
-    }));
+    let r = lsp.request(
+        "textDocument/foldingRange",
+        json!({
+            "textDocument": { "uri": "file:///fold.zsh" },
+        }),
+    );
     let arr = r.as_array().expect("ranges");
     assert!(
         arr.iter().any(|x| x["startLine"] == 0 && x["endLine"] == 3),
-        "expected (0..3) fold, got: {:?}", arr
+        "expected (0..3) fold, got: {:?}",
+        arr
     );
 }
 
@@ -324,21 +395,31 @@ fn formatting_strips_trailing_whitespace() {
     let mut lsp = LspHandle::spawn();
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///fmt.zsh", "languageId": "zshrs",
-            "version": 1, "text": "echo hi   \n  echo bye\t\n",
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///fmt.zsh", "languageId": "zshrs",
+                "version": 1, "text": "echo hi   \n  echo bye\t\n",
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/formatting", json!({
-        "textDocument": { "uri": "file:///fmt.zsh" },
-        "options": { "tabSize": 4, "insertSpaces": true },
-    }));
+    let r = lsp.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": "file:///fmt.zsh" },
+            "options": { "tabSize": 4, "insertSpaces": true },
+        }),
+    );
     let arr = r.as_array().expect("edits");
     assert_eq!(arr.len(), 1, "expected 1 whole-file edit: {:?}", arr);
     let new_text = arr[0]["newText"].as_str().expect("newText");
-    assert!(!new_text.contains("   \n"), "trailing spaces not stripped: {:?}", new_text);
+    assert!(
+        !new_text.contains("   \n"),
+        "trailing spaces not stripped: {:?}",
+        new_text
+    );
     assert!(new_text.ends_with('\n'));
 }
 
@@ -348,18 +429,24 @@ fn rename_emits_workspace_edits_for_all_occurrences() {
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
     let text = "function greet { echo hi }\ngreet\ngreet x\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///rename.zsh", "languageId": "zshrs",
-            "version": 1, "text": text,
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///rename.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/rename", json!({
-        "textDocument": { "uri": "file:///rename.zsh" },
-        "position": { "line": 0, "character": 9 },
-        "newName": "salutate",
-    }));
+    let r = lsp.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": "file:///rename.zsh" },
+            "position": { "line": 0, "character": 9 },
+            "newName": "salutate",
+        }),
+    );
     let changes = r["changes"].as_object().expect("changes");
     let edits = changes["file:///rename.zsh"].as_array().expect("edits");
     assert_eq!(edits.len(), 3, "expected 3 edits, got: {:?}", edits);
@@ -373,18 +460,29 @@ fn semantic_tokens_emit_delta_encoded_array() {
     let mut lsp = LspHandle::spawn();
     let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
     lsp.notify("initialized", json!({}));
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": {
-            "uri": "file:///sem.zsh", "languageId": "zshrs",
-            "version": 1, "text": "# c\nif true; then echo $HOME; fi\n",
-        }
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///sem.zsh", "languageId": "zshrs",
+                "version": 1, "text": "# c\nif true; then echo $HOME; fi\n",
+            }
+        }),
+    );
     let _ = lsp.wait_diagnostics(Duration::from_millis(500));
-    let r = lsp.request("textDocument/semanticTokens/full", json!({
-        "textDocument": { "uri": "file:///sem.zsh" },
-    }));
+    let r = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({
+            "textDocument": { "uri": "file:///sem.zsh" },
+        }),
+    );
     let data = r["data"].as_array().expect("data array");
     // Must be a multiple of 5 (delta-encoded 5-tuples)
     assert!(!data.is_empty(), "no tokens emitted");
-    assert_eq!(data.len() % 5, 0, "data not multiple-of-5: len={}", data.len());
+    assert_eq!(
+        data.len() % 5,
+        0,
+        "data not multiple-of-5: len={}",
+        data.len()
+    );
 }

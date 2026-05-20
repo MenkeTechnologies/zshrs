@@ -35,30 +35,30 @@ use std::collections::HashMap;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
 /// Port of `MMARK` from `Src/Zle/complist.c:126`. Tag bit used in
 /// the low bit of `Cmatch *` / `Cmgroup` pointers to mark a match
@@ -66,12 +66,12 @@ use crate::ported::zle::deltochar::*;
 /// uses pointer tagging; the Rust port uses the same bit position
 /// (`u32 = 1`) as a search-anchor — actual marker storage lives on
 /// a separate `bool` per Cmatch when the substrate hydrates.
-pub const MMARK: u32 = 1;                                                    // c:126
+pub const MMARK: u32 = 1; // c:126
 
 /// Port of `MAX_POS` from `Src/Zle/complist.c:137`. Maximum number
 /// of saved (mline, mcol) menu-select positions in the back-stack
 /// used by msearchpush/msearchpop.
-pub const MAX_POS: usize = 11;                                               // c:137
+pub const MAX_POS: usize = 11; // c:137
 
 // =====================================================================
 // Substrate for the LS_COLORS / ZLS_COLORS subsystem —
@@ -79,33 +79,33 @@ pub const MAX_POS: usize = 11;                                               // 
 // =====================================================================
 
 // `COL_*` — index into `mcolors.files[]` per `Src/Zle/complist.c:167-194`.
-pub const COL_NO:  usize = 0;                                                // c:167
-pub const COL_FI:  usize = 1;                                                // c:168
-pub const COL_DI:  usize = 2;                                                // c:169
-pub const COL_LN:  usize = 3;                                                // c:170
-pub const COL_PI:  usize = 4;                                                // c:171
-pub const COL_SO:  usize = 5;                                                // c:172
-pub const COL_BD:  usize = 6;                                                // c:173
-pub const COL_CD:  usize = 7;                                                // c:174
-pub const COL_OR:  usize = 8;                                                // c:175
-pub const COL_MI:  usize = 9;                                                // c:176
-pub const COL_SU:  usize = 10;                                               // c:177
-pub const COL_SG:  usize = 11;                                               // c:178
-pub const COL_TW:  usize = 12;                                               // c:179
-pub const COL_OW:  usize = 13;                                               // c:180
-pub const COL_ST:  usize = 14;                                               // c:181
-pub const COL_EX:  usize = 15;                                               // c:182
-pub const COL_LC:  usize = 16;                                               // c:183
-pub const COL_RC:  usize = 17;                                               // c:184
-pub const COL_EC:  usize = 18;                                               // c:185
-pub const COL_TC:  usize = 19;                                               // c:186
-pub const COL_SP:  usize = 20;                                               // c:187
-pub const COL_MA:  usize = 21;                                               // c:188
-pub const COL_HI:  usize = 22;                                               // c:189
-pub const COL_DU:  usize = 23;                                               // c:190
-pub const COL_SA:  usize = 24;                                               // c:191
+pub const COL_NO: usize = 0; // c:167
+pub const COL_FI: usize = 1; // c:168
+pub const COL_DI: usize = 2; // c:169
+pub const COL_LN: usize = 3; // c:170
+pub const COL_PI: usize = 4; // c:171
+pub const COL_SO: usize = 5; // c:172
+pub const COL_BD: usize = 6; // c:173
+pub const COL_CD: usize = 7; // c:174
+pub const COL_OR: usize = 8; // c:175
+pub const COL_MI: usize = 9; // c:176
+pub const COL_SU: usize = 10; // c:177
+pub const COL_SG: usize = 11; // c:178
+pub const COL_TW: usize = 12; // c:179
+pub const COL_OW: usize = 13; // c:180
+pub const COL_ST: usize = 14; // c:181
+pub const COL_EX: usize = 15; // c:182
+pub const COL_LC: usize = 16; // c:183
+pub const COL_RC: usize = 17; // c:184
+pub const COL_EC: usize = 18; // c:185
+pub const COL_TC: usize = 19; // c:186
+pub const COL_SP: usize = 20; // c:187
+pub const COL_MA: usize = 21; // c:188
+pub const COL_HI: usize = 22; // c:189
+pub const COL_DU: usize = 23; // c:190
+pub const COL_SA: usize = 24; // c:191
 /// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
-pub const NUM_COLS: usize = 25;                                              // c:193
+pub const NUM_COLS: usize = 25; // c:193
 
 /// ```c
 /// static filecol
@@ -122,12 +122,14 @@ pub const NUM_COLS: usize = 25;                                              // 
 /// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
 /// Port of `filecol(char *col)` from `Src/Zle/complist.c:488`.
-pub fn filecol(col: &str) -> filecol {                                       // c:488
-    filecol {                                                                // c:488 zhalloc
-        prog: None,                                                          // c:493 fc->prog = NULL
-        col:  col.to_string(),                                               // c:494 fc->col = col
-        next: None,                                                          // c:495 fc->next = NULL
-    }                                                                        // c:497 return fc
+pub fn filecol(col: &str) -> filecol {
+    // c:488
+    filecol {
+        // c:488 zhalloc
+        prog: None,           // c:493 fc->prog = NULL
+        col: col.to_string(), // c:494 fc->col = col
+        next: None,           // c:495 fc->next = NULL
+    } // c:497 return fc
 }
 
 /// Port of `struct filecol` / `typedef struct filecol *filecol` from
@@ -139,13 +141,14 @@ pub fn filecol(col: &str) -> filecol {                                       // 
 /// can't auto-derive them; impl manually if needed by callers.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct filecol {                                                         // c:215
+pub struct filecol {
+    // c:215
     /// Group pattern (NULL → applies to all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:216
+    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:216
     /// Color string (ANSI escape-code body).
-    pub col: String,                                                         // c:217
+    pub col: String, // c:217
     /// Next entry chained for the same color slot.
-    pub next: Option<Box<filecol>>,                                          // c:218
+    pub next: Option<Box<filecol>>, // c:218
 }
 
 /// Port of `struct patcol` from `Src/Zle/complist.c:225`. Per-pattern
@@ -153,50 +156,54 @@ pub struct filecol {                                                         // 
 /// strings (one per submatch position).
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct patcol {                                                          // c:225
+pub struct patcol {
+    // c:225
     /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
+    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:226
     /// Pattern for match.
-    pub pat: Option<crate::ported::zsh_h::Patprog>,                          // c:227
+    pub pat: Option<crate::ported::zsh_h::Patprog>, // c:227
     /// Color strings indexed by submatch position (MAX_POS + 1 slots).
-    pub cols: Vec<String>,                                                   // c:228
+    pub cols: Vec<String>, // c:228
     /// Next entry in the patcol chain.
-    pub next: Option<Box<patcol>>,                                           // c:229
+    pub next: Option<Box<patcol>>, // c:229
 }
 
 /// Port of `struct extcol` from `Src/Zle/complist.c:236`. Per-extension
 /// terminal-color spec.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct extcol {                                                          // c:236
+pub struct extcol {
+    // c:236
     /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
+    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:237
     /// File extension (e.g. ".tar").
-    pub ext: String,                                                         // c:238
+    pub ext: String, // c:238
     /// Terminal color string.
-    pub col: String,                                                         // c:239
+    pub col: String, // c:239
     /// Next entry in the extcol chain.
-    pub next: Option<Box<extcol>>,                                           // c:240
+    pub next: Option<Box<extcol>>, // c:240
 }
 
 /// Port of `struct listcols` from `Src/Zle/complist.c:253`. Holds
 /// every terminal-color string a completion-listing run might emit.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct listcols {                                                        // c:253
+pub struct listcols {
+    // c:253
     /// Strings for file types (indexed by `col::*` constants).
-    pub files: Vec<filecol>,                                                 // c:254 [NUM_COLS]
+    pub files: Vec<filecol>, // c:254 [NUM_COLS]
     /// Strings for patterns.
-    pub pats: Option<Box<patcol>>,                                           // c:255
+    pub pats: Option<Box<patcol>>, // c:255
     /// Strings for extensions.
-    pub exts: Option<Box<extcol>>,                                           // c:256
+    pub exts: Option<Box<extcol>>, // c:256
     /// Special settings, see `LC_FOLLOW_SYMLINKS` above.
-    pub flags: i32,                                                          // c:257
+    pub flags: i32, // c:257
 }
 
 /// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
 #[allow(unused_variables)]
-pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
+pub fn getcolval(s: &str, multi: i32) -> &str {
+    // c:275
     // C body c:277-329 — walks one ANSI escape sequence (digits and
     //                    `;`) and returns pointer past it. Used while
     //                    parsing `key=val` from LS_COLORS.
@@ -205,7 +212,8 @@ pub fn getcolval(s: &str, multi: i32) -> &str {                             // c
 }
 
 /// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
-pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
+pub fn getcoldef(s: &str) -> Option<String> {
+    // c:330
     // C body c:332-503 — parses one "key=val" entry from LS_COLORS
     //                    /ZLS_COLORS, walks past the key (one of the
     //                    `colnames` two-letters, plus filename
@@ -256,61 +264,68 @@ pub fn getcoldef(s: &str) -> Option<String> {                                // 
 ///         mcolors.files[COL_MI] = mcolors.files[COL_FI];
 /// }
 /// ```
-pub fn getcols(_unused: &str) -> i32 {                                       // c:505
+pub fn getcols(_unused: &str) -> i32 {
+    // c:505
     use std::sync::atomic::Ordering;
 
-    MAX_CAPLEN.store(0, Ordering::SeqCst);                                   // c:510
-    LR_CAPLEN.store(0, Ordering::SeqCst);                                    // c:510
+    MAX_CAPLEN.store(0, Ordering::SeqCst); // c:510
+    LR_CAPLEN.store(0, Ordering::SeqCst); // c:510
     {
         let mut mc = MCOLORS.lock().unwrap();
-        mc.flags = 0;                                                        // c:511
+        mc.flags = 0; // c:511
     }
-    crate::ported::signals::queue_signals();                                 // c:512
+    crate::ported::signals::queue_signals(); // c:512
 
     // c:513-514 — `if (!(s = getsparam_u("ZLS_COLORS")) && !(s = getsparam_u("ZLS_COLOURS")))`
     let s_opt = crate::ported::params::getsparam("ZLS_COLORS")
         .or_else(|| crate::ported::params::getsparam("ZLS_COLOURS"));
 
-    if s_opt.is_none() {                                                     // c:513
+    if s_opt.is_none() {
+        // c:513
         let mut mc = MCOLORS.lock().unwrap();
         mc.files.clear();
-        for _i in 0..NUM_COLS {                                              // c:515
-            mc.files.push(filecol(""));                                      // c:516 filecol("")
+        for _i in 0..NUM_COLS {
+            // c:515
+            mc.files.push(filecol("")); // c:516 filecol("")
         }
-        mc.pats = None;                                                      // c:517
-        mc.exts = None;                                                      // c:518
+        mc.pats = None; // c:517
+        mc.exts = None; // c:518
 
         // c:520-524 — try termcap TCSTANDOUTBEG for highlight color.
         let tcstr_guard = crate::ported::init::tcstr.lock().unwrap();
         let so_beg = tcstr_guard[crate::ported::zsh_h::TCSTANDOUTBEG as usize].clone();
         let so_end = tcstr_guard[crate::ported::zsh_h::TCSTANDOUTEND as usize].clone();
         drop(tcstr_guard);
-        if !so_beg.is_empty() {                                              // c:520
-            mc.files[COL_MA] = filecol(&so_beg);                             // c:521
-            mc.files[COL_EC] = filecol(&so_end);                             // c:522
-        } else {                                                             // c:523
+        if !so_beg.is_empty() {
+            // c:520
+            mc.files[COL_MA] = filecol(&so_beg); // c:521
+            mc.files[COL_EC] = filecol(&so_end); // c:522
+        } else {
+            // c:523
             // c:524 — `mcolors.files[COL_MA] = filecol(defcols[COL_MA]);`
             // defcols[COL_MA] = "7" (reverse-video) per c:204.
-            mc.files[COL_MA] = filecol("7");                                 // c:524
+            mc.files[COL_MA] = filecol("7"); // c:524
         }
         // c:525-528 — cap-length tracking.
         let ma_len = mc.files[COL_MA].col.len() as i32;
         let ec_len = mc.files[COL_EC].col.len() as i32;
         let max_len = if ma_len < ec_len { ec_len } else { ma_len };
-        MAX_CAPLEN.store(max_len, Ordering::SeqCst);                         // c:526-528
-        crate::ported::signals::unqueue_signals();                           // c:529
-        return 0;                                                            // c:530
+        MAX_CAPLEN.store(max_len, Ordering::SeqCst); // c:526-528
+        crate::ported::signals::unqueue_signals(); // c:529
+        return 0; // c:530
     }
 
     // c:532-540 — parse ZLS_COLORS into mcolors via getcoldef loop.
     {
         let mut mc = MCOLORS.lock().unwrap();
-        *mc = listcols::default();                                           // c:533 memset(&mcolors, 0)
+        *mc = listcols::default(); // c:533 memset(&mcolors, 0)
     }
-    let mut s = s_opt.unwrap();                                              // c:534 dupstring
-    while !s.is_empty() {                                                    // c:535
-        if s.starts_with(':') {                                              // c:536
-            s = s[1..].to_string();                                          // c:537 s++
+    let mut s = s_opt.unwrap(); // c:534 dupstring
+    while !s.is_empty() {
+        // c:535
+        if s.starts_with(':') {
+            // c:536
+            s = s[1..].to_string(); // c:537 s++
         } else {
             // c:539 — `s = getcoldef(s);`
             s = match getcoldef(&s) {
@@ -319,25 +334,51 @@ pub fn getcols(_unused: &str) -> i32 {                                       // 
             };
         }
     }
-    crate::ported::signals::unqueue_signals();                               // c:540
+    crate::ported::signals::unqueue_signals(); // c:540
 
     // c:543-549 — default-fill loop for unset color slots.
     let defcols: [&str; NUM_COLS] = [
-        "0", "0", "01;34", "01;36", "33", "01;35", "01;33", "01;33",
-        "01;05;37;41", "01;05;37;41", "37;41", "30;43", "30;42", "34;42",
-        "37;44", "01;32", "\x1b[", "m", "0", "0", "0", "7", "0", "0", "0",
+        "0",
+        "0",
+        "01;34",
+        "01;36",
+        "33",
+        "01;35",
+        "01;33",
+        "01;33",
+        "01;05;37;41",
+        "01;05;37;41",
+        "37;41",
+        "30;43",
+        "30;42",
+        "34;42",
+        "37;44",
+        "01;32",
+        "\x1b[",
+        "m",
+        "0",
+        "0",
+        "0",
+        "7",
+        "0",
+        "0",
+        "0",
     ];
     let mut mc = MCOLORS.lock().unwrap();
     while mc.files.len() < NUM_COLS {
         mc.files.push(filecol(""));
     }
     let mut max_len = MAX_CAPLEN.load(Ordering::SeqCst);
-    for i in 0..NUM_COLS {                                                   // c:543
-        if mc.files[i].col.is_empty() {                                      // c:544
-            mc.files[i] = filecol(defcols[i]);                               // c:545
+    for i in 0..NUM_COLS {
+        // c:543
+        if mc.files[i].col.is_empty() {
+            // c:544
+            mc.files[i] = filecol(defcols[i]); // c:545
         }
-        let l = mc.files[i].col.len() as i32;                                // c:547
-        if l > max_len { max_len = l; }                                      // c:548
+        let l = mc.files[i].col.len() as i32; // c:547
+        if l > max_len {
+            max_len = l;
+        } // c:548
     }
     MAX_CAPLEN.store(max_len, Ordering::SeqCst);
 
@@ -346,15 +387,17 @@ pub fn getcols(_unused: &str) -> i32 {                                       // 
     LR_CAPLEN.store(lr_len, Ordering::SeqCst);
 
     // c:553-558 — defaults: COL_OR fallback to COL_LN; COL_MI to COL_FI.
-    if mc.files[COL_OR].col.is_empty() {                                     // c:554
+    if mc.files[COL_OR].col.is_empty() {
+        // c:554
         let ln = mc.files[COL_LN].col.clone();
-        mc.files[COL_OR] = filecol(&ln);                                     // c:555
+        mc.files[COL_OR] = filecol(&ln); // c:555
     }
-    if mc.files[COL_MI].col.is_empty() {                                     // c:557
+    if mc.files[COL_MI].col.is_empty() {
+        // c:557
         let fi = mc.files[COL_FI].col.clone();
-        mc.files[COL_MI] = filecol(&fi);                                     // c:558
+        mc.files[COL_MI] = filecol(&fi); // c:558
     }
-    0                                                                        // c:560
+    0 // c:560
 }
 
 /// Direct port of `void zlrputs(char *cap)` from
@@ -363,7 +406,8 @@ pub fn getcols(_unused: &str) -> i32 {                                       // 
 /// stores the cap into `last_cap` for the bleed-prevention path
 /// downstream (used by `zcoff` in `cleareol`); that file-static
 /// `last_cap` isn't yet ported, so we only emit the SGR escape.
-pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
+pub fn zlrputs(cap: &str) -> i32 {
+    // c:564
     use std::sync::atomic::Ordering;
     if cap.is_empty() {
         return 0;
@@ -380,21 +424,20 @@ pub fn zlrputs(cap: &str) -> i32 {                                           // 
 /// Port of `zcputs(char *group, int colour)` from Src/Zle/complist.c. The C source uses
 /// this for per-match colour application during list paint.
 /// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
-pub fn zcputs(s: &str, color: Option<&str>) -> String {                      // c:580
+pub fn zcputs(s: &str, color: Option<&str>) -> String {
+    // c:580
     match color {
         Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
         None => s.to_string(),
     }
 }
 
-
-
 // Turn off colouring.                                                     // c:597
 /// Port of `zcoff()` from Src/Zle/complist.c:597.
-pub fn zcoff() {                                                            // c:597
-    // C body c:599-617 — emits the LS_COLORS no-color escape via
-    //                    tputs(mcolors.files[COL_NO]->col,...).
-    //                    No mcolors substrate: no-op.
+pub fn zcoff() { // c:597
+                 // C body c:599-617 — emits the LS_COLORS no-color escape via
+                 //                    tputs(mcolors.files[COL_NO]->col,...).
+                 //                    No mcolors substrate: no-op.
 }
 
 /// Direct port of `void cleareol(void)` from
@@ -409,7 +452,8 @@ pub fn zcoff() {                                                            // c
 /// paint (`mlbeg >= 0`) and the terminal supports the cap. If a
 /// LS_COLOR cap is currently active, emit the SGR-reset first so
 /// the EOL-clear doesn't carry the color into untouched columns.
-pub fn cleareol() {                                                          // c:608
+pub fn cleareol() {
+    // c:608
     use std::sync::atomic::Ordering;
     if MLBEG.load(Ordering::Relaxed) < 0 {
         return;
@@ -431,10 +475,13 @@ pub fn cleareol() {                                                          // 
 /// at the start of a colored match emission. Pops the first
 /// `patcols[0]` entry as the initial color and resets all the
 /// position cursors + region-tracking arrays.
-pub fn initiscol() -> i32 {                                                  // c:618
+pub fn initiscol() -> i32 {
+    // c:618
     use std::sync::atomic::Ordering;
     // c:622 — `zlrputs(patcols[0]);` — emit first color cap.
-    let first_cap = PATCOLS.lock().ok()
+    let first_cap = PATCOLS
+        .lock()
+        .ok()
         .and_then(|p| p.first().cloned())
         .unwrap_or_default();
     if !first_cap.is_empty() {
@@ -447,7 +494,7 @@ pub fn initiscol() -> i32 {                                                  // 
         }
     }
     CURISCOL.store(0, Ordering::Relaxed);
-    PATCOLS_IDX.store(1, Ordering::Relaxed);                                 // c:624 patcols++
+    PATCOLS_IDX.store(1, Ordering::Relaxed); // c:624 patcols++
 
     // c:626 — `curisbeg = curissend = 0;`
     CURISBEG.store(0, Ordering::Relaxed);
@@ -460,17 +507,17 @@ pub fn initiscol() -> i32 {                                                  // 
             sp[i] = 0xfffffff;
         }
         for i in 0..nrefs.min(MAX_POS) {
-            sp[i] = 0xfffffff;                                              // c:629 already 0xfffffff
+            sp[i] = 0xfffffff; // c:629 already 0xfffffff
         }
     }
     if let Ok(mut bp) = BEGPOS.lock() {
         for i in nrefs..MAX_POS {
-            bp[i] = 0xfffffff;                                              // c:631
+            bp[i] = 0xfffffff; // c:631
         }
     }
     if let Ok(mut ep) = ENDPOS.lock() {
         for i in nrefs..MAX_POS {
-            ep[i] = 0xfffffff;                                              // c:631
+            ep[i] = 0xfffffff; // c:631
         }
     }
     0
@@ -488,7 +535,8 @@ pub fn initiscol() -> i32 {                                                  // 
 ///    finishes-empty regions (endpos < begpos or begpos == -1):
 ///    inserts `endpos` into the sorted `sendpos[]` array, emits
 ///    SGR-reset + the new color, pushes onto curiscols[].
-pub fn doiscol(pos: i32) -> i32 {                                             // c:635
+pub fn doiscol(pos: i32) -> i32 {
+    // c:635
     use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
@@ -496,9 +544,14 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
     // c:639-645 — pop finished regions.
     loop {
         let curissend = CURISSEND.load(Ordering::Relaxed) as usize;
-        let sp = SENDPOS.lock().ok().and_then(|s| s.get(curissend).copied())
+        let sp = SENDPOS
+            .lock()
+            .ok()
+            .and_then(|s| s.get(curissend).copied())
             .unwrap_or(0xfffffff);
-        if pos <= sp { break; }
+        if pos <= sp {
+            break;
+        }
         CURISSEND.fetch_add(1, Ordering::Relaxed);
         let curiscol = CURISCOL.load(Ordering::Relaxed);
         if curiscol > 0 {
@@ -507,7 +560,9 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
             // c:643 — `zlrputs(curiscols[--curiscol]);`
             let new_idx = curiscol - 1;
             CURISCOL.store(new_idx, Ordering::Relaxed);
-            let restore_cap = CURISCOLS.lock().ok()
+            let restore_cap = CURISCOLS
+                .lock()
+                .ok()
                 .and_then(|c| c.get(new_idx as usize).cloned())
                 .unwrap_or_default();
             if !restore_cap.is_empty() {
@@ -519,15 +574,17 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
     // c:646-665 — push new regions starting at or before `pos`.
     loop {
         let curisbeg = CURISBEG.load(Ordering::Relaxed) as usize;
-        if curisbeg >= MAX_POS { break; }
+        if curisbeg >= MAX_POS {
+            break;
+        }
         let (bp, ep) = {
             let bp_lock = BEGPOS.lock().ok();
             let ep_lock = ENDPOS.lock().ok();
             match (bp_lock, ep_lock) {
-                (Some(b), Some(e)) => {
-                    (b.get(curisbeg).copied().unwrap_or(0xfffffff),
-                     e.get(curisbeg).copied().unwrap_or(0xfffffff))
-                }
+                (Some(b), Some(e)) => (
+                    b.get(curisbeg).copied().unwrap_or(0xfffffff),
+                    e.get(curisbeg).copied().unwrap_or(0xfffffff),
+                ),
                 _ => break,
             }
         };
@@ -539,10 +596,14 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
         }
         // c:648 — `*patcols` truthy gate (more colors available).
         let patcols_idx = PATCOLS_IDX.load(Ordering::Relaxed);
-        let cap_now = PATCOLS.lock().ok()
+        let cap_now = PATCOLS
+            .lock()
+            .ok()
             .and_then(|p| p.get(patcols_idx).cloned())
             .unwrap_or_default();
-        if cap_now.is_empty() { break; }
+        if cap_now.is_empty() {
+            break;
+        }
 
         if !fi {
             // c:650-657 — insert `e = endpos[curisbeg]` into sendpos[]
@@ -582,7 +643,8 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
 }
 
 /// Port of `clprintfmt(char *p, int ml)` from Src/Zle/complist.c:671.
-pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c:671
+pub fn clprintfmt(p: &str, ml: i32) -> i32 {
+    // c:671
     // C body c:673-712 — colored variant of printfmt that uses mcolors
     //                    for %F/%B etc. Without the mcolors substrate
     //                    we delegate to the plain printfmt.
@@ -600,7 +662,8 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c
 /// only emits the post-decoded string without per-char color cycling
 /// until the mcolors substrate is wired.
 #[allow(unused_variables)]
-pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
+pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {
+    // c:715
     use std::sync::atomic::Ordering;
     let _ = do_colors;
     // c:717-735 — meta-decode loop matches the C `niceztrlen`/
@@ -611,13 +674,14 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
-        if c == 0x83 {                                                       // c:741 Meta byte
+        if c == 0x83 {
+            // c:741 Meta byte
             i += 1;
             if i < bytes.len() {
                 out.push(bytes[i] ^ 32);
             }
-        } else if (0x80..0xa0).contains(&c) {                                // c:744 itok skip
-            // pass — pseudo-token, not real output
+        } else if (0x80..0xa0).contains(&c) { // c:744 itok skip
+             // pass — pseudo-token, not real output
         } else {
             out.push(c);
         }
@@ -634,7 +698,8 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c
 
 // Get the terminal color string for the given match.                      // c:881
 /// Port of `putmatchcol(char *group, char *n)` from Src/Zle/complist.c:881.
-pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
+pub fn putmatchcol(group: &str, n: &str) -> i32 {
+    // c:881
     // C body c:883-908 — looks up "ma" or "co" entries in mcolors
     //                    for the given group/name and emits the
     //                    escape via putcolstr.
@@ -644,7 +709,8 @@ pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
 }
 
 /// Port of `putfilecol(char *group, char *filename, mode_t m, int special)` from Src/Zle/complist.c:910.
-pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { // c:910
+pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 {
+    // c:910
     // C body c:912-988 — looks up the LS_COLORS class for `name`
     //                    by mode bits + filename suffix, emits the
     //                    matching escape via putcolstr.
@@ -660,7 +726,8 @@ pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { //
 /// `getzlequery`; ours produces the prompt string and leaves the
 /// input read to the caller.
 /// WARNING: param names don't match C — Rust=(total, shown) vs C=(ml)
-pub fn asklistscroll(total: usize, shown: usize) -> String {                 // c:1001
+pub fn asklistscroll(total: usize, shown: usize) -> String {
+    // c:1001
     let _remaining = total.saturating_sub(shown);
     format!("--More--({}/{})", shown, total)
 }
@@ -678,7 +745,8 @@ pub fn asklistscroll(total: usize, shown: usize) -> String {                 // 
 /// return 0;
 /// ```
 #[allow(unused_variables)]
-pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
+pub fn compprintnl(ml: i32) -> i32 {
+    // c:1054
     use std::sync::atomic::Ordering;
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
     //          emit both as a single write (CSI K + LF).
@@ -715,7 +783,8 @@ pub fn compprintnl(ml: i32) -> i32 {                                        // c
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(fmt, n, dopr, doesc, ml, stop) vs C=(fmt, n, dopr, doesc, ml, stop)
-pub fn compprintfmt(                                                         // c:1072
+pub fn compprintfmt(
+    // c:1072
     fmt: &str,
     n: i32,
     dopr: i32,
@@ -725,7 +794,7 @@ pub fn compprintfmt(                                                         // 
 ) -> i32 {
     use std::sync::atomic::Ordering;
 
-    let mut l = 0i32;                                                        // c:1075
+    let mut l = 0i32; // c:1075
     let mut cc = 0i32;
     let _ = doesc;
     let _ = ml;
@@ -733,16 +802,19 @@ pub fn compprintfmt(                                                         // 
 
     // c:1077-1086 — fmt fallback to mstatus / mlistp when caller passed NULL.
     let owned: String;
-    let fmt_str: &str = if fmt.is_empty() {                                  // c:1077
-        if MLBEG.load(Ordering::SeqCst) >= 0 {                               // c:1078
+    let fmt_str: &str = if fmt.is_empty() {
+        // c:1077
+        if MLBEG.load(Ordering::SeqCst) >= 0 {
+            // c:1078
             owned = MSTATUS.lock().unwrap().clone();
             if owned.is_empty() {
-                MLPRINTED.store(0, Ordering::SeqCst);                        // c:1080
-                return 0;                                                    // c:1081
+                MLPRINTED.store(0, Ordering::SeqCst); // c:1080
+                return 0; // c:1081
             }
-            cc = -1;                                                         // c:1083
+            cc = -1; // c:1083
             &owned
-        } else {                                                             // c:1084
+        } else {
+            // c:1084
             owned = MLISTP.lock().unwrap().clone();
             &owned
         }
@@ -754,18 +826,28 @@ pub fn compprintfmt(                                                         // 
     // subset (the LIST_PACKED escape arms that LISTPROMPT users hit).
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '%' {                                                        // c:1102
+        if c == '%' {
+            // c:1102
             // c:1108 — optional digit arg
             let mut arg = 0i32;
             while let Some(&d) = chars.peek() {
                 if d.is_ascii_digit() {
                     arg = arg * 10 + (d as i32 - '0' as i32);
                     chars.next();
-                } else { break; }
+                } else {
+                    break;
+                }
             }
-            match chars.next() {                                             // c:1119
-                Some('%') => { if dopr == 1 { l += 1; } cc += 1; }           // c:1120
-                Some('n') => {                                               // c:1141
+            match chars.next() {
+                // c:1119
+                Some('%') => {
+                    if dopr == 1 {
+                        l += 1;
+                    }
+                    cc += 1;
+                } // c:1120
+                Some('n') => {
+                    // c:1141
                     let s = n.to_string();
                     if dopr == 1 {
                         use std::sync::atomic::Ordering as O;
@@ -776,12 +858,15 @@ pub fn compprintfmt(                                                         // 
                     l += s.len() as i32;
                     cc += s.len() as i32;
                 }
-                Some('p') => {                                               // c:1155 line position
+                Some('p') => {
+                    // c:1155 line position
                     let mlbeg = MLBEG.load(Ordering::SeqCst);
                     let mlines = MLINES.load(Ordering::SeqCst);
                     let s = if mlbeg <= 0 && mlines < MLEND.load(Ordering::SeqCst) {
                         "Top".to_string()
-                    } else if mlbeg + MLEND.load(Ordering::SeqCst) - MLBEG.load(Ordering::SeqCst) >= mlines {
+                    } else if mlbeg + MLEND.load(Ordering::SeqCst) - MLBEG.load(Ordering::SeqCst)
+                        >= mlines
+                    {
                         "Bot".to_string()
                     } else {
                         format!("{}%", mlbeg.max(0) * 100 / mlines.max(1))
@@ -795,10 +880,13 @@ pub fn compprintfmt(                                                         // 
                     l += s.len() as i32;
                     cc += s.len() as i32;
                 }
-                Some(_) => { let _ = arg; }                                  // c:other-escape
+                Some(_) => {
+                    let _ = arg;
+                } // c:other-escape
                 None => break,
             }
-        } else {                                                             // c:literal char
+        } else {
+            // c:literal char
             if dopr == 1 {
                 use std::sync::atomic::Ordering as O;
                 let fd = crate::ported::init::SHTTY.load(O::Relaxed);
@@ -812,18 +900,18 @@ pub fn compprintfmt(                                                         // 
         }
     }
     let _ = l;
-    cc                                                                       // c:return
+    cc // c:return
 }
 
 /// Port of `static char *mstatus` from `Src/Zle/complist.c:93`. Message
 /// printed when the user scrolls the completion list.
 pub static MSTATUS: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));       // c:93
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new())); // c:93
 
 /// Port of `static char *mlistp` from `Src/Zle/complist.c:93`. Message
 /// printed when merely listing (no scroll).
 pub static MLISTP: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));       // c:93
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new())); // c:93
 
 /// Port of `int compzputs(char const *s, int ml)` from
 /// `Src/Zle/complist.c:1338`. Demetafies each byte (Meta XOR 32),
@@ -832,20 +920,22 @@ pub static MLISTP: std::sync::LazyLock<std::sync::Mutex<String>> =
 /// `asklistscroll` scroll-prompts; those land when the curses
 /// substrate is wired.
 #[allow(unused_variables)]
-pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
+pub fn compzputs(s: &str, ml: i32) -> i32 {
+    // c:1338
     use std::sync::atomic::Ordering;
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
-        if c == 0x83 {                                                       // c:1343 Meta byte
+        if c == 0x83 {
+            // c:1343 Meta byte
             i += 1;
             if i < bytes.len() {
                 out.push(bytes[i] ^ 32);
             }
-        } else if (0x80..0xa0).contains(&c) {                                // c:1345 itok skip
-            // pass — pseudo-token
+        } else if (0x80..0xa0).contains(&c) { // c:1345 itok skip
+             // pass — pseudo-token
         } else {
             out.push(c);
         }
@@ -856,7 +946,7 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c
     }
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, &out);                  // c:1356 putc loop
+    let _ = crate::ported::utils::write_loop(out_fd, &out); // c:1356 putc loop
     0
 }
 
@@ -865,18 +955,21 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c
 /// chain, emits explanations + ylist + cmatch grid via
 /// `clprintm` / `compprintfmt` / `compzputs`, tracking line
 /// position against `mlbeg`/`mlend` for resumable scrolling.
-pub fn compprintlist(showall: i32) -> i32 {                                  // c:1367
+pub fn compprintlist(showall: i32) -> i32 {
+    // c:1367
+    use crate::ported::zle::comp_h::{
+        CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST,
+    };
     use std::sync::atomic::Ordering;
-    use crate::ported::zle::comp_h::{CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
 
-    let mut pnl = 0i32;                                                      // c:1378
+    let mut pnl = 0i32; // c:1378
     let mut cl: i32;
     let mut ml: i32 = 0;
     let mut mc: i32;
     let mut printed = 0i32;
     let mut stop = 0i32;
     let _asked = 1i32;
-    let mut lastused = 0i32;                                                 // c:1379
+    let mut lastused = 0i32; // c:1379
 
     let mlbeg = MLBEG.load(Ordering::SeqCst);
     let mlend = MLEND.load(Ordering::SeqCst);
@@ -886,14 +979,14 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
     let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
     let invcount = crate::ported::zle::compresult::INVCOUNT.load(Ordering::SeqCst);
 
-    MFIRSTL.store(-1, Ordering::SeqCst);                                     // c:1381
+    MFIRSTL.store(-1, Ordering::SeqCst); // c:1381
 
     // c:1382-1388 — reset accumulators when ainfo changed.
     let mut last_type = LAST_TYPE.load(Ordering::SeqCst);
     let last_invcount = LAST_INVCOUNT.load(Ordering::SeqCst);
     let last_beg = LAST_BEG.load(Ordering::SeqCst);
     if mnew != 0 || last_invcount != invcount || last_beg != mlbeg || mlbeg < 0 {
-        last_type = 0;                                                       // c:1383-1387
+        last_type = 0; // c:1383-1387
         LAST_TYPE.store(0, Ordering::SeqCst);
         LAST_NLNCT.store(-1, Ordering::SeqCst);
     }
@@ -903,42 +996,55 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
-    cl = if listdat_nlines > zterm_lines - nlnct - mhasstat {                // c:1389
+    cl = if listdat_nlines > zterm_lines - nlnct - mhasstat {
+        // c:1389
         zterm_lines - nlnct - mhasstat
     } else {
         listdat_nlines
-    } - if LAST_NLNCT.load(Ordering::SeqCst) > nlnct { 1 } else { 0 };
-    LAST_NLNCT.store(nlnct, Ordering::SeqCst);                               // c:1392
-    MRESTLINES.store(zterm_lines - 1, Ordering::SeqCst);                     // c:1393
-    LAST_INVCOUNT.store(invcount, Ordering::SeqCst);                         // c:1394
+    } - if LAST_NLNCT.load(Ordering::SeqCst) > nlnct {
+        1
+    } else {
+        0
+    };
+    LAST_NLNCT.store(nlnct, Ordering::SeqCst); // c:1392
+    MRESTLINES.store(zterm_lines - 1, Ordering::SeqCst); // c:1393
+    LAST_INVCOUNT.store(invcount, Ordering::SeqCst); // c:1394
 
-    let tcd_avail = crate::ported::init::tclen.lock().unwrap()
-        [crate::ported::zsh_h::TCCLEAREOD as usize] != 0;                    // c:1398
-    let tceol_avail = crate::ported::init::tclen.lock().unwrap()
-        [crate::ported::zsh_h::TCCLEAREOL as usize] != 0;
+    let tcd_avail =
+        crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOD as usize] != 0; // c:1398
+    let tceol_avail =
+        crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0;
 
-    if cl < 2 {                                                              // c:1396
-        cl = -1;                                                             // c:1397
-        if tcd_avail {                                                       // c:1398
-            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");            // c:1399
+    if cl < 2 {
+        // c:1396
+        cl = -1; // c:1397
+        if tcd_avail {
+            // c:1398
+            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); // c:1399
         }
-    } else if mlbeg >= 0 && !tceol_avail && tcd_avail {                      // c:1400
-        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");                // c:1401
+    } else if mlbeg >= 0 && !tceol_avail && tcd_avail {
+        // c:1400
+        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); // c:1401
     }
 
     // c:1403-1679 — walk amatches groups.
     let groups: Vec<crate::ported::zle::comp_h::Cmgroup> = {
         crate::ported::zle::compcore::amatches
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-            .lock().ok().map(|g| g.clone()).unwrap_or_default()
+            .lock()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     };
 
-    let dolist = |x: i32| -> bool { x >= mlbeg && x < mlend };               // c:1048
-    let dolistcl = |x: i32| -> bool { x >= mlbeg && x < mlend + 1 };         // c:1049
-    let dolistnl = |x: i32| -> bool { x >= mlbeg && x < mlend - 1 };         // c:1050
+    let dolist = |x: i32| -> bool { x >= mlbeg && x < mlend }; // c:1048
+    let dolistcl = |x: i32| -> bool { x >= mlbeg && x < mlend + 1 }; // c:1049
+    let dolistnl = |x: i32| -> bool { x >= mlbeg && x < mlend - 1 }; // c:1050
 
-    'outer: for g in &groups {                                               // c:1404
-        if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {       // c:1404 !errflag
+    'outer: for g in &groups {
+        // c:1404
+        if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+            // c:1404 !errflag
             break;
         }
 
@@ -950,49 +1056,66 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
             .unwrap_or(0);
 
         // c:1412-1470 — emit explanation strings.
-        if !g.expls.is_empty() {                                             // c:1412
-            for e in &g.expls {                                              // c:1418
-                if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 { break 'outer; }
+        if !g.expls.is_empty() {
+            // c:1412
+            for e in &g.expls {
+                // c:1418
+                if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+                    break 'outer;
+                }
                 let valid = (e.count != 0 || e.always != 0)                  // c:1419
                     && (onlyexpl == 0
                         || (onlyexpl & if e.always > 0 { 2 } else { 1 }) != 0);
                 if valid {
-                    if pnl != 0 {                                            // c:1422
-                        if dolistnl(ml) && compprintnl(ml) != 0 {            // c:1423
+                    if pnl != 0 {
+                        // c:1422
+                        if dolistnl(ml) && compprintnl(ml) != 0 {
+                            // c:1423
                             break 'outer;
                         }
-                        pnl = 0;                                             // c:1425
-                        ml += 1;                                             // c:1426
-                        if dolistcl(ml) && cl >= 0 {                         // c:1427
+                        pnl = 0; // c:1425
+                        ml += 1; // c:1426
+                        if dolistcl(ml) && cl >= 0 {
+                            // c:1427
                             cl -= 1;
                             if cl <= 1 {
-                                cl = -1;                                     // c:1428
-                                if tcd_avail {                               // c:1429
+                                cl = -1; // c:1428
+                                if tcd_avail {
+                                    // c:1429
                                     crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
                                 }
                             }
                         }
                     }
-                    if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {     // c:1433
-                        MFIRSTL.store(ml, Ordering::SeqCst);                 // c:1434
+                    if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
+                        // c:1433
+                        MFIRSTL.store(ml, Ordering::SeqCst); // c:1434
                     }
                     let n = if e.always != 0 { -1 } else { e.count };
                     let estr = e.str.clone().unwrap_or_default();
-                    let _ = compprintfmt(                                    // c:1435
-                        &estr, n,
+                    let _ = compprintfmt(
+                        // c:1435
+                        &estr,
+                        n,
                         if dolist(ml) { 1 } else { 0 },
-                        1, ml, &mut stop,
+                        1,
+                        ml,
+                        &mut stop,
                     );
-                    if stop != 0 { break 'outer; }                           // c:1447
-                    if last_type == 0 && ml >= mlbeg {                       // c:1449
-                        last_type = 1;                                       // c:1450
+                    if stop != 0 {
+                        break 'outer;
+                    } // c:1447
+                    if last_type == 0 && ml >= mlbeg {
+                        // c:1449
+                        last_type = 1; // c:1450
                         LAST_TYPE.store(1, Ordering::SeqCst);
                         LAST_BEG.store(mlbeg, Ordering::SeqCst);
                         LAST_ML.store(ml, Ordering::SeqCst);
                         lastused = 1;
                     }
-                    ml += MLPRINTED.load(Ordering::SeqCst);                  // c:1458
-                    if dolistcl(ml) && cl >= 0 {                             // c:1459
+                    ml += MLPRINTED.load(Ordering::SeqCst); // c:1458
+                    if dolistcl(ml) && cl >= 0 {
+                        // c:1459
                         cl -= MLPRINTED.load(Ordering::SeqCst);
                         if cl <= 1 {
                             cl = -1;
@@ -1001,54 +1124,81 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
                             }
                         }
                     }
-                    pnl = 1;                                                 // c:1464
+                    pnl = 1; // c:1464
                 }
-                if mnew == 0 && ml > mlend { break 'outer; }                 // c:1467
+                if mnew == 0 && ml > mlend {
+                    break 'outer;
+                } // c:1467
             }
         }
 
         // c:1471-1529 — ylist short-form rendering.
-        if onlyexpl == 0 && mlbeg < 0 && !pp.is_empty() {                    // c:1471
-            if pnl != 0 {                                                    // c:1472
-                if dolistnl(ml) && compprintnl(ml) != 0 { break 'outer; }    // c:1473
+        if onlyexpl == 0 && mlbeg < 0 && !pp.is_empty() {
+            // c:1471
+            if pnl != 0 {
+                // c:1472
+                if dolistnl(ml) && compprintnl(ml) != 0 {
+                    break 'outer;
+                } // c:1473
                 pnl = 0;
                 ml += 1;
-                if cl >= 0 { cl -= 1; if cl <= 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } } }
+                if cl >= 0 {
+                    cl -= 1;
+                    if cl <= 1 {
+                        cl = -1;
+                        if tcd_avail {
+                            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                        }
+                    }
+                }
             }
             if mlbeg < 0 && MFIRSTL.load(Ordering::SeqCst) < 0 {
                 MFIRSTL.store(ml, Ordering::SeqCst);
             }
-            if (g.flags & CGF_LINES) != 0 {                                  // c:1485
-                for s in pp {                                                // c:1486
-                    if compzputs(s, ml) != 0 { break 'outer; }               // c:1487
-                    if compprintnl(ml) != 0 { break 'outer; }                // c:1489
+            if (g.flags & CGF_LINES) != 0 {
+                // c:1485
+                for s in pp {
+                    // c:1486
+                    if compzputs(s, ml) != 0 {
+                        break 'outer;
+                    } // c:1487
+                    if compprintnl(ml) != 0 {
+                        break 'outer;
+                    } // c:1489
                 }
             } else {
                 // c:1492-1528 — packed ylist columns.
                 // Single-pass emit; column-perfect alignment defers to
                 // the column-width helper port.
                 for s in pp {
-                    if compzputs(s, MSCROLL.load(Ordering::SeqCst)) != 0 {   // c:1505
+                    if compzputs(s, MSCROLL.load(Ordering::SeqCst)) != 0 {
+                        // c:1505
                         break 'outer;
                     }
-                    if compprintnl(ml) != 0 { break 'outer; }                // c:1518
+                    if compprintnl(ml) != 0 {
+                        break 'outer;
+                    } // c:1518
                     ml += 1;
                 }
             }
-        } else if onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {  // c:1530
+        } else if onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {
+            // c:1530
             // c:1532-1675 — cmatch grid render.
             let n_total = g.dcount;
             let _ = n_total;
             let nc = g.lins;
 
             // c:1537-1590 — CGF_HASDL whole-line displays.
-            if (g.flags & CGF_HASDL) != 0 {                                  // c:1537
-                for m in &g.matches {                                        // c:1549
+            if (g.flags & CGF_HASDL) != 0 {
+                // c:1537
+                for m in &g.matches {
+                    // c:1549
                     let displine = m.disp.is_some() && (m.flags & CMF_DISPLINE) != 0;
-                    let visible = showall != 0
-                        || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
-                    if displine && visible {                                 // c:1551
-                        if pnl != 0 {                                        // c:1552
+                    let visible = showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
+                    if displine && visible {
+                        // c:1551
+                        if pnl != 0 {
+                            // c:1552
                             if dolistnl(ml) && compprintnl(ml) != 0 {
                                 break 'outer;
                             }
@@ -1056,39 +1206,65 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
                             ml += 1;
                             if dolistcl(ml) && cl >= 0 {
                                 cl -= 1;
-                                if cl <= 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } }
+                                if cl <= 1 {
+                                    cl = -1;
+                                    if tcd_avail {
+                                        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                    }
+                                }
                             }
                         }
-                        if last_type == 0 && ml >= mlbeg {                   // c:1563
+                        if last_type == 0 && ml >= mlbeg {
+                            // c:1563
                             last_type = 2;
                             LAST_TYPE.store(2, Ordering::SeqCst);
                             LAST_BEG.store(mlbeg, Ordering::SeqCst);
                             LAST_ML.store(ml, Ordering::SeqCst);
                             lastused = 1;
                         }
-                        if MFIRSTL.load(Ordering::SeqCst) < 0 {              // c:1573
+                        if MFIRSTL.load(Ordering::SeqCst) < 0 {
+                            // c:1573
                             MFIRSTL.store(ml, Ordering::SeqCst);
                         }
-                        if dolist(ml) { printed += 1; }                      // c:1575
-                        if clprintm(Some(g), Some(m), 0, ml, 1, 0) != 0 {    // c:1577
+                        if dolist(ml) {
+                            printed += 1;
+                        } // c:1575
+                        if clprintm(Some(g), Some(m), 0, ml, 1, 0) != 0 {
+                            // c:1577
                             break 'outer;
                         }
-                        ml += MLPRINTED.load(Ordering::SeqCst);              // c:1579
+                        ml += MLPRINTED.load(Ordering::SeqCst); // c:1579
                         if dolistcl(ml) {
                             cl -= MLPRINTED.load(Ordering::SeqCst);
-                            if cl <= 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } }
+                            if cl <= 1 {
+                                cl = -1;
+                                if tcd_avail {
+                                    crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                }
+                            }
                         }
-                        pnl = 1;                                             // c:1585
+                        pnl = 1; // c:1585
                     }
-                    if mnew == 0 && ml > mlend { break 'outer; }             // c:1587
+                    if mnew == 0 && ml > mlend {
+                        break 'outer;
+                    } // c:1587
                 }
             }
-            if pnl != 0 {                                                    // c:1591
-                if dolistnl(ml) && compprintnl(ml) != 0 { break 'outer; }
-                pnl = 0; ml += 1;
+            if pnl != 0 {
+                // c:1591
+                if dolistnl(ml) && compprintnl(ml) != 0 {
+                    break 'outer;
+                }
+                pnl = 0;
+                ml += 1;
                 if dolistcl(ml) && cl >= 0 {
                     cl -= 1;
-                    if cl <= 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } }
+                    if cl <= 1 {
+                        cl = -1;
+                        if tcd_avail {
+                            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                        }
+                    }
                 }
             }
 
@@ -1098,70 +1274,101 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
             // Skip CMF_HIDE/CMF_NOLIST matches at head.
             while p_idx < g.matches.len() {
                 let m = &g.matches[p_idx];
-                if (m.flags & CMF_HIDE) != 0
-                    || (showall == 0 && (m.flags & CMF_NOLIST) != 0)
-                {
+                if (m.flags & CMF_HIDE) != 0 || (showall == 0 && (m.flags & CMF_NOLIST) != 0) {
                     p_idx += 1;
-                } else { break; }
+                } else {
+                    break;
+                }
             }
             let mut n = g.dcount;
             while n > 0 && nl_cnt > 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) == 0 {
-                if last_type == 0 && ml >= mlbeg {                           // c:1612
+                if last_type == 0 && ml >= mlbeg {
+                    // c:1612
                     last_type = 3;
                     LAST_TYPE.store(3, Ordering::SeqCst);
                     LAST_BEG.store(mlbeg, Ordering::SeqCst);
                     LAST_ML.store(ml, Ordering::SeqCst);
                     lastused = 1;
                 }
-                let mut i = g.cols;                                          // c:1622
+                let mut i = g.cols; // c:1622
                 mc = 0;
                 let mut q_idx = p_idx;
                 while n > 0 && i > 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) == 0 {
                     i -= 1;
-                    let wid = if !g.widths.is_empty() {                      // c:1626
+                    let wid = if !g.widths.is_empty() {
+                        // c:1626
                         g.widths.get(mc as usize).copied().unwrap_or(g.width)
-                    } else { g.width };
-                    let m_at_q = g.matches.get(q_idx);                       // c:1627
+                    } else {
+                        g.width
+                    };
+                    let m_at_q = g.matches.get(q_idx); // c:1627
                     match m_at_q {
-                        None => {                                            // c:1627 !m
-                            if clprintm(Some(g), None, mc, ml,               // c:1628
-                                if i == 0 { 1 } else { 0 }, wid) != 0
+                        None => {
+                            // c:1627 !m
+                            if clprintm(
+                                Some(g),
+                                None,
+                                mc,
+                                ml, // c:1628
+                                if i == 0 { 1 } else { 0 },
+                                wid,
+                            ) != 0
                             {
                                 break 'outer;
                             }
                             break;
                         }
-                        Some(m) => {                                         // c:1632
-                            if clprintm(Some(g), Some(m), mc, ml,
-                                if i == 0 { 1 } else { 0 }, wid) != 0
+                        Some(m) => {
+                            // c:1632
+                            if clprintm(Some(g), Some(m), mc, ml, if i == 0 { 1 } else { 0 }, wid)
+                                != 0
                             {
                                 break 'outer;
                             }
-                            if dolist(ml) { printed += 1; }                  // c:1635
-                            ml += MLPRINTED.load(Ordering::SeqCst);          // c:1637
+                            if dolist(ml) {
+                                printed += 1;
+                            } // c:1635
+                            ml += MLPRINTED.load(Ordering::SeqCst); // c:1637
                             if dolistcl(ml) {
                                 cl -= MLPRINTED.load(Ordering::SeqCst);
-                                if cl < 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } }
+                                if cl < 1 {
+                                    cl = -1;
+                                    if tcd_avail {
+                                        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                    }
+                                }
                             }
-                            if MFIRSTL.load(Ordering::SeqCst) < 0 {          // c:1643
+                            if MFIRSTL.load(Ordering::SeqCst) < 0 {
+                                // c:1643
                                 MFIRSTL.store(ml, Ordering::SeqCst);
                             }
-                            n -= 1;                                          // c:1646
-                            if n > 0 {                                       // c:1646
-                                let step = if (g.flags & CGF_ROWS) != 0 { 1 } else { nc as usize };
-                                for _j in 0..step {                          // c:1647
-                                    if q_idx < g.matches.len() { q_idx += 1; }
-                                    while q_idx < g.matches.len() {          // c:1649 skipnolist
+                            n -= 1; // c:1646
+                            if n > 0 {
+                                // c:1646
+                                let step = if (g.flags & CGF_ROWS) != 0 {
+                                    1
+                                } else {
+                                    nc as usize
+                                };
+                                for _j in 0..step {
+                                    // c:1647
+                                    if q_idx < g.matches.len() {
+                                        q_idx += 1;
+                                    }
+                                    while q_idx < g.matches.len() {
+                                        // c:1649 skipnolist
                                         let m2 = &g.matches[q_idx];
                                         if (m2.flags & CMF_HIDE) != 0
                                             || (showall == 0 && (m2.flags & CMF_NOLIST) != 0)
                                         {
                                             q_idx += 1;
-                                        } else { break; }
+                                        } else {
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                            mc += 1;                                         // c:1650
+                            mc += 1; // c:1650
                         }
                     }
                 }
@@ -1170,72 +1377,90 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
                     i -= 1;
                     let wid = if !g.widths.is_empty() {
                         g.widths.get(mc as usize).copied().unwrap_or(g.width)
-                    } else { g.width };
-                    if clprintm(Some(g), None, mc, ml,
-                        if i == 0 { 1 } else { 0 }, wid) != 0
-                    {
+                    } else {
+                        g.width
+                    };
+                    if clprintm(Some(g), None, mc, ml, if i == 0 { 1 } else { 0 }, wid) != 0 {
                         break 'outer;
                     }
                     mc += 1;
                 }
-                if n > 0 {                                                   // c:1658
-                    if dolistnl(ml) && compprintnl(ml) != 0 { break 'outer; }
-                    ml += 1;                                                 // c:1661
-                    if dolistcl(ml) && cl >= 0 {                             // c:1662
-                        cl -= 1;
-                        if cl <= 1 { cl = -1; if tcd_avail { crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); } }
+                if n > 0 {
+                    // c:1658
+                    if dolistnl(ml) && compprintnl(ml) != 0 {
+                        break 'outer;
                     }
-                    if nl_cnt > 0 {                                          // c:1667
-                        let step = if (g.flags & CGF_ROWS) != 0 { g.cols as usize } else { 1 };
+                    ml += 1; // c:1661
+                    if dolistcl(ml) && cl >= 0 {
+                        // c:1662
+                        cl -= 1;
+                        if cl <= 1 {
+                            cl = -1;
+                            if tcd_avail {
+                                crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                            }
+                        }
+                    }
+                    if nl_cnt > 0 {
+                        // c:1667
+                        let step = if (g.flags & CGF_ROWS) != 0 {
+                            g.cols as usize
+                        } else {
+                            1
+                        };
                         for _j in 0..step {
-                            if p_idx < g.matches.len() { p_idx += 1; }
+                            if p_idx < g.matches.len() {
+                                p_idx += 1;
+                            }
                             while p_idx < g.matches.len() {
                                 let m2 = &g.matches[p_idx];
                                 if (m2.flags & CMF_HIDE) != 0
                                     || (showall == 0 && (m2.flags & CMF_NOLIST) != 0)
                                 {
                                     p_idx += 1;
-                                } else { break; }
+                                } else {
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-                if mnew == 0 && ml > mlend { break 'outer; }                 // c:1672
+                if mnew == 0 && ml > mlend {
+                    break 'outer;
+                } // c:1672
                 nl_cnt -= 1;
             }
         }
-        if g.lcount != 0 || (showall != 0 && g.mcount != 0) {                // c:1676
-            pnl = 1;                                                         // c:1677
+        if g.lcount != 0 || (showall != 0 && g.mcount != 0) {
+            // c:1676
+            pnl = 1; // c:1677
         }
     }
     // c:1681 end:
-    MSTATPRINTED.store(0, Ordering::SeqCst);                                 // c:1682
+    MSTATPRINTED.store(0, Ordering::SeqCst); // c:1682
     crate::ported::zle::zle_refresh::LASTLISTLEN.store(0, Ordering::SeqCst); // c:1683
-    if nlnct <= 1 { MSCROLL.store(0, Ordering::SeqCst); }                    // c:1684
+    if nlnct <= 1 {
+        MSCROLL.store(0, Ordering::SeqCst);
+    } // c:1684
 
     let _ = lastused;
-    printed                                                                  // c:1727 (approx; full clearflag epilogue elided)
+    printed // c:1727 (approx; full clearflag epilogue elided)
 }
 
 /// Port of `static int lasttype` from `Src/Zle/complist.c:1369`.
-pub static LAST_TYPE: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1369
+pub static LAST_TYPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:1369
 
 /// Port of `static int lastbeg` from `Src/Zle/complist.c:1369`.
-pub static LAST_BEG: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1369
+pub static LAST_BEG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:1369
 
 /// Port of `static int lastml` from `Src/Zle/complist.c:1369`.
-pub static LAST_ML: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1369
+pub static LAST_ML: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:1369
 
 /// Port of `static int lastinvcount` from `Src/Zle/complist.c:1369`.
-pub static LAST_INVCOUNT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);                                   // c:1369
+pub static LAST_INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:1369
 
 /// Port of `static int lastnlnct` from `Src/Zle/complist.c:1370`.
-pub static LAST_NLNCT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);                                   // c:1370
+pub static LAST_NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:1370
 
 /// Port of `static int clprintm(Cmgroup g, Cmatch *mp, int mc, int ml,
 /// int lastc, int width)` from `Src/Zle/complist.c:1730`. Renders one
@@ -1277,20 +1502,24 @@ pub fn clprintm(
     ml: i32,
     lastc: i32,
     width: i32,
-) -> i32 {                                                                   // c:1730
+) -> i32 {
+    // c:1730
     use std::sync::atomic::Ordering;
 
     let mselect = MSELECT.load(Ordering::SeqCst);
     let mcols = MCOLS.load(Ordering::SeqCst);
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
-    let mlines_v = MLINES.load(Ordering::SeqCst);                            // c:1735
+    let mlines_v = MLINES.load(Ordering::SeqCst); // c:1735
 
     // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
     //                      "clprintm called with ml too large (%d/%d)",
     //                      ml, mlines)
-    crate::DPUTS2!(                                                          // c:1735
-        mselect >= 0 && ml >= mlines_v,                                       // c:1735
-        "clprintm called with ml too large ({}/{})", ml, mlines_v            // c:1736-1737
+    crate::DPUTS2!(
+        // c:1735
+        mselect >= 0 && ml >= mlines_v, // c:1735
+        "clprintm called with ml too large ({}/{})",
+        ml,
+        mlines_v // c:1736-1737
     );
 
     // c:1738-1741 — group-change detection: reset last_cap so the
@@ -1298,19 +1527,22 @@ pub fn clprintm(
     {
         let mut lg = LAST_GROUP.lock().unwrap();
         let g_name = g.and_then(|grp| grp.name.clone()).unwrap_or_default();
-        if *lg != g_name {                                                   // c:1738
-            *LAST_CAP.lock().unwrap() = String::new();                       // c:1739
-            *lg = g_name;                                                    // c:1741
+        if *lg != g_name {
+            // c:1738
+            *LAST_CAP.lock().unwrap() = String::new(); // c:1739
+            *lg = g_name; // c:1741
         }
     }
 
     // c:1743-1753 — empty cell case.
-    let m_ref = match m {                                                    // c:1743
+    let m_ref = match m {
+        // c:1743
         Some(m_real) => m_real,
         None => {
             // c:1744 — `if (dolist(ml))` — list-decision predicate.
             // Without dolist port we treat all rows as visible.
-            if let Some(grp) = g {                                           // c:1745
+            if let Some(grp) = g {
+                // c:1745
                 let _ = grp;
                 // c:1745 — zcputs(g->name, COL_SP)
                 // c:1747-1748 — pad with `width-2` spaces
@@ -1322,8 +1554,8 @@ pub fn clprintm(
                 let _ = crate::ported::utils::write_loop(out_fd, pad_str.as_bytes());
                 // c:1749 — zcoff() reset
             }
-            MLPRINTED.store(0, Ordering::SeqCst);                            // c:1751
-            return 0;                                                        // c:1752
+            MLPRINTED.store(0, Ordering::SeqCst); // c:1751
+            return 0; // c:1752
         }
     };
 
@@ -1337,76 +1569,87 @@ pub fn clprintm(
     MLASTM.store(m_ref.gnum, Ordering::SeqCst);
 
     // c:1760 — `if (m->disp && (m->flags & CMF_DISPLINE))`
-    let displine = m_ref.disp.is_some()
-        && (m_ref.flags & crate::ported::zle::comp_h::CMF_DISPLINE) != 0;
-    if displine {                                                            // c:1760
+    let displine =
+        m_ref.disp.is_some() && (m_ref.flags & crate::ported::zle::comp_h::CMF_DISPLINE) != 0;
+    if displine {
+        // c:1760
         // c:1761-1777 — write mtab cells for whole-line display.
-        if mselect >= 0 {                                                    // c:1761
-            let mm = mcols * ml;                                             // c:1762
+        if mselect >= 0 {
+            // c:1761
+            let mm = mcols * ml; // c:1762
             let mut mtab_guard = MTAB.lock().unwrap();
             let mut mgtab_guard = MGTAB.lock().unwrap();
-            for i in 0..mcols {                                              // c:1765 / c:1771
+            for i in 0..mcols {
+                // c:1765 / c:1771
                 let idx = (mm + i) as usize;
                 if idx < mtab_guard.len() {
-                    mtab_guard[idx] = Some(m_ref.clone());                   // c:1767/1773
+                    mtab_guard[idx] = Some(m_ref.clone()); // c:1767/1773
                     if let Some(grp) = g {
-                        mgtab_guard[idx] = Some(grp.clone());                // c:1768/1774
+                        mgtab_guard[idx] = Some(grp.clone()); // c:1768/1774
                     }
                 }
             }
         }
         // c:1782-1788 — selected? capture current mline/mcol.
-        if m_ref.gnum == mselect {                                           // c:1782
+        if m_ref.gnum == mselect {
+            // c:1782
             let mm = mcols * ml;
-            MLINE.store(ml, Ordering::SeqCst);                               // c:1785
-            MCOL.store(0, Ordering::SeqCst);                                 // c:1786
-            MMTABP.store(mm.max(0) as usize, Ordering::SeqCst);              // c:1787
-            MGTABP.store(mm.max(0) as usize, Ordering::SeqCst);              // c:1788
+            MLINE.store(ml, Ordering::SeqCst); // c:1785
+            MCOL.store(0, Ordering::SeqCst); // c:1786
+            MMTABP.store(mm.max(0) as usize, Ordering::SeqCst); // c:1787
+            MGTABP.store(mm.max(0) as usize, Ordering::SeqCst); // c:1788
         }
         // c:1789-1797 — color selection. Stubbed to no-op output;
         // the live zcputs / putmatchcol / putfilecol pipeline lands
         // once those helpers port.
         // c:1801 — compprintfmt(m->disp, 0, 1, 0, ml, &stop)
         let disp = m_ref.disp.as_deref().unwrap_or("");
-        let _ = compprintfmt(disp, 0, 1, 0, ml, &mut 0);                     // c:1801
+        let _ = compprintfmt(disp, 0, 1, 0, ml, &mut 0); // c:1801
     } else {
         // c:1806-1898 — normal grid-cell display.
-        let mx = if !g.is_some_and(|grp| grp.widths.is_empty()) {            // c:1809-1813
+        let mx = if !g.is_some_and(|grp| grp.widths.is_empty()) {
+            // c:1809-1813
             // c:1812-1813 — sum widths[0..mc]
-            g.map(|grp| grp.widths.iter().take(mc as usize).sum::<i32>()).unwrap_or(0)
+            g.map(|grp| grp.widths.iter().take(mc as usize).sum::<i32>())
+                .unwrap_or(0)
         } else {
             // c:1815 — `mx = mc * g->width;`
             mc * g.map(|grp| grp.width).unwrap_or(0)
         };
 
         // c:1817-1832 — write mtab cells for cell width.
-        if mselect >= 0 {                                                    // c:1817
+        if mselect >= 0 {
+            // c:1817
             let mm = mcols * ml;
             let mut mtab_guard = MTAB.lock().unwrap();
             let mut mgtab_guard = MGTAB.lock().unwrap();
             let n = if width != 0 { width } else { mcols };
-            for i in 0..n {                                                  // c:1821 / c:1827
+            for i in 0..n {
+                // c:1821 / c:1827
                 let idx = (mx + mm + i) as usize;
                 if idx < mtab_guard.len() {
-                    mtab_guard[idx] = Some(m_ref.clone());                   // c:1823/1829
+                    mtab_guard[idx] = Some(m_ref.clone()); // c:1823/1829
                     if let Some(grp) = g {
-                        mgtab_guard[idx] = Some(grp.clone());                // c:1824/1830
+                        mgtab_guard[idx] = Some(grp.clone()); // c:1824/1830
                     }
                 }
             }
         }
 
         // c:1842-1850 — selected? capture coords.
-        if m_ref.gnum == mselect {                                           // c:1842
+        if m_ref.gnum == mselect {
+            // c:1842
             let mm = mcols * ml;
-            MCOL.store(mx, Ordering::SeqCst);                                // c:1846
-            MLINE.store(ml, Ordering::SeqCst);                               // c:1847
-            MMTABP.store((mx + mm).max(0) as usize, Ordering::SeqCst);       // c:1848
-            MGTABP.store((mx + mm).max(0) as usize, Ordering::SeqCst);       // c:1849
+            MCOL.store(mx, Ordering::SeqCst); // c:1846
+            MLINE.store(ml, Ordering::SeqCst); // c:1847
+            MMTABP.store((mx + mm).max(0) as usize, Ordering::SeqCst); // c:1848
+            MGTABP.store((mx + mm).max(0) as usize, Ordering::SeqCst); // c:1849
         }
 
         // c:1872 — `ret = clnicezputs(subcols, m->disp ? m->disp : m->str, ml);`
-        let display = m_ref.disp.as_deref()
+        let display = m_ref
+            .disp
+            .as_deref()
             .unwrap_or_else(|| m_ref.str.as_deref().unwrap_or(""));
         // Emit raw — full clnicezputs (escape-aware writer) deferred;
         // the cell still receives the visible text.
@@ -1416,40 +1659,49 @@ pub fn clprintm(
         let _ = crate::ported::utils::write_loop(out_fd, display.as_bytes());
 
         let len_str = display.chars().count() as i32;
-        let lines = if len_str > 0 { (len_str - 1) / zterm_columns } else { 0 };
-        MLPRINTED.store(lines, Ordering::SeqCst);                            // c:1879
+        let lines = if len_str > 0 {
+            (len_str - 1) / zterm_columns
+        } else {
+            0
+        };
+        MLPRINTED.store(lines, Ordering::SeqCst); // c:1879
 
         // c:1881-1888 — emit modec marker for CGF_FILES groups.
-        let cgf_files = g.map(|grp| (grp.flags & crate::ported::zle::comp_h::CGF_FILES) != 0)
+        let cgf_files = g
+            .map(|grp| (grp.flags & crate::ported::zle::comp_h::CGF_FILES) != 0)
             .unwrap_or(false);
         let modec = m_ref.modec as u8;
         let mut emitted_marker = 0i32;
-        if cgf_files && modec != 0 {                                         // c:1882
-            let _ = crate::ported::utils::write_loop(out_fd, &[modec]);      // c:1887
-            emitted_marker = 1;                                              // c:1888 len++
+        if cgf_files && modec != 0 {
+            // c:1882
+            let _ = crate::ported::utils::write_loop(out_fd, &[modec]); // c:1887
+            emitted_marker = 1; // c:1888 len++
         }
 
         // c:1890-1897 — pad to width.
         let total_len = len_str + emitted_marker;
-        let pad = (width - total_len - 2).max(0) as usize;                   // c:1890
-        if pad > 0 {                                                         // c:1890
+        let pad = (width - total_len - 2).max(0) as usize; // c:1890
+        if pad > 0 {
+            // c:1890
             let pad_str = " ".repeat(pad);
-            let _ = crate::ported::utils::write_loop(out_fd, pad_str.as_bytes());  // c:1896
+            let _ = crate::ported::utils::write_loop(out_fd, pad_str.as_bytes());
+            // c:1896
         }
     }
     let _ = lastc;
-    0                                                                        // c:1988 ret
+    0 // c:1988 ret
 }
 
 /// Port of `static Cmgroup last_group` from `Src/Zle/complist.c:1729`.
 /// The group whose color cap is currently active; reset clears
 /// `last_cap` so the next zcputs re-emits the prefix.
 pub static LAST_GROUP: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));       // c:1729
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new())); // c:1729
 
 /// Port of `singlecalc(int *cp, int l, int *lcp)` from Src/Zle/complist.c:1909.
 #[allow(unused_variables)]
-pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:1909
+pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {
+    // c:1909
     // C body c:1911-1933 — computes scroll offset for single-column
     //                      mode. Without mtab/mline substrate: 0.
     0
@@ -1501,7 +1753,8 @@ pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:19
 ///     return 0;
 /// }
 /// ```
-pub fn singledraw() -> i32 {                                                 // c:1934
+pub fn singledraw() -> i32 {
+    // c:1934
     use std::sync::atomic::Ordering;
 
     let mline = MLINE.load(Ordering::SeqCst);
@@ -1512,29 +1765,43 @@ pub fn singledraw() -> i32 {                                                 // 
     let molbeg = MOLBEG.load(Ordering::SeqCst);
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
 
-    let t1 = mline - mlbeg;                                                  // c:1939
-    let t2 = moline - molbeg;                                                // c:1940
+    let t1 = mline - mlbeg; // c:1939
+    let t2 = moline - molbeg; // c:1940
 
     // c:1942-1948 — pick top→bottom ordering for the two paints.
     let (mc1, ml1, md1, mc2, ml2, md2);
-    if t2 < t1 {                                                             // c:1942
-        mc1 = mocol; ml1 = moline; md1 = t2;                                 // c:1943
-        mc2 = mcol;  ml2 = mline;  md2 = t1;                                 // c:1944
-    } else {                                                                 // c:1945
-        mc1 = mcol;  ml1 = mline;  md1 = t1;                                 // c:1946
-        mc2 = mocol; ml2 = moline; md2 = t2;                                 // c:1947
+    if t2 < t1 {
+        // c:1942
+        mc1 = mocol;
+        ml1 = moline;
+        md1 = t2; // c:1943
+        mc2 = mcol;
+        ml2 = mline;
+        md2 = t1; // c:1944
+    } else {
+        // c:1945
+        mc1 = mcol;
+        ml1 = mline;
+        md1 = t1; // c:1946
+        mc2 = mocol;
+        ml2 = moline;
+        md2 = t2; // c:1947
     }
 
     // c:1949-1950 — singlecalc returns the mcc index after clamping
     // to the actual match-width at that row. Stub: identity.
-    let mcc1 = mc1; let _lc1 = 0i32;
-    let mcc2 = mc2; let _lc2 = 0i32;
+    let mcc1 = mc1;
+    let _lc1 = 0i32;
+    let mcc2 = mc2;
+    let _lc2 = 0i32;
 
-    if md1 != 0 {                                                            // c:1952
-        crate::ported::zle::zle_refresh::tc_downcurs(md1 as usize);          // c:1953
+    if md1 != 0 {
+        // c:1952
+        crate::ported::zle::zle_refresh::tc_downcurs(md1 as usize); // c:1953
     }
-    if mc1 != 0 {                                                            // c:1954
-        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc1);          // c:1955
+    if mc1 != 0 {
+        // c:1954
+        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc1); // c:1955
     }
 
     // c:1957-1959 — `g = mgtab[ml1 * zterm_columns + mc1];
@@ -1542,14 +1809,22 @@ pub fn singledraw() -> i32 {                                                 // 
     let idx1 = (ml1 * zterm_columns + mc1) as usize;
     let g_at1 = MGTAB.lock().unwrap().get(idx1).cloned().flatten();
     let m_at1 = MTAB.lock().unwrap().get(idx1).cloned().flatten();
-    let width_at1 = g_at1.as_ref()
-        .map(|g| if g.widths.is_empty() { g.width } else { g.widths.get(mcc1 as usize).copied().unwrap_or(g.width) })
+    let width_at1 = g_at1
+        .as_ref()
+        .map(|g| {
+            if g.widths.is_empty() {
+                g.width
+            } else {
+                g.widths.get(mcc1 as usize).copied().unwrap_or(g.width)
+            }
+        })
         .unwrap_or(0);
-    clprintm(g_at1.as_ref(), m_at1.as_ref(), mcc1, ml1, 0, width_at1);        // c:1958
+    clprintm(g_at1.as_ref(), m_at1.as_ref(), mcc1, ml1, 0, width_at1); // c:1958
 
     let mlprinted = MLPRINTED.load(Ordering::SeqCst);
-    if mlprinted != 0 {                                                      // c:1960
-        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted);       // c:1961
+    if mlprinted != 0 {
+        // c:1960
+        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
     use std::sync::atomic::Ordering as O;
@@ -1558,30 +1833,39 @@ pub fn singledraw() -> i32 {                                                 // 
     let _ = crate::ported::utils::write_loop(out_fd, b"\r");
 
     // c:1964-1965 — relative down-move to second cell.
-    if md2 != md1 {                                                          // c:1964
-        crate::ported::zle::zle_refresh::tc_downcurs((md2 - md1) as usize);  // c:1965
+    if md2 != md1 {
+        // c:1964
+        crate::ported::zle::zle_refresh::tc_downcurs((md2 - md1) as usize); // c:1965
     }
-    if mc2 != 0 {                                                            // c:1966
-        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc2);          // c:1967
+    if mc2 != 0 {
+        // c:1966
+        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc2); // c:1967
     }
 
     let idx2 = (ml2 * zterm_columns + mc2) as usize;
     let g_at2 = MGTAB.lock().unwrap().get(idx2).cloned().flatten();
     let m_at2 = MTAB.lock().unwrap().get(idx2).cloned().flatten();
-    let width_at2 = g_at2.as_ref()
-        .map(|g| if g.widths.is_empty() { g.width } else { g.widths.get(mcc2 as usize).copied().unwrap_or(g.width) })
+    let width_at2 = g_at2
+        .as_ref()
+        .map(|g| {
+            if g.widths.is_empty() {
+                g.width
+            } else {
+                g.widths.get(mcc2 as usize).copied().unwrap_or(g.width)
+            }
+        })
         .unwrap_or(0);
-    clprintm(g_at2.as_ref(), m_at2.as_ref(), mcc2, ml2, 0, width_at2);        // c:1970
+    clprintm(g_at2.as_ref(), m_at2.as_ref(), mcc2, ml2, 0, width_at2); // c:1970
 
-    if mlprinted != 0 {                                                      // c:1972
-        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted);       // c:1973
+    if mlprinted != 0 {
+        // c:1972
+        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1973
     }
-    let _ = crate::ported::utils::write_loop(out_fd, b"\r");                 // c:1974
+    let _ = crate::ported::utils::write_loop(out_fd, b"\r"); // c:1974
 
     let _ = (mcc1, mcc2);
-    0                                                                        // c:1986
+    0 // c:1986
 }
-
 
 /// Port of `int complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from
 /// `Src/Zle/complist.c:1990`.
@@ -1625,7 +1909,8 @@ pub fn singledraw() -> i32 {                                                 // 
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn complistmatches() -> i32 {                                            // c:1990
+pub fn complistmatches() -> i32 {
+    // c:1990
     use std::sync::atomic::Ordering;
 
     // c:1995 — `Cmgroup oamatches = amatches;` — saved for restore
@@ -1636,8 +1921,9 @@ pub fn complistmatches() -> i32 {                                            // 
     // exposed at this entry, the global is already populated.
 
     // c:2004-2005 — `if (noselect > 0) noselect = 0;`
-    if NOSELECT.load(Ordering::SeqCst) > 0 {                                 // c:2004
-        NOSELECT.store(0, Ordering::SeqCst);                                 // c:2005
+    if NOSELECT.load(Ordering::SeqCst) > 0 {
+        // c:2004
+        NOSELECT.store(0, Ordering::SeqCst); // c:2005
     }
 
     // c:2007-2012 — early-exit: list too tall or errflag set.
@@ -1655,8 +1941,8 @@ pub fn complistmatches() -> i32 {                                            // 
         || nlnct >= zterm_lines
         || errflag_v != 0
     {
-        crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);  // c:2009
-        NOSELECT.store(1, Ordering::SeqCst);                                 // c:2011
+        crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst); // c:2009
+        NOSELECT.store(1, Ordering::SeqCst); // c:2011
         return 1;
     }
 
@@ -1664,9 +1950,7 @@ pub fn complistmatches() -> i32 {                                            // 
     crate::ported::mem::pushheap();
 
     // c:2023-2024 — save EXTENDEDGLOB; force it on for the listing pass.
-    let extendedglob = crate::ported::zsh_h::isset(
-        crate::ported::zsh_h::EXTENDEDGLOB,
-    );
+    let extendedglob = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
     // c:2024 — `opts[EXTENDEDGLOB] = 1;` — option mutation not yet
     // exposed as a free fn; the typed `setopt(EXTENDEDGLOB)` path
     // would set the bit. Carry-through.
@@ -1682,14 +1966,13 @@ pub fn complistmatches() -> i32 {                                            // 
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
-    let mnew = (calc_changed != 0 || mlastcols != zterm_columns
-                || mlastlines != listdat_nlines) && mselect >= 0;
+    let mnew = (calc_changed != 0 || mlastcols != zterm_columns || mlastlines != listdat_nlines)
+        && mselect >= 0;
     MNEW.store(if mnew { 1 } else { 0 }, Ordering::SeqCst);
 
     // c:2031-2040 — empty list / no-zle bail-out.
     let usezle = crate::ported::zsh_h::isset(crate::ported::zsh_h::USEZLE);
-    if listdat_nlines == 0
-        || (mselect >= 0 && !(usezle /* && !termflags && complastprompt valid */))
+    if listdat_nlines == 0 || (mselect >= 0 && !(usezle/* && !termflags && complastprompt valid */))
     {
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
         crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::SeqCst);
@@ -1715,24 +1998,31 @@ pub fn complistmatches() -> i32 {                                            // 
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
         crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::SeqCst);
         crate::ported::zle::zle_refresh::LASTLISTLEN.store(0, Ordering::SeqCst);
-        if listprompt.is_some() {                                            // c:2060
+        if listprompt.is_some() {
+            // c:2060
             // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
-            crate::ported::zle::zle_refresh::CLEARFLAG.store(
-                if usezle { 1 } else { 0 }, Ordering::SeqCst);
-            MSCROLL.store(1, Ordering::SeqCst);                              // c:2062
-        } else {                                                             // c:2063
-            crate::ported::zle::zle_refresh::CLEARFLAG.store(1, Ordering::SeqCst);  // c:2064
-            // c:2065 — minfo.asked = listdat.nlines + nlnct <= zterm_lines
+            crate::ported::zle::zle_refresh::CLEARFLAG
+                .store(if usezle { 1 } else { 0 }, Ordering::SeqCst);
+            MSCROLL.store(1, Ordering::SeqCst); // c:2062
+        } else {
+            // c:2063
+            crate::ported::zle::zle_refresh::CLEARFLAG.store(1, Ordering::SeqCst); // c:2064
+                                                                                   // c:2065 — minfo.asked = listdat.nlines + nlnct <= zterm_lines
             if let Some(m) = crate::ported::zle::compcore::MINFO.get() {
                 if let Ok(mut g) = m.lock() {
-                    g.asked = if listdat_nlines + nlnct <= zterm_lines { 1 } else { 0 };
+                    g.asked = if listdat_nlines + nlnct <= zterm_lines {
+                        1
+                    } else {
+                        0
+                    };
                 }
             }
         }
     } else {
         // c:2070-2075 — asklist() prompts "show all N? (y/n)"
         let r = crate::ported::zle::compresult::asklist();
-        if r != 0 {                                                          // c:2070
+        if r != 0 {
+            // c:2070
             crate::ported::mem::popheap();
             NOSELECT.store(1, Ordering::SeqCst);
             return 1;
@@ -1741,35 +2031,39 @@ pub fn complistmatches() -> i32 {                                            // 
 
     // c:2077-2082 — mlend window calculation.
     let mlbeg = MLBEG.load(Ordering::SeqCst);
-    if mlbeg >= 0 {                                                          // c:2077
+    if mlbeg >= 0 {
+        // c:2077
         let mhasstat = MHASSTAT.load(Ordering::SeqCst);
-        let mut new_mlend = mlbeg + zterm_lines - nlnct - mhasstat;          // c:2078
+        let mut new_mlend = mlbeg + zterm_lines - nlnct - mhasstat; // c:2078
         let mline = MLINE.load(Ordering::SeqCst);
         let mut adjusted_mlbeg = mlbeg;
-        while mline >= new_mlend {                                           // c:2079
-            adjusted_mlbeg += 1;                                             // c:2080 mlbeg++
+        while mline >= new_mlend {
+            // c:2079
+            adjusted_mlbeg += 1; // c:2080 mlbeg++
             new_mlend += 1;
         }
         MLBEG.store(adjusted_mlbeg, Ordering::SeqCst);
         MLEND.store(new_mlend, Ordering::SeqCst);
-    } else {                                                                 // c:2081
-        MLEND.store(9_999_999, Ordering::SeqCst);                            // c:2082
+    } else {
+        // c:2081
+        MLEND.store(9_999_999, Ordering::SeqCst); // c:2082
     }
 
     // c:2084-2102 — `if (mnew)` realloc mtab/mgtab.
-    if mnew {                                                                // c:2084
-        MTAB_BEEN_REALLOCATED.store(1, Ordering::SeqCst);                    // c:2087
-        let i = (zterm_columns * listdat_nlines) as usize;                   // c:2089
-        // c:2090-2092 — free(mtab); mtab = zalloc(i); memset(mtab, 0, i);
-        *MTAB.lock().unwrap() = vec![None; i];                               // c:2091-2092
-        // c:2093-2098 — same for mgtab
-        *MGTAB.lock().unwrap() = vec![None; i];                              // c:2094-2098
-        MGTABSIZE.store(i as i32, Ordering::SeqCst);                         // c:2096
-        MLASTCOLS.store(zterm_columns, Ordering::SeqCst);                    // c:2099 mlastcols = mcols
+    if mnew {
+        // c:2084
+        MTAB_BEEN_REALLOCATED.store(1, Ordering::SeqCst); // c:2087
+        let i = (zterm_columns * listdat_nlines) as usize; // c:2089
+                                                           // c:2090-2092 — free(mtab); mtab = zalloc(i); memset(mtab, 0, i);
+        *MTAB.lock().unwrap() = vec![None; i]; // c:2091-2092
+                                               // c:2093-2098 — same for mgtab
+        *MGTAB.lock().unwrap() = vec![None; i]; // c:2094-2098
+        MGTABSIZE.store(i as i32, Ordering::SeqCst); // c:2096
+        MLASTCOLS.store(zterm_columns, Ordering::SeqCst); // c:2099 mlastcols = mcols
         MCOLS.store(zterm_columns, Ordering::SeqCst);
-        MLASTLINES.store(listdat_nlines, Ordering::SeqCst);                  // c:2100 mlastlines = mlines
+        MLASTLINES.store(listdat_nlines, Ordering::SeqCst); // c:2100 mlastlines = mlines
         MLINES.store(listdat_nlines, Ordering::SeqCst);
-        MMTABP.store(0, Ordering::SeqCst);                                   // c:2101
+        MMTABP.store(0, Ordering::SeqCst); // c:2101
     }
 
     // c:2103-2104 — last_cap = zhalloc(max_caplen + 1); *last_cap = '\0';
@@ -1782,41 +2076,41 @@ pub fn complistmatches() -> i32 {                                            // 
     let inselect = INSELECT.load(Ordering::SeqCst);
     let mlbeg_cur = MLBEG.load(Ordering::SeqCst);
     let molbeg = MOLBEG.load(Ordering::SeqCst);
-    let clearflag = crate::ported::zle::zle_refresh::CLEARFLAG
-        .load(Ordering::SeqCst);
+    let clearflag = crate::ported::zle::zle_refresh::CLEARFLAG.load(Ordering::SeqCst);
     if !mnew && inselect != 0 && cur_onlnct == nlnct                         // c:2106
         && mlbeg_cur >= 0 && mlbeg_cur == molbeg
     {
-        if NOSELECT.load(Ordering::SeqCst) == 0 {                            // c:2108
-            singledraw();                                                    // c:2109
+        if NOSELECT.load(Ordering::SeqCst) == 0 {
+            // c:2108
+            singledraw(); // c:2109
         }
     } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0           // c:2110
         || clearflag == 0
     {
-        NOSELECT.store(1, Ordering::SeqCst);                                 // c:2111
+        NOSELECT.store(1, Ordering::SeqCst); // c:2111
     }
 
     // c:2113-2116 — capture frame state for next call's diff.
-    ONLNCT.store(nlnct, Ordering::SeqCst);                                   // c:2113
-    MOLBEG.store(MLBEG.load(Ordering::SeqCst), Ordering::SeqCst);            // c:2114
-    MOCOL.store(MCOL.load(Ordering::SeqCst), Ordering::SeqCst);              // c:2115
-    MOLINE.store(MLINE.load(Ordering::SeqCst), Ordering::SeqCst);            // c:2116
+    ONLNCT.store(nlnct, Ordering::SeqCst); // c:2113
+    MOLBEG.store(MLBEG.load(Ordering::SeqCst), Ordering::SeqCst); // c:2114
+    MOCOL.store(MCOL.load(Ordering::SeqCst), Ordering::SeqCst); // c:2115
+    MOLINE.store(MLINE.load(Ordering::SeqCst), Ordering::SeqCst); // c:2116
 
     // c:2118-2120 — `amatches = oamatches; popheap();`
     crate::ported::mem::popheap();
-    let _ = extendedglob;                                                    // c:2121 opts[EXTENDEDGLOB] = extendedglob
+    let _ = extendedglob; // c:2121 opts[EXTENDEDGLOB] = extendedglob
 
-    NOSELECT.load(Ordering::SeqCst)                                          // c:2123 return noselect
+    NOSELECT.load(Ordering::SeqCst) // c:2123 return noselect
 }
 
 /// Port of `static int onlnct` from `Src/Zle/complist.c:1992`. Saved
 /// `nlnct` from the previous `complistmatches` call so the incremental
 /// `singledraw` path can detect frame-boundary equality.
-pub static ONLNCT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);                                   // c:1992
+pub static ONLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:1992
 
 /// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
-pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
+pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {
+    // c:2127
     // C body c:2129-2170 — clamps mcol to nearest valid column when
     //                      moving across rows of variable-width matches.
     //                      Without the mtab[][] matrix we just clamp
@@ -1830,31 +2124,32 @@ pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c
 /// previous state.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct menustack {                                                       // c:2159
+pub struct menustack {
+    // c:2159
     /// Saved zleline contents.
-    pub line: String,                                                        // c:2161
+    pub line: String, // c:2161
     /// Brace-info head + tail.
-    pub brbeg: Vec<u8>,                                                      // c:2162 (Brinfo)
-    pub brend: Vec<u8>,                                                      // c:2163
+    pub brbeg: Vec<u8>, // c:2162 (Brinfo)
+    pub brend: Vec<u8>, // c:2163
     /// Brace-info counts.
-    pub nbrbeg: i32,                                                         // c:2164
-    pub nbrend: i32,                                                         // c:2164
+    pub nbrbeg: i32, // c:2164
+    pub nbrend: i32,    // c:2164
     /// Cursor + acceptance + match counts + menu line + line begin
     /// + nolist flag.
-    pub cs: i32,                                                             // c:2165
-    pub acc: i32,                                                            // c:2165
-    pub nmatches: i32,                                                       // c:2165
-    pub mline: i32,                                                          // c:2165
-    pub mlbeg: i32,                                                          // c:2165
-    pub nolist: i32,                                                         // c:2165
+    pub cs: i32, // c:2165
+    pub acc: i32,       // c:2165
+    pub nmatches: i32,  // c:2165
+    pub mline: i32,     // c:2165
+    pub mlbeg: i32,     // c:2165
+    pub nolist: i32,    // c:2165
     /// Original line state before menu entry.
-    pub origline: String,                                                    // c:2172
-    pub origcs: i32,                                                         // c:2173
-    pub origll: i32,                                                         // c:2173
+    pub origline: String, // c:2172
+    pub origcs: i32,    // c:2173
+    pub origll: i32,    // c:2173
     /// Interactive-mode status line.
-    pub status: String,                                                      // c:2180
+    pub status: String, // c:2180
     /// Mode discriminator (interactive vs search).
-    pub mode: i32,                                                           // c:2181
+    pub mode: i32, // c:2181
 }
 
 /// Port of `struct menusearch` from `Src/Zle/complist.c:2186`. Per-step
@@ -1862,31 +2157,32 @@ pub struct menustack {                                                       // 
 /// backspace can undo one step.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-pub struct menusearch {                                                      // c:2186
+pub struct menusearch {
+    // c:2186
     /// The search string accumulator.
-    pub str: String,                                                         // c:2188
+    pub str: String, // c:2188
     /// Saved line + column.
-    pub line: i32,                                                           // c:2189
-    pub col: i32,                                                            // c:2190
+    pub line: i32, // c:2189
+    pub col: i32, // c:2190
     /// Direction (1 = forward, 0 = backward).
-    pub back: i32,                                                           // c:2191
+    pub back: i32, // c:2191
     /// Search-state discriminator (`MS_OK`/`MS_FAILED`/`MS_WRAPPED`).
-    pub state: i32,                                                          // c:2192
+    pub state: i32, // c:2192
     /// Cursor pointer into the current Cmatch row (index into mtab).
-    pub ptr: usize,                                                          // c:2193
+    pub ptr: usize, // c:2193
 }
 
 /// Port of `MS_OK` from `Src/Zle/complist.c:2196`. Search step landed
 /// on a match.
-pub const MS_OK:      i32 = 0;                                               // c:2196
+pub const MS_OK: i32 = 0; // c:2196
 /// Port of `MS_FAILED` from `complist.c:2197`. Search step found no match.
-pub const MS_FAILED:  i32 = 1;                                               // c:2197
+pub const MS_FAILED: i32 = 1; // c:2197
 /// Port of `MS_WRAPPED` from `complist.c:2198`. Search wrapped past edge.
-pub const MS_WRAPPED: i32 = 2;                                               // c:2198
+pub const MS_WRAPPED: i32 = 2; // c:2198
 
 /// Port of `MAX_STATUS` from `Src/Zle/complist.c:2200`. Max bytes the
 /// menu-status line shows.
-pub const MAX_STATUS: usize = 128;                                           // c:2200
+pub const MAX_STATUS: usize = 128; // c:2200
 
 /// Port of `setmstatus(char *status, char *sline, int sll, int scs, int *csp, int *llp, int *lenp)` from Src/Zle/complist.c:2203.
 /// WARNING: param names don't match C — Rust=(_status, _sline, _scs, _np, _nl, _nc) vs C=(status, sline, sll, scs, csp, llp, lenp)
@@ -1932,7 +2228,8 @@ pub const MAX_STATUS: usize = 128;                                           // 
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(status, sline, sll, scs, csp, llp, lenp) vs C=(status, sline, sll, scs, csp, llp, lenp)
-pub fn setmstatus(                                                           // c:2203
+pub fn setmstatus(
+    // c:2203
     status: &mut String,
     sline: &str,
     sll: i32,
@@ -1943,7 +2240,7 @@ pub fn setmstatus(                                                           // 
 ) -> Option<String> {
     use std::sync::atomic::Ordering;
 
-    let mut ret: Option<String> = None;                                      // c:2206
+    let mut ret: Option<String> = None; // c:2206
 
     let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
     let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
@@ -1953,16 +2250,21 @@ pub fn setmstatus(                                                           // 
     let mut p: String;
     let mut s: String;
 
-    if let Some(csp_ref) = csp {                                             // c:2211
-        *csp_ref = zlemetacs;                                                // c:2212
-        if let Some(llp_ref) = llp { *llp_ref = zlemetall; }                 // c:2213
-        if let Some(lenp_ref) = lenp { *lenp_ref = lastend - wb; }           // c:2214
+    if let Some(csp_ref) = csp {
+        // c:2211
+        *csp_ref = zlemetacs; // c:2212
+        if let Some(llp_ref) = llp {
+            *llp_ref = zlemetall;
+        } // c:2213
+        if let Some(lenp_ref) = lenp {
+            *lenp_ref = lastend - wb;
+        } // c:2214
 
         let zml = crate::ported::zle::compcore::ZLEMETALINE
             .get()
             .and_then(|m| m.lock().ok().map(|g| g.clone()))
             .unwrap_or_default();
-        ret = Some(zml.clone());                                             // c:2216 dupstring(zlemetaline)
+        ret = Some(zml.clone()); // c:2216 dupstring(zlemetaline)
 
         // c:2218-2220 — p = zlemetaline[wb..zlemetacs]
         let wb_u = wb.max(0) as usize;
@@ -1970,74 +2272,85 @@ pub fn setmstatus(                                                           // 
         p = zml.get(wb_u..cs_u).unwrap_or("").to_string();
 
         // c:2221-2227 — s = zlemetaline[zlemetacs..lastend] or empty
-        if lastend < zlemetacs {                                             // c:2221
-            s = String::new();                                               // c:2222
+        if lastend < zlemetacs {
+            // c:2221
+            s = String::new(); // c:2222
         } else {
             let le_u = lastend.max(0) as usize;
-            s = zml.get(cs_u..le_u).unwrap_or("").to_string();               // c:2224-2226
+            s = zml.get(cs_u..le_u).unwrap_or("").to_string(); // c:2224-2226
         }
 
         // c:2228-2232 — replace line with sline.
-        crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst);  // c:2228
-        crate::ported::zle::zle_utils::foredel(zlemetall, 0);                // c:2229 CUT_RAW
-        crate::ported::zle::zle_utils::spaceinline(sll);                     // c:2230
+        crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst); // c:2228
+        crate::ported::zle::zle_utils::foredel(zlemetall, 0); // c:2229 CUT_RAW
+        crate::ported::zle::zle_utils::spaceinline(sll); // c:2230
         if let Some(zml_mutex) = crate::ported::zle::compcore::ZLEMETALINE.get() {
             if let Ok(mut g) = zml_mutex.lock() {
                 if g.len() >= sll as usize {
                     let head: String = sline.chars().take(sll as usize).collect();
-                    g.replace_range(..sll as usize, &head);                  // c:2231 memcpy
+                    g.replace_range(..sll as usize, &head); // c:2231 memcpy
                 } else {
                     *g = sline.chars().take(sll as usize).collect();
                 }
             }
         }
-        crate::ported::zle::compcore::ZLEMETACS.store(scs, Ordering::SeqCst);  // c:2232
-    } else {                                                                 // c:2233
+        crate::ported::zle::compcore::ZLEMETACS.store(scs, Ordering::SeqCst); // c:2232
+    } else {
+        // c:2233
         // c:2234-2235 — p = complastprefix; s = complastsuffix
         p = crate::ported::zle::complete::COMPLASTPREFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock().unwrap().clone();
+            .lock()
+            .unwrap()
+            .clone();
         s = crate::ported::zle::complete::COMPLASTSUFFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock().unwrap().clone();
+            .lock()
+            .unwrap()
+            .clone();
     }
 
-    let pl = p.len() as i32;                                                 // c:2237
-    let sl = s.len() as i32;                                                 // c:2238
+    let pl = p.len() as i32; // c:2237
+    let sl = s.len() as i32; // c:2238
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
-    let max = if zterm_columns < MAX_STATUS as i32 {                         // c:2239
+    let max = if zterm_columns < MAX_STATUS as i32 {
+        // c:2239
         zterm_columns
     } else {
         MAX_STATUS as i32
     } - 14;
 
-    if max > 12 {                                                            // c:2241
-        let h = (max - 2) >> 1;                                              // c:2242
+    if max > 12 {
+        // c:2241
+        let h = (max - 2) >> 1; // c:2242
 
         status.clear();
-        status.push_str("interactive: ");                                    // c:2244
-        if pl > h - 3 {                                                      // c:2245
-            status.push_str("...");                                          // c:2246
+        status.push_str("interactive: "); // c:2244
+        if pl > h - 3 {
+            // c:2245
+            status.push_str("..."); // c:2246
             let skip = (pl - h - 3).max(0) as usize;
-            status.push_str(&p[skip..]);                                     // c:2247 p + pl - h - 3
+            status.push_str(&p[skip..]); // c:2247 p + pl - h - 3
         } else {
-            status.push_str(&p);                                             // c:2249
+            status.push_str(&p); // c:2249
         }
-        status.push_str("[]");                                               // c:2251
-        if sl > h - 3 {                                                      // c:2252
+        status.push_str("[]"); // c:2251
+        if sl > h - 3 {
+            // c:2252
             let take = (h - 3).max(0) as usize;
-            status.push_str(&s.chars().take(take).collect::<String>());      // c:2253
-            status.push_str("...");                                          // c:2254
+            status.push_str(&s.chars().take(take).collect::<String>()); // c:2253
+            status.push_str("..."); // c:2254
         } else {
-            status.push_str(&s);                                             // c:2256
+            status.push_str(&s); // c:2256
         }
     }
-    ret                                                                      // c:2258
+    ret // c:2258
 }
 
 /// Port of `msearchpush(Cmatch **p, int back)` from Src/Zle/complist.c:2266.
 /// WARNING: param names don't match C — Rust=() vs C=(p, back)
-pub fn msearchpush() -> i32 {                                                // c:2266
+pub fn msearchpush() -> i32 {
+    // c:2266
     // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
     //                      msearchstack so msearchpop can restore.
     //                      No msearchstack substrate: no-op.
@@ -2046,7 +2359,8 @@ pub fn msearchpush() -> i32 {                                                // 
 
 /// Port of `msearchpop(int *backp)` from Src/Zle/complist.c:2281.
 /// WARNING: param names don't match C — Rust=() vs C=(backp)
-pub fn msearchpop() -> i32 {                                                 // c:2281
+pub fn msearchpop() -> i32 {
+    // c:2281
     // C body c:2283-2301 — pops one entry off msearchstack restoring
     //                      mline/mcol/msearchstr.
     //                      Without msearchstack substrate: no-op.
@@ -2095,7 +2409,8 @@ pub fn msearchpop() -> i32 {                                                 // 
 /// Returns the linear index of the matched cell in `mtab`, or `-1`
 /// on failure. Param shape adapted from `Cmatch **` out-pointer to
 /// the canonical Rust Result-like discriminant.
-pub fn msearch() -> i32 {                                                    // c:2302
+pub fn msearch() -> i32 {
+    // c:2302
     use std::sync::atomic::Ordering;
 
     let mut x = MCOL.load(Ordering::SeqCst);
@@ -2106,91 +2421,108 @@ pub fn msearch() -> i32 {                                                    // 
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
     let mut wrap = 0i32;
-    let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED;            // c:2306
+    let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED; // c:2306
 
     // c:2308 — msearchpush(ptr, back). Stack management deferred.
 
-    let back = 0i32;                                                         // c:2305 default forward
-    let (mut ex, mut ey) = if back != 0 {                                    // c:2312
+    let back = 0i32; // c:2305 default forward
+    let (mut ex, mut ey) = if back != 0 {
+        // c:2312
         (mcols - 1, -1i32)
-    } else {                                                                 // c:2315
+    } else {
+        // c:2315
         (0i32, listdat_nlines)
     };
 
-    let mut p = (y * mcols + x).max(0) as usize;                             // c:2319
+    let mut p = (y * mcols + x).max(0) as usize; // c:2319
 
     let needle = MSEARCHSTR.lock().unwrap().clone();
     let mtab_snapshot: Vec<Option<crate::ported::zle::comp_h::Cmatch>> =
         MTAB.lock().unwrap().clone();
 
-    loop {                                                                   // c:2322
+    loop {
+        // c:2322
         // c:2323-2333 — probe current cell
-        if let Some(Some(m)) = mtab_snapshot.get(p) {                        // c:2323
-            let hay = m.disp.as_deref()
+        if let Some(Some(m)) = mtab_snapshot.get(p) {
+            // c:2323
+            let hay = m
+                .disp
+                .as_deref()
                 .unwrap_or_else(|| m.str.as_deref().unwrap_or(""));
-            if !needle.is_empty() && hay.contains(needle.as_str()) {         // c:2327
-                MCOL.store(x, Ordering::SeqCst);                             // c:2328
-                MLINE.store(y, Ordering::SeqCst);                            // c:2329
-                return p as i32;                                             // c:2331
+            if !needle.is_empty() && hay.contains(needle.as_str()) {
+                // c:2327
+                MCOL.store(x, Ordering::SeqCst); // c:2328
+                MLINE.store(y, Ordering::SeqCst); // c:2329
+                return p as i32; // c:2331
             }
         }
 
         // c:2336-2348 — advance.
         if back != 0 {
-            if p == 0 { p = mtab_snapshot.len().saturating_sub(1); }
-            else { p -= 1; }
+            if p == 0 {
+                p = mtab_snapshot.len().saturating_sub(1);
+            } else {
+                p -= 1;
+            }
             x -= 1;
-            if x < 0 {                                                       // c:2338
-                x = mcols - 1;                                               // c:2339
-                y -= 1;                                                      // c:2340
+            if x < 0 {
+                // c:2338
+                x = mcols - 1; // c:2339
+                y -= 1; // c:2340
             }
         } else {
-            p += 1;                                                          // c:2343
+            p += 1; // c:2343
             x += 1;
-            if x == mcols {                                                  // c:2344
-                x = 0;                                                       // c:2345
-                y += 1;                                                      // c:2346
+            if x == mcols {
+                // c:2344
+                x = 0; // c:2345
+                y += 1; // c:2346
             }
         }
 
         // c:2349 — `if (x == ex && y == ey)` — hit boundary.
-        if x == ex && y == ey {                                              // c:2349
+        if x == ex && y == ey {
+            // c:2349
             // c:2351-2358 — restart from the opposite corner.
-            if back != 0 {                                                   // c:2351
-                x = mcols - 1;                                               // c:2352
-                y = listdat_nlines - 1;                                      // c:2353
-                p = (y * mcols + x).max(0) as usize;                         // c:2354
+            if back != 0 {
+                // c:2351
+                x = mcols - 1; // c:2352
+                y = listdat_nlines - 1; // c:2353
+                p = (y * mcols + x).max(0) as usize; // c:2354
             } else {
-                x = 0; y = 0;                                                // c:2356
-                p = 0;                                                       // c:2357
+                x = 0;
+                y = 0; // c:2356
+                p = 0; // c:2357
             }
-            ex = MCOL.load(Ordering::SeqCst);                                // c:2359
-            ey = MLINE.load(Ordering::SeqCst);                               // c:2360
+            ex = MCOL.load(Ordering::SeqCst); // c:2359
+            ey = MLINE.load(Ordering::SeqCst); // c:2360
 
             // c:2362-2365 — second exhaustion: fail.
-            if wrap != 0 || (x == ex && y == ey) {                           // c:2362
-                MSEARCHSTATE.store(MS_FAILED | owrap, Ordering::SeqCst);     // c:2363
-                break;                                                       // c:2364
+            if wrap != 0 || (x == ex && y == ey) {
+                // c:2362
+                MSEARCHSTATE.store(MS_FAILED | owrap, Ordering::SeqCst); // c:2363
+                break; // c:2364
             }
 
-            MSEARCHSTATE.fetch_or(MS_WRAPPED, Ordering::SeqCst);             // c:2367
-            wrap = 1;                                                        // c:2368
+            MSEARCHSTATE.fetch_or(MS_WRAPPED, Ordering::SeqCst); // c:2367
+            wrap = 1; // c:2368
         }
-        if p >= mtab_snapshot.len() { break; }
+        if p >= mtab_snapshot.len() {
+            break;
+        }
     }
-    -1                                                                       // c:2372 NULL
+    -1 // c:2372 NULL
 }
 
 /// Port of `static char *msearchstr` from `Src/Zle/complist.c:2262`.
 /// The accumulator string the menu-select incremental search is
 /// currently matching against.
 pub static MSEARCHSTR: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));       // c:2262
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new())); // c:2262
 
 /// Port of `static int msearchstate` from `Src/Zle/complist.c`. Search
 /// state bitmask: `MS_OK` / `MS_FAILED` / `MS_WRAPPED`.
-pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(MS_OK);                                // c:msearchstate
+pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(MS_OK); // c:msearchstate
 
 /// Port of `static int domenuselect(Hookdef dummy, Chdata dat)` from
 /// `Src/Zle/complist.c:2383`. Menu-select interactive key-loop:
@@ -2198,46 +2530,47 @@ pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 =
 /// `mtab[][]` matrix, dispatches widget actions (up/down/forward/
 /// backward/accept/search/cancel), repaints via `complistmatches`.
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn domenuselect() -> i32 {                                               // c:2383
+pub fn domenuselect() -> i32 {
+    // c:2383
     use std::sync::atomic::Ordering;
 
     // c:2385-2396 — local declarations.
-    let mut _i: i32 = 0;                                                     // c:2392
-    let mut _acc: i32 = 0;                                                   // c:2392
-    let mut _wishcol: i32 = 0;                                               // c:2392
-    let _setwish: i32 = 0;                                                   // c:2392
-    let oe = crate::ported::zle::compcore::onlyexpl.load(Ordering::SeqCst);  // c:2392
-    let mut _wasnext: i32 = 0;                                               // c:2392
-    let _space: i32 = 0;                                                     // c:2393
-    let _lbeg: i32 = 0;                                                      // c:2393
-    let mut step: i32 = 1;                                                   // c:2393
-    let _wrap: i32 = 0;                                                      // c:2393
+    let mut _i: i32 = 0; // c:2392
+    let mut _acc: i32 = 0; // c:2392
+    let mut _wishcol: i32 = 0; // c:2392
+    let _setwish: i32 = 0; // c:2392
+    let oe = crate::ported::zle::compcore::onlyexpl.load(Ordering::SeqCst); // c:2392
+    let mut _wasnext: i32 = 0; // c:2392
+    let _space: i32 = 0; // c:2393
+    let _lbeg: i32 = 0; // c:2393
+    let mut step: i32 = 1; // c:2393
+    let _wrap: i32 = 0; // c:2393
     let _pl = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst); // c:2393
-    let _broken: i32 = 0;                                                    // c:2393
-    let _first: i32 = 1;                                                     // c:2393
-    let mut _nolist: i32 = 0;                                                // c:2394
-    let mut mode: i32 = 0;                                                   // c:2394
-    let _modecs: i32 = 0;                                                    // c:2394
-    let _modell: i32 = 0;                                                    // c:2394
-    let _modelen: i32 = 0;                                                   // c:2394
-    let _wasmeta: i32;                                                       // c:2394
-    let mut status = String::new();                                          // c:2396
+    let _broken: i32 = 0; // c:2393
+    let _first: i32 = 1; // c:2393
+    let mut _nolist: i32 = 0; // c:2394
+    let mut mode: i32 = 0; // c:2394
+    let _modecs: i32 = 0; // c:2394
+    let _modell: i32 = 0; // c:2394
+    let _modelen: i32 = 0; // c:2394
+    let _wasmeta: i32; // c:2394
+    let mut status = String::new(); // c:2396
 
     // c:2398-2399 — bail-out: no previous list.
     // !!! STUB: `hasoldlist` static not yet ported. C tests it to
     // detect that a previous compprintlist has populated mtab/mgtab;
     // without that gate we'd loop on an empty matrix. Return 2
     // (caller falls through to basic menucomplete).
-    let hasoldlist = false;                                                  // c:2398
+    let hasoldlist = false; // c:2398
     if !hasoldlist {
-        return 2;                                                            // c:2399
+        return 2; // c:2399
     }
 
     // c:2401-2403 — reset incremental search state.
-    *MSEARCHSTR.lock().unwrap() = String::new();                             // c:2402
-    MSEARCHSTATE.store(MS_OK, Ordering::SeqCst);                             // c:2403
+    *MSEARCHSTR.lock().unwrap() = String::new(); // c:2402
+    MSEARCHSTATE.store(MS_OK, Ordering::SeqCst); // c:2403
 
-    crate::ported::signals::queue_signals();                                 // c:2406
+    crate::ported::signals::queue_signals(); // c:2406
 
     // c:2407-2416 — recursive-entry guard via `fdat` static.
     // Without the Chdata param + fdat static wired here, skip.
@@ -2251,26 +2584,34 @@ pub fn domenuselect() -> i32 {                                               // 
     };
 
     // c:2434-2440 — MENUSCROLL: step size for half-page jumps.
-    if let Some(s) = crate::ported::params::getsparam("MENUSCROLL") {        // c:2434
+    if let Some(s) = crate::ported::params::getsparam("MENUSCROLL") {
+        // c:2434
         let parsed: i32 = s.trim().parse().unwrap_or(0);
-        if parsed == 0 {                                                     // c:2435
+        if parsed == 0 {
+            // c:2435
             let zterm_lines = crate::ported::utils::adjustlines() as i32;
             let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
-            step = (zterm_lines - nlnct) >> 1;                               // c:2436
-        } else if parsed < 0 {                                               // c:2437
+            step = (zterm_lines - nlnct) >> 1; // c:2436
+        } else if parsed < 0 {
+            // c:2437
             let zterm_lines = crate::ported::utils::adjustlines() as i32;
             let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
             step = parsed + zterm_lines - nlnct;
-            if step < 0 { step = 1; }                                        // c:2439
+            if step < 0 {
+                step = 1;
+            } // c:2439
         } else {
             step = parsed;
         }
     }
 
     // c:2441-2462 — MENUMODE: interactive / search-fwd / search-back.
-    if let Some(s) = crate::ported::params::getsparam("MENUMODE") {          // c:2441
-        if s == "interactive" {                                              // c:2442
-            mode = 1;  /* MM_INTER */                                        // c:2453
+    if let Some(s) = crate::ported::params::getsparam("MENUMODE") {
+        // c:2441
+        if s == "interactive" {
+            // c:2442
+            mode = 1; /* MM_INTER */
+            // c:2453
             // c:2454-2458 — restore origline so the user sees what they typed.
             let origline = crate::ported::zle::zle_tricky::ORIGLINE
                 .get()
@@ -2278,24 +2619,30 @@ pub fn domenuselect() -> i32 {                                               // 
                 .unwrap_or_default();
             let l = origline.len() as i32;
             crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst);
-            crate::ported::zle::zle_utils::foredel(                          // c:2455
-                crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst), 0);
-            crate::ported::zle::zle_utils::spaceinline(l);                   // c:2456
+            crate::ported::zle::zle_utils::foredel(
+                // c:2455
+                crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
+                0,
+            );
+            crate::ported::zle::zle_utils::spaceinline(l); // c:2456
             if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
                 if let Ok(mut g) = m.lock() {
                     if g.len() >= l as usize {
-                        g.replace_range(..l as usize, &origline);            // c:2457
+                        g.replace_range(..l as usize, &origline); // c:2457
                     } else {
                         *g = origline.clone();
                     }
                 }
             }
-            crate::ported::zle::compcore::ZLEMETACS.store(                   // c:2458
+            crate::ported::zle::compcore::ZLEMETACS.store(
+                // c:2458
                 crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::SeqCst),
-                Ordering::SeqCst);
-            let _ = setmstatus(&mut status, "", 0, 0, None, None, None);     // c:2459
-        } else if s.starts_with("search") {                                  // c:2460
-            mode = if s.contains("back") { 3 } else { 2 };                   // c:2461 MM_BSEARCH / MM_FSEARCH
+                Ordering::SeqCst,
+            );
+            let _ = setmstatus(&mut status, "", 0, 0, None, None, None); // c:2459
+        } else if s.starts_with("search") {
+            // c:2460
+            mode = if s.contains("back") { 3 } else { 2 }; // c:2461 MM_BSEARCH / MM_FSEARCH
         }
     }
 
@@ -2320,7 +2667,8 @@ pub fn domenuselect() -> i32 {                                               // 
 
 /// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn menuselect() -> i32 {                                                 // c:3484
+pub fn menuselect() -> i32 {
+    // c:3484
     // C body c:3486-3510 — entry widget for `menu-select`. Sets
     //                      `usemenu = 1`, calls docomplete with
     //                      COMP_COMPLETE then enters domenuselect()
@@ -2331,14 +2679,16 @@ pub fn menuselect() -> i32 {                                                 // 
 
 /// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn setup_() -> i32 {                                                     // c:3511
+pub fn setup_() -> i32 {
+    // c:3511
     // C body c:3513-3514 — `return 0`. Faithful empty body.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/complist.c:3518.
 /// WARNING: param names don't match C — Rust=() vs C=(m, features)
-pub fn features_() -> i32 {                                                  // c:3518
+pub fn features_() -> i32 {
+    // c:3518
     // C body c:3520-3521 — `*features = featuresarray(m, &module_features);
     //                       return 0`. The features array is exposed
     //                       elsewhere; this entry returns success.
@@ -2347,7 +2697,8 @@ pub fn features_() -> i32 {                                                  // 
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/complist.c:3526.
 /// WARNING: param names don't match C — Rust=() vs C=(m, enables)
-pub fn enables_() -> i32 {                                                   // c:3526
+pub fn enables_() -> i32 {
+    // c:3526
     // C body c:3528 — `return handlefeatures(m, &module_features, enables)`.
     //                  No feature-toggle dispatch in the static-link
     //                  Rust port; success.
@@ -2355,7 +2706,8 @@ pub fn enables_() -> i32 {                                                   // 
 }
 
 /// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533.
-pub fn menuselect_bindings() -> i32 {                                        // c:3533
+pub fn menuselect_bindings() -> i32 {
+    // c:3533
     // C body c:3535-3562 — `if (!(mskeymap = openkeymap("menuselect")))
     //                       { mskeymap = newkeymap(...); linkkeymap(...);
     //                         bindkey(... default arrow/tab/CR keys) }`
@@ -2368,7 +2720,8 @@ pub fn menuselect_bindings() -> i32 {                                        // 
 
 /// Port of `boot_(UNUSED(Module m))` from Src/Zle/complist.c:3564.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn boot_() -> i32 {                                                      // c:3564
+pub fn boot_() -> i32 {
+    // c:3564
     // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
     //                       inselect = 0; w_menuselect = addzlefunction(...);
     //                       menuselect_bindings()`. Without the live mtab/
@@ -2380,7 +2733,8 @@ pub fn boot_() -> i32 {                                                      // 
 
 /// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/complist.c:3586.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn cleanup_() -> i32 {                                                   // c:3586
+pub fn cleanup_() -> i32 {
+    // c:3586
     // C body c:3589-3596 — frees mtab/mgtab, deletes w_menuselect zle
     //                      function, drops the comp_list_matches and
     //                      menu_start hooks, unlinks both keymaps,
@@ -2391,7 +2745,8 @@ pub fn cleanup_() -> i32 {                                                   // 
 
 /// Port of `finish_(UNUSED(Module m))` from Src/Zle/complist.c:3601.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn finish_() -> i32 {                                                    // c:3601
+pub fn finish_() -> i32 {
+    // c:3601
     // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
     0
 }
@@ -2412,8 +2767,7 @@ pub static PATCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
 /// File-static index into PATCOLS. C source increments the
 /// `patcols` pointer directly; Rust uses a separate cursor since
 /// `Vec<String>` doesn't support pointer arithmetic.
-pub static PATCOLS_IDX: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static PATCOLS_IDX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Port of `static int begpos[MAX_POS]` from `complist.c:140` —
 /// begin positions of regex backref regions in the current match.
@@ -2435,25 +2789,46 @@ pub static CURISCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
 
 /// Port of `colnames[]` from `Src/Zle/complist.c:197-201`.
 /// Two-letter LS_COLORS keys, parallel-indexed with `col::*`.
-pub static COLNAMES: &[&str] = &[                                            // c:197
-    "no", "fi", "di", "ln", "pi", "so", "bd", "cd", "or", "mi",
-    "su", "sg", "tw", "ow", "st", "ex",
+pub static COLNAMES: &[&str] = &[
+    // c:197
+    "no", "fi", "di", "ln", "pi", "so", "bd", "cd", "or", "mi", "su", "sg", "tw", "ow", "st", "ex",
     "lc", "rc", "ec", "tc", "sp", "ma", "hi", "du", "sa",
 ];
 
 /// Port of `defcols[]` from `Src/Zle/complist.c:205-209`.
 /// Default ANSI escape codes when LS_COLORS doesn't override.
-pub static DEFCOLS: &[Option<&str>] = &[                                     // c:205
-    Some("0"), Some("0"), Some("1;31"), Some("1;36"), Some("33"),
-    Some("1;35"), Some("1;33"), Some("1;33"), None, None,
-    Some("37;41"), Some("30;43"), Some("30;42"), Some("34;42"), Some("37;44"),
-    Some("1;32"), Some("\x1b["), Some("m"), None, Some("0"),
-    Some("0"), Some("7"), None, None, Some("0"),
+pub static DEFCOLS: &[Option<&str>] = &[
+    // c:205
+    Some("0"),
+    Some("0"),
+    Some("1;31"),
+    Some("1;36"),
+    Some("33"),
+    Some("1;35"),
+    Some("1;33"),
+    Some("1;33"),
+    None,
+    None,
+    Some("37;41"),
+    Some("30;43"),
+    Some("30;42"),
+    Some("34;42"),
+    Some("37;44"),
+    Some("1;32"),
+    Some("\x1b["),
+    Some("m"),
+    None,
+    Some("0"),
+    Some("0"),
+    Some("7"),
+    None,
+    None,
+    Some("0"),
 ];
 
 /// Port of `LC_FOLLOW_SYMLINKS` from `Src/Zle/complist.c:251`.
 /// `ln=target:` flag — follow symlinks to determine highlighting.
-pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // c:251
+pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001; // c:251
 
 // =====================================================================
 // Menu-select / list-render file-statics — `Src/Zle/complist.c:52-148`.
@@ -2464,90 +2839,90 @@ pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // 
 
 /// Port of `static int noselect` from `complist.c:52`. Suppress the
 /// menu-select cursor highlight when set.
-pub static NOSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static NOSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 /// Port of `static int mselect` from `complist.c:52`. Currently
 /// selected match index (-1 = none).
-pub static MSELECT:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
+pub static MSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
 /// Port of `static int inselect` from `complist.c:52`. Inside menu-
 /// select dispatch loop.
-pub static INSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static INSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 /// Port of `static int mcol` from `complist.c:52`. Current column.
-pub static MCOL:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static MCOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 /// Port of `static int mline` from `complist.c:52`. Current line.
-pub static MLINE:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static MLINE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 /// Port of `static int mcols` from `complist.c:52`. Total columns.
-pub static MCOLS:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static MCOLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 /// Port of `static int mlines` from `complist.c:52`. Total lines.
-pub static MLINES:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+pub static MLINES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52
 
 /// Port of `static int selected` from `complist.c:62`. Match was
 /// selected (Enter/Tab pressed in menu).
-pub static SELECTED:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+pub static SELECTED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:62
 /// Port of `static int mlbeg = -1` from `complist.c:62`. First visible
 /// menu line.
-pub static MLBEG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:62
+pub static MLBEG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:62
 /// Port of `static int mlend = 9999999` from `complist.c:62`. Last
 /// visible menu line.
-pub static MLEND:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(9_999_999); // c:62
+pub static MLEND: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(9_999_999); // c:62
 /// Port of `static int mscroll` from `complist.c:62`. Scroll-mode
 /// active.
-pub static MSCROLL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+pub static MSCROLL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:62
 /// Port of `static int mrestlines` from `complist.c:62`. Lines remaining
 /// before next asklistscroll prompt.
-pub static MRESTLINES:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+pub static MRESTLINES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:62
 
 /// Port of `static int mnew` from `complist.c:76`. Match list is new
 /// (vs. continuation of prior cycle).
-pub static MNEW:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MNEW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 /// Port of `static int mlastcols` from `complist.c:76`. Previous columns.
-pub static MLASTCOLS:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MLASTCOLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 /// Port of `static int mlastlines` from `complist.c:76`. Previous lines.
-pub static MLASTLINES:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MLASTLINES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 /// Port of `static int mhasstat` from `complist.c:76`. Status line is shown.
-pub static MHASSTAT:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MHASSTAT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 /// Port of `static int mfirstl` from `complist.c:76`. First line of menu.
-pub static MFIRSTL:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MFIRSTL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 /// Port of `static int mlastm` from `complist.c:76`. Last match index.
-pub static MLASTM:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+pub static MLASTM: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
 
 /// Port of `static int mlprinted` from `complist.c:88`. Lines actually printed.
-pub static MLPRINTED:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+pub static MLPRINTED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
 /// Port of `static int molbeg = -2` from `complist.c:88`. Old menu beg.
-pub static MOLBEG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-2); // c:88
+pub static MOLBEG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-2); // c:88
 /// Port of `static int mocol` from `complist.c:88`. Old column.
-pub static MOCOL:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+pub static MOCOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
 /// Port of `static int moline` from `complist.c:88`. Old line.
-pub static MOLINE:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+pub static MOLINE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
 /// Port of `static int mstatprinted` from `complist.c:88`. Status was printed.
-pub static MSTATPRINTED:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+pub static MSTATPRINTED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
 
 /// Port of `static int mtab_been_reallocated` from `complist.c:106`.
 pub static MTAB_BEEN_REALLOCATED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                                    // c:106
+    std::sync::atomic::AtomicI32::new(0); // c:106
 
 /// Port of `static int mgtabsize` from `complist.c:117`. Size of mgtab.
-pub static MGTABSIZE:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:117
+pub static MGTABSIZE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:117
 
 /// Port of `static int nrefs` from `complist.c:139`. Number of group
 /// pattern references in the current LS_COLORS spec.
-pub static NREFS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:139
+pub static NREFS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:139
 
 /// Port of `static int curisbeg` from `complist.c:140`. Current
 /// "is-begin-pos" iterator state.
-pub static CURISBEG:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:140
+pub static CURISBEG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:140
 /// Port of `static int curissend` from `complist.c:142`. Current
 /// "is-sorted-end-pos" iterator state.
-pub static CURISSEND:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:142
+pub static CURISSEND: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:142
 /// Port of `static int curiscol` from `complist.c:144`. Current
 /// "is-color" iterator state.
-pub static CURISCOL:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:144
+pub static CURISCOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:144
 
 /// Port of `static int lr_caplen` from `complist.c:269`. Left-right
 /// cap length (current).
-pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
+pub static LR_CAPLEN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
 /// Port of `static int max_caplen` from `complist.c:269`. Maximum
 /// observed cap length.
-pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
+pub static MAX_CAPLEN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
 
 /// Port of `static struct listcols mcolors` from `Src/Zle/complist.c:265`.
 /// Holds every terminal-color string a completion-listing run might
@@ -2559,25 +2934,24 @@ pub static MCOLORS: std::sync::LazyLock<std::sync::Mutex<listcols>> =
 /// logical 2-D array of all matches; contains `mcols*mlines` cells.
 /// Each cell holds the Cmatch displayed at (row, col) in the listing,
 /// or None for empty padding cells.
-pub static MTAB: std::sync::LazyLock<std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmatch>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));          // c:102
+pub static MTAB: std::sync::LazyLock<
+    std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmatch>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:102
 
 /// Port of `static Cmatch **mmtabp` from `Src/Zle/complist.c:102`.
 /// Pointer (linear-index) into `mtab` for the currently-selected match.
-pub static MMTABP: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);                                  // c:102
+pub static MMTABP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0); // c:102
 
 /// Port of `static Cmgroup *mgtab` from `Src/Zle/complist.c:111`. The
 /// parallel 2-D array of groups: same layout as `mtab`, with each
 /// cell holding the Cmgroup the match-at-that-cell belongs to.
-pub static MGTAB: std::sync::LazyLock<std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmgroup>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));          // c:111
+pub static MGTAB: std::sync::LazyLock<
+    std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmgroup>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:111
 
 /// Port of `static Cmgroup *mgtabp` from `Src/Zle/complist.c:111`.
 /// Pointer (linear-index) into `mgtab` parallel to `mmtabp`.
-pub static MGTABP: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);                                  // c:111
-
+pub static MGTABP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0); // c:111
 
 /// Bridge — delegates to `compresult::calclist` (`compresult.c:1495`).
 /// The `tests/data/zsh_c_fn_names.txt` ctags index lists both
@@ -2597,7 +2971,8 @@ pub static MGTABP: std::sync::atomic::AtomicUsize =
 /// at `src/ported/zle/compresult.rs::calclist` with the same
 /// semantics; this entry exists for C-name parity in the complist
 /// module's symbol table.
-pub fn calclist(showall: i32) -> i32 {                                       // c:compresult.c:1495
+pub fn calclist(showall: i32) -> i32 {
+    // c:compresult.c:1495
     // Delegate to the canonical port; the function-table dispatch
     // C uses at complist.c:2028 lands on the same body.
     let r = crate::ported::zle::compresult::calclist(showall);
@@ -2666,8 +3041,8 @@ mod tests {
         assert_eq!(DEFCOLS[COL_NO], Some("0"));
         assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
         assert_eq!(DEFCOLS[COL_EX], Some("1;32"));
-        assert_eq!(DEFCOLS[COL_OR], None);    // default for orphan: fallback to ln
-        assert_eq!(DEFCOLS[COL_MI], None);    // default for missing: fallback to fi
+        assert_eq!(DEFCOLS[COL_OR], None); // default for orphan: fallback to ln
+        assert_eq!(DEFCOLS[COL_MI], None); // default for missing: fallback to fi
         assert_eq!(DEFCOLS[COL_LC], Some("\x1b["));
         assert_eq!(DEFCOLS[COL_RC], Some("m"));
     }
@@ -2718,9 +3093,9 @@ mod tests {
         assert_eq!(COL_RC, 17);
         assert_eq!(COL_TC, 19);
         assert_eq!(COL_SP, 20);
-        assert_eq!(COL_MA, 21);  // c:188 marker
-        assert_eq!(COL_HI, 22);  // c:189 highlight
-        assert_eq!(COL_DU, 23);  // c:190 duplicate
+        assert_eq!(COL_MA, 21); // c:188 marker
+        assert_eq!(COL_HI, 22); // c:189 highlight
+        assert_eq!(COL_DU, 23); // c:190 duplicate
     }
 
     /// c:197-201 — `COLNAMES` is the canonical LS_COLORS two-letter
@@ -2732,12 +3107,21 @@ mod tests {
     fn colnames_entries_are_two_lowercase_letters() {
         let _g = crate::test_util::global_state_lock();
         for (i, &name) in COLNAMES.iter().enumerate() {
-            assert_eq!(name.len(), 2,
-                "COLNAMES[{}] = {:?} must be exactly 2 chars", i, name);
+            assert_eq!(
+                name.len(),
+                2,
+                "COLNAMES[{}] = {:?} must be exactly 2 chars",
+                i,
+                name
+            );
             for c in name.chars() {
-                assert!(c.is_ascii_lowercase(),
+                assert!(
+                    c.is_ascii_lowercase(),
                     "COLNAMES[{}] = {:?} contains non-lowercase char {:?}",
-                    i, name, c);
+                    i,
+                    name,
+                    c
+                );
             }
         }
     }
@@ -2749,8 +3133,7 @@ mod tests {
     fn colnames_has_no_duplicates() {
         let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = COLNAMES.iter().copied().collect();
-        assert_eq!(unique.len(), COLNAMES.len(),
-            "duplicate entry in COLNAMES");
+        assert_eq!(unique.len(), COLNAMES.len(), "duplicate entry in COLNAMES");
     }
 
     /// c:205-209 — `DEFCOLS` parallels COLNAMES; both must have the
@@ -2759,10 +3142,16 @@ mod tests {
     #[test]
     fn defcols_and_colnames_have_equal_lengths() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(DEFCOLS.len(), COLNAMES.len(),
-            "DEFCOLS and COLNAMES must have parallel indices");
-        assert_eq!(NUM_COLS, COLNAMES.len(),
-            "NUM_COLS must equal COLNAMES.len()");
+        assert_eq!(
+            DEFCOLS.len(),
+            COLNAMES.len(),
+            "DEFCOLS and COLNAMES must have parallel indices"
+        );
+        assert_eq!(
+            NUM_COLS,
+            COLNAMES.len(),
+            "NUM_COLS must equal COLNAMES.len()"
+        );
     }
 
     /// c:488 — `filecol(col)` produces a node whose `col` field is

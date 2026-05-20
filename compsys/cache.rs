@@ -390,9 +390,9 @@ impl CompsysCache {
         exclude: &std::collections::HashSet<String>,
         limit: usize,
     ) -> rusqlite::Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name, body FROM autoloads WHERE body IS NOT NULL ORDER BY name",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, body FROM autoloads WHERE body IS NOT NULL ORDER BY name")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;

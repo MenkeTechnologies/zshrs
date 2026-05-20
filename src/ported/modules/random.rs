@@ -3,12 +3,11 @@
 //! Provides access to kernel random sources for cryptographically secure
 //! random number generation.
 
-use std::io;
-use std::fs::File;
-use std::io::Read;
 use std::fs::metadata;
-use std::os::unix::fs::FileTypeExt;
+use std::io;
+use std::io::Read;
 use std::os::fd::IntoRawFd;
+use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::Ordering;
 
 /// Fill a buffer with cryptographically random bytes.
@@ -19,7 +18,8 @@ use std::sync::atomic::Ordering;
 /// Linux, and `/dev/urandom` everywhere else.
 #[cfg(target_os = "macos")]
 /// WARNING: param names don't match C — Rust=(buf) vs C=(buf, len)
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
+    // c:62
     unsafe {
         libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
     }
@@ -62,7 +62,8 @@ thread_local! {
 /// with the C EINTR-retry loop at c:80-85.
 #[cfg(target_os = "linux")]
 /// WARNING: param names don't match C — Rust=(buf) vs C=(buf, len)
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
+    // c:62
     let mut filled = 0;
 
     while filled < buf.len() {
@@ -90,7 +91,8 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 
 /// Port of `getrandom_buffer(void *buf, size_t len)` from `Src/Modules/random.c:62`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {                  // c:62
+pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {
+    // c:62
 
     let mut file = File::open("/dev/urandom")?;
     file.read_exact(m)?;
@@ -103,28 +105,33 @@ pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {                  // c:
 /// sample only the rare `leftover < max` slot. `count` is folded into
 /// `buffer.len()` per Rust idiom.
 /// WARNING: param names don't match C — Rust=(buffer, max) vs C=(buffer, count, max)
-pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // c:104
+pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
+    // c:104
     // c:112 getrandom_buffer(buffer, count*sizeof(uint32_t)) — fill u32s.
     let mut bytes: Vec<u8> = vec![0u8; buffer.len() * 4];
     let _ = getrandom_buffer(&mut bytes);
     for (i, chunk) in bytes.chunks_exact(4).enumerate() {
         buffer[i] = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
     }
-    if max == u32::MAX {                                                     // c:113 UINT32_MAX
-        return;                                                              // c:114
+    if max == u32::MAX {
+        // c:113 UINT32_MAX
+        return; // c:114
     }
-    for i in 0..buffer.len() {                                               // c:116
-        let mut multi_result: u64 = (buffer[i] as u64) * (max as u64);       // c:117
-        let mut leftover: u32 = multi_result as u32;                         // c:118
-        if leftover < max {                                                  // c:124
-            let threshold: u32 = (max.wrapping_neg()) % max;                 // c:125 -max % max
-            while leftover < threshold {                                     // c:126
-                let j: u32 = get_srandom();                                  // c:127 get_srandom(NULL)
-                multi_result = (j as u64) * (max as u64);                    // c:128
-                leftover = multi_result as u32;                              // c:129
+    for i in 0..buffer.len() {
+        // c:116
+        let mut multi_result: u64 = (buffer[i] as u64) * (max as u64); // c:117
+        let mut leftover: u32 = multi_result as u32; // c:118
+        if leftover < max {
+            // c:124
+            let threshold: u32 = (max.wrapping_neg()) % max; // c:125 -max % max
+            while leftover < threshold {
+                // c:126
+                let j: u32 = get_srandom(); // c:127 get_srandom(NULL)
+                multi_result = (j as u64) * (max as u64); // c:128
+                leftover = multi_result as u32; // c:129
             }
         }
-        buffer[i] = (multi_result >> 32) as u32;                             // c:132
+        buffer[i] = (multi_result >> 32) as u32; // c:132
     }
 }
 
@@ -133,25 +140,27 @@ pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // 
 /// parameter. Refills `rand_buff` via `getrandom_buffer()` when
 /// drained, then returns the next pre-loaded u32.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn get_srandom() -> u32 {                                                // c:58
+pub fn get_srandom() -> u32 {
+    // c:58
     let cnt = BUF_CNT.with(|c| c.get());
-    if cnt == 0 {                                                            // c:145
-        let mut bytes = [0u8; RAND_BUFF_SIZE * 4];                           // c:143
-        if getrandom_buffer(&mut bytes).is_ok() {                            // c:143
+    if cnt == 0 {
+        // c:145
+        let mut bytes = [0u8; RAND_BUFF_SIZE * 4]; // c:143
+        if getrandom_buffer(&mut bytes).is_ok() {
+            // c:143
             RAND_BUFF.with(|r| {
                 let mut buf = r.borrow_mut();
-                for (i, chunk) in bytes.chunks_exact(4).enumerate() {        // c:143
-                    buf[i] = u32::from_ne_bytes(
-                        [chunk[0], chunk[1], chunk[2], chunk[3]],
-                    );
+                for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+                    // c:143
+                    buf[i] = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 }
             });
         }
-        BUF_CNT.with(|c| c.set(RAND_BUFF_SIZE));                             // c:145
+        BUF_CNT.with(|c| c.set(RAND_BUFF_SIZE)); // c:145
     }
-    let new_cnt = BUF_CNT.with(|c| c.get()) - 1;                             // c:145
+    let new_cnt = BUF_CNT.with(|c| c.get()) - 1; // c:145
     BUF_CNT.with(|c| c.set(new_cnt));
-    RAND_BUFF.with(|r| r.borrow()[new_cnt])                                  // c:145
+    RAND_BUFF.with(|r| r.borrow()[new_cnt]) // c:145
 }
 
 /// `math_zrand_int(upper, lower, inclusive)` math function.
@@ -160,7 +169,12 @@ pub fn get_srandom() -> u32 {                                                // 
 /// All three arguments are optional; behaviour matches the C
 /// source's bound-checks (`lower < 0`, `upper < lower`, etc.).
 /// WARNING: param names don't match C — Rust=(upper, lower, inclusive) vs C=(name, argc, argv, id)
-pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Result<i64, String> { // c:161
+pub fn math_zrand_int(
+    upper: Option<i64>,
+    lower: Option<i64>,
+    inclusive: bool,
+) -> Result<i64, String> {
+    // c:161
     let lower = lower.unwrap_or(0);
     let upper = upper.unwrap_or(u32::MAX as i64);
 
@@ -201,60 +215,65 @@ pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -
 /// the C source's math-function entry point that returns a
 /// uniform double in `[0, 1)`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, argc, argv, id)
-pub fn math_zrand_float() -> f64 {                                           // c:204
+pub fn math_zrand_float() -> f64 {
+    // c:204
     random_real()
 }
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/random.c:243`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:243
+pub fn setup_(m: *const module) -> i32 {
+    // c:243
     // c:243-261 — USE_URANDOM block: stat /dev/urandom; verify
     //              S_ISCHR. We probe via std::fs::metadata + file_type().
-    match metadata("/dev/urandom") {                                         // c:251
+    match metadata("/dev/urandom") {
+        // c:251
         Ok(md) => {
-            if !md.file_type().is_char_device() {                            // c:256
+            if !md.file_type().is_char_device() {
+                // c:256
                 // c:257 — `zwarn("Error getting kernel random pool: %m");`
-                crate::ported::utils::zwarn(
-                    "Error getting kernel random pool: not a char device");
+                crate::ported::utils::zwarn("Error getting kernel random pool: not a char device");
                 return 1;
             }
         }
         Err(e) => {
-            crate::ported::utils::zwarn(
-                &format!("Error getting kernel random pool: {}", e));
+            crate::ported::utils::zwarn(&format!("Error getting kernel random pool: {}", e));
             return 1;
         }
     }
-    0                                                                        // c:275
+    0 // c:275
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/random.c:267`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:267
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:267
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/random.c:275`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:275
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:275
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/random.c:282`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:282
+pub fn boot_(m: *const module) -> i32 {
+    // c:282
     // c:282-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
     //              movefd, addmodulefd to track the fd.
-    match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {      // c:295
+    match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {
+        // c:295
         Ok(f) => {
-            let fd = f.into_raw_fd();                                        // c:312
+            let fd = f.into_raw_fd(); // c:312
             RANDFD.store(fd, Ordering::SeqCst);
             0
         }
         Err(e) => {
             // c:300 — `zwarn("Could not access kernel random pool: %m");`
-            crate::ported::utils::zwarn(
-                &format!("Could not access kernel random pool: {}", e));
-            1                                                                // c:319
+            crate::ported::utils::zwarn(&format!("Could not access kernel random pool: {}", e));
+            1 // c:319
         }
     }
 }
@@ -269,27 +288,25 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
 pub use crate::ported::modules::random_real::random_real;
 
 /// Generate a random integer in `[min, max]`.
-
-
-
 // =====================================================================
 // static struct features module_features                            c:255 (random.c)
 // =====================================================================
-
 use crate::ported::zsh_h::module;
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/random.c:312`.
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:312
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:312
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/random.c:319`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:319
+pub fn finish_(m: *const module) -> i32 {
+    // c:319
     // c:319-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
     let fd = RANDFD.swap(-1, Ordering::SeqCst);
     if fd >= 0 {
-        unsafe { libc::close(fd) };                                          // c:323 zclose
+        unsafe { libc::close(fd) }; // c:323 zclose
     }
     0
 }
@@ -300,14 +317,10 @@ const RAND_BUFF_SIZE: usize = 8;
 
 // `mftab` — port of `static struct mathfunc mftab[]` (random.c).
 
-
 // `patab` — port of `static struct paramdef patab[]` (random.c).
-
 
 // `module_features` — port of `static struct features module_features`
 // from random.c:255.
-
-
 
 /// `RANDFD` — port of the file-static `int randfd` in
 /// `Src/Modules/random.c:243`. Holds the open fd for `/dev/urandom`.
@@ -375,7 +388,6 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
@@ -386,7 +398,11 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["f:zrand_float".to_string(), "f:zrand_int".to_string(), "p:SRANDOM".to_string()]
+    vec![
+        "f:zrand_float".to_string(),
+        "f:zrand_int".to_string(),
+        "p:SRANDOM".to_string(),
+    ]
 }
 
 // WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.
@@ -408,11 +424,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -443,17 +455,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 2,
-        pd_list: None,
-        pd_size: 1,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 2,
+            pd_list: None,
+            pd_size: 1,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -463,7 +477,7 @@ mod tests {
     #[test]
     fn test_random_state() {
         let _g = crate::test_util::global_state_lock();
-        
+
         let r1 = get_srandom();
         let r2 = get_srandom();
         let r3 = get_srandom();
@@ -579,8 +593,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_int(Some(10), Some(5), true).unwrap();
-            assert!((5..=10).contains(&v),
-                "value {v} out of inclusive range [5, 10]");
+            assert!(
+                (5..=10).contains(&v),
+                "value {v} out of inclusive range [5, 10]"
+            );
         }
     }
 
@@ -591,8 +607,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_int(Some(10), Some(5), false).unwrap();
-            assert!((5..10).contains(&v),
-                "value {v} out of exclusive range [5, 10)");
+            assert!(
+                (5..10).contains(&v),
+                "value {v} out of exclusive range [5, 10)"
+            );
         }
     }
 
@@ -604,8 +622,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_float();
-            assert!((0.0..1.0).contains(&v),
-                "value {v} out of unit interval [0.0, 1.0)");
+            assert!(
+                (0.0..1.0).contains(&v),
+                "value {v} out of unit interval [0.0, 1.0)"
+            );
         }
     }
 

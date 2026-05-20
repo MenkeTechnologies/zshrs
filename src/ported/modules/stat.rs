@@ -15,7 +15,6 @@
 //!   - bin_stat       `[c:368]`
 //!   - 6 module loaders
 
-use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -27,7 +26,7 @@ use std::os::unix::fs::MetadataExt;
 // ============================================================
 /// Port of `HNAMEKEY` from `Src/Modules/stat.c:43`. Hash key the
 /// `zstat -H` mode uses to store the file name in the result assoc.
-pub const HNAMEKEY: &str = "name";                                       // c:43
+pub const HNAMEKEY: &str = "name"; // c:43
 
 /// Port of `statmodeprint(mode_t mode, char *outbuf, int flags)` from `Src/Modules/stat.c:47`. Renders
 /// a Unix mode word per the STF_RAW / STF_OCTAL / STF_STRING flag
@@ -38,55 +37,66 @@ pub const HNAMEKEY: &str = "name";                                       // c:43
 /// Rust port returns the formatted string (caller writes to its
 /// own buffer) — same observable output for a given flag set.
 /// WARNING: param names don't match C — Rust=(mode, flags) vs C=(mode, outbuf, flags)
-pub fn statmodeprint(mode: u32, flags: i32) -> String {                  // c:47
+pub fn statmodeprint(mode: u32, flags: i32) -> String {
+    // c:47
     let mut out = String::new();
-    if (flags & STF_RAW) != 0 {                                          // c:50
-        if (flags & STF_OCTAL) != 0 {                                    // c:51
+    if (flags & STF_RAW) != 0 {
+        // c:50
+        if (flags & STF_OCTAL) != 0 {
+            // c:51
             out.push_str(&format!("0{:o}", mode));
         } else {
             out.push_str(&format!("{}", mode));
         }
-        if (flags & STF_STRING) != 0 {                                   // c:53
-            out.push_str(" (");                                          // c:54
+        if (flags & STF_STRING) != 0 {
+            // c:53
+            out.push_str(" ("); // c:54
         }
     }
-    if (flags & STF_STRING) != 0 {                                       // c:56
+    if (flags & STF_STRING) != 0 {
+        // c:56
         let modes = b"?rwxrwxrwx";
         let mut pm = [b'-'; 10];
         // c:84-103 — file-type char.
-        let ifmt = mode & 0o170_000;                                     // S_IFMT
+        let ifmt = mode & 0o170_000; // S_IFMT
         pm[0] = match ifmt {
-            0o020_000 => b'c',  // S_ISCHR
-            0o040_000 => b'd',  // S_ISDIR
-            0o060_000 => b'b',  // S_ISBLK
-            0o100_000 => b'-',  // S_ISREG
-            0o120_000 => b'l',  // S_ISLNK
-            0o140_000 => b's',  // S_ISSOCK
-            0o010_000 => b'p',  // S_ISFIFO
+            0o020_000 => b'c', // S_ISCHR
+            0o040_000 => b'd', // S_ISDIR
+            0o060_000 => b'b', // S_ISBLK
+            0o100_000 => b'-', // S_ISREG
+            0o120_000 => b'l', // S_ISLNK
+            0o140_000 => b's', // S_ISSOCK
+            0o010_000 => b'p', // S_ISFIFO
             _ => b'?',
         };
         // c:105-107 — owner/group/other rwx bits.
         let bits = [
-            0o0400, 0o0200, 0o0100,
-            0o0040, 0o0020, 0o0010,
-            0o0004, 0o0002, 0o0001,
+            0o0400, 0o0200, 0o0100, 0o0040, 0o0020, 0o0010, 0o0004, 0o0002, 0o0001,
         ];
         for i in 0..9 {
-            pm[i + 1] = if (mode & bits[i]) != 0 { modes[i + 1] } else { b'-' };
+            pm[i + 1] = if (mode & bits[i]) != 0 {
+                modes[i + 1]
+            } else {
+                b'-'
+            };
         }
         // c:111-115 — setuid / setgid / sticky.
-        if (mode & 0o4000) != 0 {                                        // S_ISUID
+        if (mode & 0o4000) != 0 {
+            // S_ISUID
             pm[3] = if (mode & 0o0100) != 0 { b's' } else { b'S' };
         }
-        if (mode & 0o2000) != 0 {                                        // S_ISGID
+        if (mode & 0o2000) != 0 {
+            // S_ISGID
             pm[6] = if (mode & 0o0010) != 0 { b's' } else { b'S' };
         }
-        if (mode & 0o1000) != 0 {                                        // S_ISVTX
+        if (mode & 0o1000) != 0 {
+            // S_ISVTX
             pm[9] = if (mode & 0o0001) != 0 { b't' } else { b'T' };
         }
         out.push_str(std::str::from_utf8(&pm).unwrap_or(""));
-        if (flags & STF_RAW) != 0 {                                      // c:132
-            out.push(')');                                               // c:132
+        if (flags & STF_RAW) != 0 {
+            // c:132
+            out.push(')'); // c:132
         }
     }
     out
@@ -96,31 +106,41 @@ pub fn statmodeprint(mode: u32, flags: i32) -> String {                  // c:47
 /// a uid in raw form (decimal), string form (user name via
 /// `getpwuid`), or both.
 /// WARNING: param names don't match C — Rust=(uid, flags) vs C=(uid, outbuf, flags)
-pub fn statuidprint(uid: u32, flags: i32) -> String {                    // c:132
+pub fn statuidprint(uid: u32, flags: i32) -> String {
+    // c:132
     let mut out = String::new();
-    if (flags & STF_RAW) != 0 {                                          // c:135
+    if (flags & STF_RAW) != 0 {
+        // c:135
         out.push_str(&format!("{}", uid));
-        if (flags & STF_STRING) != 0 {                                   // c:137
+        if (flags & STF_STRING) != 0 {
+            // c:137
             out.push_str(" (");
         }
     }
-    if (flags & STF_STRING) != 0 {                                       // c:140
+    if (flags & STF_STRING) != 0 {
+        // c:140
         let name = unsafe {
             // c:142 — `pwd = getpwuid(uid);`
             let p = libc::getpwuid(uid);
-            if p.is_null() { String::new() }
-            else {
+            if p.is_null() {
+                String::new()
+            } else {
                 let nm = (*p).pw_name;
-                if nm.is_null() { String::new() }
-                else { std::ffi::CStr::from_ptr(nm).to_string_lossy().into_owned() }
+                if nm.is_null() {
+                    String::new()
+                } else {
+                    std::ffi::CStr::from_ptr(nm).to_string_lossy().into_owned()
+                }
             }
         };
-        if name.is_empty() {                                              // c:148 numeric fallback
+        if name.is_empty() {
+            // c:148 numeric fallback
             out.push_str(&format!("{}", uid));
         } else {
-            out.push_str(&name);                                          // c:161 pwd->pw_name
+            out.push_str(&name); // c:161 pwd->pw_name
         }
-        if (flags & STF_RAW) != 0 {                                      // c:161
+        if (flags & STF_RAW) != 0 {
+            // c:161
             out.push(')');
         }
     }
@@ -130,30 +150,39 @@ pub fn statuidprint(uid: u32, flags: i32) -> String {                    // c:13
 /// Port of `statgidprint(gid_t gid, char *outbuf, int flags)` from `Src/Modules/stat.c:161`. Symmetric
 /// with `statuidprint` for gid via `getgrgid`.
 /// WARNING: param names don't match C — Rust=(gid, flags) vs C=(gid, outbuf, flags)
-pub fn statgidprint(gid: u32, flags: i32) -> String {                    // c:161
+pub fn statgidprint(gid: u32, flags: i32) -> String {
+    // c:161
     let mut out = String::new();
-    if (flags & STF_RAW) != 0 {                                          // c:164
+    if (flags & STF_RAW) != 0 {
+        // c:164
         out.push_str(&format!("{}", gid));
-        if (flags & STF_STRING) != 0 {                                   // c:166
+        if (flags & STF_STRING) != 0 {
+            // c:166
             out.push_str(" (");
         }
     }
-    if (flags & STF_STRING) != 0 {                                       // c:169
+    if (flags & STF_STRING) != 0 {
+        // c:169
         let name = unsafe {
-            let g = libc::getgrgid(gid);                                  // c:171
-            if g.is_null() { String::new() }
-            else {
+            let g = libc::getgrgid(gid); // c:171
+            if g.is_null() {
+                String::new()
+            } else {
                 let nm = (*g).gr_name;
-                if nm.is_null() { String::new() }
-                else { std::ffi::CStr::from_ptr(nm).to_string_lossy().into_owned() }
+                if nm.is_null() {
+                    String::new()
+                } else {
+                    std::ffi::CStr::from_ptr(nm).to_string_lossy().into_owned()
+                }
             }
         };
         if name.is_empty() {
-            out.push_str(&format!("{}", gid));                           // c:184
+            out.push_str(&format!("{}", gid)); // c:184
         } else {
-            out.push_str(&name);                                         // c:178
+            out.push_str(&name); // c:178
         }
-        if (flags & STF_RAW) != 0 {                                      // c:191
+        if (flags & STF_RAW) != 0 {
+            // c:191
             out.push(')');
         }
     }
@@ -164,20 +193,25 @@ pub fn statgidprint(gid: u32, flags: i32) -> String {                    // c:16
 /// a Unix timestamp + nsec offset: raw form is integer seconds;
 /// string form is `ctime(3)` (or strftime via the timefmt global).
 /// WARNING: param names don't match C — Rust=(tim, _nsecs, flags) vs C=(tim, nsecs, outbuf, flags)
-pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {      // c:191
+pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
+    // c:191
     let mut out = String::new();
-    if (flags & STF_RAW) != 0 {                                          // c:194
+    if (flags & STF_RAW) != 0 {
+        // c:194
         out.push_str(&format!("{}", tim));
-        if (flags & STF_STRING) != 0 {                                   // c:196
+        if (flags & STF_STRING) != 0 {
+            // c:196
             out.push_str(" (");
         }
     }
-    if (flags & STF_STRING) != 0 {                                       // c:199
+    if (flags & STF_STRING) != 0 {
+        // c:199
         // c:200 — `ztrftime(buf, ..., timefmt, localtime(&tim), nsecs);`
         let st = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tim.max(0) as u64);
         let formatted = crate::ported::utils::ztrftime("%a %b %e %k:%M:%S %Z %Y", st);
         out.push_str(&formatted);
-        if (flags & STF_RAW) != 0 {                                      // c:211
+        if (flags & STF_RAW) != 0 {
+            // c:211
             out.push(')');
         }
     }
@@ -188,19 +222,22 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {      // c:19
 /// unsigned-long stat field as decimal (always raw, no STF_STRING
 /// branch).
 /// WARNING: param names don't match C — Rust=(num) vs C=(num, outbuf)
-pub fn statulprint(num: u64) -> String {                                 // c:211
-    format!("{}", num)                                                    // c:219
+pub fn statulprint(num: u64) -> String {
+    // c:211
+    format!("{}", num) // c:219
 }
 
 /// Port of `statlinkprint(struct stat *sbuf, char *outbuf, char *fname)` from `Src/Modules/stat.c:219`. For
 /// symlinks, renders the link target via `readlink(2)`; otherwise
 /// returns empty.
 /// WARNING: param names don't match C — Rust=(sbuf_mode, fname) vs C=(sbuf, outbuf, fname)
-pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {            // c:219
-    if (sbuf_mode & 0o170_000) != 0o120_000 {                            // c:219 S_ISLNK
+pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {
+    // c:219
+    if (sbuf_mode & 0o170_000) != 0o120_000 {
+        // c:219 S_ISLNK
         return String::new();
     }
-    fs::read_link(fname)                                                  // c:226 readlink
+    fs::read_link(fname) // c:226 readlink
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
@@ -213,35 +250,36 @@ pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {            // c:21
 /// C signature: `static void statprint(struct stat *sbuf, char *outbuf,
 ///                                      char *fname, int iwhich, int flags)`.
 /// WARNING: param names don't match C — Rust=(meta, fname, iwhich, flags) vs C=(sbuf, outbuf, fname, iwhich, flags)
-pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> String {  // c:234
+pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> String {
+    // c:234
     // c:234-241 — `if (flags & STF_NAME)` prefix with `name<space>`.
     // `%-8s` left-justifies the name to 8 chars when not PICK/ARRAY,
     // `%s ` otherwise.
     let name_prefix = if (flags & STF_NAME) != 0 {
         let n = STATELTS.get(iwhich as usize).copied().unwrap_or("");
         if (flags & (STF_PICK | STF_ARRAY)) != 0 {
-            format!("{} ", n)                                            // c:239
+            format!("{} ", n) // c:239
         } else {
-            format!("{:<8}", n)                                          // c:240
+            format!("{:<8}", n) // c:240
         }
     } else {
         String::new()
     };
     let val = match iwhich {
-        ST_DEV      => format!("{}", meta.dev()),                        // c:240
-        ST_INO      => format!("{}", meta.ino()),                        // c:241
-        ST_MODE     => statmodeprint(meta.mode(), flags),                // c:242
-        ST_NLINK    => format!("{}", meta.nlink()),                      // c:243
-        ST_UID      => statuidprint(meta.uid(), flags),                  // c:244
-        ST_GID      => statgidprint(meta.gid(), flags),                  // c:245
-        ST_RDEV     => format!("{}", meta.rdev()),                       // c:246
-        ST_SIZE     => statulprint(meta.size()),                         // c:247
-        ST_ATIM     => stattimeprint(meta.atime(), 0, flags),            // c:248
-        ST_MTIM     => stattimeprint(meta.mtime(), 0, flags),            // c:249
-        ST_CTIM     => stattimeprint(meta.ctime(), 0, flags),            // c:250
-        ST_BLKSIZE  => statulprint(meta.blksize()),                      // c:251
-        ST_BLOCKS   => statulprint(meta.blocks()),                       // c:252
-        ST_READLINK => statlinkprint(meta.mode(), fname),                // c:253
+        ST_DEV => format!("{}", meta.dev()),              // c:240
+        ST_INO => format!("{}", meta.ino()),              // c:241
+        ST_MODE => statmodeprint(meta.mode(), flags),     // c:242
+        ST_NLINK => format!("{}", meta.nlink()),          // c:243
+        ST_UID => statuidprint(meta.uid(), flags),        // c:244
+        ST_GID => statgidprint(meta.gid(), flags),        // c:245
+        ST_RDEV => format!("{}", meta.rdev()),            // c:246
+        ST_SIZE => statulprint(meta.size()),              // c:247
+        ST_ATIM => stattimeprint(meta.atime(), 0, flags), // c:248
+        ST_MTIM => stattimeprint(meta.mtime(), 0, flags), // c:249
+        ST_CTIM => stattimeprint(meta.ctime(), 0, flags), // c:250
+        ST_BLKSIZE => statulprint(meta.blksize()),        // c:251
+        ST_BLOCKS => statulprint(meta.blocks()),          // c:252
+        ST_READLINK => statlinkprint(meta.mode(), fname), // c:253
         _ => String::new(),
     };
     format!("{}{}", name_prefix, val)
@@ -256,12 +294,16 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
 /// C signature: `static int bin_stat(char *name, char **args,
 ///                                    Options ops, int func)`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(name, args, ops, func)
-pub fn bin_stat(nam: &str, args: &[String],                                  // c:368
-                _ops_unused: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_stat(
+    nam: &str,
+    args: &[String], // c:368
+    _ops_unused: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // c:370-374 — locals.
-    let mut iwhich: i32 = -1;                                            // c:373
+    let mut iwhich: i32 = -1; // c:373
     let mut flags: i32 = 0;
-    let mut found = 0i32;                                                // c:375
+    let mut found = 0i32; // c:375
     let mut arrnam: Option<String> = None;
     let mut hashnam: Option<String> = None;
     let mut fd: i32 = 0;
@@ -278,20 +320,26 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
         let arg = &args[i][1..];
         if arg.is_empty() || arg.starts_with('-') || arg.starts_with('+') {
             i += 1;
-            break;                                                       // c:386
+            break; // c:386
         }
-        if args[i].starts_with('+') {                                    // c:389
-            if found != 0 { break; }
-            for (idx, name) in STATELTS.iter().enumerate() {             // c:392
+        if args[i].starts_with('+') {
+            // c:389
+            if found != 0 {
+                break;
+            }
+            for (idx, name) in STATELTS.iter().enumerate() {
+                // c:392
                 if name.starts_with(arg) {
                     found += 1;
                     iwhich = idx as i32;
                 }
             }
-            if found > 1 {                                               // c:397
+            if found > 1 {
+                // c:397
                 zwarnnam(nam, &format!("{}: ambiguous stat element", arg));
                 return 1;
-            } else if found == 0 {                                       // c:400
+            } else if found == 0 {
+                // c:400
                 zwarnnam(nam, &format!("{}: no such stat element", arg));
                 return 1;
             }
@@ -299,12 +347,13 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
             if iwhich == ST_READLINK {
                 ops[b'L' as usize] = true;
             }
-            flags |= STF_PICK;                                           // c:406
-        } else {                                                         // c:407 - flag arm
+            flags |= STF_PICK; // c:406
+        } else {
+            // c:407 - flag arm
             for ch in arg.chars() {
                 match ch {
                     'g' | 'l' | 'L' | 'n' | 'N' | 'o' | 'r' | 's' | 't' | 'T' => {
-                        ops[ch as u8 as usize] = true;                   // c:411
+                        ops[ch as u8 as usize] = true; // c:411
                     }
                     'A' => {
                         // c:412 — array name follows.
@@ -367,28 +416,33 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
     }
     let _ = fd;
 
-    if (flags & STF_ARRAY) != 0 && (flags & STF_HASH) != 0 {             // c:459
+    if (flags & STF_ARRAY) != 0 && (flags & STF_HASH) != 0 {
+        // c:459
         zwarnnam(nam, "both array and hash requested");
         return 1;
     }
 
-    if ops[b'l' as usize] {                                              // c:467
+    if ops[b'l' as usize] {
+        // c:467
         // List elements + return.
-        if let Some(ref name) = arrnam {                                 // c:469
+        if let Some(ref name) = arrnam {
+            // c:469
             // c:472 — `setaparam(arrnam, names);` — array of element names.
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
             crate::ported::params::setsparam(name, &joined.join(":"));
         } else {
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
-            println!("{}", joined.join(" "));                            // c:478 putchar
+            println!("{}", joined.join(" ")); // c:478 putchar
         }
-        return 0;                                                        // c:489
+        return 0; // c:489
     }
 
-    if argv.is_empty() && !ops[b'f' as usize] {                          // c:491
+    if argv.is_empty() && !ops[b'f' as usize] {
+        // c:491
         zwarnnam(nam, "no files given");
         return 1;
-    } else if !argv.is_empty() && ops[b'f' as usize] {                   // c:493
+    } else if !argv.is_empty() && ops[b'f' as usize] {
+        // c:493
         zwarnnam(nam, "no files allowed with -f");
         return 1;
     }
@@ -397,35 +451,49 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
     let use_lstat = ops[b'L' as usize];
     let mut hash_out: Vec<(String, String)> = Vec::new();
     let mut array_out: Vec<String> = Vec::new();
-    let show_type = ops[b't' as usize];                                  // c: -t
+    let show_type = ops[b't' as usize]; // c: -t
     let mut local_flags = flags;
     // c:513 — `if (OPT_ISSET(ops,'s') || !OPT_ISSET(ops,'r'))` STF_STRING.
-    if ops[b's' as usize] { local_flags |= STF_STRING; }                  // c:514
-    // c:516 — `if (OPT_ISSET(ops,'r') || !OPT_ISSET(ops,'s'))` STF_RAW.
-    if ops[b'r' as usize] || !ops[b's' as usize] {                        // c:516
+    if ops[b's' as usize] {
+        local_flags |= STF_STRING;
+    } // c:514
+      // c:516 — `if (OPT_ISSET(ops,'r') || !OPT_ISSET(ops,'s'))` STF_RAW.
+    if ops[b'r' as usize] || !ops[b's' as usize] {
+        // c:516
         local_flags |= STF_RAW;
     }
     // c:518-519 — `-n` → STF_FILE (filename prefix).
-    if ops[b'n' as usize] { local_flags |= STF_FILE; }                    // c:519
-    // c:520-521 — `-o` → STF_OCTAL.
-    if ops[b'o' as usize] { local_flags |= STF_OCTAL; }                   // c:521
-    // c:522-523 — `-t` → STF_NAME explicit.
-    if ops[b't' as usize] { local_flags |= STF_NAME; }                    // c:523
-    // c:525-530 — default STF_NAME when neither -A nor -H and no
-    // single-element pick: every line gets a `name<sp>` prefix so
-    // `zstat /etc/hosts` looks like `mode    33188` etc.
+    if ops[b'n' as usize] {
+        local_flags |= STF_FILE;
+    } // c:519
+      // c:520-521 — `-o` → STF_OCTAL.
+    if ops[b'o' as usize] {
+        local_flags |= STF_OCTAL;
+    } // c:521
+      // c:522-523 — `-t` → STF_NAME explicit.
+    if ops[b't' as usize] {
+        local_flags |= STF_NAME;
+    } // c:523
+      // c:525-530 — default STF_NAME when neither -A nor -H and no
+      // single-element pick: every line gets a `name<sp>` prefix so
+      // `zstat /etc/hosts` looks like `mode    33188` etc.
     if arrnam.is_none() && hashnam.is_none() {
-        if argv.len() > 1 { local_flags |= STF_FILE; }                    // c:527
-        if (local_flags & STF_PICK) == 0 {                                // c:528
-            local_flags |= STF_NAME;                                      // c:529
+        if argv.len() > 1 {
+            local_flags |= STF_FILE;
+        } // c:527
+        if (local_flags & STF_PICK) == 0 {
+            // c:528
+            local_flags |= STF_NAME; // c:529
         }
     }
     // c:532-535 — explicit -N / -f turn off STF_FILE; -T / -H turn off
     // STF_NAME (suppress prefix for `read` / hash use).
-    if ops[b'N' as usize] || ops[b'f' as usize] {                         // c:532
+    if ops[b'N' as usize] || ops[b'f' as usize] {
+        // c:532
         local_flags &= !STF_FILE;
     }
-    if ops[b'T' as usize] || ops[b'H' as usize] {                         // c:534
+    if ops[b'T' as usize] || ops[b'H' as usize] {
+        // c:534
         local_flags &= !STF_NAME;
     }
     let _ = show_type;
@@ -447,7 +515,7 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
         // c:573-581 — `STF_FILE` prefix the filename per file.
         if (local_flags & STF_FILE) != 0 && arrnam.is_none() && hashnam.is_none() {
             if (local_flags & STF_PICK) != 0 {
-                print!("{} ", path);                                     // c:580
+                print!("{} ", path); // c:580
             } else {
                 println!("{}:", path);
             }
@@ -462,7 +530,7 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
                 hash_out.push((STATELTS[iwhich as usize].to_string(), val));
                 let _ = hname;
             } else {
-                println!("{}", val);                                     // c:591
+                println!("{}", val); // c:591
             }
         } else {
             // All elements.
@@ -473,17 +541,19 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
                 } else if let Some(_) = &hashnam {
                     hash_out.push((STATELTS[idx].to_string(), val));
                 } else {
-                    println!("{}", val);                                 // c:603
+                    println!("{}", val); // c:603
                 }
             }
         }
     }
 
-    if let Some(name) = arrnam {                                         // c:setaparam
+    if let Some(name) = arrnam {
+        // c:setaparam
         // c — `setaparam(name, zarrdup(array_out));` — real indexed array.
-        crate::ported::params::setaparam(&name, array_out);              // c:params.c:3595
+        crate::ported::params::setaparam(&name, array_out); // c:params.c:3595
     }
-    if let Some(name) = hashnam {                                        // c:sethparam
+    if let Some(name) = hashnam {
+        // c:sethparam
         // c — `sethparam(name, ...);` — real assoc array. Flatten
         // hash_out into alternating [k,v,k,v,...].
         let mut flat: Vec<String> = Vec::with_capacity(hash_out.len() * 2);
@@ -491,42 +561,43 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
             flat.push(k);
             flat.push(v);
         }
-        crate::ported::params::sethparam(&name, flat);                   // c:params.c:3602
+        crate::ported::params::sethparam(&name, flat); // c:params.c:3602
     }
     0
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (stat.c:638).
 
-
 // `module_features` — port of `static struct features module_features`
 // from stat.c:642.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/stat.c:651`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:651
+pub fn setup_(m: *const module) -> i32 {
+    // c:651
     // C body c:653-654 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/stat.c:658`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:658
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:658
     *features = featuresarray(m, module_features());
-    0                                                                    // c:673
+    0 // c:673
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/stat.c:666`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:666
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:666
     handlefeatures(m, module_features(), enables) // c:673
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/stat.c:673`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:673
+pub fn boot_(m: *const module) -> i32 {
+    // c:673
     // C body c:675-676 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin registers via the bn_list dispatch.
     0
@@ -534,42 +605,44 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/stat.c:680`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:680
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:680
     setfeatureenables(m, module_features(), None) // c:687
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/stat.c:687`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:687
+pub fn finish_(m: *const module) -> i32 {
+    // c:687
     // C body c:689-690 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin unregisters via cleanup_'s setfeatureenables.
     0
 }
 
-pub const ST_DEV:      i32 = 0;                                          // c:33
-pub const ST_INO:      i32 = 1;
-pub const ST_MODE:     i32 = 2;
-pub const ST_NLINK:    i32 = 3;
-pub const ST_UID:      i32 = 4;
-pub const ST_GID:      i32 = 5;
-pub const ST_RDEV:     i32 = 6;
-pub const ST_SIZE:     i32 = 7;
-pub const ST_ATIM:     i32 = 8;
-pub const ST_MTIM:     i32 = 9;
-pub const ST_CTIM:     i32 = 10;
-pub const ST_BLKSIZE:  i32 = 11;
-pub const ST_BLOCKS:   i32 = 12;
+pub const ST_DEV: i32 = 0; // c:33
+pub const ST_INO: i32 = 1;
+pub const ST_MODE: i32 = 2;
+pub const ST_NLINK: i32 = 3;
+pub const ST_UID: i32 = 4;
+pub const ST_GID: i32 = 5;
+pub const ST_RDEV: i32 = 6;
+pub const ST_SIZE: i32 = 7;
+pub const ST_ATIM: i32 = 8;
+pub const ST_MTIM: i32 = 9;
+pub const ST_CTIM: i32 = 10;
+pub const ST_BLKSIZE: i32 = 11;
+pub const ST_BLOCKS: i32 = 12;
 pub const ST_READLINK: i32 = 13;
-pub const ST_COUNT:    i32 = 14;                                         // c:34
+pub const ST_COUNT: i32 = 14; // c:34
 
 // ============================================================
 // Port of `enum statflags` from `Src/Modules/stat.c:36-38`.
 // Bitmask flags passed to the print fns + bin_stat dispatch.
 // ============================================================
-pub const STF_NAME:   i32 = 1;                                           // c:36
-pub const STF_FILE:   i32 = 2;
+pub const STF_NAME: i32 = 1; // c:36
+pub const STF_FILE: i32 = 2;
 pub const STF_STRING: i32 = 4;
-pub const STF_RAW:    i32 = 8;
+pub const STF_RAW: i32 = 8;
 
 // =====================================================================
 // static struct builtin bintab[]                                    c:638
@@ -577,28 +650,24 @@ pub const STF_RAW:    i32 = 8;
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-pub const STF_PICK:   i32 = 16;
-pub const STF_ARRAY:  i32 = 32;
-pub const STF_GMT:    i32 = 64;
-pub const STF_HASH:   i32 = 128;
-pub const STF_OCTAL:  i32 = 256;                                         // c:38
+pub const STF_PICK: i32 = 16;
+pub const STF_ARRAY: i32 = 32;
+pub const STF_GMT: i32 = 64;
+pub const STF_HASH: i32 = 128;
+pub const STF_OCTAL: i32 = 256; // c:38
 
 /// Port of `statelts[]` from `Src/Modules/stat.c:39`. Names of the
 /// 14 stat-elements, indexed by the `ST_*` constants above.
-pub static STATELTS: &[&str] = &[                                        // c:39
-    "device", "inode", "mode", "nlink",
-    "uid", "gid", "rdev", "size", "atime",
-    "mtime", "ctime", "blksize", "blocks",
-    "link",
+pub static STATELTS: &[&str] = &[
+    // c:39
+    "device", "inode", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime",
+    "blksize", "blocks", "link",
 ];
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -632,11 +701,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -667,17 +732,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 2,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 2,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -764,33 +831,51 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // 4755 = setuid + executable → 's' in user slot
         let s = statmodeprint(0o104_755, STF_STRING);
-        assert_eq!(s.chars().nth(3), Some('s'),
-            "setuid+x must render as 's' in user-execute slot");
+        assert_eq!(
+            s.chars().nth(3),
+            Some('s'),
+            "setuid+x must render as 's' in user-execute slot"
+        );
 
         // 4644 = setuid + NOT executable → 'S' in user slot
         let s = statmodeprint(0o104_644, STF_STRING);
-        assert_eq!(s.chars().nth(3), Some('S'),
-            "setuid without x must render as 'S' (uppercase)");
+        assert_eq!(
+            s.chars().nth(3),
+            Some('S'),
+            "setuid without x must render as 'S' (uppercase)"
+        );
 
         // 2755 = setgid + group-x → 's' in group-execute slot
         let s = statmodeprint(0o102_755, STF_STRING);
-        assert_eq!(s.chars().nth(6), Some('s'),
-            "setgid+gx must render as 's' in group-execute slot");
+        assert_eq!(
+            s.chars().nth(6),
+            Some('s'),
+            "setgid+gx must render as 's' in group-execute slot"
+        );
 
         // 2644 = setgid without group-x → 'S'
         let s = statmodeprint(0o102_644, STF_STRING);
-        assert_eq!(s.chars().nth(6), Some('S'),
-            "setgid without gx must render as 'S'");
+        assert_eq!(
+            s.chars().nth(6),
+            Some('S'),
+            "setgid without gx must render as 'S'"
+        );
 
         // 1755 = sticky + world-x → 't' in other-execute slot
         let s = statmodeprint(0o101_755, STF_STRING);
-        assert_eq!(s.chars().nth(9), Some('t'),
-            "sticky+ox must render as 't' in other-execute slot");
+        assert_eq!(
+            s.chars().nth(9),
+            Some('t'),
+            "sticky+ox must render as 't' in other-execute slot"
+        );
 
         // 1644 = sticky without world-x → 'T'
         let s = statmodeprint(0o101_644, STF_STRING);
-        assert_eq!(s.chars().nth(9), Some('T'),
-            "sticky without ox must render as 'T'");
+        assert_eq!(
+            s.chars().nth(9),
+            Some('T'),
+            "sticky without ox must render as 'T'"
+        );
     }
 
     /// c:47-93 — `STF_RAW | STF_STRING` produces "raw (string)" with
@@ -807,8 +892,12 @@ mod tests {
         // The closing paren must come right after the 10-char ls form
         let open = s.find('(').unwrap();
         let close = s.rfind(')').unwrap();
-        assert_eq!(close - open - 1, 10,
-            "expected 10-char ls-mode between parens, got: {:?}", &s[open+1..close]);
+        assert_eq!(
+            close - open - 1,
+            10,
+            "expected 10-char ls-mode between parens, got: {:?}",
+            &s[open + 1..close]
+        );
     }
 
     /// c:47-93 — `statmodeprint(0)` with STF_STRING renders all dashes
@@ -820,8 +909,7 @@ mod tests {
         let s = statmodeprint(0, STF_STRING);
         assert_eq!(s.len(), 10);
         assert_eq!(&s[..1], "?", "mode with no S_IFMT bits → unknown");
-        assert_eq!(&s[1..], "---------",
-            "no permission bits → all dashes");
+        assert_eq!(&s[1..], "---------", "no permission bits → all dashes");
     }
 
     /// c:132 — `statuidprint` raw form is just the decimal uid;
@@ -844,8 +932,11 @@ mod tests {
         let s = statuidprint(0, STF_STRING);
         // Some hardened systems map uid 0 to a different name, but
         // it MUST resolve to non-numeric.
-        assert!(!s.parse::<u32>().is_ok(),
-            "uid 0 fell back to numeric form: {}", s);
+        assert!(
+            !s.parse::<u32>().is_ok(),
+            "uid 0 fell back to numeric form: {}",
+            s
+        );
         assert!(!s.is_empty());
     }
 
@@ -882,20 +973,27 @@ mod tests {
     #[test]
     fn stf_flag_values_are_distinct_single_bits() {
         let _g = crate::test_util::global_state_lock();
-        for f in [STF_NAME, STF_FILE, STF_STRING, STF_RAW,
-                  STF_PICK, STF_ARRAY, STF_GMT, STF_HASH, STF_OCTAL] {
+        for f in [
+            STF_NAME, STF_FILE, STF_STRING, STF_RAW, STF_PICK, STF_ARRAY, STF_GMT, STF_HASH,
+            STF_OCTAL,
+        ] {
             assert!(f > 0, "STF_* flag {} must be positive", f);
-            assert_eq!((f as u32).count_ones(), 1,
+            assert_eq!(
+                (f as u32).count_ones(),
+                1,
                 "STF_* flag {} = 0b{:b} must be a single bit",
-                f, f);
+                f,
+                f
+            );
         }
         // Pairwise: no two flags share a bit
-        let flags = [STF_NAME, STF_FILE, STF_STRING, STF_RAW,
-                     STF_PICK, STF_ARRAY, STF_GMT, STF_HASH, STF_OCTAL];
+        let flags = [
+            STF_NAME, STF_FILE, STF_STRING, STF_RAW, STF_PICK, STF_ARRAY, STF_GMT, STF_HASH,
+            STF_OCTAL,
+        ];
         for (i, &a) in flags.iter().enumerate() {
-            for &b in &flags[i+1..] {
-                assert_eq!(a & b, 0,
-                    "STF flags {} and {} overlap", a, b);
+            for &b in &flags[i + 1..] {
+                assert_eq!(a & b, 0, "STF flags {} and {} overlap", a, b);
             }
         }
     }

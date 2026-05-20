@@ -77,7 +77,11 @@ fn main() {
         Err(e) => {
             // Snapshot missing or unreadable — warn but don't break
             // the build. The full test will fail loudly if invoked.
-            println!("cargo:warning=PORT.md drift: cannot read {} ({})", c_index_path.display(), e);
+            println!(
+                "cargo:warning=PORT.md drift: cannot read {} ({})",
+                c_index_path.display(),
+                e
+            );
             return;
         }
     };
@@ -168,8 +172,7 @@ fn main() {
 /// shell script (see the file's header comment); the assignments use
 /// `KEY=VALUE` with no spaces around the `=`.
 fn parse_version_mk(path: &Path) -> (String, String) {
-    let s = fs::read_to_string(path)
-        .unwrap_or_else(|_| String::new());
+    let s = fs::read_to_string(path).unwrap_or_else(|_| String::new());
     let mut version = String::new();
     let mut version_date = String::new();
     for line in s.lines() {
@@ -224,9 +227,7 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
         let lineno = lineno + 1;
         let trimmed = line.trim_start();
 
-        if depth == 0
-            && (trimmed.starts_with("mod tests {") || trimmed.starts_with("mod test {"))
-        {
+        if depth == 0 && (trimmed.starts_with("mod tests {") || trimmed.starts_with("mod test {")) {
             in_test_mod = true;
             test_mod_depth = depth + 1;
         }
@@ -260,8 +261,14 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                     i += 1;
                     while i < bytes.len() {
                         let c = bytes[i];
-                        if c == b'\\' { i += 2; continue; }
-                        if c == b'"' { i += 1; break; }
+                        if c == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if c == b'"' {
+                            i += 1;
+                            break;
+                        }
                         i += 1;
                     }
                 }
@@ -275,7 +282,9 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                     if j < bytes.len() && bytes[j] == b'"' {
                         i = j + 1;
                         loop {
-                            if i >= bytes.len() { break; }
+                            if i >= bytes.len() {
+                                break;
+                            }
                             if bytes[i] == b'"' {
                                 let mut closed = 0;
                                 let mut k = i + 1;
@@ -314,13 +323,21 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                         i = j + 1;
                     } else {
                         i += 1;
-                        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                        while i < bytes.len()
+                            && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                        {
                             i += 1;
                         }
                     }
                 }
-                b'{' => { delta += 1; i += 1; }
-                b'}' => { delta -= 1; i += 1; }
+                b'{' => {
+                    delta += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    delta -= 1;
+                    i += 1;
+                }
                 _ => i += 1,
             }
         }

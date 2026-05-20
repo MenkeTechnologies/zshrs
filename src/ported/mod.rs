@@ -55,17 +55,17 @@ pub mod utils;
 
 pub mod builtin;
 pub mod builtins;
+pub mod config_h;
+pub mod exec;
+pub mod lex;
+pub mod parse;
+pub mod patchlevel;
+mod prototypes_h;
+pub mod signals_h;
 pub mod zle;
 pub mod zsh_h;
 pub mod zsh_system_h;
 pub mod ztype_h;
-mod prototypes_h;
-pub mod patchlevel;
-pub mod signals_h;
-pub mod config_h;
-pub mod lex;
-pub mod parse;
-pub mod exec;
 
 #[cfg(test)]
 mod tests {
@@ -80,7 +80,7 @@ mod tests {
     fn meta_sentinel_consistent_across_modules() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(input::META as u8, zsh_h::META as u8);
-        assert_eq!(utils::Meta,        zsh_h::META as u8);
+        assert_eq!(utils::Meta, zsh_h::META as u8);
         assert_eq!(input::META as u8, 0x83);
     }
 }

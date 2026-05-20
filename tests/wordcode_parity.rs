@@ -59,7 +59,12 @@ fn collect_corpus() -> Vec<PathBuf> {
         .map(|rd| {
             rd.filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| matches!(p.extension().and_then(|s| s.to_str()), Some("zsh") | Some("sh")))
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|s| s.to_str()),
+                        Some("zsh") | Some("sh")
+                    )
+                })
                 .filter(|p| {
                     p.file_name()
                         .and_then(|s| s.to_str())
@@ -121,16 +126,37 @@ fn load_zsh_stream(path: &Path) -> Result<String, String> {
 }
 
 const WCNAMES: &[&str] = &[
-    "WC_END",     "WC_LIST",    "WC_SUBLIST", "WC_PIPE",    "WC_REDIR",
-    "WC_ASSIGN",  "WC_SIMPLE",  "WC_TYPESET", "WC_SUBSH",   "WC_CURSH",
-    "WC_TIMED",   "WC_FUNCDEF", "WC_FOR",     "WC_SELECT",  "WC_WHILE",
-    "WC_REPEAT",  "WC_CASE",    "WC_IF",      "WC_COND",    "WC_ARITH",
-    "WC_AUTOFN",  "WC_TRY",
+    "WC_END",
+    "WC_LIST",
+    "WC_SUBLIST",
+    "WC_PIPE",
+    "WC_REDIR",
+    "WC_ASSIGN",
+    "WC_SIMPLE",
+    "WC_TYPESET",
+    "WC_SUBSH",
+    "WC_CURSH",
+    "WC_TIMED",
+    "WC_FUNCDEF",
+    "WC_FOR",
+    "WC_SELECT",
+    "WC_WHILE",
+    "WC_REPEAT",
+    "WC_CASE",
+    "WC_IF",
+    "WC_COND",
+    "WC_ARITH",
+    "WC_AUTOFN",
+    "WC_TRY",
 ];
 
 fn wc_name(kind: wordcode) -> &'static str {
     let i = kind as usize;
-    if i < WCNAMES.len() { WCNAMES[i] } else { "WC_?" }
+    if i < WCNAMES.len() {
+        WCNAMES[i]
+    } else {
+        "WC_?"
+    }
 }
 
 fn esc(out: &mut String, s: &str) {
@@ -252,8 +278,14 @@ fn first_divergence(a: &str, b: &str) -> usize {
 }
 
 fn safe_slice(s: &str, lo: usize, hi: usize) -> &str {
-    let start = (0..=lo.min(s.len())).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
-    let end = (start..=hi.min(s.len())).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(s.len());
+    let start = (0..=lo.min(s.len()))
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(0);
+    let end = (start..=hi.min(s.len()))
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(s.len());
     &s[start..end]
 }
 
@@ -329,6 +361,10 @@ fn corpus_wordcode_parity() {
         if failures.len() > 3 {
             eprintln!("... {} more failures elided ...", failures.len() - 3);
         }
-        panic!("wordcode parity FAILURES: {}/{}", failures.len(), corpus.len());
+        panic!(
+            "wordcode parity FAILURES: {}/{}",
+            failures.len(),
+            corpus.len()
+        );
     }
 }

@@ -11,36 +11,34 @@ use super::lex::{
     DBAR, DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
     FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
-    IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
-    OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER,
-    STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
+    IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
+    OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN,
+    TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
 };
 use super::zsh_h::{
-    eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Inpar,
-    Outang, Outpar, Stringg, Tilde, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT,
-    COND_OR, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
-    CSHJUNKIELOOPS,
-    EC_DUP, EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
-    PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW,
-    REDIR_FROM_HEREDOC_MASK, REDIR_VARID_MASK, REDIR_ERRAPP,
-    REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH,
-    REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ,
-    REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS, SHORTREPEAT, WCB_COND, WCB_SIMPLE,
-    WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SUBLIST_COPROC,
-    WC_SUBLIST_NOT,
+    eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Outang,
+    Tilde, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT, COND_OR, COND_REGEX,
+    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, CSHJUNKIELOOPS, EC_DUP,
+    EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
+    PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
+    REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_FROM_HEREDOC_MASK, REDIR_HEREDOC,
+    REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
+    REDIR_READ, REDIR_READWRITE, REDIR_VARID_MASK, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS,
+    SHORTREPEAT, WCB_COND, WCB_SIMPLE, WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE,
+    WC_REDIR_VARID, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
 };
-use crate::ported::utils::{zerr, zwarnnam, errflag, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, zwarnnam, ERRFLAG_ERROR};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
 // Names lifted out of inside-fn `use` statements (PORT.md
 // 'no imports inside FNs ever').
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // Direct port of `Src/parse.c:287-289` grow-policy constants.
 const EC_INIT_SIZE: i32 = 256;
@@ -217,6 +215,13 @@ pub fn ecadjusthere(p: usize, d: i32) {
 // retires them entirely — until then, callers reach them via this
 // re-export.
 pub use crate::heredoc_ast::HereDoc;
+use crate::ported::lex::{
+    incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin,
+    lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond,
+    set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_lineno, set_noaliases,
+    set_nocorrect, tok, tokfd, toklineno, tokstr, zshlex,
+};
+use crate::prompt::{cmdpop, cmdpush};
 pub use crate::zsh_ast::{
     CaseArm, CaseTerm, CaseTerminator, CompoundCommand, ForList, HereDocInfo, ListFlags, ListOp,
     Redirect, RedirectOp, ShellCommand, ShellWord, SimpleCommand, SublistFlags, SublistOp,
@@ -224,25 +229,18 @@ pub use crate::zsh_ast::{
     ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
     ZshTry, ZshWhile,
 };
-use crate::ported::lex::{
-    incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
-    isnewlin, lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond, set_lineno,
-    set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_noaliases,
-    set_nocorrect, set_pos, set_tokfd, set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr, zshlex,
-};
-use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
-    wc_bdata, CS_ALWAYS, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE,
-    CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT,
-    CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH, WCB_END,
-    WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
-    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
-    WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND,
-    WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_ELIF, WC_IF_ELSE, WC_IF_HEAD, WC_IF_IF,
-    WC_PIPE_END, WC_PIPE_LINENO,
-    WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END,
-    WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY,
-    WC_TIMED_PIPE, WC_WHILE_UNTIL, WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
+    wc_bdata, CS_ALWAYS, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF,
+    CS_ELSE, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT,
+    CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH,
+    WCB_END, WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
+    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY,
+    WC_ASSIGN_INC, WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR,
+    WC_CASE_TESTAND, WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_ELIF, WC_IF_ELSE, WC_IF_HEAD,
+    WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST,
+    WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR,
+    WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, WC_WHILE_UNTIL,
+    WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
 };
 
 /// Direct port of `ecispace(int p, int n)` at `Src/parse.c:372`. Insert `n`
@@ -432,9 +430,8 @@ pub fn ecstrcode(s: &str) -> u32 {
         // c_bytes via from_utf8_unchecked so non-UTF-8 zsh marker
         // bytes feed straight in. SAFETY: hasher only iterates
         // `.bytes()` — no UTF-8 validity assumed.
-        let val = crate::ported::hashtable::hasher(unsafe {
-            std::str::from_utf8_unchecked(&c_bytes)
-        });
+        let val =
+            crate::ported::hashtable::hasher(unsafe { std::str::from_utf8_unchecked(&c_bytes) });
         let nfunc = ECNFUNC.get();
         let found_offs = ECSTRS_TREE.with_borrow_mut(|root| {
             // Walk the tree. At each node, if all 3 cmps == 0,
@@ -475,8 +472,7 @@ pub fn ecstrcode(s: &str) -> u32 {
             return offs;
         }
         // c:462 — `p->offs = ((ecsoffs - ecssub) << 2) | (t ? 1 : 0);`
-        let offs =
-            (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
+        let offs = (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
         // c:463 — `p->aoffs = ecsoffs;` (absolute write position).
         let aoffs = ECSOFFS.get() as u32;
         // c:457-465 — insert new node at the NULL slot the walk
@@ -506,9 +502,9 @@ pub fn ecstrcode(s: &str) -> u32 {
                     let mut cmp = (p.nfunc as i64) - (nfunc as i64);
                     if cmp == 0 {
                         // C does `(int)(p->hashval - val)` — unsigned 32-bit
-                    // subtraction wraps, then cast to int. Use
-                    // wrapping_sub + as i32 to match the bit pattern.
-                    cmp = (p.hashval.wrapping_sub(val) as i32) as i64;
+                        // subtraction wraps, then cast to int. Use
+                        // wrapping_sub + as i32 to match the bit pattern.
+                        cmp = (p.hashval.wrapping_sub(val) as i32) as i64;
                         if cmp == 0 {
                             cmp = match p.str.as_slice().cmp(c_bytes.as_slice()) {
                                 std::cmp::Ordering::Less => -1,
@@ -553,16 +549,17 @@ pub fn ecstrcode(s: &str) -> u32 {
 /// reset, a fresh parse called after an in-flight `repeat`
 /// command would inherit the stale counter and silently misread
 /// the next token as a body of an already-completed repeat.
-pub fn init_parse_status() {                                                  // c:491
+pub fn init_parse_status() {
+    // c:491
     // parse.c:500-502 — `incasepat = incond = inredir = infor =
     // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
-    set_incasepat(0);                                                         // c:500
-    set_incond(0);                                                            // c:500
-    set_inredir(false);                                                       // c:500
-    set_infor(0);                                                             // c:500
-    set_intypeset(false);                                                     // c:500
-    crate::ported::lex::set_inrepeat(0);                                      // c:501 inrepeat_ = 0
-    set_incmdpos(true);                                                       // c:502
+    set_incasepat(0); // c:500
+    set_incond(0); // c:500
+    set_inredir(false); // c:500
+    set_infor(0); // c:500
+    set_intypeset(false); // c:500
+    crate::ported::lex::set_inrepeat(0); // c:501 inrepeat_ = 0
+    set_incmdpos(true); // c:502
 }
 
 /// Initialize parser for a fresh parse. Direct port of
@@ -691,7 +688,8 @@ pub fn empty_eprog(p: &crate::ported::zsh_h::eprog) -> bool {
 /// `clear_hdocs(void)` from `Src/parse.c:591`. The C version walks
 /// `hdocs` and frees each node; Rust drops the `Box<heredocs>`
 /// chain automatically when the head is replaced with None.
-pub fn clear_hdocs() {                                                            // c:591
+pub fn clear_hdocs() {
+    // c:591
     // c:593-598 — for (p = hdocs; p; p = n) { n = p->next; zfree(p); }
     // c:599 — hdocs = NULL;
     HDOCS.with_borrow_mut(|h| *h = None);
@@ -1161,8 +1159,8 @@ fn par_for() -> Option<ZshCommand> {
     // every grammar transition (parse.c:617, :791, :1072, :1145,
     // :1154, :1161, ...); without porting those companion sites a
     // single explicit reset here is more harmful than helpful.
-    set_infor(if tok() == FOR { 2 } else { 0 });                             // c:1095
-    zshlex();                                                                // c:1096
+    set_infor(if tok() == FOR { 2 } else { 0 }); // c:1095
+    zshlex(); // c:1096
 
     // Check for C-style: for (( init; cond; step ))
     if tok() == DINPAR {
@@ -1179,7 +1177,7 @@ fn par_for() -> Option<ZshCommand> {
     // the loop body through dbparens — so `for x in a; do (( 1
     // )); done` and `if (( 1 )) { … }` inside the do-body both
     // mis-lexed as a c-style for header.
-    set_infor(0);                                                            // c:1116
+    set_infor(0); // c:1116
 
     // Get variable name(s). zsh parse.c par_for accepts multiple
     // identifier tokens before `in`/`(`/newline — `for k v in ...`
@@ -1763,8 +1761,7 @@ fn par_funcdef() -> Option<ZshCommand> {
     // `\u{8f}` (bct++ path post-switch add). C parse.c:1702 handles
     // both string forms via `*tokstr == Inbrace || *tokstr == '{'`.
     let body_opener_is_string_brace =
-        tok() == STRING_LEX
-            && tokstr().map(|s| s == "{" || s == "\u{8f}").unwrap_or(false);
+        tok() == STRING_LEX && tokstr().map(|s| s == "{" || s == "\u{8f}").unwrap_or(false);
     if tok() == INBRACE_TOK || body_opener_is_string_brace {
         // Capture body_start BEFORE the lexer advances past the
         // first body token. After the previous zshlex consumed
@@ -2141,10 +2138,10 @@ fn par_cond() -> Option<ZshCommand> {
     set_incond(1);
     set_incmdpos(false);
     zshlex(); // skip [[
-    // Empty cond `[[ ]]` is a parse error in zsh — emit the
-    // diagnostic and return None so the caller produces a
-    // non-zero exit. Without this, `[[ ]]` silently passed and
-    // returned exit 0.
+              // Empty cond `[[ ]]` is a parse error in zsh — emit the
+              // diagnostic and return None so the caller produces a
+              // non-zero exit. Without this, `[[ ]]` silently passed and
+              // returned exit 0.
     if tok() == DOUTBRACK {
         crate::ported::utils::zerr("parse error near `]]'");
         set_incond(0);
@@ -2424,17 +2421,29 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecadd(WCB_COND(COND_STREQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
     // c:2668-2673 — `(t0 = b[0]=='>' || Outang) || b[0]=='<' || Inang`.
     if bc.len() == 1 && (is_gt(bc[0]) || is_lt(bc[0])) {
-        let op = if is_gt(bc[0]) { COND_STRGTR } else { COND_STRLT };
+        let op = if is_gt(bc[0]) {
+            COND_STRGTR
+        } else {
+            COND_STRLT
+        };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
@@ -2443,7 +2452,11 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecadd(WCB_COND(COND_STRDEQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
@@ -2452,7 +2465,11 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecadd(WCB_COND(COND_STRNEQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
@@ -2525,18 +2542,27 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 ///      gates per c:2746 (printing only when neither is set) — the
 ///      ERRFLAG_INT check is the load-bearing guard.
 ///   3. Sets ERRFLAG_ERROR per c:2753 (noerr=0 path always taken).
-pub fn yyerror(msg: &str) {                                                  // c:2733
+pub fn yyerror(msg: &str) {
+    // c:2733
     let int_flagged = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
-        & crate::ported::zsh_h::ERRFLAG_INT) != 0;
-    if !int_flagged {                                                        // c:2746
-        let body = if msg.is_empty() { "parse error".to_string() }           // c:2751
-                   else { format!("parse error: {msg}") };                   // c:2748
+        & crate::ported::zsh_h::ERRFLAG_INT)
+        != 0;
+    if !int_flagged {
+        // c:2746
+        let body = if msg.is_empty() {
+            "parse error".to_string()
+        }
+        // c:2751
+        else {
+            format!("parse error: {msg}")
+        }; // c:2748
         crate::ported::utils::zwarnnam("zsh", &body);
     }
     // c:2753 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`
     crate::ported::utils::errflag.fetch_or(
         crate::ported::zsh_h::ERRFLAG_ERROR,
-        std::sync::atomic::Ordering::SeqCst);
+        std::sync::atomic::Ordering::SeqCst,
+    );
 }
 
 // ============================================================
@@ -2664,11 +2690,11 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         // an interior NUL (e.g. `[a, 0, b]` → "ab"), diverging from
         // C's strlen-truncate (`[a, 0, b]` → "a"). Fix: truncate at
         // first NUL to match C exactly.
-        let b0 = ((c >> 3)  & 0xff) as u8;
+        let b0 = ((c >> 3) & 0xff) as u8;
         let b1 = ((c >> 11) & 0xff) as u8;
         let b2 = ((c >> 19) & 0xff) as u8;
-        let v  = [b0, b1, b2];
-        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len());        // c:2869 strlen(buf)
+        let v = [b0, b1, b2];
+        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2869 strlen(buf)
         String::from_utf8_lossy(&v[..end]).into_owned()
     } else {
         // c:2877 `else r = s->strs + (c >> 2);`
@@ -2717,11 +2743,11 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         // c:2902-2906 — same 3-byte inline string as ecgetstr, then
         // `buf[3] = '\0'; return dupstring(buf);` — truncate at first
         // NUL via strlen (NOT splice out interior NULs).
-        let b0 = ((c >> 3)  & 0xff) as u8;
+        let b0 = ((c >> 3) & 0xff) as u8;
         let b1 = ((c >> 11) & 0xff) as u8;
         let b2 = ((c >> 19) & 0xff) as u8;
-        let v  = [b0, b1, b2];
-        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len());        // c:2906 strlen(buf)
+        let v = [b0, b1, b2];
+        let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2906 strlen(buf)
         String::from_utf8_lossy(&v[..end]).into_owned()
     } else {
         // c:2911
@@ -3554,7 +3580,7 @@ pub fn load_dump_file(
 pub fn try_dump_file(
     path: &str,
     name: &str,
-    file: &str,                                                              // c:3746
+    file: &str, // c:3746
     test_only: bool,
 ) -> Option<(Vec<u32>, bool)> {
     use std::fs;
@@ -3614,14 +3640,15 @@ pub fn try_dump_file(
         }
     }
 
-    crate::ported::signals::unqueue_signals();                               // c:3787
-    None                                                                     // c:3788
+    crate::ported::signals::unqueue_signals(); // c:3787
+    None // c:3788
 }
 
 /// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
 /// Returns an Eprog (the wordcode dump body) if `<file>.zwc` exists
 /// and is newer than `<file>`, else None.
-pub fn try_source_file(file: &str) -> Option<String> {                       // c:3795
+pub fn try_source_file(file: &str) -> Option<String> {
+    // c:3795
 
     // c:3802-3805 — if ((tail = strrchr(file, '/'))) tail++; else tail = file;
     let tail = match file.rfind('/') {
@@ -3631,14 +3658,13 @@ pub fn try_source_file(file: &str) -> Option<String> {                       // 
 
     // c:3807-3812 — if (strsfx(FD_EXT, file)) { ... return check_dump_file(file, NULL, tail, NULL, 0); }
     if file.ends_with(FD_EXT) {
-        crate::ported::signals::queue_signals();                             // c:3808
+        crate::ported::signals::queue_signals(); // c:3808
         let meta = fs::metadata(file);
         let prog = match meta {
-            Ok(m) => check_dump_file(file, &m, tail, false)
-                .map(|(_, _)| file.to_string()),                             // c:3809
+            Ok(m) => check_dump_file(file, &m, tail, false).map(|(_, _)| file.to_string()), // c:3809
             Err(_) => None,
         };
-        crate::ported::signals::unqueue_signals();                           // c:3810
+        crate::ported::signals::unqueue_signals(); // c:3810
         return prog;
     }
 
@@ -3649,24 +3675,24 @@ pub fn try_source_file(file: &str) -> Option<String> {                       // 
     let stc = fs::metadata(&wc);
     let stn = fs::metadata(file);
 
-    crate::ported::signals::queue_signals();                                 // c:3818
-    // c:3819-3823 — if (!rc && (rn || stc.st_mtime >= stn.st_mtime) && (prog = check_dump_file(...))) return prog;
+    crate::ported::signals::queue_signals(); // c:3818
+                                             // c:3819-3823 — if (!rc && (rn || stc.st_mtime >= stn.st_mtime) && (prog = check_dump_file(...))) return prog;
     if let Ok(meta_c) = &stc {
         let newer_than_src = match (&stc, &stn) {
             (Ok(c), Ok(n)) => c.modified().ok() >= n.modified().ok(),
-            (Ok(_), Err(_)) => true,                                         // c:3819 — `rn` (src missing) ⇒ accept .zwc
+            (Ok(_), Err(_)) => true, // c:3819 — `rn` (src missing) ⇒ accept .zwc
             _ => false,
         };
         if newer_than_src {
-            let prog = check_dump_file(&wc, meta_c, tail, false);            // c:3820
+            let prog = check_dump_file(&wc, meta_c, tail, false); // c:3820
             if prog.is_some() {
-                crate::ported::signals::unqueue_signals();                   // c:3821
-                return Some(wc);                                             // c:3822
+                crate::ported::signals::unqueue_signals(); // c:3821
+                return Some(wc); // c:3822
             }
         }
     }
-    crate::ported::signals::unqueue_signals();                               // c:3824
-    None                                                                     // c:3825
+    crate::ported::signals::unqueue_signals(); // c:3824
+    None // c:3825
 }
 
 /// Port of `Eprog check_dump_file(char *file, struct stat *sbuf,
@@ -3709,7 +3735,8 @@ pub fn try_source_file(file: &str) -> Option<String> {                       // 
 /// `Eprog` pointer + `*ksh` out-param: tuple element 0 is the
 /// wordcode slice, element 1 is true if the function was a ksh-
 /// loaded entry.
-pub fn check_dump_file(                                                      // c:3833
+pub fn check_dump_file(
+    // c:3833
     file: &str,
     sbuf: &std::fs::Metadata,
     name: &str,
@@ -3719,42 +3746,48 @@ pub fn check_dump_file(                                                      // 
 
     // c:3842-3846 — `if (!sbuf) { zwcstat(file, &lsbuf); sbuf = &lsbuf; }`
     // Rust takes sbuf by &Metadata — never null.
-    let dev = sbuf.dev();                                                    // c:3859
-    let ino = sbuf.ino();                                                    // c:3859
+    let dev = sbuf.dev(); // c:3859
+    let ino = sbuf.ino(); // c:3859
 
     // c:3854 — `d = NULL;`
     let mut d: Option<Vec<u32>> = None;
-    let mut found_mmap = false;                                              // c:3858 `for (f = dumps; f; ...)`
+    let mut found_mmap = false; // c:3858 `for (f = dumps; f; ...)`
 
     // c:3858-3862 — walk DUMPS for matching dev/ino.
     {
         let dumps_guard = DUMPS.lock().expect("dumps poisoned");
-        for f in dumps_guard.iter() {                                        // c:3858
-            if f.dev == dev && f.ino == ino {                                // c:3859
-                d = Some(f.map.clone());                                     // c:3860
+        for f in dumps_guard.iter() {
+            // c:3858
+            if f.dev == dev && f.ino == ino {
+                // c:3859
+                d = Some(f.map.clone()); // c:3860
                 found_mmap = true;
-                break;                                                       // c:3861
+                break; // c:3861
             }
         }
     }
 
     // c:3870-3871 — `if (!f && (isrec || !(d = load_dump_header(NULL, file, 0)))) return NULL;`
-    if !found_mmap {                                                         // c:3870
-        match load_dump_header("", file, 0) {                                // c:3870 load_dump_header
+    if !found_mmap {
+        // c:3870
+        match load_dump_header("", file, 0) {
+            // c:3870 load_dump_header
             Some(loaded) => d = Some(loaded),
-            None => return None,                                             // c:3871
+            None => return None, // c:3871
         }
     }
 
     // c:3873 — `if ((h = dump_find_func(d, name)))`
     let dump = d?;
-    if !dump_find_func(&dump, name) {                                        // c:3873
+    if !dump_find_func(&dump, name) {
+        // c:3873
         return None;
     }
 
     // c:3876-3879 — `if (test_only) return &dummy_eprog;`
-    if test_only {                                                           // c:3876
-        return Some((Vec::new(), false));                                    // c:3879 dummy
+    if test_only {
+        // c:3876
+        return Some((Vec::new(), false)); // c:3879 dummy
     }
 
     // c:3884-3953 — allocate Eprog from the mmap area + ksh detection.
@@ -3763,18 +3796,18 @@ pub fn check_dump_file(                                                      // 
     // since Eprog construction lives at the call site (load_dump_file).
     // ksh-load detection reads the FDHF_KSHLOAD flag on the FDHead.
     // !!! STUB: FDHead parsing not yet wired through dump_find_func.
-    let is_ksh_load = false;                                                 // c:3905 fdhflags(h) & FDHF_KSHLOAD
+    let is_ksh_load = false; // c:3905 fdhflags(h) & FDHF_KSHLOAD
 
     // c:3950 — incrdumpcount(f). The Rust incrdumpcount takes a
     // funcdump ref; look up the matching entry by dev/ino again.
     if found_mmap {
         let dumps_guard = DUMPS.lock().expect("dumps poisoned");
         if let Some(f) = dumps_guard.iter().find(|f| f.dev == dev && f.ino == ino) {
-            incrdumpcount(f);                                                // c:3899
+            incrdumpcount(f); // c:3899
         }
     }
 
-    Some((dump, is_ksh_load))                                                // c:3953
+    Some((dump, is_ksh_load)) // c:3953
 }
 
 /// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
@@ -3784,7 +3817,12 @@ pub fn check_dump_file(                                                      // 
 /// effect (the count of the matching entry increments).
 pub fn incrdumpcount(f: &crate::ported::zsh_h::funcdump) {
     // c:3970 — `f->count++;`
-    if let Some(d) = DUMPS.lock().unwrap().iter_mut().find(|d| d.filename.as_deref() == f.filename.as_deref()) {
+    if let Some(d) = DUMPS
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|d| d.filename.as_deref() == f.filename.as_deref())
+    {
         d.count += 1; // c:3973
     }
 }
@@ -3836,13 +3874,13 @@ pub fn closedumps() {
 /// for autoload via `shfunctab`.
 pub fn dump_autoload(
     nam: &str,
-    file: &str,                                                              // c:4042
+    file: &str, // c:4042
     on: i32,
     ops: &crate::ported::zsh_h::options,
     func: i32,
 ) -> i32 {
     use crate::ported::zsh_h::shfunc;
-    let mut ret = 0;                                                         // c:4047
+    let mut ret = 0; // c:4047
 
     // c:4049-4050 — if (!strsfx(FD_EXT, file)) file = dyncat(file, FD_EXT);
     let file_owned;
@@ -3860,7 +3898,7 @@ pub fn dump_autoload(
     };
 
     // c:4055-4056 — for (n = firstfdhead(h); n < e; n = nextfdhead(n))
-    let hlen = fdheaderlen(&h) as usize;                                     // c:4055
+    let hlen = fdheaderlen(&h) as usize; // c:4055
     let mut n_off = firstfdhead_offset();
     while n_off < hlen {
         let head = match read_fdhead(&h, n_off) {
@@ -3875,13 +3913,13 @@ pub fn dump_autoload(
             node: crate::ported::zsh_h::hashnode {
                 next: None,
                 nam: basename.clone(),
-                flags: on,                                                   // c:4058
+                flags: on, // c:4058
             },
             filename: None,
             lineno: 0,
             funcdef: None,
             redir: None,
-            sticky: None,                                                    // c:4060 NULL
+            sticky: None, // c:4060 NULL
             body: None,
         };
         // c:4059 — shf->funcdef = mkautofn(shf);  (placeholder Eprog ptr)
@@ -3897,12 +3935,8 @@ pub fn dump_autoload(
         // c:4062-4063 — if (OPT_ISSET(ops,'X') && eval_autoload(...)) ret = 1;
         if crate::ported::zsh_h::OPT_ISSET(ops, b'X') {
             let mut shf_ref = snapshot;
-            if crate::ported::builtin::eval_autoload(
-                &mut shf_ref as *mut _,
-                &basename,
-                ops,
-                func,
-            ) != 0
+            if crate::ported::builtin::eval_autoload(&mut shf_ref as *mut _, &basename, ops, func)
+                != 0
             {
                 ret = 1;
             }
@@ -3910,7 +3944,7 @@ pub fn dump_autoload(
         n_off = nextfdhead_offset(&h, n_off);
     }
     let _ = nam;
-    ret                                                                      // c:4065
+    ret // c:4065
 }
 
 /// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
@@ -4803,9 +4837,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         // c:1116 — `infor = 0;`
         set_infor(0);
         // c:1117-1118 — `if (tok != STRING || !isident(tokstr)) YYERRORV(oecused);`
-        if tok() != STRING_LEX
-            || !crate::ported::params::isident(&tokstr().unwrap_or_default())
-        {
+        if tok() != STRING_LEX || !crate::ported::params::isident(&tokstr().unwrap_or_default()) {
             crate::ported::utils::zerr("par_for: expected identifier");
             return;
         }
@@ -4829,15 +4861,13 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             // c:1127 — `zshlex();`
             zshlex();
             // c:1128-1129 — `if (tok != STRING || !strcmp(tokstr, "in") || sel) break;`
-            if tok() != STRING_LEX
-                || tokstr().as_deref() == Some("in")
-                || sel
-            {
+            if tok() != STRING_LEX || tokstr().as_deref() == Some("in") || sel {
                 break;
             }
             // c:1130-1135 — `if (!isident(tokstr) || errflag) { ... YYERRORV; }`
             if !crate::ported::params::isident(&tokstr().unwrap_or_default())
-                || (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) & 1) != 0
+                || (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) & 1)
+                    != 0
             {
                 set_noaliases(ona);
                 set_nocorrect(onc);
@@ -5264,7 +5294,11 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         // c:1420 — `xtok = tok;`
         xtok = tok();
         // c:1421 — `cmdpush(xtok == IF ? CS_IF : CS_ELIF);`
-        cmdpush(if xtok == IF { CS_IF as u8 } else { CS_ELIF as u8 });
+        cmdpush(if xtok == IF {
+            CS_IF as u8
+        } else {
+            CS_ELIF as u8
+        });
         // c:1422-1426 — `if (xtok == FI) { incmdpos = 0; zshlex(); break; }`
         if xtok == FI {
             set_incmdpos(false);
@@ -5857,7 +5891,13 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
     ecadd(WCB_END());
     // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
     // YYERRORV(oecused);`
-    if tok() != (if otok == INPAR_TOK { OUTPAR_TOK } else { OUTBRACE_TOK }) {
+    if tok()
+        != (if otok == INPAR_TOK {
+            OUTPAR_TOK
+        } else {
+            OUTBRACE_TOK
+        })
+    {
         crate::ported::utils::zerr("par_subsh: missing closing token");
         return;
     }
@@ -6095,7 +6135,9 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}' /* Inbrack */ {
+                    if ch == '\u{91}'
+                    /* Inbrack */
+                    {
                         // Skip matched Inbrack…Outbrack pair.
                         let mut depth = 1;
                         idx += 1;
@@ -6116,7 +6158,9 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     // ENVSTRING split scans past the `=` (since it's
                     // already tokenised) and the whole `name=value`
                     // ends up in one ecstr.
-                    if ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */ {
+                    if ch == '=' || ch == '+' || ch == '\u{8d}'
+                    /* Equals */
+                    {
                         break;
                     }
                     idx += 1;
@@ -6135,8 +6179,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // c:1860 — `if (*ptr == '=') { *ptr = '\0'; str = ptr + 1; }
                 //          else equalsplit(tokstr, &str);`
                 let name: String = bytes[..name_end].iter().collect();
-                let str_off = if idx < bytes.len()
-                    && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
+                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
                 {
                     idx + 1
                 } else {
@@ -6147,10 +6190,13 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // subst); if found, bump cmplx (suppresses Z_SIMPLE).
                 let vbytes: Vec<char> = value.chars().collect();
                 for (i, ch) in vbytes.iter().enumerate() {
-                    if i + 1 < vbytes.len() && vbytes[i + 1] == '\u{88}' /* Inpar */ {
+                    if i + 1 < vbytes.len() && vbytes[i + 1] == '\u{88}'
+                    /* Inpar */
+                    {
                         if *ch == '\u{8d}' /* Equals */
                             || *ch == '\u{94}' /* Inang */
-                            || *ch == '\u{96}' /* OutangProc */
+                            || *ch == '\u{96}'
+                        /* OutangProc */
                         {
                             *cmplx = 1;
                             break;
@@ -6292,9 +6338,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                         let inner_start = opener_len;
                         let inner_end = bytes.len() - closer_len;
                         let inner = &s[inner_start..inner_end];
-                        if !inner.is_empty()
-                            && crate::ported::params::isident(inner)
-                        {
+                        if !inner.is_empty() && crate::ported::params::isident(inner) {
                             // c:1946-1948 — `char *idstring = dupstrpfx(...);`
                             //                `redir_var = 1; zshlex();`
                             let idstring = inner.to_string();
@@ -6354,7 +6398,9 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}' /* Inbrack */ {
+                    if ch == '\u{91}'
+                    /* Inbrack */
+                    {
                         let mut depth = 1;
                         idx += 1;
                         while idx < bytes.len() && depth > 0 {
@@ -6367,13 +6413,16 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                         }
                         continue;
                     }
-                    if ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */ {
+                    if ch == '=' || ch == '+' || ch == '\u{8d}'
+                    /* Equals */
+                    {
                         break;
                     }
                     idx += 1;
                 }
                 let name: String = bytes[..idx].iter().collect();
-                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}') {
+                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
+                {
                     idx + 1
                 } else {
                     idx
@@ -6401,7 +6450,11 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let parr = ecadd(0);
                 let raw = tokstr().unwrap_or_default();
                 let is_inc = raw.ends_with('+');
-                let name = if is_inc { &raw[..raw.len() - 1] } else { raw.as_str() };
+                let name = if is_inc {
+                    &raw[..raw.len() - 1]
+                } else {
+                    raw.as_str()
+                };
                 let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
                 ecstr(name);
                 cmdpush(CS_ARRAY as u8);
@@ -6546,7 +6599,9 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     let ok = par_cmd_wordcode(&mut body_c, if argc == 0 { 1 } else { 0 });
                     if !ok {
                         cmdpop();
-                        crate::ported::utils::zerr("par_simple: funcdef short-body: missing command");
+                        crate::ported::utils::zerr(
+                            "par_simple: funcdef short-body: missing command",
+                        );
                         return 0;
                     }
                     if argc == 0 {
@@ -6835,9 +6890,10 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
             HDOCS.with_borrow_mut(|head| {
                 let mut cur = head;
                 while cur.is_some() {
-                    cur = &mut cur.as_mut().unwrap().next;                        // c:2290
+                    cur = &mut cur.as_mut().unwrap().next; // c:2290
                 }
-                *cur = Some(Box::new(crate::ported::zsh_h::heredocs {             // c:2292-2296
+                *cur = Some(Box::new(crate::ported::zsh_h::heredocs {
+                    // c:2292-2296
                     next: None,
                     typ: htype,
                     pc: r as i32,
@@ -6875,10 +6931,7 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
         // c:2316-2320 — REDIR_READWRITE
         x if x == REDIR_READWRITE => {
             let nb: Vec<char> = name.chars().collect();
-            if nb.len() >= 2
-                && (nb[0] == '\u{94}' || nb[0] == '\u{96}')
-                && nb[1] == '\u{88}'
-            {
+            if nb.len() >= 2 && (nb[0] == '\u{94}' || nb[0] == '\u{96}') && nb[1] == '\u{88}' {
                 r#type = if nb[0] == '\u{94}' {
                     REDIR_INPIPE
                 } else {
@@ -7406,9 +7459,10 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
         HDOCS.with_borrow_mut(|head| {
             let mut cur = head;
             while cur.is_some() {
-                cur = &mut cur.as_mut().unwrap().next;                            // c:2290
+                cur = &mut cur.as_mut().unwrap().next; // c:2290
             }
-            *cur = Some(Box::new(crate::ported::zsh_h::heredocs {                 // c:2292-2296
+            *cur = Some(Box::new(crate::ported::zsh_h::heredocs {
+                // c:2292-2296
                 next: None,
                 typ: rtype,
                 pc: -1,
@@ -7482,7 +7536,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     // the same reason c:1094's `incmdpos = 0;` is skipped in
     // par_for above — zshrs doesn't mirror the full
     // incmdpos state-machine inline.
-    set_infor(0);                                                            // c:1110
+    set_infor(0); // c:1110
     zshlex(); // Move past ))
 
     skip_separators();
@@ -7723,7 +7777,9 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // accepted when SHORTLOOPS is set. parse_init seeds
         // SHORTLOOPS=on so this fires only when a script
         // explicitly disabled the option.
-        crate::ported::utils::zerr("parse error: short function body form requires SHORTLOOPS option");
+        crate::ported::utils::zerr(
+            "parse error: short function body form requires SHORTLOOPS option",
+        );
         None
     } else {
         match par_cmd() {
@@ -8171,7 +8227,7 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// `try_source_file` MUST refuse a stale `.zwc` cache when the
     /// uncompiled source has been modified more recently. The C body
@@ -8197,9 +8253,12 @@ mod tests {
         fs::write(&src, b"echo hi").unwrap();
 
         let result = try_source_file(src.to_str().unwrap());
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "c:3819 — stale .zwc (older than source) MUST be rejected; \
-             got {:?}", result);
+             got {:?}",
+            result
+        );
     }
 
     /// `try_source_file` returns None when no `.zwc` exists for the
@@ -8219,8 +8278,10 @@ mod tests {
         // No .zwc sibling.
 
         let result = try_source_file(src.to_str().unwrap());
-        assert!(result.is_none(),
-            "c:3819 gate fails when stat(wc) returns Err → None");
+        assert!(
+            result.is_none(),
+            "c:3819 gate fails when stat(wc) returns Err → None"
+        );
     }
 
     /// Test helper. Mirrors zsh's `errflag` save/clear/check pattern
@@ -8586,7 +8647,7 @@ esac"#;
         assert!(pass_rate >= 50.0, "Pass rate too low: {:.1}%", pass_rate);
     }
 
-/// c:2643 — `get_cond_num` returns 0..=8 for the canonical binary
+    /// c:2643 — `get_cond_num` returns 0..=8 for the canonical binary
     /// test operators in order `nt ot ef eq ne lt gt le ge`. The
     /// index IS the wordcode opcode dispatch key; flipping any entry
     /// would silently mis-dispatch `[[ a -eq b ]]` to a different op.
@@ -8610,10 +8671,14 @@ esac"#;
     #[test]
     fn get_cond_num_unknown_operator_returns_minus_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(get_cond_num("xx"),     -1);
-        assert_eq!(get_cond_num(""),       -1);
-        assert_eq!(get_cond_num("eqnt"),   -1, "exact-match required");
-        assert_eq!(get_cond_num("NT"),     -1, "case-sensitive — uppercase rejected");
+        assert_eq!(get_cond_num("xx"), -1);
+        assert_eq!(get_cond_num(""), -1);
+        assert_eq!(get_cond_num("eqnt"), -1, "exact-match required");
+        assert_eq!(
+            get_cond_num("NT"),
+            -1,
+            "case-sensitive — uppercase rejected"
+        );
     }
 
     /// c:2628 — `par_cond_double` requires arg `a` to start with `-`
@@ -8638,9 +8703,11 @@ esac"#;
     #[test]
     fn get_cond_num_round_trips_for_every_table_entry() {
         let _g = crate::test_util::global_state_lock();
-        for (i, op) in ["nt","ot","ef","eq","ne","lt","gt","le","ge"].iter().enumerate() {
-            assert_eq!(get_cond_num(op) as usize, i,
-                "{op} must map to index {i}");
+        for (i, op) in ["nt", "ot", "ef", "eq", "ne", "lt", "gt", "le", "ge"]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(get_cond_num(op) as usize, i, "{op} must map to index {i}");
         }
     }
 
@@ -8650,9 +8717,9 @@ esac"#;
     #[test]
     fn get_cond_num_partial_prefix_does_not_match() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(get_cond_num("e"),  -1);
+        assert_eq!(get_cond_num("e"), -1);
         assert_eq!(get_cond_num("eq2"), -1);
-        assert_eq!(get_cond_num("n"),  -1);
+        assert_eq!(get_cond_num("n"), -1);
     }
 
     /// c:2628 — `par_cond_double` checks `IS_DASH(ac[0])` so any
@@ -8708,10 +8775,7 @@ esac"#;
         fn pack_inline(b0: u8, b1: u8, b2: u8) -> u32 {
             // c:2862 layout — bit0 = tokflag (0 here), bit1 = inline (1),
             // bits 3-10 = b0, bits 11-18 = b1, bits 19-26 = b2.
-            (2u32)
-                | ((b0 as u32) << 3)
-                | ((b1 as u32) << 11)
-                | ((b2 as u32) << 19)
+            (2u32) | ((b0 as u32) << 3) | ((b1 as u32) << 11) | ((b2 as u32) << 19)
         }
         let mk_state = |word: u32| -> estate {
             let p = eprog {
@@ -8725,28 +8789,45 @@ esac"#;
                 shf: None,
                 dump: None,
             };
-            estate { prog: Box::new(p), pc: 0, strs: None, strs_offset: 0 }
+            estate {
+                prog: Box::new(p),
+                pc: 0,
+                strs: None,
+                strs_offset: 0,
+            }
         };
 
         // 1-char: ('a', 0, 0) → "a"
         let mut st = mk_state(pack_inline(b'a', 0, 0));
-        assert_eq!(ecgetstr(&mut st, 0, None), "a",
-            "c:2869 strlen truncates 1-char inline at the NUL tail");
+        assert_eq!(
+            ecgetstr(&mut st, 0, None),
+            "a",
+            "c:2869 strlen truncates 1-char inline at the NUL tail"
+        );
 
         // 2-char: ('a', 'b', 0) → "ab"
         let mut st = mk_state(pack_inline(b'a', b'b', 0));
-        assert_eq!(ecgetstr(&mut st, 0, None), "ab",
-            "c:2869 strlen truncates 2-char inline at the NUL tail");
+        assert_eq!(
+            ecgetstr(&mut st, 0, None),
+            "ab",
+            "c:2869 strlen truncates 2-char inline at the NUL tail"
+        );
 
         // 3-char: ('a', 'b', 'c') → "abc"
         let mut st = mk_state(pack_inline(b'a', b'b', b'c'));
-        assert_eq!(ecgetstr(&mut st, 0, None), "abc",
-            "c:2869 full 3-byte inline preserved");
+        assert_eq!(
+            ecgetstr(&mut st, 0, None),
+            "abc",
+            "c:2869 full 3-byte inline preserved"
+        );
 
         // Pathological: ('a', 0, 'b') → "a" (NOT "ab" from retain-splice)
         let mut st = mk_state(pack_inline(b'a', 0, b'b'));
-        assert_eq!(ecgetstr(&mut st, 0, None), "a",
-            "c:2869 strlen STOPS at first NUL; must not splice 'b' through");
+        assert_eq!(
+            ecgetstr(&mut st, 0, None),
+            "a",
+            "c:2869 strlen STOPS at first NUL; must not splice 'b' through"
+        );
     }
 
     /// Pin: `init_parse_status` resets ALL six lexer-parser flags
@@ -8768,11 +8849,15 @@ esac"#;
         init_parse_status();
         // c:500-502 — every flag back to its default.
         assert_eq!(incasepat(), 0, "c:500 — incasepat = 0");
-        assert_eq!(incond(),    0, "c:500 — incond = 0");
-        assert!(!inredir(),         "c:500 — inredir = 0");
-        assert_eq!(infor(),     0, "c:500 — infor = 0");
-        assert!(!intypeset(),       "c:500 — intypeset = 0");
-        assert_eq!(inrepeat(),  0, "c:501 — inrepeat_ = 0 (was previously missing)");
-        assert!(incmdpos(),         "c:502 — incmdpos = 1");
+        assert_eq!(incond(), 0, "c:500 — incond = 0");
+        assert!(!inredir(), "c:500 — inredir = 0");
+        assert_eq!(infor(), 0, "c:500 — infor = 0");
+        assert!(!intypeset(), "c:500 — intypeset = 0");
+        assert_eq!(
+            inrepeat(),
+            0,
+            "c:501 — inrepeat_ = 0 (was previously missing)"
+        );
+        assert!(incmdpos(), "c:502 — incmdpos = 1");
     }
 }

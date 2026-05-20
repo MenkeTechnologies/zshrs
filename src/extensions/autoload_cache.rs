@@ -351,8 +351,7 @@ fn read_owned_shard(path: &Path) -> Option<AutoloadShard> {
 }
 
 fn write_shard_atomic(path: &Path, shard: &AutoloadShard) -> Result<(), String> {
-    let bytes = rkyv::to_bytes::<_, 4096>(shard)
-        .map_err(|e| format!("rkyv serialize: {}", e))?;
+    let bytes = rkyv::to_bytes::<_, 4096>(shard).map_err(|e| format!("rkyv serialize: {}", e))?;
     let parent = path.parent().expect("cache path has parent");
     let _ = std::fs::create_dir_all(parent);
     let pid = std::process::id();
@@ -411,13 +410,12 @@ pub fn cache_enabled() -> bool {
     )
 }
 
-pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> =
-    once_cell::sync::Lazy::new(|| {
-        if !cache_enabled() {
-            return None;
-        }
-        AutoloadCache::open(&default_cache_path()).ok()
-    });
+pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync::Lazy::new(|| {
+    if !cache_enabled() {
+        return None;
+    }
+    AutoloadCache::open(&default_cache_path()).ok()
+});
 
 pub fn try_load(name: &str) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
@@ -452,10 +450,7 @@ pub fn try_merge_in(entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
 }
 
 pub fn cached_names() -> std::collections::HashSet<String> {
-    CACHE
-        .as_ref()
-        .map(|c| c.cached_names())
-        .unwrap_or_default()
+    CACHE.as_ref().map(|c| c.cached_names()).unwrap_or_default()
 }
 
 pub fn entry_count() -> usize {

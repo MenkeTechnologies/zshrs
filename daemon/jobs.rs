@@ -390,8 +390,7 @@ impl Supervisor {
                     // New session, new process group — child becomes
                     // session leader, eligible to acquire a controlling
                     // tty.
-                    nix::unistd::setsid()
-                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    nix::unistd::setsid().map_err(|e| std::io::Error::other(e.to_string()))?;
                     // Make stdin (the slave fd, dup'd to fd 0 by the
                     // standard library before pre_exec runs) the
                     // controlling tty. zero arg = "I'm willing to steal
@@ -662,8 +661,7 @@ impl Supervisor {
                 }
                 // EIO is the typical signal once the slave side has
                 // closed (Linux quirk for pty masters). Treat as EOF.
-                if err.raw_os_error() == Some(libc::EIO)
-                    || err.raw_os_error() == Some(libc::EBADF)
+                if err.raw_os_error() == Some(libc::EIO) || err.raw_os_error() == Some(libc::EBADF)
                 {
                     break;
                 }
@@ -1016,8 +1014,7 @@ fn _keep_mpsc_alive() -> Option<mpsc::Sender<()>> {
 // drainer. Same alphabet as RFC 4648; padded with `=`. Used to wrap
 // raw pty bytes (vt100 escape sequences) in JSON IPC payloads. Decoder
 // lives in daemon/zd_dispatch.rs.
-const B64_ALPHABET: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

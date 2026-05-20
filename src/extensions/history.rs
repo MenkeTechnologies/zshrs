@@ -19,12 +19,12 @@
 //! - Deduplication with timestamp updates
 
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::io::Write as _;
 use std::io::Read;
+use std::io::Write as _;
 use std::io::Write;
 use std::io::{Seek, SeekFrom};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// SQLite-backed history engine.
 /// Replaces the in-memory `histent` doubly-linked list +
@@ -82,10 +82,7 @@ impl HistoryEngine {
                         to = %path.display(),
                         "history: renamed legacy zshrs_history -> zshrs_history.db"
                     ),
-                    Err(e) => tracing::warn!(
-                        ?e,
-                        "history: rename legacy zshrs_history failed"
-                    ),
+                    Err(e) => tracing::warn!(?e, "history: rename legacy zshrs_history failed"),
                 }
             }
         }
@@ -312,7 +309,9 @@ impl HistoryEngine {
         if text_size > 0 {
             return Ok(());
         }
-        let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
         if count == 0 {
             return Ok(());
         }
@@ -601,7 +600,10 @@ fn append_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Resu
 /// stays untouched on disk.
 fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
     let path = HistoryEngine::text_path();
-    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)?;
     let len = f.metadata()?.len();
     // 64 KiB is enough for any realistic single-command record (zsh
     // commands top out at ~1-4 KiB). Beyond that, give up and append

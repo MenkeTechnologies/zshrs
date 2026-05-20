@@ -340,9 +340,10 @@ pub fn call_program(
     let output = Command::new(command).args(args).output()?;
 
     if !output.status.success() {
-        return Err(std::io::Error::other(
-            format!("{} failed with status {}", command, output.status),
-        ));
+        return Err(std::io::Error::other(format!(
+            "{} failed with status {}",
+            command, output.status
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

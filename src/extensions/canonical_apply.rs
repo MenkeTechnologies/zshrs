@@ -38,7 +38,7 @@ use std::path::PathBuf;
 
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
-use crate::vm_helper::{AutoloadFlags, ShellExecutor, zstyle_entry};
+use crate::vm_helper::{zstyle_entry, AutoloadFlags, ShellExecutor};
 // Legacy `zle()` / `KeymapName` removed alongside the
 // `extensions::keymaps` dissolution. Recorder-replay paths that
 // previously wrote into `ZleManager` (bindkey + user-widget
@@ -106,11 +106,7 @@ fn latest_recorder_shard(paths: &CachePaths) -> Option<PathBuf> {
                 .map(|s| s.ends_with("-recorder.rkyv"))
                 .unwrap_or(false)
         })
-        .max_by_key(|p| {
-            std::fs::metadata(p)
-                .and_then(|m| m.modified())
-                .ok()
-        })
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
 /// Bulk-copy every subsystem from a deserialized canonical shard
@@ -180,15 +176,18 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // of C `Src/hashnameddir.c::nameddirtab`).
     for (name, path) in shard.named_dirs {
         if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
-            tab.insert(name.clone(), crate::ported::zsh_h::nameddir {
-                node: crate::ported::zsh_h::hashnode {
-                    next: None,
-                    nam: name,
-                    flags: 0,
+            tab.insert(
+                name.clone(),
+                crate::ported::zsh_h::nameddir {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: name,
+                        flags: 0,
+                    },
+                    dir: path.clone(),
+                    diff: 0,
                 },
-                dir: path.clone(),
-                diff: 0,
-            });
+            );
             total += 1;
         }
     }
@@ -304,9 +303,8 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         // matching the C `bin_zle_new()` registration path at
         // `Src/Zle/zle_thingy.c:584`.
         for (name, body) in zle_widgets {
-            let w = std::sync::Arc::new(
-                crate::ported::zle::zle_h::widget::user_defined(name, body),
-            );
+            let w =
+                std::sync::Arc::new(crate::ported::zle::zle_h::widget::user_defined(name, body));
             crate::ported::zle::zle_thingy::rthingy(name);
             crate::ported::zle::zle_thingy::bindwidget(w, name);
             total += 1;

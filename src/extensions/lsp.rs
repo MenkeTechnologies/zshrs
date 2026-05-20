@@ -43,17 +43,18 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
             break;
         }
         if let Some(rest) = line.strip_prefix("Content-Length:") {
-            content_length = Some(rest.trim().parse().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "bad Content-Length")
-            })?);
+            content_length =
+                Some(rest.trim().parse().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "bad Content-Length")
+                })?);
         }
     }
     let len = content_length
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length"))?;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
-    let v: Value = serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let v: Value =
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(v))
 }
 
@@ -211,7 +212,9 @@ fn scan_workspace_root(root: &std::path::Path, out: &mut HashMap<String, String>
                 Err(_) => continue,
             };
             if ty.is_dir() {
-                if SKIP_DIRS.contains(&name) || name.starts_with('.') && !ZSH_BASENAMES.iter().any(|b| b == &name) {
+                if SKIP_DIRS.contains(&name)
+                    || name.starts_with('.') && !ZSH_BASENAMES.iter().any(|b| b == &name)
+                {
                     continue;
                 }
                 stack.push(path);
@@ -294,10 +297,7 @@ fn refresh_workspace_file(state: &mut State, uri: &str) {
         Some(p) => p,
         None => return,
     };
-    let inside_root = state
-        .workspace_roots
-        .iter()
-        .any(|r| path.starts_with(r));
+    let inside_root = state.workspace_roots.iter().any(|r| path.starts_with(r));
     if !inside_root {
         return;
     }
@@ -334,9 +334,13 @@ pub fn run_lsp() -> i32 {
     let mut writer = stdout.lock();
 
     let log_path = std::env::var("ZSHRS_LSP_LOG").ok();
-    let mut log = log_path
-        .as_ref()
-        .and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+    let mut log = log_path.as_ref().and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
 
     loop {
         let msg = match read_message(&mut reader) {
@@ -358,7 +362,10 @@ pub fn run_lsp() -> i32 {
             let _ = writeln!(l, "← {}", msg);
         }
 
-        let method = msg.get("method").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let method = msg
+            .get("method")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let id = msg.get("id").cloned();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         tracing::trace!(
@@ -415,16 +422,12 @@ pub fn run_lsp() -> i32 {
                 }
                 None
             }
-            Some("textDocument/completion") => {
-                Some(reply(id, completion(&state, &params)))
-            }
+            Some("textDocument/completion") => Some(reply(id, completion(&state, &params))),
             Some("textDocument/hover") => Some(reply(id, hover(&state, &params))),
             Some("textDocument/documentSymbol") => {
                 Some(reply(id, document_symbols(&state, &params)))
             }
-            Some("textDocument/foldingRange") => {
-                Some(reply(id, folding_ranges(&state, &params)))
-            }
+            Some("textDocument/foldingRange") => Some(reply(id, folding_ranges(&state, &params))),
             Some("textDocument/definition") => Some(reply(id, definition(&state, &params))),
             Some("textDocument/references") => Some(reply(id, references(&state, &params))),
             Some("textDocument/documentHighlight") => {
@@ -508,7 +511,12 @@ fn handle_initialize(id: Option<Value>, _params: &Value) -> Value {
 
 // ── Diagnostics ─────────────────────────────────────────────────────────
 
-fn publish_diagnostics<W: Write>(writer: &mut W, uri: &str, text: &str, log: &mut Option<std::fs::File>) {
+fn publish_diagnostics<W: Write>(
+    writer: &mut W,
+    uri: &str,
+    text: &str,
+    log: &mut Option<std::fs::File>,
+) {
     let diags = diagnose(text);
     let msg = json!({
         "jsonrpc": "2.0",
@@ -531,7 +539,9 @@ fn diagnose(text: &str) -> Vec<Value> {
 
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') { continue; }
+        if trimmed.starts_with('#') {
+            continue;
+        }
         // Token-level scan
         let mut i = 0usize;
         let bytes = line.as_bytes();
@@ -540,20 +550,23 @@ fn diagnose(text: &str) -> Vec<Value> {
             match c {
                 '(' | '{' | '[' => stack.push((c, line_no, i)),
                 ')' => {
-                    if stack.last().map(|x| x.0) == Some('(') { stack.pop(); }
-                    else {
+                    if stack.last().map(|x| x.0) == Some('(') {
+                        stack.pop();
+                    } else {
                         diags.push(diagnostic(line_no, i, 1, "unmatched `)`", 1));
                     }
                 }
                 '}' => {
-                    if stack.last().map(|x| x.0) == Some('{') { stack.pop(); }
-                    else {
+                    if stack.last().map(|x| x.0) == Some('{') {
+                        stack.pop();
+                    } else {
                         diags.push(diagnostic(line_no, i, 1, "unmatched `}`", 1));
                     }
                 }
                 ']' => {
-                    if stack.last().map(|x| x.0) == Some('[') { stack.pop(); }
-                    else {
+                    if stack.last().map(|x| x.0) == Some('[') {
+                        stack.pop();
+                    } else {
                         diags.push(diagnostic(line_no, i, 1, "unmatched `]`", 1));
                     }
                 }
@@ -563,8 +576,13 @@ fn diagnose(text: &str) -> Vec<Value> {
                     i += 1;
                     while i < bytes.len() {
                         let cc = bytes[i] as char;
-                        if cc == '\\' && q != '\'' && i + 1 < bytes.len() { i += 2; continue; }
-                        if cc == q { break; }
+                        if cc == '\\' && q != '\'' && i + 1 < bytes.len() {
+                            i += 2;
+                            continue;
+                        }
+                        if cc == q {
+                            break;
+                        }
                         i += 1;
                     }
                 }
@@ -580,20 +598,33 @@ fn diagnose(text: &str) -> Vec<Value> {
                     block_stack.push((kw, line_no, 0));
                 }
                 "fi" => {
-                    if block_stack.last().map(|x| x.0) == Some("if") { block_stack.pop(); }
-                    else { diags.push(diagnostic(line_no, 0, 2, "unmatched `fi`", 1)); }
+                    if block_stack.last().map(|x| x.0) == Some("if") {
+                        block_stack.pop();
+                    } else {
+                        diags.push(diagnostic(line_no, 0, 2, "unmatched `fi`", 1));
+                    }
                 }
                 "done" => {
                     let last = block_stack.last().map(|x| x.0);
-                    if matches!(last, Some("for") | Some("while") | Some("until") | Some("select") | Some("repeat")) {
+                    if matches!(
+                        last,
+                        Some("for")
+                            | Some("while")
+                            | Some("until")
+                            | Some("select")
+                            | Some("repeat")
+                    ) {
                         block_stack.pop();
                     } else {
                         diags.push(diagnostic(line_no, 0, 4, "unmatched `done`", 1));
                     }
                 }
                 "esac" => {
-                    if block_stack.last().map(|x| x.0) == Some("case") { block_stack.pop(); }
-                    else { diags.push(diagnostic(line_no, 0, 4, "unmatched `esac`", 1)); }
+                    if block_stack.last().map(|x| x.0) == Some("case") {
+                        block_stack.pop();
+                    } else {
+                        diags.push(diagnostic(line_no, 0, 4, "unmatched `esac`", 1));
+                    }
                 }
                 _ => {}
             }
@@ -603,7 +634,13 @@ fn diagnose(text: &str) -> Vec<Value> {
         diags.push(diagnostic(line, col, 1, &format!("unclosed `{}`", c), 1));
     }
     for (kw, line, col) in block_stack {
-        diags.push(diagnostic(line, col, kw.len(), &format!("unclosed `{}` block", kw), 1));
+        diags.push(diagnostic(
+            line,
+            col,
+            kw.len(),
+            &format!("unclosed `{}` block", kw),
+            1,
+        ));
     }
     diags
 }
@@ -862,9 +899,14 @@ fn scan_symbols(text: &str) -> Vec<(String, &'static str, &'static str)> {
     let mut out = Vec::new();
     for line in text.lines() {
         let t = line.trim_start();
-        if t.starts_with('#') { continue; }
+        if t.starts_with('#') {
+            continue;
+        }
         // `function foo {` or `function foo()`
-        if let Some(rest) = t.strip_prefix("function ").or_else(|| t.strip_prefix("function\t")) {
+        if let Some(rest) = t
+            .strip_prefix("function ")
+            .or_else(|| t.strip_prefix("function\t"))
+        {
             if let Some(name) = first_ident(rest) {
                 out.push((name, "function", "function"));
                 continue;
@@ -888,7 +930,15 @@ fn scan_symbols(text: &str) -> Vec<(String, &'static str, &'static str)> {
             }
         }
         // `local foo=...`, `typeset foo=...`, `export FOO=...`, `FOO=...`
-        for prefix in &["local ", "typeset ", "declare ", "readonly ", "export ", "integer ", "float "] {
+        for prefix in &[
+            "local ",
+            "typeset ",
+            "declare ",
+            "readonly ",
+            "export ",
+            "integer ",
+            "float ",
+        ] {
             if let Some(rest) = t.strip_prefix(prefix) {
                 if let Some(name) = first_ident(rest) {
                     out.push((name, "variable", "variable"));
@@ -910,7 +960,11 @@ fn first_ident(s: &str) -> Option<String> {
             break;
         }
     }
-    if end == 0 { None } else { Some(s[..end].to_string()) }
+    if end == 0 {
+        None
+    } else {
+        Some(s[..end].to_string())
+    }
 }
 
 // ── Folding ranges ──────────────────────────────────────────────────────
@@ -929,7 +983,9 @@ fn folding_ranges(state: &State, params: &Value) -> Value {
         let t = line.trim_start();
         // Comment runs
         if t.starts_with('#') {
-            if comment_run_start.is_none() { comment_run_start = Some(i); }
+            if comment_run_start.is_none() {
+                comment_run_start = Some(i);
+            }
         } else {
             if let Some(start) = comment_run_start.take() {
                 if i - 1 >= start + 2 {
@@ -940,8 +996,9 @@ fn folding_ranges(state: &State, params: &Value) -> Value {
             }
         }
         for c in line.chars() {
-            if c == '{' { brace_stack.push(i); }
-            else if c == '}' {
+            if c == '{' {
+                brace_stack.push(i);
+            } else if c == '}' {
                 if let Some(start) = brace_stack.pop() {
                     if i > start {
                         out.push(json!({ "startLine": start, "endLine": i, "kind": "region" }));
@@ -1184,8 +1241,18 @@ fn rename(state: &State, params: &Value) -> Value {
 // ── Semantic tokens ─────────────────────────────────────────────────────
 
 const SEMANTIC_TOKEN_TYPES: &[&str] = &[
-    "comment", "string", "number", "keyword", "operator", "function",
-    "variable", "parameter", "type", "macro", "property", "regexp",
+    "comment",
+    "string",
+    "number",
+    "keyword",
+    "operator",
+    "function",
+    "variable",
+    "parameter",
+    "type",
+    "macro",
+    "property",
+    "regexp",
 ];
 
 fn semantic_tokens(state: &State, params: &Value) -> Value {
@@ -1206,7 +1273,15 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
             let rest = &line[col..];
             // Comment runs to end of line
             if rest.starts_with('#') {
-                push_tok(&mut data, &mut last_line, &mut last_col, ln, col as u32, rest.len() as u32, 0);
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    rest.len() as u32,
+                    0,
+                );
                 break;
             }
             // Strings
@@ -1215,11 +1290,25 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 let mut end = 1;
                 while end < rest.len() {
                     let c = rest.as_bytes()[end] as char;
-                    if c == '\\' && q != '\'' && end + 1 < rest.len() { end += 2; continue; }
-                    if c == q { end += 1; break; }
+                    if c == '\\' && q != '\'' && end + 1 < rest.len() {
+                        end += 2;
+                        continue;
+                    }
+                    if c == q {
+                        end += 1;
+                        break;
+                    }
                     end += 1;
                 }
-                push_tok(&mut data, &mut last_line, &mut last_col, ln, col as u32, end as u32, 1);
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    end as u32,
+                    1,
+                );
                 col += end;
                 continue;
             }
@@ -1230,22 +1319,40 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 if end < b.len() && b[end] == b'{' {
                     // ${...}
                     end += 1;
-                    while end < b.len() && b[end] != b'}' { end += 1; }
-                    if end < b.len() { end += 1; }
+                    while end < b.len() && b[end] != b'}' {
+                        end += 1;
+                    }
+                    if end < b.len() {
+                        end += 1;
+                    }
                 } else {
                     while end < b.len() {
                         let c = b[end] as char;
-                        if c.is_alphanumeric() || c == '_' { end += 1; } else { break; }
+                        if c.is_alphanumeric() || c == '_' {
+                            end += 1;
+                        } else {
+                            break;
+                        }
                     }
                     if end == 1 {
                         // Special: $0..$9, $?, $!, $$, etc.
                         if end < b.len() {
                             let c = b[end] as char;
-                            if "?!$#*@-_0123456789".contains(c) { end += 1; }
+                            if "?!$#*@-_0123456789".contains(c) {
+                                end += 1;
+                            }
                         }
                     }
                 }
-                push_tok(&mut data, &mut last_line, &mut last_col, ln, col as u32, end as u32, 6);
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    end as u32,
+                    6,
+                );
                 col += end;
                 continue;
             }
@@ -1254,8 +1361,18 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
             if c0.is_ascii_digit() {
                 let mut end = 0;
                 let b = rest.as_bytes();
-                while end < b.len() && (b[end] as char).is_ascii_digit() { end += 1; }
-                push_tok(&mut data, &mut last_line, &mut last_col, ln, col as u32, end as u32, 2);
+                while end < b.len() && (b[end] as char).is_ascii_digit() {
+                    end += 1;
+                }
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    end as u32,
+                    2,
+                );
                 col += end;
                 continue;
             }
@@ -1265,13 +1382,29 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 let mut end = 0;
                 while end < b.len() {
                     let c = b[end] as char;
-                    if c == '_' || c.is_alphanumeric() { end += 1; } else { break; }
+                    if c == '_' || c.is_alphanumeric() {
+                        end += 1;
+                    } else {
+                        break;
+                    }
                 }
                 let w = &rest[..end];
-                let kind = if KEYWORDS.contains(&w) { 3u32 }
-                    else if BUILTINS.contains(&w) { 5 }
-                    else { 6 };
-                push_tok(&mut data, &mut last_line, &mut last_col, ln, col as u32, end as u32, kind);
+                let kind = if KEYWORDS.contains(&w) {
+                    3u32
+                } else if BUILTINS.contains(&w) {
+                    5
+                } else {
+                    6
+                };
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    end as u32,
+                    kind,
+                );
                 col += end;
                 continue;
             }
@@ -1291,7 +1424,11 @@ fn push_tok(
     ty: u32,
 ) {
     let delta_line = line - *last_line;
-    let delta_col = if delta_line == 0 { col - *last_col } else { col };
+    let delta_col = if delta_line == 0 {
+        col - *last_col
+    } else {
+        col
+    };
     out.push(delta_line);
     out.push(delta_col);
     out.push(len);
@@ -1313,7 +1450,9 @@ fn formatting(state: &State, params: &Value) -> Value {
     let tab_size = opts["tabSize"].as_u64().unwrap_or(4) as usize;
     let insert_spaces = opts["insertSpaces"].as_bool().unwrap_or(true);
     let formatted = simple_format(&text, tab_size, insert_spaces);
-    if formatted == text { return Value::Array(vec![]); }
+    if formatted == text {
+        return Value::Array(vec![]);
+    }
 
     let last_line = text.lines().count().saturating_sub(1);
     let last_col = text.lines().last().map(|l| l.len()).unwrap_or(0);
@@ -1342,10 +1481,16 @@ fn simple_format(text: &str, tab_size: usize, insert_spaces: bool) -> String {
             .sum();
         let rest = trimmed_end.trim_start();
         if insert_spaces {
-            for _ in 0..leading_spaces { out.push(' '); }
+            for _ in 0..leading_spaces {
+                out.push(' ');
+            }
         } else {
-            for _ in 0..(leading_spaces / tab_size) { out.push('\t'); }
-            for _ in 0..(leading_spaces % tab_size) { out.push(' '); }
+            for _ in 0..(leading_spaces / tab_size) {
+                out.push('\t');
+            }
+            for _ in 0..(leading_spaces % tab_size) {
+                out.push(' ');
+            }
         }
         out.push_str(rest);
         out.push('\n');
@@ -1357,136 +1502,380 @@ fn simple_format(text: &str, tab_size: usize, insert_spaces: bool) -> String {
 
 fn word_at(text: &str, line_no: usize, col: usize) -> Option<String> {
     let line = text.lines().nth(line_no)?;
-    if col > line.len() { return None; }
+    if col > line.len() {
+        return None;
+    }
     let bytes = line.as_bytes();
     // Allow `$` prefix for special variables ($! $? $@)
     let mut start = col;
     while start > 0 {
         let c = bytes[start - 1] as char;
-        if c == '_' || c.is_alphanumeric() || c == '$' { start -= 1; } else { break; }
+        if c == '_' || c.is_alphanumeric() || c == '$' {
+            start -= 1;
+        } else {
+            break;
+        }
     }
     let mut end = col;
     while end < bytes.len() {
         let c = bytes[end] as char;
-        if c == '_' || c.is_alphanumeric() { end += 1; } else { break; }
+        if c == '_' || c.is_alphanumeric() {
+            end += 1;
+        } else {
+            break;
+        }
     }
-    if start == end { return None; }
+    if start == end {
+        return None;
+    }
     Some(line[start..end].to_string())
 }
 
 // ── Doc tables (verbatim, hand-curated) ─────────────────────────────────
 
 const KEYWORDS: &[&str] = &[
-    "if", "then", "else", "elif", "fi",
-    "for", "foreach", "while", "until", "do", "done",
-    "case", "esac", "select", "repeat",
-    "function", "local", "typeset", "declare", "export", "readonly",
-    "integer", "float", "private",
-    "break", "continue", "return", "exit",
-    "in", "time", "coproc", "always", "nocorrect", "noglob",
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "for",
+    "foreach",
+    "while",
+    "until",
+    "do",
+    "done",
+    "case",
+    "esac",
+    "select",
+    "repeat",
+    "function",
+    "local",
+    "typeset",
+    "declare",
+    "export",
+    "readonly",
+    "integer",
+    "float",
+    "private",
+    "break",
+    "continue",
+    "return",
+    "exit",
+    "in",
+    "time",
+    "coproc",
+    "always",
+    "nocorrect",
+    "noglob",
 ];
 
 const BUILTINS: &[&str] = &[
-    "cd", "pwd", "pushd", "popd", "dirs",
-    "alias", "unalias", "setopt", "unsetopt", "zstyle", "zmodload",
-    "autoload", "bindkey", "compdef", "compinit", "zcompile", "zparseopts",
-    "source", ".", "eval", "exec", "trap",
-    "echo", "print", "printf", "read", "readarray", "mapfile",
-    "test", "[", "[[", "]]",
-    "umask", "ulimit", "wait", "kill", "jobs", "fg", "bg", "suspend", "disown",
-    "history", "fc", "hash", "unhash", "rehash",
-    "command", "type", "which", "whence", "where", "builtin", "enable",
-    "shift", "unset", "unfunction", "set",
-    "true", "false", ":",
-    "stat", "zstat", "zsocket", "zsystem",
-    "let", "getopts",
+    "cd",
+    "pwd",
+    "pushd",
+    "popd",
+    "dirs",
+    "alias",
+    "unalias",
+    "setopt",
+    "unsetopt",
+    "zstyle",
+    "zmodload",
+    "autoload",
+    "bindkey",
+    "compdef",
+    "compinit",
+    "zcompile",
+    "zparseopts",
+    "source",
+    ".",
+    "eval",
+    "exec",
+    "trap",
+    "echo",
+    "print",
+    "printf",
+    "read",
+    "readarray",
+    "mapfile",
+    "test",
+    "[",
+    "[[",
+    "]]",
+    "umask",
+    "ulimit",
+    "wait",
+    "kill",
+    "jobs",
+    "fg",
+    "bg",
+    "suspend",
+    "disown",
+    "history",
+    "fc",
+    "hash",
+    "unhash",
+    "rehash",
+    "command",
+    "type",
+    "which",
+    "whence",
+    "where",
+    "builtin",
+    "enable",
+    "shift",
+    "unset",
+    "unfunction",
+    "set",
+    "true",
+    "false",
+    ":",
+    "stat",
+    "zstat",
+    "zsocket",
+    "zsystem",
+    "let",
+    "getopts",
 ];
 
 const OPTIONS: &[&str] = &[
-    "EXTENDED_GLOB", "NULL_GLOB", "GLOB_DOTS", "NUMERIC_GLOB_SORT",
-    "NOMATCH", "BAD_PATTERN", "PIPE_FAIL", "NO_CLOBBER", "CORRECT", "CORRECT_ALL",
-    "HIST_IGNORE_DUPS", "HIST_IGNORE_ALL_DUPS", "HIST_SAVE_NO_DUPS", "HIST_REDUCE_BLANKS",
-    "SHARE_HISTORY", "APPEND_HISTORY", "INC_APPEND_HISTORY", "EXTENDED_HISTORY",
-    "AUTO_CD", "AUTO_PUSHD", "PUSHD_SILENT", "PUSHD_TO_HOME", "PUSHD_IGNORE_DUPS",
-    "INTERACTIVE_COMMENTS", "RC_QUOTES", "RC_EXPAND_PARAM",
-    "PROMPT_SUBST", "PROMPT_BANG", "PROMPT_PERCENT", "TRANSIENT_RPROMPT",
-    "COMPLETE_IN_WORD", "ALWAYS_TO_END", "AUTO_MENU", "MENU_COMPLETE",
-    "NO_BEEP", "NOTIFY", "MONITOR", "BG_NICE", "HUP", "CHECK_JOBS",
-    "MULTIOS", "CSH_NULL_GLOB",
-    "ERR_RETURN", "ERR_EXIT", "VERBOSE", "XTRACE",
-    "TYPESET_SILENT", "WARN_CREATE_GLOBAL", "WARN_NESTED_VAR",
+    "EXTENDED_GLOB",
+    "NULL_GLOB",
+    "GLOB_DOTS",
+    "NUMERIC_GLOB_SORT",
+    "NOMATCH",
+    "BAD_PATTERN",
+    "PIPE_FAIL",
+    "NO_CLOBBER",
+    "CORRECT",
+    "CORRECT_ALL",
+    "HIST_IGNORE_DUPS",
+    "HIST_IGNORE_ALL_DUPS",
+    "HIST_SAVE_NO_DUPS",
+    "HIST_REDUCE_BLANKS",
+    "SHARE_HISTORY",
+    "APPEND_HISTORY",
+    "INC_APPEND_HISTORY",
+    "EXTENDED_HISTORY",
+    "AUTO_CD",
+    "AUTO_PUSHD",
+    "PUSHD_SILENT",
+    "PUSHD_TO_HOME",
+    "PUSHD_IGNORE_DUPS",
+    "INTERACTIVE_COMMENTS",
+    "RC_QUOTES",
+    "RC_EXPAND_PARAM",
+    "PROMPT_SUBST",
+    "PROMPT_BANG",
+    "PROMPT_PERCENT",
+    "TRANSIENT_RPROMPT",
+    "COMPLETE_IN_WORD",
+    "ALWAYS_TO_END",
+    "AUTO_MENU",
+    "MENU_COMPLETE",
+    "NO_BEEP",
+    "NOTIFY",
+    "MONITOR",
+    "BG_NICE",
+    "HUP",
+    "CHECK_JOBS",
+    "MULTIOS",
+    "CSH_NULL_GLOB",
+    "ERR_RETURN",
+    "ERR_EXIT",
+    "VERBOSE",
+    "XTRACE",
+    "TYPESET_SILENT",
+    "WARN_CREATE_GLOBAL",
+    "WARN_NESTED_VAR",
 ];
 
 const SPECIAL_VARS: &[&str] = &[
-    "$0", "$?", "$!", "$$", "$#", "$*", "$@", "$-", "$_",
-    "$PATH", "$HOME", "$USER", "$PWD", "$OLDPWD", "$SHELL", "$IFS", "$PROMPT", "$PS1",
-    "$ZSH_VERSION", "$ZSH_NAME", "$ZSH_ARGZERO", "$ZSH_SUBSHELL", "$ZSH_PATCHLEVEL",
-    "$RANDOM", "$LINENO", "$SECONDS", "$EPOCHSECONDS", "$EPOCHREALTIME",
-    "$HISTFILE", "$HISTSIZE", "$SAVEHIST", "$DIRSTACKSIZE",
-    "$fpath", "$path", "$cdpath", "$manpath", "$module_path",
-    "$argv", "$status", "$pipestatus", "$signals",
+    "$0",
+    "$?",
+    "$!",
+    "$$",
+    "$#",
+    "$*",
+    "$@",
+    "$-",
+    "$_",
+    "$PATH",
+    "$HOME",
+    "$USER",
+    "$PWD",
+    "$OLDPWD",
+    "$SHELL",
+    "$IFS",
+    "$PROMPT",
+    "$PS1",
+    "$ZSH_VERSION",
+    "$ZSH_NAME",
+    "$ZSH_ARGZERO",
+    "$ZSH_SUBSHELL",
+    "$ZSH_PATCHLEVEL",
+    "$RANDOM",
+    "$LINENO",
+    "$SECONDS",
+    "$EPOCHSECONDS",
+    "$EPOCHREALTIME",
+    "$HISTFILE",
+    "$HISTSIZE",
+    "$SAVEHIST",
+    "$DIRSTACKSIZE",
+    "$fpath",
+    "$path",
+    "$cdpath",
+    "$manpath",
+    "$module_path",
+    "$argv",
+    "$status",
+    "$pipestatus",
+    "$signals",
 ];
 
 const KEYWORD_DOCS: &[(&str, &str)] = &[
-    ("if", "Conditional. `if cmd; then …; elif cmd; then …; else …; fi`"),
-    ("for", "Loop. `for var in words; do …; done` or `for ((init; cond; step)); do …; done`"),
-    ("while", "Loop. `while cmd; do …; done` — runs the body while `cmd` succeeds."),
-    ("until", "Loop. `until cmd; do …; done` — runs the body while `cmd` fails."),
-    ("case", "Pattern match. `case word in pat1) …;; pat2) …;; esac`"),
-    ("select", "Interactive menu. `select var in items; do …; done`"),
+    (
+        "if",
+        "Conditional. `if cmd; then …; elif cmd; then …; else …; fi`",
+    ),
+    (
+        "for",
+        "Loop. `for var in words; do …; done` or `for ((init; cond; step)); do …; done`",
+    ),
+    (
+        "while",
+        "Loop. `while cmd; do …; done` — runs the body while `cmd` succeeds.",
+    ),
+    (
+        "until",
+        "Loop. `until cmd; do …; done` — runs the body while `cmd` fails.",
+    ),
+    (
+        "case",
+        "Pattern match. `case word in pat1) …;; pat2) …;; esac`",
+    ),
+    (
+        "select",
+        "Interactive menu. `select var in items; do …; done`",
+    ),
     ("repeat", "Counted loop. `repeat N; do …; done`"),
-    ("function", "Function declaration. `function foo { body }` or `foo() { body }`"),
-    ("local", "Declare a function-scope variable. `local var=value` or `local -i var=42`"),
-    ("typeset", "Set variable attributes. `-a` array, `-A` assoc, `-i` integer, `-r` readonly."),
+    (
+        "function",
+        "Function declaration. `function foo { body }` or `foo() { body }`",
+    ),
+    (
+        "local",
+        "Declare a function-scope variable. `local var=value` or `local -i var=42`",
+    ),
+    (
+        "typeset",
+        "Set variable attributes. `-a` array, `-A` assoc, `-i` integer, `-r` readonly.",
+    ),
     ("export", "Mark a variable for export to the environment."),
     ("readonly", "Mark a variable as read-only."),
     ("integer", "Shorthand for `typeset -i`."),
     ("float", "Shorthand for `typeset -F` (floating point)."),
-    ("return", "Return from a function or sourced script with the given status."),
-    ("break", "Exit the innermost loop, or N levels up with `break N`."),
-    ("continue", "Skip to the next iteration of the innermost loop."),
+    (
+        "return",
+        "Return from a function or sourced script with the given status.",
+    ),
+    (
+        "break",
+        "Exit the innermost loop, or N levels up with `break N`.",
+    ),
+    (
+        "continue",
+        "Skip to the next iteration of the innermost loop.",
+    ),
     ("exit", "Exit the shell with the given status."),
     ("time", "Time the execution of the following pipeline."),
-    ("coproc", "Run a command as a coprocess (background, attached I/O)."),
+    (
+        "coproc",
+        "Run a command as a coprocess (background, attached I/O).",
+    ),
 ];
 
 const BUILTIN_DOCS: &[(&str, &str)] = &[
     ("cd", "Change the working directory."),
     ("pwd", "Print the working directory."),
-    ("pushd", "Push the current directory onto the stack and `cd`."),
+    (
+        "pushd",
+        "Push the current directory onto the stack and `cd`.",
+    ),
     ("popd", "Pop a directory off the stack and `cd` to it."),
     ("alias", "Define a command alias. `alias name=value`"),
     ("setopt", "Turn on a zsh option. `setopt EXTENDED_GLOB`"),
     ("unsetopt", "Turn off a zsh option."),
-    ("zstyle", "Set a context-aware style (used by compsys, prompts, etc.)."),
-    ("zmodload", "Load a zsh binary module (e.g. `zsh/datetime`, `zsh/stat`)."),
-    ("autoload", "Mark a function to be loaded from `fpath` on first call."),
+    (
+        "zstyle",
+        "Set a context-aware style (used by compsys, prompts, etc.).",
+    ),
+    (
+        "zmodload",
+        "Load a zsh binary module (e.g. `zsh/datetime`, `zsh/stat`).",
+    ),
+    (
+        "autoload",
+        "Mark a function to be loaded from `fpath` on first call.",
+    ),
     ("bindkey", "Bind a key sequence to a ZLE widget."),
     ("compdef", "Register a completion function for a command."),
-    ("source", "Execute a file in the current shell context. Same as `.`."),
+    (
+        "source",
+        "Execute a file in the current shell context. Same as `.`.",
+    ),
     ("eval", "Concatenate args and execute them as shell code."),
-    ("exec", "Replace the current process with the given command."),
+    (
+        "exec",
+        "Replace the current process with the given command.",
+    ),
     ("trap", "Set a signal or pseudo-signal handler."),
-    ("echo", "Print arguments separated by spaces, with a trailing newline."),
-    ("print", "zsh-extended print. `-r` raw, `-n` no newline, `-l` one per line."),
+    (
+        "echo",
+        "Print arguments separated by spaces, with a trailing newline.",
+    ),
+    (
+        "print",
+        "zsh-extended print. `-r` raw, `-n` no newline, `-l` one per line.",
+    ),
     ("printf", "C-style formatted print."),
     ("read", "Read a line into a variable. `read -r var`"),
-    ("test", "Evaluate a conditional. Same as `[`. Prefer `[[ … ]]` in zsh."),
+    (
+        "test",
+        "Evaluate a conditional. Same as `[`. Prefer `[[ … ]]` in zsh.",
+    ),
     ("kill", "Send a signal to a job or pid."),
     ("jobs", "List background jobs."),
     ("fg", "Bring a job to the foreground."),
     ("bg", "Resume a stopped job in the background."),
     ("hash", "Print or modify the command hash table."),
-    ("unhash", "Remove an entry from the hash / alias / function table."),
+    (
+        "unhash",
+        "Remove an entry from the hash / alias / function table.",
+    ),
     ("history", "Show the command history."),
     ("fc", "List, edit, or re-execute history entries."),
-    ("command", "Bypass aliases and functions to run the named command."),
-    ("type", "Show how a name would be interpreted (alias / builtin / function / file)."),
+    (
+        "command",
+        "Bypass aliases and functions to run the named command.",
+    ),
+    (
+        "type",
+        "Show how a name would be interpreted (alias / builtin / function / file).",
+    ),
     ("whence", "Same as `type` but with more formatting options."),
-    ("builtin", "Run the named builtin, bypassing any function / alias."),
+    (
+        "builtin",
+        "Run the named builtin, bypassing any function / alias.",
+    ),
     ("set", "Set positional parameters or options."),
     ("unset", "Remove a variable."),
-    ("getopts", "Parse positional parameters in the style of GNU getopt."),
+    (
+        "getopts",
+        "Parse positional parameters in the style of GNU getopt.",
+    ),
     ("let", "Evaluate an arithmetic expression. `let count++`"),
 ];
 
@@ -1506,12 +1895,21 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
     ("$PWD", "Current working directory."),
     ("$OLDPWD", "Previous working directory (used by `cd -`)."),
     ("$ZSH_VERSION", "zsh / zshrs version string."),
-    ("$RANDOM", "Each read returns a fresh pseudo-random integer."),
+    (
+        "$RANDOM",
+        "Each read returns a fresh pseudo-random integer.",
+    ),
     ("$LINENO", "Current line number in the script."),
     ("$SECONDS", "Seconds since the shell started."),
     ("$EPOCHSECONDS", "Unix epoch seconds (zsh/datetime)."),
-    ("$EPOCHREALTIME", "Unix epoch with microsecond precision (zsh/datetime)."),
-    ("$fpath", "Array of directories searched for autoloaded functions."),
+    (
+        "$EPOCHREALTIME",
+        "Unix epoch with microsecond precision (zsh/datetime).",
+    ),
+    (
+        "$fpath",
+        "Array of directories searched for autoloaded functions.",
+    ),
     ("$path", "Array version of $PATH."),
     ("$argv", "Array of positional parameters (same as $@)."),
     ("$pipestatus", "Exit statuses of each pipeline element."),
@@ -1524,29 +1922,42 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
 /// group by tag in its tree.
 pub fn dump_reflection_json() -> String {
     let mut builtins = serde_json::Map::new();
-    for b in BUILTINS { builtins.insert(b.to_string(), Value::String("builtin".into())); }
+    for b in BUILTINS {
+        builtins.insert(b.to_string(), Value::String("builtin".into()));
+    }
     let mut keywords = serde_json::Map::new();
-    for k in KEYWORDS { keywords.insert(k.to_string(), Value::String("keyword".into())); }
+    for k in KEYWORDS {
+        keywords.insert(k.to_string(), Value::String("keyword".into()));
+    }
     let mut options = serde_json::Map::new();
-    for o in OPTIONS { options.insert(o.to_string(), Value::String("option".into())); }
+    for o in OPTIONS {
+        options.insert(o.to_string(), Value::String("option".into()));
+    }
     let mut special_vars = serde_json::Map::new();
-    for s in SPECIAL_VARS { special_vars.insert(s.to_string(), Value::String("special".into())); }
+    for s in SPECIAL_VARS {
+        special_vars.insert(s.to_string(), Value::String("special".into()));
+    }
     serde_json::to_string_pretty(&json!({
         "builtins": builtins,
         "keywords": keywords,
         "options": options,
         "special_vars": special_vars,
-    })).unwrap_or_else(|_| "{}".into())
+    }))
+    .unwrap_or_else(|_| "{}".into())
 }
 
 // silence the unused-import warning when `Mutex` ends up not needed by future edits
 #[allow(dead_code)]
-fn _hush() { let _ = std::mem::size_of::<Mutex<()>>(); }
+fn _hush() {
+    let _ = std::mem::size_of::<Mutex<()>>();
+}
 
 // silence unused warnings for the serde derive helpers below; placeholder
 // kept for future structured request typing
 #[derive(Serialize, Deserialize, Default, Debug)]
-struct _Placeholder { _x: Option<u32> }
+struct _Placeholder {
+    _x: Option<u32>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -1655,8 +2066,10 @@ mod tests {
         let src = "function broken {\n  echo missing close\n";
         let d = diagnose(src);
         assert!(
-            d.iter().any(|v| v["message"].as_str().unwrap_or("").contains("unclosed `{`")),
-            "expected unclosed-brace diagnostic, got: {:?}", d
+            d.iter()
+                .any(|v| v["message"].as_str().unwrap_or("").contains("unclosed `{`")),
+            "expected unclosed-brace diagnostic, got: {:?}",
+            d
         );
     }
 
@@ -1666,8 +2079,12 @@ mod tests {
         let src = "if true\nthen\necho\n";
         let d = diagnose(src);
         assert!(
-            d.iter().any(|v| v["message"].as_str().unwrap_or("").contains("unclosed `if`")),
-            "expected unclosed-if diagnostic, got: {:?}", d
+            d.iter().any(|v| v["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unclosed `if`")),
+            "expected unclosed-if diagnostic, got: {:?}",
+            d
         );
     }
 
@@ -1676,7 +2093,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "echo \"a } b\" '{ }' \n";
         let d = diagnose(src);
-        assert!(d.is_empty(), "string-internal braces tripped diagnose: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "string-internal braces tripped diagnose: {:?}",
+            d
+        );
     }
 
     // ── simple_format ───────────────────────────────────────────────────
@@ -1728,7 +2149,11 @@ mod tests {
         });
         let result = completion(&state, &params);
         let items = result["items"].as_array().unwrap();
-        assert!(items.iter().any(|i| i["label"] == "cd"), "items: {:?}", items);
+        assert!(
+            items.iter().any(|i| i["label"] == "cd"),
+            "items: {:?}",
+            items
+        );
     }
 
     // ── folding_ranges ──────────────────────────────────────────────────
@@ -1747,11 +2172,13 @@ mod tests {
         // One brace-block fold (lines 0..2) and one for/do fold
         assert!(
             arr.iter().any(|r| r["startLine"] == 0 && r["endLine"] == 2),
-            "missing brace fold: {:?}", arr
+            "missing brace fold: {:?}",
+            arr
         );
         assert!(
             arr.iter().any(|r| r["startLine"] == 3 && r["endLine"] == 5),
-            "missing for/do fold: {:?}", arr
+            "missing for/do fold: {:?}",
+            arr
         );
     }
 
@@ -1857,10 +2284,9 @@ mod tests {
     fn hover_on_builtin_inside_comment_is_suppressed() {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert(
-            "file:///t.zsh".into(),
-            "echo hi  # call cd later\n".into(),
-        );
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo hi  # call cd later\n".into());
         // `cd` is a real zsh builtin with a doc card, but inside a `#`
         // comment it must not hover.
         let cd_pos = "echo hi  # call ".len();
@@ -1876,10 +2302,9 @@ mod tests {
     fn hover_on_real_builtin_outside_comment_still_works() {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert(
-            "file:///t.zsh".into(),
-            "cd /tmp\n".into(),
-        );
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "cd /tmp\n".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 0 },
@@ -1971,7 +2396,9 @@ mod tests {
 
         let mut state = State::default();
         // Only `rc.zsh` is in the editor — `lib.zsh` is on disk.
-        state.docs.insert(rc_uri.clone(), "greet\ngreet world\n".into());
+        state
+            .docs
+            .insert(rc_uri.clone(), "greet\ngreet world\n".into());
         // Simulate the `initialize` workspace handoff.
         let init = json!({ "rootUri": format!("file://{}", tmp.display()) });
         ingest_workspace_init(&mut state, &init);
@@ -2054,10 +2481,9 @@ mod tests {
     fn prepare_rename_rejects_in_comment() {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert(
-            "file:///t.zsh".into(),
-            "echo hi  # rename me\n".into(),
-        );
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo hi  # rename me\n".into());
         let pos = "echo hi  # rename ".len();
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },

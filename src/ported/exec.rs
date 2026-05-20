@@ -41,7 +41,7 @@ use crate::ported::zsh_h::PM_UNDEFINED;
 ///
 /// Values: `TRAP_STATE_INACTIVE = 0`, `TRAP_STATE_PRIMED = 1`,
 /// `TRAP_STATE_FORCE_RETURN = 2` (see `Src/zsh.h`).
-pub static TRAP_STATE: std::sync::atomic::AtomicI32 =                       // c:134 (Src/exec.c)
+pub static TRAP_STATE: std::sync::atomic::AtomicI32 = // c:134 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `int trap_return;` from `Src/exec.c:155`. Carries the
@@ -49,7 +49,7 @@ pub static TRAP_STATE: std::sync::atomic::AtomicI32 =                       // c
 /// "running an EXIT/DEBUG-style trap at the current level"
 /// (signals.c:1166). Promoted to the user's `return N` value by
 /// `bin_return` when POSIX-trap semantics apply (builtin.c:5852).
-pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c:155 (Src/exec.c)
+pub static TRAP_RETURN: std::sync::atomic::AtomicI32 = // c:155 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `int forklevel;` from `Src/exec.c:1052`. Records the
@@ -63,7 +63,7 @@ pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c
 ///
 /// Initialised to 0 (no fork has occurred yet). Set to `locallevel`
 /// at every `entersubsh()` entry per c:1221.
-pub static FORKLEVEL: std::sync::atomic::AtomicI32 =                        // c:1052 (Src/exec.c)
+pub static FORKLEVEL: std::sync::atomic::AtomicI32 = // c:1052 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
 /// Convert a here-document into a here-string. Line-by-line port of
@@ -80,37 +80,40 @@ pub static FORKLEVEL: std::sync::atomic::AtomicI32 =                        // c
 /// the C signature which can return NULL.
 ///
 /// Port of `gethere(char **strp, int typ)` from `Src/exec.c:4573`.
-pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                  // c:4573 (Src/exec.c)
-    let mut buf: String;                                                          // c:4575 char *buf
-    let mut bsiz: usize;                                                          // c:4576 int bsiz
-    let mut qt: i32 = 0;                                                          // c:4576 int qt = 0
-    let mut strip: i32 = 0;                                                       // c:4576 int strip = 0
-    // c:4577 — char *s, *t, *bptr, c. zshrs uses byte-offsets into
-    // `buf` for `t` and tracks `bptr` implicitly as `buf.len()` (the
-    // C `bptr++` increment is `buf.push(c)`; `bptr--` is `buf.pop()`).
-    // `s` (the loop iterator for the inull-scan) stays local to its
-    // for-loop. `c` mirrors the C `char c`.
-    let mut t: usize;                                                             // c:4577 char *t
-    let mut c: Option<char>;                                                      // c:4577 char c
-    let mut str: String = strp.clone();                                           // c:4578 char *str = *strp
+pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
+    // c:4573 (Src/exec.c)
+    let mut buf: String; // c:4575 char *buf
+    let mut bsiz: usize; // c:4576 int bsiz
+    let mut qt: i32 = 0; // c:4576 int qt = 0
+    let mut strip: i32 = 0; // c:4576 int strip = 0
+                            // c:4577 — char *s, *t, *bptr, c. zshrs uses byte-offsets into
+                            // `buf` for `t` and tracks `bptr` implicitly as `buf.len()` (the
+                            // C `bptr++` increment is `buf.push(c)`; `bptr--` is `buf.pop()`).
+                            // `s` (the loop iterator for the inull-scan) stays local to its
+                            // for-loop. `c` mirrors the C `char c`.
+    let mut t: usize; // c:4577 char *t
+    let mut c: Option<char>; // c:4577 char c
+    let mut str: String = strp.clone(); // c:4578 char *str = *strp
 
     // c:4580-4584 — for (s = str; *s; s++) if (inull(*s)) { qt = 1; break; }
     for s in str.bytes() {
-        if crate::ported::ztype_h::inull(s) {                                     // c:4581
-            qt = 1;                                                               // c:4582
-            break;                                                                // c:4583
+        if crate::ported::ztype_h::inull(s) {
+            // c:4581
+            qt = 1; // c:4582
+            break; // c:4583
         }
     }
-    str = crate::ported::subst::quotesubst(&str);                                 // c:4585
-    str = crate::ported::lex::untokenize(&str);                                   // c:4586
-    if typ == crate::ported::zsh_h::REDIR_HEREDOCDASH {                           // c:4587
-        strip = 1;                                                                // c:4588
-        // c:4589-4590 — while (*str == '\t') str++;
+    str = crate::ported::subst::quotesubst(&str); // c:4585
+    str = crate::ported::lex::untokenize(&str); // c:4586
+    if typ == crate::ported::zsh_h::REDIR_HEREDOCDASH {
+        // c:4587
+        strip = 1; // c:4588
+                   // c:4589-4590 — while (*str == '\t') str++;
         while str.starts_with('\t') {
             str.remove(0);
         }
     }
-    *strp = str.clone();                                                          // c:4592 *strp = str
+    *strp = str.clone(); // c:4592 *strp = str
 
     // c:4593 — bptr = buf = zalloc(bsiz = 256);
     bsiz = 256;
@@ -119,7 +122,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                 
 
     // c:4594 — for (;;)
     loop {
-        t = buf.len();                                                            // c:4595 t = bptr
+        t = buf.len(); // c:4595 t = bptr
 
         // c:4597-4598 — while ((c = hgetc()) == '\t' && strip) ;
         loop {
@@ -139,18 +142,20 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                 
             }
             // c:4616 — if (!qt && c == '\\')
             if qt == 0 && c == Some('\\') {
-                buf.push('\\');                                                   // c:4617 *bptr++ = c
-                c = crate::ported::lex::hgetc();                                  // c:4618
-                if c == Some('\n') {                                              // c:4619
-                    buf.pop();                                                    // c:4620 bptr--
-                    c = crate::ported::lex::hgetc();                              // c:4621
-                    continue;                                                     // c:4622
+                buf.push('\\'); // c:4617 *bptr++ = c
+                c = crate::ported::lex::hgetc(); // c:4618
+                if c == Some('\n') {
+                    // c:4619
+                    buf.pop(); // c:4620 bptr--
+                    c = crate::ported::lex::hgetc(); // c:4621
+                    continue; // c:4622
                 }
             }
-            if let Some(ch) = c {                                                 // c:4625 *bptr++ = c
+            if let Some(ch) = c {
+                // c:4625 *bptr++ = c
                 buf.push(ch);
             }
-            c = crate::ported::lex::hgetc();                                      // c:4626
+            c = crate::ported::lex::hgetc(); // c:4626
         }
         // c:4628 — *bptr = '\0'; (implicit — Rust String tracks len)
 
@@ -174,7 +179,8 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                 
     // string-heap allocator. Rust drops the old String when reassigned.
     buf = crate::ported::mem::dupstring(&buf);
 
-    if qt == 0 {                                                                  // c:4641
+    if qt == 0 {
+        // c:4641
         // c:4642 — int ef = errflag;
         let ef = errflag.load(Ordering::Relaxed);
         // c:4644 — parsestr(&buf);
@@ -184,10 +190,13 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                 
         // c:4646-4649 — if (!(errflag & ERRFLAG_ERROR)) errflag = ef | (errflag & ERRFLAG_INT);
         if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
             let cur = errflag.load(Ordering::Relaxed);
-            errflag.store(ef | (cur & crate::ported::zsh_h::ERRFLAG_INT), Ordering::Relaxed);
+            errflag.store(
+                ef | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+                Ordering::Relaxed,
+            );
         }
     }
-    Some(buf)                                                                     // c:4651 return buf
+    Some(buf) // c:4651 return buf
 }
 
 /// Free-function wrapper for `getoutput()` from `Src/exec.c:4712`.
@@ -203,7 +212,8 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                 
 /// silent-no-op pattern (return empty string when no executor) would
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
-pub fn getoutput(cmd: &str) -> String {                                      // c:4712 (Src/exec.c)
+pub fn getoutput(cmd: &str) -> String {
+    // c:4712 (Src/exec.c)
     with_executor(|exec| exec.run_command_substitution(cmd))
 }
 
@@ -225,8 +235,12 @@ pub fn getoutput(cmd: &str) -> String {                                      // 
 /// `hashtable.rs:362`); the parser pass that converts text →
 /// Eprog runs lazily at first call site.
 /// Port of `loadautofn(Shfunc shf, int fksh, int autol, int current_fpath)` from `Src/exec.c:5682`.
-pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5682 (Src/exec.c)
-              _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
+pub fn loadautofn(
+    shf: *mut crate::ported::zsh_h::shfunc, // c:5682 (Src/exec.c)
+    _ks: i32,
+    test_only: i32,
+    _ignore_loaddir: i32,
+) -> i32 {
     if shf.is_null() {
         return 1;
     }
@@ -236,10 +250,11 @@ pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                       
     let mut dir_path: Option<String> = None;
     let path = match getfpfunc(&name, &mut dir_path, None, 0) {
         Some(p) => p,
-        None => return 1,                                                    // c:5074 not found
+        None => return 1, // c:5074 not found
     };
-    if test_only != 0 {                                                      // c:5096
-        return 0;                                                            // test passes — file exists
+    if test_only != 0 {
+        // c:5096
+        return 0; // test passes — file exists
     }
     // c:5100-5140 — read the file. C uses zopen + read + parse_string +
     // execsave; Rust port stores raw text on the ShFunc and defers
@@ -285,16 +300,24 @@ pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                       
 /// supplied `spec_path` slice) for a file named `name` and writes the
 /// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
 /// Returns `Some(file_contents_path)` on success, `None` when not found.
-pub fn getfpfunc(name: &str, dir_path_out: &mut Option<String>,                  // c:5260 (Src/exec.c)
-             spec_path: Option<&[String]>, _all_loaded: i32) -> Option<String> {
+pub fn getfpfunc(
+    name: &str,
+    dir_path_out: &mut Option<String>, // c:5260 (Src/exec.c)
+    spec_path: Option<&[String]>,
+    _all_loaded: i32,
+) -> Option<String> {
     let dirs: Vec<String> = match spec_path {
         Some(s) => s.to_vec(),
-        None => std::env::var("FPATH").or_else(|_| std::env::var("fpath"))
-            .ok().map(|v| v.split(':').map(String::from).collect())
+        None => std::env::var("FPATH")
+            .or_else(|_| std::env::var("fpath"))
+            .ok()
+            .map(|v| v.split(':').map(String::from).collect())
             .unwrap_or_default(),
     };
     for dir in &dirs {
-        if dir.is_empty() { continue; }
+        if dir.is_empty() {
+            continue;
+        }
         let path = format!("{}/{}", dir, name);
         if std::path::Path::new(&path).exists() {
             *dir_path_out = Some(dir.clone());
@@ -327,10 +350,10 @@ pub fn getfpfunc(name: &str, dir_path_out: &mut Option<String>,                 
 /// this port is the identity for builtins with a registered
 /// `handlerfunc` and returns `None` for unresolved stubs (matching
 /// the C return-NULL-on-failure contract).
-pub fn resolvebuiltin<'a>(cmdarg: &str,                                       // c:2703 (Src/exec.c)
-                          hn: &'a crate::ported::zsh_h::builtin)
-    -> Option<&'a crate::ported::zsh_h::builtin>
-{
+pub fn resolvebuiltin<'a>(
+    cmdarg: &str, // c:2703 (Src/exec.c)
+    hn: &'a crate::ported::zsh_h::builtin,
+) -> Option<&'a crate::ported::zsh_h::builtin> {
     // c:2705 — `if (!((Builtin) hn)->handlerfunc)`.
     if hn.handlerfunc.is_none() {
         // c:2706 — `modname = dupstring(((Builtin)hn)->optstr)`.
@@ -341,10 +364,11 @@ pub fn resolvebuiltin<'a>(cmdarg: &str,                                       //
         // c:2715-2721 — re-lookup, fail with `lastval=1` + zerr.
         crate::ported::utils::zerr(&format!(
             "autoloading module {} failed to define builtin: {}",
-            modname, cmdarg));
-        return None;                                                          // c:2720
+            modname, cmdarg
+        ));
+        return None; // c:2720
     }
-    Some(hn)                                                                  // c:2723
+    Some(hn) // c:2723
 }
 
 /// Dispatch decision returned by `execcmd_exec`'s head-walk port.
@@ -420,18 +444,17 @@ pub struct execcmd_dispatch {
 /// the args list arrives already-expanded as a `&[String]` (analog
 /// of `preargs` after `execcmd_getargs` at `c:3028`). `type_`
 /// mirrors `eparams->type` (`WC_SIMPLE` vs `WC_TYPESET`).
-pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         // c:2900 (Src/exec.c)
-    use crate::ported::zsh_h::{
-        BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, WC_SIMPLE, WC_TYPESET,
-    };
+pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
+    // c:2900 (Src/exec.c)
+    use crate::ported::zsh_h::{BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, WC_SIMPLE, WC_TYPESET};
 
     // c:2904-2916 — locals.
-    let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None;        // c:2904
-    let mut is_shfunc = false;                                                // c:2913
-    let mut is_builtin = false;                                               // c:2913
-    let use_defpath = false;                                                  // c:2913
-    let mut cflags: u32 = 0;                                                  // c:2915
-    let mut orig_cflags: u32 = 0;                                             // c:2915
+    let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None; // c:2904
+    let mut is_shfunc = false; // c:2913
+    let mut is_builtin = false; // c:2913
+    let use_defpath = false; // c:2913
+    let mut cflags: u32 = 0; // c:2915
+    let mut orig_cflags: u32 = 0; // c:2915
     let _ = orig_cflags;
 
     // c:2962-2973 — `%job` head: rewrite `%name` → `fg|bg|disown %name`.
@@ -444,13 +467,15 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         /
     // status as the %job head: runtime concern, deferred.
 
     // c:3013-3091 — precommand-modifier walk.
-    let mut preargs: Vec<String> = args.to_vec();                             // c:3027 newlinklist
+    let mut preargs: Vec<String> = args.to_vec(); // c:3027 newlinklist
     let mut precmd_skip: usize = 0;
 
     // c:3018 — `if ((type == WC_SIMPLE || type == WC_TYPESET) && args)`.
-    if (type_ == WC_SIMPLE || type_ == WC_TYPESET) && !preargs.is_empty() {   // c:3018
+    if (type_ == WC_SIMPLE || type_ == WC_TYPESET) && !preargs.is_empty() {
+        // c:3018
         // c:3029 — `while (nonempty(preargs))`.
-        while precmd_skip < preargs.len() {                                   // c:3029
+        while precmd_skip < preargs.len() {
+            // c:3029
             // c:3030 — `cmdarg = (char *) peekfirst(preargs);`.
             let cmdarg = crate::ported::lex::untokenize(&preargs[precmd_skip]);
             // c:3031 — `checked = !has_token(cmdarg)`. zshrs's fusevm
@@ -469,21 +494,23 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         /
             // BINF_COMMAND)) && shfunctab->getnode(...))` — shell
             // function takes precedence unless a `builtin`/`command`
             // modifier preceded it.
-            if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {                // c:3051
+            if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {
+                // c:3051
                 if crate::ported::hashtable::shfunctab_lock()
                     .read()
                     .map(|t| t.iter().any(|(k, _)| k == &cmdarg))
                     .unwrap_or(false)
                 {
-                    is_shfunc = true;                                         // c:3053
-                    break;                                                    // c:3054
+                    is_shfunc = true; // c:3053
+                    break; // c:3054
                 }
             }
             // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
             let entry = crate::ported::builtin::BUILTINS
                 .iter()
                 .find(|b| b.node.nam == cmdarg);
-            let Some(entry) = entry else {                                    // c:3056-3058
+            let Some(entry) = entry else {
+                // c:3056-3058
                 break;
             };
             hn = Some(entry);
@@ -493,7 +520,8 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         /
             cflags |= entry.node.flags as u32;
             // c:3064 — `if (!(hn->flags & BINF_PREFIX))` — real
             // builtin, stop.
-            if (entry.node.flags as u32 & BINF_PREFIX) == 0 {                 // c:3064
+            if (entry.node.flags as u32 & BINF_PREFIX) == 0 {
+                // c:3064
                 // WARNING — DIVERGENCE: c:3068 calls `resolvebuiltin`
                 // to autoload the builtin's module if its
                 // `handlerfunc` is NULL. In zshrs, builtins live in
@@ -507,8 +535,8 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {         /
                 // skip the resolvebuiltin call here; the faithful
                 // port remains available for future callers that
                 // genuinely need module-autoload semantics.
-                is_builtin = true;                                            // c:3065
-                break;                                                        // c:3077
+                is_builtin = true; // c:3065
+                break; // c:3077
             }
             // c:3086 — `uremnode(preargs, firstnode(preargs))`.
             precmd_skip += 1;

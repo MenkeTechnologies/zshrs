@@ -23,46 +23,53 @@ use crate::ported::utils::zwarn;
 /// Binary-search clz fallback used when the compiler doesn't provide
 /// `__builtin_clzll`. C source body followed line-by-line.
 pub fn _zclz64(x: u64) -> i32 {
-    let mut n: i32 = 0;                                                   // c:49
+    let mut n: i32 = 0; // c:49
     let mut x = x;
 
-    if x == 0 {                                                            // c:52
-        return 64;                                                         // c:53
+    if x == 0 {
+        // c:52
+        return 64; // c:53
     }
 
-    if (x & 0xFFFF_FFFF_0000_0000) == 0 {                                  // c:55
-        n += 32;                                                           // c:56
-        x <<= 32;                                                          // c:57
+    if (x & 0xFFFF_FFFF_0000_0000) == 0 {
+        // c:55
+        n += 32; // c:56
+        x <<= 32; // c:57
     }
-    if (x & 0xFFFF_0000_0000_0000) == 0 {                                  // c:59
-        n += 16;                                                           // c:60
-        x <<= 16;                                                          // c:61
+    if (x & 0xFFFF_0000_0000_0000) == 0 {
+        // c:59
+        n += 16; // c:60
+        x <<= 16; // c:61
     }
-    if (x & 0xFF00_0000_0000_0000) == 0 {                                  // c:63
-        n += 8;                                                            // c:64
-        x <<= 8;                                                           // c:65
+    if (x & 0xFF00_0000_0000_0000) == 0 {
+        // c:63
+        n += 8; // c:64
+        x <<= 8; // c:65
     }
-    if (x & 0xF000_0000_0000_0000) == 0 {                                  // c:67
-        n += 4;                                                            // c:68
-        x <<= 4;                                                           // c:69
+    if (x & 0xF000_0000_0000_0000) == 0 {
+        // c:67
+        n += 4; // c:68
+        x <<= 4; // c:69
     }
-    if (x & 0xC000_0000_0000_0000) == 0 {                                  // c:71
-        n += 2;                                                            // c:72
-        // Upstream `Src/Modules/random_real.c:73` writes `x <<= 1`, which
-        // is an off-by-one bug in the binary-halving CLZ cascade: every
-        // earlier stage shifts by the same amount it adds to n (32/16/8/4),
-        // so this stage must add 2 AND shift by 2. With the upstream
-        // `<<= 1`, the bit ends up one position below the c:75 top-bit
-        // mask and the count is one too high. Concrete failure case:
-        // `_zclz64(2)` returns 63 with `<< 1`, true CLZ is 62.
-        // Fixed per maintainer directive 2026-05 — port faithfulness
-        // overridden because upstream is provably wrong.
-        x <<= 2;                                                           // c:73 (FIXED: was x<<=1)
+    if (x & 0xC000_0000_0000_0000) == 0 {
+        // c:71
+        n += 2; // c:72
+                // Upstream `Src/Modules/random_real.c:73` writes `x <<= 1`, which
+                // is an off-by-one bug in the binary-halving CLZ cascade: every
+                // earlier stage shifts by the same amount it adds to n (32/16/8/4),
+                // so this stage must add 2 AND shift by 2. With the upstream
+                // `<<= 1`, the bit ends up one position below the c:75 top-bit
+                // mask and the count is one too high. Concrete failure case:
+                // `_zclz64(2)` returns 63 with `<< 1`, true CLZ is 62.
+                // Fixed per maintainer directive 2026-05 — port faithfulness
+                // overridden because upstream is provably wrong.
+        x <<= 2; // c:73 (FIXED: was x<<=1)
     }
-    if (x & 0x8000_0000_0000_0000) == 0 {                                  // c:75
-        n += 1;                                                            // c:76
+    if (x & 0x8000_0000_0000_0000) == 0 {
+        // c:75
+        n += 1; // c:76
     }
-    n                                                                      // c:84
+    n // c:84
 }
 
 // =====================================================================
@@ -74,16 +81,16 @@ pub fn _zclz64(x: u64) -> i32 {
 /// C body returns `uint64_t`; failure path returns 1 (NOT 0 — the
 /// `random_real()` zero-detection loop would spin forever on 0).
 pub fn random_64bit() -> u64 {
-    let r: u64;                                                            // c:84
-    let mut buf = [0u8; 8];                                                // staging for &r
+    let r: u64; // c:84
+    let mut buf = [0u8; 8]; // staging for &r
 
     // c:87 — `if (getrandom_buffer(&r, sizeof(r)) < 0)`
     if getrandom_buffer(&mut buf).is_err() {
-        zwarn("zsh/random: Can't get sufficient random data.");            // c:88
-        return 1;                                                          // c:89 0 will cause loop
+        zwarn("zsh/random: Can't get sufficient random data."); // c:88
+        return 1; // c:89 0 will cause loop
     }
     r = u64::from_ne_bytes(buf);
-    r                                                                      // c:92 return r;
+    r // c:92 return r;
 }
 
 // =====================================================================
@@ -110,25 +117,28 @@ pub fn random_64bit() -> u64 {
 
 /// Port of `random_real()` from `Src/Modules/random_real.c:147`.
 pub fn random_real() -> f64 {
-    let mut exponent: i32 = 0;                                             // c:147
-    let mut significand: u64 = 0;                                          // c:150
-    let mut r: u64 = 0;                                                    // c:151
-    let shift: u32;                                                        // c:152
+    let mut exponent: i32 = 0; // c:147
+    let mut significand: u64 = 0; // c:150
+    let mut r: u64 = 0; // c:151
+    let shift: u32; // c:152
 
     /*
      * Read zeros into the exponent until we hit a one; the rest
      * will go into the significand.
-     */                                                                    // c:154-157
-    while significand == 0 {                                               // c:158
-        exponent -= 64;                                                    // c:159
+     */
+    // c:154-157
+    while significand == 0 {
+        // c:158
+        exponent -= 64; // c:159
 
-        /* Get random_64bit and check for error */                         // c:161
+        /* Get random_64bit and check for error */
+        // c:161
         // c:162-165 — errno = 0; significand = random_64bit(); if (errno) return -1;
         // The Rust `random_64bit()` returns 1 on entropy failure (c:89),
         // so the loop exits naturally on the sentinel — no explicit
         // errno probe needed. The `< 0` return path of C maps to our
         // "no error" success path.
-        significand = random_64bit();                                      // c:163
+        significand = random_64bit(); // c:163
 
         /*
          * If the exponent falls below -1074 = emin + 1 - p,
@@ -136,9 +146,11 @@ pub fn random_real() -> f64 {
          * guaranteed the result will be rounded to zero.  This
          * case is so unlikely it will happen in realistic
          * terms only if random_64bit is broken.
-         */                                                                // c:166-172
-        if exponent < -1074 {                                              // c:173
-            return 0.0;                                                    // c:174
+         */
+        // c:166-172
+        if exponent < -1074 {
+            // c:173
+            return 0.0; // c:174
         }
     }
 
@@ -149,15 +161,17 @@ pub fn random_real() -> f64 {
      * bits of the significand.  Can't predict one way or another
      * whether there are leading zeros: there's a fifty-fifty
      * chance, if random_64bit is uniformly distributed.
-     */                                                                    // c:177-184
-    shift = clz64(significand) as u32;                                     // c:185
-    if shift != 0 {                                                        // c:186
+     */
+    // c:177-184
+    shift = clz64(significand) as u32; // c:185
+    if shift != 0 {
+        // c:186
         // c:188-191 — errno = 0; r = random_64bit(); if (errno) return -1;
-        r = random_64bit();                                                // c:189
+        r = random_64bit(); // c:189
 
-        exponent -= shift as i32;                                          // c:193
-        significand <<= shift;                                             // c:194
-        significand |= r >> (64 - shift);                                  // c:195
+        exponent -= shift as i32; // c:193
+        significand <<= shift; // c:194
+        significand |= r >> (64 - shift); // c:195
     }
 
     /*
@@ -166,13 +180,15 @@ pub fn random_real() -> f64 {
      * like a tie to even when, almost surely, were we to look
      * further in the bit stream, there would be a 1 breaking the
      * tie.
-     */                                                                    // c:198-204
-    significand |= 1;                                                      // c:205
+     */
+    // c:198-204
+    significand |= 1; // c:205
 
     /*
      * Finally, convert to double (rounding) and scale by
      * 2^exponent.
-     */                                                                    // c:207-210
+     */
+    // c:207-210
     // c:211 — `return ldexp((double)significand, exponent);`
     // libm `ldexp(x, exp) = x * 2^exp`. Rust stdlib doesn't expose
     // ldexp; use the `(x as f64) * 2f64.powi(exp)` equivalent, which
@@ -199,7 +215,11 @@ pub fn random_real() -> f64 {
 #[inline]
 pub fn clz64(x: u64) -> i32 {
     // Equivalent to C's `__builtin_clzll(x)` branch (c:43).
-    if x == 0 { 64 } else { x.leading_zeros() as i32 }
+    if x == 0 {
+        64
+    } else {
+        x.leading_zeros() as i32
+    }
 }
 
 #[cfg(test)]
@@ -268,8 +288,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for bit in 0..64u32 {
             let x = 1u64 << bit;
-            assert_eq!(_zclz64(x), x.leading_zeros() as i32,
-                "mismatch at single-bit input 1<<{}", bit);
+            assert_eq!(
+                _zclz64(x),
+                x.leading_zeros() as i32,
+                "mismatch at single-bit input 1<<{}",
+                bit
+            );
         }
     }
 
@@ -280,12 +304,12 @@ mod tests {
     #[test]
     fn zclz64_low_bit_anchors_match_position() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_zclz64(0b1),         63);  // bit 0
-        assert_eq!(_zclz64(0b10),        62);  // bit 1 (was the bug case)
-        assert_eq!(_zclz64(0b100),       61);  // bit 2
-        assert_eq!(_zclz64(0b1000),      60);  // bit 3
-        assert_eq!(_zclz64(0b1_0000),    59);  // bit 4
-        assert_eq!(_zclz64(0b1000_0000), 56);  // bit 7
+        assert_eq!(_zclz64(0b1), 63); // bit 0
+        assert_eq!(_zclz64(0b10), 62); // bit 1 (was the bug case)
+        assert_eq!(_zclz64(0b100), 61); // bit 2
+        assert_eq!(_zclz64(0b1000), 60); // bit 3
+        assert_eq!(_zclz64(0b1_0000), 59); // bit 4
+        assert_eq!(_zclz64(0b1000_0000), 56); // bit 7
     }
 
     /// c:49 — The MSB-set input always returns 0 (no leading zeros).
@@ -308,14 +332,33 @@ mod tests {
     fn zclz64_matches_leading_zeros_across_diverse_inputs() {
         let _g = crate::test_util::global_state_lock();
         for x in [
-            0u64, 1, 2, 3, 0xff, 0x100, 0xff00, 0xffff,
-            0x12345678_9abcdef0, 0xdeadbeef, 0xcafebabe_cafebabe,
-            (1 << 31), (1 << 32), (1 << 33), (1 << 62),
-            u64::MAX, u64::MAX - 1, 0x5555_5555_5555_5555,
-            0xAAAA_AAAA_AAAA_AAAA, 0x8000_0000_0000_0001,
+            0u64,
+            1,
+            2,
+            3,
+            0xff,
+            0x100,
+            0xff00,
+            0xffff,
+            0x12345678_9abcdef0,
+            0xdeadbeef,
+            0xcafebabe_cafebabe,
+            (1 << 31),
+            (1 << 32),
+            (1 << 33),
+            (1 << 62),
+            u64::MAX,
+            u64::MAX - 1,
+            0x5555_5555_5555_5555,
+            0xAAAA_AAAA_AAAA_AAAA,
+            0x8000_0000_0000_0001,
         ] {
-            assert_eq!(_zclz64(x), x.leading_zeros() as i32,
-                "mismatch at 0x{:016x}", x);
+            assert_eq!(
+                _zclz64(x),
+                x.leading_zeros() as i32,
+                "mismatch at 0x{:016x}",
+                x
+            );
         }
     }
 
@@ -343,8 +386,10 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_nonzero,
-            "50 consecutive 0.0 outputs from random_real — entropy pump broken");
+        assert!(
+            saw_nonzero,
+            "50 consecutive 0.0 outputs from random_real — entropy pump broken"
+        );
     }
 
     /// c:147 — `random_real()` outputs must spread across the unit
@@ -358,9 +403,11 @@ mod tests {
         for _ in 0..100 {
             seen.insert(random_real().to_bits());
         }
-        assert!(seen.len() >= 5,
+        assert!(
+            seen.len() >= 5,
             "100 draws produced only {} distinct outputs — distribution broken",
-            seen.len());
+            seen.len()
+        );
     }
 
     /// c:84 — `random_64bit()` never returns 0 (entropy success
@@ -379,6 +426,9 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_real, "every random_64bit returned the failure sentinel — getrandom broken?");
+        assert!(
+            saw_real,
+            "every random_64bit returned the failure sentinel — getrandom broken?"
+        );
     }
 }

@@ -2,7 +2,7 @@
 #![cfg(feature = "recorder")]
 #[allow(unused_imports)]
 use crate::ported::vm_helper::ShellExecutor;
-use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_EXPORTED, PM_READONLY, PM_UNIQUE, };
+use crate::ported::zsh_h::{PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_INTEGER, PM_READONLY, PM_UNIQUE};
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
@@ -57,9 +57,7 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// `$funcstack`; current source-file tracking is wired in
     /// Phase 2 alongside the source-stack push/pop in bin_dot.
     pub(crate) fn recorder_ctx(&self) -> crate::recorder::RecordCtx {
-        let line = self
-            .scalar("LINENO")
-            .and_then(|s| s.parse::<u32>().ok());
+        let line = self.scalar("LINENO").and_then(|s| s.parse::<u32>().ok());
         let fn_chain = self.array("funcstack").and_then(|s| {
             if s.is_empty() {
                 None

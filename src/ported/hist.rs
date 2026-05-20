@@ -8,15 +8,12 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize
 use std::sync::Mutex;
 
 use crate::ported::zsh_h::histent;
-pub use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 use crate::zsh_h::{
-    isset,
-    BANGHIST, HFILE_FAST, HFILE_USE_OPTIONS,
-    HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE,
-    HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS,
-    INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INTERACTIVE,
-    SHAREHISTORY, SHINSTDIN,
+    isset, BANGHIST, HFILE_FAST, HFILE_USE_OPTIONS, HISTIGNOREALLDUPS, HISTIGNOREDUPS,
+    HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, INCAPPENDHISTORY,
+    INCAPPENDHISTORYTIME, INTERACTIVE, SHAREHISTORY, SHINSTDIN,
 };
+pub use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::Component::*;
@@ -30,43 +27,42 @@ use std::path::Component::*;
 // idiom. They stay as `crate::ported::input::inbufflags` until
 // the shadowing pattern is refactored.
 use crate::ported::input::{ingetc, inungetc};
-use crate::ported::utils::{zerr, errflag, ERRFLAG_ERROR};
-use crate::ported::signals::unqueue_signals;
 use crate::ported::lex::LEX_ISFIRSTCH;
 // Names lifted out of inside-fn `use` statements (PORT.md
 // 'no imports inside FNs ever').
 use crate::ported::options::dosetopt;
+use crate::ported::signals::unqueue_signals;
+use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
-    CSHJUNKIEHISTORY, HISTVERIFY, HISTEXPIREDUPSFIRST,
-    INP_ALIAS, INP_HIST, Pound,
+    Pound, CSHJUNKIEHISTORY, HISTEXPIREDUPSFIRST, HISTVERIFY, INP_ALIAS, INP_HIST,
 };
 use crate::ported::ztype_h::itok;
 use std::sync::atomic::Ordering::SeqCst;
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
-pub const HA_ACTIVE: u32 = 1 << 0;                                           // c:138
+pub const HA_ACTIVE: u32 = 1 << 0; // c:138
 /// Port of `HA_NOINC` from Src/hist.c:139. Don't store, curhist not incremented.
-pub const HA_NOINC: u32 = 1 << 1;                                            // c:139
+pub const HA_NOINC: u32 = 1 << 1; // c:139
 /// Port of `HA_INWORD` from Src/hist.c:140. We're inside a word.
-pub const HA_INWORD: u32 = 1 << 2;                                           // c:140
+pub const HA_INWORD: u32 = 1 << 2; // c:140
 /// Port of `HA_UNGET` from Src/hist.c:142. Recursively ungetting.
-pub const HA_UNGET: u32 = 1 << 3;                                            // c:142
+pub const HA_UNGET: u32 = 1 << 3; // c:142
 
 /// Port of `static zlong defev` from Src/hist.c:210.
-static defev: AtomicI64 = AtomicI64::new(0);                                 // c:210
+static defev: AtomicI64 = AtomicI64::new(0); // c:210
 
 /// Port of `static int hist_keep_comment` from Src/hist.c:217.
-static hist_keep_comment: AtomicI32 = AtomicI32::new(0);                     // c:217
+static hist_keep_comment: AtomicI32 = AtomicI32::new(0); // c:217
 
 /// Port of `static int histsave_stack_size` from Src/hist.c:239.
-static histsave_stack_size: AtomicI32 = AtomicI32::new(0);                   // c:239
+static histsave_stack_size: AtomicI32 = AtomicI32::new(0); // c:239
 
 /// Port of `static int histsave_stack_pos` from Src/hist.c:240.
-static histsave_stack_pos: AtomicI32 = AtomicI32::new(0);                    // c:240
+static histsave_stack_pos: AtomicI32 = AtomicI32::new(0); // c:240
 
 /// Port of `static zlong histfile_linect` from Src/hist.c:242.
-static histfile_linect: AtomicI64 = AtomicI64::new(0);                       // c:242
+static histfile_linect: AtomicI64 = AtomicI64::new(0); // c:242
 
 // =========================================================================
 // Functions from hist.c
@@ -74,62 +70,69 @@ static histfile_linect: AtomicI64 = AtomicI64::new(0);                       // 
 
 /// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:248.
-pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:248
-    if toplevel != 0 {                                                       // c:248
+pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) {
+    // c:248
+    if toplevel != 0 {
+        // c:248
         // top level, make this version visible to ZLE                       // c:251
-        *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone());  // c:252
-        // ensure line stored is NULL-terminated — implicit in String        // c:253-255
+        *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone()); // c:252
+                                                                            // ensure line stored is NULL-terminated — implicit in String        // c:253-255
     }
-    hs.histactive = histactive.load(Ordering::SeqCst) as i32;                // c:257
-    hs.histdone = histdone.load(Ordering::SeqCst);                           // c:258
-    hs.stophist = stophist.load(Ordering::SeqCst);                           // c:259
-    hs.hline = Some(chline.lock().unwrap().clone());                         // c:260
-    hs.hptr = Some(hptr.load(Ordering::SeqCst).to_string());                 // c:261
-    hs.chwords = chwords.lock().unwrap().clone();                            // c:262
-    hs.chwordlen = chwordlen.load(Ordering::SeqCst);                         // c:263
-    hs.chwordpos = chwordpos.load(Ordering::SeqCst);                         // c:264
-    // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
-    // are runtime-mutable function-pointer globals in C; the Rust port
-    // dispatches statically via crate::ported::input.
-    hs.hlinesz = hlinesz.load(Ordering::SeqCst);                             // c:272
-    hs.defev = defev.load(Ordering::SeqCst);                                 // c:273
-    hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst);         // c:274
-    // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
+    hs.histactive = histactive.load(Ordering::SeqCst) as i32; // c:257
+    hs.histdone = histdone.load(Ordering::SeqCst); // c:258
+    hs.stophist = stophist.load(Ordering::SeqCst); // c:259
+    hs.hline = Some(chline.lock().unwrap().clone()); // c:260
+    hs.hptr = Some(hptr.load(Ordering::SeqCst).to_string()); // c:261
+    hs.chwords = chwords.lock().unwrap().clone(); // c:262
+    hs.chwordlen = chwordlen.load(Ordering::SeqCst); // c:263
+    hs.chwordpos = chwordpos.load(Ordering::SeqCst); // c:264
+                                                     // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
+                                                     // are runtime-mutable function-pointer globals in C; the Rust port
+                                                     // dispatches statically via crate::ported::input.
+    hs.hlinesz = hlinesz.load(Ordering::SeqCst); // c:272
+    hs.defev = defev.load(Ordering::SeqCst); // c:273
+    hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst); // c:274
+                                                                     // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
     hs.csp = 0;
 
-    stophist.store(0, Ordering::SeqCst);                                     // c:296
-    chline.lock().unwrap().clear();                                          // c:296
-    hptr.store(0, Ordering::SeqCst);                                         // c:296
-    histactive.store(0, Ordering::SeqCst);                                   // c:296
-    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
+    stophist.store(0, Ordering::SeqCst); // c:296
+    chline.lock().unwrap().clear(); // c:296
+    hptr.store(0, Ordering::SeqCst); // c:296
+    histactive.store(0, Ordering::SeqCst); // c:296
+                                           // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:296.
-pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:296
-    if toplevel != 0 {                                                       // c:296
+pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) {
+    // c:296
+    if toplevel != 0 {
+        // c:296
         // c:299 — Back to top level: don't need special ZLE value
         // c:300 — DPUTS(hs->hline != zle_chline, "BUG: Ouch, wrong chline for ZLE")
-        crate::DPUTS!(                                                        // c:300
-            hs.hline != *zle_chline.lock().unwrap(),                         // c:300
-            "BUG: Ouch, wrong chline for ZLE"                                // c:300
+        crate::DPUTS!(
+            // c:300
+            hs.hline != *zle_chline.lock().unwrap(), // c:300
+            "BUG: Ouch, wrong chline for ZLE"        // c:300
         );
-        *zle_chline.lock().unwrap() = None;                                  // c:301
+        *zle_chline.lock().unwrap() = None; // c:301
     }
-    histactive.store(hs.histactive as u32, Ordering::SeqCst);                // c:303
-    histdone.store(hs.histdone, Ordering::SeqCst);                           // c:304
-    stophist.store(hs.stophist, Ordering::SeqCst);                           // c:305
-    *chline.lock().unwrap() = hs.hline.clone().unwrap_or_default();          // c:306
-    hptr.store(hs.hptr.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0),   // c:307
-               Ordering::SeqCst);
-    *chwords.lock().unwrap() = hs.chwords.clone();                           // c:308
-    chwordlen.store(hs.chwordlen, Ordering::SeqCst);                         // c:309
-    chwordpos.store(hs.chwordpos, Ordering::SeqCst);                         // c:310
-    // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
-    hlinesz.store(hs.hlinesz, Ordering::SeqCst);                             // c:318
-    defev.store(hs.defev, Ordering::SeqCst);                                 // c:339
-    hist_keep_comment.store(hs.hist_keep_comment, Ordering::SeqCst);         // c:339
-    // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
+    histactive.store(hs.histactive as u32, Ordering::SeqCst); // c:303
+    histdone.store(hs.histdone, Ordering::SeqCst); // c:304
+    stophist.store(hs.stophist, Ordering::SeqCst); // c:305
+    *chline.lock().unwrap() = hs.hline.clone().unwrap_or_default(); // c:306
+    hptr.store(
+        hs.hptr.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0), // c:307
+        Ordering::SeqCst,
+    );
+    *chwords.lock().unwrap() = hs.chwords.clone(); // c:308
+    chwordlen.store(hs.chwordlen, Ordering::SeqCst); // c:309
+    chwordpos.store(hs.chwordpos, Ordering::SeqCst); // c:310
+                                                     // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
+    hlinesz.store(hs.hlinesz, Ordering::SeqCst); // c:318
+    defev.store(hs.defev, Ordering::SeqCst); // c:339
+    hist_keep_comment.store(hs.hist_keep_comment, Ordering::SeqCst); // c:339
+                                                                     // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
 }
 
 /// Port of `void hist_in_word(int yesno)` from Src/hist.c.
@@ -143,7 +146,11 @@ pub fn hist_in_word(yesno: i32) {
 
 /// Port of `int hist_is_in_word(void)` from Src/hist.c.
 pub fn hist_is_in_word() -> i32 {
-    if (histactive.load(Ordering::SeqCst) & HA_INWORD) != 0 { 1 } else { 0 }
+    if (histactive.load(Ordering::SeqCst) & HA_INWORD) != 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Port of `void ihwaddc(int c)` from Src/hist.c:357.
@@ -162,7 +169,8 @@ pub fn hist_is_in_word() -> i32 {
 ///     }
 /// }
 /// ```
-pub fn ihwaddc(c: i32) {                                                     // c:357
+pub fn ihwaddc(c: i32) {
+    // c:357
     // c:360-361 — guard: history line must exist, no error/lex stop,
     // and we're not strictly inside alias-expansion-only input.
     if errflag.load(Ordering::SeqCst) != 0 || lexstop.load(Ordering::SeqCst) {
@@ -199,13 +207,27 @@ pub fn ihwaddc(c: i32) {                                                     // 
         // Mirror the recursive `hwaddc('\\');` at c:366 — also writes
         // at hptr + advances.
         if qbang_active {
-            if pos < bytes.len() { bytes[pos] = b'\\'; }                     // c:366
-            else { while bytes.len() < pos { bytes.push(0); } bytes.push(b'\\'); }
+            if pos < bytes.len() {
+                bytes[pos] = b'\\';
+            }
+            // c:366
+            else {
+                while bytes.len() < pos {
+                    bytes.push(0);
+                }
+                bytes.push(b'\\');
+            }
             pos += 1;
         }
         // c:368 — `*hptr++ = c;`.
-        if pos < bytes.len() { bytes[pos] = c as u8; }
-        else { while bytes.len() < pos { bytes.push(0); } bytes.push(c as u8); }
+        if pos < bytes.len() {
+            bytes[pos] = c as u8;
+        } else {
+            while bytes.len() < pos {
+                bytes.push(0);
+            }
+            bytes.push(c as u8);
+        }
         pos += 1;
         hptr.store(pos, Ordering::SeqCst);
     }
@@ -214,11 +236,12 @@ pub fn ihwaddc(c: i32) {                                                     // 
     // for any caller that reads it (e.g. `hwend()`). C condition
     // is `hptr - chline >= hlinesz`; mirror with the canonical
     // `hptr` global (matches the c:1658 / c:1693 fixes).
-    let cur_off = hptr.load(Ordering::SeqCst) as i32;                         // c:381 hptr - chline
+    let cur_off = hptr.load(Ordering::SeqCst) as i32; // c:381 hptr - chline
     let sz = hlinesz.load(Ordering::SeqCst);
-    if cur_off >= sz {                                                        // c:381
+    if cur_off >= sz {
+        // c:381
         let new_sz = sz + 64;
-        hlinesz.store(new_sz, Ordering::SeqCst);                              // c:384
+        hlinesz.store(new_sz, Ordering::SeqCst); // c:384
     }
 }
 
@@ -255,21 +278,17 @@ pub fn ihwaddc(c: i32) {                                                     // 
 /// mapping. The cursor tracking + zleentry hook are doc-pinned
 /// for future ZLE wireup but otherwise no-op since chline is
 /// the backing store for both code paths in zshrs.
-pub fn iaddtoline(c: i32) {                                                  // c:397
+pub fn iaddtoline(c: i32) {
+    // c:397
     // c:399 — `if (!expanding || lexstop) return;`.
-    if expanding.load(Ordering::SeqCst) == 0
-        || lexstop.load(Ordering::SeqCst)
-    {
+    if expanding.load(Ordering::SeqCst) == 0 || lexstop.load(Ordering::SeqCst) {
         return;
     }
     // c:401-404 — bang-escape under qbang.
     let bc = bangchar.load(Ordering::SeqCst);
-    if qbang.load(Ordering::SeqCst)
-        && c == bc
-        && stophist.load(Ordering::SeqCst) < 2
-    {
-        exlast.fetch_sub(1, Ordering::SeqCst);                                // c:402
-        chline.lock().unwrap().push('\\');                                    // c:403 zleentry ADD '\\'
+    if qbang.load(Ordering::SeqCst) && c == bc && stophist.load(Ordering::SeqCst) < 2 {
+        exlast.fetch_sub(1, Ordering::SeqCst); // c:402
+        chline.lock().unwrap().push('\\'); // c:403 zleentry ADD '\\'
     }
     // c:405-411 — `if (excs > zlemetacs) { excs += 1 + inbufct -
     // exlast; if (excs < zlemetacs) excs = zlemetacs; }`.
@@ -283,22 +302,23 @@ pub fn iaddtoline(c: i32) {                                                  // 
     // The previous Rust port omitted the entire block — typing
     // `!str` mid-line would leave the ZLE cursor at the wrong
     // position after expansion.
-    let zlemetacs_v =
-        crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let zlemetacs_v = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
     let excs_v = excs.load(Ordering::SeqCst);
-    if excs_v > zlemetacs_v {                                                // c:405
+    if excs_v > zlemetacs_v {
+        // c:405
         let inbufct_now = crate::ported::input::inbufct.with(|c| c.get());
         let exlast_v = exlast.load(Ordering::SeqCst);
-        let mut new_excs = excs_v + 1 + inbufct_now - exlast_v;              // c:406
-        if new_excs < zlemetacs_v {                                          // c:407
-            new_excs = zlemetacs_v;                                          // c:410
+        let mut new_excs = excs_v + 1 + inbufct_now - exlast_v; // c:406
+        if new_excs < zlemetacs_v {
+            // c:407
+            new_excs = zlemetacs_v; // c:410
         }
         excs.store(new_excs, Ordering::SeqCst);
     }
     // c:413 — `exlast = inbufct;`
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
-    exlast.store(inbufct_v, Ordering::SeqCst);                                // c:413
-    // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
+    exlast.store(inbufct_v, Ordering::SeqCst); // c:413
+                                               // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
     let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
         let idx = (c as u8).wrapping_sub(crate::ported::zsh_h::Pound as u8) as usize;
         // ztokens is the literal-char back-mapping for ITOK bytes.
@@ -312,7 +332,7 @@ pub fn iaddtoline(c: i32) {                                                  // 
     } else {
         c as u8
     };
-    chline.lock().unwrap().push(push_byte as char);                           // c:413
+    chline.lock().unwrap().push(push_byte as char); // c:413
 }
 
 /// Port of `void safeinungetc(int c)` from Src/hist.c:466.
@@ -326,11 +346,15 @@ pub fn iaddtoline(c: i32) {                                                  // 
 ///         inungetc(c);
 /// }
 /// ```
-pub fn safeinungetc(c: i32) {                                                // c:467
-    if lexstop.load(Ordering::SeqCst) {                                      // c:469
-        lexstop.store(false, Ordering::SeqCst);                              // c:470
-    } else {                                                                 // c:471
-        if let Some(ch) = char::from_u32(c as u32) {                         // c:472 inungetc(c)
+pub fn safeinungetc(c: i32) {
+    // c:467
+    if lexstop.load(Ordering::SeqCst) {
+        // c:469
+        lexstop.store(false, Ordering::SeqCst); // c:470
+    } else {
+        // c:471
+        if let Some(ch) = char::from_u32(c as u32) {
+            // c:472 inungetc(c)
             inungetc(ch);
         }
     }
@@ -362,43 +386,52 @@ pub fn safeinungetc(c: i32) {                                                // 
 ///     return c;
 /// }
 /// ```
-pub fn ihgetc() -> i32 {                                                     // c:418
-    let mut c: i32 = ingetc()                          // c:420 int c = ingetc();
+pub fn ihgetc() -> i32 {
+    // c:418
+    let mut c: i32 = ingetc() // c:420 int c = ingetc();
         .map(|ch| ch as i32)
         .unwrap_or(-1);
-    if exit_pending.load(Ordering::SeqCst) {                                 // c:422
-        lexstop.store(true, Ordering::SeqCst);                               // c:424
-        errflag.fetch_or(                              // c:425 errflag |= ERRFLAG_ERROR
+    if exit_pending.load(Ordering::SeqCst) {
+        // c:422
+        lexstop.store(true, Ordering::SeqCst); // c:424
+        errflag.fetch_or(
+            // c:425 errflag |= ERRFLAG_ERROR
             ERRFLAG_ERROR,
             Ordering::SeqCst,
         );
-        return b' ' as i32;                                                  // c:426
+        return b' ' as i32; // c:426
     }
-    qbang.store(false, Ordering::SeqCst);                                    // c:428 qbang = 0
+    qbang.store(false, Ordering::SeqCst); // c:428 qbang = 0
     let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
     if stophist.load(Ordering::SeqCst) == 0                                  // c:429 !stophist
-        && (inbufflags_v & INP_ALIAS) == 0                                   // c:429 !(inbufflags & INP_ALIAS)
+        && (inbufflags_v & INP_ALIAS) == 0
+    // c:429 !(inbufflags & INP_ALIAS)
     {
-        c = histsubchar(c);                                                  // c:431 c = histsubchar(c)
-        if c < 0 {                                                           // c:432
-            lexstop.store(true, Ordering::SeqCst);                           // c:434
-            errflag.fetch_or(                          // c:435
+        c = histsubchar(c); // c:431 c = histsubchar(c)
+        if c < 0 {
+            // c:432
+            lexstop.store(true, Ordering::SeqCst); // c:434
+            errflag.fetch_or(
+                // c:435
                 ERRFLAG_ERROR,
                 Ordering::SeqCst,
             );
-            return b' ' as i32;                                              // c:436
+            return b' ' as i32; // c:436
         }
     }
     let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
     let bc = bangchar.load(Ordering::SeqCst);
-    if (inbufflags_v & INP_HIST) != 0 && stophist.load(Ordering::SeqCst) == 0 {  // c:439
+    if (inbufflags_v & INP_HIST) != 0 && stophist.load(Ordering::SeqCst) == 0 {
+        // c:439
         // c:447 qbang = 0
         qbang.store(false, Ordering::SeqCst);
-        if c == b'\\' as i32 {                                               // c:448 c == '\\'
-            let g = ingetc()                           // c:448 c = ingetc()
+        if c == b'\\' as i32 {
+            // c:448 c == '\\'
+            let g = ingetc() // c:448 c = ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if g == bc {                                                     // c:448 qbang = (c == bangchar)
+            if g == bc {
+                // c:448 qbang = (c == bangchar)
                 qbang.store(true, Ordering::SeqCst);
                 c = g;
             } else {
@@ -408,15 +441,16 @@ pub fn ihgetc() -> i32 {                                                     // 
             }
         }
     } else if stophist.load(Ordering::SeqCst) != 0                           // c:450 stophist
-        || (inbufflags_v & INP_ALIAS) != 0                                   // c:450 (inbufflags & INP_ALIAS)
+        || (inbufflags_v & INP_ALIAS) != 0
+    // c:450 (inbufflags & INP_ALIAS)
     {
         // c:458 qbang = c == bangchar && (stophist < 2)
         let v = c == bc && stophist.load(Ordering::SeqCst) < 2;
         qbang.store(v, Ordering::SeqCst);
     }
-    ihwaddc(c);                                                              // c:459 hwaddc(c)
-    iaddtoline(c);                                                           // c:460 addtoline(c)
-    c                                                                        // c:462 return c
+    ihwaddc(c); // c:459 hwaddc(c)
+    iaddtoline(c); // c:460 addtoline(c)
+    c // c:462 return c
 }
 
 /// Port of `unsigned char hatchar` from `Src/params.c:132`. Caret used
@@ -426,7 +460,7 @@ pub fn ihgetc() -> i32 {                                                     // 
 /// `params.rs`, alongside `bangchar`/`hashchar`. Kept here to mirror
 /// the existing (pre-2026-05) placement of `bangchar` at hist.rs:1858;
 /// move-all-three is a follow-up cleanup.
-pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32);                 // c:params.c:132
+pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32); // c:params.c:132
 
 /// Port of `unsigned char hashchar` from `Src/params.c:132`. Comment-
 /// start character; init'd to `'#'` at `Src/init.c:1101`. Read by
@@ -435,15 +469,15 @@ pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32);                 // 
 /// changes — previously was a `const char` in `lex.rs:3507`, which
 /// silently diverged from C (no `setopt HISTCHARS='!^@'` syntax
 /// could change the comment character).
-pub static hashchar: AtomicI32 = AtomicI32::new(b'#' as i32);                // c:params.c:132
+pub static hashchar: AtomicI32 = AtomicI32::new(b'#' as i32); // c:params.c:132
 
 /// Port of `static int marg` from `Src/hist.c:599`. Argument index of the
 /// most-recent `!?str?` event match; `-1` when no match has happened.
-pub static marg: AtomicI32 = AtomicI32::new(-1);                             // c:599
+pub static marg: AtomicI32 = AtomicI32::new(-1); // c:599
 
 /// Port of `static zlong mev` from `Src/hist.c:600`. Event number of the
 /// most-recent `!?str?` event match; `-1` when no match has happened.
-pub static mev: AtomicI64 = AtomicI64::new(-1);                              // c:600
+pub static mev: AtomicI64 = AtomicI64::new(-1); // c:600
 
 /// Port of `static int histsubchar(int c)` from Src/hist.c:594.
 /// Implements `^foo^bar` and full `!` history expansion: walks the input
@@ -468,96 +502,110 @@ pub static mev: AtomicI64 = AtomicI64::new(-1);                              // 
 ///     /* ... see Src/hist.c:594-983 for full body ... */
 /// }
 /// ```
-pub fn histsubchar(c_in: i32) -> i32 {                                       // c:595
+pub fn histsubchar(c_in: i32) -> i32 {
+    // c:595
     let mut c: i32 = c_in;
-    let mut farg: i32;                                                       // c:597
-    let mut evset: i32 = -1;                                                 // c:597
+    let mut farg: i32; // c:597
+    let mut evset: i32 = -1; // c:597
     let mut larg: i32;
-    let mut argc: i32;                                                       // c:597
-    let mut cflag: i32 = 0;                                                  // c:597
-    let mut bflag: i32 = 0;                                                  // c:597
-    let mut ev: i64;                                                         // c:598
-    let mut buf: String;                                                     // c:601 char *buf, *ptr
-    let mut sline: String;                                                   // c:602
-    // c:603 lexraw_mark — Rust port's lexer doesn't expose `zshlex_raw_mark`
-    // hook yet; mirror the C `lexraw_mark` / `zshlex_raw_back_to_mark` calls
-    // as a no-op `i32` carry.
-    let lexraw_mark: i32 = 0;                                                // c:603,615
+    let mut argc: i32; // c:597
+    let mut cflag: i32 = 0; // c:597
+    let mut bflag: i32 = 0; // c:597
+    let mut ev: i64; // c:598
+    let mut buf: String; // c:601 char *buf, *ptr
+    let mut sline: String; // c:602
+                           // c:603 lexraw_mark — Rust port's lexer doesn't expose `zshlex_raw_mark`
+                           // hook yet; mirror the C `lexraw_mark` / `zshlex_raw_back_to_mark` calls
+                           // as a no-op `i32` carry.
+    let lexraw_mark: i32 = 0; // c:603,615
 
     // c:618 — `^foo^bar` shortcut: only valid on first column of input.
     let hat = hatchar.load(Ordering::SeqCst);
-    if LEX_ISFIRSTCH.with(|f| f.get()) && c == hat {                                         // c:618
-        let mut gbal: i32 = 0;                                               // c:619
-        // c:622 — clear isfirstch
-        LEX_ISFIRSTCH.with(|f| f.set(false));                                                // c:622
-        // c:623 — push hatchar back so getargs parses the leading ^.
+    if LEX_ISFIRSTCH.with(|f| f.get()) && c == hat {
+        // c:618
+        let mut gbal: i32 = 0; // c:619
+                               // c:622 — clear isfirstch
+        LEX_ISFIRSTCH.with(|f| f.set(false)); // c:622
+                                              // c:623 — push hatchar back so getargs parses the leading ^.
         if let Some(ch) = char::from_u32(hat as u32) {
-            inungetc(ch);                              // c:623
+            inungetc(ch); // c:623
         }
-        let ehist = match gethist(defev.load(Ordering::SeqCst)) {            // c:624
+        let ehist = match gethist(defev.load(Ordering::SeqCst)) {
+            // c:624
             Some(h) => h,
-            None => return -1,                                               // c:626
+            None => return -1, // c:626
         };
         let argc_local = getargc(&ehist) as usize;
-        sline = match getargs(&ehist, 0, argc_local.saturating_sub(0)) {     // c:625
+        sline = match getargs(&ehist, 0, argc_local.saturating_sub(0)) {
+            // c:625
             Some(s) => s,
-            None => return -1,                                               // c:626
+            None => return -1, // c:626
         };
 
-        if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {                 // c:628
-            return substfailed();                                            // c:629
+        if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {
+            // c:628
+            return substfailed(); // c:629
         }
-        if hsubl.lock().unwrap().is_none() {                                 // c:630
-            return -1;                                                       // c:631
+        if hsubl.lock().unwrap().is_none() {
+            // c:630
+            return -1; // c:631
         }
         let in_pat = hsubl.lock().unwrap().clone().unwrap_or_default();
         let out_pat = hsubr.lock().unwrap().clone().unwrap_or_default();
-        let new = subst(&sline, &in_pat, &out_pat, gbal != 0);               // c:632
-        if new == sline {                                                    // c:632 subst returned 0 (no match)
-            return substfailed();                                            // c:633
+        let new = subst(&sline, &in_pat, &out_pat, gbal != 0); // c:632
+        if new == sline {
+            // c:632 subst returned 0 (no match)
+            return substfailed(); // c:633
         }
         sline = new;
     } else {
         // c:636 — !c shortcut: first-column flag clears unless c==' '.
-        if c != b' ' as i32 {                                                // c:636
-            LEX_ISFIRSTCH.with(|f| f.set(false));                                            // c:637
+        if c != b' ' as i32 {
+            // c:636
+            LEX_ISFIRSTCH.with(|f| f.set(false)); // c:637
         }
         let bc = bangchar.load(Ordering::SeqCst);
-        if c == b'\\' as i32 {                                               // c:638
-            let g = ingetc()                           // c:639 ingetc()
+        if c == b'\\' as i32 {
+            // c:638
+            let g = ingetc() // c:639 ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if g != bc {                                                     // c:641
-                safeinungetc(g);                                             // c:642
-            } else {                                                         // c:643
-                qbang.store(true, Ordering::SeqCst);                         // c:644
-                return bc;                                                   // c:645 return bangchar
+            if g != bc {
+                // c:641
+                safeinungetc(g); // c:642
+            } else {
+                // c:643
+                qbang.store(true, Ordering::SeqCst); // c:644
+                return bc; // c:645 return bangchar
             }
         }
-        if c != bc {                                                         // c:648
-            return c;                                                        // c:649
+        if c != bc {
+            // c:648
+            return c; // c:649
         }
         // c:650 — `*hptr = '\0'` truncates chline at the current position.
-        let pos = hptr.load(Ordering::SeqCst);                               // c:650
+        let pos = hptr.load(Ordering::SeqCst); // c:650
         {
             let mut cl = chline.lock().unwrap();
             if pos < cl.len() {
                 cl.truncate(pos);
             }
         }
-        c = ingetc()                                   // c:651
+        c = ingetc() // c:651
             .map(|ch| ch as i32)
             .unwrap_or(-1);
-        if c == b'{' as i32 {                                                // c:651
-            bflag = 1;                                                       // c:652
+        if c == b'{' as i32 {
+            // c:651
+            bflag = 1; // c:652
             cflag = 1;
-            c = ingetc()                               // c:653
+            c = ingetc() // c:653
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
         }
-        if c == b'"' as i32 {                                                // c:655 c == '\"'
-            stophist.store(1, Ordering::SeqCst);                             // c:656
-            return ingetc()                            // c:657 return ingetc()
+        if c == b'"' as i32 {
+            // c:655 c == '\"'
+            stophist.store(1, Ordering::SeqCst); // c:656
+            return ingetc() // c:657 return ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
         }
@@ -566,88 +614,112 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
         if (cflag == 0 && is_blank)
             || c == b'=' as i32
             || c == b'(' as i32
-            || lexstop.load(Ordering::SeqCst)                                // c:659
+            || lexstop.load(Ordering::SeqCst)
+        // c:659
         {
-            safeinungetc(c);                                                 // c:660
-            return bc;                                                       // c:661 return bangchar
+            safeinungetc(c); // c:660
+            return bc; // c:661 return bangchar
         }
-        cflag = 0;                                                           // c:663
-        let mut buflen: usize = 265;                                         // c:664
-        buf = String::with_capacity(buflen);                                 // c:664 zhalloc
+        cflag = 0; // c:663
+        let mut buflen: usize = 265; // c:664
+        buf = String::with_capacity(buflen); // c:664 zhalloc
 
         // c:666-727 — read event-spec into buf.
-        crate::ported::signals::queue_signals();                             // c:668
-        if c == b'?' as i32 {                                                // c:669
-            loop {                                                           // c:670
-                c = ingetc()                           // c:671 ingetc()
+        crate::ported::signals::queue_signals(); // c:668
+        if c == b'?' as i32 {
+            // c:669
+            loop {
+                // c:670
+                c = ingetc() // c:671 ingetc()
                     .map(|ch| ch as i32)
                     .unwrap_or(-1);
-                if c == b'?' as i32 || c == b'\n' as i32 || lexstop.load(Ordering::SeqCst) {  // c:672
-                    break;                                                   // c:673
+                if c == b'?' as i32 || c == b'\n' as i32 || lexstop.load(Ordering::SeqCst) {
+                    // c:672
+                    break; // c:673
                 } else {
-                    buf.push(c as u8 as char);                               // c:675 *ptr++ = c
-                    if buf.len() >= buflen {                                 // c:676
-                        buflen *= 2;                                         // c:679 buflen *= 2
+                    buf.push(c as u8 as char); // c:675 *ptr++ = c
+                    if buf.len() >= buflen {
+                        // c:676
+                        buflen *= 2; // c:679 buflen *= 2
                         buf.reserve(buflen);
                     }
                 }
             }
-            if c != b'\n' as i32 && !lexstop.load(Ordering::SeqCst) {        // c:683
-                c = ingetc()                           // c:684
+            if c != b'\n' as i32 && !lexstop.load(Ordering::SeqCst) {
+                // c:683
+                c = ingetc() // c:684
                     .map(|ch| ch as i32)
                     .unwrap_or(-1);
             }
             // c:685 *ptr = '\0' — Rust String is already terminated.
-            *hsubl.lock().unwrap() = Some(buf.clone());                      // c:686 hsubl = ztrdup(buf)
-            // c:686 — `mev = ev = hconsearch(hsubl = ztrdup(buf), &marg);`
-            // hconsearch now returns Option<(histnum, marg)> per C
-            // out-pointer pair — previously dropped the marg side,
-            // forcing the caller to hardcode margbox=0 which lost
-            // the matched word index.
-            let (ev_val, marg_val) = match hconsearch(&buf) {                // c:686
+            *hsubl.lock().unwrap() = Some(buf.clone()); // c:686 hsubl = ztrdup(buf)
+                                                        // c:686 — `mev = ev = hconsearch(hsubl = ztrdup(buf), &marg);`
+                                                        // hconsearch now returns Option<(histnum, marg)> per C
+                                                        // out-pointer pair — previously dropped the marg side,
+                                                        // forcing the caller to hardcode margbox=0 which lost
+                                                        // the matched word index.
+            let (ev_val, marg_val) = match hconsearch(&buf) {
+                // c:686
                 Some((e, m)) => (e, m),
                 None => (-1, -1),
             };
             ev = ev_val;
-            mev.store(ev, Ordering::SeqCst);                                 // c:686 mev = ev
-            marg.store(marg_val, Ordering::SeqCst);                          // c:686 marg out-arg
-            evset = 0;                                                       // c:687
-            if ev == -1 {                                                    // c:688
-                herrflush();                                                 // c:689
-                unqueue_signals();                   // c:690
-                zerr(&format!("no such event: {}", buf));  // c:691
-                return -1;                                                   // c:692
+            mev.store(ev, Ordering::SeqCst); // c:686 mev = ev
+            marg.store(marg_val, Ordering::SeqCst); // c:686 marg out-arg
+            evset = 0; // c:687
+            if ev == -1 {
+                // c:688
+                herrflush(); // c:689
+                unqueue_signals(); // c:690
+                zerr(&format!("no such event: {}", buf)); // c:691
+                return -1; // c:692
             }
-        } else {                                                             // c:694
+        } else {
+            // c:694
             // c:697 — collect event spec until terminator.
             loop {
                 let is_term = (c as u8 as char).is_ascii_whitespace()
-                    || c == b';' as i32 || c == b':' as i32 || c == b'^' as i32
-                    || c == b'$' as i32 || c == b'*' as i32 || c == b'%' as i32
-                    || c == b'}' as i32 || c == b'\'' as i32 || c == b'"' as i32
-                    || c == b'`' as i32 || lexstop.load(Ordering::SeqCst);    // c:698-700
-                if is_term { break; }
-                if !buf.is_empty() {                                         // c:702
-                    if c == b'-' as i32 { break; }                           // c:703-704
+                    || c == b';' as i32
+                    || c == b':' as i32
+                    || c == b'^' as i32
+                    || c == b'$' as i32
+                    || c == b'*' as i32
+                    || c == b'%' as i32
+                    || c == b'}' as i32
+                    || c == b'\'' as i32
+                    || c == b'"' as i32
+                    || c == b'`' as i32
+                    || lexstop.load(Ordering::SeqCst); // c:698-700
+                if is_term {
+                    break;
+                }
+                if !buf.is_empty() {
+                    // c:702
+                    if c == b'-' as i32 {
+                        break;
+                    } // c:703-704
                     let first = buf.as_bytes()[0];
                     if (first.is_ascii_digit() || first == b'-')             // c:705
-                        && !(c as u8).is_ascii_digit()                       // c:705 !idigit(c)
+                        && !(c as u8).is_ascii_digit()
+                    // c:705 !idigit(c)
                     {
-                        break;                                               // c:706
+                        break; // c:706
                     }
                 }
-                buf.push(c as u8 as char);                                   // c:708
-                if buf.len() >= buflen {                                     // c:709
-                    buflen *= 2;                                             // c:712
+                buf.push(c as u8 as char); // c:708
+                if buf.len() >= buflen {
+                    // c:709
+                    buflen *= 2; // c:712
                     buf.reserve(buflen);
                 }
-                if c == b'#' as i32 || c == bc {                             // c:714
-                    c = ingetc()                       // c:715
+                if c == b'#' as i32 || c == bc {
+                    // c:714
+                    c = ingetc() // c:715
                         .map(|ch| ch as i32)
                         .unwrap_or(-1);
-                    break;                                                   // c:716
+                    break; // c:716
                 }
-                c = ingetc()                           // c:718
+                c = ingetc() // c:718
                     .map(|ch| ch as i32)
                     .unwrap_or(-1);
             }
@@ -655,65 +727,92 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                 && (c == b'}' as i32 || c == b';' as i32 || c == b'\'' as i32
                     || c == b'"' as i32 || c == b'`' as i32)
             {
-                safeinungetc(c);                                             // c:723
-                unqueue_signals();                   // c:724
-                return bc;                                                   // c:725
+                safeinungetc(c); // c:723
+                unqueue_signals(); // c:724
+                return bc; // c:725
             }
             // c:727 *ptr = 0 — handled by Rust String
-            if buf.is_empty() {                                              // c:728
-                if c != b'%' as i32 {                                        // c:729
-                    if isset(CSHJUNKIEHISTORY) {                             // c:730
+            if buf.is_empty() {
+                // c:728
+                if c != b'%' as i32 {
+                    // c:729
+                    if isset(CSHJUNKIEHISTORY) {
+                        // c:730
                         ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
-                    } else {                                                 // c:732
-                        ev = defev.load(Ordering::SeqCst);                   // c:733
-                    }
-                    if c == b':' as i32 && evset == -1 {                     // c:734
-                        evset = 0;                                           // c:735
                     } else {
-                        evset = 1;                                           // c:737
+                        // c:732
+                        ev = defev.load(Ordering::SeqCst); // c:733
                     }
-                } else {                                                     // c:738
-                    if marg.load(Ordering::SeqCst) != -1 {                   // c:739
-                        ev = mev.load(Ordering::SeqCst);                     // c:740
-                    } else {                                                 // c:741
-                        ev = defev.load(Ordering::SeqCst);                   // c:742
+                    if c == b':' as i32 && evset == -1 {
+                        // c:734
+                        evset = 0; // c:735
+                    } else {
+                        evset = 1; // c:737
                     }
-                    evset = 0;                                               // c:743
+                } else {
+                    // c:738
+                    if marg.load(Ordering::SeqCst) != -1 {
+                        // c:739
+                        ev = mev.load(Ordering::SeqCst); // c:740
+                    } else {
+                        // c:741
+                        ev = defev.load(Ordering::SeqCst); // c:742
+                    }
+                    evset = 0; // c:743
                 }
-            } else if let Ok(t0) = buf.trim().parse::<i64>() {               // c:745 zstrtol(buf, NULL, 10)
+            } else if let Ok(t0) = buf.trim().parse::<i64>() {
+                // c:745 zstrtol(buf, NULL, 10)
                 if t0 != 0 {
-                    ev = if t0 < 0 {                                         // c:746
-                        addhistnum(curhist.load(Ordering::SeqCst), t0 as i32, HIST_FOREIGN as i32)
+                    ev = if t0 < 0 {
+                        // c:746
+                        addhistnum(
+                            curhist.load(Ordering::SeqCst),
+                            t0 as i32,
+                            HIST_FOREIGN as i32,
+                        )
                     } else {
                         t0
                     };
-                    evset = 1;                                               // c:747
-                } else if buf.as_bytes()[0] == bc as u8 {                    // c:748 *buf == bangchar
-                    ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);  // c:749
-                    evset = 1;                                               // c:750
-                } else if buf.as_bytes()[0] == b'#' {                        // c:751
-                    ev = curhist.load(Ordering::SeqCst);                     // c:752
-                    evset = 1;                                               // c:753
-                } else {                                                     // c:754
-                    match hcomsearch(&buf) {                                 // c:754
-                        Some(e) => { ev = e; evset = 1; }
+                    evset = 1; // c:747
+                } else if buf.as_bytes()[0] == bc as u8 {
+                    // c:748 *buf == bangchar
+                    ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32); // c:749
+                    evset = 1; // c:750
+                } else if buf.as_bytes()[0] == b'#' {
+                    // c:751
+                    ev = curhist.load(Ordering::SeqCst); // c:752
+                    evset = 1; // c:753
+                } else {
+                    // c:754
+                    match hcomsearch(&buf) {
+                        // c:754
+                        Some(e) => {
+                            ev = e;
+                            evset = 1;
+                        }
                         None => {
-                            herrflush();                                     // c:755
-                            unqueue_signals();       // c:756
-                            zerr(&format!("event not found: {}", buf));  // c:757
-                            return -1;                                       // c:758
+                            herrflush(); // c:755
+                            unqueue_signals(); // c:756
+                            zerr(&format!("event not found: {}", buf)); // c:757
+                            return -1; // c:758
                         }
                     }
                 }
-            } else if buf.as_bytes()[0] == bc as u8 {                        // c:748 *buf == bangchar
+            } else if buf.as_bytes()[0] == bc as u8 {
+                // c:748 *buf == bangchar
                 ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
                 evset = 1;
-            } else if buf.as_bytes()[0] == b'#' {                            // c:751
+            } else if buf.as_bytes()[0] == b'#' {
+                // c:751
                 ev = curhist.load(Ordering::SeqCst);
                 evset = 1;
-            } else {                                                         // c:754
+            } else {
+                // c:754
                 match hcomsearch(&buf) {
-                    Some(e) => { ev = e; evset = 1; }
+                    Some(e) => {
+                        ev = e;
+                        evset = 1;
+                    }
                     None => {
                         herrflush();
                         unqueue_signals();
@@ -725,197 +824,239 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
         }
 
         // c:765 — fetch the resolved history entry.
-        defev.store(ev, Ordering::SeqCst);                                   // c:765 defev = ev
-        let mut ehist = match gethist(ev) {                                  // c:765
+        defev.store(ev, Ordering::SeqCst); // c:765 defev = ev
+        let mut ehist = match gethist(ev) {
+            // c:765
             Some(h) => h,
             None => {
-                unqueue_signals();                   // c:766
-                return -1;                                                   // c:767
+                unqueue_signals(); // c:766
+                return -1; // c:767
             }
         };
-        argc = getargc(&ehist) as i32;                                       // c:771
+        argc = getargc(&ehist) as i32; // c:771
 
         // c:772 — word-designator parsing.
-        if c == b':' as i32 {                                                // c:772
-            cflag = 1;                                                       // c:773
-            c = ingetc()                               // c:774
+        if c == b':' as i32 {
+            // c:772
+            cflag = 1; // c:773
+            c = ingetc() // c:774
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if c == b'%' as i32 && marg.load(Ordering::SeqCst) != -1 {       // c:775
-                if evset == 0 {                                              // c:776
-                    ehist = match gethist(mev.load(Ordering::SeqCst)) {      // c:777
-                        Some(h) => { defev.store(mev.load(Ordering::SeqCst), Ordering::SeqCst); h }
+            if c == b'%' as i32 && marg.load(Ordering::SeqCst) != -1 {
+                // c:775
+                if evset == 0 {
+                    // c:776
+                    ehist = match gethist(mev.load(Ordering::SeqCst)) {
+                        // c:777
+                        Some(h) => {
+                            defev.store(mev.load(Ordering::SeqCst), Ordering::SeqCst);
+                            h
+                        }
                         None => {
                             unqueue_signals();
                             return -1;
                         }
                     };
-                    argc = getargc(&ehist) as i32;                           // c:778
-                } else {                                                     // c:779
-                    herrflush();                                             // c:780
-                    unqueue_signals();               // c:781
-                    zerr("ambiguous history reference");  // c:782
-                    return -1;                                               // c:783
+                    argc = getargc(&ehist) as i32; // c:778
+                } else {
+                    // c:779
+                    herrflush(); // c:780
+                    unqueue_signals(); // c:781
+                    zerr("ambiguous history reference"); // c:782
+                    return -1; // c:783
                 }
             }
         }
         // c:788
-        if c == b'*' as i32 {                                                // c:788
-            farg = 1;                                                        // c:789
-            larg = argc;                                                     // c:790
-            cflag = 0;                                                       // c:791
-        } else {                                                             // c:792
+        if c == b'*' as i32 {
+            // c:788
+            farg = 1; // c:789
+            larg = argc; // c:790
+            cflag = 0; // c:791
+        } else {
+            // c:792
             if let Some(ch) = char::from_u32(c as u32) {
-                inungetc(ch);                          // c:793
+                inungetc(ch); // c:793
             }
-            let r = getargspec(argc, marg.load(Ordering::SeqCst), evset);    // c:794
-            larg = r; farg = r;
-            if larg == -2 {                                                  // c:795
-                unqueue_signals();                   // c:796
-                return -1;                                                   // c:797
+            let r = getargspec(argc, marg.load(Ordering::SeqCst), evset); // c:794
+            larg = r;
+            farg = r;
+            if larg == -2 {
+                // c:795
+                unqueue_signals(); // c:796
+                return -1; // c:797
             }
-            if farg != -1 {                                                  // c:799
-                cflag = 0;                                                   // c:800
+            if farg != -1 {
+                // c:799
+                cflag = 0; // c:800
             }
-            c = ingetc()                               // c:801
+            c = ingetc() // c:801
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if c == b'*' as i32 {                                            // c:802
-                cflag = 0;                                                   // c:803
-                larg = argc;                                                 // c:804
-            } else if c == b'-' as i32 {                                     // c:805
-                cflag = 0;                                                   // c:806
+            if c == b'*' as i32 {
+                // c:802
+                cflag = 0; // c:803
+                larg = argc; // c:804
+            } else if c == b'-' as i32 {
+                // c:805
+                cflag = 0; // c:806
                 larg = getargspec(argc, marg.load(Ordering::SeqCst), evset); // c:807
-                if larg == -2 {                                              // c:808
-                    unqueue_signals();               // c:809
-                    return -1;                                               // c:810
+                if larg == -2 {
+                    // c:808
+                    unqueue_signals(); // c:809
+                    return -1; // c:810
                 }
-                if larg == -1 {                                              // c:812
-                    larg = argc - 1;                                         // c:813
+                if larg == -1 {
+                    // c:812
+                    larg = argc - 1; // c:813
                 }
-            } else {                                                         // c:814
+            } else {
+                // c:814
                 if let Some(ch) = char::from_u32(c as u32) {
-                    inungetc(ch);                      // c:815
+                    inungetc(ch); // c:815
                 }
             }
         }
-        if farg == -1 {                                                      // c:817
-            farg = 0;                                                        // c:818
+        if farg == -1 {
+            // c:817
+            farg = 0; // c:818
         }
-        if larg == -1 {                                                      // c:819
-            larg = argc;                                                     // c:820
+        if larg == -1 {
+            // c:819
+            larg = argc; // c:820
         }
-        sline = match getargs(&ehist, farg as usize, larg as usize) {        // c:821
+        sline = match getargs(&ehist, farg as usize, larg as usize) {
+            // c:821
             Some(s) => s,
             None => {
-                unqueue_signals();                   // c:822
-                return -1;                                                   // c:823
+                unqueue_signals(); // c:822
+                return -1; // c:823
             }
         };
-        unqueue_signals();                           // c:825
+        unqueue_signals(); // c:825
     }
 
     // c:830 — modifier loop.
     loop {
-        c = if cflag != 0 { b':' as i32 } else {                             // c:831
-            ingetc()
-                .map(|ch| ch as i32)
-                .unwrap_or(-1)
+        c = if cflag != 0 {
+            b':' as i32
+        } else {
+            // c:831
+            ingetc().map(|ch| ch as i32).unwrap_or(-1)
         };
-        cflag = 0;                                                           // c:832
-        if c == b':' as i32 {                                                // c:833
-            let mut gbal: i32 = 0;                                           // c:834
-            c = ingetc()                               // c:836
+        cflag = 0; // c:832
+        if c == b':' as i32 {
+            // c:833
+            let mut gbal: i32 = 0; // c:834
+            c = ingetc() // c:836
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if c == b'g' as i32 {                                            // c:836
-                gbal = 1;                                                    // c:837
-                c = ingetc()                           // c:838
+            if c == b'g' as i32 {
+                // c:836
+                gbal = 1; // c:837
+                c = ingetc() // c:838
                     .map(|ch| ch as i32)
                     .unwrap_or(-1);
-                if c != b's' as i32 && c != b'S' as i32 && c != b'&' as i32 {  // c:839
-                    zerr("'s' or '&' modifier expected after 'g'");  // c:840
-                    return -1;                                               // c:841
+                if c != b's' as i32 && c != b'S' as i32 && c != b'&' as i32 {
+                    // c:839
+                    zerr("'s' or '&' modifier expected after 'g'"); // c:840
+                    return -1; // c:841
                 }
             }
             match c as u8 {
-                b'p' => {                                                    // c:845
-                    histdone.store(HISTFLAG_DONE | HISTFLAG_NOEXEC, Ordering::SeqCst);  // c:846
+                b'p' => {
+                    // c:845
+                    histdone.store(HISTFLAG_DONE | HISTFLAG_NOEXEC, Ordering::SeqCst);
+                    // c:846
                 }
-                b'a' => {                                                    // c:848
-                    match chabspath(&sline) {                                // c:849
+                b'a' => {
+                    // c:848
+                    match chabspath(&sline) {
+                        // c:849
                         Some(new) => sline = new,
                         None => {
-                            herrflush();                                     // c:850
-                            zerr("modifier failed: a");// c:851
-                            return -1;                                       // c:852
+                            herrflush(); // c:850
+                            zerr("modifier failed: a"); // c:851
+                            return -1; // c:852
                         }
                     }
                 }
-                b'A' => {                                                    // c:856
-                    match chrealpath(&sline, b'A', false) {                  // c:857 chrealpath(&sline, 'A', 0)
+                b'A' => {
+                    // c:856
+                    match chrealpath(&sline, b'A', false) {
+                        // c:857 chrealpath(&sline, 'A', 0)
                         Some(new) => sline = new,
                         None => {
-                            herrflush();                                     // c:858
-                            zerr("modifier failed: A");// c:859
-                            return -1;                                       // c:860
+                            herrflush(); // c:858
+                            zerr("modifier failed: A"); // c:859
+                            return -1; // c:860
                         }
                     }
                 }
-                b'c' => {                                                    // c:863
-                    match crate::ported::subst::equalsubstr(&sline, false, false) {  // c:864
+                b'c' => {
+                    // c:863
+                    match crate::ported::subst::equalsubstr(&sline, false, false) {
+                        // c:864
                         Some(new) => sline = new,
                         None => {
-                            herrflush();                                     // c:865
-                            zerr("modifier failed: c");// c:866
-                            return -1;                                       // c:867
+                            herrflush(); // c:865
+                            zerr("modifier failed: c"); // c:866
+                            return -1; // c:867
                         }
                     }
                 }
-                b'h' => {                                                    // c:870
-                    let count = digitcount();                                // c:871
+                b'h' => {
+                    // c:870
+                    let count = digitcount(); // c:871
                     sline = remtpath(&sline, count);
                 }
-                b'e' => {                                                    // c:877
-                    sline = rembutext(&sline);                               // c:878
+                b'e' => {
+                    // c:877
+                    sline = rembutext(&sline); // c:878
                 }
-                b'r' => {                                                    // c:884
-                    sline = remtext(&sline);                                 // c:885
+                b'r' => {
+                    // c:884
+                    sline = remtext(&sline); // c:885
                 }
-                b't' => {                                                    // c:891
-                    let count = digitcount();                                // c:892
+                b't' => {
+                    // c:891
+                    let count = digitcount(); // c:892
                     sline = remlpaths(&sline, count);
                 }
-                b's' | b'S' => {                                             // c:898-899
-                    hsubpatopt.store((c == b'S' as i32) as i32, Ordering::SeqCst);  // c:900
-                    if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {     // c:901
-                        return -1;                                           // c:902
+                b's' | b'S' => {
+                    // c:898-899
+                    hsubpatopt.store((c == b'S' as i32) as i32, Ordering::SeqCst); // c:900
+                    if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {
+                        // c:901
+                        return -1; // c:902
                     }
                     // fall through to '&'                                   // c:902
-                    let (in_pat, out_pat) = (
-                        hsubl.lock().unwrap().clone(),
-                        hsubr.lock().unwrap().clone(),
-                    );
-                    if let (Some(ip), Some(op)) = (in_pat, out_pat) {        // c:904
-                        let new = subst(&sline, &ip, &op, gbal != 0);        // c:905
-                        if new == sline {                                    // c:905 no match
-                            return substfailed();                            // c:906
+                    let (in_pat, out_pat) =
+                        (hsubl.lock().unwrap().clone(), hsubr.lock().unwrap().clone());
+                    if let (Some(ip), Some(op)) = (in_pat, out_pat) {
+                        // c:904
+                        let new = subst(&sline, &ip, &op, gbal != 0); // c:905
+                        if new == sline {
+                            // c:905 no match
+                            return substfailed(); // c:906
                         }
                         sline = new;
-                    } else {                                                 // c:907
-                        herrflush();                                         // c:908
-                        zerr("no previous substitution");  // c:909
-                        return -1;                                           // c:910
+                    } else {
+                        // c:907
+                        herrflush(); // c:908
+                        zerr("no previous substitution"); // c:909
+                        return -1; // c:910
                     }
                 }
-                b'&' => {                                                    // c:903
-                    let (in_pat, out_pat) = (
-                        hsubl.lock().unwrap().clone(),
-                        hsubr.lock().unwrap().clone(),
-                    );
+                b'&' => {
+                    // c:903
+                    let (in_pat, out_pat) =
+                        (hsubl.lock().unwrap().clone(), hsubr.lock().unwrap().clone());
                     if let (Some(ip), Some(op)) = (in_pat, out_pat) {
                         let new = subst(&sline, &ip, &op, gbal != 0);
-                        if new == sline { return substfailed(); }
+                        if new == sline {
+                            return substfailed();
+                        }
                         sline = new;
                     } else {
                         herrflush();
@@ -923,84 +1064,96 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                         return -1;
                     }
                 }
-                b'q' => {                                                    // c:913
-                    sline = quote(&sline);                                   // c:914
+                b'q' => {
+                    // c:913
+                    sline = quote(&sline); // c:914
                 }
-                b'Q' => {                                                    // c:916
+                b'Q' => {
+                    // c:916
                     // c:918-924 — `noerrs` flag stack is no-op in Rust port;
                     // see params.rs:1310. Tokenize-strip via parse_subst_string,
                     // then remnulargs + untokenize.
                     let oef = errflag.load(Ordering::SeqCst);
-                    let _ = crate::ported::lex::parse_subst_string(&sline);  // c:921
+                    let _ = crate::ported::lex::parse_subst_string(&sline); // c:921
                     errflag.store(
-                        oef | (errflag.load(Ordering::SeqCst)
-                            & crate::ported::zsh_h::ERRFLAG_INT),
+                        oef | (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT),
                         Ordering::SeqCst,
-                    );                                                       // c:923
+                    ); // c:923
                     let mut s = sline.clone();
-                    crate::ported::glob::remnulargs(&mut s);                 // c:924
-                    sline = crate::ported::lex::untokenize(&s);              // c:925
+                    crate::ported::glob::remnulargs(&mut s); // c:924
+                    sline = crate::ported::lex::untokenize(&s); // c:925
                 }
-                b'x' => {                                                    // c:928
-                    sline = quotebreak(&sline);                              // c:929
+                b'x' => {
+                    // c:928
+                    sline = quotebreak(&sline); // c:929
                 }
-                b'l' => {                                                    // c:931
-                    sline = casemodify(&sline, CASMOD_LOWER);                // c:932
+                b'l' => {
+                    // c:931
+                    sline = casemodify(&sline, CASMOD_LOWER); // c:932
                 }
-                b'u' => {                                                    // c:934
-                    sline = casemodify(&sline, CASMOD_UPPER);                // c:935
+                b'u' => {
+                    // c:934
+                    sline = casemodify(&sline, CASMOD_UPPER); // c:935
                 }
-                b'P' => {                                                    // c:937
-                    if !sline.starts_with('/') {                             // c:938
-                        let here = crate::ported::compat::zgetcwd();         // c:939
-                        sline = if here.ends_with('/') {                     // c:940
-                            crate::ported::string::dyncat(&here, &sline)     // c:943
-                        } else {                                             // c:941
+                b'P' => {
+                    // c:937
+                    if !sline.starts_with('/') {
+                        // c:938
+                        let here = crate::ported::compat::zgetcwd(); // c:939
+                        sline = if here.ends_with('/') {
+                            // c:940
+                            crate::ported::string::dyncat(&here, &sline) // c:943
+                        } else {
+                            // c:941
                             // c:941 zhtricat(metafy(here, -1, META_HEAPDUP), "/", sline)
-                            format!("{}/{}", here, sline)                    // c:941
-                        };                                                   // c:944
+                            format!("{}/{}", here, sline) // c:941
+                        }; // c:944
                     }
-                    match crate::ported::utils::xsymlink(&sline) {           // c:945
+                    match crate::ported::utils::xsymlink(&sline) {
+                        // c:945
                         Some(new) => sline = new,
                         None => {} // C ignores xsymlink failure (returns NULL → keep sline)
                     }
                 }
-                _ => {                                                       // c:947 default
-                    herrflush();                                             // c:948
-                    zerr(&format!("illegal modifier: {}", c as u8 as char));  // c:949
-                    return -1;                                               // c:950
+                _ => {
+                    // c:947 default
+                    herrflush(); // c:948
+                    zerr(&format!("illegal modifier: {}", c as u8 as char)); // c:949
+                    return -1; // c:950
                 }
             }
-        } else {                                                             // c:952
-            if c != b'}' as i32 || bflag == 0 {                              // c:953
+        } else {
+            // c:952
+            if c != b'}' as i32 || bflag == 0 {
+                // c:953
                 if let Some(ch) = char::from_u32(c as u32) {
-                    inungetc(ch);                      // c:954
+                    inungetc(ch); // c:954
                 }
             }
-            if c != b'}' as i32 && bflag != 0 {                              // c:955
-                zerr("'}' expected");                  // c:956
-                return -1;                                                   // c:957
+            if c != b'}' as i32 && bflag != 0 {
+                // c:955
+                zerr("'}' expected"); // c:956
+                return -1; // c:957
             }
-            break;                                                           // c:959
+            break; // c:959
         }
     }
 
     // c:963 — zshlex_raw_back_to_mark(lexraw_mark): no-op until lex hook
     // exposes the raw-input mark/restore pair.
-    let _ = lexraw_mark;                                                     // c:963
+    let _ = lexraw_mark; // c:963
 
     // c:970-976 — push the expanded value onto the input stack as INP_HIST.
-    lexstop.store(false, Ordering::SeqCst);                                  // c:970
-    crate::ported::input::inpush(&sline, crate::ported::zsh_h::INP_HIST, None);  // c:976
-    histdone.fetch_or(HISTFLAG_DONE, Ordering::SeqCst);                      // c:977
-    if isset(HISTVERIFY) {                                                   // c:978
-        histdone.fetch_or(HISTFLAG_NOEXEC | HISTFLAG_RECALL, Ordering::SeqCst);  // c:979
+    lexstop.store(false, Ordering::SeqCst); // c:970
+    crate::ported::input::inpush(&sline, crate::ported::zsh_h::INP_HIST, None); // c:976
+    histdone.fetch_or(HISTFLAG_DONE, Ordering::SeqCst); // c:977
+    if isset(HISTVERIFY) {
+        // c:978
+        histdone.fetch_or(HISTFLAG_NOEXEC | HISTFLAG_RECALL, Ordering::SeqCst); // c:979
     }
 
     // c:982 — return ingetc() so caller sees the first char of expansion.
-    ingetc()
-        .map(|ch| ch as i32)
-        .unwrap_or(-1)
+    ingetc().map(|ch| ch as i32).unwrap_or(-1)
 }
 
 /// Port of `void herrflush(void)` from Src/hist.c:477.
@@ -1015,7 +1168,8 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
 /// claiming the deps weren't ported. They ARE: `ihwaddc` /
 /// `iaddtoline` live at hist.rs above; `strin` / `LEX_LEX_ADD_RAW`
 /// are file-statics on this module + lex.rs.
-pub fn herrflush() {                                                         // c:477
+pub fn herrflush() {
+    // c:477
     // c:479 — `inpopalias();`
     crate::ported::input::inpopalias();
 
@@ -1042,15 +1196,17 @@ pub fn herrflush() {                                                         // 
         }
         let strin_v = strin.load(Ordering::SeqCst);
         let lex_add_raw = crate::ported::lex::LEX_LEX_ADD_RAW.get();
-        if !(strin_v == 0 || lex_add_raw != 0) {                             // c:494 (!strin || lex_add_raw)
+        if !(strin_v == 0 || lex_add_raw != 0) {
+            // c:494 (!strin || lex_add_raw)
             break;
         }
-        let c = ingetc()                               // c:495 ingetc()
+        let c = ingetc() // c:495 ingetc()
             .map(|ch| ch as i32)
             .unwrap_or(-1);
-        if !crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {              // c:496 if (!lexstop)
-            ihwaddc(c);                                                       // c:497 hwaddc(c)
-            iaddtoline(c);                                                    // c:498 addtoline(c)
+        if !crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+            // c:496 if (!lexstop)
+            ihwaddc(c); // c:497 hwaddc(c)
+            iaddtoline(c); // c:498 addtoline(c)
         }
     }
 }
@@ -1070,10 +1226,11 @@ pub fn getargc(entry: &histent) -> usize {
 ///     return -1;
 /// }
 /// ```
-pub fn substfailed() -> i32 {                                                // c:563
-    herrflush();                                                             // c:565
-    zerr("substitution failed");                       // c:566
-    -1                                                                       // c:567
+pub fn substfailed() -> i32 {
+    // c:563
+    herrflush(); // c:565
+    zerr("substitution failed"); // c:566
+    -1 // c:567
 }
 
 /// Port of `static int digitcount(void)` from `Src/hist.c:573-589`.
@@ -1103,31 +1260,35 @@ pub fn substfailed() -> i32 {                                                // 
 /// `(s: &str) -> usize` counting leading digits in an argument
 /// string. No real caller — the C function streams from input, not
 /// a string. Pin the C signature exactly.
-pub fn digitcount() -> i32 {                                                  // c:574
-    let mut c: i32 = ingetc()                          // c:576 ingetc()
+pub fn digitcount() -> i32 {
+    // c:574
+    let mut c: i32 = ingetc() // c:576 ingetc()
         .map(|ch| ch as i32)
         .unwrap_or(-1);
     let mut count: i32;
-    if c >= 0 && (c as u8 as char).is_ascii_digit() {                        // c:578 idigit(c)
-        count = 0;                                                            // c:579
+    if c >= 0 && (c as u8 as char).is_ascii_digit() {
+        // c:578 idigit(c)
+        count = 0; // c:579
         loop {
-            count = 10 * count + (c - b'0' as i32);                          // c:581
-            c = ingetc()                                // c:582 ingetc()
+            count = 10 * count + (c - b'0' as i32); // c:581
+            c = ingetc() // c:582 ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if c < 0 || !(c as u8 as char).is_ascii_digit() {                // c:583
+            if c < 0 || !(c as u8 as char).is_ascii_digit() {
+                // c:583
                 break;
             }
         }
     } else {
-        count = 0;                                                            // c:586
+        count = 0; // c:586
     }
     if c >= 0 {
-        if let Some(ch) = char::from_u32(c as u32) {                          // c:587 inungetc(c)
+        if let Some(ch) = char::from_u32(c as u32) {
+            // c:587 inungetc(c)
             inungetc(ch);
         }
     }
-    count                                                                     // c:588
+    count // c:588
 }
 
 /// Port of `void strinbeg(int dohist)` from `Src/hist.c:1033-1044`.
@@ -1144,11 +1305,12 @@ pub fn digitcount() -> i32 {                                                  //
 /// classification tables, current-token buffers) AND stale parser
 /// status (incomplete-expression flags), so subsequent strinbeg-
 /// driven parses could misbehave with state from a prior parse.
-pub fn strinbeg(dohist: i32) {                                                // c:1033
-    strin.fetch_add(1, Ordering::SeqCst);                                     // c:1035
-    hbegin(dohist);                                                           // c:1036
-    crate::ported::lex::lexinit();                                            // c:1037
-    crate::ported::parse::init_parse_status();                                // c:1042
+pub fn strinbeg(dohist: i32) {
+    // c:1033
+    strin.fetch_add(1, Ordering::SeqCst); // c:1035
+    hbegin(dohist); // c:1036
+    crate::ported::lex::lexinit(); // c:1037
+    crate::ported::parse::init_parse_status(); // c:1042
 }
 
 /// Port of `void strinend(void)` from `Src/hist.c:1049-1056`.
@@ -1165,26 +1327,31 @@ pub fn strinbeg(dohist: i32) {                                                //
 /// next strinbeg-driven parse inherited stale "we're past the first
 /// char" state from the prior scope, defeating `^foo^bar`-style
 /// histsubchar shortcuts that key on `isfirstch`.
-pub fn strinend() {                                                           // c:1049
-    hend(None);                                                               // c:1051
-    // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
-    crate::DPUTS!(                                                            // c:1052
-        strin.load(Ordering::SeqCst) == 0,                                   // c:1052 !strin
-        "BUG: strinend() called without strinbeg()"                          // c:1052
+pub fn strinend() {
+    // c:1049
+    hend(None); // c:1051
+                // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
+    crate::DPUTS!(
+        // c:1052
+        strin.load(Ordering::SeqCst) == 0, // c:1052 !strin
+        "BUG: strinend() called without strinbeg()"  // c:1052
     );
-    strin.fetch_sub(1, Ordering::SeqCst);                                     // c:1053
-    LEX_ISFIRSTCH.with(|f| f.set(true));                  // c:1054 isfirstch = 1
-    histdone.store(0, Ordering::SeqCst);                                      // c:1055 histdone = 0
+    strin.fetch_sub(1, Ordering::SeqCst); // c:1053
+    LEX_ISFIRSTCH.with(|f| f.set(true)); // c:1054 isfirstch = 1
+    histdone.store(0, Ordering::SeqCst); // c:1055 histdone = 0
 }
 
 /// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
-pub fn nohw(_c: i32) { /* do nothing */ }                                    // c:1062
+pub fn nohw(_c: i32) { /* do nothing */
+} // c:1062
 
 /// Port of `static void nohwabort(void)` from Src/hist.c:1067.
-pub fn nohwabort() { /* do nothing */ }                                      // c:1067
+pub fn nohwabort() { /* do nothing */
+} // c:1067
 
 /// Port of `static void nohwe(void)` from Src/hist.c:1072.
-pub fn nohwe() { /* do nothing */ }                                          // c:1072
+pub fn nohwe() { /* do nothing */
+} // c:1072
 
 /// Port of `void ihwbegin(int offset)` from `Src/hist.c:1656`.
 ///
@@ -1202,7 +1369,8 @@ pub fn nohwe() { /* do nothing */ }                                          // 
 /// fresh words. The C source skips alias-only input from the
 /// history-word table because aliases are pre-expansion and
 /// shouldn't show up as user-typed words in `!:N` etc.
-pub fn ihwbegin(offset: i32) {                                               // c:1656
+pub fn ihwbegin(offset: i32) {
+    // c:1656
     // c:1658 — `int pos = hptr - chline + offset;`. The C `hptr` is
     // the current write position into the chline buffer; `pos` is
     // the byte offset from buffer start + caller-supplied offset.
@@ -1211,142 +1379,162 @@ pub fn ihwbegin(offset: i32) {                                               // 
     // any lexer rewind (e.g. backquote, comment-resume) shifts hptr
     // earlier and the chline.len() reading would record the WRONG
     // word start, producing off-by-many history word offsets.
-    let hptr_val = hptr.load(Ordering::SeqCst);                              // c:1658
+    let hptr_val = hptr.load(Ordering::SeqCst); // c:1658
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
     // c:1659 — `(inbufflags & (INP_ALIAS|INP_HIST)) == INP_ALIAS`
     // means "alias-only input (no history layered above)".
-    if stop == 2
-        || (active & HA_INWORD) != 0
-        || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS                  // c:1659
+    if stop == 2 || (active & HA_INWORD) != 0 || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS
+    // c:1659
     {
         return;
     }
     let pos = chwordpos.load(Ordering::SeqCst);
-    if pos % 2 != 0 {                                                        // c:1662 chwordpos%2
-        chwordpos.fetch_sub(1, Ordering::SeqCst);                            // c:1663
+    if pos % 2 != 0 {
+        // c:1662 chwordpos%2
+        chwordpos.fetch_sub(1, Ordering::SeqCst); // c:1663
     }
     // c:1664-1665 — DPUTS1(pos < 0, "History word position < 0 in %s",
     //                      dupstrpfx(chline, hptr-chline))
-    let word_pos = (hptr_val as i32) + offset;                               // c:1664 pos
-    crate::DPUTS1!(                                                          // c:1664
-        word_pos < 0,                                                         // c:1664
-        "History word position < 0 in {}",                                   // c:1664
-        {                                                                     // c:1665 dupstrpfx(chline, hptr-chline)
-            let line = chline.lock().unwrap();                               // c:1665
-            line.chars().take(hptr_val).collect::<String>()                  // c:1665
+    let word_pos = (hptr_val as i32) + offset; // c:1664 pos
+    crate::DPUTS1!(
+        // c:1664
+        word_pos < 0,                      // c:1664
+        "History word position < 0 in {}", // c:1664
+        {
+            // c:1665 dupstrpfx(chline, hptr-chline)
+            let line = chline.lock().unwrap(); // c:1665
+            line.chars().take(hptr_val).collect::<String>() // c:1665
         }
     );
     // c:1666 — `if (pos < 0) pos = 0;`. The .max(0) clamp.
-    let start = word_pos.max(0) as i16;                                       // c:1658
+    let start = word_pos.max(0) as i16; // c:1658
     let mut words = chwords.lock().unwrap();
     let idx = chwordpos.load(Ordering::SeqCst) as usize;
     if words.len() <= idx {
         words.resize(idx + 1, 0);
     }
-    words[idx] = start;                                                      // c:1668
-    chwordpos.fetch_add(1, Ordering::SeqCst);                                // c:1668 chwordpos++
+    words[idx] = start; // c:1668
+    chwordpos.fetch_add(1, Ordering::SeqCst); // c:1668 chwordpos++
 }
 
 /// Port of `static void linkcurline(void)` from Src/hist.c:1079.
-pub fn linkcurline() {                                                       // c:1079
-    let new_hist = curhist.fetch_add(1, Ordering::SeqCst) + 1;               // c:1093 ++curhist
+pub fn linkcurline() {
+    // c:1079
+    let new_hist = curhist.fetch_add(1, Ordering::SeqCst) + 1; // c:1093 ++curhist
     let mut cur = curline.lock().unwrap();
-    *cur = Some(make_histent(new_hist, String::new()));                      // c:1093 curline.histnum
-    // Splicing into the ring (c:1081-1088) is encoded by the Vec::insert
-    // at hist_ring index 0 done by hend() on commit. The sentinel itself
-    // lives in `curline` until then.
+    *cur = Some(make_histent(new_hist, String::new())); // c:1093 curline.histnum
+                                                        // Splicing into the ring (c:1081-1088) is encoded by the Vec::insert
+                                                        // at hist_ring index 0 done by hend() on commit. The sentinel itself
+                                                        // lives in `curline` until then.
 }
 
 /// Port of `static void unlinkcurline(void)` from Src/hist.c:1093.
-pub fn unlinkcurline() {                                                     // c:1093
-    *curline.lock().unwrap() = None;                                         // c:1093-1102
-    curhist.fetch_sub(1, Ordering::SeqCst);                                  // c:1103
+pub fn unlinkcurline() {
+    // c:1093
+    *curline.lock().unwrap() = None; // c:1093-1102
+    curhist.fetch_sub(1, Ordering::SeqCst); // c:1103
 }
 
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
-pub fn hbegin(dohist: i32) {                                                 // c:1110
+pub fn hbegin(dohist: i32) {
+    // c:1110
     // isfirstln/isfirstch live in the lex.rs LEX_* thread_locals, not as
     // globals — caller resets them via lexer instance API.            // c:1114
 
-    errflag.fetch_and(                                 // c:1115
+    errflag.fetch_and(
+        // c:1115
         !ERRFLAG_ERROR,
         Ordering::Relaxed,
     );
-    histdone.store(0, Ordering::SeqCst);                                     // c:1116
-    // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
+    histdone.store(0, Ordering::SeqCst); // c:1116
+                                         // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
     let interact = isset(INTERACTIVE);
     let shinstdin = isset(SHINSTDIN);
-    if dohist == 0 {                                                         // c:1117
-        stophist.store(2, Ordering::SeqCst);                                 // c:1118
-    } else if dohist != 2 {                                                  // c:1119
-        stophist.store(if !interact || !shinstdin { 2 } else { 0 },          // c:1120
-            Ordering::SeqCst);
-    } else {                                                                 // c:1121
-        stophist.store(0, Ordering::SeqCst);                                 // c:1122
+    if dohist == 0 {
+        // c:1117
+        stophist.store(2, Ordering::SeqCst); // c:1118
+    } else if dohist != 2 {
+        // c:1119
+        stophist.store(
+            if !interact || !shinstdin { 2 } else { 0 }, // c:1120
+            Ordering::SeqCst,
+        );
+    } else {
+        // c:1121
+        stophist.store(0, Ordering::SeqCst); // c:1122
     }
 
-    if stophist.load(Ordering::SeqCst) == 2 {                                // c:1134
-        chline.lock().unwrap().clear();                                      // c:1135 chline = NULL
-        hptr.store(0, Ordering::SeqCst);                                     // c:1135 hptr = NULL
-        hlinesz.store(0, Ordering::SeqCst);                                  // c:1136
-        chwords.lock().unwrap().clear();                                     // c:1137
-        chwordlen.store(0, Ordering::SeqCst);                                // c:1138
-        // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline are       c:1139-1145
-        // function-pointer slots in C; Rust dispatches statically.
-    } else {                                                                 // c:1146
-        let mut buf = chline.lock().unwrap();                                // c:1147
+    if stophist.load(Ordering::SeqCst) == 2 {
+        // c:1134
+        chline.lock().unwrap().clear(); // c:1135 chline = NULL
+        hptr.store(0, Ordering::SeqCst); // c:1135 hptr = NULL
+        hlinesz.store(0, Ordering::SeqCst); // c:1136
+        chwords.lock().unwrap().clear(); // c:1137
+        chwordlen.store(0, Ordering::SeqCst); // c:1138
+                                              // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline are       c:1139-1145
+                                              // function-pointer slots in C; Rust dispatches statically.
+    } else {
+        // c:1146
+        let mut buf = chline.lock().unwrap(); // c:1147
         buf.clear();
         buf.reserve(64);
-        hlinesz.store(64, Ordering::SeqCst);                                 // c:1147
+        hlinesz.store(64, Ordering::SeqCst); // c:1147
         drop(buf);
-        let mut w = chwords.lock().unwrap();                                 // c:1148
+        let mut w = chwords.lock().unwrap(); // c:1148
         w.clear();
         w.reserve(64);
         chwordlen.store(64, Ordering::SeqCst);
         drop(w);
         // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline c:1149-1155 — see c:1139.
-        if !isset(BANGHIST) {                                                // c:1156
-            stophist.store(4, Ordering::SeqCst);                             // c:1157
+        if !isset(BANGHIST) {
+            // c:1156
+            stophist.store(4, Ordering::SeqCst); // c:1157
         }
     }
-    chwordpos.store(0, Ordering::SeqCst);                                    // c:1159
+    chwordpos.store(0, Ordering::SeqCst); // c:1159
 
-    {                                                                        // c:1161
+    {
+        // c:1161
         let mut ring = hist_ring.lock().unwrap();
         if let Some(top) = ring.first_mut() {
             if top.ftim == 0 && strin.load(Ordering::SeqCst) == 0 {
                 top.ftim = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);                                           // c:1162
+                    .unwrap_or(0); // c:1162
             }
         }
     }
     if (dohist == 2 || (interact && shinstdin))                              // c:1163
         && strin.load(Ordering::SeqCst) == 0
     {
-        histactive.store(HA_ACTIVE, Ordering::SeqCst);                       // c:1164
-        // c:1165 — `attachtty(mypgrp);` reclaims the controlling
-        // terminal for the shell's pgrp at the start of a fresh
-        // history-recording line. The previous Rust port left this
-        // as a comment-only stub claiming "TTY infra not ported"
-        // — but `utils::attachtty` AND the `MYPGRP` global ARE
-        // both ported (utils.rs:3593, jobs.rs:2585). Wire the
-        // call so the shell actually grabs the tty during
-        // interactive history sessions, matching C behavior.
+        histactive.store(HA_ACTIVE, Ordering::SeqCst); // c:1164
+                                                       // c:1165 — `attachtty(mypgrp);` reclaims the controlling
+                                                       // terminal for the shell's pgrp at the start of a fresh
+                                                       // history-recording line. The previous Rust port left this
+                                                       // as a comment-only stub claiming "TTY infra not ported"
+                                                       // — but `utils::attachtty` AND the `MYPGRP` global ARE
+                                                       // both ported (utils.rs:3593, jobs.rs:2585). Wire the
+                                                       // call so the shell actually grabs the tty during
+                                                       // interactive history sessions, matching C behavior.
         let mypgrp = *crate::ported::jobs::MYPGRP
             .get_or_init(|| std::sync::Mutex::new(0))
             .lock()
             .expect("mypgrp poisoned");
-        crate::ported::utils::attachtty(mypgrp);                             // c:1165
-        linkcurline();                                                       // c:1166
-        defev.store(addhistnum(curhist.load(Ordering::SeqCst),               // c:1167
-                               -1, HIST_FOREIGN as i32),
-                    Ordering::SeqCst);
+        crate::ported::utils::attachtty(mypgrp); // c:1165
+        linkcurline(); // c:1166
+        defev.store(
+            addhistnum(
+                curhist.load(Ordering::SeqCst), // c:1167
+                -1,
+                HIST_FOREIGN as i32,
+            ),
+            Ordering::SeqCst,
+        );
     } else {
-        histactive.store(HA_ACTIVE | HA_NOINC, Ordering::SeqCst);            // c:1169
+        histactive.store(HA_ACTIVE | HA_NOINC, Ordering::SeqCst); // c:1169
     }
 
     if isset(INCAPPENDHISTORYTIME) // c:1189
@@ -1356,10 +1544,13 @@ pub fn hbegin(dohist: i32) {                                                 // 
         && strin.load(Ordering::SeqCst) == 0
         && histsave_stack_pos.load(Ordering::SeqCst) == 0
     {
-        let hf = resolve_histfile();                                         // c:1192
-        savehistfile(hf.as_deref(), 0                                        // c:1193
+        let hf = resolve_histfile(); // c:1192
+        savehistfile(
+            hf.as_deref(),
+            0                                        // c:1193
             | HFILE_USE_OPTIONS as i32
-            | HFILE_FAST as i32);
+            | HFILE_FAST as i32,
+        );
     }
 }
 
@@ -1388,16 +1579,24 @@ pub fn histreduceblanks(text: &str) -> String {
     let mut prev_space = false;
     for c in text.chars() {
         if is_inblank_narrow(c) {
-            if !prev_space { result.push(' '); prev_space = true; }
+            if !prev_space {
+                result.push(' ');
+                prev_space = true;
+            }
         } else {
-            result.push(c); prev_space = false;
+            result.push(c);
+            prev_space = false;
         }
     }
     // c:1240 — trim trailing inblank only; preserve embedded non-
     // inblank chars (newline, CR, etc).
     let mut s = result;
-    while s.ends_with(' ') { s.pop(); }
-    while s.starts_with(' ') { s.remove(0); }
+    while s.ends_with(' ') {
+        s.pop();
+    }
+    while s.starts_with(' ') {
+        s.remove(0);
+    }
     s
 }
 
@@ -1421,39 +1620,51 @@ pub fn histreduceblanks(text: &str) -> String {
 /// entry as a duplicate). With HIST_IGNORE_ALL_DUPS off, identical
 /// commands stay in the ring intentionally; the Rust port would
 /// have aggressively pruned them anyway.
-pub fn histremovedups() {                                                    // c:1254
+pub fn histremovedups() {
+    // c:1254
     let mut ring = hist_ring.lock().unwrap();
-    ring.retain(|h| (h.node.flags as u32 & HIST_DUP) == 0);                  // c:1259-1260
+    ring.retain(|h| (h.node.flags as u32 & HIST_DUP) == 0); // c:1259-1260
     let new_ct = ring.len() as i64;
     drop(ring);
     histlinect.store(new_ct, Ordering::SeqCst);
 }
 
 /// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
-pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // c:1266
-    let dir: i32 = if n < 0 { -1 } else if n > 0 { 1 } else { 0 };           // c:1266
-    let he = gethistent(hl, dir);                                            // c:1269
+pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {
+    // c:1266
+    let dir: i32 = if n < 0 {
+        -1
+    } else if n > 0 {
+        1
+    } else {
+        0
+    }; // c:1266
+    let he = gethistent(hl, dir); // c:1269
     let he = match he {
-        None => return 0,                                                    // c:1271-1272
+        None => return 0, // c:1271-1272
         Some(h) => h,
     };
-    if he != hl {                                                            // c:1273
-        n -= dir;                                                            // c:1274
+    if he != hl {
+        // c:1273
+        n -= dir; // c:1274
     }
-    let final_he = if n != 0 {                                               // c:1275
-        movehistent(he, n, xflags as u32)                                    // c:1276
+    let final_he = if n != 0 {
+        // c:1275
+        movehistent(he, n, xflags as u32) // c:1276
     } else {
         Some(he)
     };
-    match final_he {                                                         // c:1277
+    match final_he {
+        // c:1277
         None => {
-            if dir < 0 {                                                     // c:1278
+            if dir < 0 {
+                // c:1278
                 firsthist() - 1
             } else {
                 curhist.load(Ordering::SeqCst) + 1
             }
         }
-        Some(h) => h,                                                        // c:1279
+        Some(h) => h, // c:1279
     }
 }
 
@@ -1465,46 +1676,54 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // 
 /// `curline` so the caller sees fresh word data. Without it, code
 /// that walks back to the current entry and then reads `curline`
 /// got stale word data.
-pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {         // c:1284
+pub fn movehistent(start: i64, mut n: i32, xflags: u32) -> Option<i64> {
+    // c:1284
     let mut cur = start;
-    while n < 0 {                                                                // c:1286
-        cur = up_histent(cur)?;                                                  // c:1287
+    while n < 0 {
+        // c:1286
+        cur = up_histent(cur)?; // c:1287
         if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {                             // c:1289
-                n += 1;                                                          // c:1290
+            if (e.node.flags as u32 & xflags) == 0 {
+                // c:1289
+                n += 1; // c:1290
             }
         }
     }
-    while n > 0 {                                                                // c:1292
-        cur = down_histent(cur)?;                                                // c:1293
+    while n > 0 {
+        // c:1292
+        cur = down_histent(cur)?; // c:1293
         if let Some(e) = ring_get(cur) {
-            if (e.node.flags as u32 & xflags) == 0 {                             // c:1295
-                n -= 1;                                                          // c:1296
+            if (e.node.flags as u32 & xflags) == 0 {
+                // c:1295
+                n -= 1; // c:1296
             }
         }
     }
     // c:1298 — `checkcurline(he);` flushes in-flight build state
     // into `curline` if the walk landed on the active history entry.
     if let Some(e) = ring_get(cur) {
-        checkcurline(&e);                                                        // c:1298
+        checkcurline(&e); // c:1298
     }
-    Some(cur)                                                                    // c:1299
+    Some(cur) // c:1299
 }
 
 /// Port of `Histent up_histent(Histent he)` from Src/hist.c.
-pub fn up_histent(current: i64) -> Option<i64> {                             // c:1304
-    let pos = ring_position(current)?;                                       // c:1306 !he
-    (pos + 1 < ring_len()).then(|| ring_at(pos + 1))                         // c:1306 he->up == hist_ring? NULL : he->up
+pub fn up_histent(current: i64) -> Option<i64> {
+    // c:1304
+    let pos = ring_position(current)?; // c:1306 !he
+    (pos + 1 < ring_len()).then(|| ring_at(pos + 1)) // c:1306 he->up == hist_ring? NULL : he->up
 }
 
 /// Port of `Histent down_histent(Histent he)` from Src/hist.c.
-pub fn down_histent(current: i64) -> Option<i64> {                           // c:1311
+pub fn down_histent(current: i64) -> Option<i64> {
+    // c:1311
     let pos = ring_position(current)?;
-    (pos > 0).then(|| ring_at(pos - 1))                                      // c:1313 he == hist_ring? NULL : he->down
+    (pos > 0).then(|| ring_at(pos - 1)) // c:1313 he == hist_ring? NULL : he->down
 }
 
 /// Port of `Histent gethistent(zlong ev, int nearmatch)` from Src/hist.c.
-pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // c:1318
+pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {
+    // c:1318
     if ring_len() == 0 {
         return None;
     }
@@ -1524,7 +1743,11 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // 
             best_newer = Some(n);
         }
     }
-    if nearmatch < 0 { best_older } else { best_newer }
+    if nearmatch < 0 {
+        best_older
+    } else {
+        best_newer
+    }
 }
 
 /// Port of `void putoldhistentryontop(short keep_going)` from `Src/hist.c:1347`.
@@ -1535,7 +1758,8 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // 
 /// next entry that IS a duplicate (so dup entries get evicted first).
 /// `keep_going` advances the per-call cursor instead of resetting
 /// it — used by save loops that expire multiple entries in succession.
-pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // c:1347
+pub fn putoldhistentryontop(keep_going: i32) -> i32 {
+    // c:1347
 
     thread_local! {
         // c:1349 — `static Histent next = NULL;` (per-evaluator cursor).
@@ -1564,7 +1788,11 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // 
     };
     // Advance `next` to the slot one step further into the past — in the
     // ring that's one position closer to the head (newer).
-    idx = if cur_idx == 0 { None } else { Some(cur_idx - 1) };
+    idx = if cur_idx == 0 {
+        None
+    } else {
+        Some(cur_idx - 1)
+    };
     NEXT_IDX.with(|c| c.set(idx));
 
     // c:1355-1370 — HISTEXPIREDUPSFIRST: skip non-dups until we find one.
@@ -1575,12 +1803,22 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // 
             MAX_UNIQUE_CT.with(|c| c.set(savehistsiz.load(Ordering::SeqCst) as i64));
         }
         loop {
-            let cur = MAX_UNIQUE_CT.with(|c| { let v = c.get(); c.set(v - 1); v });
+            let cur = MAX_UNIQUE_CT.with(|c| {
+                let v = c.get();
+                c.set(v - 1);
+                v
+            });
             if cur <= 0 {
                 // c:1360-1365 — give up: reset to ring head (oldest).
                 MAX_UNIQUE_CT.with(|c| c.set(0));
                 cur_idx = ring.len() - 1;
-                NEXT_IDX.with(|c| c.set(if cur_idx == 0 { None } else { Some(cur_idx - 1) }));
+                NEXT_IDX.with(|c| {
+                    c.set(if cur_idx == 0 {
+                        None
+                    } else {
+                        Some(cur_idx - 1)
+                    })
+                });
                 break;
             }
             // c:1367-1368 — `he = next; next = he->down;`
@@ -1588,7 +1826,11 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // 
                 Some(i) if i < ring.len() => i,
                 _ => return 0,
             };
-            let nxt = if cur_idx == 0 { None } else { Some(cur_idx - 1) };
+            let nxt = if cur_idx == 0 {
+                None
+            } else {
+                Some(cur_idx - 1)
+            };
             NEXT_IDX.with(|c| c.set(nxt));
             // c:1369 — `} while (!(he->node.flags & HIST_DUP));`
             if (ring[cur_idx].node.flags as u32 & HIST_DUP) != 0 {
@@ -1606,7 +1848,8 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // 
 }
 
 /// Port of `Histent prepnexthistent(void)` from Src/hist.c.
-pub fn prepnexthistent() -> i64 {                                            // c:1387
+pub fn prepnexthistent() -> i64 {
+    // c:1387
     let cap = histsiz.load(Ordering::SeqCst);
     if histlinect.load(Ordering::SeqCst) >= cap {
         if let Some(oldest) = ring_oldest() {
@@ -1621,78 +1864,93 @@ pub fn prepnexthistent() -> i64 {                                            // 
 }
 
 /// Port of `static int should_ignore_line(Eprog prog)` from Src/hist.c:1425.
-fn should_ignore_line(prog: Option<&[u8]>) -> i32 {                          // c:1425
+fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
+    // c:1425
     let line = chline.lock().unwrap().clone();
-    if isset(HISTIGNORESPACE) {                                              // c:1427
-        if line.starts_with(' ') /* aliasspaceflag — alias state TBD */ {    // c:1428
-            return 1;                                                        // c:1429
+    if isset(HISTIGNORESPACE) {
+        // c:1427
+        if line.starts_with(' ')
+        /* aliasspaceflag — alias state TBD */
+        {
+            // c:1428
+            return 1; // c:1429
         }
     }
-    if prog.is_none() {                                                      // c:1432
-        return 0;                                                            // c:1433
+    if prog.is_none() {
+        // c:1432
+        return 0; // c:1433
     }
-    if isset(HISTNOFUNCTIONS) {                                              // c:1435
+    if isset(HISTNOFUNCTIONS) {
+        // c:1435
         // Inspecting an Eprog requires the wordcode VM port — leave the
         // funcdef detection to the executor; conservatively return 0.    // c:1436-1440
         return 0;
     }
-    if isset(HISTNOSTORE) {                                                  // c:1443
+    if isset(HISTNOSTORE) {
+        // c:1443
         // getjobtext(prog, NULL) — text reconstruction also needs the
         // wordcode VM. Apply the simpler text-based filters on chline
         // for the cases the C code carves out.
         let mut b: &str = &line;
         let mut saw_builtin = false;
-        if let Some(rest) = b.strip_prefix("builtin ") {                     // c:1446
+        if let Some(rest) = b.strip_prefix("builtin ") {
+            // c:1446
             b = rest;
             saw_builtin = true;
         }
         if (b == "history" || b.starts_with("history "))                     // c:1451
             && (saw_builtin /* || shfunctab.getnode("history").is_none() */)
         {
-            return 1;                                                        // c:1453
+            return 1; // c:1453
         }
         if (b == "r" || b.starts_with("r "))                                 // c:1454
             && (saw_builtin /* || shfunctab.getnode("r").is_none() */)
         {
             return 1;
         }
-        if let Some(rest) = b.strip_prefix("fc -") {                         // c:1457
-            if (saw_builtin /* || shfunctab.getnode("fc").is_none() */)
-                && rest.chars().take_while(|c| c.is_ascii_alphabetic())
-                       .any(|c| c == 'l')
+        if let Some(rest) = b.strip_prefix("fc -") {
+            // c:1457
+            if (saw_builtin/* || shfunctab.getnode("fc").is_none() */)
+                && rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphabetic())
+                    .any(|c| c == 'l')
             {
-                return 1;                                                    // c:1474
+                return 1; // c:1474
             }
         }
     }
-    0                                                                        // c:1474
+    0 // c:1474
 }
 
 /// Port of `int hend(Eprog prog)` from Src/hist.c:1474.
-pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // c:1474
-    let stack_pos = histsave_stack_pos.load(Ordering::SeqCst);               // c:1474
-    let mut save: i32 = 1;                                                   // c:1484
+pub fn hend(prog: Option<&[u8]>) -> i32 {
+    // c:1474
+    let stack_pos = histsave_stack_pos.load(Ordering::SeqCst); // c:1474
+    let mut save: i32 = 1; // c:1484
     let mut hookret: i32 = 0;
 
     // DPUTS(stophist != 2 && !(inbufflags & INP_ALIAS) && !chline,       c:1487
     //       "BUG: chline is NULL in hend()");
-    crate::ported::signals::queue_signals();                                 // c:1489
-    if (histdone.load(Ordering::SeqCst) & HISTFLAG_SETTY) != 0 {             // c:1490
-        // settyinfo(&shttyinfo) — TTY-state singleton not ported.          // c:1491
+    crate::ported::signals::queue_signals(); // c:1489
+    if (histdone.load(Ordering::SeqCst) & HISTFLAG_SETTY) != 0 { // c:1490
+         // settyinfo(&shttyinfo) — TTY-state singleton not ported.          // c:1491
     }
     let active = histactive.load(Ordering::SeqCst);
-    if (active & HA_NOINC) == 0 {                                            // c:1492
-        unlinkcurline();                                                     // c:1493
+    if (active & HA_NOINC) == 0 {
+        // c:1492
+        unlinkcurline(); // c:1493
     }
-    if (active & HA_NOINC) != 0 {                                            // c:1494
-        chline.lock().unwrap().clear();                                      // c:1495 zfree(chline)
-        chwords.lock().unwrap().clear();                                     // c:1496 zfree(chwords)
-        hptr.store(0, Ordering::SeqCst);                                     // c:1497
-        histactive.store(0, Ordering::SeqCst);                               // c:1499
-        unqueue_signals();                           // c:1500
-        return 1;                                                            // c:1501
+    if (active & HA_NOINC) != 0 {
+        // c:1494
+        chline.lock().unwrap().clear(); // c:1495 zfree(chline)
+        chwords.lock().unwrap().clear(); // c:1496 zfree(chwords)
+        hptr.store(0, Ordering::SeqCst); // c:1497
+        histactive.store(0, Ordering::SeqCst); // c:1499
+        unqueue_signals(); // c:1500
+        return 1; // c:1501
     }
-    let cur_ignore_all = if isset(HISTIGNOREALLDUPS) { 1 } else { 0 };       // c:1503
+    let cur_ignore_all = if isset(HISTIGNOREALLDUPS) { 1 } else { 0 }; // c:1503
     let prev_ignore_all = hist_ignore_all_dups.load(Ordering::SeqCst);
     if prev_ignore_all != cur_ignore_all                                     // c:1503
         && {
@@ -1700,92 +1958,110 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
             cur_ignore_all != 0
         }
     {
-        histremovedups();                                                    // c:1505
+        histremovedups(); // c:1505
     }
     // *hptr = '\0';                                                         // c:1513 — String is implicit
     let chline_text = chline.lock().unwrap().clone();
-    if !chline_text.is_empty() {                                             // c:1515
-        let save_errflag = errflag                     // c:1517
+    if !chline_text.is_empty() {
+        // c:1515
+        let save_errflag = errflag // c:1517
             .load(Ordering::Relaxed);
-        errflag.store(0, Ordering::Relaxed);           // c:1518
-        let args = vec!["zshaddhistory".to_string(), chline_text.clone()];   // c:1520-1521
-        hookret = crate::ported::utils::callhookfunc(                        // c:1522
-            "zshaddhistory", Some(&args), 1, std::ptr::null_mut());
-        let new_errflag = (errflag                     // c:1524-1525
+        errflag.store(0, Ordering::Relaxed); // c:1518
+        let args = vec!["zshaddhistory".to_string(), chline_text.clone()]; // c:1520-1521
+        hookret = crate::ported::utils::callhookfunc(
+            // c:1522
+            "zshaddhistory",
+            Some(&args),
+            1,
+            std::ptr::null_mut(),
+        );
+        let new_errflag = (errflag // c:1524-1525
             .load(Ordering::Relaxed)
-            & !ERRFLAG_ERROR) | save_errflag;
+            & !ERRFLAG_ERROR)
+            | save_errflag;
         errflag.store(new_errflag, Ordering::Relaxed);
     }
-    let hf = resolve_histfile();                                             // c:1528
+    let hf = resolve_histfile(); // c:1528
     if isset(SHAREHISTORY)                                                   // c:1529
         && lockhistfile(hf.as_deref(), 0) == 0
     {
-        readhistfile(hf.as_deref(), 0,                                       // c:1530
-            HFILE_USE_OPTIONS as i32 | HFILE_FAST as i32);
+        readhistfile(
+            hf.as_deref(),
+            0, // c:1530
+            HFILE_USE_OPTIONS as i32 | HFILE_FAST as i32,
+        );
         // curline.histnum = curhist + 1                                     // c:1531
     }
-    let flag = histdone.load(Ordering::SeqCst);                              // c:1533
-    histdone.store(0, Ordering::SeqCst);                                     // c:1534
+    let flag = histdone.load(Ordering::SeqCst); // c:1533
+    histdone.store(0, Ordering::SeqCst); // c:1534
     let hptr_pos = hptr.load(Ordering::SeqCst);
     let mut text = chline_text;
-    if hptr_pos < 1 {                                                        // c:1535 hptr < chline + 1
-        save = 0;                                                            // c:1536
+    if hptr_pos < 1 {
+        // c:1535 hptr < chline + 1
+        save = 0; // c:1536
     } else {
-        if text.ends_with('\n') {                                            // c:1538 hptr[-1] == '\n'
-            if text.len() > 1 {                                              // c:1539 chline[1]
-                text.pop();                                                  // c:1540 *--hptr = '\0'
+        if text.ends_with('\n') {
+            // c:1538 hptr[-1] == '\n'
+            if text.len() > 1 {
+                // c:1539 chline[1]
+                text.pop(); // c:1540 *--hptr = '\0'
                 if hptr.load(Ordering::SeqCst) > 0 {
                     hptr.fetch_sub(1, Ordering::SeqCst);
                 }
             } else {
-                save = 0;                                                    // c:1542
+                save = 0; // c:1542
             }
         }
         if chwordpos.load(Ordering::SeqCst) <= 2                             // c:1544
             && hist_keep_comment.load(Ordering::SeqCst) == 0
         {
-            save = 0;                                                        // c:1545
-        } else if should_ignore_line(prog) != 0 {                            // c:1546
-            save = -1;                                                       // c:1547
-        } else if hookret == 2 {                                             // c:1548
-            save = -2;                                                       // c:1549
-        } else if hookret != 0 {                                             // c:1550
-            save = -1;                                                       // c:1551
+            save = 0; // c:1545
+        } else if should_ignore_line(prog) != 0 {
+            // c:1546
+            save = -1; // c:1547
+        } else if hookret == 2 {
+            // c:1548
+            save = -2; // c:1549
+        } else if hookret != 0 {
+            // c:1550
+            save = -1; // c:1551
         }
     }
-    if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) != 0 {                     // c:1553
-        let ptr = text.clone();                                              // c:1556 ztrdup(chline)
-        if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) == HISTFLAG_DONE {     // c:1557
+    if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) != 0 {
+        // c:1553
+        let ptr = text.clone(); // c:1556 ztrdup(chline)
+        if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) == HISTFLAG_DONE {
+            // c:1557
             // zputs(ptr, shout); fputc('\n', shout); fflush(shout);         // c:1558-1560
             print!("{}\n", ptr);
             let _ = std::io::stdout().flush();
         }
-        if (flag & HISTFLAG_RECALL) != 0 {                                   // c:1562
+        if (flag & HISTFLAG_RECALL) != 0 {
+            // c:1562
             // zpushnode(bufstack, ptr) — bufstack push not yet wired here. // c:1563
-            save = 0;                                                        // c:1564
+            save = 0; // c:1564
         }
     }
-    if save != 0 || text.starts_with(' ') {                                  // c:1568
+    if save != 0 || text.starts_with(' ') {
+        // c:1568
         // Walk up the ring skipping HIST_FOREIGN entries; if the topmost
         // non-foreign entry is HIST_TMPSTORE, drop it.                     // c:1569-1576
         let mut ring = hist_ring.lock().unwrap();
         let mut idx: usize = 0;
-        while idx < ring.len()
-            && (ring[idx].node.flags as u32 & HIST_FOREIGN) != 0
-        {
+        while idx < ring.len() && (ring[idx].node.flags as u32 & HIST_FOREIGN) != 0 {
             idx += 1;
         }
-        if idx < ring.len()
-            && (ring[idx].node.flags as u32 & HIST_TMPSTORE) != 0
-        {
-            if idx == 0 {                                                    // c:1573 he == hist_ring
-                curhist.fetch_sub(1, Ordering::SeqCst);                      // c:1574
+        if idx < ring.len() && (ring[idx].node.flags as u32 & HIST_TMPSTORE) != 0 {
+            if idx == 0 {
+                // c:1573 he == hist_ring
+                curhist.fetch_sub(1, Ordering::SeqCst); // c:1574
             }
-            ring.remove(idx);                                                // c:1575 freehistnode
+            ring.remove(idx); // c:1575 freehistnode
             histlinect.fetch_sub(1, Ordering::SeqCst);
         }
     }
-    if save != 0 {                                                           // c:1578
+    if save != 0 {
+        // c:1578
         // chwordpos parity guard — if odd, hwend() to close.            // c:1583-1587
         if chwordpos.load(Ordering::SeqCst) % 2 != 0 {
             ihwend();
@@ -1796,19 +2072,27 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
             let words = chwords.lock().unwrap();
             let last = words.get((cwp - 2) as usize).copied().unwrap_or(0);
             // C: !chline[chwords[chwordpos-2]] — index past end after NUL.
-            if (last as usize) >= text.len() {                               // c:1590
+            if (last as usize) >= text.len() {
+                // c:1590
                 drop(words);
                 chwordpos.fetch_sub(2, Ordering::SeqCst);
             } else {
                 drop(words);
             }
-            if isset(HISTREDUCEBLANKS) {                                     // c:1593
-                text = histreduceblanks(&text);                              // c:1594
+            if isset(HISTREDUCEBLANKS) {
+                // c:1593
+                text = histreduceblanks(&text); // c:1594
             }
         }
-        let newflags: u32 = if save == -1 { HIST_TMPSTORE }                  // c:1596-1601
-            else if save == -2 { HIST_NOWRITE }
-            else { 0 };
+        let newflags: u32 = if save == -1 {
+            HIST_TMPSTORE
+        }
+        // c:1596-1601
+        else if save == -2 {
+            HIST_NOWRITE
+        } else {
+            0
+        };
         let mut he_idx: Option<usize> = None;
         let mut overwrite_old: u32 = 0;
         if (isset(HISTIGNOREDUPS) || isset(HISTIGNOREALLDUPS))                // c:1602
@@ -1816,8 +2100,9 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         {
             let ring = hist_ring.lock().unwrap();
             if let Some(top) = ring.first() {
-                if top.node.nam == text {                                    // c:1603 histstrcmp
-                    overwrite_old = top.node.flags as u32 & HIST_OLD;        // c:1610
+                if top.node.nam == text {
+                    // c:1603 histstrcmp
+                    overwrite_old = top.node.flags as u32 & HIST_OLD; // c:1610
                     he_idx = Some(0);
                 }
             }
@@ -1829,22 +2114,23 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         let cwp = chwordpos.load(Ordering::SeqCst);
         let chwords_snapshot: Vec<i16> = chwords.lock().unwrap().clone();
         let nwords = (cwp / 2) as i32;
-        if let Some(0) = he_idx {                                            // c:1609 reuse top
+        if let Some(0) = he_idx {
+            // c:1609 reuse top
             let mut ring = hist_ring.lock().unwrap();
             if let Some(top) = ring.first_mut() {
-                top.node.nam = text.clone();                                 // c:1616
-                top.stim = now;                                              // c:1617
-                top.ftim = 0;                                                // c:1618
-                top.node.flags = (newflags | overwrite_old) as i32;          // c:1619
-                top.nwords = nwords;                                         // c:1621
+                top.node.nam = text.clone(); // c:1616
+                top.stim = now; // c:1617
+                top.ftim = 0; // c:1618
+                top.node.flags = (newflags | overwrite_old) as i32; // c:1619
+                top.nwords = nwords; // c:1621
                 top.words = if cwp > 0 {
-                    chwords_snapshot[..cwp as usize].to_vec()                // c:1622-1623
+                    chwords_snapshot[..cwp as usize].to_vec() // c:1622-1623
                 } else {
                     Vec::new()
                 };
             }
         } else {
-            let n = prepnexthistent();                                       // c:1614
+            let n = prepnexthistent(); // c:1614
             let mut he = make_histent(n, text.clone());
             he.stim = now;
             he.ftim = 0;
@@ -1856,48 +2142,53 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
             let mut ring = hist_ring.lock().unwrap();
             ring.insert(0, he);
             histlinect.fetch_add(1, Ordering::SeqCst);
-            if (newflags & HIST_TMPSTORE) == 0 {                             // c:1625
+            if (newflags & HIST_TMPSTORE) == 0 {
+                // c:1625
                 // addhistnode(histtab, he->node.nam, he) — hashtable wiring c:1626
                 // routes through crate::ported::hashtable::addhistnode.
                 crate::ported::hashtable::addhistnode(&text, n as i32);
             }
         }
     }
-    chline.lock().unwrap().clear();                                          // c:1628 zfree(chline)
-    chwords.lock().unwrap().clear();                                         // c:1629 zfree(chwords)
-    hptr.store(0, Ordering::SeqCst);                                         // c:1630
-    histactive.store(0, Ordering::SeqCst);                                   // c:1632
+    chline.lock().unwrap().clear(); // c:1628 zfree(chline)
+    chwords.lock().unwrap().clear(); // c:1629 zfree(chwords)
+    hptr.store(0, Ordering::SeqCst); // c:1630
+    histactive.store(0, Ordering::SeqCst); // c:1632
 
     let share = isset(SHAREHISTORY);
     let do_inc = if share {
-        histfileIsLocked() != 0                                              // c:1636
+        histfileIsLocked() != 0 // c:1636
     } else {
         isset(INCAPPENDHISTORY)                                              // c:1637
             || (isset(INCAPPENDHISTORYTIME)                                  // c:1637
-                && histsave_stack_pos.load(Ordering::SeqCst) != 0)           // c:1638
+                && histsave_stack_pos.load(Ordering::SeqCst) != 0) // c:1638
     };
     if do_inc {
-        savehistfile(hf.as_deref(), 0                                        // c:1639
+        savehistfile(
+            hf.as_deref(),
+            0                                        // c:1639
             | HFILE_USE_OPTIONS as i32
-            | HFILE_FAST as i32);
+            | HFILE_FAST as i32,
+        );
     }
-    unlockhistfile(hf.as_deref().unwrap_or(""));                             // c:1640
+    unlockhistfile(hf.as_deref().unwrap_or("")); // c:1640
 
-    while histsave_stack_pos.load(Ordering::SeqCst) > stack_pos {            // c:1645
-        pophiststack();                                                      // c:1646
+    while histsave_stack_pos.load(Ordering::SeqCst) > stack_pos {
+        // c:1645
+        pophiststack(); // c:1646
     }
-    hist_keep_comment.store(0, Ordering::SeqCst);                            // c:1647
-    unqueue_signals();                               // c:1648
-    if (flag & HISTFLAG_NOEXEC) != 0
-        || errflag.load(Ordering::Relaxed) != 0 {
-        0                                                                    // c:1649
+    hist_keep_comment.store(0, Ordering::SeqCst); // c:1647
+    unqueue_signals(); // c:1648
+    if (flag & HISTFLAG_NOEXEC) != 0 || errflag.load(Ordering::Relaxed) != 0 {
+        0 // c:1649
     } else {
         1
     }
 }
 
 /// Port of `void ihwabort(void)` from Src/hist.c.
-pub fn ihwabort() {                                                          // c:1675
+pub fn ihwabort() {
+    // c:1675
     let pos = chwordpos.load(Ordering::SeqCst);
     if pos % 2 != 0 {
         chwordpos.fetch_sub(1, Ordering::SeqCst);
@@ -1915,13 +2206,13 @@ pub fn ihwabort() {                                                          // 
 /// (matching the `ihwbegin` divergence). Words started during
 /// alias expansion got closed too — corrupting the chwords
 /// table when an alias expansion ended.
-pub fn ihwend() {                                                            // c:1686
+pub fn ihwend() {
+    // c:1686
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
-    if stop == 2
-        || (active & HA_INWORD) != 0
-        || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS                  // c:1688
+    if stop == 2 || (active & HA_INWORD) != 0 || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS
+    // c:1688
     {
         return;
     }
@@ -1937,15 +2228,16 @@ pub fn ihwend() {                                                            // 
     // hptr is at end of the buffer. Any lexer rewind would mis-
     // close the word boundary. Read the canonical `hptr` global
     // matching the `ihwbegin` fix at c:1658.
-    let cur = hptr.load(Ordering::SeqCst) as i16;                            // c:1693
+    let cur = hptr.load(Ordering::SeqCst) as i16; // c:1693
     let mut words = chwords.lock().unwrap();
     let start_idx = (pos - 1) as usize;
-    if cur > words[start_idx] {                                              // c:1693
+    if cur > words[start_idx] {
+        // c:1693
         let end_idx = pos as usize;
         if words.len() <= end_idx {
             words.resize(end_idx + 1, 0);
         }
-        words[end_idx] = cur;                                                // c:1694
+        words[end_idx] = cur; // c:1694
         chwordpos.fetch_add(1, Ordering::SeqCst);
     } else {
         // c:1700 — `chwordpos--;` "scrub that last word, doesn't exist".
@@ -1973,11 +2265,13 @@ pub fn ihwend() {                                                            // 
 /// No call sites in src/ used the Rust signature, so renaming is
 /// safe. Pin the C semantic: rewind `hptr` to the start of the
 /// previous word when we're at a word-boundary.
-pub fn histbackword() {                                                       // c:1711
+pub fn histbackword() {
+    // c:1711
     let pos = chwordpos.load(Ordering::SeqCst);
     // c:1714 — `if (!(chwordpos%2) && chwordpos)`. Both conditions
     // — even (word boundary) AND non-zero.
-    if pos % 2 == 0 && pos != 0 {                                            // c:1714
+    if pos % 2 == 0 && pos != 0 {
+        // c:1714
         let words = chwords.lock().unwrap();
         let idx = (pos - 1) as usize;
         if idx < words.len() {
@@ -1988,7 +2282,7 @@ pub fn histbackword() {                                                       //
             // semantic where chline + negative-offset is UB and
             // would have been clamped by the parser earlier).
             let off = (words[idx] as i32).max(0) as usize;
-            hptr.store(off, Ordering::SeqCst);                                // c:1715
+            hptr.store(off, Ordering::SeqCst); // c:1715
         }
     }
 }
@@ -1999,24 +2293,28 @@ pub fn hwget() -> Option<(i32, String)> {
     // c:1729 — DPUTS(1, "BUG: hwget() called with no words"); arm fires
     // when chwordpos == 0 (the C `if (!chwordpos)` branch at c:1728).
     if pos == 0 {
-        crate::DPUTS!(true, "BUG: hwget() called with no words");           // c:1729
+        crate::DPUTS!(true, "BUG: hwget() called with no words"); // c:1729
         return None;
     }
     // c:1734 — DPUTS(1, "BUG: hwget() called in middle of word")
     if pos % 2 != 0 {
-        crate::DPUTS!(true, "BUG: hwget() called in middle of word");       // c:1734
+        crate::DPUTS!(true, "BUG: hwget() called in middle of word"); // c:1734
         return None;
     }
     let words = chwords.lock().unwrap();
     let start_idx = (pos - 2) as usize;
     let end_idx = (pos - 1) as usize;
-    if end_idx >= words.len() { return None; }
+    if end_idx >= words.len() {
+        return None;
+    }
     let start = words[start_idx];
     let end = words[end_idx];
     let line = chline.lock().unwrap();
     let s = (start.max(0)) as usize;
     let e = (end.max(0) as usize).min(line.len());
-    if s > e || s >= line.len() { return None; }
+    if s > e || s >= line.len() {
+        return None;
+    }
     Some((start as i32, line[s..e].to_string()))
 }
 
@@ -2045,7 +2343,8 @@ pub fn hwget() -> Option<(i32, String)> {
 ///
 /// No call sites in src/ used the Rust signature, so renaming is
 /// safe. Port faithfully to operate on the globals.
-pub fn hwrep(rep: &str) {                                                     // c:1748
+pub fn hwrep(rep: &str) {
+    // c:1748
     // c:1752 — `hwget(&start)` — get the current word's start offset.
     let (start_off, start_text) = match hwget() {
         Some(v) => v,
@@ -2058,14 +2357,14 @@ pub fn hwrep(rep: &str) {                                                     //
     // c:1756 — `hptr = start; chwordpos -= 2;`. Rewind to the start
     // of the word we're rewriting; the open word slot is conceptually
     // re-opened by the chwordpos decrement.
-    hptr.store(start_off.max(0) as usize, Ordering::SeqCst);                  // c:1756
-    chwordpos.fetch_sub(2, Ordering::SeqCst);                                 // c:1757
-    // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
+    hptr.store(start_off.max(0) as usize, Ordering::SeqCst); // c:1756
+    chwordpos.fetch_sub(2, Ordering::SeqCst); // c:1757
+                                              // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
     ihwbegin(0);
     // c:1759 — `qbang = 1;` mark word as bang-bearing so subsequent
     // ihwaddc bang-escapes correctly.
-    qbang.store(true, Ordering::SeqCst);                                      // c:1759
-    // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
+    qbang.store(true, Ordering::SeqCst); // c:1759
+                                         // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
     for b in rep.bytes() {
         ihwaddc(b as i32);
     }
@@ -2097,7 +2396,8 @@ pub fn hwrep(rep: &str) {                                                     //
 /// (None for the C NULL case at c:1777).
 ///
 /// No Rust callers used the old (entry) signature.
-pub fn hgetline() -> Option<String> {                                         // c:1769
+pub fn hgetline() -> Option<String> {
+    // c:1769
     let hp = hptr.load(Ordering::SeqCst);
     let line = chline.lock().unwrap();
     // c:1777 — `if (!chline || hptr == chline) return NULL;`
@@ -2117,7 +2417,7 @@ pub fn hgetline() -> Option<String> {                                         //
     // c:1783-1784 — reset line: hptr = 0, chwordpos = 0.
     hptr.store(0, Ordering::SeqCst);
     chwordpos.store(0, Ordering::SeqCst);
-    Some(truncated)                                                            // c:1786
+    Some(truncated) // c:1786
 }
 
 /// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c:1793.
@@ -2148,52 +2448,65 @@ pub fn hgetline() -> Option<String> {                                         //
 ///     return ret;
 /// }
 /// ```
-pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {             // c:1793
-    let mut c: i32 = ingetc()                          // c:1797 ingetc()
+pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {
+    // c:1793
+    let mut c: i32 = ingetc() // c:1797 ingetc()
         .map(|ch| ch as i32)
         .unwrap_or(-1);
-    let mut ret: i32 = -1;                                                   // c:1795
-    if c == b'0' as i32 {                                                    // c:1797
-        return 0;                                                            // c:1798
+    let mut ret: i32 = -1; // c:1795
+    if c == b'0' as i32 {
+        // c:1797
+        return 0; // c:1798
     }
-    if (c as u8 as char).is_ascii_digit() {                                  // c:1799 idigit(c)
-        ret = 0;                                                             // c:1800
-        while (c as u8 as char).is_ascii_digit() {                           // c:1801
-            ret = ret * 10 + c - b'0' as i32;                                // c:1802
-            if ret < 0 {                                                     // c:1803
-                herrflush();                                                 // c:1804
-                zerr("no such word in event");         // c:1805
-                return -2;                                                   // c:1806
+    if (c as u8 as char).is_ascii_digit() {
+        // c:1799 idigit(c)
+        ret = 0; // c:1800
+        while (c as u8 as char).is_ascii_digit() {
+            // c:1801
+            ret = ret * 10 + c - b'0' as i32; // c:1802
+            if ret < 0 {
+                // c:1803
+                herrflush(); // c:1804
+                zerr("no such word in event"); // c:1805
+                return -2; // c:1806
             }
-            c = ingetc()                               // c:1808 ingetc()
+            c = ingetc() // c:1808 ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
         }
-        if let Some(ch) = char::from_u32(c as u32) {                         // c:1810 inungetc(c)
+        if let Some(ch) = char::from_u32(c as u32) {
+            // c:1810 inungetc(c)
             inungetc(ch);
         }
-    } else if c == b'^' as i32 {                                             // c:1811
-        ret = 1;                                                             // c:1812
-    } else if c == b'$' as i32 {                                             // c:1813
-        ret = argc;                                                          // c:1814
-    } else if c == b'%' as i32 {                                             // c:1815
-        if evset != 0 {                                                      // c:1816
-            herrflush();                                                     // c:1817
-            zerr("Ambiguous history reference");       // c:1818
-            return -2;                                                       // c:1819
+    } else if c == b'^' as i32 {
+        // c:1811
+        ret = 1; // c:1812
+    } else if c == b'$' as i32 {
+        // c:1813
+        ret = argc; // c:1814
+    } else if c == b'%' as i32 {
+        // c:1815
+        if evset != 0 {
+            // c:1816
+            herrflush(); // c:1817
+            zerr("Ambiguous history reference"); // c:1818
+            return -2; // c:1819
         }
-        if marg_arg == -1 {                                                  // c:1821
-            herrflush();                                                     // c:1822
-            zerr("%% with no previous word matched");  // c:1823
-            return -2;                                                       // c:1824
+        if marg_arg == -1 {
+            // c:1821
+            herrflush(); // c:1822
+            zerr("%% with no previous word matched"); // c:1823
+            return -2; // c:1824
         }
-        ret = marg_arg;                                                      // c:1826
-    } else {                                                                 // c:1827
-        if let Some(ch) = char::from_u32(c as u32) {                         // c:1828 inungetc(c)
+        ret = marg_arg; // c:1826
+    } else {
+        // c:1827
+        if let Some(ch) = char::from_u32(c as u32) {
+            // c:1828 inungetc(c)
             inungetc(ch);
         }
     }
-    ret                                                                      // c:1829
+    ret // c:1829
 }
 
 /// Port of `static zlong hconsearch(char *str, int *marg)` from
@@ -2225,7 +2538,8 @@ pub fn getargspec(argc: i32, marg_arg: i32, evset: i32) -> i32 {             // 
 /// Rust adaptation: returns `Option<(histnum, marg)>` instead of
 /// the C in/out pair; None mirrors the C `return -1` miss path.
 /// WARNING: Rust returns a tuple — C uses an out-pointer for marg.
-pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {                      // c:1836
+pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {
+    // c:1836
     // c:1842 — `for (he = up_histent(hist_ring); he; he = up_histent(he))`.
     // The C `hist_ring` is the doubly-linked-list sentinel; iterating
     // `up_histent(hist_ring)` walks from the newest real entry toward
@@ -2233,25 +2547,27 @@ pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {                      // 
     // walk positions 0..ring_len for the same effect.
     let ring = hist_ring.lock().expect("hist_ring poisoned");
     for entry in ring.iter() {
-        if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {                   // c:1843
-            continue;                                                        // c:1844
+        if (entry.node.flags as u32 & HIST_FOREIGN) != 0 {
+            // c:1843
+            continue; // c:1844
         }
-        if let Some(pos) = entry.node.nam.find(needle) {                     // c:1845 strstr
+        if let Some(pos) = entry.node.nam.find(needle) {
+            // c:1845 strstr
             // c:1846 — `int pos = s - he->node.nam;`
-            let mut t1: i32 = 0;                                             // c:1838
-            while t1 < entry.nwords {                                         // c:1847
-                let slot_pos = entry.words.get((2 * t1) as usize)
-                    .copied()
-                    .unwrap_or(0) as usize;
-                if slot_pos > pos {                                           // c:1847 he->words[2*t1] <= pos
+            let mut t1: i32 = 0; // c:1838
+            while t1 < entry.nwords {
+                // c:1847
+                let slot_pos = entry.words.get((2 * t1) as usize).copied().unwrap_or(0) as usize;
+                if slot_pos > pos {
+                    // c:1847 he->words[2*t1] <= pos
                     break;
                 }
-                t1 += 1;                                                      // c:1848
+                t1 += 1; // c:1848
             }
-            return Some((entry.histnum, t1 - 1));                             // c:1849-1850
+            return Some((entry.histnum, t1 - 1)); // c:1849-1850
         }
     }
-    None                                                                      // c:1853
+    None // c:1853
 }
 
 /// Port of `int hcomsearch(char *str)` from Src/hist.c.
@@ -2273,12 +2589,17 @@ pub fn hcomsearch(prefix: &str) -> Option<i64> {
 
 /// Port of `char *chabspath(char **pathptr)` from Src/hist.c.
 pub fn chabspath(input: &str) -> Option<String> {
-    if input.is_empty() { return Some(String::new()); }
+    if input.is_empty() {
+        return Some(String::new());
+    }
     let mut path = if !input.starts_with('/') {
         let cwd = std::env::current_dir().ok()?;
         let cwd_s = cwd.to_string_lossy().into_owned();
-        if cwd_s.ends_with('/') { format!("{}{}", cwd_s, input) }
-        else { format!("{}/{}", cwd_s, input) }
+        if cwd_s.ends_with('/') {
+            format!("{}{}", cwd_s, input)
+        } else {
+            format!("{}/{}", cwd_s, input)
+        }
     } else {
         input.to_string()
     };
@@ -2290,31 +2611,54 @@ pub fn chabspath(input: &str) -> Option<String> {
         if c == '/' {
             out.push('/');
             i += 1;
-            while i < chars.len() && chars[i] == '/' { i += 1; }
-        } else if c == '.' && i + 1 < chars.len() && chars[i + 1] == '.'
+            while i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
+        } else if c == '.'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '.'
             && (i + 2 == chars.len() || chars[i + 2] == '/')
         {
             if out.len() <= 1 {
-                if out.is_empty() || out == ['/'] { return None; }
-                out.push('.'); out.push('.');
+                if out.is_empty() || out == ['/'] {
+                    return None;
+                }
+                out.push('.');
+                out.push('.');
             } else if out.len() >= 3 && &out[out.len() - 3..] == &['.', '.', '/'] {
-                out.push('.'); out.push('.');
+                out.push('.');
+                out.push('.');
             } else {
-                if out.last() == Some(&'/') && out.len() > 1 { out.pop(); }
-                while out.last().map(|c| *c != '/').unwrap_or(false) { out.pop(); }
+                if out.last() == Some(&'/') && out.len() > 1 {
+                    out.pop();
+                }
+                while out.last().map(|c| *c != '/').unwrap_or(false) {
+                    out.pop();
+                }
             }
             i += 2;
-            if i < chars.len() && chars[i] == '/' { i += 1; }
+            if i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
         } else if c == '.' && (i + 1 == chars.len() || chars[i + 1] == '/') {
             i += 1;
-            while i < chars.len() && chars[i] == '/' { i += 1; }
+            while i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
         } else {
-            out.push(c); i += 1;
+            out.push(c);
+            i += 1;
         }
     }
-    while out.len() > 1 && out.last() == Some(&'/') { out.pop(); }
+    while out.len() > 1 && out.last() == Some(&'/') {
+        out.pop();
+    }
     path = out.into_iter().collect();
-    if path.is_empty() { Some("/".to_string()) } else { Some(path) }
+    if path.is_empty() {
+        Some("/".to_string())
+    } else {
+        Some(path)
+    }
 }
 
 /// Port of `int chrealpath(char **junkptr, char mode, int use_heap)` from `Src/hist.c:1971`.
@@ -2325,11 +2669,14 @@ pub fn chabspath(input: &str) -> Option<String> {
 ///
 /// Signature now matches C (Rule B): `path`, `mode` ('A' or 'P'),
 /// `use_heap` (ignored — Rust strings are heap by default).
-pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> { // c:1971
+pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
+    // c:1971
     // c:1983 — DPUTS1(mode != 'A' && mode != 'P', "chrealpath: mode='%c' is invalid", mode)
-    crate::DPUTS1!(                                                          // c:1983
-        mode != b'A' && mode != b'P',                                         // c:1983
-        "chrealpath: mode='{}' is invalid", mode as char                     // c:1983
+    crate::DPUTS1!(
+        // c:1983
+        mode != b'A' && mode != b'P', // c:1983
+        "chrealpath: mode='{}' is invalid",
+        mode as char // c:1983
     );
     // c:1985-1986 — if (!**junkptr) return 1; (empty input is success)
     if path.is_empty() {
@@ -2388,12 +2735,17 @@ pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> { // 
 }
 
 /// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
-pub fn remtpath(s: &str, count: i32) -> String {                             // c:2056
+pub fn remtpath(s: &str, count: i32) -> String {
+    // c:2056
     let s = s.trim_end_matches('/');
-    if s.is_empty() { return "/".to_string(); }
+    if s.is_empty() {
+        return "/".to_string();
+    }
     if count == 0 {
         if let Some(pos) = s.rfind('/') {
-            if pos == 0 { return "/".to_string(); }
+            if pos == 0 {
+                return "/".to_string();
+            }
             return s[..pos].trim_end_matches('/').to_string();
         }
         return ".".to_string();
@@ -2405,10 +2757,14 @@ pub fn remtpath(s: &str, count: i32) -> String {                             // 
         if bytes[i] == b'/' {
             remaining -= 1;
             if remaining <= 0 {
-                if i == 0 { return "/".to_string(); }
+                if i == 0 {
+                    return "/".to_string();
+                }
                 return s[..i].to_string();
             }
-            while i + 1 < bytes.len() && bytes[i + 1] == b'/' { i += 1; }
+            while i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                i += 1;
+            }
         }
         i += 1;
     }
@@ -2436,24 +2792,27 @@ pub fn remtpath(s: &str, count: i32) -> String {                             // 
 /// Edge cases pinned by C: `.hidden` → `""`, `foo/.bashrc` → `foo/`.
 /// The previous Rust port guarded with `dot_pos > 0` which kept the
 /// leading-dot files unchanged — a divergence from C's behavior.
-pub fn remtext(s: &str) -> String {                                          // c:2122
+pub fn remtext(s: &str) -> String {
+    // c:2122
     // c:2126 — find the rightmost `/` to bound the scan (C walks back
     // from end until it hits a dirsep). Everything after that slash
     // (or the whole string if no slash) is the basename region.
     let (prefix, basename) = match s.rfind('/') {
         Some(i) => (&s[..=i], &s[i + 1..]),
-        None    => ("",       s),
+        None => ("", s),
     };
     // c:2127 — `if (*str == '.')`. Find rightmost `.` in basename;
     // truncate there. C makes no exception for leading dot.
-    if let Some(dot_pos) = basename.rfind('.') {                             // c:2127
-        return format!("{}{}", prefix, &basename[..dot_pos]);                // c:2128
+    if let Some(dot_pos) = basename.rfind('.') {
+        // c:2127
+        return format!("{}{}", prefix, &basename[..dot_pos]); // c:2128
     }
-    s.to_string()                                                            // c:2131
+    s.to_string() // c:2131
 }
 
 /// Port of `char *rembutext(char **str)` from Src/hist.c:2136.
-pub fn rembutext(s: &str) -> String {                                        // c:2136
+pub fn rembutext(s: &str) -> String {
+    // c:2136
     if let Some(slash_pos) = s.rfind('/') {
         let after_slash = &s[slash_pos + 1..];
         if let Some(dot_pos) = after_slash.rfind('.') {
@@ -2479,11 +2838,14 @@ pub fn rembutext(s: &str) -> String {                                        // 
 /// the leading slash for absolute paths). The Rust port previously
 /// stripped the leading slash unconditionally, so `:t4` on
 /// `/a/b/c` returned `"a/b/c"` instead of C's `"/a/b/c"`.
-pub fn remlpaths(s: &str, count: i32) -> String {                            // c:2152
+pub fn remlpaths(s: &str, count: i32) -> String {
+    // c:2152
     // c:2156-2161 — `if (IS_DIRSEP(*str))` block trims trailing slashes
     // off the input. Apply lexically before splitting.
     let trimmed = s.trim_end_matches('/');
-    if trimmed.is_empty() { return String::new(); }
+    if trimmed.is_empty() {
+        return String::new();
+    }
     let parts: Vec<&str> = trimmed.split('/').filter(|p| !p.is_empty()).collect();
     let n = if count == 0 { 1 } else { count as usize };
     if n > parts.len() {
@@ -2496,18 +2858,27 @@ pub fn remlpaths(s: &str, count: i32) -> String {                            // 
     // leading slash (and prefix path) gets overwritten by NUL and the
     // returned slice starts AFTER it, dropping it. So when n <= count of
     // components, the leading slash is stripped (matches C).
-    parts.iter().rev().take(n).rev().copied().collect::<Vec<&str>>().join("/")
+    parts
+        .iter()
+        .rev()
+        .take(n)
+        .rev()
+        .copied()
+        .collect::<Vec<&str>>()
+        .join("/")
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
 /// Rust idiom replacement: `chars()` + `to_lowercase`/`to_uppercase`
 /// covers the C `tolower`/`toupper`/`isalpha` per-byte loop; the
 /// CASMOD_CAPS branch tracks word-boundary via the `nextupper` flag.
-pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
+pub fn casemodify(s: &str, how: i32) -> String {
+    // c:2196
     // c:2200 — `int nextupper = 1;`. Start expecting a leading uppercase.
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
-    for c in s.chars() {                                                      // c:2209 `while (*str)`
+    for c in s.chars() {
+        // c:2209 `while (*str)`
         // c:2241 — `if (IS_COMBINING(wc)) break;` — combining chars
         // (those with WCWIDTH==0) don't affect nextupper state and
         // don't get case-folded. Macro at `Src/zsh.h:3343`:
@@ -2518,8 +2889,8 @@ pub fn casemodify(s: &str, how: i32) -> String {                              //
         // semantically wrong intent) and (b) for CAPS, would reset
         // nextupper via the `!is_alphanumeric` branch, breaking
         // word-boundary detection on accented words.
-        let is_combining = (c as u32) != 0
-            && unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0;
+        let is_combining =
+            (c as u32) != 0 && unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0;
         let modified = match how {
             x if x == CASMOD_LOWER => {                                       // c:2225
                 // c:2226-2229 — `if (iswupper(wc)) wc = towlower(wc);`.
@@ -2586,22 +2957,32 @@ pub fn casemodify(s: &str, how: i32) -> String {                              //
 /// `:s/#foo/bar/` where the lexer has tokenized the `#` would
 /// silently miss the anchor-start in the Rust port — falling
 /// through to substring-match semantics.
-pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String { // c:2336
-    if in_pattern.is_empty() { return s.to_string(); }
+pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
+    // c:2336
+    if in_pattern.is_empty() {
+        return s.to_string();
+    }
     let mut anchor_start = false;
     let mut anchor_end = false;
     let mut pat = in_pattern;
     // c:2349 — `if (*in == '#' || *in == Pound)` — anchor-head matcher
     // covers BOTH the literal char and the tokenized Pound byte.
     if let Some(rest) = pat.strip_prefix('#').or_else(|| pat.strip_prefix(Pound)) {
-        anchor_start = true;                                                  // c:2351 SUB_START
-        pat = rest;                                                           // c:2352 in++
+        anchor_start = true; // c:2351 SUB_START
+        pat = rest; // c:2352 in++
     }
-    if let Some(rest) = pat.strip_prefix('%') { anchor_end = true; pat = rest; }
-    if pat.is_empty() { return s.to_string(); }
+    if let Some(rest) = pat.strip_prefix('%') {
+        anchor_end = true;
+        pat = rest;
+    }
+    if pat.is_empty() {
+        return s.to_string();
+    }
     let out_expanded = convamps(out_pattern, pat);
     if anchor_start && anchor_end {
-        if s == pat { return out_expanded; }
+        if s == pat {
+            return out_expanded;
+        }
         return s.to_string();
     }
     if anchor_start {
@@ -2617,7 +2998,11 @@ pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> Stri
         }
         return s.to_string();
     }
-    if global { s.replace(pat, &out_expanded) } else { s.replacen(pat, &out_expanded, 1) }
+    if global {
+        s.replace(pat, &out_expanded)
+    } else {
+        s.replacen(pat, &out_expanded, 1)
+    }
 }
 
 /// Port of `char *convamps(char *out, char *in)` from Src/hist.c.
@@ -2626,7 +3011,10 @@ fn convamps(out: &str, in_pattern: &str) -> String {
     let mut chars = out.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\\' {
-            if let Some(&next) = chars.peek() { result.push(next); chars.next(); }
+            if let Some(&next) = chars.peek() {
+                result.push(next);
+                chars.next();
+            }
         } else if c == '&' {
             result.push_str(in_pattern);
         } else {
@@ -2667,13 +3055,15 @@ fn convamps(out: &str, in_pattern: &str) -> String {
 /// stores cloned values into the `curline` Mutex. The observable
 /// effect is the same after the function returns: a caller reading
 /// `curline` sees the latest chline/chwords snapshot.
-pub fn checkcurline(he: &histent) {                                              // c:2421
-    let curhist_val = curhist.load(Ordering::SeqCst);                            // c:2424
-    let active = histactive.load(Ordering::SeqCst);                              // c:2424
-    if he.histnum == curhist_val && (active & HA_ACTIVE) != 0 {                  // c:2424
-        let chline_val = chline.lock().expect("chline poisoned").clone();        // c:2425
-        let chwordpos_val = chwordpos.load(Ordering::SeqCst);                    // c:2426
-        let chwords_val = chwords.lock().expect("chwords poisoned").clone();     // c:2427
+pub fn checkcurline(he: &histent) {
+    // c:2421
+    let curhist_val = curhist.load(Ordering::SeqCst); // c:2424
+    let active = histactive.load(Ordering::SeqCst); // c:2424
+    if he.histnum == curhist_val && (active & HA_ACTIVE) != 0 {
+        // c:2424
+        let chline_val = chline.lock().expect("chline poisoned").clone(); // c:2425
+        let chwordpos_val = chwordpos.load(Ordering::SeqCst); // c:2426
+        let chwords_val = chwords.lock().expect("chwords poisoned").clone(); // c:2427
         let mut cl = curline.lock().expect("curline poisoned");
         // Build a fresh histent snapshot mirroring the C field
         // aliasing — name = chline, nwords = chwordpos/2,
@@ -2681,7 +3071,7 @@ pub fn checkcurline(he: &histent) {                                             
         *cl = Some(histent {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
-                nam: chline_val,                                                 // c:2425
+                nam: chline_val, // c:2425
                 flags: 0,
             },
             up: None,
@@ -2689,20 +3079,22 @@ pub fn checkcurline(he: &histent) {                                             
             zle_text: None,
             stim: 0,
             ftim: 0,
-            words: chwords_val,                                                  // c:2427
-            nwords: chwordpos_val / 2,                                           // c:2426
+            words: chwords_val,        // c:2427
+            nwords: chwordpos_val / 2, // c:2426
             histnum: he.histnum,
         });
     }
 }
 
 /// Port of `Histent quietgethist(zlong ev)` from Src/hist.c.
-pub fn quietgethist(ev: i64) -> Option<histent> {                            // c:2433
+pub fn quietgethist(ev: i64) -> Option<histent> {
+    // c:2433
     ring_get(ev)
 }
 
 /// Port of `Histent gethist(zlong ev)` from Src/hist.c.
-pub fn gethist(ev: i64) -> Option<histent> {                                 // c:2440
+pub fn gethist(ev: i64) -> Option<histent> {
+    // c:2440
     let ret = quietgethist(ev);
     if ret.is_none() {
         herrflush();
@@ -2757,32 +3149,35 @@ pub fn gethist(ev: i64) -> Option<histent> {                                 // 
 ///      The Rust port's bounds check missed the overflow case
 ///      and let bogus garbage positions through into the slice
 ///      indexing.
-pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {    // c:2454
-    let nwords = entry.nwords as usize;                                          // c:2457 nwords = elist->nwords
-    if arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {                         // c:2459
-        herrflush();                                                             // c:2461
-        zerr("no such word in event");                     // c:2462
-        return None;                                                             // c:2463
+pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
+    // c:2454
+    let nwords = entry.nwords as usize; // c:2457 nwords = elist->nwords
+    if arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
+        // c:2459
+        herrflush(); // c:2461
+        zerr("no such word in event"); // c:2462
+        return None; // c:2463
     }
     // c:2466-2467 — `if (arg1 == 0 && arg2 == nwords - 1) return dupstring(nam);`
     if arg1 == 0 && arg2 == nwords - 1 {
-        return Some(entry.node.nam.clone());                                     // c:2467
+        return Some(entry.node.nam.clone()); // c:2467
     }
-    let pos1_raw = entry.words.get(2 * arg1).copied().unwrap_or(-1);             // c:2469 pos1 = words[2*arg1]
-    let pos2_raw = entry.words.get(2 * arg2 + 1).copied().unwrap_or(-1);         // c:2470 pos2 = words[2*arg2+1]
-    // c:2476 — C signed-short overflow detection: any negative
-    // position OR a position less than its corresponding word
-    // index means the i16 storage wrapped on a >32KB history line.
+    let pos1_raw = entry.words.get(2 * arg1).copied().unwrap_or(-1); // c:2469 pos1 = words[2*arg1]
+    let pos2_raw = entry.words.get(2 * arg2 + 1).copied().unwrap_or(-1); // c:2470 pos2 = words[2*arg2+1]
+                                                                         // c:2476 — C signed-short overflow detection: any negative
+                                                                         // position OR a position less than its corresponding word
+                                                                         // index means the i16 storage wrapped on a >32KB history line.
     if pos1_raw < 0
         || (pos1_raw as i64) < (arg1 as i64)
         || pos2_raw < 0
         || (pos2_raw as i64) < (arg2 as i64)
-    {                                                                            // c:2476
-        herrflush();                                                             // c:2477
+    {
+        // c:2476
+        herrflush(); // c:2477
         zerr(
-            "history event too long, can't index requested words"               // c:2478
+            "history event too long, can't index requested words", // c:2478
         );
-        return None;                                                             // c:2479
+        return None; // c:2479
     }
     let pos1 = pos1_raw as usize;
     let pos2 = pos2_raw as usize;
@@ -2792,7 +3187,7 @@ pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {   
     // are bounded by the underlying string length per insert
     // contract. Guard with .get() so a malformed entry doesn't
     // panic.
-    entry.node.nam.get(pos1..pos2).map(|s| s.to_string())                        // c:2481
+    entry.node.nam.get(pos1..pos2).map(|s| s.to_string()) // c:2481
 }
 
 /// Port of `int quote(char **tr)` from `Src/hist.c:2486-2523`.
@@ -2804,7 +3199,8 @@ pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {   
 /// `inblank()` which is the narrow typtab INBLANK class (space, tab,
 /// newline ONLY). Drift would silently quote CR/FF/VT/NBSP/etc.
 /// chars that C leaves alone.
-pub fn quote(s: &str) -> String {                                            // c:2486
+pub fn quote(s: &str) -> String {
+    // c:2486
     let bytes: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(bytes.len() + 3);
     out.push('\'');
@@ -2815,9 +3211,15 @@ pub fn quote(s: &str) -> String {                                            // 
         let is_inblank = matches!(c, ' ' | '\t' | '\n');
         if c == '\'' {
             inquotes = !inquotes;
-            out.push('\''); out.push('\\'); out.push('\''); out.push('\'');
-        } else if is_inblank && !inquotes && prev != '\\' {                  // c:2514
-            out.push('\''); out.push(c); out.push('\'');
+            out.push('\'');
+            out.push('\\');
+            out.push('\'');
+            out.push('\'');
+        } else if is_inblank && !inquotes && prev != '\\' {
+            // c:2514
+            out.push('\'');
+            out.push(c);
+            out.push('\'');
         } else {
             out.push(c);
         }
@@ -2833,15 +3235,19 @@ pub fn quote(s: &str) -> String {                                            // 
 ///
 /// `c.is_whitespace()` → `inblank(c)` fix per the same divergence
 /// pattern as `quote` above.
-pub fn quotebreak(s: &str) -> String {                                       // c:2527
+pub fn quotebreak(s: &str) -> String {
+    // c:2527
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
     for c in s.chars() {
         // c:2548 — `inblank(*ptr)` narrow set.
         let is_inblank = matches!(c, ' ' | '\t' | '\n');
-        if c == '\'' { result.push_str("'\\''"); }
-        else if is_inblank {
-            result.push('\''); result.push(c); result.push('\'');
+        if c == '\'' {
+            result.push_str("'\\''");
+        } else if is_inblank {
+            result.push('\'');
+            result.push(c);
+            result.push('\'');
         } else {
             result.push(c);
         }
@@ -2855,36 +3261,42 @@ pub fn quotebreak(s: &str) -> String {                                       // 
 /// the name-parity port mirrors the disabled body: read input chars via
 /// `ingetc()` until `stop`/newline/lexstop, honoring `\\`-escape, and
 /// emit a `delimiter expected` error if newline is hit first.
-pub fn hdynread(stop: i32) -> Option<String> {                               // c:2562
-    let stop_c = stop as u8 as char;                                         // c:2562 int stop
-    let mut buf = String::with_capacity(256);                                // c:2564 bsiz=256
-    let mut c: Option<char>;                                                 // c:2564 int c
+pub fn hdynread(stop: i32) -> Option<String> {
+    // c:2562
+    let stop_c = stop as u8 as char; // c:2562 int stop
+    let mut buf = String::with_capacity(256); // c:2564 bsiz=256
+    let mut c: Option<char>; // c:2564 int c
     loop {
-        c = ingetc();                                  // c:2568
+        c = ingetc(); // c:2568
         match c {
             None => break,
-            Some(ch) if ch == stop_c => break,                               // c:2568
-            Some('\n') => break,                                             // c:2568
+            Some(ch) if ch == stop_c => break, // c:2568
+            Some('\n') => break,               // c:2568
             Some(ch) => {
-                if crate::ported::hist::lexstop.load(SeqCst) { break; }      // c:2568
+                if crate::ported::hist::lexstop.load(SeqCst) {
+                    break;
+                } // c:2568
                 let mut written = ch;
-                if ch == '\\' {                                              // c:2569
-                    if let Some(nxt) = ingetc() {      // c:2570
+                if ch == '\\' {
+                    // c:2569
+                    if let Some(nxt) = ingetc() {
+                        // c:2570
                         written = nxt;
                     } else {
                         break;
                     }
                 }
-                buf.push(written);                                           // c:2571
+                buf.push(written); // c:2571
             }
         }
     }
-    if let Some('\n') = c {                                                  // c:2578
-        inungetc('\n');                                // c:2579
-        zerr("delimiter expected");                    // c:2580
-        return None;                                                         // c:2582
+    if let Some('\n') = c {
+        // c:2578
+        inungetc('\n'); // c:2579
+        zerr("delimiter expected"); // c:2580
+        return None; // c:2582
     }
-    Some(buf)                                                                // c:2584
+    Some(buf) // c:2584
 }
 
 /// Direct port of `static void ihungetc(int c)` from `Src/hist.c:989`.
@@ -2894,9 +3306,10 @@ pub fn hdynread(stop: i32) -> Option<String> {                               // 
 /// `qbang` state for `\!` re-escape on the next pass. Loops while
 /// `qbang` keeps firing (which can re-trigger via the `c='\\'` step
 /// at the bottom).
-pub fn ihungetc(c: i32) {                                                    // c:989
-    let mut c = c as u8 as char;                                             // c:991 int c
-    let mut doit = 1;                                                        // c:991 doit = 1
+pub fn ihungetc(c: i32) {
+    // c:989
+    let mut c = c as u8 as char; // c:991 int c
+    let mut doit = 1; // c:991 doit = 1
     while !crate::ported::hist::lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
         && errflag.load(SeqCst) == 0
     {
@@ -2912,42 +3325,53 @@ pub fn ihungetc(c: i32) {                                                    // 
             && (active & crate::ported::hist::HA_UNGET) == 0
             && (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS
         {
-            crate::ported::hist::histactive.fetch_or(crate::ported::hist::HA_UNGET, SeqCst);  // c:998
-            inungetc('\n');                            // c:999 hungetc('\n') — default = inungetc (c:1140)
-            inungetc('\\');                            // c:1000
-            crate::ported::hist::histactive.fetch_and(!crate::ported::hist::HA_UNGET, SeqCst); // c:1001
+            crate::ported::hist::histactive.fetch_or(crate::ported::hist::HA_UNGET, SeqCst); // c:998
+            inungetc('\n'); // c:999 hungetc('\n') — default = inungetc (c:1140)
+            inungetc('\\'); // c:1000
+            crate::ported::hist::histactive.fetch_and(!crate::ported::hist::HA_UNGET, SeqCst);
+            // c:1001
         }
-        if crate::ported::hist::expanding.load(SeqCst) != 0 {                // c:1004 if (expanding)
-            crate::ported::zle::compcore::ZLEMETACS.fetch_sub(1, SeqCst);    // c:1005 zlemetacs--
-            crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst);    // c:1006 zlemetall--
-            crate::ported::hist::exlast.fetch_add(1, SeqCst);                // c:1007 exlast++
+        if crate::ported::hist::expanding.load(SeqCst) != 0 {
+            // c:1004 if (expanding)
+            crate::ported::zle::compcore::ZLEMETACS.fetch_sub(1, SeqCst); // c:1005 zlemetacs--
+            crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst); // c:1006 zlemetall--
+            crate::ported::hist::exlast.fetch_add(1, SeqCst); // c:1007 exlast++
         }
-        if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {                 // c:1009
+        if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {
+            // c:1009
             // c:1010 — DPUTS(hptr <= chline, "BUG: hungetc attempted at buffer start")
             crate::DPUTS!(hp <= 0, "BUG: hungetc attempted at buffer start"); // c:1010
-            // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
-            crate::DPUTS!(                                                    // c:1012
-                hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8),      // c:1012
-                "BUG: wrong character in hungetc() "                         // c:1012
+                                                                              // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
+            crate::DPUTS!(
+                // c:1012
+                hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8), // c:1012
+                "BUG: wrong character in hungetc() "                    // c:1012
             );
             let new_hp = hp.saturating_sub(1);
-            crate::ported::hist::hptr.store(new_hp, SeqCst);                 // c:1011 hptr--
+            crate::ported::hist::hptr.store(new_hp, SeqCst); // c:1011 hptr--
             let bangchar_v = crate::ported::hist::bangchar.load(SeqCst) as u8;
             let qb = c as u8 == bangchar_v && stop < 2                       // c:1014-1015
                 && new_hp > 0 && line_b.get(new_hp - 1).copied() == Some(b'\\');
             crate::ported::hist::qbang.store(qb, SeqCst);
         } else {
-            crate::ported::hist::qbang.store(false, SeqCst);                 // c:1018 No active bangs in aliases
+            crate::ported::hist::qbang.store(false, SeqCst); // c:1018 No active bangs in aliases
         }
-        if doit != 0 {                                                        // c:1020
-            inungetc(c);                               // c:1021
+        if doit != 0 {
+            // c:1020
+            inungetc(c); // c:1021
         }
-        if !crate::ported::hist::qbang.load(SeqCst) { return; }              // c:1022
+        if !crate::ported::hist::qbang.load(SeqCst) {
+            return;
+        } // c:1022
         let inflags2 = crate::ported::input::inbufflags.with(|f| f.get());
         doit = if crate::ported::hist::stophist.load(SeqCst) == 0            // c:1023-1024
             && ((inflags2 & INP_HIST) != 0 || (inflags2 & INP_ALIAS) == 0)
-        { 1 } else { 0 };
-        c = '\\';                                                            // c:1025
+        {
+            1
+        } else {
+            0
+        };
+        c = '\\'; // c:1025
     }
 }
 
@@ -2958,13 +3382,17 @@ pub fn ihungetc(c: i32) {                                                    // 
 /// globals, then peeks the trailing `:G` (global) or fall-through char.
 /// Returns 0 on success, 1 on a bad-expansion (empty old chunk).
 /// WARNING: param names don't match C — Rust=(_subline, gbalp, cflagp) vs C=(subline, gbalp, cflagp)
-pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {  // c:518
-    let del = match ingetc() {                         // c:524 del = ingetc()
-        Some(c) => c, None => return 1,
+pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {
+    // c:518
+    let del = match ingetc() {
+        // c:524 del = ingetc()
+        Some(c) => c,
+        None => return 1,
     };
     // c:525-528 — `ptr1 = hdynread2(del); if (!ptr1) return 1;`
     // Inline hdynread2: read until del or '\n', honoring backslash escapes.
-    let read_until = |stop: char| -> Option<String> {                        // c:hdynread2 inline
+    let read_until = |stop: char| -> Option<String> {
+        // c:hdynread2 inline
         let mut out = String::new();
         loop {
             match ingetc() {
@@ -2973,7 +3401,9 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {  
                 Some(c) if c == stop => return Some(out),
                 Some('\\') => {
                     if let Some(n) = ingetc() {
-                        if n != stop { out.push('\\'); }
+                        if n != stop {
+                            out.push('\\');
+                        }
                         out.push(n);
                     }
                 }
@@ -2981,26 +3411,37 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {  
             }
         }
     };
-    let ptr1 = match read_until(del) { Some(p) => p, None => return 1 };     // c:525
-    let ptr2 = read_until(del).unwrap_or_default();                          // c:529
-    if !ptr1.is_empty() {                                                    // c:530
-        *hsubl.lock().unwrap() = Some(ptr1);                                 // c:531-532 zsfree(hsubl); hsubl = ptr1
-    } else if hsubl.lock().unwrap().is_none() {                              // c:533 fail silently
-        return 0;                                                            // c:536
+    let ptr1 = match read_until(del) {
+        Some(p) => p,
+        None => return 1,
+    }; // c:525
+    let ptr2 = read_until(del).unwrap_or_default(); // c:529
+    if !ptr1.is_empty() {
+        // c:530
+        *hsubl.lock().unwrap() = Some(ptr1); // c:531-532 zsfree(hsubl); hsubl = ptr1
+    } else if hsubl.lock().unwrap().is_none() {
+        // c:533 fail silently
+        return 0; // c:536
     }
-    *hsubr.lock().unwrap() = Some(ptr2);                                     // c:539-540 zsfree(hsubr); hsubr = ptr2
-    let follow = ingetc();                             // c:541 follow = ingetc()
-    if follow == Some(':') {                                                 // c:542
-        let next = ingetc();                           // c:543
-        if next == Some('G') { *gbalp = 1; }                                 // c:544-545
+    *hsubr.lock().unwrap() = Some(ptr2); // c:539-540 zsfree(hsubr); hsubr = ptr2
+    let follow = ingetc(); // c:541 follow = ingetc()
+    if follow == Some(':') {
+        // c:542
+        let next = ingetc(); // c:543
+        if next == Some('G') {
+            *gbalp = 1;
+        }
+        // c:544-545
         else {
-            if let Some(c) = next { inungetc(c); }     // c:547 inungetc
-            *cflagp = 1;                                                     // c:548
+            if let Some(c) = next {
+                inungetc(c);
+            } // c:547 inungetc
+            *cflagp = 1; // c:548
         }
     } else if let Some(c) = follow {
-        inungetc(c);                                   // c:551 inungetc(follow)
+        inungetc(c); // c:551 inungetc(follow)
     }
-    0                                                                        // c:553
+    0 // c:553
 }
 
 /// Port of `char *hdynread2(int stop)` from Src/hist.c.
@@ -3011,7 +3452,9 @@ pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
     while let Some(c) = chars.next() {
         consumed += c.len_utf8();
         if c == stop || c == '\n' {
-            if c == '\n' { consumed -= c.len_utf8(); }
+            if c == '\n' {
+                consumed -= c.len_utf8();
+            }
             return (out, consumed);
         }
         if c == '\\' {
@@ -3027,7 +3470,8 @@ pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
 }
 
 /// Port of `void inithist(void)` from Src/hist.c:2613.
-pub fn inithist() {                                                          // c:2613
+pub fn inithist() {
+    // c:2613
     histsiz.store(1000, Ordering::SeqCst);
     savehistsiz.store(1000, Ordering::SeqCst);
     curhist.store(0, Ordering::SeqCst);
@@ -3051,13 +3495,18 @@ pub fn resizehistents() {
 /// Port of `void readhistline(char *line, ...)` from Src/hist.c.
 pub fn readhistline(line: &str) -> Option<histent> {
     let line = line.trim();
-    if line.is_empty() { return None; }
+    if line.is_empty() {
+        return None;
+    }
     if let Some(rest) = line.strip_prefix(": ") {
         if let Some(semi) = rest.find(';') {
             let meta = &rest[..semi];
             let cmd = &rest[semi + 1..];
             let parts: Vec<&str> = meta.splitn(2, ':').collect();
-            let timestamp = parts.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let timestamp = parts
+                .first()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
             let mut entry = make_histent(0, cmd.to_string());
             entry.stim = timestamp;
             return Some(entry);
@@ -3067,7 +3516,8 @@ pub fn readhistline(line: &str) -> Option<histent> {
 }
 
 /// Port of `void readhistfile(char *fn, int err, int readflags)` from Src/hist.c:2675.
-pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {     // c:2675
+pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
+    // c:2675
     let path: String = match fn_path {
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
@@ -3079,7 +3529,9 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {     // 
         Ok(s) => s,
         Err(_) => return,
     };
-    if contents.is_empty() { return; }
+    if contents.is_empty() {
+        return;
+    }
     let _ = lockhistfile(Some(&path), 1);
 
     let mut current: Option<(i64, i64, String)> = None;
@@ -3141,12 +3593,21 @@ pub fn flockhistfile(path: &str) -> i32 {
             .open(format!("{}.lock", path))
         {
             let fd = file.as_raw_fd();
-            return unsafe { if libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 { 1 } else { 0 } };
+            return unsafe {
+                if libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 {
+                    1
+                } else {
+                    0
+                }
+            };
         }
         0
     }
     #[cfg(not(unix))]
-    { let _ = path; 1 }
+    {
+        let _ = path;
+        1
+    }
 }
 
 /// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
@@ -3154,7 +3615,8 @@ pub fn flockhistfile(path: &str) -> i32 {
 /// the C `fopen`+`fwrite`+`fclose` ladder with the `err` arg folded
 /// into the Result-bubbling; HFILE_APPEND/HFILE_USE_OPTIONS flag
 /// handling lives on the caller's writeflags decision.
-pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // c:2922
+pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
+    // c:2922
     // c:2931-2934 — `if (!interact || savehistsiz <= 0 || !hist_ring
     //                || (!fn && !(fn = getsparam("HISTFILE")))) return;`
     //
@@ -3166,15 +3628,18 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // 
     //      history saving is explicitly disabled. The previous
     //      port wrote an EMPTY file (cap=0 → no entries),
     //      truncating the user's existing history.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)        // c:2932 !interact
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+    // c:2932 !interact
     {
         return;
     }
-    let cap = savehistsiz.load(Ordering::SeqCst);                             // c:2932 savehistsiz
-    if cap <= 0 {                                                             // c:2932 savehistsiz <= 0
+    let cap = savehistsiz.load(Ordering::SeqCst); // c:2932 savehistsiz
+    if cap <= 0 {
+        // c:2932 savehistsiz <= 0
         return;
     }
-    let path: String = match fn_path {                                        // c:2933 fn / HISTFILE
+    let path: String = match fn_path {
+        // c:2933 fn / HISTFILE
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
@@ -3183,13 +3648,18 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // 
     };
     let _ = lockhistfile(Some(&path), 1);
     if let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true).create(true).truncate(true).open(&path)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
     {
         let cap = cap as usize;
         let ring = hist_ring.lock().unwrap();
         let mut count = 0;
         for entry in ring.iter().rev() {
-            if count >= cap { break; }
+            if count >= cap {
+                break;
+            }
             let dur = entry.ftim.saturating_sub(entry.stim);
             let _ = writeln!(file, ": {}:{};{}", entry.stim, dur, entry.node.nam);
             count += 1;
@@ -3207,7 +3677,9 @@ pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
     if let Ok(meta) = std::fs::metadata(&lockfile) {
         if let Ok(modified) = meta.modified() {
             if let Ok(age) = modified.elapsed() {
-                if age.as_secs() < max_age_secs { return 1; }
+                if age.as_secs() < max_age_secs {
+                    return 1;
+                }
             }
         }
     }
@@ -3218,12 +3690,14 @@ pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
 /// Rust idiom replacement: `fs2::FileExt::try_lock_exclusive` covers
 /// the C `flock` + `link`-symlink retry loop; the `keep_trying`
 /// arg controls retry budget rather than mode flags.
-pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3182
-    let path: String = match fn_path {                                       // c:3182
+pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {
+    // c:3182
+    let path: String = match fn_path {
+        // c:3182
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
-            None => return 1,                                                // c:3189
+            None => return 1, // c:3189
         },
     };
     if lockhistct.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -3239,7 +3713,11 @@ pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // 
         }
     }
     lockhistct.fetch_sub(1, Ordering::SeqCst);
-    if keep_trying != 0 { 2 } else { 1 }
+    if keep_trying != 0 {
+        2
+    } else {
+        1
+    }
 }
 
 /// Port of `void unlockhistfile(char *fn)` from Src/hist.c.
@@ -3258,7 +3736,11 @@ pub fn unlockhistfile(path: &str) {
 /// Port of `int histfileIsLocked(void)` from Src/hist.c.
 #[allow(non_snake_case)]
 pub fn histfileIsLocked() -> i32 {
-    if lockhistct.load(Ordering::SeqCst) > 0 { 1 } else { 0 }
+    if lockhistct.load(Ordering::SeqCst) > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Port of `int bufferwords(LinkList list, char *buf, int *index, int flags)` from Src/hist.c.
@@ -3362,7 +3844,8 @@ pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
 /// On lex mismatch (the `bad = 1` branch at c:3776), falls back to
 /// the simple whitespace tokenizer (matches C's `lineptr = start;
 /// uselex = 0;` retry).
-pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // c:3650
+pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
+    // c:3650
     if uselex {
         // c:3662-3663 — wordlist = bufferwords(NULL, lineptr, NULL, LEXFLAGS_COMMENTS_KEEP);
         let (lexed, _) = bufferwords(line, 0);
@@ -3392,8 +3875,11 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // 
             loop {
                 // c:3715-3722 — semicolon vs ";;" disambiguation: a single
                 // `;` lex token shouldn't consume both chars of `;;`.
-                if word == ";" && lptr + 1 < bytes.len()
-                    && bytes[lptr] == b';' && bytes[lptr + 1] == b';' {
+                if word == ";"
+                    && lptr + 1 < bytes.len()
+                    && bytes[lptr] == b';'
+                    && bytes[lptr + 1] == b';'
+                {
                     // Treat this as a synthetic newline-→-`;` token: no
                     // line consumption (c:3721 loop_next=2, continue).
                     break;
@@ -3419,16 +3905,17 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // 
                         bad = true;
                         break;
                     }
-                    if bytes[lptr] == wbytes[wptr]
-                        || (bytes[lptr] == b'!' && wbytes[wptr] == b'|')      // c:3754-3755
+                    if bytes[lptr] == wbytes[wptr] || (bytes[lptr] == b'!' && wbytes[wptr] == b'|')
+                    // c:3754-3755
                     {
                         lptr += 1;
                         wptr += 1;
                         if wptr >= wbytes.len() {
                             break;
                         }
-                    } else if bytes[lptr] == b'\\' && lptr + 1 < bytes.len()
-                              && bytes[lptr + 1] == b'\n'
+                    } else if bytes[lptr] == b'\\'
+                        && lptr + 1 < bytes.len()
+                        && bytes[lptr + 1] == b'\n'
                     {
                         // c:3759-3769 — \\\n mid-word, skip line break.
                         lptr += 2;
@@ -3474,8 +3961,8 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // 
         if lptr >= bytes.len() {
             break;
         }
-        let word_start = lptr;                                                // c:3818
-        // c:3819-3826 — walk until next blank; Meta-byte advances by 2.
+        let word_start = lptr; // c:3818
+                               // c:3819-3826 — walk until next blank; Meta-byte advances by 2.
         while lptr < bytes.len() {
             let b = bytes[lptr];
             if b == 0x83 /* Meta */ && lptr + 1 < bytes.len() {
@@ -3486,32 +3973,39 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {     // 
                 lptr += 1;
             }
         }
-        words.push((word_start, lptr));                                       // c:3827
+        words.push((word_start, lptr)); // c:3827
     }
     words
 }
 
 /// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3845.
-pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // c:3845
-    let snap = histsave {                                                    // c:3870
+pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {
+    // c:3845
+    let snap = histsave {
+        // c:3870
         lasthist: histfile_stats {
-            text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
-            interrupted: 0, next_write_ev: 0,
+            text: None,
+            stim: 0,
+            mtim: 0,
+            fpos: 0,
+            fsiz: 0,
+            interrupted: 0,
+            next_write_ev: 0,
         },
-        histfile: hf.map(|s| s.to_string()),                                 // c:3872 h->histfile = histfile
-        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()),          // c:3874 h->hist_ring = hist_ring
-        curhist: curhist.load(Ordering::SeqCst),                             // c:3875 h->curhist = curhist
-        histlinect: histlinect.load(Ordering::SeqCst),                       // c:3876
-        histsiz: histsiz.load(Ordering::SeqCst),                             // c:3877
-        savehistsiz: savehistsiz.load(Ordering::SeqCst),                     // c:3878
-        locallevel: level,                                                   // c:3879
+        histfile: hf.map(|s| s.to_string()), // c:3872 h->histfile = histfile
+        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3874 h->hist_ring = hist_ring
+        curhist: curhist.load(Ordering::SeqCst),                    // c:3875 h->curhist = curhist
+        histlinect: histlinect.load(Ordering::SeqCst),              // c:3876
+        histsiz: histsiz.load(Ordering::SeqCst),                    // c:3877
+        savehistsiz: savehistsiz.load(Ordering::SeqCst),            // c:3878
+        locallevel: level,                                          // c:3879
     };
-    histsave_stack.lock().unwrap().push(snap);                               // c:3901
+    histsave_stack.lock().unwrap().push(snap); // c:3901
     histsave_stack_size.fetch_add(1, Ordering::SeqCst);
     histsave_stack_pos.fetch_add(1, Ordering::SeqCst);
-    histsiz.store(hs, Ordering::SeqCst);                                     // c:3901
-    savehistsiz.store(shs, Ordering::SeqCst);                                // c:3901
-    curhist.store(0, Ordering::SeqCst);                                      // c:3901 curhist = histlinect = 0
+    histsiz.store(hs, Ordering::SeqCst); // c:3901
+    savehistsiz.store(shs, Ordering::SeqCst); // c:3901
+    curhist.store(0, Ordering::SeqCst); // c:3901 curhist = histlinect = 0
     histlinect.store(0, Ordering::SeqCst);
     let _ = hf;
 }
@@ -3550,31 +4044,34 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // 
 ///
 /// Return: 0 when nothing was popped, else `histsave_stack_pos + 1`
 /// (the depth that WAS popped).
-pub fn pophiststack() -> i32 {                                                // c:3901
+pub fn pophiststack() -> i32 {
+    // c:3901
     let snap = match histsave_stack.lock().unwrap().pop() {
         Some(s) => s,
-        None => return 0,                                                     // c:3907
+        None => return 0, // c:3907
     };
     // c:3920-3924 — restore HISTFILE via setsparam / unsetparam.
     // Was previously `let _ = snap.histfile;` (dropped on the
     // floor). With this in place, `fc -p file ...; fc -P`
     // properly restores the outer HISTFILE value.
     if let Some(ref hf) = snap.histfile {
-        if !hf.is_empty() {                                                   // c:3922 *h->histfile
-            crate::ported::params::setsparam("HISTFILE", hf);                 // c:3922
-        } else {                                                              // c:3923
+        if !hf.is_empty() {
+            // c:3922 *h->histfile
+            crate::ported::params::setsparam("HISTFILE", hf); // c:3922
+        } else {
+            // c:3923
             // Unset HISTFILE — Rust paramtab remove.
             let _ = crate::ported::params::paramtab()
                 .write()
                 .unwrap()
-                .remove("HISTFILE");                                          // c:3923 unsetparam
+                .remove("HISTFILE"); // c:3923 unsetparam
         }
     }
-    *hist_ring.lock().unwrap() = snap.hist_ring;                              // c:3925
-    curhist.store(snap.curhist, Ordering::SeqCst);                            // c:3926
-    histlinect.store(snap.histlinect, Ordering::SeqCst);                      // c:3929
-    histsiz.store(snap.histsiz, Ordering::SeqCst);                            // c:3930
-    savehistsiz.store(snap.savehistsiz, Ordering::SeqCst);                    // c:3931
+    *hist_ring.lock().unwrap() = snap.hist_ring; // c:3925
+    curhist.store(snap.curhist, Ordering::SeqCst); // c:3926
+    histlinect.store(snap.histlinect, Ordering::SeqCst); // c:3929
+    histsiz.store(snap.histsiz, Ordering::SeqCst); // c:3930
+    savehistsiz.store(snap.savehistsiz, Ordering::SeqCst); // c:3931
     histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
     histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
     // c:3934 — `return histsave_stack_pos + 1;` (new pos after
@@ -3618,13 +4115,16 @@ pub fn pophiststack() -> i32 {                                                //
 ///
 /// WARNING: param names don't match C — Rust=(pop_through, writeflags)
 /// matches C=(pop_through, writeflags) shape; callers updated.
-pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {    // c:3947
+pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {
+    // c:3947
     let stack_pos = histsave_stack_pos.load(SeqCst);
     // c:3949-3953 — non-positive pop_through means "pop relative
     // to current pos": fold to an absolute index.
-    if pop_through <= 0 {                                                     // c:3949
-        pop_through += stack_pos + 1;                                         // c:3950
-        if pop_through <= 0 {                                                 // c:3951
+    if pop_through <= 0 {
+        // c:3949
+        pop_through += stack_pos + 1; // c:3950
+        if pop_through <= 0 {
+            // c:3951
             pop_through = 1;
         }
     }
@@ -3634,7 +4134,8 @@ pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {    //
     // (the per-frame locallevel snapshot); approximate by skipping
     // this loop — matches the "pop everything we have" intent for
     // current callers.
-    if stack_pos < pop_through {                                              // c:3957
+    if stack_pos < pop_through {
+        // c:3957
         return 0;
     }
     // c:3959-3962 — loop pop until we reach pop_through. The
@@ -3644,8 +4145,9 @@ pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {    //
     loop {
         // c:3960-3961 — `if (!nohistsave) savehistfile(NULL, 1, writeflags);`.
         savehistfile(None, writeflags);
-        pophiststack();                                                       // c:3962
-        if histsave_stack_pos.load(SeqCst) < pop_through {                    // c:3963
+        pophiststack(); // c:3962
+        if histsave_stack_pos.load(SeqCst) < pop_through {
+            // c:3963
             break;
         }
     }
@@ -3660,117 +4162,125 @@ pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {    //
 
 /// Port of `HashTable histtab` from Src/hist.c:101.
 /// Lookup table for histent by name (placeholder until hashtable port lands). // c:101
-pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new());              // c:101
+pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new()); // c:101
 
 /// Port of `mod_export Histent hist_ring` from Src/hist.c:103.
 /// Doubly-linked ring of history entries; modelled here as a `Vec<histent>`
 /// since each histent already has up/down pointers in the C struct.
-pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new());          // c:103
+pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new()); // c:103
 
 /// Port of `struct histent curline` from Src/hist.c:91. Sentinel
 /// histent for the in-progress edit; spliced into the ring head by
 /// linkcurline() and removed by unlinkcurline().
-pub static curline: Mutex<Option<histent>> = Mutex::new(None);               // c:91
+pub static curline: Mutex<Option<histent>> = Mutex::new(None); // c:91
 
 /// Port of `zlong histsiz` from Src/hist.c:108.
-pub static histsiz: AtomicI64 = AtomicI64::new(0);                           // c:108
+pub static histsiz: AtomicI64 = AtomicI64::new(0); // c:108
 
 /// Port of `zlong savehistsiz` from Src/hist.c:113.
-pub static savehistsiz: AtomicI64 = AtomicI64::new(0);                       // c:113
+pub static savehistsiz: AtomicI64 = AtomicI64::new(0); // c:113
 
 /// Port of `int histdone` from Src/hist.c:119.
-pub static histdone: AtomicI32 = AtomicI32::new(0);                          // c:119
+pub static histdone: AtomicI32 = AtomicI32::new(0); // c:119
 
 /// Port of `int histactive` from Src/hist.c:124.
-pub static histactive: AtomicU32 = AtomicU32::new(0);                        // c:124
+pub static histactive: AtomicU32 = AtomicU32::new(0); // c:124
 
 /// Port of `int hist_ignore_all_dups` from Src/hist.c:130.
-pub static hist_ignore_all_dups: AtomicI32 = AtomicI32::new(0);              // c:130
+pub static hist_ignore_all_dups: AtomicI32 = AtomicI32::new(0); // c:130
 
 /// Port of `mod_export int hist_skip_flags` from Src/hist.c:135.
-pub static hist_skip_flags: AtomicI32 = AtomicI32::new(0);                   // c:135
+pub static hist_skip_flags: AtomicI32 = AtomicI32::new(0); // c:135
 
 /// Port of `short *chwords` from Src/hist.c:147.
 /// Word beginning/end offsets in current history line.
-pub static chwords: Mutex<Vec<i16>> = Mutex::new(Vec::new());                // c:147
+pub static chwords: Mutex<Vec<i16>> = Mutex::new(Vec::new()); // c:147
 
 /// Port of `int chwordlen` from Src/hist.c:154.
-pub static chwordlen: AtomicI32 = AtomicI32::new(0);                         // c:154
+pub static chwordlen: AtomicI32 = AtomicI32::new(0); // c:154
 
 /// Port of `int chwordpos` from Src/hist.c:154.
-pub static chwordpos: AtomicI32 = AtomicI32::new(0);                         // c:154
+pub static chwordpos: AtomicI32 = AtomicI32::new(0); // c:154
 
 /// Port of `char *hsubl` from Src/hist.c:159.
 /// Last `l` for `s/l/r/` history substitution.
-pub static hsubl: Mutex<Option<String>> = Mutex::new(None);                  // c:159
+pub static hsubl: Mutex<Option<String>> = Mutex::new(None); // c:159
 
 /// Port of `char *hsubr` from Src/hist.c:164.
-pub static hsubr: Mutex<Option<String>> = Mutex::new(None);                  // c:164
+pub static hsubr: Mutex<Option<String>> = Mutex::new(None); // c:164
 
 /// Port of `int hsubpatopt` from Src/hist.c:169.
-pub static hsubpatopt: AtomicI32 = AtomicI32::new(0);                        // c:169
+pub static hsubpatopt: AtomicI32 = AtomicI32::new(0); // c:169
 
 /// Port of `mod_export char *hptr` from Src/hist.c:174.
 /// Pointer into the history line; tracked as the byte length of `chline`.
-pub static hptr: AtomicUsize = AtomicUsize::new(0);                          // c:174
+pub static hptr: AtomicUsize = AtomicUsize::new(0); // c:174
 
 /// Port of `mod_export char *chline` from Src/hist.c:179.
-pub static chline: Mutex<String> = Mutex::new(String::new());                // c:179
+pub static chline: Mutex<String> = Mutex::new(String::new()); // c:179
 
 /// Port of `mod_export char *zle_chline` from Src/hist.c:195.
-pub static zle_chline: Mutex<Option<String>> = Mutex::new(None);             // c:195
+pub static zle_chline: Mutex<Option<String>> = Mutex::new(None); // c:195
 
 /// Port of `int qbang` from Src/hist.c:201.
-pub static qbang: AtomicBool = AtomicBool::new(false);                       // c:201
+pub static qbang: AtomicBool = AtomicBool::new(false); // c:201
 
 /// Port of `int hlinesz` from Src/hist.c:206.
-pub static hlinesz: AtomicI32 = AtomicI32::new(0);                           // c:206
+pub static hlinesz: AtomicI32 = AtomicI32::new(0); // c:206
 
 /// Port of `mod_export int expanding;` from Src/hist.c:65.
 /// Non-zero while history-expansion is rewriting the current line.
-pub static expanding: AtomicI32 = AtomicI32::new(0);                         // c:65
+pub static expanding: AtomicI32 = AtomicI32::new(0); // c:65
 
 /// Port of `mod_export int excs;` from Src/hist.c:70.
 /// Cursor position offset accumulator used while history-expanding.
-pub static excs: AtomicI32 = AtomicI32::new(0);                              // c:70
+pub static excs: AtomicI32 = AtomicI32::new(0); // c:70
 
 /// Port of `mod_export int exlast;` from Src/hist.c:70.
 /// Last `inbufct` snapshot taken at expansion start; the difference
 /// drives the `excs` cursor advance through the rewritten line.
-pub static exlast: AtomicI32 = AtomicI32::new(0);                            // c:70
+pub static exlast: AtomicI32 = AtomicI32::new(0); // c:70
 
 /// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
 #[allow(non_camel_case_types)]
-pub struct histfile_stats {                                                  // c:220
-    pub text: Option<String>,                                                // c:221
-    pub stim: i64,                                                           // c:222 time_t
-    pub mtim: i64,                                                           // c:222
-    pub fpos: i64,                                                           // c:223 off_t
-    pub fsiz: i64,                                                           // c:223
-    pub interrupted: i32,                                                    // c:224
-    pub next_write_ev: i64,                                                  // c:225 zlong
+pub struct histfile_stats {
+    // c:220
+    pub text: Option<String>, // c:221
+    pub stim: i64,            // c:222 time_t
+    pub mtim: i64,            // c:222
+    pub fpos: i64,            // c:223 off_t
+    pub fsiz: i64,            // c:223
+    pub interrupted: i32,     // c:224
+    pub next_write_ev: i64,   // c:225 zlong
 }
-static lasthist: Mutex<histfile_stats> = Mutex::new(histfile_stats {         // c:226
-    text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
-    interrupted: 0, next_write_ev: 0,
+static lasthist: Mutex<histfile_stats> = Mutex::new(histfile_stats {
+    // c:226
+    text: None,
+    stim: 0,
+    mtim: 0,
+    fpos: 0,
+    fsiz: 0,
+    interrupted: 0,
+    next_write_ev: 0,
 });
 
 /// Port of `static struct histsave` from Src/hist.c:228-238.
 #[allow(non_camel_case_types)]
-pub struct histsave {                                                        // c:228
-    pub lasthist: histfile_stats,                                            // c:229
-    pub histfile: Option<String>,                                            // c:230
-    pub hist_ring: Vec<histent>,                                             // c:232
-    pub curhist: i64,                                                        // c:233 zlong
-    pub histlinect: i64,                                                     // c:234
-    pub histsiz: i64,                                                        // c:235
-    pub savehistsiz: i64,                                                    // c:236
-    pub locallevel: i32,                                                     // c:237
+pub struct histsave {
+    // c:228
+    pub lasthist: histfile_stats, // c:229
+    pub histfile: Option<String>, // c:230
+    pub hist_ring: Vec<histent>,  // c:232
+    pub curhist: i64,             // c:233 zlong
+    pub histlinect: i64,          // c:234
+    pub histsiz: i64,             // c:235
+    pub savehistsiz: i64,         // c:236
+    pub locallevel: i32,          // c:237
 }
 
 /// Port of `static struct histsave *histsave_stack` from Src/hist.c:238.
 #[allow(clippy::vec_init_then_push)]
-static histsave_stack: Mutex<Vec<histsave>> = Mutex::new(Vec::new());        // c:238
+static histsave_stack: Mutex<Vec<histsave>> = Mutex::new(Vec::new()); // c:238
 
 // =========================================================================
 // Externs from other C files used in hist.c
@@ -3820,9 +4330,7 @@ static strin: AtomicI32 = AtomicI32::new(0);
 // or writing the wrong bit; history-file write paths would skip
 // entries the user wanted preserved, and HIST_FOREIGN/HIST_NOWRITE
 // gates fired against unrelated bit patterns.
-pub use crate::ported::zsh_h::{
-    HIST_OLD, HIST_DUP, HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE,
-};
+pub use crate::ported::zsh_h::{HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE};
 
 // =========================================================================
 // CASMOD_ enum (port of zsh.h:3122-3127)
@@ -3842,9 +4350,7 @@ pub use crate::ported::zsh_h::{
 // This is the same consolidation pattern applied to the prior HIST_*
 // flag-value drift fix and the BINF/CONDF/MFF duplicates in
 // module.rs — single source of truth for C-pinned bit values.
-pub use crate::ported::zsh_h::{
-    HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY,
-};
+pub use crate::ported::zsh_h::{HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY};
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
@@ -3887,7 +4393,11 @@ fn clone_histent(h: &histent) -> histent {
 }
 
 fn ring_position(ev: i64) -> Option<usize> {
-    hist_ring.lock().unwrap().iter().position(|h| h.histnum == ev)
+    hist_ring
+        .lock()
+        .unwrap()
+        .iter()
+        .position(|h| h.histnum == ev)
 }
 
 fn ring_at(idx: usize) -> i64 {
@@ -3938,7 +4448,6 @@ pub fn firsthist() -> i64 {
     let ring = hist_ring.lock().unwrap();
     ring.last().map(|h| h.histnum).unwrap_or(1)
 }
-
 
 /// Apply chained history modifiers `:X:Y...` to `val`.
 /// Direct port of the modifier-loop body in `Src/hist.c:830-961`
@@ -4151,7 +4660,8 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                 let (global, do_parse) = match c {
                     's' => (false, true),
                     '&' => (false, false),
-                    _ => {                                                   // 'g'
+                    _ => {
+                        // 'g'
                         match chars.next() {
                             Some('s') => (true, true),
                             Some('&') => (true, false),
@@ -4165,22 +4675,36 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                     let delim = chars.next().unwrap_or('/');
                     let mut old = String::new();
                     while let Some(&ch) = chars.peek() {
-                        if ch == delim { chars.next(); break; }
+                        if ch == delim {
+                            chars.next();
+                            break;
+                        }
                         chars.next();
                         if ch == '\\' {
                             if let Some(&n) = chars.peek() {
-                                if n == delim { chars.next(); old.push(delim); continue; }
+                                if n == delim {
+                                    chars.next();
+                                    old.push(delim);
+                                    continue;
+                                }
                             }
                         }
                         old.push(ch);
                     }
                     let mut new = String::new();
                     while let Some(&ch) = chars.peek() {
-                        if ch == delim { chars.next(); break; }
+                        if ch == delim {
+                            chars.next();
+                            break;
+                        }
                         chars.next();
                         if ch == '\\' {
                             if let Some(&n) = chars.peek() {
-                                if n == delim { chars.next(); new.push(delim); continue; }
+                                if n == delim {
+                                    chars.next();
+                                    new.push(delim);
+                                    continue;
+                                }
                             }
                         }
                         new.push(ch);
@@ -4253,9 +4777,12 @@ mod chrealpath_tests {
     #[test]
     fn chrealpath_rejects_relative_path() {
         let _g = crate::test_util::global_state_lock();
-        let r = chrealpath("relative/path", b'P', false);                    // c:1971
-        assert!(r.is_none(),
-            "c:1999-2000 — relative path MUST return None; got {:?}", r);
+        let r = chrealpath("relative/path", b'P', false); // c:1971
+        assert!(
+            r.is_none(),
+            "c:1999-2000 — relative path MUST return None; got {:?}",
+            r
+        );
     }
 
     /// `chrealpath` empty input returns Some(empty) — the c:1985-1986
@@ -4266,9 +4793,12 @@ mod chrealpath_tests {
     #[test]
     fn chrealpath_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        let r = chrealpath("", b'P', false);                                 // c:1971
-        assert_eq!(r.as_deref(), Some(""),
-            "c:1985-1986 — empty input returns Some(empty), not None");
+        let r = chrealpath("", b'P', false); // c:1971
+        assert_eq!(
+            r.as_deref(),
+            Some(""),
+            "c:1985-1986 — empty input returns Some(empty), not None"
+        );
     }
 
     /// `chrealpath` MUST fall back to walking parent prefixes when
@@ -4290,17 +4820,19 @@ mod chrealpath_tests {
         // dir.path() is an absolute, canonicalized path.
         let probe = dir.path().join("nonexistent_sub/nonexistent_tail");
         let probe_str = probe.to_str().unwrap();
-        let r = chrealpath(probe_str, b'P', false)                           // c:1971
+        let r = chrealpath(probe_str, b'P', false) // c:1971
             .expect("partial-prefix walk → Some");
         // The C semantics: prefix walks back to dir.path() (which
         // exists), and the tail "nonexistent_sub/nonexistent_tail"
         // gets re-spliced. Result must end with the unresolvable tail.
-        assert!(r.ends_with("/nonexistent_sub/nonexistent_tail"),
-            "c:2046-2048 — unresolvable tail must be re-spliced; got {:?}", r);
+        assert!(
+            r.ends_with("/nonexistent_sub/nonexistent_tail"),
+            "c:2046-2048 — unresolvable tail must be re-spliced; got {:?}",
+            r
+        );
         // Result must START at a real absolute path (the existing prefix).
         // On macOS `dir.path()` might be `/var/folders/...` (already canonical).
-        assert!(r.starts_with('/'),
-            "result must be absolute; got {:?}", r);
+        assert!(r.starts_with('/'), "result must be absolute; got {:?}", r);
     }
 }
 
@@ -4375,15 +4907,23 @@ mod histsplitwords_uselex_tests {
         let words = histsplitwords(line, true);
         // Every word span must lie within the line.
         for (s, e) in &words {
-            assert!(*e <= line.len(),
-                "word ({},{}) overflows line len {}", s, e, line.len());
+            assert!(
+                *e <= line.len(),
+                "word ({},{}) overflows line len {}",
+                s,
+                e,
+                line.len()
+            );
             assert!(s < e, "empty span ({},{})", s, e);
         }
         // The last word must be "bar" (offsets 7..10).
         let last = words.last().expect("at least one word");
-        assert_eq!(&line[last.0..last.1], "bar",
+        assert_eq!(
+            &line[last.0..last.1],
+            "bar",
             "c:3715-3722 — last word must be 'bar' regardless of ;; handling, got {:?}",
-            &line[last.0..last.1]);
+            &line[last.0..last.1]
+        );
     }
 }
 
@@ -4395,8 +4935,7 @@ mod subst_modifier_tests {
     /// must serialize through this Mutex — cargo's parallel test
     /// runner races on these atomics otherwise.
     fn hist_test_lock() -> &'static std::sync::Mutex<()> {
-        static L: std::sync::OnceLock<std::sync::Mutex<()>> =
-            std::sync::OnceLock::new();
+        static L: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         L.get_or_init(|| std::sync::Mutex::new(()))
     }
 
@@ -4404,16 +4943,20 @@ mod subst_modifier_tests {
     fn s_replaces_first_occurrence() {
         let _g = crate::test_util::global_state_lock();
         // c:3743 — `:s/old/new/` single substitution.
-        assert_eq!(apply_history_modifiers("foo bar foo", ":s/foo/baz/"),
-                   "baz bar foo");
+        assert_eq!(
+            apply_history_modifiers("foo bar foo", ":s/foo/baz/"),
+            "baz bar foo"
+        );
     }
 
     #[test]
     fn gs_replaces_all_occurrences() {
         let _g = crate::test_util::global_state_lock();
         // c:3743 — `:gs/old/new/` global substitution.
-        assert_eq!(apply_history_modifiers("foo bar foo", ":gs/foo/baz/"),
-                   "baz bar baz");
+        assert_eq!(
+            apply_history_modifiers("foo bar foo", ":gs/foo/baz/"),
+            "baz bar baz"
+        );
     }
 
     #[test]
@@ -4421,7 +4964,7 @@ mod subst_modifier_tests {
         let _g = crate::test_util::global_state_lock();
         // c:3784 — `:&` repeats the cached last_str/last_rep pair.
         // First call caches old="x" new="y"; second `:&` reuses it.
-        let first  = apply_history_modifiers("xxx", ":s/x/y/");
+        let first = apply_history_modifiers("xxx", ":s/x/y/");
         let second = apply_history_modifiers("xxxx", ":&");
         assert_eq!(first, "yxx");
         assert_eq!(second, "yxxx");
@@ -4477,7 +5020,7 @@ mod subst_modifier_tests {
         // call → ptr1 is None → return 1.
         let r = getsubsargs("", &mut gbal, &mut cflag);
         assert_eq!(r, 1, "no delimiter byte → fail-fast 1");
-        assert_eq!(gbal,  0, "no :G suffix observed");
+        assert_eq!(gbal, 0, "no :G suffix observed");
         assert_eq!(cflag, 0, "no cflag set");
     }
 
@@ -4505,17 +5048,29 @@ mod subst_modifier_tests {
         // Space and tab — collapsed.
         assert_eq!(histreduceblanks("a  b"), "a b");
         assert_eq!(histreduceblanks("a\t\tb"), "a b");
-        assert_eq!(histreduceblanks("a \tb"), "a b",
-            "c:1240 — mixed space/tab run collapses to single space");
+        assert_eq!(
+            histreduceblanks("a \tb"),
+            "a b",
+            "c:1240 — mixed space/tab run collapses to single space"
+        );
         // Newline is NOT inblank per c:50 — must be preserved.
-        assert_eq!(histreduceblanks("a\nb"), "a\nb",
-            "c:50 — newline not in inblank; passes through unchanged");
+        assert_eq!(
+            histreduceblanks("a\nb"),
+            "a\nb",
+            "c:50 — newline not in inblank; passes through unchanged"
+        );
         // CR is NOT inblank.
-        assert_eq!(histreduceblanks("a\rb"), "a\rb",
-            "CR not in inblank class; must NOT be collapsed");
+        assert_eq!(
+            histreduceblanks("a\rb"),
+            "a\rb",
+            "CR not in inblank class; must NOT be collapsed"
+        );
         // NBSP (\u{A0}) is NOT inblank either.
-        assert_eq!(histreduceblanks("a\u{A0}b"), "a\u{A0}b",
-            "NBSP not in inblank; must NOT be collapsed");
+        assert_eq!(
+            histreduceblanks("a\u{A0}b"),
+            "a\u{A0}b",
+            "NBSP not in inblank; must NOT be collapsed"
+        );
         // Leading/trailing spaces stripped (c:1241).
         assert_eq!(histreduceblanks("   x"), "x");
         assert_eq!(histreduceblanks("x   "), "x");
@@ -4549,7 +5104,10 @@ mod subst_modifier_tests {
         let n = digitcount();
         assert_eq!(n, 0, "c:586 — non-digit first char returns 0");
         let nxt = ingetc().unwrap_or('\0');
-        assert_eq!(nxt, 'x', "c:587 — even the non-digit first char is inungetc'd");
+        assert_eq!(
+            nxt, 'x',
+            "c:587 — even the non-digit first char is inungetc'd"
+        );
     }
 
     /// `hist_in_word` / `hist_is_in_word` round-trip — the state flag
@@ -4572,8 +5130,8 @@ mod subst_modifier_tests {
     fn remtext_strips_extension_keeping_dirname() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(remtext("path/file.ext"), "path/file");
-        assert_eq!(remtext("file.ext"),      "file");
-        assert_eq!(remtext("file"),          "file");
+        assert_eq!(remtext("file.ext"), "file");
+        assert_eq!(remtext("file"), "file");
     }
 
     /// c:2122 + Doc/Zsh/expn.yo:303-310 — the `:r` modifier strips
@@ -4590,10 +5148,16 @@ mod subst_modifier_tests {
     #[test]
     fn remtext_strips_leading_dot_per_zsh_doc() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(remtext(".bashrc"),      "",
-            "$.bashrc:r is an extension per Doc/Zsh/expn.yo:303");
-        assert_eq!(remtext("path/.bashrc"), "path/",
-            "extension scan stops at `/`, then strips at first `.`");
+        assert_eq!(
+            remtext(".bashrc"),
+            "",
+            "$.bashrc:r is an extension per Doc/Zsh/expn.yo:303"
+        );
+        assert_eq!(
+            remtext("path/.bashrc"),
+            "path/",
+            "extension scan stops at `/`, then strips at first `.`"
+        );
     }
 
     /// c:2136 — `rembutext("path/file.ext")` returns `"ext"` (the
@@ -4603,9 +5167,12 @@ mod subst_modifier_tests {
     fn rembutext_returns_extension_only() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(rembutext("path/file.ext"), "ext");
-        assert_eq!(rembutext("file.tar.gz"),   "gz",
-            "last `.` wins (extension-only is post-LAST-dot)");
-        assert_eq!(rembutext("file"),          "");
+        assert_eq!(
+            rembutext("file.tar.gz"),
+            "gz",
+            "last `.` wins (extension-only is post-LAST-dot)"
+        );
+        assert_eq!(rembutext("file"), "");
     }
 
     /// c:2056 — `remtpath(path, 0)` (the `${PWD:h}` no-count case)
@@ -4615,10 +5182,9 @@ mod subst_modifier_tests {
     #[test]
     fn remtpath_count_zero_strips_last_component() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(remtpath("/a/b/c", 0),  "/a/b");
-        assert_eq!(remtpath("/a",     0),  "/");
-        assert_eq!(remtpath("foo",    0),  ".",
-            "no slash → returns '.'");
+        assert_eq!(remtpath("/a/b/c", 0), "/a/b");
+        assert_eq!(remtpath("/a", 0), "/");
+        assert_eq!(remtpath("foo", 0), ".", "no slash → returns '.'");
     }
 
     /// c:2152 — `remlpaths(path, count)` keeps the LAST `count`
@@ -4655,8 +5221,11 @@ mod subst_modifier_tests {
     fn casemodify_caps_capitalises_word_starts() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
-        assert_eq!(casemodify("FOO BAR",     CASMOD_CAPS), "Foo Bar",
-            "non-first letters lowercased");
+        assert_eq!(
+            casemodify("FOO BAR", CASMOD_CAPS),
+            "Foo Bar",
+            "non-first letters lowercased"
+        );
     }
 
     /// `Src/hist.c:2486-2523` — `quote(s)` wraps in `'...'` and
@@ -4668,16 +5237,25 @@ mod subst_modifier_tests {
     fn quote_breaks_only_narrow_inblank_chars() {
         let _g = crate::test_util::global_state_lock();
         // c:2514 — close current quote, emit ` ` in its own pair, reopen.
-        assert_eq!(quote("a b"), "'a' 'b'",
-            "c:2514 — space broken out of single-quote span");
+        assert_eq!(
+            quote("a b"),
+            "'a' 'b'",
+            "c:2514 — space broken out of single-quote span"
+        );
         assert_eq!(quote("a\tb"), "'a'\t'b'");
         assert_eq!(quote("a\nb"), "'a'\n'b'");
         // CR (\r) is NOT inblank per C → must stay inside the quotes.
-        assert_eq!(quote("a\rb"), "'a\rb'",
-            "c:2499 — CR is NOT in C's inblank set; stays inside quotes");
+        assert_eq!(
+            quote("a\rb"),
+            "'a\rb'",
+            "c:2499 — CR is NOT in C's inblank set; stays inside quotes"
+        );
         // NBSP (0xA0) is NOT in narrow inblank either.
-        assert_eq!(quote("a\u{00A0}b"), "'a\u{00A0}b'",
-            "NBSP is not inblank; must remain inside the quote span");
+        assert_eq!(
+            quote("a\u{00A0}b"),
+            "'a\u{00A0}b'",
+            "NBSP is not inblank; must remain inside the quote span"
+        );
     }
 
     /// `Src/hist.c:2527-2560` — `quotebreak(s)` same as quote but
@@ -4690,14 +5268,23 @@ mod subst_modifier_tests {
         assert_eq!(quotebreak("a\tb"), "'a'\t'b'");
         assert_eq!(quotebreak("a\nb"), "'a'\n'b'");
         // CR — NOT inblank → stays inside.
-        assert_eq!(quotebreak("a\rb"), "'a\rb'",
-            "CR not in inblank set, must not be broken out");
+        assert_eq!(
+            quotebreak("a\rb"),
+            "'a\rb'",
+            "CR not in inblank set, must not be broken out"
+        );
         // NBSP — NOT inblank.
-        assert_eq!(quotebreak("a\u{00A0}b"), "'a\u{00A0}b'",
-            "NBSP not in inblank, must not be broken out");
+        assert_eq!(
+            quotebreak("a\u{00A0}b"),
+            "'a\u{00A0}b'",
+            "NBSP not in inblank, must not be broken out"
+        );
         // Form-feed (\x0C) — NOT inblank.
-        assert_eq!(quotebreak("a\u{000C}b"), "'a\u{000C}b'",
-            "FF not in inblank, must not be broken out");
+        assert_eq!(
+            quotebreak("a\u{000C}b"),
+            "'a\u{000C}b'",
+            "FF not in inblank, must not be broken out"
+        );
     }
 
     /// Pin: `savehistfile` short-circuits when `!interact` per
@@ -4724,8 +5311,10 @@ mod subst_modifier_tests {
         dosetopt(INTERACTIVE, 0, 0);
         savehistfile(Some(path_str), 0);
         let after = std::fs::read(&path).expect("read after");
-        assert_eq!(after, b"PRESERVED",
-            "c:2932 — !interact must skip write; original content preserved");
+        assert_eq!(
+            after, b"PRESERVED",
+            "c:2932 — !interact must skip write; original content preserved"
+        );
         // Restore.
         dosetopt(INTERACTIVE, if saved { 1 } else { 0 }, 0);
     }
@@ -4744,26 +5333,29 @@ mod subst_modifier_tests {
         let saved_chwordpos = chwordpos.swap(0, Ordering::SeqCst);
 
         // Empty chline → None (c:1777).
-        assert_eq!(hgetline(), None,
-            "c:1777 — empty chline returns None");
+        assert_eq!(hgetline(), None, "c:1777 — empty chline returns None");
 
         // chline = "abcdef", hptr = 0 → None (c:1777 hp == 0).
         *chline.lock().unwrap() = "abcdef".to_string();
         hptr.store(0, Ordering::SeqCst);
-        assert_eq!(hgetline(), None,
-            "c:1777 — hptr == 0 returns None");
+        assert_eq!(hgetline(), None, "c:1777 — hptr == 0 returns None");
 
         // chline = "abcdef", hptr = 3 → Some("abc"), reset hptr/pos.
         *chline.lock().unwrap() = "abcdef".to_string();
         hptr.store(3, Ordering::SeqCst);
         chwordpos.store(2, Ordering::SeqCst);
         let result = hgetline();
-        assert_eq!(result, Some("abc".to_string()),
-            "c:1779 — truncate chline at hptr=3 returns 'abc'");
-        assert_eq!(hptr.load(Ordering::SeqCst), 0,
-            "c:1783 — hptr reset to 0");
-        assert_eq!(chwordpos.load(Ordering::SeqCst), 0,
-            "c:1784 — chwordpos reset to 0");
+        assert_eq!(
+            result,
+            Some("abc".to_string()),
+            "c:1779 — truncate chline at hptr=3 returns 'abc'"
+        );
+        assert_eq!(hptr.load(Ordering::SeqCst), 0, "c:1783 — hptr reset to 0");
+        assert_eq!(
+            chwordpos.load(Ordering::SeqCst),
+            0,
+            "c:1784 — chwordpos reset to 0"
+        );
 
         // Restore state.
         *chline.lock().unwrap() = saved_chline;
@@ -4799,22 +5391,31 @@ mod subst_modifier_tests {
         chwordpos.store(4, Ordering::SeqCst);
         hptr.store(999, Ordering::SeqCst);
         histbackword();
-        assert_eq!(hptr.load(Ordering::SeqCst), 7,
-            "c:1715 — even chwordpos must rewind hptr to chwords[pos-1]");
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            7,
+            "c:1715 — even chwordpos must rewind hptr to chwords[pos-1]"
+        );
 
         // chwordpos at 0 (no words recorded) — no-op.
         chwordpos.store(0, Ordering::SeqCst);
         hptr.store(123, Ordering::SeqCst);
         histbackword();
-        assert_eq!(hptr.load(Ordering::SeqCst), 123,
-            "c:1714 — chwordpos == 0 means no-op (hptr untouched)");
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            123,
+            "c:1714 — chwordpos == 0 means no-op (hptr untouched)"
+        );
 
         // chwordpos at 3 (odd, mid-word) — no-op.
         chwordpos.store(3, Ordering::SeqCst);
         hptr.store(456, Ordering::SeqCst);
         histbackword();
-        assert_eq!(hptr.load(Ordering::SeqCst), 456,
-            "c:1714 — odd chwordpos means mid-word, no-op");
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            456,
+            "c:1714 — odd chwordpos means mid-word, no-op"
+        );
 
         // Restore state.
         chwordpos.store(saved_pos, Ordering::SeqCst);
@@ -4835,8 +5436,7 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_errflag =
-            errflag.load(Ordering::SeqCst);
+        let saved_errflag = errflag.load(Ordering::SeqCst);
         let saved_lexstop = lexstop.load(Ordering::SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
         let saved_qbang = qbang.load(Ordering::SeqCst);
@@ -4860,10 +5460,16 @@ mod subst_modifier_tests {
         ihwaddc(b'W' as i32);
 
         let cl = chline.lock().unwrap().clone();
-        assert_eq!(cl.as_str(), "echo NEWword extra",
-            "c:368 — *hptr++ = c writes AT cursor (NOT appends to end)");
-        assert_eq!(hptr.load(Ordering::SeqCst), 8,
-            "c:368 — hptr advances over the three overwrites");
+        assert_eq!(
+            cl.as_str(),
+            "echo NEWword extra",
+            "c:368 — *hptr++ = c writes AT cursor (NOT appends to end)"
+        );
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            8,
+            "c:368 — hptr advances over the three overwrites"
+        );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
@@ -4889,8 +5495,7 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_errflag =
-            errflag.load(Ordering::SeqCst);
+        let saved_errflag = errflag.load(Ordering::SeqCst);
         let saved_lexstop = lexstop.load(Ordering::SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
         let saved_qbang = qbang.load(Ordering::SeqCst);
@@ -4899,7 +5504,7 @@ mod subst_modifier_tests {
         let saved_hlinesz = hlinesz.load(Ordering::SeqCst);
 
         // Set up: history active, no errors, no alias-only.
-        *chline.lock().unwrap() = "AB".to_string();   // chline must be non-empty
+        *chline.lock().unwrap() = "AB".to_string(); // chline must be non-empty
         hptr.store(2, Ordering::SeqCst);
         errflag.store(0, Ordering::SeqCst);
         lexstop.store(false, Ordering::SeqCst);
@@ -4911,31 +5516,49 @@ mod subst_modifier_tests {
 
         // Push 'x' → chline grows AND hptr advances.
         ihwaddc(b'x' as i32);
-        assert_eq!(chline.lock().unwrap().as_str(), "ABx",
-            "c:368 — chline grows");
-        assert_eq!(hptr.load(Ordering::SeqCst), 3,
-            "c:368 — hptr advances by 1 (CRITICAL — previous port left this stale)");
+        assert_eq!(
+            chline.lock().unwrap().as_str(),
+            "ABx",
+            "c:368 — chline grows"
+        );
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            3,
+            "c:368 — hptr advances by 1 (CRITICAL — previous port left this stale)"
+        );
 
         // Push 'y' → second advance.
         ihwaddc(b'y' as i32);
-        assert_eq!(hptr.load(Ordering::SeqCst), 4,
-            "c:368 — hptr advances on each push");
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            4,
+            "c:368 — hptr advances on each push"
+        );
 
         // Bang-escape with qbang: qbang=true, c=bangchar → '\\' AND c
         // get pushed, hptr advances by 2.
         qbang.store(true, Ordering::SeqCst);
         ihwaddc(b'!' as i32);
-        assert_eq!(chline.lock().unwrap().as_str(), "ABxy\\!",
-            "c:366 — qbang escape pushes '\\\\' before bangchar");
-        assert_eq!(hptr.load(Ordering::SeqCst), 6,
-            "c:366+c:368 — both pushes advance hptr (was off-by-one previously)");
+        assert_eq!(
+            chline.lock().unwrap().as_str(),
+            "ABxy\\!",
+            "c:366 — qbang escape pushes '\\\\' before bangchar"
+        );
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            6,
+            "c:366+c:368 — both pushes advance hptr (was off-by-one previously)"
+        );
 
         // errflag set → no-op.
         errflag.store(1, Ordering::SeqCst);
         let hptr_before = hptr.load(Ordering::SeqCst);
         ihwaddc(b'z' as i32);
-        assert_eq!(hptr.load(Ordering::SeqCst), hptr_before,
-            "c:359 — errflag short-circuits, hptr unchanged");
+        assert_eq!(
+            hptr.load(Ordering::SeqCst),
+            hptr_before,
+            "c:359 — errflag short-circuits, hptr unchanged"
+        );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
@@ -4982,26 +5605,38 @@ mod subst_modifier_tests {
 
         ihwend();
 
-        assert_eq!(chwords.lock().unwrap().get(1).copied(), Some(7),
-            "c:1694 — chwords[chwordpos] = hptr - chline = 7 (NOT chline.len()=10)");
-        assert_eq!(chwordpos.load(Ordering::SeqCst), 2,
-            "c:1694 — chwordpos++ on successful close");
+        assert_eq!(
+            chwords.lock().unwrap().get(1).copied(),
+            Some(7),
+            "c:1694 — chwords[chwordpos] = hptr - chline = 7 (NOT chline.len()=10)"
+        );
+        assert_eq!(
+            chwordpos.load(Ordering::SeqCst),
+            2,
+            "c:1694 — chwordpos++ on successful close"
+        );
 
         // c:1700 scrub branch — hptr<=chwords[start] → chwordpos--.
         *chwords.lock().unwrap() = vec![5, 0];
         chwordpos.store(1, Ordering::SeqCst);
-        hptr.store(3, Ordering::SeqCst);                        // hptr(3) <= chwords[0]=5
+        hptr.store(3, Ordering::SeqCst); // hptr(3) <= chwords[0]=5
         ihwend();
-        assert_eq!(chwordpos.load(Ordering::SeqCst), 0,
-            "c:1700 — chwordpos-- when hptr <= chwords[chwordpos-1]");
+        assert_eq!(
+            chwordpos.load(Ordering::SeqCst),
+            0,
+            "c:1700 — chwordpos-- when hptr <= chwords[chwordpos-1]"
+        );
 
         // Even chwordpos short-circuits (between-words, no in-flight).
         chwordpos.store(2, Ordering::SeqCst);
         hptr.store(9, Ordering::SeqCst);
         *chwords.lock().unwrap() = vec![0, 4, 5, 8];
         ihwend();
-        assert_eq!(chwordpos.load(Ordering::SeqCst), 2,
-            "c:1691 — even chwordpos short-circuits");
+        assert_eq!(
+            chwordpos.load(Ordering::SeqCst),
+            2,
+            "c:1691 — even chwordpos short-circuits"
+        );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
@@ -5025,14 +5660,18 @@ mod subst_modifier_tests {
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let saved_ring = {
             let r = hist_ring.lock().unwrap();
-            r.iter().map(|h| (h.node.nam.clone(), h.histnum, h.node.flags))
+            r.iter()
+                .map(|h| (h.node.nam.clone(), h.histnum, h.node.flags))
                 .collect::<Vec<_>>()
         };
         let saved_histlinect = histlinect.load(Ordering::SeqCst);
 
         // HIST_DUP must equal C value 0x08 (Src/zsh.h:2255).
-        assert_eq!(HIST_DUP, 0x08,
-            "HIST_DUP bit value must match C (0x08), got {:#x}", HIST_DUP);
+        assert_eq!(
+            HIST_DUP, 0x08,
+            "HIST_DUP bit value must match C (0x08), got {:#x}",
+            HIST_DUP
+        );
 
         // Build a ring with three entries, only the middle one flagged HIST_DUP.
         {
@@ -5040,16 +5679,22 @@ mod subst_modifier_tests {
             ring.clear();
             for (nam, num, flags) in [
                 ("entry1", 1i64, 0i32),
-                ("entry2", 2i64, HIST_DUP as i32),                   // flagged
+                ("entry2", 2i64, HIST_DUP as i32), // flagged
                 ("entry3", 3i64, 0i32),
             ] {
                 ring.push(histent {
                     node: crate::ported::zsh_h::hashnode {
-                        next: None, nam: nam.to_string(), flags,
+                        next: None,
+                        nam: nam.to_string(),
+                        flags,
                     },
-                    up: None, down: None, zle_text: None,
-                    stim: 0, ftim: 0,
-                    words: vec![], nwords: 0,
+                    up: None,
+                    down: None,
+                    zle_text: None,
+                    stim: 0,
+                    ftim: 0,
+                    words: vec![],
+                    nwords: 0,
                     histnum: num,
                 });
             }
@@ -5060,14 +5705,20 @@ mod subst_modifier_tests {
 
         {
             let ring = hist_ring.lock().unwrap();
-            assert_eq!(ring.len(), 2,
-                "c:1259-1260 — only the HIST_DUP-flagged entry is removed");
+            assert_eq!(
+                ring.len(),
+                2,
+                "c:1259-1260 — only the HIST_DUP-flagged entry is removed"
+            );
             assert!(ring.iter().any(|h| h.node.nam == "entry1"));
             assert!(ring.iter().any(|h| h.node.nam == "entry3"));
             assert!(!ring.iter().any(|h| h.node.nam == "entry2"));
         }
-        assert_eq!(histlinect.load(Ordering::SeqCst), 2,
-            "histlinect updated after removal");
+        assert_eq!(
+            histlinect.load(Ordering::SeqCst),
+            2,
+            "histlinect updated after removal"
+        );
 
         // Restore ring.
         {
@@ -5076,11 +5727,17 @@ mod subst_modifier_tests {
             for (nam, num, flags) in saved_ring {
                 ring.push(histent {
                     node: crate::ported::zsh_h::hashnode {
-                        next: None, nam, flags,
+                        next: None,
+                        nam,
+                        flags,
                     },
-                    up: None, down: None, zle_text: None,
-                    stim: 0, ftim: 0,
-                    words: vec![], nwords: 0,
+                    up: None,
+                    down: None,
+                    zle_text: None,
+                    stim: 0,
+                    ftim: 0,
+                    words: vec![],
+                    nwords: 0,
                     histnum: num,
                 });
             }
@@ -5100,8 +5757,7 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_excs = excs.load(Ordering::SeqCst);
-        let saved_zlemetacs =
-            crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+        let saved_zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
         let saved_expanding = expanding.load(Ordering::SeqCst);
         let saved_lexstop = lexstop.load(Ordering::SeqCst);
         let saved_qbang = qbang.load(Ordering::SeqCst);
@@ -5113,7 +5769,7 @@ mod subst_modifier_tests {
         expanding.store(1, Ordering::SeqCst);
         lexstop.store(false, Ordering::SeqCst);
         qbang.store(false, Ordering::SeqCst);
-        excs.store(10, Ordering::SeqCst);                                   // > zlemetacs
+        excs.store(10, Ordering::SeqCst); // > zlemetacs
         crate::ported::zle::compcore::ZLEMETACS.store(5, Ordering::SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(3));
         exlast.store(2, Ordering::SeqCst);
@@ -5121,8 +5777,11 @@ mod subst_modifier_tests {
         // c:405-407 — excs(10) > zlemetacs(5), so
         // new_excs = 10 + 1 + 3 - 2 = 12; 12 > 5 → no clamp.
         iaddtoline(b'x' as i32);
-        assert_eq!(excs.load(Ordering::SeqCst), 12,
-            "c:406 — excs += 1 + inbufct - exlast (10+1+3-2=12)");
+        assert_eq!(
+            excs.load(Ordering::SeqCst),
+            12,
+            "c:406 — excs += 1 + inbufct - exlast (10+1+3-2=12)"
+        );
 
         // c:407-410 — clamp branch: post-add excs < zlemetacs.
         // Set excs=6, zlemetacs=20, inbufct=1, exlast=10.
@@ -5137,8 +5796,11 @@ mod subst_modifier_tests {
         crate::ported::input::inbufct.with(|c| c.set(1));
         exlast.store(10, Ordering::SeqCst);
         iaddtoline(b'y' as i32);
-        assert_eq!(excs.load(Ordering::SeqCst), 20,
-            "c:407-410 — clamp to zlemetacs(20) when post-add excs<zlemetacs");
+        assert_eq!(
+            excs.load(Ordering::SeqCst),
+            20,
+            "c:407-410 — clamp to zlemetacs(20) when post-add excs<zlemetacs"
+        );
 
         // No adjustment when excs <= zlemetacs.
         excs.store(3, Ordering::SeqCst);
@@ -5146,14 +5808,16 @@ mod subst_modifier_tests {
         crate::ported::input::inbufct.with(|c| c.set(1));
         exlast.store(0, Ordering::SeqCst);
         iaddtoline(b'z' as i32);
-        assert_eq!(excs.load(Ordering::SeqCst), 3,
-            "c:405 — excs<=zlemetacs leaves excs unchanged");
+        assert_eq!(
+            excs.load(Ordering::SeqCst),
+            3,
+            "c:405 — excs<=zlemetacs leaves excs unchanged"
+        );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
         excs.store(saved_excs, Ordering::SeqCst);
-        crate::ported::zle::compcore::ZLEMETACS
-            .store(saved_zlemetacs, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLEMETACS.store(saved_zlemetacs, Ordering::SeqCst);
         expanding.store(saved_expanding, Ordering::SeqCst);
         lexstop.store(saved_lexstop, Ordering::SeqCst);
         qbang.store(saved_qbang, Ordering::SeqCst);
@@ -5189,24 +5853,25 @@ mod subst_modifier_tests {
         chwordpos.store(0, Ordering::SeqCst);
         hptr.store(4, Ordering::SeqCst);
         stophist.store(0, Ordering::SeqCst);
-        histactive.store(0, Ordering::SeqCst);                     // !HA_INWORD
-        crate::ported::input::inbufflags.with(|f| f.set(0));        // not alias-only
+        histactive.store(0, Ordering::SeqCst); // !HA_INWORD
+        crate::ported::input::inbufflags.with(|f| f.set(0)); // not alias-only
 
         ihwbegin(0);
 
         let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
-        assert_eq!(recorded, 4,
+        assert_eq!(
+            recorded, 4,
             "c:1658 — pos = hptr - chline + offset = 4 + 0 = 4 \
-             (NOT chline.len()=10)");
+             (NOT chline.len()=10)"
+        );
 
         // Negative offset clamps to 0 (c:1666).
         chwords.lock().unwrap().clear();
         chwordpos.store(0, Ordering::SeqCst);
         hptr.store(3, Ordering::SeqCst);
-        ihwbegin(-10);                                              // pos = 3-10 = -7 → clamp to 0
+        ihwbegin(-10); // pos = 3-10 = -7 → clamp to 0
         let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
-        assert_eq!(recorded, 0,
-            "c:1666 — pos<0 clamps to 0");
+        assert_eq!(recorded, 0, "c:1666 — pos<0 clamps to 0");
 
         // Stop guard (c:1659) — `stophist == 2` short-circuits.
         chwords.lock().unwrap().clear();
@@ -5214,8 +5879,10 @@ mod subst_modifier_tests {
         hptr.store(5, Ordering::SeqCst);
         stophist.store(2, Ordering::SeqCst);
         ihwbegin(0);
-        assert!(chwords.lock().unwrap().is_empty(),
-            "c:1659 — stophist==2 short-circuits, no record");
+        assert!(
+            chwords.lock().unwrap().is_empty(),
+            "c:1659 — stophist==2 short-circuits, no record"
+        );
         stophist.store(0, Ordering::SeqCst);
 
         // Alias-only guard (c:1659).
@@ -5224,8 +5891,10 @@ mod subst_modifier_tests {
         hptr.store(5, Ordering::SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS));
         ihwbegin(0);
-        assert!(chwords.lock().unwrap().is_empty(),
-            "c:1659 — alias-only (INP_ALIAS without INP_HIST) short-circuits");
+        assert!(
+            chwords.lock().unwrap().is_empty(),
+            "c:1659 — alias-only (INP_ALIAS without INP_HIST) short-circuits"
+        );
 
         // INP_ALIAS|INP_HIST does NOT short-circuit (mixed input).
         chwords.lock().unwrap().clear();
@@ -5234,8 +5903,7 @@ mod subst_modifier_tests {
         crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS | INP_HIST));
         ihwbegin(0);
         let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
-        assert_eq!(recorded, 7,
-            "c:1659 — alias+hist mixed still records");
+        assert_eq!(recorded, 7, "c:1659 — alias+hist mixed still records");
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
@@ -5268,36 +5936,56 @@ mod subst_modifier_tests {
             stim: 0,
             ftim: 0,
             words: vec![0, 4, 5, 10, 11, 16],
-            nwords: 3,                                          // c:2457 source of truth
+            nwords: 3, // c:2457 source of truth
             histnum: 1,
         };
 
         // c:2459 — `arg2 < arg1` → reject.
-        assert_eq!(getargs(&he, 2, 1), None,
-            "c:2459 — arg2 < arg1 rejects");
+        assert_eq!(getargs(&he, 2, 1), None, "c:2459 — arg2 < arg1 rejects");
         // c:2459 — `arg1 >= nwords` → reject.
-        assert_eq!(getargs(&he, 3, 3), None,
-            "c:2459 — arg1 >= nwords (3>=3) rejects");
+        assert_eq!(
+            getargs(&he, 3, 3),
+            None,
+            "c:2459 — arg1 >= nwords (3>=3) rejects"
+        );
         // c:2459 — `arg2 >= nwords` → reject.
-        assert_eq!(getargs(&he, 0, 3), None,
-            "c:2459 — arg2 >= nwords (3>=3) rejects");
+        assert_eq!(
+            getargs(&he, 0, 3),
+            None,
+            "c:2459 — arg2 >= nwords (3>=3) rejects"
+        );
 
         // c:2466 — `arg1==0 && arg2==nwords-1` → full event fast path.
-        assert_eq!(getargs(&he, 0, 2).as_deref(), Some("echo hello world"),
-            "c:2467 — full-event fast path returns dupstring(nam)");
+        assert_eq!(
+            getargs(&he, 0, 2).as_deref(),
+            Some("echo hello world"),
+            "c:2467 — full-event fast path returns dupstring(nam)"
+        );
 
         // c:2469-2481 — per-word slice. word[0] = "echo" (pos 0..4).
-        assert_eq!(getargs(&he, 0, 0).as_deref(), Some("echo"),
-            "c:2481 — word[0] = nam[0..4]");
+        assert_eq!(
+            getargs(&he, 0, 0).as_deref(),
+            Some("echo"),
+            "c:2481 — word[0] = nam[0..4]"
+        );
         // word[1] = "hello" (pos 5..10).
-        assert_eq!(getargs(&he, 1, 1).as_deref(), Some("hello"),
-            "c:2481 — word[1] = nam[5..10]");
+        assert_eq!(
+            getargs(&he, 1, 1).as_deref(),
+            Some("hello"),
+            "c:2481 — word[1] = nam[5..10]"
+        );
         // word[2] = "world" (pos 11..16).
-        assert_eq!(getargs(&he, 2, 2).as_deref(), Some("world"),
-            "c:2481 — word[2] = nam[11..16]");
+        assert_eq!(
+            getargs(&he, 2, 2).as_deref(),
+            Some("world"),
+            "c:2481 — word[2] = nam[11..16]"
+        );
         // Multi-word span: word[1..=2] = "hello world".
-        assert_eq!(getargs(&he, 1, 2).as_deref(), Some("hello world"),
-            "c:2481 — words[1..=2] = nam[5..16]");
+        assert_eq!(
+            getargs(&he, 1, 2).as_deref(),
+            Some("hello world"),
+            "c:2481 — words[1..=2] = nam[5..16]"
+        );
 
         // c:2476 — signed-short overflow detection. Build a histent
         // whose stored pos[0] is negative (simulating i16 wrap on a
@@ -5309,14 +5997,20 @@ mod subst_modifier_tests {
                 nam: "ab cd".to_string(),
                 flags: 0,
             },
-            up: None, down: None, zle_text: None,
-            stim: 0, ftim: 0,
-            words: vec![-1, 5, 3, 5],                            // word[0]: pos1 < 0
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: vec![-1, 5, 3, 5], // word[0]: pos1 < 0
             nwords: 2,
             histnum: 1,
         };
-        assert_eq!(getargs(&overflow, 0, 0), None,
-            "c:2476 — pos1 < 0 (i16 overflow) rejects");
+        assert_eq!(
+            getargs(&overflow, 0, 0),
+            None,
+            "c:2476 — pos1 < 0 (i16 overflow) rejects"
+        );
 
         // c:2476 — `pos1 < arg1` detection (pos must be ≥ word index).
         let underflow = histent {
@@ -5325,16 +6019,22 @@ mod subst_modifier_tests {
                 nam: "a b c d".to_string(),
                 flags: 0,
             },
-            up: None, down: None, zle_text: None,
-            stim: 0, ftim: 0,
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
             // arg1=2 but pos1=1 means recorded pos < word index.
             // Each word must be ≥1 char so word[2] must start at pos ≥ 2.
             words: vec![0, 1, 2, 3, 1, 5, 6, 7],
             nwords: 4,
             histnum: 1,
         };
-        assert_eq!(getargs(&underflow, 2, 2), None,
-            "c:2476 — pos1 < arg1 (i16 overflow signal) rejects");
+        assert_eq!(
+            getargs(&underflow, 2, 2),
+            None,
+            "c:2476 — pos1 < arg1 (i16 overflow signal) rejects"
+        );
     }
 
     /// Pin `hconsearch` to its canonical C body at
@@ -5349,13 +6049,17 @@ mod subst_modifier_tests {
         // Save ring state.
         let saved_ring = {
             let r = hist_ring.lock().unwrap();
-            r.iter().map(|h| (
-                h.node.nam.clone(),
-                h.histnum,
-                h.words.clone(),
-                h.nwords,
-                h.node.flags,
-            )).collect::<Vec<_>>()
+            r.iter()
+                .map(|h| {
+                    (
+                        h.node.nam.clone(),
+                        h.histnum,
+                        h.words.clone(),
+                        h.nwords,
+                        h.node.flags,
+                    )
+                })
+                .collect::<Vec<_>>()
         };
         let saved_curhist = curhist.load(Ordering::SeqCst);
 
@@ -5381,22 +6085,31 @@ mod subst_modifier_tests {
                 histnum: 7,
             });
         }
-        curhist.store(8, Ordering::SeqCst);   // up_histent will walk back to 7
+        curhist.store(8, Ordering::SeqCst); // up_histent will walk back to 7
 
         // "hello" found at pos 5 → word index 1 (0-based).
         let got = hconsearch("hello");
-        assert_eq!(got, Some((7, 1)),
-            "c:1846-1850 — strstr at pos 5 lands in word[1] (start=5)");
+        assert_eq!(
+            got,
+            Some((7, 1)),
+            "c:1846-1850 — strstr at pos 5 lands in word[1] (start=5)"
+        );
 
         // "world" found at pos 11 → word index 2.
         let got = hconsearch("world");
-        assert_eq!(got, Some((7, 2)),
-            "c:1846-1850 — strstr at pos 11 lands in word[2] (start=11)");
+        assert_eq!(
+            got,
+            Some((7, 2)),
+            "c:1846-1850 — strstr at pos 11 lands in word[2] (start=11)"
+        );
 
         // "echo" found at pos 0 → word index 0.
         let got = hconsearch("echo");
-        assert_eq!(got, Some((7, 0)),
-            "c:1846-1850 — strstr at pos 0 lands in word[0]");
+        assert_eq!(
+            got,
+            Some((7, 0)),
+            "c:1846-1850 — strstr at pos 0 lands in word[0]"
+        );
 
         // Miss → None (c:1853 return -1).
         let got = hconsearch("notthere");
@@ -5423,8 +6136,10 @@ mod subst_modifier_tests {
             });
         }
         let got = hconsearch("skip");
-        assert_eq!(got, None,
-            "c:1843-1844 — HIST_FOREIGN entries continue past, miss → None");
+        assert_eq!(
+            got, None,
+            "c:1843-1844 — HIST_FOREIGN entries continue past, miss → None"
+        );
 
         // Restore ring.
         {
@@ -5433,10 +6148,18 @@ mod subst_modifier_tests {
             for (nam, histnum, words, nwords, flags) in saved_ring {
                 ring.push(histent {
                     node: crate::ported::zsh_h::hashnode {
-                        next: None, nam, flags,
+                        next: None,
+                        nam,
+                        flags,
                     },
-                    up: None, down: None, zle_text: None,
-                    stim: 0, ftim: 0, words, nwords, histnum,
+                    up: None,
+                    down: None,
+                    zle_text: None,
+                    stim: 0,
+                    ftim: 0,
+                    words,
+                    nwords,
+                    histnum,
                 });
             }
         }
@@ -5463,7 +6186,7 @@ mod subst_modifier_tests {
         curhist.store(42, Ordering::SeqCst);
         histactive.store(HA_ACTIVE, Ordering::SeqCst);
         *chline.lock().unwrap() = "echo hello".to_string();
-        chwordpos.store(4, Ordering::SeqCst);                 // 2 words
+        chwordpos.store(4, Ordering::SeqCst); // 2 words
         *chwords.lock().unwrap() = vec![0, 4, 5, 10];
         *curline.lock().unwrap() = None;
 
@@ -5486,36 +6209,58 @@ mod subst_modifier_tests {
         checkcurline(&he);
         {
             let cl = curline.lock().unwrap();
-            let snap = cl.as_ref().expect(
-                "c:2425-2427 — matching+active must flush a snapshot"
+            let snap = cl
+                .as_ref()
+                .expect("c:2425-2427 — matching+active must flush a snapshot");
+            assert_eq!(
+                snap.node.nam, "echo hello",
+                "c:2425 — curline.node.nam = chline"
             );
-            assert_eq!(snap.node.nam, "echo hello",
-                "c:2425 — curline.node.nam = chline");
-            assert_eq!(snap.nwords, 2,
-                "c:2426 — curline.nwords = chwordpos/2 (4/2=2)");
-            assert_eq!(snap.words, vec![0, 4, 5, 10],
-                "c:2427 — curline.words = chwords");
+            assert_eq!(
+                snap.nwords, 2,
+                "c:2426 — curline.nwords = chwordpos/2 (4/2=2)"
+            );
+            assert_eq!(
+                snap.words,
+                vec![0, 4, 5, 10],
+                "c:2427 — curline.words = chwords"
+            );
         }
 
         // Case 2: matching histnum but NOT active → no flush.
-        histactive.store(0, Ordering::SeqCst);                // c:2424 HA_ACTIVE off
+        histactive.store(0, Ordering::SeqCst); // c:2424 HA_ACTIVE off
         *curline.lock().unwrap() = None;
         checkcurline(&he);
-        assert!(curline.lock().unwrap().is_none(),
-            "c:2424 — HA_ACTIVE cleared, no flush");
+        assert!(
+            curline.lock().unwrap().is_none(),
+            "c:2424 — HA_ACTIVE cleared, no flush"
+        );
 
         // Case 3: active but mismatched histnum → no flush.
         histactive.store(HA_ACTIVE, Ordering::SeqCst);
-        let he2 = histent { histnum: 99, ..histent {
-            node: crate::ported::zsh_h::hashnode {
-                next: None, nam: String::new(), flags: 0,
-            },
-            up: None, down: None, zle_text: None,
-            stim: 0, ftim: 0, words: vec![], nwords: 0, histnum: 0,
-        }};
+        let he2 = histent {
+            histnum: 99,
+            ..histent {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: String::new(),
+                    flags: 0,
+                },
+                up: None,
+                down: None,
+                zle_text: None,
+                stim: 0,
+                ftim: 0,
+                words: vec![],
+                nwords: 0,
+                histnum: 0,
+            }
+        };
         checkcurline(&he2);
-        assert!(curline.lock().unwrap().is_none(),
-            "c:2424 — histnum mismatch, no flush");
+        assert!(
+            curline.lock().unwrap().is_none(),
+            "c:2424 — histnum mismatch, no flush"
+        );
 
         // Restore.
         curhist.store(saved_curhist, Ordering::SeqCst);
@@ -5538,11 +6283,14 @@ mod subst_modifier_tests {
     fn remlpaths_count_exceeds_components_preserves_leading_slash() {
         let _g = crate::test_util::global_state_lock();
         // 4 > 3 components in "/a/b/c" → return whole string verbatim.
-        assert_eq!(remlpaths("/a/b/c", 4),  "/a/b/c",
-            "c:2172-2175 — count > components → preserve original (leading slash)");
+        assert_eq!(
+            remlpaths("/a/b/c", 4),
+            "/a/b/c",
+            "c:2172-2175 — count > components → preserve original (leading slash)"
+        );
         assert_eq!(remlpaths("/a/b/c", 10), "/a/b/c");
         // Relative path: no leading slash, but still preserved.
-        assert_eq!(remlpaths("a/b/c", 99),  "a/b/c");
+        assert_eq!(remlpaths("a/b/c", 99), "a/b/c");
     }
 
     /// `Src/hist.c:2156-2161` — `remlpaths` trims trailing slashes off
@@ -5551,12 +6299,18 @@ mod subst_modifier_tests {
     #[test]
     fn remlpaths_trims_trailing_slashes() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(remlpaths("/a/b/c/",   1),  "c",
-            "c:2156-2161 — trailing slash trimmed before scan");
-        assert_eq!(remlpaths("/a/b/c///", 1),  "c");
-        assert_eq!(remlpaths("/",         1),  "",
-            "all-slashes input → empty after trim → empty result");
-        assert_eq!(remlpaths("",          1),  "");
+        assert_eq!(
+            remlpaths("/a/b/c/", 1),
+            "c",
+            "c:2156-2161 — trailing slash trimmed before scan"
+        );
+        assert_eq!(remlpaths("/a/b/c///", 1), "c");
+        assert_eq!(
+            remlpaths("/", 1),
+            "",
+            "all-slashes input → empty after trim → empty result"
+        );
+        assert_eq!(remlpaths("", 1), "");
     }
 
     /// `Src/hist.c:2152` — `remlpaths` with `count == 0` is a special
@@ -5566,8 +6320,11 @@ mod subst_modifier_tests {
     #[test]
     fn remlpaths_count_zero_defaults_to_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(remlpaths("/a/b/c", 0), "c",
-            "c:574 — count=0 from digitcount aliases to default 1");
+        assert_eq!(
+            remlpaths("/a/b/c", 0),
+            "c",
+            "c:574 — count=0 from digitcount aliases to default 1"
+        );
         // Same as explicit count=1.
         assert_eq!(remlpaths("/a/b/c", 0), remlpaths("/a/b/c", 1));
     }
@@ -5577,8 +6334,11 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_lower_lowercases_uppercase_only() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(casemodify("HELLO", CASMOD_LOWER), "hello",
-            "c:2226-2228 — uppercase → lowercase");
+        assert_eq!(
+            casemodify("HELLO", CASMOD_LOWER),
+            "hello",
+            "c:2226-2228 — uppercase → lowercase"
+        );
         // Already lowercase: no change.
         assert_eq!(casemodify("hello", CASMOD_LOWER), "hello");
         // Digits + punct: untouched.
@@ -5592,8 +6352,11 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_upper_uppercases_lowercase_only() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(casemodify("hello", CASMOD_UPPER), "HELLO",
-            "c:2233-2236 — lowercase → uppercase");
+        assert_eq!(
+            casemodify("hello", CASMOD_UPPER),
+            "HELLO",
+            "c:2233-2236 — lowercase → uppercase"
+        );
         assert_eq!(casemodify("HELLO", CASMOD_UPPER), "HELLO");
         assert_eq!(casemodify("élite", CASMOD_UPPER), "ÉLITE");
     }
@@ -5633,8 +6396,10 @@ mod subst_modifier_tests {
         let input = "a\u{0301}b";
         let got = casemodify(input, CASMOD_CAPS);
         let expected = "A\u{0301}b";
-        assert_eq!(got, expected,
-            "c:2241-2242 — IS_COMBINING short-circuit must not break word boundary");
+        assert_eq!(
+            got, expected,
+            "c:2241-2242 — IS_COMBINING short-circuit must not break word boundary"
+        );
     }
 
     /// `Src/hist.c:2349` — anchor-head matcher checks BOTH ASCII `#`
@@ -5644,16 +6409,25 @@ mod subst_modifier_tests {
     fn subst_anchor_head_recognises_pound_token() {
         let _g = crate::test_util::global_state_lock();
         // c:2349 — ASCII '#' anchor at head: matches only prefix.
-        assert_eq!(subst("foobar", "#foo", "baz", false), "bazbar",
-            "c:2349 ASCII '#' anchor — match at head");
+        assert_eq!(
+            subst("foobar", "#foo", "baz", false),
+            "bazbar",
+            "c:2349 ASCII '#' anchor — match at head"
+        );
         // c:2349 — Pound token (0x84) anchor at head: same effect.
         let pat = format!("{}foo", Pound);
-        assert_eq!(subst("foobar", &pat, "baz", false), "bazbar",
-            "c:2349 Pound token (0x84) anchor — match at head");
+        assert_eq!(
+            subst("foobar", &pat, "baz", false),
+            "bazbar",
+            "c:2349 Pound token (0x84) anchor — match at head"
+        );
         // Negative: anchored at head MUST NOT match mid-string.
         let pat = format!("{}foo", Pound);
-        assert_eq!(subst("xfoo", &pat, "baz", false), "xfoo",
-            "c:2349 anchor-head rejects non-prefix");
+        assert_eq!(
+            subst("xfoo", &pat, "baz", false),
+            "xfoo",
+            "c:2349 anchor-head rejects non-prefix"
+        );
     }
 
     /// `Src/hist.c:2354` — anchor-tail matcher checks `%` only
@@ -5662,10 +6436,16 @@ mod subst_modifier_tests {
     fn subst_anchor_tail_matches_only_suffix() {
         let _g = crate::test_util::global_state_lock();
         // c:2354 — `%foo` anchored at tail.
-        assert_eq!(subst("xxfoo", "%foo", "bar", false), "xxbar",
-            "c:2354 — '%' anchors at end of string");
+        assert_eq!(
+            subst("xxfoo", "%foo", "bar", false),
+            "xxbar",
+            "c:2354 — '%' anchors at end of string"
+        );
         // Non-suffix → no change.
-        assert_eq!(subst("foox", "%foo", "bar", false), "foox",
-            "c:2354 — '%foo' must not match unless `foo` is at end");
+        assert_eq!(
+            subst("foox", "%foo", "bar", false),
+            "foox",
+            "c:2354 — '%foo' must not match unless `foo` is at end"
+        );
     }
 }

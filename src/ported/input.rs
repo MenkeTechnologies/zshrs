@@ -17,8 +17,8 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::{self, BufRead, BufReader, Read};
 use std::io::Write;
+use std::io::{self, BufRead, BufReader, Read};
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
@@ -26,16 +26,17 @@ use std::io::Write;
 /// continuations over the active input.
 #[derive(Clone, Default)]
 #[allow(non_camel_case_types)]
-struct instacks {                                                            // c:109
-    buf: String,                                                             // c:110 char *buf
-    bufpos: usize,                                                           // c:110 char *bufptr offset
-    flags: i32,                                                              // c:112 int flags
-    alias: Option<String>,                                                   // c:111 Alias alias
+struct instacks {
+    // c:109
+    buf: String,           // c:110 char *buf
+    bufpos: usize,         // c:110 char *bufptr offset
+    flags: i32,            // c:112 int flags
+    alias: Option<String>, // c:111 Alias alias
 }
 
 /// Initial input stack size
 #[allow(dead_code)]
-const INSTACK_INITIAL: usize = 4;                                            // c:122
+const INSTACK_INITIAL: usize = 4; // c:122
 
 // `pub mod flags { … INP_* … }` deleted — Rust-only namespace with
 // values that diverged from the C `#define INP_FREE (1<<0)` etc. at
@@ -43,8 +44,7 @@ const INSTACK_INITIAL: usize = 4;                                            // 
 // `crate::ported::zsh_h::INP_*` (matching the C bit positions
 // exactly); this file uses those constants directly.
 use crate::ported::zsh_h::{
-    INP_ALCONT, INP_ALIAS, INP_APPEND, INP_CONT, INP_FREE, INP_HIST,
-    INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
+    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,8 @@ use crate::ported::zsh_h::{
 /// Reset the SHIN pushback buffer.
 /// Port of `shinbufreset()` from Src/input.c:159 —
 /// `shinbufendptr = shinbufptr = shinbuffer`.
-pub fn shinbufreset() {                                                      // c:159
+pub fn shinbufreset() {
+    // c:159
     shinbuffer.with(|b| b.borrow_mut().clear());
     shinbufpos.with(|p| p.set(0));
 }
@@ -134,7 +135,8 @@ thread_local! {
 
 /// Allocate a fresh SHIN buffer.
 /// Port of `shinbufalloc()` from Src/input.c:171.
-pub fn shinbufalloc() {                                                      // c:171
+pub fn shinbufalloc() {
+    // c:171
     shinbuffer.with(|b| {
         *b.borrow_mut() = String::with_capacity(SHIN_BUF_SIZE);
     });
@@ -145,7 +147,8 @@ pub fn shinbufalloc() {                                                      // 
 /// Port of `shinbufsave()` from Src/input.c:181 — push the
 /// existing buffer onto a save-stack and start a fresh one for
 /// nested `eval`/`source` contexts.
-pub fn shinbufsave() {                                                       // c:181
+pub fn shinbufsave() {
+    // c:181
     let (snap_buf, snap_pos) = (
         shinbuffer.with(|b| std::mem::take(&mut *b.borrow_mut())),
         shinbufpos.with(|p| p.replace(0)),
@@ -156,7 +159,8 @@ pub fn shinbufsave() {                                                       // 
 
 /// Pop the top of the SHIN save stack back into the live buffer.
 /// Port of `shinbufrestore()` from Src/input.c:200.
-pub fn shinbufrestore() {                                                    // c:200
+pub fn shinbufrestore() {
+    // c:200
     if let Some((buf, pos)) = shinsavestack.with(|s| s.borrow_mut().pop()) {
         shinbuffer.with(|b| *b.borrow_mut() = buf);
         shinbufpos.with(|p| p.set(pos));
@@ -168,7 +172,8 @@ pub fn shinbufrestore() {                                                    // 
 /// Port of `shingetchar()` from Src/input.c:218. C source pulls
 /// from `shinbuffer` first then falls through to `read(2)` on the
 /// SHIN fd; Rust mirrors by reading from `std::io::stdin`.
-pub fn shingetchar() -> i32 {                                                // c:218
+pub fn shingetchar() -> i32 {
+    // c:218
     // c:218-228 — `if (shinbufptr < shinbufendptr) return *shinbufptr++;`
     let bufd = shinbuffer.with(|b| b.borrow().clone());
     let pos = shinbufpos.with(|p| p.get());
@@ -199,7 +204,8 @@ pub fn shingetchar() -> i32 {                                                // 
 /// Port of `shingetline()` from Src/input.c:267 — calls
 /// `shingetchar` in a loop, metafies high bytes, returns NULL
 /// (`""`) on EOF.
-pub fn shingetline() -> String {                                             // c:267
+pub fn shingetline() -> String {
+    // c:267
     let mut result = String::new();
     loop {
         match shingetchar() {
@@ -232,7 +238,8 @@ pub fn shingetline() -> String {                                             // 
 /// Get the next char from the active input source.
 /// Port of `ingetc()` from Src/input.c:318 — drives the
 /// lexer; consumes pushback first, then top-of-stack input.
-pub fn ingetc() -> Option<char> {                                            // c:318
+pub fn ingetc() -> Option<char> {
+    // c:318
     if lexstop.with(|c| c.get()) {
         return Some(' ');
     }
@@ -264,14 +271,11 @@ pub fn ingetc() -> Option<char> {                                            // 
             // `itok()` lets future `inittyptab` adjustments propagate
             // automatically with zero changes here.
             let cu32 = c as u32;
-            if cu32 < 256
-                && crate::ported::ztype_h::itok(cu32 as u8)
-            {
+            if cu32 < 256 && crate::ported::ztype_h::itok(cu32 as u8) {
                 continue;
             }
 
-            let inp_lineno =
-                (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
+            let inp_lineno = (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
             let is_strin = strin.with(|s| s.get()) != 0;
             if (inp_lineno || !is_strin) && c == '\n' {
                 lineno.with(|l| l.set(l.get() + 1));
@@ -305,7 +309,8 @@ pub fn ingetc() -> Option<char> {                                            // 
 /// between zle / non-zle paths and `shingetline` /
 /// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
 /// returns "" on EOF and sets lexstop the same way.
-pub fn inputline() -> String {                                               // c:366
+pub fn inputline() -> String {
+    // c:366
     let line = shingetline();
     if line.is_empty() {
         lexstop.with(|c| c.set(true));
@@ -315,7 +320,8 @@ pub fn inputline() -> String {                                               // 
 
 /// Replace the current input line.
 /// Port of `inputsetline(char *str, int flags)` from Src/input.c:510.
-pub fn inputsetline(str: &str, flags: i32) {                               // c:510
+pub fn inputsetline(str: &str, flags: i32) {
+    // c:510
     inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
     let len = str.len() as i32;
@@ -329,7 +335,8 @@ pub fn inputsetline(str: &str, flags: i32) {                               // c:
 
 /// Push a character back onto the input stream.
 /// Port of `inungetc(int c)` from Src/input.c:546.
-pub fn inungetc(c: char) {                                                   // c:546
+pub fn inungetc(c: char) {
+    // c:546
     if lexstop.with(|c| c.get()) {
         return;
     }
@@ -337,13 +344,14 @@ pub fn inungetc(c: char) {                                                   // 
     if pos > 0 {
         inbufpos.with(|p| p.set(pos - 1));
         inbufct.with(|cell| cell.set(cell.get() + 1));
-        let inp_lineno =
-            (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
+        let inp_lineno = (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
         let is_strin = strin.with(|s| s.get()) != 0;
         if (inp_lineno || !is_strin) && c == '\n' {
             lineno.with(|l| l.set(l.get().saturating_sub(1)));
         }
-        raw_input.with(|r| { r.borrow_mut().pop(); });
+        raw_input.with(|r| {
+            r.borrow_mut().pop();
+        });
     } else {
         pushback.with(|p| p.borrow_mut().push_front(c));
     }
@@ -354,7 +362,8 @@ pub fn inungetc(c: char) {                                                   // 
 /// Port of `zstuff(char **out, const char *fn)` from Src/input.c:614 — the C source uses
 /// it for `Functions/Misc/run-help` and similar autoload paths.
 /// WARNING: param names don't match C — Rust=(path) vs C=(out, fn)
-pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
+pub fn zstuff(path: &str) -> io::Result<String> {
+    // c:614
     std::fs::read_to_string(path)
 }
 
@@ -367,7 +376,8 @@ pub fn zstuff(path: &str) -> io::Result<String> {                            // 
 /// Port of `stuff(char *fn)` from Src/input.c:647 — read the file, echo
 /// it to stderr, push onto the input stack.
 /// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
-pub fn stuff(filename: &str) -> i32 {                                        // c:647
+pub fn stuff(filename: &str) -> i32 {
+    // c:647
     let buf = match std::fs::read_to_string(filename) {
         Ok(b) => b,
         Err(_) => return 1,
@@ -380,7 +390,8 @@ pub fn stuff(filename: &str) -> i32 {                                        // 
 
 /// Discard pending input after a parse error.
 /// Port of `inerrflush()` from Src/input.c:665.
-pub fn inerrflush() {                                                        // c:665
+pub fn inerrflush() {
+    // c:665
     while !lexstop.with(|c| c.get()) && inbufct.with(|c| c.get()) > 0 {
         let _ = ingetc();
     }
@@ -391,7 +402,8 @@ pub fn inerrflush() {                                                        // 
 /// Port of `inpush(char *str, int flags, Alias inalias)` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
-pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // c:675
+pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
+    // c:675
     let saved = instacks {
         buf: inbuf.with(|b| std::mem::take(&mut *b.borrow_mut())),
         bufpos: inbufpos.with(|p| p.replace(0)),
@@ -432,7 +444,8 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // 
 // Remove the top element of the stack                                       // c:736
 /// Pop one input-stack frame off the top.
 /// Port of `inpoptop()` from Src/input.c:736.
-pub fn inpoptop() {                                                          // c:736
+pub fn inpoptop() {
+    // c:736
     // c:738 — if (!lexstop) {
     if !crate::ported::lex::LEX_LEXSTOP.with(|c| c.get()) {
         // c:739 — inbufflags &= ~(INP_ALCONT|INP_HISTCONT);
@@ -440,16 +453,15 @@ pub fn inpoptop() {                                                          // 
         // c:740-753 — drain unread bytes of the popped frame; for alias
         // frames (without RAW_KEEP) push back the corresponding raw-lex
         // marker via zshlex_raw_back so the lexer-side cursor unwinds.
-        let was_alias = (inbufflags.with(|f| f.get())
-            & (INP_ALIAS | INP_HIST | INP_RAW_KEEP))
-            == INP_ALIAS;
+        let was_alias =
+            (inbufflags.with(|f| f.get()) & (INP_ALIAS | INP_HIST | INP_RAW_KEEP)) == INP_ALIAS;
         let unread = inbuf.with(|b| {
             let blen = b.borrow().len();
             blen.saturating_sub(inbufpos.with(|p| p.get()))
         });
         if was_alias {
             for _ in 0..unread {
-                crate::ported::lex::zshlex_raw_back();                       // c:752
+                crate::ported::lex::zshlex_raw_back(); // c:752
             }
         }
     }
@@ -467,7 +479,7 @@ pub fn inpoptop() {                                                          // 
                     .write()
                     .expect("aliastab poisoned");
                 if let Some(a) = tab.get_mut(name) {
-                    a.inuse = 0;                                             // c:773
+                    a.inuse = 0; // c:773
                 }
             }
             // c:774-777 — trailing-space → trigger inalmore + histbackword.
@@ -475,13 +487,14 @@ pub fn inpoptop() {                                                          // 
             //              histbackword call alone preserves the C-visible
             //              effect on the history cursor.
             if entry.buf.ends_with(' ') {
-                crate::ported::hist::histbackword();                         // c:776
+                crate::ported::hist::histbackword(); // c:776
             }
         }
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
         inbufpos.with(|p| p.set(entry.bufpos));
         inbufflags.with(|f| f.set(entry.flags));
-        let remaining = inbuf.with(|b| b.borrow().len())
+        let remaining = inbuf
+            .with(|b| b.borrow().len())
             .saturating_sub(entry.bufpos) as i32;
         inbufct.with(|c| c.set(remaining));
     }
@@ -490,7 +503,8 @@ pub fn inpoptop() {                                                          // 
 // Remove the top element of the stack and all its continuations.            // c:785
 /// Pop the topmost input-stack frame plus any continuations.
 /// Port of `inpop()` from Src/input.c:785.
-pub fn inpop() {                                                             // c:785
+pub fn inpop() {
+    // c:785
     loop {
         let was_cont = (inbufflags.with(|f| f.get()) & INP_CONT) != 0;
         inpoptop();
@@ -503,7 +517,8 @@ pub fn inpop() {                                                             // 
 /// Pop the top input level only if it's an alias frame.
 /// Port of `inpopalias()` from Src/input.c:804 — used to unwind
 /// alias expansion without disturbing the underlying source.
-pub fn inpopalias() {                                                        // c:804
+pub fn inpopalias() {
+    // c:804
     while (inbufflags.with(|f| f.get()) & INP_ALIAS) != 0 {
         inpoptop();
     }
@@ -511,9 +526,15 @@ pub fn inpopalias() {                                                        // 
 
 /// Get a slice of the unread portion of the current input.
 /// Port of `ingetptr()` from Src/input.c:817.
-pub fn ingetptr() -> String {                                                // c:817
+pub fn ingetptr() -> String {
+    // c:817
     let pos = inbufpos.with(|p| p.get());
-    inbuf.with(|b| b.borrow().get(pos..).map(str::to_string).unwrap_or_default())
+    inbuf.with(|b| {
+        b.borrow()
+            .get(pos..)
+            .map(str::to_string)
+            .unwrap_or_default()
+    })
 }
 
 // Size of buffer for non-interactive command input                        // c:127
@@ -547,9 +568,12 @@ pub use crate::ported::zsh_h::META;
 ///     bytes).
 /// Route through the canonical `ztype_h::imeta` typtab predicate so
 /// every IMETA test in the codebase agrees.
-fn imeta(c: char) -> bool {                                                  // c:60 (Src/ztype.h)
+fn imeta(c: char) -> bool {
+    // c:60 (Src/ztype.h)
     let b = c as u32;
-    if b > 0xff { return false; }
+    if b > 0xff {
+        return false;
+    }
     crate::ported::ztype_h::imeta(b as u8)
 }
 
@@ -652,7 +676,8 @@ mod tests {
         // every byte's IMETA bit reads as 0. Serialise against other
         // typtab-mutating tests via the canonical lock.
         let _g = crate::ported::ztype_h::TYPTAB_TEST_LOCK
-            .lock().unwrap_or_else(|e| e.into_inner());
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
 
         // c:4195 — '\0' is IMETA.
@@ -729,11 +754,16 @@ mod tests {
         super::shinbufpos.with(|p| p.set(7));
         super::shinbufreset();
         super::shinbuffer.with(|b| {
-            assert!(b.borrow().is_empty(),
-                "c:161 — shinbuffer must be empty after reset");
+            assert!(
+                b.borrow().is_empty(),
+                "c:161 — shinbuffer must be empty after reset"
+            );
         });
-        assert_eq!(super::shinbufpos.with(|p| p.get()), 0,
-            "c:161 — shinbufpos must be 0 after reset");
+        assert_eq!(
+            super::shinbufpos.with(|p| p.get()),
+            0,
+            "c:161 — shinbufpos must be 0 after reset"
+        );
     }
 
     /// `Src/input.c:171-175` — `shinbufalloc` body is
@@ -751,8 +781,10 @@ mod tests {
         super::shinbufpos.with(|p| p.set(3));
         super::shinbufalloc();
         super::shinbuffer.with(|b| {
-            assert!(b.borrow().is_empty(),
-                "c:173 — fresh shinbuffer must be empty");
+            assert!(
+                b.borrow().is_empty(),
+                "c:173 — fresh shinbuffer must be empty"
+            );
             // Capacity hint is at least 1 (default `String::with_capacity` semantics).
             // Not pinning exact value — different libstd versions may round.
             assert!(b.borrow().capacity() >= 1);
@@ -774,18 +806,29 @@ mod tests {
         super::shinbufpos.with(|p| p.set(2));
         super::shinbufsave();
         super::shinbuffer.with(|b| {
-            assert!(b.borrow().is_empty(),
-                "c:193 — shinbufsave invokes shinbufalloc (resets to empty)");
+            assert!(
+                b.borrow().is_empty(),
+                "c:193 — shinbufsave invokes shinbufalloc (resets to empty)"
+            );
         });
-        assert_eq!(super::shinbufpos.with(|p| p.get()), 0,
-            "c:193 — pos must be 0 after save");
+        assert_eq!(
+            super::shinbufpos.with(|p| p.get()),
+            0,
+            "c:193 — pos must be 0 after save"
+        );
         super::shinbufrestore();
         super::shinbuffer.with(|b| {
-            assert_eq!(*b.borrow(), "abc",
-                "c:200-209 — shinbufrestore restores saved buffer");
+            assert_eq!(
+                *b.borrow(),
+                "abc",
+                "c:200-209 — shinbufrestore restores saved buffer"
+            );
         });
-        assert_eq!(super::shinbufpos.with(|p| p.get()), 2,
-            "c:200-209 — shinbufrestore restores saved pos");
+        assert_eq!(
+            super::shinbufpos.with(|p| p.get()),
+            2,
+            "c:200-209 — shinbufrestore restores saved pos"
+        );
     }
 
     /// `Src/input.c:200` — `shinbufrestore` on an empty save stack
@@ -800,8 +843,11 @@ mod tests {
         super::shinbuffer.with(|b| *b.borrow_mut() = "persist".to_string());
         super::shinbufrestore();
         super::shinbuffer.with(|b| {
-            assert_eq!(*b.borrow(), "persist",
-                "empty-stack restore must leave buffer untouched");
+            assert_eq!(
+                *b.borrow(),
+                "persist",
+                "empty-stack restore must leave buffer untouched"
+            );
         });
     }
 
@@ -824,7 +870,7 @@ mod tests {
         // typtab default may have ITOK bits unset).
         crate::ported::utils::inittyptab();
 
-        let bang:   char = '\u{009c}'; // Bang (LAST_NORMAL_TOK)
+        let bang: char = '\u{009c}'; // Bang (LAST_NORMAL_TOK)
         let nularg: char = '\u{00a1}'; // Nularg (last ITOK byte)
         let mut s = String::new();
         s.push('a');
@@ -836,10 +882,16 @@ mod tests {
         // c:328 — itok bytes must be silently skipped; visible
         // sequence is "abc".
         assert_eq!(ingetc(), Some('a'));
-        assert_eq!(ingetc(), Some('b'),
-            "c:328 — Bang (0x9c) must be skipped (ITOK bit set per inittyptab)");
-        assert_eq!(ingetc(), Some('c'),
-            "c:328 — Nularg (0xa1) must be skipped (ITOK bit set per inittyptab)");
+        assert_eq!(
+            ingetc(),
+            Some('b'),
+            "c:328 — Bang (0x9c) must be skipped (ITOK bit set per inittyptab)"
+        );
+        assert_eq!(
+            ingetc(),
+            Some('c'),
+            "c:328 — Nularg (0xa1) must be skipped (ITOK bit set per inittyptab)"
+        );
     }
 
     /// `Src/input.c:328` — non-token bytes (e.g. Meta=0x83) must NOT
@@ -852,7 +904,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_input();
         crate::ported::utils::inittyptab();
-        let meta: char = '\u{0083}';   // Meta lead byte — IMETA only
+        let meta: char = '\u{0083}'; // Meta lead byte — IMETA only
         let marker: char = '\u{00a2}'; // Marker — IMETA only per c:4197
         let mut s = String::new();
         s.push('x');
@@ -862,11 +914,17 @@ mod tests {
         s.push('z');
         inputsetline(&s, 0);
         assert_eq!(ingetc(), Some('x'));
-        assert_eq!(ingetc(), Some(meta),
-            "c:328 — Meta (0x83) is IMETA-only, NOT ITOK; must pass through");
+        assert_eq!(
+            ingetc(),
+            Some(meta),
+            "c:328 — Meta (0x83) is IMETA-only, NOT ITOK; must pass through"
+        );
         assert_eq!(ingetc(), Some('y'));
-        assert_eq!(ingetc(), Some(marker),
-            "c:328 / c:4197 — Marker (0xa2) is IMETA-only, NOT ITOK; must pass through");
+        assert_eq!(
+            ingetc(),
+            Some(marker),
+            "c:328 / c:4197 — Marker (0xa2) is IMETA-only, NOT ITOK; must pass through"
+        );
         assert_eq!(ingetc(), Some('z'));
     }
 }

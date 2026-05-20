@@ -74,11 +74,7 @@ fn now_ns() -> i64 {
 
 fn blob_path(state: &DaemonState, digest_hex: &str) -> PathBuf {
     let prefix = &digest_hex[..2.min(digest_hex.len())];
-    state
-        .paths
-        .artifacts_dir
-        .join(prefix)
-        .join(digest_hex)
+    state.paths.artifacts_dir.join(prefix).join(digest_hex)
 }
 
 fn name_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
@@ -94,7 +90,12 @@ fn digest_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
         .and_then(Value::as_str)
         .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
         .map(str::to_string)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing or malformed `digest` (need 64-hex sha256)"))
+        .ok_or_else(|| {
+            ErrPayload::new(
+                "bad_args",
+                "missing or malformed `digest` (need 64-hex sha256)",
+            )
+        })
 }
 
 /// Decode the request `value` field. Accepts either:
@@ -110,7 +111,10 @@ fn decode_value(args: &Value) -> std::result::Result<Vec<u8>, ErrPayload> {
     match args.get("value") {
         Some(Value::String(s)) => Ok(s.as_bytes().to_vec()),
         Some(other) => Ok(other.to_string().into_bytes()),
-        None => Err(ErrPayload::new("bad_args", "missing `value` or `value_base64`")),
+        None => Err(ErrPayload::new(
+            "bad_args",
+            "missing `value` or `value_base64`",
+        )),
     }
 }
 
@@ -167,9 +171,8 @@ pub async fn op_artifact_get(state: &Arc<DaemonState>, args: Value) -> OpResult 
         )
         .optional()
         .map_err(|e| ErrPayload::new("artifact_get", e.to_string()))?;
-    let (digest, _) = row.ok_or_else(|| {
-        ErrPayload::new("no_such_file", format!("artifact `{name}` not found"))
-    })?;
+    let (digest, _) =
+        row.ok_or_else(|| ErrPayload::new("no_such_file", format!("artifact `{name}` not found")))?;
     let _ = conn.execute(
         "UPDATE artifacts SET last_get_at = ?1 WHERE name = ?2",
         params![now_ns(), name],
@@ -182,11 +185,7 @@ pub async fn op_artifact_get_by_digest(state: &Arc<DaemonState>, args: Value) ->
     fetch_blob(state, &digest, None)
 }
 
-fn fetch_blob(
-    state: &DaemonState,
-    digest: &str,
-    name: Option<&str>,
-) -> OpResult {
+fn fetch_blob(state: &DaemonState, digest: &str, name: Option<&str>) -> OpResult {
     let blob = blob_path(state, digest);
     if !blob.exists() {
         return Err(ErrPayload::new(
@@ -194,8 +193,8 @@ fn fetch_blob(
             format!("blob {digest} missing on disk (did artifact_gc reap it?)"),
         ));
     }
-    let bytes = std::fs::read(&blob)
-        .map_err(|e| ErrPayload::new("artifact_read", e.to_string()))?;
+    let bytes =
+        std::fs::read(&blob).map_err(|e| ErrPayload::new("artifact_read", e.to_string()))?;
     let value_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(json!({
         "digest": digest,
@@ -211,15 +210,16 @@ pub async fn op_artifact_gc(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let now = now_ns();
 
     let conn = open_names_db(state)?;
-    let cutoff_ns: Option<i64> =
-        max_age_secs.map(|s| now - s.saturating_mul(1_000_000_000));
+    let cutoff_ns: Option<i64> = max_age_secs.map(|s| now - s.saturating_mul(1_000_000_000));
 
     // Collect candidates for removal: rows where last_get_at (or
     // updated_at if never read) is older than cutoff_ns.
     let mut to_remove: Vec<(String, String, i64)> = Vec::new();
     {
         let mut stmt = conn
-            .prepare("SELECT name, digest_hex, bytes, COALESCE(last_get_at, updated_at) FROM artifacts")
+            .prepare(
+                "SELECT name, digest_hex, bytes, COALESCE(last_get_at, updated_at) FROM artifacts",
+            )
             .map_err(|e| ErrPayload::new("artifact_gc_scan", e.to_string()))?;
         let rows = stmt
             .query_map([], |r| {

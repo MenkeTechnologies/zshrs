@@ -64,8 +64,8 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
     // pure-Rust.
     if format == "pdf" {
         let body = render(state, &target, "text", additive)?;
-        let pdf_bytes = pdf_render(&target, &body)
-            .map_err(|e| ErrPayload::new("pdf_render", e.to_string()))?;
+        let pdf_bytes =
+            pdf_render(&target, &body).map_err(|e| ErrPayload::new("pdf_render", e.to_string()))?;
         use base64::Engine as _;
         let body_base64 = base64::engine::general_purpose::STANDARD.encode(&pdf_bytes);
         return Ok(json!({
@@ -1886,8 +1886,7 @@ fn pdf_render(target: &str, body: &str) -> std::result::Result<Vec<u8>, String> 
     }
 
     let total_pages = display_lines.len().div_ceil(lines_per_page).max(1);
-    let (doc, first_page, first_layer) =
-        PdfDocument::new(&title, Mm(PAGE_W), Mm(PAGE_H), "page-1");
+    let (doc, first_page, first_layer) = PdfDocument::new(&title, Mm(PAGE_W), Mm(PAGE_H), "page-1");
     let font = doc
         .add_builtin_font(BuiltinFont::Helvetica)
         .map_err(|e| format!("printpdf font: {e}"))?;
@@ -1907,13 +1906,7 @@ fn pdf_render(target: &str, body: &str) -> std::result::Result<Vec<u8>, String> 
         let mut y = PAGE_H - MARGIN;
         layer.use_text(&title, FONT_PT + 2.0, Mm(MARGIN), Mm(y), &bold);
         let pageno = format!("page {} / {}", page_idx + 1, total_pages);
-        layer.use_text(
-            &pageno,
-            FONT_PT,
-            Mm(PAGE_W - MARGIN - 30.0),
-            Mm(y),
-            &font,
-        );
+        layer.use_text(&pageno, FONT_PT, Mm(PAGE_W - MARGIN - 30.0), Mm(y), &font);
         y -= LINE_H * 2.0;
 
         // Body lines.

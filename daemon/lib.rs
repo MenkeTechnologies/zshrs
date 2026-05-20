@@ -14,7 +14,6 @@
 pub mod artifact;
 pub mod auth;
 pub mod builtins;
-pub mod zd_dispatch;
 pub mod cache;
 pub mod canonical;
 pub mod catalog;
@@ -44,6 +43,7 @@ pub mod ticker;
 pub mod zask;
 pub mod zask_builtin;
 pub mod zcomplete_builtin;
+pub mod zd_dispatch;
 pub mod zhistory_builtin;
 pub mod zjob_builtin;
 pub mod zsource_builtin;

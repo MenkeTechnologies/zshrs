@@ -500,10 +500,9 @@ impl<'a> ArgumentsState<'a> {
 
         // Check if previous word was an option that takes an argument
         for opt in &self.spec.options {
-            if opt.arg_req != ArgRequirement::None
-                && opt.full_name() == *prev_word {
-                    return Some(opt);
-                }
+            if opt.arg_req != ArgRequirement::None && opt.full_name() == *prev_word {
+                return Some(opt);
+            }
         }
 
         // Check for --opt=value form
@@ -591,31 +590,32 @@ pub fn arguments_execute(
     if (analysis.prefix.is_empty()
         || analysis.prefix.starts_with('-')
         || analysis.prefix.starts_with('+'))
-        && (!analysis.seen_ddash || !spec.no_opts_after_ddash) {
-            state.begin_group("options", true);
+        && (!analysis.seen_ddash || !spec.no_opts_after_ddash)
+    {
+        state.begin_group("options", true);
 
-            for opt in &analysis.available_opts {
-                let full = opt.full_name();
-                if full.starts_with(&analysis.prefix) {
-                    let mut comp = Completion::new(&full);
+        for opt in &analysis.available_opts {
+            let full = opt.full_name();
+            if full.starts_with(&analysis.prefix) {
+                let mut comp = Completion::new(&full);
 
-                    if !opt.description.is_empty() {
-                        comp.disp = Some(format!("{} -- {}", full, opt.description));
-                    }
-
-                    // Add = suffix for options that take arguments with =
-                    if opt.arg_req == ArgRequirement::Required && opt.opt_type == OptType::Long {
-                        comp.suf = Some("=".to_string());
-                        comp.flags |= CompletionFlags::NOSPACE;
-                    }
-
-                    state.add_match(comp, Some("options"));
-                    added = true;
+                if !opt.description.is_empty() {
+                    comp.disp = Some(format!("{} -- {}", full, opt.description));
                 }
-            }
 
-            state.end_group();
+                // Add = suffix for options that take arguments with =
+                if opt.arg_req == ArgRequirement::Required && opt.opt_type == OptType::Long {
+                    comp.suf = Some("=".to_string());
+                    comp.flags |= CompletionFlags::NOSPACE;
+                }
+
+                state.add_match(comp, Some("options"));
+                added = true;
+            }
         }
+
+        state.end_group();
+    }
 
     added
 }

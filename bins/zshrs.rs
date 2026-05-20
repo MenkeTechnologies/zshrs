@@ -25,8 +25,8 @@ use reedline::{
     Validator,
 };
 
-use zsh::vm_helper::ShellExecutor;
 use zsh::history::HistoryEngine;
+use zsh::vm_helper::ShellExecutor;
 use zsh::zwc;
 
 use compsys::{
@@ -608,22 +608,32 @@ pub fn zshrs_main() {
     // producing commands on cache hit — that diverges from every
     // reference shell, so parity modes opt out entirely.
     let parity_mode_selected = if args.iter().any(|a| a == "--posix") {
-        unsafe { SHELL_MODE = ShellMode::Posix; }
+        unsafe {
+            SHELL_MODE = ShellMode::Posix;
+        }
         true
     } else if args.iter().any(|a| a == "--bash") {
-        unsafe { SHELL_MODE = ShellMode::Bash; }
+        unsafe {
+            SHELL_MODE = ShellMode::Bash;
+        }
         true
     } else if args.iter().any(|a| a == "--ksh") {
-        unsafe { SHELL_MODE = ShellMode::Ksh; }
+        unsafe {
+            SHELL_MODE = ShellMode::Ksh;
+        }
         true
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
-        unsafe { SHELL_MODE = ShellMode::Zsh; }
+        unsafe {
+            SHELL_MODE = ShellMode::Zsh;
+        }
         true
     } else {
         false
     };
     if parity_mode_selected {
-        unsafe { std::env::set_var("ZSHRS_CACHE", "0"); }
+        unsafe {
+            std::env::set_var("ZSHRS_CACHE", "0");
+        }
         tracing::info!(mode = ?shell_mode(), "parity mode: ZSHRS_CACHE=0, daemon disabled, plugin_cache replay disabled");
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
@@ -679,9 +689,15 @@ pub fn zshrs_main() {
     // `dumpwordcode` builtins (so output can be diff'd byte-for-byte against
     // C zsh for parity verification).
     for &(flag, dumper) in &[
-        ("--dump-tokens",   zsh::dumpers::dump_tokens   as fn(&str) -> String),
-        ("--dump-ast",      zsh::dumpers::dump_ast      as fn(&str) -> String),
-        ("--dump-wordcode", zsh::dumpers::dump_wordcode as fn(&str) -> String),
+        (
+            "--dump-tokens",
+            zsh::dumpers::dump_tokens as fn(&str) -> String,
+        ),
+        ("--dump-ast", zsh::dumpers::dump_ast as fn(&str) -> String),
+        (
+            "--dump-wordcode",
+            zsh::dumpers::dump_wordcode as fn(&str) -> String,
+        ),
     ] {
         if args.len() >= 3 && args[1] == flag {
             let path = &args[2];
@@ -3230,9 +3246,7 @@ fn parse_option_spec(spec: &str) -> Option<(String, String)> {
     if !rest.starts_with('-') {
         return None;
     }
-    let opt_end = rest
-        .find(['[', '=', ':', ' '])
-        .unwrap_or(rest.len());
+    let opt_end = rest.find(['[', '=', ':', ' ']).unwrap_or(rest.len());
     let opt_name = rest[..opt_end].trim_end_matches(['+', '=']);
     if opt_name.is_empty() || opt_name == "-" || opt_name == "--" {
         return None;

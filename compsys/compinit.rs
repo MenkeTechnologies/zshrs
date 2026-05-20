@@ -675,11 +675,10 @@ impl CompInitOpts {
 
         while i < args.len() {
             match args[i].as_str() {
-                "-d"
-                    if i + 1 < args.len() && !args[i + 1].starts_with('-') => {
-                        opts.dump_file = Some(PathBuf::from(&args[i + 1]));
-                        i += 1;
-                    }
+                "-d" if i + 1 < args.len() && !args[i + 1].starts_with('-') => {
+                    opts.dump_file = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
+                }
                 "-D" => opts.no_dump = true,
                 "-C" => opts.no_check = true,
                 "-i" => opts.ignore_insecure = true,

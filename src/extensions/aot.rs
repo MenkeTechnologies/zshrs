@@ -52,8 +52,8 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 /// 8-byte trailer magic.
 pub const AOT_MAGIC: &[u8; 8] = b"ZSHRSAOT";
@@ -313,7 +313,10 @@ mod tests {
     use super::*;
 
     fn mkfile(name: &str, src: &str) -> EmbeddedFile {
-        EmbeddedFile { name: name.into(), source: src.into() }
+        EmbeddedFile {
+            name: name.into(),
+            source: src.into(),
+        }
     }
 
     #[test]

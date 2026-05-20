@@ -68,8 +68,7 @@ impl Metrics {
             .or_insert(0) += 1;
     }
     pub fn record_recorder_events(&self, n: u64) {
-        self.recorder_events_total
-            .fetch_add(n, Ordering::Relaxed);
+        self.recorder_events_total.fetch_add(n, Ordering::Relaxed);
     }
 }
 
@@ -94,7 +93,9 @@ pub fn prometheus_text(state: &DaemonState) -> String {
     out.push_str(&format!("daemon_active_sessions {sessions}\n"));
 
     let subs = state.subscription_count();
-    out.push_str("# HELP daemon_active_subscriptions Total pubsub subscriptions across all sessions.\n");
+    out.push_str(
+        "# HELP daemon_active_subscriptions Total pubsub subscriptions across all sessions.\n",
+    );
     out.push_str("# TYPE daemon_active_subscriptions gauge\n");
     out.push_str(&format!("daemon_active_subscriptions {subs}\n"));
 

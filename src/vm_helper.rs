@@ -23,69 +23,75 @@ use crate::options::ZSH_OPTIONS_SET;
 // rewrite — zprof state now lives in module-level statics
 // (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
 // the C file-statics at zprof.c:66-71.
+use crate::ported::builtin::RETFLAG;
+use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS};
+use crate::ported::math::mathevali;
+use crate::ported::modules::parameter::*;
+use crate::ported::parse::ecgetstr_wordcode;
+use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
+use crate::ported::parse::ECBUF;
+use crate::ported::subst::singsub;
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use crate::ported::zle::zle_thingy::{getwidgettarget, listwidgets};
+use crate::ported::zsh_h::PM_UNDEFINED;
+use crate::ported::zsh_h::WC_PIPE;
+use crate::ported::zsh_h::WC_REPEAT_SKIP;
+use crate::ported::zsh_h::WC_SUBLIST;
+use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
+use crate::ported::zsh_h::{
+    PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_LEFT, PM_LOWER,
+    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER,
+};
+use crate::ported::zsh_h::{
+    WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT, WC_SELECT,
+    WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
+};
+use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
+use crate::ported::zsh_h::{WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE};
+use crate::ported::zsh_h::{WC_IF_SKIP, WC_IF_TYPE};
+use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;
 use std::collections::HashSet;
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-use std::sync::atomic::Ordering;
-use crate::ported::parse::ECBUF;
-use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
-use crate::ported::zsh_h::WC_SUBLIST;
-use crate::ported::zsh_h::WC_PIPE;
-use crate::ported::zsh_h::{WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT, WC_SELECT, WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE, };
-use crate::ported::zsh_h::{WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE};
-use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
-use crate::ported::builtin::RETFLAG;
-use crate::ported::zsh_h::{WC_IF_SKIP, WC_IF_TYPE};
-use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS};
-use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
-use crate::ported::math::mathevali;
-use crate::ported::parse::ecgetstr_wordcode;
-use crate::ported::subst::singsub;
-use crate::ported::zsh_h::WC_REPEAT_SKIP;
-use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
-use std::fs;
-use std::os::unix::io::FromRawFd;
-use std::io::Read;
-use std::ffi::CString;
-use std::os::unix::ffi::OsStrExt;
-use crate::ported::zsh_h::{options, MAX_OPS};
-use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
 use std::ffi::CStr;
-use crate::ported::zle::zle_thingy::{listwidgets, getwidgettarget};
-use std::time::{SystemTime, UNIX_EPOCH};
-use walkdir::WalkDir;
+use std::ffi::CString;
+use std::fs;
+use std::io::Read;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::FromRawFd;
 use std::sync::atomic::AtomicI32;
-use crate::ported::modules::parameter::*;
-use crate::ported::zsh_h::PM_UNDEFINED;
+use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
+use walkdir::WalkDir;
 
 // Backward-compat re-exports for free fns recently relocated to their
 // canonical-C-file Rust modules. Existing call-sites in this file (and
 // elsewhere) still reference these unqualified.
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_tilde};
-#[allow(unused_imports)]
-pub use crate::ported::params::convbase as format_int_in_base;
-pub use crate::ported::params::convbase_underscore;
-#[allow(unused_imports)]
-pub(crate) use crate::ported::math::{parse_assign, parse_compound, parse_pre_inc};
-#[allow(unused_imports)]
-pub(crate) use crate::ported::params::getarrvalue;
-#[allow(unused_imports)]
-#[allow(unused_imports)]
 // drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op
 #[allow(unused_imports)]
 pub(crate) use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
+#[allow(unused_imports)]
+pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_tilde};
+#[allow(unused_imports)]
+pub(crate) use crate::ported::hist::bufferwords as bufferwords_z_tuple;
+#[allow(unused_imports)]
+pub(crate) use crate::ported::math::{parse_assign, parse_compound, parse_pre_inc};
+#[allow(unused_imports)]
+pub use crate::ported::params::convbase as format_int_in_base;
+pub use crate::ported::params::convbase_underscore;
+#[allow(unused_imports)]
+pub(crate) use crate::ported::params::getarrvalue;
+#[allow(unused_imports)]
 pub(crate) use crate::ported::utils::base64_decode;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::{ispwd, printprompt4, quotedzputs};
-#[allow(unused_imports)]
-pub(crate) use crate::ported::hist::bufferwords as bufferwords_z_tuple;
 
 pub(crate) use crate::intercepts::intercept_matches;
 /// AOP advice type — before, after, or around.
@@ -96,10 +102,8 @@ pub use crate::compinit_bg::CompInitBgResult;
 use std::io::Write;
 use std::sync::LazyLock;
 
-
 /// State snapshot for plugin delta computation.
 pub(crate) use crate::plugin_cache::PluginSnapshot;
-
 
 /// Cached compiled regexes for hot paths
 pub(crate) static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, regex::Regex>>> =
@@ -117,8 +121,8 @@ pub(crate) static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, 
 // src/fusevm_bridge.rs. The bridge re-exports the symbols that the
 // rest of the codebase imports as `crate::ported::exec::X`.
 // ───────────────────────────────────────────────────────────────────────────
+pub(crate) use crate::fusevm_bridge::ExecutorContext;
 pub use crate::fusevm_bridge::*;
-pub(crate) use crate::fusevm_bridge::{ExecutorContext};
 
 /// `ZSH_VERSION` / `ZSH_PATCHLEVEL` / `ZSH_VERSION_DATE` consts
 /// generated by `build.rs` from `src/zsh/Config/version.mk`. Use
@@ -231,19 +235,17 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-
 // Drift structs moved to their canonical-C-file modules
 // (src/ported/zle/computil.rs, modules/{zutil,zpty,zprof,socket}.rs,
 // builtins/sched.rs). Re-exported here so existing call-sites that
 // reference `crate::ported::exec::<Name>` keep compiling.
-pub use crate::bash_complete::{CompSpec, CompMatch, CompGroup, CompState};
+pub use crate::bash_complete::{CompGroup, CompMatch, CompSpec, CompState};
 pub use crate::ported::modules::zutil::zstyle_entry;
 // `ProfileEntry` re-export deleted — was unused outside
 // `ShellExecutor::profile_data` (which itself is now removed).
 // `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
 // (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
 pub use crate::ported::builtin::AutoloadFlags;
-
 
 /// Cross-VM loop-control signal. When `break`/`continue` is hit inside a body
 /// that runs on a sub-VM (e.g. select's body), the inline patches mechanism
@@ -301,7 +303,6 @@ pub struct SubshellSnapshot {
 }
 
 /// Variable attribute record + kind enum — moved to params.rs.
-
 
 // Pattern helpers moved to src/ported/pattern.rs.
 #[allow(unused_imports)]
@@ -394,7 +395,7 @@ pub struct ShellExecutor {
     pub comp_matches: Vec<CompMatch>, // Current completion matches
     pub comp_groups: Vec<CompGroup>,  // Completion groups
     pub comp_state: CompState,        // compstate associative array
-    pub zstyles: Vec<zstyle_entry>,         // zstyle configurations
+    pub zstyles: Vec<zstyle_entry>,   // zstyle configurations
     pub comp_words: Vec<String>,      // words on command line
     pub comp_current: i32,            // current word index (1-based)
     pub comp_prefix: String,          // PREFIX parameter
@@ -591,7 +592,7 @@ impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
     pub fn set_scalar(&mut self, name: String, value: String) {
-        crate::ported::params::setsparam(&name, &value);                     // c:params.c:3350
+        crate::ported::params::setsparam(&name, &value); // c:params.c:3350
     }
 
     /// Read positional parameters from canonical `PPARAMS`
@@ -616,7 +617,8 @@ impl ShellExecutor {
     /// the name isn't in paramtab. Mirrors the C source's direct
     /// `pm->node.flags & PM_INTEGER` checks.
     pub fn param_flags(&self, name: &str) -> i32 {
-        crate::ported::params::paramtab().read()
+        crate::ported::params::paramtab()
+            .read()
             .ok()
             .and_then(|t| t.get(name).map(|p| p.node.flags))
             .unwrap_or(0)
@@ -652,22 +654,20 @@ impl ShellExecutor {
     /// Most-recent-command exit status. Reads canonical
     /// `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
     pub fn last_status(&self) -> i32 {
-        crate::ported::builtin::LASTVAL
-            .load(std::sync::atomic::Ordering::Relaxed)
+        crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Write the most-recent-command exit status. The canonical
     /// store is `builtin::LASTVAL`; this is the single setter.
     /// Used everywhere `$?` / `%?` / errexit / ZERR trap read.
     pub fn set_last_status(&mut self, status: i32) {
-        crate::ported::builtin::LASTVAL
-            .store(status, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Set an indexed array parameter via canonical paramtab
     /// (`setaparam`, `Src/params.c:3595`). The single store.
     pub fn set_array(&mut self, name: String, value: Vec<String>) {
-        crate::ported::params::setaparam(&name, value);                      // c:params.c:3595
+        crate::ported::params::setaparam(&name, value); // c:params.c:3595
     }
 
     /// Set an associative array parameter via canonical
@@ -678,7 +678,7 @@ impl ShellExecutor {
             flat.push(k.clone());
             flat.push(v.clone());
         }
-        crate::ported::params::sethparam(&name, flat);                       // c:params.c:3602
+        crate::ported::params::sethparam(&name, flat); // c:params.c:3602
     }
 
     /// Read a scalar parameter. Mirrors C `getsparam` at
@@ -692,7 +692,8 @@ impl ShellExecutor {
     /// `getaparam` at `Src/params.c:3100` — `paramtab->getnode(s)`
     /// then `pm->u.arr.clone()`. Returns an owned `Vec<String>`.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        crate::ported::params::paramtab().read()
+        crate::ported::params::paramtab()
+            .read()
             .ok()
             .and_then(|t| t.get(name).and_then(|pm| pm.u_arr.clone()))
     }
@@ -702,7 +703,8 @@ impl ShellExecutor {
     /// `Src/params.c:3115` — returns the typed `IndexMap`.
     pub fn assoc(&self, name: &str) -> Option<indexmap::IndexMap<String, String>> {
         crate::ported::params::paramtab_hashed_storage()
-            .lock().ok()
+            .lock()
+            .ok()
             .and_then(|m| m.get(name).cloned())
     }
 
@@ -714,7 +716,8 @@ impl ShellExecutor {
 
     /// Test whether an array parameter exists in paramtab.
     pub fn has_array(&self, name: &str) -> bool {
-        crate::ported::params::paramtab().read()
+        crate::ported::params::paramtab()
+            .read()
             .ok()
             .and_then(|t| t.get(name).map(|pm| pm.u_arr.is_some()))
             .unwrap_or(false)
@@ -735,11 +738,17 @@ impl ShellExecutor {
     /// + paramtab_hashed_storage. Direct port of `unsetparam_pm`
     /// for a PM_HASHED Param.
     pub fn unset_assoc(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab()
+            .write()
+            .ok()
+            .as_deref_mut()
+        {
             tab.remove(name);
         }
         let _ = crate::ported::params::paramtab_hashed_storage()
-            .lock().ok().as_deref_mut()
+            .lock()
+            .ok()
+            .as_deref_mut()
             .map(|m| m.remove(name));
     }
 
@@ -790,7 +799,9 @@ impl ShellExecutor {
     pub fn set_global_alias(&mut self, name: String, value: String) {
         if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
             tab.add(crate::ported::hashtable::createaliasnode(
-                &name, &value, crate::ported::zsh_h::ALIAS_GLOBAL as u32,
+                &name,
+                &value,
+                crate::ported::zsh_h::ALIAS_GLOBAL as u32,
             ));
         }
     }
@@ -824,8 +835,7 @@ impl ShellExecutor {
         if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
             tab.iter_sorted()
                 .into_iter()
-                .filter(|(_, a)| (a.node.flags
-                    & crate::ported::zsh_h::ALIAS_GLOBAL as i32) == 0)
+                .filter(|(_, a)| (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) == 0)
                 .map(|(k, a)| (k.clone(), a.text.clone()))
                 .collect()
         } else {
@@ -838,8 +848,7 @@ impl ShellExecutor {
         if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
             tab.iter_sorted()
                 .into_iter()
-                .filter(|(_, a)| (a.node.flags
-                    & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0)
+                .filter(|(_, a)| (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0)
                 .map(|(k, a)| (k.clone(), a.text.clone()))
                 .collect()
         } else {
@@ -863,7 +872,11 @@ impl ShellExecutor {
     /// a PM_ARRAY Param. Mirrors are kept for now while the field
     /// transitions.
     pub fn unset_array(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab()
+            .write()
+            .ok()
+            .as_deref_mut()
+        {
             tab.remove(name);
         }
     }
@@ -872,7 +885,11 @@ impl ShellExecutor {
     /// than `unset_var` which clears arrays + assocs too. Direct
     /// port of `Src/params.c:unsetparam_pm` for a scalar PM_TYPE.
     pub fn unset_scalar(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab()
+            .write()
+            .ok()
+            .as_deref_mut()
+        {
             tab.remove(name);
         }
     }
@@ -884,11 +901,17 @@ impl ShellExecutor {
     /// just one type pass through this single entry so paramtab and
     /// the HashMaps don't drift apart.
     pub(crate) fn unset_var(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
-            tab.remove(name);                                                // c:params.c:3900 paramtab removenode
+        if let Some(tab) = crate::ported::params::paramtab()
+            .write()
+            .ok()
+            .as_deref_mut()
+        {
+            tab.remove(name); // c:params.c:3900 paramtab removenode
         }
         let _ = crate::ported::params::paramtab_hashed_storage()
-            .lock().ok().as_deref_mut()
+            .lock()
+            .ok()
+            .as_deref_mut()
             .map(|m| m.remove(name));
     }
 
@@ -900,7 +923,6 @@ impl ShellExecutor {
     /// Replaces the bot-invented `expand_string` method that was deleted
     /// in the citation purge (180463e1e7). All call sites that previously
     /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
-
 
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
@@ -949,9 +971,14 @@ impl ShellExecutor {
         // source sets these at `Src/params.c:972-973` via
         // `setsparam("ZSH_VERSION", ztrdup_metafy(ZSH_VERSION))`.
         let mut variables = HashMap::new();
-        variables.insert("ZSH_VERSION".to_string(), zsh_version::ZSH_VERSION.to_string()); // c:params.c:972
-        variables.insert("ZSH_PATCHLEVEL".to_string(),
-            zsh_version::ZSH_PATCHLEVEL.to_string());                                       // c:params.c:973
+        variables.insert(
+            "ZSH_VERSION".to_string(),
+            zsh_version::ZSH_VERSION.to_string(),
+        ); // c:params.c:972
+        variables.insert(
+            "ZSH_PATCHLEVEL".to_string(),
+            zsh_version::ZSH_PATCHLEVEL.to_string(),
+        ); // c:params.c:973
         variables.insert("ZSH_NAME".to_string(), "zsh".to_string());
         // $ZSH_ARGZERO mirrors `posixzero` from Src/init.c:271
         // (`argv0 = argzero = posixzero = *argv++`). Src/params.c:971
@@ -1000,8 +1027,10 @@ impl ShellExecutor {
         // bangchar+hatchar+hashchar (defaults `!`, `^`, `#` per
         // `Src/init.c:1100-1102`). Route through the C-port `histcharsgetfn`
         // so the value follows any runtime updates to the trio.
-        variables.insert("histchars".to_string(),
-            crate::ported::params::histcharsgetfn());                                       // c:params.c:5064
+        variables.insert(
+            "histchars".to_string(),
+            crate::ported::params::histcharsgetfn(),
+        ); // c:params.c:5064
 
         // c:Src/params.c:858-860 standard non-special param defaults.
         // The full createparamtable() body installs special_paramdef
@@ -1009,19 +1038,21 @@ impl ShellExecutor {
         // block subsequent BUILTIN_SET_LINENO writes; the readonly-
         // special bypass at setsparam isn't ported yet. Inline these
         // three setiparam-equivalent values in the meantime.
-        variables.insert("MAILCHECK".to_string(), "60".to_string());                    // c:858
-        variables.insert("KEYTIMEOUT".to_string(), "40".to_string());                   // c:859
-        variables.insert("LISTMAX".to_string(), "100".to_string());                     // c:860
-        // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
-        // zsh's watch boot_ seeds WATCHFMT to the default when the
-        // module loads. zshrs's modules are statically linked but
-        // boot_ isn't wired into require_module yet, so seed the
-        // default here. `print "$WATCHFMT"` prints the default
-        // (diverges from `/bin/zsh -fc` which leaves it unset until
-        // an explicit `zmodload zsh/watch`, but matches the
-        // post-zmodload state that most plugin code expects).
-        variables.insert("WATCHFMT".to_string(),
-            crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string());
+        variables.insert("MAILCHECK".to_string(), "60".to_string()); // c:858
+        variables.insert("KEYTIMEOUT".to_string(), "40".to_string()); // c:859
+        variables.insert("LISTMAX".to_string(), "100".to_string()); // c:860
+                                                                    // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
+                                                                    // zsh's watch boot_ seeds WATCHFMT to the default when the
+                                                                    // module loads. zshrs's modules are statically linked but
+                                                                    // boot_ isn't wired into require_module yet, so seed the
+                                                                    // default here. `print "$WATCHFMT"` prints the default
+                                                                    // (diverges from `/bin/zsh -fc` which leaves it unset until
+                                                                    // an explicit `zmodload zsh/watch`, but matches the
+                                                                    // post-zmodload state that most plugin code expects).
+        variables.insert(
+            "WATCHFMT".to_string(),
+            crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string(),
+        );
 
         // `$FUNCNEST` default. Real zsh defaults to 500 (Src/zsh.h
         // MAXNEST), but zshrs's bytecode-VM recursion eats ~40KB of
@@ -1223,10 +1254,10 @@ impl ShellExecutor {
         // self; this loop fans the contents out to paramtab in one
         // pass at the end of new().
         for (k, v) in &variables {
-            crate::ported::params::setsparam(k, v);                          // c:params.c:3350
+            crate::ported::params::setsparam(k, v); // c:params.c:3350
         }
         for (k, v) in &arrays {
-            crate::ported::params::setaparam(k, v.clone());                  // c:params.c:3595
+            crate::ported::params::setaparam(k, v.clone()); // c:params.c:3595
         }
         // Assocs: there are no pre-seeded entries (terminfo / termcap
         // resolve lazily via magic_assoc_lookup) so no mirror loop.
@@ -1253,7 +1284,6 @@ impl ShellExecutor {
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// Bytecode is stored in rkyv keyed by (path, mtime).
     pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
-
         let path = Path::new(file_path);
         let abs_path = path
             .canonicalize()
@@ -1387,8 +1417,7 @@ impl ShellExecutor {
                 continue;
             }
             let header = buf[pc];
-            let skip = (wc_data(header)
-                >> crate::ported::zsh_h::WC_LIST_FREE) as usize;
+            let skip = (wc_data(header) >> crate::ported::zsh_h::WC_LIST_FREE) as usize;
             pc += 1;
             let (s, _) = self.exec_sublist_wordcode(buf, pc);
             last_status = s;
@@ -1676,7 +1705,7 @@ impl ShellExecutor {
             return (1, end_pc);
         }
         let mut last_status: i32 = 0; // loop.c:519 — `lastval = 0` for zero count.
-        // loop.c:520-522 — `pushheap(); cmdpush(CS_REPEAT); loops++;`
+                                      // loop.c:520-522 — `pushheap(); cmdpush(CS_REPEAT); loops++;`
         LOOPS.fetch_add(1, Ordering::SeqCst);
         let loop_body_pc = after_count;
         // loop.c:523-545 — main iteration.
@@ -1793,7 +1822,9 @@ impl ShellExecutor {
             .map(|s| {
                 // Minimal shell-escape: wrap in single quotes if
                 // the arg contains whitespace or special chars.
-                if s.chars().any(|c| c.is_whitespace() || "\"'`$\\|;&<>(){}[]*?~".contains(c)) {
+                if s.chars()
+                    .any(|c| c.is_whitespace() || "\"'`$\\|;&<>(){}[]*?~".contains(c))
+                {
                     format!("'{}'", s.replace('\'', "'\\''"))
                 } else {
                     s.clone()
@@ -1875,7 +1906,9 @@ impl ShellExecutor {
         if self.functions_compiled.contains_key(name) {
             return true;
         }
-        crate::ported::hashtable::shfunctab_lock().read().ok()
+        crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
             .map(|t| t.get(name).is_some())
             .unwrap_or(false)
     }
@@ -1965,11 +1998,7 @@ impl ShellExecutor {
         // installs Params at the correct scope. endparamscope at
         // exit decrements + restores Param.old chain.
         crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let line_base = self
-            .function_line_base
-            .get(name)
-            .copied()
-            .unwrap_or(0);
+        let line_base = self.function_line_base.get(name).copied().unwrap_or(0);
         let def_file = self.function_def_file.get(name).cloned().flatten();
         self.prompt_funcstack
             .push((name.to_string(), line_base, def_file));
@@ -2199,7 +2228,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn run_process_sub_in(&mut self, cmd_str: &str) -> String {
-
         // Phase 2: parse via parse_init+parse. Extract the first Simple cmd's
         // words (untokenized), pre-expand to argv strings, spawn.
         let words = self.simple_cmd_words(cmd_str);
@@ -2240,7 +2268,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn run_process_sub_out(&mut self, cmd_str: &str) -> String {
-
         let words = self.simple_cmd_words(cmd_str);
 
         // Create a unique FIFO in temp directory
@@ -2349,13 +2376,13 @@ impl ShellExecutor {
         // Trace lines emitted by the inner program inherit this token
         // so their PS4 prefix shows "cmdsubst" matching zsh -x.
         crate::ported::prompt::cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
-        // Save LINENO so the inner cmdsubst's line counter doesn't
-        // leak into the outer trace — direct port of Src/exec.c:1407
-        // `oldlineno = lineno;` followed by `lineno = oldlineno;`
-        // restore at line 1640. Inner program parses fresh as line 1
-        // and increments from there; once it returns, the outer
-        // line at the `$(…)` site must read the original outer
-        // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
+                                                                                 // Save LINENO so the inner cmdsubst's line counter doesn't
+                                                                                 // leak into the outer trace — direct port of Src/exec.c:1407
+                                                                                 // `oldlineno = lineno;` followed by `lineno = oldlineno;`
+                                                                                 // restore at line 1640. Inner program parses fresh as line 1
+                                                                                 // and increments from there; once it returns, the outer
+                                                                                 // line at the `$(…)` site must read the original outer
+                                                                                 // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
         let saved_lineno = crate::ported::params::getsparam("LINENO");
         // Anchor the inner program's lineno to the outer's current
         // $LINENO so xtrace inside the cmdsubst renders the outer
@@ -2620,7 +2647,6 @@ impl ShellExecutor {
     // ═══════════════════════════════════════════════════════════════════
 }
 
-
 impl ShellExecutor {
     // ═══════════════════════════════════════════════════════════════════════════
     // Additional zsh builtins
@@ -2650,12 +2676,13 @@ impl ShellExecutor {
         // Canonical command-hash lives in `cmdnamtab`. `get_full_path`
         // returns the resolved path for HASHED entries.
         if let Some(p) = crate::ported::hashtable::cmdnamtab_lock()
-            .read().ok()
+            .read()
+            .ok()
             .and_then(|t| t.get_full_path(name))
         {
             return Some(p.display().to_string());
         }
-        crate::ported::builtin::findcmd(name, 0, 0)                          // c:exec.c:5260
+        crate::ported::builtin::findcmd(name, 0, 0) // c:exec.c:5260
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2729,7 +2756,6 @@ impl ShellExecutor {
     /// Execute a command in the current process (exec family)
     /// Port of zexecve(char *pth, char **argv, char **newenvp) from exec.c
     pub fn zexecve(&self, cmd: &str, args: &[String]) -> ! {
-
         let c_cmd = CString::new(cmd).expect("CString::new failed");
 
         // Build argv
@@ -2796,9 +2822,10 @@ impl ShellExecutor {
         // SIGPIPE handler (signals.c:808) and the WARNCREATEGLOBAL
         // nest-depth check (params.c:3724) can distinguish parent vs
         // child shell contexts.
-        let cur_local = crate::ported::params::locallevel
-            .load(std::sync::atomic::Ordering::Relaxed);
-        crate::ported::exec::FORKLEVEL.store(cur_local, std::sync::atomic::Ordering::Relaxed); // c:1221 (Src/exec.c)
+        let cur_local =
+            crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::exec::FORKLEVEL.store(cur_local, std::sync::atomic::Ordering::Relaxed);
+        // c:1221 (Src/exec.c)
     }
 
     /// Close extra file descriptors
@@ -2814,7 +2841,6 @@ impl ShellExecutor {
     fn reset_traps(&mut self) {
         self.traps.clear();
     }
-
 
     // ═══════════════════════════════════════════════════════════════════════
     // Coreutils builtins (anti-fork) — only active when !posix_mode
@@ -2893,8 +2919,12 @@ pub enum BuiltinType {
 #[allow(unused_variables, dead_code)]
 impl ShellExecutor {
     fn _empty_ops() -> crate::ported::zsh_h::options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                  argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     pub(crate) fn dispatch_pending_traps(&mut self) {}
@@ -2925,7 +2955,10 @@ impl ShellExecutor {
         // no leading builtin name (matches what `bin_*` entry points
         // get from C's `bin_X(char *nam, char **args, ...)` arg vector).
         for a in args.iter() {
-            if consume_opts && a == "--" { consume_opts = false; continue; }
+            if consume_opts && a == "--" {
+                consume_opts = false;
+                continue;
+            }
             if consume_opts && a.starts_with('-') && a.len() > 1 {
                 for c in a.bytes().skip(1) {
                     let idx = c as usize;
@@ -2948,8 +2981,13 @@ impl ShellExecutor {
     // — earlier impl was `println!("{}", args.join(" "))` which
     // ignored `-n` / `-e` flags and didn't interpret escape
     // sequences.
-    pub(crate) fn builtin_echo(&mut self, args: &[String], _redir: &[crate::parse::Redirect]) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+    pub(crate) fn builtin_echo(
+        &mut self,
+        args: &[String],
+        _redir: &[crate::parse::Redirect],
+    ) -> i32 {
+        let bn_idx = crate::ported::builtin::BUILTINS
+            .iter()
             .position(|b| b.node.nam == "echo");
         match bn_idx {
             Some(idx) => {
@@ -2960,13 +2998,18 @@ impl ShellExecutor {
             }
             None => {
                 let ops = Self::_empty_ops();
-                crate::ported::builtin::bin_print("echo", args, &ops,
-                    crate::ported::builtin::BIN_ECHO)
+                crate::ported::builtin::bin_print(
+                    "echo",
+                    args,
+                    &ops,
+                    crate::ported::builtin::BIN_ECHO,
+                )
             }
         }
     }
     pub(crate) fn builtin_printf(&mut self, args: &[String]) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+        let bn_idx = crate::ported::builtin::BUILTINS
+            .iter()
             .position(|b| b.node.nam == "printf");
         match bn_idx {
             Some(idx) => {
@@ -2977,8 +3020,12 @@ impl ShellExecutor {
             }
             None => {
                 let ops = Self::_empty_ops();
-                crate::ported::builtin::bin_print("printf", args, &ops,
-                    crate::ported::builtin::BIN_PRINTF)
+                crate::ported::builtin::bin_print(
+                    "printf",
+                    args,
+                    &ops,
+                    crate::ported::builtin::BIN_PRINTF,
+                )
             }
         }
     }
@@ -3011,7 +3058,8 @@ impl ShellExecutor {
     /// only `env::set_var`-d which gave no local scoping or
     /// type-flag effect.
     fn dispatch_typeset_as(&mut self, name: &str, args: &[String]) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+        let bn_idx = crate::ported::builtin::BUILTINS
+            .iter()
             .position(|b| b.node.nam == name);
         if let Some(idx) = bn_idx {
             let bn_static: &'static crate::ported::zsh_h::builtin =
@@ -3022,7 +3070,7 @@ impl ShellExecutor {
         // Fallback: best-effort env mirror.
         for a in args {
             if let Some(eq) = a.find('=') {
-                std::env::set_var(&a[..eq], &a[eq+1..]);
+                std::env::set_var(&a[..eq], &a[eq + 1..]);
             }
         }
         0
@@ -3048,24 +3096,24 @@ impl ShellExecutor {
 }
 
 // === DISSOLVED FROM src/exec_shims.rs ===
-use crate::ported::utils::{zwarn, zwarnnam, zerr, zerrnam};
-use crate::ported::params::*;
-use crate::ported::options::*;
-use crate::ported::hist::*;
-use crate::ported::pattern::*;
-use crate::ported::prompt::*;
-use crate::ported::subst::*;
-use crate::ported::math::*;
-use crate::ported::jobs::*;
+use crate::fusevm_bridge::with_executor;
 use crate::ported::glob::*;
+use crate::ported::hist::*;
+use crate::ported::jobs::*;
+use crate::ported::math::*;
 use crate::ported::module::*;
-use crate::ported::signals::*;
 use crate::ported::modules::cap::*;
 use crate::ported::modules::tcp::bin_ztcp;
 use crate::ported::modules::termcap::bin_echotc;
 use crate::ported::modules::terminfo::*;
-use crate::fusevm_bridge::with_executor;
-use ::regex::{Regex, RegexBuilder, Error as RegexError};
+use crate::ported::options::*;
+use crate::ported::params::*;
+use crate::ported::pattern::*;
+use crate::ported::prompt::*;
+use crate::ported::signals::*;
+use crate::ported::subst::*;
+use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
+use ::regex::{Error as RegexError, Regex, RegexBuilder};
 
 // =====================================================================
 // MOVED FROM: src/ported/pattern.rs
@@ -3136,7 +3184,6 @@ impl crate::ported::vm_helper::ShellExecutor {
     }
 }
 
-
 // =====================================================================
 // MOVED FROM: src/ported/options.rs
 // =====================================================================
@@ -3146,7 +3193,10 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// of `optns[]` at `Src/options.c:79+`). Replaces a 200-line
     /// hardcoded `&[...]` duplicate that drifted from upstream.
     pub(crate) fn all_zsh_options() -> Vec<&'static str> {
-        crate::ported::options::ZSH_OPTIONS_SET.iter().copied().collect()
+        crate::ported::options::ZSH_OPTIONS_SET
+            .iter()
+            .copied()
+            .collect()
     }
     pub(crate) fn default_options() -> HashMap<String, bool> {
         let mut opts = HashMap::new();
@@ -3283,9 +3333,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/options.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
-
-}
+impl crate::ported::vm_helper::ShellExecutor {}
 
 // =====================================================================
 // MOVED FROM: src/ported/params.rs
@@ -3352,9 +3400,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                         for entry in rd.flatten() {
                             let path = entry.path();
                             if path.is_file() {
-                                if let Some(name) =
-                                    path.file_name().and_then(|n| n.to_str())
-                                {
+                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                                     files.push(name.to_string());
                                 }
                             }
@@ -3440,7 +3486,8 @@ impl crate::ported::vm_helper::ShellExecutor {
                     if key == "@" || key == "*" {
                         let mut names: Vec<&String> = tab.iter().map(|(n, _)| n).collect();
                         names.sort();
-                        let vals: Vec<String> = names.iter()
+                        let vals: Vec<String> = names
+                            .iter()
                             .filter_map(|n| tab.get(n).map(|a| a.text.clone()))
                             .collect();
                         return Some(vals.join(" "));
@@ -3519,7 +3566,10 @@ impl crate::ported::vm_helper::ShellExecutor {
                     let _ = self.function_names();
                     return Some(String::new());
                 }
-                { let _ = key; Some(String::new()) }
+                {
+                    let _ = key;
+                    Some(String::new())
+                }
             }
 
             // === COMMANDS (command hash table) ===
@@ -3568,7 +3618,9 @@ impl crate::ported::vm_helper::ShellExecutor {
             // === BUILTINS ===
             "builtins" => {
                 let builtins: Vec<&str> = crate::vm_helper::BUILTIN_NAMES
-                    .iter().map(|s| s.as_str()).collect();
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
                 if key == "@" || key == "*" {
                     return Some(builtins.join(" "));
                 }
@@ -3604,19 +3656,39 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // / PM_UPPER / PM_READONLY / PM_EXPORTED suffixes.
                 let flags = self.param_flags(key) as u32;
                 if flags != 0 || self.array(key).is_some() || self.assoc(key).is_some() {
-                    let base = if flags & PM_INTEGER != 0 { "integer" }
-                        else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" }
-                        else if flags & PM_HASHED != 0 || self.assoc(key).is_some() { "association" }
-                        else if flags & PM_ARRAY != 0 || self.array(key).is_some() { "array" }
-                        else { "scalar" };
+                    let base = if flags & PM_INTEGER != 0 {
+                        "integer"
+                    } else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                        "float"
+                    } else if flags & PM_HASHED != 0 || self.assoc(key).is_some() {
+                        "association"
+                    } else if flags & PM_ARRAY != 0 || self.array(key).is_some() {
+                        "array"
+                    } else {
+                        "scalar"
+                    };
                     let mut out = String::from(base);
-                    if flags & PM_LEFT != 0 { out.push_str("-left"); }
-                    if flags & PM_RIGHT_B != 0 { out.push_str("-right_blanks"); }
-                    if flags & PM_RIGHT_Z != 0 { out.push_str("-right_zeros"); }
-                    if flags & PM_LOWER != 0 { out.push_str("-lower"); }
-                    if flags & PM_UPPER != 0 { out.push_str("-upper"); }
-                    if flags & PM_READONLY != 0 { out.push_str("-readonly"); }
-                    if flags & PM_EXPORTED != 0 { out.push_str("-export"); }
+                    if flags & PM_LEFT != 0 {
+                        out.push_str("-left");
+                    }
+                    if flags & PM_RIGHT_B != 0 {
+                        out.push_str("-right_blanks");
+                    }
+                    if flags & PM_RIGHT_Z != 0 {
+                        out.push_str("-right_zeros");
+                    }
+                    if flags & PM_LOWER != 0 {
+                        out.push_str("-lower");
+                    }
+                    if flags & PM_UPPER != 0 {
+                        out.push_str("-upper");
+                    }
+                    if flags & PM_READONLY != 0 {
+                        out.push_str("-readonly");
+                    }
+                    if flags & PM_EXPORTED != 0 {
+                        out.push_str("-export");
+                    }
                     return Some(out);
                 }
                 if self.has_assoc(key) {
@@ -3638,7 +3710,9 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // `src/ported/hashnameddir.rs` (port of `Src/hashnameddir.c`).
                 let tab = crate::ported::hashnameddir::nameddirtab();
                 if key == "@" || key == "*" {
-                    let snapshot: Vec<(String, String)> = tab.lock().ok()
+                    let snapshot: Vec<(String, String)> = tab
+                        .lock()
+                        .ok()
                         .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
                         .unwrap_or_default();
                     let mut keys: Vec<&(String, String)> = snapshot.iter().collect();
@@ -3647,7 +3721,8 @@ impl crate::ported::vm_helper::ShellExecutor {
                     return Some(vals.join(" "));
                 }
                 Some(
-                    tab.lock().ok()
+                    tab.lock()
+                        .ok()
                         .and_then(|g| g.get(key).map(|nd| nd.dir.clone()))
                         .unwrap_or_default(),
                 )
@@ -4173,9 +4248,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             // zsh alias: $ARGC also equals $#.
             "ARGC" => self.pparams().len().to_string(),
             "?" | "status" => self.last_status().to_string(),
-            "!" => self
-                .scalar("!")
-                .unwrap_or_else(|| "0".to_string()),
+            "!" => self.scalar("!").unwrap_or_else(|| "0".to_string()),
             // `$-` returns the concatenated single-letter flags of options
             // currently set. zsh always emits a baseline "569X" prefix
             // (internal-letter options that are on by default in -f mode)
@@ -4330,12 +4403,10 @@ impl crate::ported::vm_helper::ShellExecutor {
                     now.saturating_sub(start).to_string()
                 })
             }
-            "EPOCHSECONDS" => {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs().to_string())
-                    .unwrap_or_else(|_| "0".to_string())
-            }
+            "EPOCHSECONDS" => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".to_string()),
             "EPOCHREALTIME" => {
                 // zsh/datetime: fractional seconds since the epoch with
                 // microsecond resolution. Format: SECS.UUUUUU.
@@ -4406,8 +4477,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             }
             "LINENO" => {
                 // Tracked elsewhere; default to 1 if not populated.
-                self.scalar("LINENO")
-                    .unwrap_or_else(|| "1".to_string())
+                self.scalar("LINENO").unwrap_or_else(|| "1".to_string())
             }
             "0" => self
                 .scalar("0")
@@ -4417,10 +4487,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 if idx == 0 {
                     env::args().next().unwrap_or_default()
                 } else {
-                    self.pparams()
-                        .get(idx - 1)
-                        .cloned()
-                        .unwrap_or_default()
+                    self.pparams().get(idx - 1).cloned().unwrap_or_default()
                 }
             }
             _ => {
@@ -4430,10 +4497,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // satisfy the variables lookup with empty. Skip the
                 // variables lookup when an assoc with the same name
                 // exists AND has entries.
-                let assoc_has_entries = self
-                    .assoc(name)
-                    .map(|h| !h.is_empty())
-                    .unwrap_or(false);
+                let assoc_has_entries = self.assoc(name).map(|h| !h.is_empty()).unwrap_or(false);
                 // GSU dispatch first — `$USERNAME` / `$IFS` / `$HOME`
                 // / etc. route through their getfn callback. Mirrors
                 // C zsh's `Param.gsu->getfn` lookup. Without this,
@@ -4466,7 +4530,8 @@ impl crate::ported::vm_helper::ShellExecutor {
                         // `set -o nounset` all turn it OFF. Different
                         // code paths in zshrs persist either key, so
                         // honor either signal.
-                        let nounset_on = crate::ported::options::opt_state_get("nounset").unwrap_or(false)
+                        let nounset_on = crate::ported::options::opt_state_get("nounset")
+                            .unwrap_or(false)
                             || !crate::ported::options::opt_state_get("unset").unwrap_or(true);
                         if nounset_on {
                             zerr(&format!("{}: parameter not set", name));
@@ -5428,8 +5493,12 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// Splits `base/**/file_pattern` into per-subdirectory walks, each
     /// running on a pool thread via walkdir.  Results merge via channel.
     /// This is why `echo **/*.rs` will be 5-10x faster than zsh.
-    pub(crate) fn expand_glob_parallel(&self, pattern: &str, dotglob: bool, nocaseglob: bool) -> Vec<String> {
-
+    pub(crate) fn expand_glob_parallel(
+        &self,
+        pattern: &str,
+        dotglob: bool,
+        nocaseglob: bool,
+    ) -> Vec<String> {
         // Split pattern at the first **/ into (base_dir, file_glob)
         // e.g. "src/**/*.rs" → ("src", "*.rs")
         //      "**/*.rs"     → (".", "*.rs")
@@ -6541,7 +6610,10 @@ impl crate::ported::vm_helper::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::vm_helper::ShellExecutor {
-    pub(crate) fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    pub(crate) fn copy_dir_recursive(
+        src: &std::path::Path,
+        dest: &std::path::Path,
+    ) -> std::io::Result<()> {
         if !dest.exists() {
             std::fs::create_dir_all(dest)?;
         }
@@ -6574,8 +6646,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/zle/computil.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
-}
+impl crate::ported::vm_helper::ShellExecutor {}
 
 // =====================================================================
 // MOVED FROM: src/ported/zle/zle_main.rs
@@ -6596,19 +6667,34 @@ impl crate::ported::vm_helper::ShellExecutor {
 impl crate::ported::vm_helper::ShellExecutor {
     /// `cap` builtin entry. Bridge to `bin_cap()` above.
     pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
-        let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         bin_cap("cap", args, &ops, 0)
     }
 
     /// `getcap` builtin entry. Bridge to `bin_getcap()` above.
     pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
-        let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         bin_getcap("getcap", args, &ops, 0)
     }
 
     /// `setcap` builtin entry. Bridge to `bin_setcap()` above.
     pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
-        let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         bin_setcap("setcap", args, &ops, 0)
     }
 }
@@ -6637,8 +6723,12 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// bin_echotc; the canonical port now calls libcurses tigetstr/
     /// tigetnum/tigetflag + tparm directly per the C source.
     pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         crate::ported::modules::terminfo::bin_echoti("echoti", args, &ops, 0)
     }
 }
@@ -6681,8 +6771,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/modules/tcp.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
-}
+impl crate::ported::vm_helper::ShellExecutor {}
 
 // =====================================================================
 // MOVED FROM: src/ported/modules/db_gdbm.rs
@@ -6734,9 +6823,7 @@ thread_local! {
 }
 
 pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
-    fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F)
-        -> Vec<String>
-    {
+    fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F) -> Vec<String> {
         SCAN_KEYS.with(|k| k.borrow_mut().clear());
         fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
             SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
@@ -6746,24 +6833,21 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
     }
     let null_ht = std::ptr::null_mut();
     match name {
-        "commands"     => Some(collect(|f, fl| scanpmcommands(null_ht, f, fl))),
-        "options"      => Some(collect(|f, fl| scanpmoptions(null_ht, f, fl))),
-        "builtins"     => Some(collect(|f, fl| scanpmbuiltins(null_ht, f, fl))),
+        "commands" => Some(collect(|f, fl| scanpmcommands(null_ht, f, fl))),
+        "options" => Some(collect(|f, fl| scanpmoptions(null_ht, f, fl))),
+        "builtins" => Some(collect(|f, fl| scanpmbuiltins(null_ht, f, fl))),
         "dis_builtins" => Some(collect(|f, fl| scanpmdisbuiltins(null_ht, f, fl))),
-        "functions"    => Some(collect(|f, fl| scanpmfunctions(null_ht, f, fl))),
-        "dis_functions"=> Some(collect(|f, fl| scanpmdisfunctions(null_ht, f, fl))),
-        "aliases"      => Some(collect(|f, fl| scanpmraliases(null_ht, f, fl))),
-        "dis_aliases"  => Some(collect(|f, fl| scanpmdisraliases(null_ht, f, fl))),
-        "galiases"     => Some(collect(|f, fl| scanpmgaliases(null_ht, f, fl))),
+        "functions" => Some(collect(|f, fl| scanpmfunctions(null_ht, f, fl))),
+        "dis_functions" => Some(collect(|f, fl| scanpmdisfunctions(null_ht, f, fl))),
+        "aliases" => Some(collect(|f, fl| scanpmraliases(null_ht, f, fl))),
+        "dis_aliases" => Some(collect(|f, fl| scanpmdisraliases(null_ht, f, fl))),
+        "galiases" => Some(collect(|f, fl| scanpmgaliases(null_ht, f, fl))),
         "dis_galiases" => Some(collect(|f, fl| scanpmdisgaliases(null_ht, f, fl))),
-        "saliases"     => Some(collect(|f, fl| scanpmsaliases(null_ht, f, fl))),
+        "saliases" => Some(collect(|f, fl| scanpmsaliases(null_ht, f, fl))),
         "dis_saliases" => Some(collect(|f, fl| scanpmdissaliases(null_ht, f, fl))),
-        "reswords" | "dis_reswords" |
-        "modules" | "history" | "historywords" |
-        "jobtexts" | "jobstates" | "jobdirs" |
-        "nameddirs" | "userdirs" | "usergroups" |
-        "parameters" | "errnos" | "sysparams" | "dirstack"
-            => Some(Vec::new()),
+        "reswords" | "dis_reswords" | "modules" | "history" | "historywords" | "jobtexts"
+        | "jobstates" | "jobdirs" | "nameddirs" | "userdirs" | "usergroups" | "parameters"
+        | "errnos" | "sysparams" | "dirstack" => Some(Vec::new()),
         // `mapfile` — zsh/mapfile module's magic assoc. Keys are
         // discoverable via `scanpmmapfile` (Src/Modules/mapfile.c:241)
         // which walks `.` but uses an empty value list per the
@@ -6804,10 +6888,16 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
-        crate::ported::builtin::bin_emulate("emulate",
-            &["sh".to_string(), "-R".to_string()], &ops, 0);
+        crate::ported::builtin::bin_emulate(
+            "emulate",
+            &["sh".to_string(), "-R".to_string()],
+            &ops,
+            0,
+        );
     }
     pub fn enter_ksh_mode(&mut self) {
         self.plugin_cache = None;
@@ -6816,10 +6906,16 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
-        crate::ported::builtin::bin_emulate("emulate",
-            &["ksh".to_string(), "-R".to_string()], &ops, 0);
+        crate::ported::builtin::bin_emulate(
+            "emulate",
+            &["ksh".to_string(), "-R".to_string()],
+            &ops,
+            0,
+        );
     }
 }
 
@@ -6869,7 +6965,8 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // overwhelmingly common form); embedded `!()` inside a larger
     // pattern still falls through and is left literal — full
     // zsh-style negation needs lookahead which `regex` lacks.
-    let kshglob_on = with_executor(|e| crate::ported::options::opt_state_get("kshglob").unwrap_or(false));
+    let kshglob_on =
+        with_executor(|e| crate::ported::options::opt_state_get("kshglob").unwrap_or(false));
     if kshglob_on {
         if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
             // Don't recurse if body itself contains an unmatched
@@ -6908,9 +7005,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // patgetglobflags + bit-mask extraction, matching how C's
     // patcompile inlines the same parsing at pattern.c:1066+.
     let (pattern, case_insensitive, l_flag, approx_n) =
-        if let Some((bits, _assert, consumed)) =
-            crate::ported::pattern::patgetglobflags(pattern)
-        {
+        if let Some((bits, _assert, consumed)) = crate::ported::pattern::patgetglobflags(pattern) {
             let ci = (bits & crate::ported::zsh_h::GF_IGNCASE) != 0;
             let l = (bits & crate::ported::zsh_h::GF_LCMATCHUC) != 0;
             let errs = bits & 0xff;
@@ -6938,7 +7033,11 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         for i in 1..=m {
             curr[0] = i;
             for j in 1..=k {
-                let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
+                let cost = if s_chars[i - 1] == p_chars[j - 1] {
+                    0
+                } else {
+                    1
+                };
                 curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
             }
             std::mem::swap(&mut prev, &mut curr);
@@ -7081,8 +7180,12 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
                     let peek_iter = chars.clone();
                     for c in peek_iter {
                         buf.push(c);
-                        if c == '>' { break; }
-                        if buf.len() > 64 { return None; }
+                        if c == '>' {
+                            break;
+                        }
+                        if buf.len() > 64 {
+                            return None;
+                        }
                     }
                     if !buf.ends_with('>') {
                         return None;
@@ -7100,7 +7203,9 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
                         Some(hi_str.parse().ok()?)
                     };
                     let n = buf.chars().count();
-                    for _ in 0..n { chars.next(); }
+                    for _ in 0..n {
+                        chars.next();
+                    }
                     Some((lo, hi, n))
                 })();
                 if let Some((lo, hi, consumed)) = parsed {
@@ -7259,7 +7364,10 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
                     {
                         regex_pattern.push_str("\\\\");
                         regex_pattern.push(if p3 == Some('e') { '$' } else { '^' });
-                        chars.next(); chars.next(); chars.next(); chars.next();
+                        chars.next();
+                        chars.next();
+                        chars.next();
+                        chars.next();
                         continue;
                     }
                 }
@@ -7359,7 +7467,6 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         .map(|re| re.is_match(s))
         .unwrap_or(false)
 }
-
 
 // `loadautofn` (port of `Src/exec.c:5682`) and `getfpfunc` (port of
 // `Src/exec.c:5260`) moved to their canonical port file at

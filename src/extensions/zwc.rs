@@ -30,31 +30,24 @@ use crate::parse::{
     SimpleCommand,
 };
 use std::fs::File;
+use std::io::Write;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::io::Write;
 
 const FD_MAGIC: u32 = 0x04050607;
 const FD_OMAGIC: u32 = 0x07060504; // Other byte order
 const FD_PRELEN: usize = 12;
 use crate::ported::zsh_h::{
-    WC_END, WC_LIST, WC_SUBLIST, WC_PIPE, WC_REDIR, WC_ASSIGN, WC_SIMPLE, WC_TYPESET,
-    WC_SUBSH, WC_CURSH, WC_TIMED, WC_FUNCDEF, WC_FOR, WC_SELECT, WC_WHILE, WC_REPEAT,
-    WC_CASE, WC_IF, WC_COND, WC_ARITH, WC_AUTOFN, WC_TRY,
-    WC_LIST_FREE, WC_SUBLIST_FREE, WC_CASE_FREE,
-    WC_SUBLIST_END, WC_SUBLIST_AND, WC_SUBLIST_OR, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
-    WC_SUBLIST_SIMPLE,
-    WC_PIPE_END, WC_PIPE_MID,
-    WC_ASSIGN_SCALAR, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
-    WC_FOR_PPARAM, WC_FOR_LIST, WC_FOR_COND,
-    WC_SELECT_PPARAM, WC_SELECT_LIST,
-    WC_WHILE_WHILE, WC_WHILE_UNTIL,
-    WC_CODEBITS,
-    WC_CASE_HEAD, WC_CASE_OR, WC_CASE_AND, WC_CASE_TESTAND,
-    WC_IF_HEAD, WC_IF_IF, WC_IF_ELIF, WC_IF_ELSE,
-    Pound, Hat, Star, Inpar, Outpar, Equals, Bar, Inbrace, Outbrace, Inbrack,
-    Stringg, Outbrack, Tick, Inang, Outang, Quest, Tilde, Comma, Dash, Bang,
-    Snull, Dnull, Bnull, Nularg,
+    Bang, Bar, Bnull, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Nularg,
+    Outang, Outbrace, Outbrack, Outpar, Pound, Quest, Snull, Star, Stringg, Tick, Tilde, WC_ARITH,
+    WC_ASSIGN, WC_ASSIGN_ARRAY, WC_ASSIGN_INC, WC_ASSIGN_SCALAR, WC_AUTOFN, WC_CASE, WC_CASE_AND,
+    WC_CASE_FREE, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND, WC_CODEBITS, WC_COND, WC_CURSH,
+    WC_END, WC_FOR, WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_FUNCDEF, WC_IF, WC_IF_ELIF,
+    WC_IF_ELSE, WC_IF_HEAD, WC_IF_IF, WC_LIST, WC_LIST_FREE, WC_PIPE, WC_PIPE_END, WC_PIPE_MID,
+    WC_REDIR, WC_REPEAT, WC_SELECT, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SIMPLE, WC_SUBLIST,
+    WC_SUBLIST_AND, WC_SUBLIST_COPROC, WC_SUBLIST_END, WC_SUBLIST_FREE, WC_SUBLIST_NOT,
+    WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_TYPESET, WC_WHILE,
+    WC_WHILE_UNTIL, WC_WHILE_WHILE,
 };
 // Z_END / Z_SIMPLE in zsh_h are i32 (matching C `int` for these flag bits).
 // Rebind to u32 for bitwise ops against `wordcode` data.
@@ -377,7 +370,6 @@ impl ZwcBuilder {
     /// Note: This writes a simplified format that stores raw source code
     /// rather than compiled wordcode. The loader handles both formats.
     pub fn write<P: AsRef<std::path::Path>>(&self, path: P) -> io::Result<()> {
-
         let mut file = std::fs::File::create(path)?;
 
         // Write magic
@@ -1408,11 +1400,9 @@ impl DecodedOp {
                         )
                     })
                     .collect();
-                let else_part: Option<Vec<ShellCommand>> = else_body.as_ref().map(|body| {
-                    body.iter()
-                        .filter_map(|op| op.to_shell_command())
-                        .collect()
-                });
+                let else_part: Option<Vec<ShellCommand>> = else_body
+                    .as_ref()
+                    .map(|body| body.iter().filter_map(|op| op.to_shell_command()).collect());
                 Some(ShellCommand::Compound(CompoundCommand::If {
                     conditions: cond_pairs,
                     else_part,
@@ -1710,10 +1700,7 @@ mod tests {
         };
         let op = DecodedOp::Case {
             word: "$x".into(),
-            cases: vec![
-                ("a*".into(), vec![body_one]),
-                ("b*".into(), vec![body_two]),
-            ],
+            cases: vec![("a*".into(), vec![body_one]), ("b*".into(), vec![body_two])],
         };
         match op.to_shell_command() {
             Some(ShellCommand::Compound(CompoundCommand::Case { cases, .. })) => {

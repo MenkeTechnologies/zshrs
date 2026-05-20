@@ -26,11 +26,11 @@ use std::path::Path;
 
 use crate::glob::matchpat;
 use crate::ported::zsh_h::{
-    COND_AND, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NOT, COND_NT,
-    COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
+    COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT, COND_OT, COND_REGEX,
+    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
 };
-use std::os::unix::io::FromRawFd;
 use std::io::Write;
+use std::os::unix::io::FromRawFd;
 
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
@@ -59,19 +59,24 @@ use std::io::Write;
 ///
 /// Returns C's convention (cond.c:62-66): 0=true, 1=false, 2=syntax
 /// error, 3=option-tested-with-`-o`-not-found.
-pub fn evalcond(                                                             // c:70
+pub fn evalcond(
+    // c:70
     args: &[&str],
     options: &HashMap<String, bool>,
     variables: &HashMap<String, String>,
     posix_mode: bool,
 ) -> i32 {
-    if args.is_empty() { return 1; }
+    if args.is_empty() {
+        return 1;
+    }
     let toks: Vec<&str> = args
         .iter()
         .filter(|s| !matches!(**s, "[" | "]" | "[[" | "]]"))
         .copied()
         .collect();
-    if toks.is_empty() { return 1; }
+    if toks.is_empty() {
+        return 1;
+    }
 
     // Inner walker — the entire cond.c:81-185 switch collapsed into
     // one fn. `prec` selects the recursion level (0=OR, 1=AND,
@@ -86,7 +91,13 @@ pub fn evalcond(                                                             // 
         posix: bool,
         prec: u8,
     ) -> i32 {
-        let b2i = |b: bool| -> i32 { if b { 0 } else { 1 } };
+        let b2i = |b: bool| -> i32 {
+            if b {
+                0
+            } else {
+                1
+            }
+        };
         let peek = |i: usize| -> Option<&str> { toks.get(i).copied() };
 
         match prec {
@@ -96,7 +107,13 @@ pub fn evalcond(                                                             // 
                 while peek(*pos) == Some("||") || peek(*pos) == Some("-o") {
                     *pos += 1;
                     let right = walk(toks, pos, opts, vars, posix, 1);
-                    left = if left == 0 { 0 } else if left >= 2 { left } else { right };
+                    left = if left == 0 {
+                        0
+                    } else if left >= 2 {
+                        left
+                    } else {
+                        right
+                    };
                 }
                 left
             }
@@ -115,7 +132,15 @@ pub fn evalcond(                                                             // 
                 if peek(*pos) == Some("!") {
                     *pos += 1;
                     let r = walk(toks, pos, opts, vars, posix, 2);
-                    if r < 2 { if r == 0 { 1 } else { 0 } } else { r }
+                    if r < 2 {
+                        if r == 0 {
+                            1
+                        } else {
+                            0
+                        }
+                    } else {
+                        r
+                    }
                 } else {
                     walk(toks, pos, opts, vars, posix, 3)
                 }
@@ -126,7 +151,9 @@ pub fn evalcond(                                                             // 
                 if peek(*pos) == Some("(") {
                     *pos += 1;
                     let r = walk(toks, pos, opts, vars, posix, 0);
-                    if peek(*pos) != Some(")") { return 2; }
+                    if peek(*pos) != Some(")") {
+                        return 2;
+                    }
                     *pos += 1;
                     return r;
                 }
@@ -134,30 +161,66 @@ pub fn evalcond(                                                             // 
                 if let Some(tok) = peek(*pos) {
                     if tok.starts_with('-') && tok.len() == 2 {
                         let op = tok.chars().nth(1).unwrap();
-                        if matches!(op,
-                            'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'k'|'L'|'n'|'o'
-                            |'p'|'r'|'s'|'S'|'t'|'u'|'v'|'w'|'x'|'z'|'G'|'N'|'O'
+                        if matches!(
+                            op,
+                            'a' | 'b'
+                                | 'c'
+                                | 'd'
+                                | 'e'
+                                | 'f'
+                                | 'g'
+                                | 'h'
+                                | 'k'
+                                | 'L'
+                                | 'n'
+                                | 'o'
+                                | 'p'
+                                | 'r'
+                                | 's'
+                                | 'S'
+                                | 't'
+                                | 'u'
+                                | 'v'
+                                | 'w'
+                                | 'x'
+                                | 'z'
+                                | 'G'
+                                | 'N'
+                                | 'O'
                         ) {
                             *pos += 1;
                             let arg = match peek(*pos) {
-                                Some(a) => { *pos += 1; a.to_string() }
+                                Some(a) => {
+                                    *pos += 1;
+                                    a.to_string()
+                                }
                                 None => return 2,
                             };
                             return match op {
-                                'a' | 'e' => b2i(Path::new(&arg).exists()),  // c:179-180
-                                'b' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32),
-                                'c' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32),
+                                'a' | 'e' => b2i(Path::new(&arg).exists()), // c:179-180
+                                'b' => {
+                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32)
+                                }
+                                'c' => {
+                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32)
+                                }
                                 'd' => b2i(Path::new(&arg).is_dir()),
                                 'f' => b2i(Path::new(&arg).is_file()),
                                 'g' => b2i(dostat(&arg) & libc::S_ISGID as u32 != 0),
-                                'h' | 'L' => b2i(dolstat(&arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32),
+                                'h' | 'L' => {
+                                    b2i(dolstat(&arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32)
+                                }
                                 'k' => b2i(dostat(&arg) & libc::S_ISVTX as u32 != 0),
-                                'p' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32),
-                                'r' => b2i(doaccess(&arg, 4) != 0),          // c:438
+                                'p' => {
+                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32)
+                                }
+                                'r' => b2i(doaccess(&arg, 4) != 0), // c:438
                                 's' => b2i(getstat(&arg).map(|m| m.len() > 0).unwrap_or(false)),
-                                'S' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32),
+                                'S' => {
+                                    b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32)
+                                }
                                 'u' => b2i(dostat(&arg) & libc::S_ISUID as u32 != 0),
-                                'w' => b2i(doaccess(&arg, 2) != 0),          // c:438
+                                'w' => b2i(doaccess(&arg, 2) != 0), // c:438
                                 // c:368-373 — `-x file` test:
                                 //   if (privasserted()) {
                                 //       mode_t mode = dostat(left);
@@ -176,29 +239,39 @@ pub fn evalcond(                                                             // 
                                 // back). Gate on `privasserted()` to
                                 // match C exactly.
                                 'x' => {
-                                    if crate::ported::utils::privasserted() {     // c:368
+                                    if crate::ported::utils::privasserted() {
+                                        // c:368
                                         let mode = dostat(&arg);
                                         // c:370 — `(mode & S_IXUGO) || S_ISDIR(mode)`.
                                         let s_ixugo = 0o111u32; // S_IXUSR|S_IXGRP|S_IXOTH
-                                        let is_dir = mode & libc::S_IFMT as u32
-                                                   == libc::S_IFDIR as u32;
-                                        b2i((mode & s_ixugo) != 0 || is_dir)      // c:370
-                                    } else {                                       // c:372
-                                        b2i(doaccess(&arg, 1) != 0)               // c:373 X_OK
+                                        let is_dir =
+                                            mode & libc::S_IFMT as u32 == libc::S_IFDIR as u32;
+                                        b2i((mode & s_ixugo) != 0 || is_dir) // c:370
+                                    } else {
+                                        // c:372
+                                        b2i(doaccess(&arg, 1) != 0) // c:373 X_OK
                                     }
                                 }
-                                'O' => b2i(getstat(&arg).map(|m| m.uid() == unsafe { libc::geteuid() })
-                                           .unwrap_or(false)),
-                                'G' => b2i(getstat(&arg).map(|m| m.gid() == unsafe { libc::getegid() })
-                                           .unwrap_or(false)),
-                                'N' => b2i(getstat(&arg).map(|m| m.mtime() >= m.atime()).unwrap_or(false)),
+                                'O' => b2i(getstat(&arg)
+                                    .map(|m| m.uid() == unsafe { libc::geteuid() })
+                                    .unwrap_or(false)),
+                                'G' => b2i(getstat(&arg)
+                                    .map(|m| m.gid() == unsafe { libc::getegid() })
+                                    .unwrap_or(false)),
+                                'N' => b2i(getstat(&arg)
+                                    .map(|m| m.mtime() >= m.atime())
+                                    .unwrap_or(false)),
                                 'n' => b2i(!arg.is_empty()),
                                 'z' => b2i(arg.is_empty()),
                                 'o' => {
-                                    let r = optison("test", &arg);           // c:502
-                                    if r != 3 { r }
-                                    else if opts.contains_key(&arg) { b2i(opts[&arg]) }
-                                    else { 3 }
+                                    let r = optison("test", &arg); // c:502
+                                    if r != 3 {
+                                        r
+                                    } else if opts.contains_key(&arg) {
+                                        b2i(opts[&arg])
+                                    } else {
+                                        3
+                                    }
                                 }
                                 'v' => b2i(vars.contains_key(&arg)),
                                 // c:330+ — `-t fd` accepts ARITHMETIC
@@ -210,8 +283,8 @@ pub fn evalcond(                                                             // 
                                 // Route through `mathevali` so all
                                 // arith-expression forms work.
                                 't' => crate::ported::math::mathevali(&arg)
-                                       .map(|fd| b2i(unsafe { libc::isatty(fd as i32) } != 0))
-                                       .unwrap_or(2),
+                                    .map(|fd| b2i(unsafe { libc::isatty(fd as i32) } != 0))
+                                    .unwrap_or(2),
                                 _ => 2,
                             };
                         }
@@ -219,15 +292,18 @@ pub fn evalcond(                                                             // 
                 }
                 // Binary `left OP right` or bare `left` (implicit `-n`).
                 let left = match peek(*pos) {
-                    Some(a) => { *pos += 1; a.to_string() }
+                    Some(a) => {
+                        *pos += 1;
+                        a.to_string()
+                    }
                     None => return 2,
                 };
                 let code: Option<i32> = peek(*pos).and_then(|t| match t {
-                    "="   => Some(COND_STREQ),
-                    "=="  => Some(COND_STRDEQ),
-                    "!="  => Some(COND_STRNEQ),
-                    "<"   => Some(COND_STRLT),
-                    ">"   => Some(COND_STRGTR),
+                    "=" => Some(COND_STREQ),
+                    "==" => Some(COND_STRDEQ),
+                    "!=" => Some(COND_STRNEQ),
+                    "<" => Some(COND_STRLT),
+                    ">" => Some(COND_STRGTR),
                     "-eq" => Some(COND_EQ),
                     "-ne" => Some(COND_NE),
                     "-lt" => Some(COND_LT),
@@ -243,7 +319,10 @@ pub fn evalcond(                                                             // 
                 if let Some(code) = code {
                     *pos += 1;
                     let right = match peek(*pos) {
-                        Some(a) => { *pos += 1; a.to_string() }
+                        Some(a) => {
+                            *pos += 1;
+                            a.to_string()
+                        }
                         None => return 2,
                     };
                     // c:415-422 — C uses `mathevali(left)` /
@@ -280,8 +359,14 @@ pub fn evalcond(                                                             // 
                         }
                     };
                     let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
-                        let lm = match getstat(l) { Some(m) => m, None => return 1 };
-                        let rm = match getstat(r) { Some(m) => m, None => return 1 };
+                        let lm = match getstat(l) {
+                            Some(m) => m,
+                            None => return 1,
+                        };
+                        let rm = match getstat(r) {
+                            Some(m) => m,
+                            None => return 1,
+                        };
                         b2i(f(lm.mtime(), rm.mtime()))
                     };
                     // c:2519 (glob.c) — `matchpat` reads EXTENDED_GLOB
@@ -301,19 +386,25 @@ pub fn evalcond(                                                             // 
                     return match code {
                         c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
                         c if c == COND_STRNEQ => b2i(!strpat(&right, &left)),
-                        c if c == COND_STRLT  => b2i(left.as_str() < right.as_str()),
+                        c if c == COND_STRLT => b2i(left.as_str() < right.as_str()),
                         c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
                         c if c == COND_EQ => num_cmp(&left, &right, |a, b| a == b),
                         c if c == COND_NE => num_cmp(&left, &right, |a, b| a != b),
-                        c if c == COND_LT => num_cmp(&left, &right, |a, b| a <  b),
-                        c if c == COND_GT => num_cmp(&left, &right, |a, b| a >  b),
+                        c if c == COND_LT => num_cmp(&left, &right, |a, b| a < b),
+                        c if c == COND_GT => num_cmp(&left, &right, |a, b| a > b),
                         c if c == COND_LE => num_cmp(&left, &right, |a, b| a <= b),
                         c if c == COND_GE => num_cmp(&left, &right, |a, b| a >= b),
-                        c if c == COND_NT => mtime_cmp(&left, &right, |a, b| a >  b),
-                        c if c == COND_OT => mtime_cmp(&left, &right, |a, b| a <  b),
+                        c if c == COND_NT => mtime_cmp(&left, &right, |a, b| a > b),
+                        c if c == COND_OT => mtime_cmp(&left, &right, |a, b| a < b),
                         c if c == COND_EF => {
-                            let lm = match getstat(&left)  { Some(m) => m, None => return 1 };
-                            let rm = match getstat(&right) { Some(m) => m, None => return 1 };
+                            let lm = match getstat(&left) {
+                                Some(m) => m,
+                                None => return 1,
+                            };
+                            let rm = match getstat(&right) {
+                                Some(m) => m,
+                                None => return 1,
+                            };
                             b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
                         }
                         c if c == COND_REGEX => {
@@ -343,7 +434,11 @@ pub fn evalcond(                                                             // 
 
     let mut pos = 0usize;
     let r = walk(&toks, &mut pos, options, variables, posix_mode, 0);
-    if pos != toks.len() { 2 } else { r }
+    if pos != toks.len() {
+        2
+    } else {
+        r
+    }
 }
 
 // ===========================================================
@@ -369,11 +464,14 @@ pub fn evalcond(                                                             // 
 /// `/dev/fd/N` symlink resolution. Rust port mirrors this with
 /// `libc::access(unmeta(s), c)` directly — the kernel handles
 /// `/dev/fd/N` transparently.
-pub fn doaccess(s: &str, c: i32) -> i32 {                                    // c:438
-    let cs = match std::ffi::CString::new(crate::ported::utils::unmeta(s)) {  // c:445 unmeta(s)
-        Ok(v) => v, Err(_) => return 0,
+pub fn doaccess(s: &str, c: i32) -> i32 {
+    // c:438
+    let cs = match std::ffi::CString::new(crate::ported::utils::unmeta(s)) {
+        // c:445 unmeta(s)
+        Ok(v) => v,
+        Err(_) => return 0,
     };
-    (unsafe { libc::access(cs.as_ptr(), c) } == 0) as i32                    // c:445 !access(...)
+    (unsafe { libc::access(cs.as_ptr(), c) } == 0) as i32 // c:445 !access(...)
 }
 
 /// Port of `getstat(char *s)` from Src/cond.c:452 — `stat(2)` wrapper that
@@ -391,9 +489,12 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
 ///      previous Rust port used `fs::metadata(s)` directly which
 ///      doesn't run `unmeta` — paths containing Meta-encoded bytes
 ///      would fail to resolve.
-pub fn getstat(s: &str) -> Option<Metadata> {                                // c:452
-    if let Some(rest) = s.strip_prefix("/dev/fd/") {                          // c:458
-        if let Ok(fd) = rest.parse::<i32>() {                                 // c:459 atoi(s+8)
+pub fn getstat(s: &str) -> Option<Metadata> {
+    // c:452
+    if let Some(rest) = s.strip_prefix("/dev/fd/") {
+        // c:458
+        if let Ok(fd) = rest.parse::<i32>() {
+            // c:459 atoi(s+8)
             // c:459 — `fstat(fd, &st)`. Pre-check via fstat to verify
             // the fd is valid BEFORE dup'ing (avoid wasting an fd slot
             // on a bad fd). The dup is a Rust adaptation: `Metadata`
@@ -414,13 +515,14 @@ pub fn getstat(s: &str) -> Option<Metadata> {                                // 
     }
     // c:464 — `if (!(us = unmeta(s))) return NULL;`
     let us = crate::ported::utils::unmeta(s);
-    fs::metadata(&us).ok()                                                    // c:466
+    fs::metadata(&us).ok() // c:466
 }
 
 /// Port of `dostat(char *s)` from Src/cond.c:474 — returns the file's
 /// `st_mode` or 0 on error. Used by `[[ -b/-c/-d/-f/-g/-h/-k/-p
 /// /-S/-u/-w/-x ]]` to inspect mode bits.
-pub fn dostat(s: &str) -> u32 {                                              // c:474
+pub fn dostat(s: &str) -> u32 {
+    // c:474
     getstat(s).map(|m| m.mode()).unwrap_or(0)
 }
 
@@ -432,8 +534,9 @@ pub fn dostat(s: &str) -> u32 {                                              // 
 /// The previous Rust port passed `s` directly to `fs::symlink_metadata`,
 /// missing the `unmeta(s)` step — paths containing Meta-encoded bytes
 /// would fail to resolve. Same divergence as the now-fixed `getstat`.
-pub fn dolstat(s: &str) -> u32 {                                             // c:488
-    let us = crate::ported::utils::unmeta(s);                                 // c:489 unmeta(s)
+pub fn dolstat(s: &str) -> u32 {
+    // c:488
+    let us = crate::ported::utils::unmeta(s); // c:489 unmeta(s)
     fs::symlink_metadata(&us).map(|m| m.mode()).unwrap_or(0)
 }
 
@@ -442,22 +545,35 @@ pub fn dolstat(s: &str) -> u32 {                                             // 
 /// when unset, 3 (error) when the name is unrecognised. Routes
 /// through the canonical option table via `optlookup` /
 /// `optlookupc` (Src/options.c:684 / :721).
-pub fn optison(name: &str, s: &str) -> i32 {                                 // c:502
-    let i: i32 = if s.len() == 1 {                                           // c:502
-        crate::ported::options::optlookupc(s.as_bytes()[0] as char)          // c:507
+pub fn optison(name: &str, s: &str) -> i32 {
+    // c:502
+    let i: i32 = if s.len() == 1 {
+        // c:502
+        crate::ported::options::optlookupc(s.as_bytes()[0] as char) // c:507
     } else {
-        crate::ported::options::optlookup(s)                                 // c:509
+        crate::ported::options::optlookup(s) // c:509
     };
-    if i == 0 {                                                              // c:510
-        if isset(crate::ported::zsh_h::POSIXBUILTINS) {                      // c:511
-            return 1;                                                        // c:512
+    if i == 0 {
+        // c:510
+        if isset(crate::ported::zsh_h::POSIXBUILTINS) {
+            // c:511
+            return 1; // c:512
         } else {
             crate::ported::utils::zwarnnam(name, &format!("no such option: {}", s)); // c:514
-            return 3;                                                        // c:515
+            return 3; // c:515
         }
-    } else if i < 0 {                                                        // c:517
-        if unset(-i) { 0 } else { 1 }                                        // c:518 !unset(-i)
-    } else if isset(i) { 0 } else { 1 }                                      // c:520 !isset(i)
+    } else if i < 0 {
+        // c:517
+        if unset(-i) {
+            0
+        } else {
+            1
+        } // c:518 !unset(-i)
+    } else if isset(i) {
+        0
+    } else {
+        1
+    } // c:520 !isset(i)
 }
 
 // `isset` / `unset` macros from `Src/options.h:62-63` — `(opts[X])`
@@ -489,20 +605,23 @@ use crate::ported::zsh_h::{isset, unset};
 /// Port the full C body: if the arg contains tokens, route through
 /// `singsub` (for $var / $(cmd) / arithmetic expansion), then
 /// `untokenize` unless raw mode was requested.
-pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // c:525
-    let s = match args.get(num) {                                            // c:527
+pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {
+    // c:525
+    let s = match args.get(num) {
+        // c:527
         Some(v) => v.clone(),
         None => return String::new(),
     };
-    if crate::ported::utils::has_token(&s) {                                 // c:529
-        let expanded = crate::ported::subst::singsub(&s);                    // c:530
+    if crate::ported::utils::has_token(&s) {
+        // c:529
+        let expanded = crate::ported::subst::singsub(&s); // c:530
         if !raw {
-            crate::ported::lex::untokenize(&expanded)                        // c:532
+            crate::ported::lex::untokenize(&expanded) // c:532
         } else {
             expanded
         }
     } else {
-        s                                                                    // c:534
+        s // c:534
     }
 }
 
@@ -518,7 +637,8 @@ pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // 
 /// side of a `-eq` / `-ne` / `-lt` / `-gt` / `-le` / `-ge` test, a
 /// divergence that breaks `[[ $((LINENO)) -eq 1+0 ]]`-style asserts
 /// in user scripts.
-pub fn cond_val(args: &[String], num: usize) -> i64 {                        // c:539
+pub fn cond_val(args: &[String], num: usize) -> i64 {
+    // c:539
     let raw = match args.get(num) {
         Some(v) => v.clone(),
         None => return 0,
@@ -529,14 +649,15 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
     // slices; module-defined ops calling cond_val would see un-
     // singsub'd tokens (Inpar/Outpar/Dnull/etc) reach mathevali and
     // fail to parse \`$((x))\`-containing operands.
-    let s = if crate::ported::utils::has_token(&raw) {                       // c:543
-        let expanded = crate::ported::subst::singsub(&raw);                  // c:544
-        crate::ported::lex::untokenize(&expanded)                            // c:545
+    let s = if crate::ported::utils::has_token(&raw) {
+        // c:543
+        let expanded = crate::ported::subst::singsub(&raw); // c:544
+        crate::ported::lex::untokenize(&expanded) // c:545
     } else {
         raw
     };
     // c:548 — `mathevali(s)`.
-    crate::ported::math::mathevali(&s).unwrap_or(0)                          // c:548
+    crate::ported::math::mathevali(&s).unwrap_or(0) // c:548
 }
 
 /// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
@@ -552,7 +673,8 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
 /// `EXTENDED_GLOB` and `CASEGLOB` option flags entirely. A user who
 /// did `setopt nocaseglob` and ran `[[ ABC = abc ]]` would still get
 /// a case-sensitive failure under the Rust port; C respects nocaseglob.
-pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c:552
+pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
+    // c:552
     // c:556 — `char *s = args[num]; singsub(&s); return matchpat(str, s);`
     //
     // C calls `singsub(&s)` to perform parameter expansion / arithmetic
@@ -565,8 +687,8 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c
         Some(v) => v,
         None => return false,
     };
-    let p = crate::ported::subst::singsub(p_raw);                            // c:556
-    // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
+    let p = crate::ported::subst::singsub(p_raw); // c:556
+                                                  // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
     let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
     // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
     // canonical-name spelling, NOT a "no_case_glob" variant).
@@ -577,7 +699,7 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c
     // `matchpat(str, p, ...)` which passed text as pattern AND
     // pattern as text — silently mis-routing every `[[ a = pat ]]`
     // glob test against the wrong side. Pass in Rust order.
-    matchpat(&p, str, extended, case_sensitive)                              // c:557
+    matchpat(&p, str, extended, case_sensitive) // c:557
 }
 
 /// Port of `tracemodcond(char *name, char **args, int inf)` from Src/cond.c:563 — `xtrace`-mode
@@ -585,7 +707,8 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c
 /// op + args to stderr in the same shape the C source uses (infix
 /// for binary, prefix for unary). Used only when the `XTRACE`
 /// option is enabled and a third-party module supplies a cond.
-pub fn tracemodcond(name: &str, args: &[String], inf: bool) {                // c:563
+pub fn tracemodcond(name: &str, args: &[String], inf: bool) {
+    // c:563
     let stderr = std::io::stderr();
     let mut out = stderr.lock();
     if inf {
@@ -681,16 +804,28 @@ mod tests {
     fn test_logical_and() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true), 1);
+        assert_eq!(
+            evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true),
+            0
+        );
+        assert_eq!(
+            evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true),
+            1
+        );
     }
 
     #[test]
     fn test_logical_or() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true), 1);
+        assert_eq!(
+            evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true),
+            0
+        );
+        assert_eq!(
+            evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true),
+            1
+        );
     }
 
     #[test]
@@ -714,18 +849,27 @@ mod tests {
 
         let empty = dir.path().join("empty");
         File::create(&empty).unwrap();
-        assert_eq!(evalcond(&["-s", empty.to_str().unwrap()], &opts, &vars, true), 1,
-            "c:179 — `-s` must be false for 0-byte file");
+        assert_eq!(
+            evalcond(&["-s", empty.to_str().unwrap()], &opts, &vars, true),
+            1,
+            "c:179 — `-s` must be false for 0-byte file"
+        );
 
         let nonempty = dir.path().join("nonempty");
         let mut f = File::create(&nonempty).unwrap();
         f.write_all(b"data").unwrap();
-        assert_eq!(evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true), 0,
-            "c:179 — `-s` must be true for non-empty file");
+        assert_eq!(
+            evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true),
+            0,
+            "c:179 — `-s` must be true for non-empty file"
+        );
 
         let missing = dir.path().join("not_there");
-        assert_eq!(evalcond(&["-s", missing.to_str().unwrap()], &opts, &vars, true), 1,
-            "c:179 — `-s` must be false when stat fails (missing file)");
+        assert_eq!(
+            evalcond(&["-s", missing.to_str().unwrap()], &opts, &vars, true),
+            1,
+            "c:179 — `-s` must be false when stat fails (missing file)"
+        );
     }
 
     /// `Src/cond.c:488` — `dolstat` uses `lstat(2)` so `-h` / `-L`
@@ -744,10 +888,16 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let link_s = link.to_str().unwrap();
-        assert_eq!(evalcond(&["-h", link_s], &opts, &vars, true), 0,
-            "c:488 — `-h` uses lstat; detects symlink even with missing target");
-        assert_eq!(evalcond(&["-L", link_s], &opts, &vars, true), 0,
-            "c:488 — `-L` is same as `-h`");
+        assert_eq!(
+            evalcond(&["-h", link_s], &opts, &vars, true),
+            0,
+            "c:488 — `-h` uses lstat; detects symlink even with missing target"
+        );
+        assert_eq!(
+            evalcond(&["-L", link_s], &opts, &vars, true),
+            0,
+            "c:488 — `-L` is same as `-h`"
+        );
         // -f / -d follow the link → false because target doesn't exist.
         assert_eq!(evalcond(&["-f", link_s], &opts, &vars, true), 1);
         assert_eq!(evalcond(&["-d", link_s], &opts, &vars, true), 1);
@@ -773,10 +923,16 @@ mod tests {
         let as_ = a.to_str().unwrap();
         let bs_ = b.to_str().unwrap();
         let cs_ = c.to_str().unwrap();
-        assert_eq!(evalcond(&[as_, "-ef", bs_], &opts, &vars, true), 0,
-            "c:179 — hardlinks share st_ino + st_dev → -ef true");
-        assert_eq!(evalcond(&[as_, "-ef", cs_], &opts, &vars, true), 1,
-            "c:179 — distinct files → -ef false");
+        assert_eq!(
+            evalcond(&[as_, "-ef", bs_], &opts, &vars, true),
+            0,
+            "c:179 — hardlinks share st_ino + st_dev → -ef true"
+        );
+        assert_eq!(
+            evalcond(&[as_, "-ef", cs_], &opts, &vars, true),
+            1,
+            "c:179 — distinct files → -ef false"
+        );
     }
 
     /// `Src/cond.c:179` — `-nt` / `-ot` compare st_mtime. Newer file
@@ -799,12 +955,21 @@ mod tests {
 
         let o = older.to_str().unwrap();
         let n = newer.to_str().unwrap();
-        assert_eq!(evalcond(&[n, "-nt", o], &opts, &vars, true), 0,
-            "c:179 — newer -nt older → true");
-        assert_eq!(evalcond(&[o, "-nt", n], &opts, &vars, true), 1,
-            "c:179 — older -nt newer → false");
-        assert_eq!(evalcond(&[o, "-ot", n], &opts, &vars, true), 0,
-            "c:179 — older -ot newer → true");
+        assert_eq!(
+            evalcond(&[n, "-nt", o], &opts, &vars, true),
+            0,
+            "c:179 — newer -nt older → true"
+        );
+        assert_eq!(
+            evalcond(&[o, "-nt", n], &opts, &vars, true),
+            1,
+            "c:179 — older -nt newer → false"
+        );
+        assert_eq!(
+            evalcond(&[o, "-ot", n], &opts, &vars, true),
+            0,
+            "c:179 — older -ot newer → true"
+        );
     }
 
     /// `Src/cond.c:179` — `-r` / `-w` map to access(F, R_OK)/W_OK.
@@ -821,18 +986,30 @@ mod tests {
         File::create(&file).unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
         let p = file.to_str().unwrap();
-        assert_eq!(evalcond(&["-r", p], &opts, &vars, true), 0,
-            "c:438 — mode 0600 → readable");
-        assert_eq!(evalcond(&["-w", p], &opts, &vars, true), 0,
-            "c:438 — mode 0600 → writable");
+        assert_eq!(
+            evalcond(&["-r", p], &opts, &vars, true),
+            0,
+            "c:438 — mode 0600 → readable"
+        );
+        assert_eq!(
+            evalcond(&["-w", p], &opts, &vars, true),
+            0,
+            "c:438 — mode 0600 → writable"
+        );
 
         // Root can read anything; skip the strip-permissions check there.
         if unsafe { libc::geteuid() } != 0 {
             std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
-            assert_eq!(evalcond(&["-r", p], &opts, &vars, true), 1,
-                "c:438 — mode 0000 → not readable (non-root)");
-            assert_eq!(evalcond(&["-w", p], &opts, &vars, true), 1,
-                "c:438 — mode 0000 → not writable (non-root)");
+            assert_eq!(
+                evalcond(&["-r", p], &opts, &vars, true),
+                1,
+                "c:438 — mode 0000 → not readable (non-root)"
+            );
+            assert_eq!(
+                evalcond(&["-w", p], &opts, &vars, true),
+                1,
+                "c:438 — mode 0000 → not writable (non-root)"
+            );
         }
     }
 
@@ -852,10 +1029,16 @@ mod tests {
     fn test_implicit_minus_n_for_bare_arg() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["foo"], &opts, &vars, true), 0,
-            "non-empty bare arg → true (implicit -n)");
-        assert_eq!(evalcond(&[""], &opts, &vars, true), 1,
-            "empty bare arg → false (implicit -n)");
+        assert_eq!(
+            evalcond(&["foo"], &opts, &vars, true),
+            0,
+            "non-empty bare arg → true (implicit -n)"
+        );
+        assert_eq!(
+            evalcond(&[""], &opts, &vars, true),
+            1,
+            "empty bare arg → false (implicit -n)"
+        );
     }
 
     /// `Src/cond.c:525-540` — `cond_str(args, num)` returns the arg
@@ -866,8 +1049,11 @@ mod tests {
         let args = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         assert_eq!(cond_str(&args, 0, false), "alpha");
         assert_eq!(cond_str(&args, 2, false), "gamma");
-        assert_eq!(cond_str(&args, 99, false), "",
-            "c:525 — out-of-bounds index returns empty (Rust safety)");
+        assert_eq!(
+            cond_str(&args, 99, false),
+            "",
+            "c:525 — out-of-bounds index returns empty (Rust safety)"
+        );
     }
 
     /// `Src/cond.c:539-554` — `cond_val(args, num)` parses arg as int.
@@ -877,12 +1063,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let args = vec!["42".to_string(), "  -7 ".to_string(), "abc".to_string()];
         assert_eq!(cond_val(&args, 0), 42);
-        assert_eq!(cond_val(&args, 1), -7,
-            "c:539 — whitespace must trim; negative supported");
-        assert_eq!(cond_val(&args, 2), 0,
-            "c:539 — non-numeric returns 0");
-        assert_eq!(cond_val(&args, 99), 0,
-            "c:539 — out-of-bounds returns 0");
+        assert_eq!(
+            cond_val(&args, 1),
+            -7,
+            "c:539 — whitespace must trim; negative supported"
+        );
+        assert_eq!(cond_val(&args, 2), 0, "c:539 — non-numeric returns 0");
+        assert_eq!(cond_val(&args, 99), 0, "c:539 — out-of-bounds returns 0");
     }
 
     /// `Src/cond.c:179-180` — `-a` / `-e` are aliases for "file exists".
@@ -896,8 +1083,11 @@ mod tests {
         let p = file.to_str().unwrap();
         let (opts, vars) = empty_maps();
         assert_eq!(evalcond(&["-e", p], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-a", p], &opts, &vars, true), 0,
-            "c:179 — -a is alias for -e in zsh test/[[ context");
+        assert_eq!(
+            evalcond(&["-a", p], &opts, &vars, true),
+            0,
+            "c:179 — -a is alias for -e in zsh test/[[ context"
+        );
     }
 
     /// `Src/cond.c:539` — implicit-numeric coercion fails for
@@ -908,8 +1098,11 @@ mod tests {
         let (opts, vars) = empty_maps();
         // Both posix and non-posix modes route through parse_num; if
         // either side fails to parse → return 2 (cond error).
-        assert_eq!(evalcond(&["abc", "-eq", "5"], &opts, &vars, true), 2,
-            "non-numeric LHS in -eq must return 2 (error)");
+        assert_eq!(
+            evalcond(&["abc", "-eq", "5"], &opts, &vars, true),
+            2,
+            "non-numeric LHS in -eq must return 2 (error)"
+        );
     }
 
     /// `Src/cond.c:81` — Parenthesised grouping: `( expr )` evaluates
@@ -921,8 +1114,11 @@ mod tests {
         // Balanced: ! ( -z "" )  →  ! true → false (1)
         assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true), 1);
         // Missing close paren: error
-        assert_eq!(evalcond(&["(", "-z", ""], &opts, &vars, true), 2,
-            "missing closing `)` must return 2 (cond error)");
+        assert_eq!(
+            evalcond(&["(", "-z", ""], &opts, &vars, true),
+            2,
+            "missing closing `)` must return 2 (cond error)"
+        );
     }
 
     /// `Src/cond.c:452-468` — `getstat(s)` special-cases `/dev/fd/N`
@@ -934,11 +1130,12 @@ mod tests {
     fn getstat_resolves_regular_path() {
         let _g = crate::test_util::global_state_lock();
         // Regular path: root exists, must return Some.
-        assert!(getstat("/").is_some(),
-            "c:466 — stat('/') must succeed");
+        assert!(getstat("/").is_some(), "c:466 — stat('/') must succeed");
         // Nonexistent path returns None.
-        assert!(getstat("/nonexistent/path/zzz").is_none(),
-            "c:464 — nonexistent path returns None");
+        assert!(
+            getstat("/nonexistent/path/zzz").is_none(),
+            "c:464 — nonexistent path returns None"
+        );
     }
 
     /// `Src/cond.c:458-461` — `/dev/fd/N` syntax routes through
@@ -956,8 +1153,8 @@ mod tests {
         // is still None, but it wasted a dup syscall.
         // Post-fix: fstat fails first → return None without dup.
         let _ = getstat("/dev/fd/99"); // must not panic
-        // /dev/fd/0 is stdin — usually valid. Test that it doesn't
-        // panic regardless of stdin shape.
+                                       // /dev/fd/0 is stdin — usually valid. Test that it doesn't
+                                       // panic regardless of stdin shape.
         let _ = getstat("/dev/fd/0");
     }
 
@@ -979,14 +1176,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let args = vec!["hello".to_string()];
         // c:529 — has_token false → return as-is.
-        assert_eq!(cond_str(&args, 0, false), "hello",
-            "c:534 — token-free string returned as-is");
+        assert_eq!(
+            cond_str(&args, 0, false),
+            "hello",
+            "c:534 — token-free string returned as-is"
+        );
         // raw=true also returns same when no tokens.
-        assert_eq!(cond_str(&args, 0, true), "hello",
-            "c:534 — token-free string returned as-is regardless of raw");
+        assert_eq!(
+            cond_str(&args, 0, true),
+            "hello",
+            "c:534 — token-free string returned as-is regardless of raw"
+        );
         // Out-of-bounds → "".
-        assert_eq!(cond_str(&args, 99, false), "",
-            "out-of-bounds num returns empty string");
+        assert_eq!(
+            cond_str(&args, 99, false),
+            "",
+            "out-of-bounds num returns empty string"
+        );
     }
 
     #[test]
@@ -994,13 +1200,19 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Literal equality always matches regardless of options.
         let args = vec!["hello".to_string()];
-        assert!(cond_match(&args, 0, "hello"),
-            "literal pattern matches identical text");
-        assert!(!cond_match(&args, 0, "world"),
-            "literal pattern rejects non-match");
+        assert!(
+            cond_match(&args, 0, "hello"),
+            "literal pattern matches identical text"
+        );
+        assert!(
+            !cond_match(&args, 0, "world"),
+            "literal pattern rejects non-match"
+        );
         // Out-of-bounds index → false (no panic, args.get returns None).
-        assert!(!cond_match(&args, 99, "hello"),
-            "out-of-bounds num returns false");
+        assert!(
+            !cond_match(&args, 99, "hello"),
+            "out-of-bounds num returns false"
+        );
 
         // c:556-557 — pattern goes through matchpat in (pattern, text)
         // order. Asymmetric glob: `*.txt` is a pattern that matches
@@ -1010,15 +1222,19 @@ mod tests {
         // match `*.txt` against text="file.txt" treating "*.txt" as a
         // string and "file.txt" as a glob, mis-routing every glob test.
         let args = vec!["*.txt".to_string()];
-        assert!(cond_match(&args, 0, "file.txt"),
-            "c:556-557 — pattern `*.txt` matches text `file.txt`");
+        assert!(
+            cond_match(&args, 0, "file.txt"),
+            "c:556-557 — pattern `*.txt` matches text `file.txt`"
+        );
         // The reverse direction MUST NOT match — `file.txt` is not a
         // glob pattern that matches `*.txt` (the asterisk would be a
         // literal). If args were reversed, this would pass too.
         let args = vec!["file.txt".to_string()];
-        assert!(!cond_match(&args, 0, "*.txt"),
+        assert!(
+            !cond_match(&args, 0, "*.txt"),
             "c:556-557 — literal pattern `file.txt` does NOT match text `*.txt` \
-             (this catches the swapped-arg regression)");
+             (this catches the swapped-arg regression)"
+        );
     }
 
     /// Pin: `cond_val` routes through `mathevali` per `Src/cond.c:548`.
@@ -1036,17 +1252,29 @@ mod tests {
             "2**8".to_string(),
         ];
         // c:548 — `1+2` → 3 (addition)
-        assert_eq!(cond_val(&args, 0), 3,
-            "c:548 — `mathevali(\"1+2\")` evaluates the expression");
+        assert_eq!(
+            cond_val(&args, 0),
+            3,
+            "c:548 — `mathevali(\"1+2\")` evaluates the expression"
+        );
         // c:548 — `10/2` → 5 (integer division)
-        assert_eq!(cond_val(&args, 1), 5,
-            "c:548 — `mathevali(\"10/2\")` evaluates the expression");
+        assert_eq!(
+            cond_val(&args, 1),
+            5,
+            "c:548 — `mathevali(\"10/2\")` evaluates the expression"
+        );
         // c:548 — `0x10` → 16 (hex literal via mathevali)
-        assert_eq!(cond_val(&args, 2), 16,
-            "c:548 — `mathevali(\"0x10\")` parses hex");
+        assert_eq!(
+            cond_val(&args, 2),
+            16,
+            "c:548 — `mathevali(\"0x10\")` parses hex"
+        );
         // c:548 — `2**8` → 256 (exponent operator)
-        assert_eq!(cond_val(&args, 3), 256,
-            "c:548 — `mathevali(\"2**8\")` evaluates the expression");
+        assert_eq!(
+            cond_val(&args, 3),
+            256,
+            "c:548 — `mathevali(\"2**8\")` evaluates the expression"
+        );
     }
 
     /// Pin: `cond_val` with plain integer string returns that integer.
@@ -1054,17 +1282,12 @@ mod tests {
     #[test]
     fn cond_val_plain_integers() {
         let _g = crate::test_util::global_state_lock();
-        let args = vec![
-            "0".to_string(),
-            "-42".to_string(),
-            "123456789".to_string(),
-        ];
+        let args = vec!["0".to_string(), "-42".to_string(), "123456789".to_string()];
         assert_eq!(cond_val(&args, 0), 0);
         assert_eq!(cond_val(&args, 1), -42);
         assert_eq!(cond_val(&args, 2), 123456789);
         // Out-of-bounds index → 0 (args.get returns None).
-        assert_eq!(cond_val(&args, 99), 0,
-            "out-of-bounds num returns 0");
+        assert_eq!(cond_val(&args, 99), 0, "out-of-bounds num returns 0");
     }
 
     /// Pin: `[[ -t fd ]]` routes the fd through `mathevali` per
@@ -1088,12 +1311,18 @@ mod tests {
         // check), NOT 2 (syntax error). The previous Rust port
         // would return 2 because `.parse::<i32>("1+0")` fails.
         let result = evalcond(&["-t", "1+0"], &opts, &vars, true);
-        assert!(result == 0 || result == 1,
-            "c:330 — `-t 1+0` must mathevali to fd 1 (not parse fail), got {}", result);
+        assert!(
+            result == 0 || result == 1,
+            "c:330 — `-t 1+0` must mathevali to fd 1 (not parse fail), got {}",
+            result
+        );
         // c:330 — `[[ -t 0 ]]` plain digit also works.
         let result = evalcond(&["-t", "0"], &opts, &vars, true);
-        assert!(result == 0 || result == 1,
-            "c:330 — `-t 0` plain digit still works, got {}", result);
+        assert!(
+            result == 0 || result == 1,
+            "c:330 — `-t 0` plain digit still works, got {}",
+            result
+        );
     }
 
     /// Pin: `[[ N -eq M ]]` etc. route both operands through
@@ -1107,18 +1336,30 @@ mod tests {
         let (opts, vars) = empty_maps();
         // c:415 — `[[ 1+2 -eq 3 ]]` evaluates LHS via mathevali.
         // Should return 0 (true).
-        assert_eq!(evalcond(&["1+2", "-eq", "3"], &opts, &vars, false), 0,
-            "c:415 — `1+2 -eq 3` must mathevali LHS to 3, return 0");
+        assert_eq!(
+            evalcond(&["1+2", "-eq", "3"], &opts, &vars, false),
+            0,
+            "c:415 — `1+2 -eq 3` must mathevali LHS to 3, return 0"
+        );
         // c:415 — `[[ 4 -gt 1+2 ]]` evaluates RHS via mathevali.
-        assert_eq!(evalcond(&["4", "-gt", "1+2"], &opts, &vars, false), 0,
-            "c:415 — `4 -gt 1+2` must mathevali RHS to 3, return 0");
+        assert_eq!(
+            evalcond(&["4", "-gt", "1+2"], &opts, &vars, false),
+            0,
+            "c:415 — `4 -gt 1+2` must mathevali RHS to 3, return 0"
+        );
         // POSIX mode falls back to plain integer parsing — no
         // arithmetic eval. `[[ 1+2 -eq 3 ]]` under POSIX should
         // fail to parse the LHS (return 2 = syntax error).
-        assert_eq!(evalcond(&["1+2", "-eq", "3"], &opts, &vars, true), 2,
-            "POSIX — no mathevali; non-numeric LHS = error");
+        assert_eq!(
+            evalcond(&["1+2", "-eq", "3"], &opts, &vars, true),
+            2,
+            "POSIX — no mathevali; non-numeric LHS = error"
+        );
         // Plain integers still work in POSIX mode.
-        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0,
-            "POSIX — plain integers compare normally");
+        assert_eq!(
+            evalcond(&["5", "-eq", "5"], &opts, &vars, true),
+            0,
+            "POSIX — plain integers compare normally"
+        );
     }
 }

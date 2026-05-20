@@ -26,49 +26,78 @@ use std::ffi::CStr;
 /// `langinfo.c:65,235` — paired here to keep liitem's body a
 /// faithful loop-over-arrays match for C.
 #[cfg(unix)]
-static NL_TABLE: &[(&str, libc::nl_item)] = &[                           // c:65,235
-    ("CODESET",     libc::CODESET),     ("D_T_FMT",     libc::D_T_FMT),
-    ("D_FMT",       libc::D_FMT),       ("T_FMT",       libc::T_FMT),
-    ("RADIXCHAR",   libc::RADIXCHAR),   ("THOUSEP",     libc::THOUSEP),
-    ("YESEXPR",     libc::YESEXPR),     ("NOEXPR",      libc::NOEXPR),
+static NL_TABLE: &[(&str, libc::nl_item)] = &[
+    // c:65,235
+    ("CODESET", libc::CODESET),
+    ("D_T_FMT", libc::D_T_FMT),
+    ("D_FMT", libc::D_FMT),
+    ("T_FMT", libc::T_FMT),
+    ("RADIXCHAR", libc::RADIXCHAR),
+    ("THOUSEP", libc::THOUSEP),
+    ("YESEXPR", libc::YESEXPR),
+    ("NOEXPR", libc::NOEXPR),
     #[cfg(target_os = "linux")]
-    ("CRNCYSTR",    libc::CRNCYSTR),
-    ("ABDAY_1",     libc::ABDAY_1),     ("ABDAY_2",     libc::ABDAY_2),
-    ("ABDAY_3",     libc::ABDAY_3),     ("ABDAY_4",     libc::ABDAY_4),
-    ("ABDAY_5",     libc::ABDAY_5),     ("ABDAY_6",     libc::ABDAY_6),
-    ("ABDAY_7",     libc::ABDAY_7),
-    ("DAY_1",       libc::DAY_1),       ("DAY_2",       libc::DAY_2),
-    ("DAY_3",       libc::DAY_3),       ("DAY_4",       libc::DAY_4),
-    ("DAY_5",       libc::DAY_5),       ("DAY_6",       libc::DAY_6),
-    ("DAY_7",       libc::DAY_7),
-    ("ABMON_1",     libc::ABMON_1),     ("ABMON_2",     libc::ABMON_2),
-    ("ABMON_3",     libc::ABMON_3),     ("ABMON_4",     libc::ABMON_4),
-    ("ABMON_5",     libc::ABMON_5),     ("ABMON_6",     libc::ABMON_6),
-    ("ABMON_7",     libc::ABMON_7),     ("ABMON_8",     libc::ABMON_8),
-    ("ABMON_9",     libc::ABMON_9),     ("ABMON_10",    libc::ABMON_10),
-    ("ABMON_11",    libc::ABMON_11),    ("ABMON_12",    libc::ABMON_12),
-    ("MON_1",       libc::MON_1),       ("MON_2",       libc::MON_2),
-    ("MON_3",       libc::MON_3),       ("MON_4",       libc::MON_4),
-    ("MON_5",       libc::MON_5),       ("MON_6",       libc::MON_6),
-    ("MON_7",       libc::MON_7),       ("MON_8",       libc::MON_8),
-    ("MON_9",       libc::MON_9),       ("MON_10",      libc::MON_10),
-    ("MON_11",      libc::MON_11),      ("MON_12",      libc::MON_12),
-    ("T_FMT_AMPM",  libc::T_FMT_AMPM),  ("AM_STR",      libc::AM_STR),
-    ("PM_STR",      libc::PM_STR),      ("ERA",         libc::ERA),
-    ("ERA_D_FMT",   libc::ERA_D_FMT),   ("ERA_D_T_FMT", libc::ERA_D_T_FMT),
-    ("ERA_T_FMT",   libc::ERA_T_FMT),   ("ALT_DIGITS",  libc::ALT_DIGITS),
+    ("CRNCYSTR", libc::CRNCYSTR),
+    ("ABDAY_1", libc::ABDAY_1),
+    ("ABDAY_2", libc::ABDAY_2),
+    ("ABDAY_3", libc::ABDAY_3),
+    ("ABDAY_4", libc::ABDAY_4),
+    ("ABDAY_5", libc::ABDAY_5),
+    ("ABDAY_6", libc::ABDAY_6),
+    ("ABDAY_7", libc::ABDAY_7),
+    ("DAY_1", libc::DAY_1),
+    ("DAY_2", libc::DAY_2),
+    ("DAY_3", libc::DAY_3),
+    ("DAY_4", libc::DAY_4),
+    ("DAY_5", libc::DAY_5),
+    ("DAY_6", libc::DAY_6),
+    ("DAY_7", libc::DAY_7),
+    ("ABMON_1", libc::ABMON_1),
+    ("ABMON_2", libc::ABMON_2),
+    ("ABMON_3", libc::ABMON_3),
+    ("ABMON_4", libc::ABMON_4),
+    ("ABMON_5", libc::ABMON_5),
+    ("ABMON_6", libc::ABMON_6),
+    ("ABMON_7", libc::ABMON_7),
+    ("ABMON_8", libc::ABMON_8),
+    ("ABMON_9", libc::ABMON_9),
+    ("ABMON_10", libc::ABMON_10),
+    ("ABMON_11", libc::ABMON_11),
+    ("ABMON_12", libc::ABMON_12),
+    ("MON_1", libc::MON_1),
+    ("MON_2", libc::MON_2),
+    ("MON_3", libc::MON_3),
+    ("MON_4", libc::MON_4),
+    ("MON_5", libc::MON_5),
+    ("MON_6", libc::MON_6),
+    ("MON_7", libc::MON_7),
+    ("MON_8", libc::MON_8),
+    ("MON_9", libc::MON_9),
+    ("MON_10", libc::MON_10),
+    ("MON_11", libc::MON_11),
+    ("MON_12", libc::MON_12),
+    ("T_FMT_AMPM", libc::T_FMT_AMPM),
+    ("AM_STR", libc::AM_STR),
+    ("PM_STR", libc::PM_STR),
+    ("ERA", libc::ERA),
+    ("ERA_D_FMT", libc::ERA_D_FMT),
+    ("ERA_D_T_FMT", libc::ERA_D_T_FMT),
+    ("ERA_T_FMT", libc::ERA_T_FMT),
+    ("ALT_DIGITS", libc::ALT_DIGITS),
 ];
 
 #[cfg(unix)]
-pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:379
-    NL_TABLE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)           // c:386 strcmp
+pub fn liitem(name: &str) -> Option<libc::nl_item> {
+    // c:379
+    NL_TABLE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v) // c:386 strcmp
 }
 
 /// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`.
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
 #[allow(unused_variables)]
-pub fn liitem(name: &str) -> Option<i32> {                                  // c:379
+pub fn liitem(name: &str) -> Option<i32> {
+    // c:379
     None
 }
 
@@ -83,25 +112,26 @@ pub fn liitem(name: &str) -> Option<i32> {                                  // c
 /// "u.str + PM_UNSET" duality C builds into the Param node.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getlanginfo(name: &str) -> Option<String> {                       // c:396
+pub fn getlanginfo(name: &str) -> Option<String> {
+    // c:396
     // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
-    let mut buf = name.as_bytes().to_vec();                              // c:403
-    crate::ported::utils::unmetafy(&mut buf);                            // c:404
+    let mut buf = name.as_bytes().to_vec(); // c:403
+    crate::ported::utils::unmetafy(&mut buf); // c:404
     let nameu = std::str::from_utf8(&buf).ok()?;
     // c:411-415 — `if (name) elem = liitem(name); else elem = NULL;`
-    let elem = liitem(nameu)?;                                           // c:412
+    let elem = liitem(nameu)?; // c:412
     unsafe {
         // c:416 — `listr = nl_langinfo(*elem)`.
-        let ptr = libc::nl_langinfo(elem);                               // c:416
+        let ptr = libc::nl_langinfo(elem); // c:416
         if ptr.is_null() {
-            return None;                                                 // c:421 PM_UNSET
+            return None; // c:421 PM_UNSET
         }
         let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
         if s.is_empty() {
             // c:421 — empty result also flags PM_UNSET.
             return None;
         }
-        Some(s)                                                          // c:417 dupstring (no metafy — C uses dupstring not metafy here)
+        Some(s) // c:417 dupstring (no metafy — C uses dupstring not metafy here)
     }
 }
 
@@ -110,7 +140,8 @@ pub fn getlanginfo(name: &str) -> Option<String> {                       // c:39
 /// POSIX-only.
 #[cfg(not(unix))]
 /// WARNING: param names don't match C — Rust=(_name) vs C=(ht, name)
-pub fn getlanginfo(_name: &str) -> Option<String> {                          // c:396
+pub fn getlanginfo(_name: &str) -> Option<String> {
+    // c:396
     None
 }
 
@@ -125,11 +156,14 @@ pub fn getlanginfo(_name: &str) -> Option<String> {                          // 
 /// Rust port returns the (name, value) pairs as a Vec since the
 /// callback-driven C API doesn't translate cleanly.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:430
+pub fn scanlanginfo() -> Vec<(String, String)> {
+    // c:430
     let mut out = Vec::new();
-    for &name in NL_NAMES {                                              // c:444 walk nl_names
-        if let Some(v) = getlanginfo(name) {                             // c:446 nl_langinfo
-            out.push((name.to_string(), v));                             // c:451 emit
+    for &name in NL_NAMES {
+        // c:444 walk nl_names
+        if let Some(v) = getlanginfo(name) {
+            // c:446 nl_langinfo
+            out.push((name.to_string(), v)); // c:451 emit
         }
     }
     out
@@ -137,16 +171,14 @@ pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:43
 
 // `partab` — port of `static struct paramdef partab[]` (langinfo.c:455).
 
-
 // `module_features` — port of `static struct features module_features`
 // from langinfo.c:464.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/langinfo.c:472`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                // c:472
-    0                                                                    // c:487
+pub fn setup_(m: *const module) -> i32 {
+    // c:472
+    0 // c:487
 }
 
 // =====================================================================
@@ -158,55 +190,102 @@ use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/langinfo.c:479`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:479
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:479
     *features = featuresarray(m, module_features());
-    0                                                                    // c:494
+    0 // c:494
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/langinfo.c:487`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:487
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:487
     handlefeatures(m, module_features(), enables) // c:501
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/langinfo.c:494`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                 // c:494
-    0                                                                    // c:508
+pub fn boot_(m: *const module) -> i32 {
+    // c:494
+    0 // c:508
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/langinfo.c:501`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                              // c:501
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:501
     setfeatureenables(m, module_features(), None) // c:508
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/langinfo.c:508`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                               // c:508
-    0                                                                    // c:508
+pub fn finish_(m: *const module) -> i32 {
+    // c:508
+    0 // c:508
 }
-pub static NL_NAMES: &[&str] = &[                                         // c:65 nl_names
-    "CODESET", "D_T_FMT", "D_FMT", "T_FMT",
-    "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR",
-    "ABDAY_1", "ABDAY_2", "ABDAY_3", "ABDAY_4",
-    "ABDAY_5", "ABDAY_6", "ABDAY_7",
-    "DAY_1", "DAY_2", "DAY_3", "DAY_4", "DAY_5", "DAY_6", "DAY_7",
-    "ABMON_1", "ABMON_2", "ABMON_3", "ABMON_4", "ABMON_5", "ABMON_6",
-    "ABMON_7", "ABMON_8", "ABMON_9", "ABMON_10", "ABMON_11", "ABMON_12",
-    "MON_1", "MON_2", "MON_3", "MON_4", "MON_5", "MON_6",
-    "MON_7", "MON_8", "MON_9", "MON_10", "MON_11", "MON_12",
-    "T_FMT_AMPM", "AM_STR", "PM_STR",
-    "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
+pub static NL_NAMES: &[&str] = &[
+    // c:65 nl_names
+    "CODESET",
+    "D_T_FMT",
+    "D_FMT",
+    "T_FMT",
+    "RADIXCHAR",
+    "THOUSEP",
+    "YESEXPR",
+    "NOEXPR",
+    "CRNCYSTR",
+    "ABDAY_1",
+    "ABDAY_2",
+    "ABDAY_3",
+    "ABDAY_4",
+    "ABDAY_5",
+    "ABDAY_6",
+    "ABDAY_7",
+    "DAY_1",
+    "DAY_2",
+    "DAY_3",
+    "DAY_4",
+    "DAY_5",
+    "DAY_6",
+    "DAY_7",
+    "ABMON_1",
+    "ABMON_2",
+    "ABMON_3",
+    "ABMON_4",
+    "ABMON_5",
+    "ABMON_6",
+    "ABMON_7",
+    "ABMON_8",
+    "ABMON_9",
+    "ABMON_10",
+    "ABMON_11",
+    "ABMON_12",
+    "MON_1",
+    "MON_2",
+    "MON_3",
+    "MON_4",
+    "MON_5",
+    "MON_6",
+    "MON_7",
+    "MON_8",
+    "MON_9",
+    "MON_10",
+    "MON_11",
+    "MON_12",
+    "T_FMT_AMPM",
+    "AM_STR",
+    "PM_STR",
+    "ERA",
+    "ERA_D_FMT",
+    "ERA_D_T_FMT",
+    "ERA_T_FMT",
+    "ALT_DIGITS",
 ];
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -240,11 +319,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -275,17 +350,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 1,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 1,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -338,12 +415,28 @@ mod tests {
     fn nl_names_covers_canonical_locale_items() {
         let _g = crate::test_util::global_state_lock();
         for required in [
-            "CODESET", "D_T_FMT", "D_FMT", "T_FMT", "T_FMT_AMPM",
-            "AM_STR", "PM_STR", "DAY_1", "DAY_7", "ABDAY_1", "MON_1",
-            "MON_12", "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR",
+            "CODESET",
+            "D_T_FMT",
+            "D_FMT",
+            "T_FMT",
+            "T_FMT_AMPM",
+            "AM_STR",
+            "PM_STR",
+            "DAY_1",
+            "DAY_7",
+            "ABDAY_1",
+            "MON_1",
+            "MON_12",
+            "RADIXCHAR",
+            "THOUSEP",
+            "YESEXPR",
+            "NOEXPR",
         ] {
-            assert!(NL_NAMES.contains(&required),
-                "NL_NAMES missing {} — port table truncated?", required);
+            assert!(
+                NL_NAMES.contains(&required),
+                "NL_NAMES missing {} — port table truncated?",
+                required
+            );
         }
     }
 
@@ -357,10 +450,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for &n in NL_NAMES {
             assert!(!n.is_empty(), "empty entry in NL_NAMES");
-            assert!(n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
-                "NL_NAMES entry {:?} contains non-uppercase chars", n);
-            assert!(!n.starts_with(|c: char| c.is_ascii_digit()),
-                "NL_NAMES entry {:?} starts with a digit", n);
+            assert!(
+                n.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "NL_NAMES entry {:?} contains non-uppercase chars",
+                n
+            );
+            assert!(
+                !n.starts_with(|c: char| c.is_ascii_digit()),
+                "NL_NAMES entry {:?} starts with a digit",
+                n
+            );
         }
     }
 
@@ -371,8 +471,7 @@ mod tests {
     fn nl_names_has_no_duplicates() {
         let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = NL_NAMES.iter().copied().collect();
-        assert_eq!(unique.len(), NL_NAMES.len(),
-            "duplicate entry in NL_NAMES");
+        assert_eq!(unique.len(), NL_NAMES.len(), "duplicate entry in NL_NAMES");
     }
 
     /// c:430 — `scanlanginfo` keys must be a subset of NL_NAMES.
@@ -384,8 +483,11 @@ mod tests {
     fn scanlanginfo_keys_are_subset_of_nl_names() {
         let _g = crate::test_util::global_state_lock();
         for (k, _) in scanlanginfo() {
-            assert!(NL_NAMES.contains(&k.as_str()),
-                "scanlanginfo emitted {:?} which is not in NL_NAMES", k);
+            assert!(
+                NL_NAMES.contains(&k.as_str()),
+                "scanlanginfo emitted {:?} which is not in NL_NAMES",
+                k
+            );
         }
     }
 
@@ -397,8 +499,10 @@ mod tests {
     fn getlanginfo_is_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
         assert!(getlanginfo("CODESET").is_some());
-        assert!(getlanginfo("codeset").is_none(),
-            "getlanginfo must be case-sensitive per the C source's strcmp lookup");
+        assert!(
+            getlanginfo("codeset").is_none(),
+            "getlanginfo must be case-sensitive per the C source's strcmp lookup"
+        );
     }
 
     /// c:472-510 — module-lifecycle stubs all return 0 in C.

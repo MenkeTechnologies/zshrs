@@ -8,8 +8,14 @@ fn main() {
     loop {
         zsh::lex::ctxtlex();
         let tok = zsh::lex::tok();
-        if tok == ENDINPUT { println!("ENDINPUT"); break; }
-        if tok == LEXERR { println!("LEXERR"); break; }
+        if tok == ENDINPUT {
+            println!("ENDINPUT");
+            break;
+        }
+        if tok == LEXERR {
+            println!("LEXERR");
+            break;
+        }
         let raw = zsh::lex::tokstr().unwrap_or_default();
         let plain = zsh::lex::untokenize_preserve_quotes(&raw);
         let raw_bytes: Vec<u8> = raw.bytes().collect();

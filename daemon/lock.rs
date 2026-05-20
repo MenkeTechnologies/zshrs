@@ -98,11 +98,7 @@ fn now_ns() -> i64 {
     chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
 }
 
-fn try_acquire_inner(
-    table: &LockTable,
-    name: &str,
-    pid: i32,
-) -> Option<u128> {
+fn try_acquire_inner(table: &LockTable, name: &str, pid: i32) -> Option<u128> {
     let mut g = table.lock();
     // If held by a dead PID, force-release.
     if let Some(existing) = g.get(name) {
@@ -139,10 +135,7 @@ pub async fn op_lock_try_acquire(state: &Arc<DaemonState>, args: Value) -> OpRes
             "token": token.to_string(),
             "holder_pid": pid,
         })),
-        None => Err(ErrPayload::new(
-            "busy",
-            format!("lock `{name}` is held"),
-        )),
+        None => Err(ErrPayload::new("busy", format!("lock `{name}` is held"))),
     }
 }
 

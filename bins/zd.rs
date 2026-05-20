@@ -94,7 +94,8 @@ impl Transport for HttpTransport {
         let mut cmd = Command::new("curl");
         cmd.arg("-sN");
         if !self.token.is_empty() {
-            cmd.arg("-H").arg(format!("Authorization: Bearer {}", self.token));
+            cmd.arg("-H")
+                .arg(format!("Authorization: Bearer {}", self.token));
         }
         cmd.arg(&url);
         cmd.stdout(Stdio::inherit());

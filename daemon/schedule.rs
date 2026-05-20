@@ -65,8 +65,8 @@ fn open_db(state: &DaemonState) -> std::result::Result<Connection, ErrPayload> {
     // user-visible filesystem footprint small and lets us reuse the
     // PRAGMA journal_mode=WAL setup.
     let path = &state.paths.cache_db;
-    let conn = Connection::open(path)
-        .map_err(|e| ErrPayload::new("schedule_open", e.to_string()))?;
+    let conn =
+        Connection::open(path).map_err(|e| ErrPayload::new("schedule_open", e.to_string()))?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -123,7 +123,10 @@ pub async fn op_schedule_add(state: &Arc<DaemonState>, args: Value) -> OpResult 
     let command = argv_arg(&args)?;
     let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
     let env = args.get("env").map(|v| v.to_string());
-    let notes = args.get("notes").and_then(Value::as_str).map(str::to_string);
+    let notes = args
+        .get("notes")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let argv_json = serde_json::to_string(&command).unwrap();
     let now = now_ns();
 
@@ -155,7 +158,10 @@ pub async fn op_schedule_add_once(state: &Arc<DaemonState>, args: Value) -> OpRe
     let command = argv_arg(&args)?;
     let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
     let env = args.get("env").map(|v| v.to_string());
-    let notes = args.get("notes").and_then(Value::as_str).map(str::to_string);
+    let notes = args
+        .get("notes")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let argv_json = serde_json::to_string(&command).unwrap();
     let now = now_ns();
 
@@ -327,11 +333,7 @@ async fn tick_once(state: &Arc<DaemonState>) -> std::result::Result<(), String> 
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    schedule_id = row.id,
-                    ?e,
-                    "scheduled job submit failed"
-                );
+                tracing::warn!(schedule_id = row.id, ?e, "scheduled job submit failed");
             }
         }
     }

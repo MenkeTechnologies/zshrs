@@ -270,7 +270,9 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
             *idx += 1;
             // Continue reading > lines as part of same stdout block
             while *idx < lines.len() {
-                let Some(rest) = lines[*idx].strip_prefix('>') else { break };
+                let Some(rest) = lines[*idx].strip_prefix('>') else {
+                    break;
+                };
                 append_redir_line(&mut expected_stdout, rest);
                 *idx += 1;
             }
@@ -282,7 +284,9 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
             append_redir_line(&mut expected_stderr, rest);
             *idx += 1;
             while *idx < lines.len() {
-                let Some(rest) = lines[*idx].strip_prefix('?') else { break };
+                let Some(rest) = lines[*idx].strip_prefix('?') else {
+                    break;
+                };
                 append_redir_line(&mut expected_stderr, rest);
                 *idx += 1;
             }

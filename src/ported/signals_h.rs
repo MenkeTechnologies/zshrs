@@ -20,8 +20,8 @@
 //! in `signals.rs` (the .c port); this header port covers the
 //! constants + the queueing-API call shape.
 
+use crate::ported::signals::{queue_front, queue_rear, signal_mask_queue, signal_queue};
 use std::sync::atomic::{AtomicI32, Ordering};
-use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_queue};
 
 // ---------------------------------------------------------------------------
 // Pseudo-signal indexes (c:34-46).
@@ -33,27 +33,27 @@ use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_
 /// libc-rs doesn't expose `NSIG` on Linux/macOS so we hardcode the
 /// value `<signal.h>` would emit.
 #[cfg(target_os = "linux")]
-pub const SIGCOUNT: i32 = 64;                                            // Linux NSIG = 65
+pub const SIGCOUNT: i32 = 64; // Linux NSIG = 65
 
 #[cfg(target_os = "macos")]
-pub const SIGCOUNT: i32 = 31;                                            // macOS NSIG = 32
+pub const SIGCOUNT: i32 = 31; // macOS NSIG = 32
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub const SIGCOUNT: i32 = 31;                                            // POSIX baseline
+pub const SIGCOUNT: i32 = 31; // POSIX baseline
 
 /// Port of `#define SIGZERR` from `Src/signals.h:34`. Pseudo-signal
 /// index for the ZERR trap (fires after every command that exits
 /// with a nonzero status).
-pub const SIGZERR: i32 = SIGCOUNT + 1;                                   // c:34
+pub const SIGZERR: i32 = SIGCOUNT + 1; // c:34
 
 /// Port of `#define SIGDEBUG` from `Src/signals.h:35`. Pseudo-signal
 /// index for the DEBUG trap (fires before every command).
-pub const SIGDEBUG: i32 = SIGCOUNT + 2;                                  // c:35
+pub const SIGDEBUG: i32 = SIGCOUNT + 2; // c:35
 
 /// Port of `#define VSIGCOUNT` from `Src/signals.h:36`. Total
 /// number of "virtual" signal-table slots = SIGCOUNT (real signals)
 /// + 3 (zero + ZERR + DEBUG).
-pub const VSIGCOUNT: i32 = SIGCOUNT + 3;                                 // c:36
+pub const VSIGCOUNT: i32 = SIGCOUNT + 3; // c:36
 
 /// Port of `#define TRAPCOUNT` from `Src/signals.h:38/42`. With
 /// `SIGRTMIN`/`SIGRTMAX` available (every Linux/musl/BSD host),
@@ -62,14 +62,14 @@ pub const VSIGCOUNT: i32 = SIGCOUNT + 3;                                 // c:36
 /// doesn't expose SIGRTMIN/SIGRTMAX as Rust constants — the c:42
 /// `#else` arm (TRAPCOUNT = VSIGCOUNT) applies.
 #[cfg(target_os = "linux")]
-pub const TRAPCOUNT: i32 = VSIGCOUNT + 32;                               // c:38 (Linux RT range = 32)
+pub const TRAPCOUNT: i32 = VSIGCOUNT + 32; // c:38 (Linux RT range = 32)
 
 #[cfg(not(target_os = "linux"))]
-pub const TRAPCOUNT: i32 = VSIGCOUNT;                                    // c:42
+pub const TRAPCOUNT: i32 = VSIGCOUNT; // c:42
 
 /// Port of `#define SIGEXIT` from `Src/signals.h:46`. Pseudo-signal
 /// index for the EXIT trap (fires when the shell exits).
-pub const SIGEXIT: i32 = 0;                                              // c:46
+pub const SIGEXIT: i32 = 0; // c:46
 
 // ---------------------------------------------------------------------------
 // Signal name table — port of the `sigs[SIGCOUNT+4]` array generated
@@ -89,32 +89,48 @@ pub const SIGEXIT: i32 = 0;                                              // c:46
 /// canonical zsh signal name for every real signal — name without
 /// the `SIG` prefix. Entries are platform-conditional via libc
 /// constants so the table matches the running OS's `<signal.h>`.
-pub static SIGS: &[(&str, i32)] = &[                                      // c:signames.c sigs[]
-    ("HUP",    libc::SIGHUP),    ("INT",    libc::SIGINT),
-    ("QUIT",   libc::SIGQUIT),   ("ILL",    libc::SIGILL),
-    ("TRAP",   libc::SIGTRAP),   ("ABRT",   libc::SIGABRT),
-    ("BUS",    libc::SIGBUS),    ("FPE",    libc::SIGFPE),
-    ("KILL",   libc::SIGKILL),   ("USR1",   libc::SIGUSR1),
-    ("SEGV",   libc::SIGSEGV),   ("USR2",   libc::SIGUSR2),
-    ("PIPE",   libc::SIGPIPE),   ("ALRM",   libc::SIGALRM),
-    ("TERM",   libc::SIGTERM),   ("CHLD",   libc::SIGCHLD),
-    ("CONT",   libc::SIGCONT),   ("STOP",   libc::SIGSTOP),
-    ("TSTP",   libc::SIGTSTP),   ("TTIN",   libc::SIGTTIN),
-    ("TTOU",   libc::SIGTTOU),   ("URG",    libc::SIGURG),
-    ("XCPU",   libc::SIGXCPU),   ("XFSZ",   libc::SIGXFSZ),
-    ("VTALRM", libc::SIGVTALRM), ("PROF",   libc::SIGPROF),
-    ("WINCH",  libc::SIGWINCH),  ("IO",     libc::SIGIO),
-    ("SYS",    libc::SIGSYS),
+pub static SIGS: &[(&str, i32)] = &[
+    // c:signames.c sigs[]
+    ("HUP", libc::SIGHUP),
+    ("INT", libc::SIGINT),
+    ("QUIT", libc::SIGQUIT),
+    ("ILL", libc::SIGILL),
+    ("TRAP", libc::SIGTRAP),
+    ("ABRT", libc::SIGABRT),
+    ("BUS", libc::SIGBUS),
+    ("FPE", libc::SIGFPE),
+    ("KILL", libc::SIGKILL),
+    ("USR1", libc::SIGUSR1),
+    ("SEGV", libc::SIGSEGV),
+    ("USR2", libc::SIGUSR2),
+    ("PIPE", libc::SIGPIPE),
+    ("ALRM", libc::SIGALRM),
+    ("TERM", libc::SIGTERM),
+    ("CHLD", libc::SIGCHLD),
+    ("CONT", libc::SIGCONT),
+    ("STOP", libc::SIGSTOP),
+    ("TSTP", libc::SIGTSTP),
+    ("TTIN", libc::SIGTTIN),
+    ("TTOU", libc::SIGTTOU),
+    ("URG", libc::SIGURG),
+    ("XCPU", libc::SIGXCPU),
+    ("XFSZ", libc::SIGXFSZ),
+    ("VTALRM", libc::SIGVTALRM),
+    ("PROF", libc::SIGPROF),
+    ("WINCH", libc::SIGWINCH),
+    ("IO", libc::SIGIO),
+    ("SYS", libc::SIGSYS),
 ];
 
 /// Port of `alt_sigs[]` from `Src/jobs.c:2740`. Cross-platform name
 /// aliases — names like `CLD` / `IO` / `IOT` map to the same number
 /// as the canonical zsh name on platforms where the underlying
 /// C macro pair coincides.
-pub static ALT_SIGS: &[(&str, i32)] = &[                                  // c:jobs.c:2740
-    ("CLD", libc::SIGCHLD),                                               // c:2742-2746
-    ("IOT", libc::SIGABRT),                                               // c:2752-2756
-    ("ERR", SIGZERR),                                                     // c:2762
+pub static ALT_SIGS: &[(&str, i32)] = &[
+    // c:jobs.c:2740
+    ("CLD", libc::SIGCHLD), // c:2742-2746
+    ("IOT", libc::SIGABRT), // c:2752-2756
+    ("ERR", SIGZERR),       // c:2762
 ];
 
 /// Port of the `sig_msg[]` array from `signames.c` (auto-generated
@@ -122,56 +138,72 @@ pub static ALT_SIGS: &[(&str, i32)] = &[                                  // c:j
 /// used in the `printjob`/`printtime` output paths when zsh wants
 /// to render a signal as e.g. `"hangup"` or `"floating point exception"`
 /// rather than just `"SIGFPE"`. Each entry is `(signum, message)`.
-pub static SIG_MSG: &[(i32, &str)] = &[                                   // c:signames.c sig_msg[]
-    (libc::SIGHUP,    "hangup"),
-    (libc::SIGINT,    "interrupt"),
-    (libc::SIGQUIT,   "quit"),
-    (libc::SIGILL,    "illegal hardware instruction"),
-    (libc::SIGTRAP,   "trace trap"),
-    (libc::SIGABRT,   "abort"),
-    (libc::SIGBUS,    "bus error"),
-    (libc::SIGFPE,    "floating point exception"),
-    (libc::SIGKILL,   "killed"),
-    (libc::SIGUSR1,   "user-defined signal 1"),
-    (libc::SIGSEGV,   "segmentation fault"),
-    (libc::SIGUSR2,   "user-defined signal 2"),
-    (libc::SIGPIPE,   "broken pipe"),
-    (libc::SIGALRM,   "alarm"),
-    (libc::SIGTERM,   "terminated"),
-    (libc::SIGCHLD,   "death of child"),
-    (libc::SIGCONT,   "continued"),
-    (libc::SIGSTOP,   "stopped (signal)"),
-    (libc::SIGTSTP,   "stopped"),
-    (libc::SIGTTIN,   "stopped (tty input)"),
-    (libc::SIGTTOU,   "stopped (tty output)"),
-    (libc::SIGURG,    "urgent condition"),
-    (libc::SIGXCPU,   "cpu limit exceeded"),
-    (libc::SIGXFSZ,   "file size limit exceeded"),
+pub static SIG_MSG: &[(i32, &str)] = &[
+    // c:signames.c sig_msg[]
+    (libc::SIGHUP, "hangup"),
+    (libc::SIGINT, "interrupt"),
+    (libc::SIGQUIT, "quit"),
+    (libc::SIGILL, "illegal hardware instruction"),
+    (libc::SIGTRAP, "trace trap"),
+    (libc::SIGABRT, "abort"),
+    (libc::SIGBUS, "bus error"),
+    (libc::SIGFPE, "floating point exception"),
+    (libc::SIGKILL, "killed"),
+    (libc::SIGUSR1, "user-defined signal 1"),
+    (libc::SIGSEGV, "segmentation fault"),
+    (libc::SIGUSR2, "user-defined signal 2"),
+    (libc::SIGPIPE, "broken pipe"),
+    (libc::SIGALRM, "alarm"),
+    (libc::SIGTERM, "terminated"),
+    (libc::SIGCHLD, "death of child"),
+    (libc::SIGCONT, "continued"),
+    (libc::SIGSTOP, "stopped (signal)"),
+    (libc::SIGTSTP, "stopped"),
+    (libc::SIGTTIN, "stopped (tty input)"),
+    (libc::SIGTTOU, "stopped (tty output)"),
+    (libc::SIGURG, "urgent condition"),
+    (libc::SIGXCPU, "cpu limit exceeded"),
+    (libc::SIGXFSZ, "file size limit exceeded"),
     (libc::SIGVTALRM, "virtual time alarm"),
-    (libc::SIGPROF,   "profile signal"),
-    (libc::SIGWINCH,  "window size changed"),
-    (libc::SIGIO,     "i/o ready"),
-    (libc::SIGSYS,    "invalid system call"),
+    (libc::SIGPROF, "profile signal"),
+    (libc::SIGWINCH, "window size changed"),
+    (libc::SIGIO, "i/o ready"),
+    (libc::SIGSYS, "invalid system call"),
 ];
 
 /// Look up the canonical signal name for `idx` (sans `SIG` prefix).
 /// Returns `"EXIT"` for slot 0, `"ZERR"`/`"DEBUG"` for the pseudo-
 /// signal slots, the SIGS-table name for real signals, or `None`
 /// when out of range. Mirrors C's `sigs[idx]` indexed lookup.
-pub fn sigs_name(idx: i32) -> Option<&'static str> {                      // c:signames.c sigs[]
-    if idx == 0           { return Some("EXIT"); }                        // c:slot 0
-    if idx == SIGZERR     { return Some("ZERR"); }                        // c:SIGCOUNT+1
-    if idx == SIGDEBUG    { return Some("DEBUG"); }                       // c:SIGCOUNT+2
+pub fn sigs_name(idx: i32) -> Option<&'static str> {
+    // c:signames.c sigs[]
+    if idx == 0 {
+        return Some("EXIT");
+    } // c:slot 0
+    if idx == SIGZERR {
+        return Some("ZERR");
+    } // c:SIGCOUNT+1
+    if idx == SIGDEBUG {
+        return Some("DEBUG");
+    } // c:SIGCOUNT+2
     SIGS.iter().find(|(_, n)| *n == idx).map(|(name, _)| *name)
 }
 
 /// Reverse of `sigs_name` — accepts a name (with or without leading
 /// `SIG`) and returns the libc signal number. Walks SIGS first, then
 /// ALT_SIGS for cross-platform aliases.
-pub fn sigs_number(name: &str) -> Option<i32> {                           // c:jobs.c:2828 lookup
+pub fn sigs_number(name: &str) -> Option<i32> {
+    // c:jobs.c:2828 lookup
     let bare = name.strip_prefix("SIG").unwrap_or(name);
-    SIGS.iter().find(|(n, _)| *n == bare).map(|(_, num)| *num)
-        .or_else(|| ALT_SIGS.iter().find(|(n, _)| *n == bare).map(|(_, num)| *num))
+    SIGS.iter()
+        .find(|(n, _)| *n == bare)
+        .map(|(_, num)| *num)
+        .or_else(|| {
+            ALT_SIGS
+                .iter()
+                .find(|(n, _)| *n == bare)
+                .map(|(_, num)| *num)
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +216,8 @@ pub fn sigs_number(name: &str) -> Option<i32> {                           // c:j
 /// `SIGRTMIN + (x - VSIGCOUNT)`. Other indexes pass through unchanged.
 #[inline]
 #[allow(non_snake_case)]
-pub fn SIGNUM(x: i32) -> i32 {                                           // c:39
+pub fn SIGNUM(x: i32) -> i32 {
+    // c:39
     #[cfg(target_os = "linux")]
     {
         if x >= VSIGCOUNT {
@@ -194,7 +227,9 @@ pub fn SIGNUM(x: i32) -> i32 {                                           // c:39
         }
     }
     #[cfg(not(target_os = "linux"))]
-    { x }
+    {
+        x
+    }
 }
 
 /// Port of `#define SIGIDX(x)` from `Src/signals.h:40`. Convert a
@@ -203,7 +238,8 @@ pub fn SIGNUM(x: i32) -> i32 {                                           // c:39
 /// other numbers pass through unchanged.
 #[inline]
 #[allow(non_snake_case)]
-pub fn SIGIDX(x: i32) -> i32 {                                           // c:40
+pub fn SIGIDX(x: i32) -> i32 {
+    // c:40
     #[cfg(target_os = "linux")]
     {
         let rtmin = libc::SIGRTMIN();
@@ -215,7 +251,9 @@ pub fn SIGIDX(x: i32) -> i32 {                                           // c:40
         }
     }
     #[cfg(not(target_os = "linux"))]
-    { x }
+    {
+        x
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +268,7 @@ pub fn SIGIDX(x: i32) -> i32 {                                           // c:40
 
 /// Port of `#define MAX_QUEUE_SIZE` from `Src/signals.h:76`. Maximum
 /// signal-queue depth before older entries get overwritten.
-pub const MAX_QUEUE_SIZE: usize = 128;                                   // c:76
+pub const MAX_QUEUE_SIZE: usize = 128; // c:76
 
 /// Port of the global `int queueing_enabled;` (Src/signals.c). The
 // ---------------------------------------------------------------------------
@@ -245,7 +283,8 @@ pub const MAX_QUEUE_SIZE: usize = 128;                                   // c:76
 /// C body: `(queue_in++, queueing_enabled++)` — both counters bump.
 #[inline]
 #[allow(non_snake_case)]
-pub fn queue_signals() {                                                 // c:90/112
+pub fn queue_signals() {
+    // c:90/112
     crate::ported::signals::queue_in.fetch_add(1, Ordering::SeqCst);
     crate::ported::signals::queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
@@ -256,16 +295,19 @@ pub fn queue_signals() {                                                 // c:90
 /// `run_queued_signals()`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn unqueue_signals() {                                               // c:92/114
+pub fn unqueue_signals() {
+    // c:92/114
     // c:93 — DPUTS(!queueing_enabled, "BUG: unqueue_signals called but not queueing")
-    crate::DPUTS!(                                                        // c:93
+    crate::DPUTS!(
+        // c:93
         crate::ported::signals::queueing_enabled.load(Ordering::SeqCst) == 0, // c:93
-        "BUG: unqueue_signals called but not queueing"                   // c:93
+        "BUG: unqueue_signals called but not queueing"                        // c:93
     );
-    crate::ported::signals::queue_in.fetch_sub(1, Ordering::SeqCst);     // c:94 --queue_in
+    crate::ported::signals::queue_in.fetch_sub(1, Ordering::SeqCst); // c:94 --queue_in
     let prev = crate::ported::signals::queueing_enabled.fetch_sub(1, Ordering::SeqCst); // c:95
-    if prev == 1 {                                                        // c:95 if (!--queueing_enabled)
-        run_queued_signals();                                             // c:95 run_queued_signals()
+    if prev == 1 {
+        // c:95 if (!--queueing_enabled)
+        run_queued_signals(); // c:95 run_queued_signals()
     }
 }
 
@@ -275,7 +317,8 @@ pub fn unqueue_signals() {                                               // c:92
 /// later DPUTS2 invariant check.
 #[inline]
 #[allow(non_snake_case)]
-pub fn dont_queue_signals() {                                            // c:98/118
+pub fn dont_queue_signals() {
+    // c:98/118
     let level = crate::ported::signals::queueing_enabled.swap(0, Ordering::SeqCst);
     crate::ported::signals::queue_in.store(level, Ordering::SeqCst);
     run_queued_signals();
@@ -287,16 +330,20 @@ pub fn dont_queue_signals() {                                            // c:98
 /// `dont_queue_signals` or similar).
 #[inline]
 #[allow(non_snake_case)]
-pub fn restore_queue_signals(q: i32) {                                   // c:104/123
+pub fn restore_queue_signals(q: i32) {
+    // c:104/123
     // c:105-106 — DPUTS2(queueing_enabled && queue_in != q,
     //                    "BUG: q = %d != queue_in = %d", q, queue_in)
-    let qi = crate::ported::signals::queue_in.load(Ordering::SeqCst);    // c:105
+    let qi = crate::ported::signals::queue_in.load(Ordering::SeqCst); // c:105
     let qe = crate::ported::signals::queueing_enabled.load(Ordering::SeqCst); // c:105
-    crate::DPUTS2!(                                                       // c:105
-        qe != 0 && qi != q,                                               // c:105
-        "BUG: q = {} != queue_in = {}", q, qi                            // c:106
+    crate::DPUTS2!(
+        // c:105
+        qe != 0 && qi != q, // c:105
+        "BUG: q = {} != queue_in = {}",
+        q,
+        qi // c:106
     );
-    crate::ported::signals::queue_in.store(q, Ordering::SeqCst);          // c:107 queue_in = q
+    crate::ported::signals::queue_in.store(q, Ordering::SeqCst); // c:107 queue_in = q
     crate::ported::signals::queueing_enabled.store(q, Ordering::SeqCst); // c:107 queueing_enabled = q
 }
 
@@ -305,7 +352,8 @@ pub fn restore_queue_signals(q: i32) {                                   // c:10
 /// pass to `restore_queue_signals`).
 #[inline]
 #[allow(non_snake_case)]
-pub fn queue_signal_level() -> i32 {                                     // c:127
+pub fn queue_signal_level() -> i32 {
+    // c:127
     crate::ported::signals::queueing_enabled.load(Ordering::SeqCst)
 }
 
@@ -325,21 +373,29 @@ pub fn queue_signal_level() -> i32 {                                     // c:12
 /// ```
 #[inline]
 #[allow(non_snake_case)]
-pub fn run_queued_signals() {                                            // c:78
+pub fn run_queued_signals() {
+    // c:78
     loop {
         let f = queue_front.load(Ordering::SeqCst);
         let r = queue_rear.load(Ordering::SeqCst);
-        if f == r { break; }
+        if f == r {
+            break;
+        }
         let nf = (f + 1) % MAX_QUEUE_SIZE;
         let sig = signal_queue[nf].load(Ordering::SeqCst);
-        let mask = signal_mask_queue.lock().ok().and_then(|g| g.get(nf).copied());
+        let mask = signal_mask_queue
+            .lock()
+            .ok()
+            .and_then(|g| g.get(nf).copied());
         queue_front.store(nf, Ordering::SeqCst);
         if let Some(m) = mask {
             let _ = crate::ported::signals::signal_setmask(&m);
         }
         // Re-deliver via raise() so the installed handler runs again
         // with the original sig number.
-        unsafe { libc::raise(sig); }
+        unsafe {
+            libc::raise(sig);
+        }
     }
 }
 
@@ -364,7 +420,8 @@ pub fn run_queued_signals() {                                            // c:78
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn child_block() {                                                   // c:52
+pub fn child_block() {
+    // c:52
     let mask = crate::ported::signals::signal_mask(libc::SIGCHLD);
     let _ = crate::ported::signals::signal_block(&mask);
 }
@@ -380,7 +437,8 @@ pub fn child_block() {}
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn child_unblock() {                                                 // c:53
+pub fn child_unblock() {
+    // c:53
     let mask = crate::ported::signals::signal_mask(libc::SIGCHLD);
     let _ = crate::ported::signals::signal_unblock(&mask);
 }
@@ -402,7 +460,8 @@ pub fn child_unblock() {}
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn winch_block() {                                                   // c:56
+pub fn winch_block() {
+    // c:56
     let mask = crate::ported::signals::signal_mask(libc::SIGWINCH);
     let _ = crate::ported::signals::signal_block(&mask);
 }
@@ -421,7 +480,8 @@ pub fn winch_block() {}
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn winch_unblock() {                                                 // c:57
+pub fn winch_unblock() {
+    // c:57
     let mask = crate::ported::signals::signal_mask(libc::SIGWINCH);
     let _ = crate::ported::signals::signal_unblock(&mask);
 }
@@ -446,7 +506,8 @@ pub fn winch_unblock() {}
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn signal_ignore(s: i32) -> libc::sighandler_t {                     // c:64
+pub fn signal_ignore(s: i32) -> libc::sighandler_t {
+    // c:64
     unsafe { libc::signal(s, libc::SIG_IGN) }
 }
 
@@ -454,7 +515,9 @@ pub fn signal_ignore(s: i32) -> libc::sighandler_t {                     // c:64
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
-pub fn signal_ignore(_s: i32) -> usize { 0 }
+pub fn signal_ignore(_s: i32) -> usize {
+    0
+}
 
 /// Port of `#define signal_default(S)` from `Src/signals.h:67`. Reset
 /// signal `s` to its default action. C: `signal(S, SIG_DFL)` —
@@ -462,7 +525,8 @@ pub fn signal_ignore(_s: i32) -> usize { 0 }
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
-pub fn signal_default(s: i32) -> libc::sighandler_t {                    // c:67
+pub fn signal_default(s: i32) -> libc::sighandler_t {
+    // c:67
     unsafe { libc::signal(s, libc::SIG_DFL) }
 }
 
@@ -470,7 +534,9 @@ pub fn signal_default(s: i32) -> libc::sighandler_t {                    // c:67
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(not(unix))]
-pub fn signal_default(_s: i32) -> usize { 0 }
+pub fn signal_default(_s: i32) -> usize {
+    0
+}
 
 #[cfg(test)]
 mod tests {
@@ -562,12 +628,18 @@ mod tests {
         let _ = signal_default(libc::SIGUSR2);
         // Install SIG_IGN — returns SIG_DFL (was reset above).
         let prev = signal_ignore(libc::SIGUSR2);
-        assert_eq!(prev, libc::SIG_DFL,
-            "c:64 — first signal_ignore must return prior SIG_DFL");
+        assert_eq!(
+            prev,
+            libc::SIG_DFL,
+            "c:64 — first signal_ignore must return prior SIG_DFL"
+        );
         // Install SIG_IGN again — returns SIG_IGN.
         let prev2 = signal_ignore(libc::SIGUSR2);
-        assert_eq!(prev2, libc::SIG_IGN,
-            "c:64 — second signal_ignore must return prior SIG_IGN");
+        assert_eq!(
+            prev2,
+            libc::SIG_IGN,
+            "c:64 — second signal_ignore must return prior SIG_IGN"
+        );
         // Cleanup.
         let _ = signal_default(libc::SIGUSR2);
     }
@@ -582,8 +654,11 @@ mod tests {
         let _ = signal_default(libc::SIGUSR2);
         let _ = signal_ignore(libc::SIGUSR2);
         let prev = signal_default(libc::SIGUSR2);
-        assert_eq!(prev, libc::SIG_IGN,
-            "c:67 — signal_default must return prior SIG_IGN");
+        assert_eq!(
+            prev,
+            libc::SIG_IGN,
+            "c:67 — signal_default must return prior SIG_IGN"
+        );
         // Default→default returns SIG_DFL.
         let prev2 = signal_default(libc::SIGUSR2);
         assert_eq!(prev2, libc::SIG_DFL);
@@ -600,9 +675,11 @@ mod tests {
         for s in 1..VSIGCOUNT {
             let n = SIGNUM(s);
             let back = SIGIDX(n);
-            assert_eq!(back, s,
+            assert_eq!(
+                back, s,
                 "round-trip failed at signal {}: SIGIDX(SIGNUM({})) = {}",
-                s, s, back);
+                s, s, back
+            );
         }
     }
 
@@ -617,8 +694,11 @@ mod tests {
         assert!(n.is_some(), "SIGEXIT (index 0) must have a name");
         // Conventionally "EXIT", but accept any non-numeric stem
         let s = n.unwrap();
-        assert!(!s.is_empty(),
-            "SIGEXIT name must be non-empty (got {:?})", s);
+        assert!(
+            !s.is_empty(),
+            "SIGEXIT name must be non-empty (got {:?})",
+            s
+        );
     }
 
     /// c:signames.c — `sigs_name` for a well-known signal returns
@@ -631,8 +711,10 @@ mod tests {
         // SIGIDX(SIGINT) may differ from libc::SIGINT depending on
         // mapping; try direct + idx.
         let alt = sigs_name(SIGIDX(libc::SIGINT));
-        assert!(n.is_some() || alt.is_some(),
-            "SIGINT must resolve to a name via direct or SIGIDX path");
+        assert!(
+            n.is_some() || alt.is_some(),
+            "SIGINT must resolve to a name via direct or SIGIDX path"
+        );
     }
 
     /// c:signames.c — `sigs_name(-1)` or huge index returns None.
@@ -652,8 +734,10 @@ mod tests {
     #[test]
     fn sigs_number_resolves_canonical_short_name() {
         let _g = crate::test_util::global_state_lock();
-        assert!(sigs_number("INT").is_some(),
-            "sigs_number(INT) must resolve");
+        assert!(
+            sigs_number("INT").is_some(),
+            "sigs_number(INT) must resolve"
+        );
         assert!(sigs_number("TERM").is_some());
         assert!(sigs_number("HUP").is_some());
         assert!(sigs_number("KILL").is_some());
@@ -702,12 +786,18 @@ mod tests {
     #[test]
     fn pseudo_signals_above_libc_signal_range() {
         let _g = crate::test_util::global_state_lock();
-        assert!(SIGZERR > SIGCOUNT,
+        assert!(
+            SIGZERR > SIGCOUNT,
             "SIGZERR ({}) must be > SIGCOUNT ({}) to avoid libc collision",
-            SIGZERR, SIGCOUNT);
-        assert!(SIGDEBUG > SIGCOUNT,
+            SIGZERR,
+            SIGCOUNT
+        );
+        assert!(
+            SIGDEBUG > SIGCOUNT,
             "SIGDEBUG ({}) must be > SIGCOUNT ({})",
-            SIGDEBUG, SIGCOUNT);
+            SIGDEBUG,
+            SIGCOUNT
+        );
         // Each pseudo-signal is distinct
         assert_ne!(SIGZERR, SIGDEBUG);
         assert_ne!(SIGZERR, SIGEXIT);

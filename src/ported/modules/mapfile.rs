@@ -20,9 +20,9 @@
 use crate::ported::utils::{metafy, unmeta, zwarn};
 use std::fs::OpenOptions;
 use std::io;
+use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
-use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
@@ -47,29 +47,33 @@ use std::os::unix::io::AsRawFd;
 /// inner block) — the Rust port mirrors that with `let _ = ...`
 /// where the C body discards the return.
 #[cfg(unix)]
-pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
+pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
+    // c:68
     // c:68 — `char *name = ztrdup(pm->node.nam);`
-    let name_unmeta = unmeta(name);                                // c:71+82
-    // c:82-83 — `unmetafy(name, &len); unmetafy(value, &len);`
-    let value_unmeta = unmeta(value);                              // c:83
+    let name_unmeta = unmeta(name); // c:71+82
+                                    // c:82-83 — `unmetafy(name, &len); unmetafy(value, &len);`
+    let value_unmeta = unmeta(value); // c:83
     let value_bytes = value_unmeta.as_bytes();
-    let len = value_bytes.len();                                         // c:83 len out
+    let len = value_bytes.len(); // c:83 len out
 
     // c:87 — `if (!(pm->node.flags & PM_READONLY) && ...`
     // The whole mmap+memcpy+msync+ftruncate+munmap block is gated on
     // !readonly && open success && mmap success. Any failure short-
     // circuits past the inner body (no error reported).
     if readonly {
-        return;                                                          // c:87 readonly skip
+        return; // c:87 readonly skip
     }
 
     // c:88 — `(fd = open(name, O_RDWR|O_CREAT|O_NOCTTY, 0666)) >= 0`
     let file = match OpenOptions::new()
-        .read(true).write(true).create(true).truncate(false)
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
         .open(&name_unmeta)
     {
         Ok(f) => f,
-        Err(_) => return,                                                // c:88 open fail → skip
+        Err(_) => return, // c:88 open fail → skip
     };
     let fd = file.as_raw_fd();
 
@@ -99,11 +103,14 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
         //       while (len--) putc(*value++, fout);
         //       fclose(fout);
         //   }
-        if let Ok(mut fout) = OpenOptions::new().write(true).create(true).truncate(true)
-                              .open(&name_unmeta)
+        if let Ok(mut fout) = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&name_unmeta)
         {
-            let _ = fout.write_all(value_bytes);                         // c:113-114
-            // fclose on drop                                            // c:115
+            let _ = fout.write_all(value_bytes); // c:113-114
+                                                 // fclose on drop                                            // c:115
         }
         return;
     }
@@ -113,9 +120,12 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
     // for when we msync.  On AIX, at least, we just get zeroes
     // otherwise."
     unsafe {
-        if libc::ftruncate(fd, len as libc::off_t) < 0 {                 // c:95
-            zwarn(&format!("ftruncate failed: {}",                       // c:96
-                  io::Error::last_os_error()));
+        if libc::ftruncate(fd, len as libc::off_t) < 0 {
+            // c:95
+            zwarn(&format!(
+                "ftruncate failed: {}", // c:96
+                io::Error::last_os_error()
+            ));
         }
         // c:97 — `memcpy(mmptr, value, len);`
         std::ptr::copy_nonoverlapping(value_bytes.as_ptr(), mmptr as *mut u8, len);
@@ -124,9 +134,12 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
         // c:102-105 — second ftruncate. Comment quoted: "we need to
         // truncate again, since mmap() always maps complete pages.
         // Honestly, I tried it without, and you need both."
-        if libc::ftruncate(fd, len as libc::off_t) < 0 {                 // c:106
-            zwarn(&format!("ftruncate failed: {}",                       // c:107
-                  io::Error::last_os_error()));
+        if libc::ftruncate(fd, len as libc::off_t) < 0 {
+            // c:106
+            zwarn(&format!(
+                "ftruncate failed: {}", // c:107
+                io::Error::last_os_error()
+            ));
         }
         // c:108 — `munmap(mmptr, len);`
         libc::munmap(mmptr, len);
@@ -140,14 +153,20 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
 /// `Src/Modules/mapfile.c:68`): `fopen("w")` + `putc` loop +
 /// `fclose`. Used on platforms without mmap.
 #[cfg(not(unix))]
-pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
-    if readonly { return; }                                              // c:87 readonly skip
+pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
+    // c:68
+    if readonly {
+        return;
+    } // c:87 readonly skip
     let name_unmeta = unmeta(name);
     let value_unmeta = unmeta(value);
-    if let Ok(mut fout) = OpenOptions::new().write(true).create(true).truncate(true)
-                          .open(&name_unmeta)
+    if let Ok(mut fout) = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&name_unmeta)
     {
-        let _ = fout.write_all(value_unmeta.as_bytes());                 // c:126-114
+        let _ = fout.write_all(value_unmeta.as_bytes()); // c:126-114
     }
 }
 
@@ -157,13 +176,15 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
 ///
 /// C signature: `static void unsetpmmapfile(Param pm, int exp)`. The
 /// `exp` arg is `UNUSED` (c:126).
-pub fn unsetpmmapfile(pm: &str, exp: bool) {                      // c:126
+pub fn unsetpmmapfile(pm: &str, exp: bool) {
+    // c:126
     // c:126 — `char *fname = ztrdup(pm->node.nam);`
     // c:131 — `unmetafy(fname, &dummy);`
-    let fname = unmeta(pm);                                      // c:129+131
-    // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(fname);`
-    if !exp {                                                       // c:133
-        let _ = std::fs::remove_file(&fname);                            // c:134
+    let fname = unmeta(pm); // c:129+131
+                            // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(fname);`
+    if !exp {
+        // c:133
+        let _ = std::fs::remove_file(&fname); // c:134
     }
     // c:136 — free(fname); auto on drop.
 }
@@ -180,20 +201,24 @@ pub fn unsetpmmapfile(pm: &str, exp: bool) {                      // c:126
 /// `setpmmapfile` so unmetafy + readonly + mmap path stays on the
 /// call chain.
 /// WARNING: param names don't match C — Rust=(entries, readonly) vs C=(pm, ht)
-pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {     // c:141
+pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {
+    // c:141
     // c:141-147 — `if (!ht) return;`
-    if entries.is_empty() {                                              // c:146
-        return;                                                          // c:147
+    if entries.is_empty() {
+        // c:146
+        return; // c:147
     }
     // c:149-160 — `if (!(pm->node.flags & PM_READONLY))
     //                  for (i = 0; i < ht->hsize; i++)
     //                      for (hn = ht->nodes[i]; hn; hn = hn->next) { ... }`
-    if !readonly {                                                       // c:149
-        for (name, value) in entries {                                   // c:150-151
+    if !readonly {
+        // c:149
+        for (name, value) in entries {
+            // c:150-151
             // c:152-159 — set up `struct value v`, call setpmmapfile.
             // Rust collapses the inline `struct value` setup since
             // we already have the metafied string pair.
-            setpmmapfile(name, value, readonly);                         // c:159
+            setpmmapfile(name, value, readonly); // c:159
         }
     }
     // c:161-162 — `if (ht != pm->u.hash) deleteparamtable(ht);`
@@ -209,19 +234,20 @@ pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {     // c:14
 /// C signature: `static char *get_contents(char *fname)`. Returns
 /// `char *` (NULL on failure); Rust port returns `Option<String>`.
 #[cfg(unix)]
-pub fn get_contents(fname: &str) -> Option<String> {                     // c:167
+pub fn get_contents(fname: &str) -> Option<String> {
+    // c:167
     // c:177 — `unmetafy(fname = ztrdup(fname), &fd);`
     let fname_unmeta = unmeta(fname);
 
     // c:180 — `(fd = open(fname, O_RDONLY | O_NOCTTY)) < 0`
     let file = match OpenOptions::new().read(true).open(&fname_unmeta) {
-        Ok(f) => f,                                                      // c:180 open ok
-        Err(_) => return None,                                           // c:184-187 NULL return
+        Ok(f) => f,            // c:180 open ok
+        Err(_) => return None, // c:184-187 NULL return
     };
     // c:181 — `fstat(fd, &sbuf)`
     let metadata = match file.metadata() {
         Ok(m) => m,
-        Err(_) => return None,                                           // c:184-187 NULL
+        Err(_) => return None, // c:184-187 NULL
     };
     let size = metadata.size() as usize;
 
@@ -257,7 +283,7 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
         if file.read_to_end(&mut contents).is_err() {
             return None;
         }
-        let raw = String::from_utf8_lossy(&contents);                    // c:202 metafy
+        let raw = String::from_utf8_lossy(&contents); // c:202 metafy
         return Some(metafy(&raw));
     }
 
@@ -270,7 +296,9 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
     let val = metafy(&raw);
 
     // c:197 — `munmap(mmptr, sbuf.st_size);`
-    unsafe { libc::munmap(mmptr, size); }
+    unsafe {
+        libc::munmap(mmptr, size);
+    }
     // c:198 — close(fd) auto on drop.
     // c:204 — free(fname) auto on drop.
     Some(val)
@@ -279,7 +307,8 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
 /// Non-Unix build path (port of the `#ifndef USE_MMAP` arm at
 /// `Src/Modules/mapfile.c:167`): plain read with metafy.
 #[cfg(not(unix))]
-pub fn get_contents(fname: &str) -> Option<String> {                     // c:167
+pub fn get_contents(fname: &str) -> Option<String> {
+    // c:167
     let fname_unmeta = unmeta(fname);
     let raw = std::fs::read_to_string(&fname_unmeta).ok()?;
     Some(metafy(&raw))
@@ -297,11 +326,12 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
 /// internal to C's hashnode dispatch; the magic-assoc dispatcher in
 /// zshrs consumes `Some(s)` as the value and `None` as PM_UNSET.
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmmapfile(name: &str) -> Option<String> {                      // c:217
+pub fn getpmmapfile(name: &str) -> Option<String> {
+    // c:217
     // c:217-234 — `if ((contents = get_contents(pm->node.nam)))
     //                  pm->u.str = contents;
     //              else { pm->u.str = ""; pm->node.flags |= PM_UNSET; }`
-    get_contents(name)                                                   // c:229
+    get_contents(name) // c:229
 }
 
 /// Port of `scanpmmapfile(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/mapfile.c:241`. The
@@ -318,22 +348,27 @@ pub fn getpmmapfile(name: &str) -> Option<String> {                      // c:21
 /// Rust port returns `Vec<(name, "")>` since zshrs doesn't expose a
 /// raw `ScanFunc` callback shape at this layer. Entries `.` and
 /// `..` are skipped per `zreaddir(dir, 1)`'s `ignoredots=1` arg.
-pub fn scanpmmapfile() -> Vec<(String, String)> {                        // c:241
+pub fn scanpmmapfile() -> Vec<(String, String)> {
+    // c:241
     let mut out = Vec::new();
     // c:246 — `if (!(dir = opendir("."))) return;`
-    let dir = match std::fs::read_dir(".") {                             // c:246
+    let dir = match std::fs::read_dir(".") {
+        // c:246
         Ok(d) => d,
-        Err(_) => return out,                                            // c:247
+        Err(_) => return out, // c:247
     };
     // c:255-265 — `while ((pm.node.nam = zreaddir(dir, 1))) { ...
     //                  pm.u.str = ""; func(&pm.node, flags); }`
-    for entry in dir.flatten() {                                         // c:255
+    for entry in dir.flatten() {
+        // c:255
         if let Some(n) = entry.file_name().to_str() {
             // c:255 — zreaddir(dir, 1) with ignoredots=1 skips `.`/`..`.
-            if n == "." || n == ".." { continue; }
+            if n == "." || n == ".." {
+                continue;
+            }
             // c:262 — `pm.node.nam = dupstring(pm.node.nam);`
             // c:263 — `pm.u.str = "";`
-            out.push((n.to_string(), String::new()));                    // c:264 func call
+            out.push((n.to_string(), String::new())); // c:264 func call
         }
     }
     // c:266 — `closedir(dir);` (auto on drop)
@@ -353,35 +388,36 @@ use crate::ported::zsh_h::module;
 
 // `partab` — port of `static struct paramdef partab[]` (mapfile.c:212).
 
-
 // `module_features` — port of `static struct features module_features`
 // from mapfile.c:267.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/mapfile.c:279`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:279
+pub fn setup_(m: *const module) -> i32 {
+    // c:279
     // C body c:280-281 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/mapfile.c:286`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:286
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:286
     *features = featuresarray(m, module_features());
-    0                                                                    // c:301
+    0 // c:301
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/mapfile.c:294`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:294
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:294
     handlefeatures(m, module_features(), enables) // c:301
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/mapfile.c:301`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:301
+pub fn boot_(m: *const module) -> i32 {
+    // c:301
     // C body c:302-303 — `return 0`. Faithful empty-body port; the
     //                    $mapfile assoc-param registers via pd_list.
     0
@@ -389,24 +425,23 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/mapfile.c:308`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:308
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:308
     setfeatureenables(m, module_features(), None) // c:315
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/mapfile.c:315`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:315
+pub fn finish_(m: *const module) -> i32 {
+    // c:315
     // C body c:316-317 — `return 0`. Faithful empty-body port.
     0
 }
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -440,11 +475,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -475,17 +506,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 1,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 1,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -543,8 +576,10 @@ mod tests {
         let entries = scanpmmapfile();
         for (name, val) in &entries {
             assert!(name != "." && name != "..");
-            assert!(val.is_empty(),
-                "scanpmmapfile values are always empty per c:263");
+            assert!(
+                val.is_empty(),
+                "scanpmmapfile values are always empty per c:263"
+            );
         }
     }
 
@@ -607,8 +642,10 @@ mod tests {
     #[test]
     fn get_contents_nonexistent_file_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(get_contents("/__never_a_file__/x").is_none(),
-            "missing file must return None, not empty Some");
+        assert!(
+            get_contents("/__never_a_file__/x").is_none(),
+            "missing file must return None, not empty Some"
+        );
     }
 
     /// c:167 — `get_contents` on an EMPTY file returns Some("") —
@@ -621,8 +658,11 @@ mod tests {
         let f = "/tmp/zshrs_mapfile_empty.txt";
         let _ = fs::write(f, "");
         let r = get_contents(f);
-        assert_eq!(r.as_deref(), Some(""),
-            "empty file must yield Some(\"\"), not None");
+        assert_eq!(
+            r.as_deref(),
+            Some(""),
+            "empty file must yield Some(\"\"), not None"
+        );
         let _ = fs::remove_file(f);
     }
 
@@ -635,8 +675,11 @@ mod tests {
         let payload = "line1\nline2\nno_trailing_nl";
         setpmmapfile(f, payload, false);
         let r = get_contents(f);
-        assert_eq!(r.as_deref(), Some(payload),
-            "round-trip must preserve content exactly");
+        assert_eq!(
+            r.as_deref(),
+            Some(payload),
+            "round-trip must preserve content exactly"
+        );
         let _ = fs::remove_file(f);
     }
 
@@ -648,7 +691,10 @@ mod tests {
         let f = "/tmp/zshrs_mapfile_empty_write.txt";
         let _ = fs::remove_file(f);
         setpmmapfile(f, "", false);
-        assert!(Path::new(f).exists(), "empty value must still create the file");
+        assert!(
+            Path::new(f).exists(),
+            "empty value must still create the file"
+        );
         assert_eq!(get_contents(f).as_deref(), Some(""));
         let _ = fs::remove_file(f);
     }
@@ -671,8 +717,10 @@ mod tests {
     fn scanpmmapfile_values_always_empty() {
         let _g = crate::test_util::global_state_lock();
         for (_k, v) in scanpmmapfile() {
-            assert!(v.is_empty(),
-                "scanpmmapfile must emit empty values per c:263");
+            assert!(
+                v.is_empty(),
+                "scanpmmapfile must emit empty values per c:263"
+            );
         }
     }
 

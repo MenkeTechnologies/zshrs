@@ -175,9 +175,8 @@ fn corpus_parity() {
 #[test]
 #[ignore = "diagnostic only — run with `cargo test single_real -- --ignored --nocapture`"]
 fn single_real() {
-    let path = std::path::PathBuf::from(
-        std::env::var("HOME").unwrap() + "/.zpwr/local/.tokens-post.sh",
-    );
+    let path =
+        std::path::PathBuf::from(std::env::var("HOME").unwrap() + "/.zpwr/local/.tokens-post.sh");
     if !path.exists() {
         eprintln!("source not present, skipping");
         return;
@@ -193,7 +192,10 @@ fn single_real() {
         .status();
     let prog = decode_zwc_first(&zwc).unwrap().unwrap();
     let zsh_sexp = ast_to_sexp(&prog);
-    let zshrs_prog = { zsh::parse::parse_init(&src); zsh::parse::parse() };
+    let zshrs_prog = {
+        zsh::parse::parse_init(&src);
+        zsh::parse::parse()
+    };
     let zshrs_sexp = ast_to_sexp(&zshrs_prog);
     eprintln!("=== source ({} bytes) ===\n{}", src.len(), src);
     eprintln!(

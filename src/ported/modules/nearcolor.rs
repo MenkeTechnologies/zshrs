@@ -35,26 +35,28 @@ use crate::ported::zsh_h::{color_rgb, hookdef, module};
 /// };
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
-pub struct cielab {                                                  // c:35
-    pub L: f64,                                                      // c:36
-    pub a: f64,                                                      // c:41
-    pub b: f64,                                                      // c:41
+pub struct cielab {
+    // c:35
+    pub L: f64, // c:36
+    pub a: f64, // c:41
+    pub b: f64, // c:41
 }
 
 /// Port of `typedef struct cielab *Cielab;` from `Src/Modules/nearcolor.c:41`.
-pub type Cielab = Box<cielab>;                                       // c:41
+pub type Cielab = Box<cielab>; // c:41
 
 // =====================================================================
 // deltae(Cielab lab1, Cielab lab2)                                   c:41
 // =====================================================================
 
 /// Port of `deltae(Cielab lab1, Cielab lab2)` from `Src/Modules/nearcolor.c:41`.
-pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {                  // c:41
+pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {
+    // c:41
     /* taking square root unnecessary as we're just comparing values */ // c:41
     // c:44-46 — `pow(L1-L2, 2) + pow(a1-a2, 2) + pow(b1-b2, 2)`
     (lab1.L - lab2.L).powi(2)                                         // c:44
         + (lab1.a - lab2.a).powi(2)                                   // c:45
-        + (lab1.b - lab2.b).powi(2)                                   // c:46
+        + (lab1.b - lab2.b).powi(2) // c:46
 }
 
 // =====================================================================
@@ -68,32 +70,67 @@ pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {                  // c:41
 /// static void
 /// RGBtoLAB(int red, int green, int blue, Cielab lab)
 /// ```
-pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {  // c:50
-    let mut R: f64 = red as f64 / 255.0;                              // c:50
-    let mut G: f64 = green as f64 / 255.0;                            // c:53
-    let mut B: f64 = blue as f64 / 255.0;                             // c:54
-    R = 100.0 * if R > 0.04045 { ((R + 0.055) / 1.055).powf(2.4) }    // c:55
-                else { R / 12.92 };
-    G = 100.0 * if G > 0.04045 { ((G + 0.055) / 1.055).powf(2.4) }    // c:56
-                else { G / 12.92 };
-    B = 100.0 * if B > 0.04045 { ((B + 0.055) / 1.055).powf(2.4) }    // c:57
-                else { B / 12.92 };
+pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {
+    // c:50
+    let mut R: f64 = red as f64 / 255.0; // c:50
+    let mut G: f64 = green as f64 / 255.0; // c:53
+    let mut B: f64 = blue as f64 / 255.0; // c:54
+    R = 100.0
+        * if R > 0.04045 {
+            ((R + 0.055) / 1.055).powf(2.4)
+        }
+        // c:55
+        else {
+            R / 12.92
+        };
+    G = 100.0
+        * if G > 0.04045 {
+            ((G + 0.055) / 1.055).powf(2.4)
+        }
+        // c:56
+        else {
+            G / 12.92
+        };
+    B = 100.0
+        * if B > 0.04045 {
+            ((B + 0.055) / 1.055).powf(2.4)
+        }
+        // c:57
+        else {
+            B / 12.92
+        };
 
-    /* Observer. = 2 degrees, Illuminant = D65 */                     // c:59
+    /* Observer. = 2 degrees, Illuminant = D65 */
+    // c:59
     let mut X: f64 = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 95.047; // c:60
-    let mut Y: f64 = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 100.0;  // c:61
+    let mut Y: f64 = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 100.0; // c:61
     let mut Z: f64 = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 108.883; // c:62
 
-    X = if X > 0.008856 { X.powf(1.0 / 3.0) }                         // c:64
-        else { 7.787 * X + 16.0 / 116.0 };
-    Y = if Y > 0.008856 { Y.powf(1.0 / 3.0) }                         // c:65
-        else { 7.787 * Y + 16.0 / 116.0 };
-    Z = if Z > 0.008856 { Z.powf(1.0 / 3.0) }                         // c:66
-        else { 7.787 * Z + 16.0 / 116.0 };
+    X = if X > 0.008856 {
+        X.powf(1.0 / 3.0)
+    }
+    // c:64
+    else {
+        7.787 * X + 16.0 / 116.0
+    };
+    Y = if Y > 0.008856 {
+        Y.powf(1.0 / 3.0)
+    }
+    // c:65
+    else {
+        7.787 * Y + 16.0 / 116.0
+    };
+    Z = if Z > 0.008856 {
+        Z.powf(1.0 / 3.0)
+    }
+    // c:66
+    else {
+        7.787 * Z + 16.0 / 116.0
+    };
 
-    lab.L = 116.0 * Y - 16.0;                                         // c:74
-    lab.a = 500.0 * (X - Y);                                          // c:74
-    lab.b = 200.0 * (Y - Z);                                          // c:74
+    lab.L = 116.0 * Y - 16.0; // c:74
+    lab.a = 500.0 * (X - Y); // c:74
+    lab.b = 200.0 * (Y - Z); // c:74
 }
 
 // =====================================================================
@@ -101,59 +138,72 @@ pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {  // c:50
 // =====================================================================
 
 /// Port of `mapRGBto88(int red, int green, int blue)` from `Src/Modules/nearcolor.c:74`.
-pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {           // c:74
+pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {
+    // c:74
     // c:74 — palette ramp: 4 RGB levels + 7 grey levels.
     let component: [i32; 11] = [
         0, 0x8b, 0xcd, 0xff, 0x2e, 0x5c, 0x8b, 0xa2, 0xb9, 0xd0, 0xe7,
-    ];                                                                // c:76
-    let mut orig = cielab::default();                                 // c:77
-    let mut next = cielab::default();                                 // c:77
-    let mut nextl: f64;                                               // c:78
-    let mut bestl: f64 = -1.0;                                        // c:78
-    let mut r: i32;                                                    // c:79
-    let mut g: i32;                                                    // c:79
-    let mut b: i32;                                                    // c:79
-    let mut comp_r: i32 = 0;                                          // c:80
-    let mut comp_g: i32 = 0;                                          // c:80
-    let mut comp_b: i32 = 0;                                          // c:80
+    ]; // c:76
+    let mut orig = cielab::default(); // c:77
+    let mut next = cielab::default(); // c:77
+    let mut nextl: f64; // c:78
+    let mut bestl: f64 = -1.0; // c:78
+    let mut r: i32; // c:79
+    let mut g: i32; // c:79
+    let mut b: i32; // c:79
+    let mut comp_r: i32 = 0; // c:80
+    let mut comp_g: i32 = 0; // c:80
+    let mut comp_b: i32 = 0; // c:80
 
-    /* Get original value */                                          // c:82
-    RGBtoLAB(red, green, blue, &mut orig);                            // c:83
+    /* Get original value */
+    // c:82
+    RGBtoLAB(red, green, blue, &mut orig); // c:83
 
-    /* try every one of the 72 colours */                             // c:85
+    /* try every one of the 72 colours */
+    // c:85
     // c:86-100 — three nested for-loops with `if (r > 3) g = b = r;`
     // grey-ramp shortcut. Mirror C's `for (...)` with mutable counters.
-    r = 0;                                                            // c:86
-    while r < 11 {                                                    // c:86
-        g = 0;                                                        // c:87
-        while g <= 3 {                                                // c:87
-            b = 0;                                                    // c:88
-            while b <= 3 {                                            // c:88
-                if r > 3 { g = r; b = r; }                            // c:89
-                RGBtoLAB(component[r as usize],                       // c:90
-                         component[g as usize],
-                         component[b as usize],
-                         &mut next);
-                nextl = deltae(&orig, &next);                         // c:91
-                if nextl < bestl || bestl < 0.0 {                     // c:92
-                    bestl = nextl;                                    // c:93
-                    comp_r = r;                                       // c:94
-                    comp_g = g;                                       // c:95
-                    comp_b = b;                                       // c:96
+    r = 0; // c:86
+    while r < 11 {
+        // c:86
+        g = 0; // c:87
+        while g <= 3 {
+            // c:87
+            b = 0; // c:88
+            while b <= 3 {
+                // c:88
+                if r > 3 {
+                    g = r;
+                    b = r;
+                } // c:89
+                RGBtoLAB(
+                    component[r as usize], // c:90
+                    component[g as usize],
+                    component[b as usize],
+                    &mut next,
+                );
+                nextl = deltae(&orig, &next); // c:91
+                if nextl < bestl || bestl < 0.0 {
+                    // c:92
+                    bestl = nextl; // c:93
+                    comp_r = r; // c:94
+                    comp_g = g; // c:95
+                    comp_b = b; // c:96
                 }
-                b += 1;                                               // c:88
+                b += 1; // c:88
             }
-            g += 1;                                                   // c:87
+            g += 1; // c:87
         }
-        r += 1;                                                       // c:86
+        r += 1; // c:86
     }
 
     // c:102-103 — return (comp_r > 3) ? 77 + comp_r :
     //                    16 + (comp_r * 16) + (comp_g * 4) + comp_b;
-    if comp_r > 3 {                                                   // c:102
-        77 + comp_r                                                   // c:102
+    if comp_r > 3 {
+        // c:102
+        77 + comp_r // c:102
     } else {
-        16 + (comp_r * 16) + (comp_g * 4) + comp_b                    // c:110
+        16 + (comp_r * 16) + (comp_g * 4) + comp_b // c:110
     }
 }
 
@@ -165,61 +215,73 @@ pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {           // c:74
 // =====================================================================
 
 /// Port of `mapRGBto256(int red, int green, int blue)` from `Src/Modules/nearcolor.c:110`.
-pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {          // c:110
+pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {
+    // c:110
     // c:110-117 — 6-step RGB ramp (216 colours) + 24-step greyscale.
     let component: [i32; 30] = [
-        0,    0x5f, 0x87, 0xaf, 0xd7, 0xff,                           // c:113
-        0x8,  0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e,               // c:114
-        0x58, 0x62, 0x6c, 0x76, 0x80, 0x8a, 0x94, 0x9e,               // c:115
-        0xa8, 0xb2, 0xbc, 0xc6, 0xd0, 0xda, 0xe4, 0xee,               // c:116
+        0, 0x5f, 0x87, 0xaf, 0xd7, 0xff, // c:113
+        0x8, 0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e, // c:114
+        0x58, 0x62, 0x6c, 0x76, 0x80, 0x8a, 0x94, 0x9e, // c:115
+        0xa8, 0xb2, 0xbc, 0xc6, 0xd0, 0xda, 0xe4, 0xee, // c:116
     ];
-    let mut orig = cielab::default();                                 // c:118
-    let mut next = cielab::default();                                 // c:118
-    let mut nextl: f64;                                               // c:119
-    let mut bestl: f64 = -1.0;                                        // c:119
-    let mut r: i32;                                                    // c:120
-    let mut g: i32;                                                    // c:120
-    let mut b: i32;                                                    // c:120
-    let mut comp_r: i32 = 0;                                          // c:121
-    let mut comp_g: i32 = 0;                                          // c:121
-    let mut comp_b: i32 = 0;                                          // c:121
+    let mut orig = cielab::default(); // c:118
+    let mut next = cielab::default(); // c:118
+    let mut nextl: f64; // c:119
+    let mut bestl: f64 = -1.0; // c:119
+    let mut r: i32; // c:120
+    let mut g: i32; // c:120
+    let mut b: i32; // c:120
+    let mut comp_r: i32 = 0; // c:121
+    let mut comp_g: i32 = 0; // c:121
+    let mut comp_b: i32 = 0; // c:121
 
-    /* Get original value */                                          // c:123
-    RGBtoLAB(red, green, blue, &mut orig);                            // c:124
+    /* Get original value */
+    // c:123
+    RGBtoLAB(red, green, blue, &mut orig); // c:124
 
     // c:126 — `for (r = 0; r < sizeof(component)/sizeof(*component); r++)`
-    let len: i32 = component.len() as i32;                            // c:126
-    r = 0;                                                            // c:126
-    while r < len {                                                   // c:126
-        g = 0;                                                        // c:127
-        while g <= 5 {                                                // c:127
-            b = 0;                                                    // c:128
-            while b <= 5 {                                            // c:128
-                if r > 5 { g = r; b = r; }                            // c:129
-                RGBtoLAB(component[r as usize],                       // c:130
-                         component[g as usize],
-                         component[b as usize],
-                         &mut next);
-                nextl = deltae(&orig, &next);                         // c:131
-                if nextl < bestl || bestl < 0.0 {                     // c:132
-                    bestl = nextl;                                    // c:133
-                    comp_r = r;                                       // c:134
-                    comp_g = g;                                       // c:135
-                    comp_b = b;                                       // c:136
+    let len: i32 = component.len() as i32; // c:126
+    r = 0; // c:126
+    while r < len {
+        // c:126
+        g = 0; // c:127
+        while g <= 5 {
+            // c:127
+            b = 0; // c:128
+            while b <= 5 {
+                // c:128
+                if r > 5 {
+                    g = r;
+                    b = r;
+                } // c:129
+                RGBtoLAB(
+                    component[r as usize], // c:130
+                    component[g as usize],
+                    component[b as usize],
+                    &mut next,
+                );
+                nextl = deltae(&orig, &next); // c:131
+                if nextl < bestl || bestl < 0.0 {
+                    // c:132
+                    bestl = nextl; // c:133
+                    comp_r = r; // c:134
+                    comp_g = g; // c:135
+                    comp_b = b; // c:136
                 }
-                b += 1;                                               // c:128
+                b += 1; // c:128
             }
-            g += 1;                                                   // c:127
+            g += 1; // c:127
         }
-        r += 1;                                                       // c:126
+        r += 1; // c:126
     }
 
     // c:142-143 — return (comp_r > 5) ? 226 + comp_r :
     //                    16 + (comp_r * 36) + (comp_g * 6) + comp_b;
-    if comp_r > 5 {                                                   // c:142
-        226 + comp_r                                                  // c:142
+    if comp_r > 5 {
+        // c:142
+        226 + comp_r // c:142
     } else {
-        16 + (comp_r * 36) + (comp_g * 6) + comp_b                    // c:143
+        16 + (comp_r * 36) + (comp_g * 6) + comp_b // c:143
     }
 }
 
@@ -237,7 +299,8 @@ pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {          // c:110
 /// `Hookdef` and `Color_rgb` are `struct hookdef *` / `struct color_rgb *`
 /// (zsh.h:528 / 2752); ported as `*const hookdef` / `*const color_rgb`.
 #[allow(unused_variables)]
-pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 { // c:147
+pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 {
+    // c:147
     /* we add 1 to the colours so that colour 0 (default) is
      * distinguished from runhookdef() indicating that no
      * hook function is registered */                                 // c:149-151
@@ -251,13 +314,15 @@ pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 { //
     }
     // C `tccolours` is an int global from `Src/init.c:94`; Rust port
     // mirrors it as the existing `init::tccolours` AtomicI32.
-    if tccolours.load(Ordering::Relaxed) == 256 {                     // c:152
-        return mapRGBto256(red, green, blue) + 1;                     // c:153
+    if tccolours.load(Ordering::Relaxed) == 256 {
+        // c:152
+        return mapRGBto256(red, green, blue) + 1; // c:153
     }
-    if tccolours.load(Ordering::Relaxed) == 88 {                      // c:154
-        return mapRGBto88(red, green, blue) + 1;                      // c:155
+    if tccolours.load(Ordering::Relaxed) == 88 {
+        // c:154
+        return mapRGBto88(red, green, blue) + 1; // c:155
     }
-    -1                                                                 // c:156
+    -1 // c:156
 }
 
 // =====================================================================
@@ -275,80 +340,88 @@ pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 { //
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:169`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:169
-    0                                                                  // c:184
+pub fn setup_(m: *const module) -> i32 {
+    // c:169
+    0 // c:184
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/nearcolor.c:176`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:176
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:176
     *features = featuresarray(m, module_features());
-    0                                                                  // c:191
+    0 // c:191
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/nearcolor.c:184`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:184
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:184
     handlefeatures(m, module_features(), enables) // c:191
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:191`.
 /// C body: `addhookfunc("get_color_attr", (Hookfn) getnearestcolor); return 0;`
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:191
-    addhookfunc("get_color_attr", getnearestcolor);              // c:199
-    0                                                                  // c:207
+pub fn boot_(m: *const module) -> i32 {
+    // c:191
+    addhookfunc("get_color_attr", getnearestcolor); // c:199
+    0 // c:207
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:199`.
 /// C body: `deletehookfunc("get_color_attr", ...); return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:199
-    deletehookfunc("get_color_attr", getnearestcolor);            // c:207
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:199
+    deletehookfunc("get_color_attr", getnearestcolor); // c:207
     setfeatureenables(m, module_features(), None) // c:207
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:207`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:207
-    0                                                                  // c:207
+pub fn finish_(m: *const module) -> i32 {
+    // c:207
+    0 // c:207
 }
 
 // =====================================================================
 // `static struct features module_features` from nearcolor.c:159 (empty).
 // =====================================================================
 
-
 // `module_features` — port of `static struct features module_features`
 // from nearcolor.c:159. All four feature slices empty.
-
-
 
 // Port of `addhookfunc(char *n, Hookfn f)` from Src/module.c:948.
 // C: `int addhookfunc(char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return addhookdeffunc(h, f); return 1;`
-fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:948
+fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
+    // c:948
     // c:948 — `Hookdef h = gethookdef(n);`
     let h = gethookdef(n);
-    if let Some(h) = h {                                                     // c:953
-        return addhookdeffunc(h, f);                                         // c:954
+    if let Some(h) = h {
+        // c:953
+        return addhookdeffunc(h, f); // c:954
     }
-    1                                                                        // c:955
+    1 // c:955
 }
 
 // Port of `deletehookfunc(const char *n, Hookfn f)` from Src/module.c:977.
 // C: `int deletehookfunc(const char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return deletehookdeffunc(h, f); return 1;`
-fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {  // c:977
-    let h = gethookdef(n);                                                   // c:977
-    if let Some(h) = h {                                                     // c:982
-        let _ = deletehookdeffunc(h, f);                                     // c:983
+fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {
+    // c:977
+    let h = gethookdef(n); // c:977
+    if let Some(h) = h {
+        // c:982
+        let _ = deletehookdeffunc(h, f); // c:983
     }
 }
 
 // Port of `gethookdef(const char *n)` from Src/module.c:849 — looks up a Hookdef by
 // name in the static-link `HOOKDEFS` registry.
 /// WARNING: param names don't match C — Rust=(_n) vs C=(funcs, NULL)
-fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // c:849
+fn gethookdef(_n: &str) -> Option<*const hookdef> {
+    // c:849
     // Static-link path: hookdefs registry lives in src/ported/module.rs;
     // until that exposes a typed lookup, return None.
     None
@@ -358,29 +431,26 @@ fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // 
 // C: `int addhookdeffunc(Hookdef h, Hookfn f)` →
 //   `addlinknode(h->funcs, (void *)f); return 0;`
 #[allow(unused_variables)]
-fn addhookdeffunc(h: *const hookdef,
-                  f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {  // c:939
+fn addhookdeffunc(h: *const hookdef, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
+    // c:939
     // c:961 — addlinknode(h->funcs, f). Static-link path: registry is static.
-    0                                                                        // c:961
+    0 // c:961
 }
 
 // Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from Src/module.c:961.
 // C: `int deletehookdeffunc(Hookdef h, Hookfn f)` — walk h->funcs,
 // remove the matching entry; returns 0 on success, 1 if not found.
 /// WARNING: param names don't match C — Rust=(_h, _f) vs C=()
-fn deletehookdeffunc(_h: *const hookdef,
-                     _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:961
+fn deletehookdeffunc(_h: *const hookdef, _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
+    // c:961
     // c:966-971 — walks h->funcs list; static-link path: nothing to remove.
-    1                                                                        // c:972
+    1 // c:972
 }
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -414,11 +484,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -449,17 +515,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -513,7 +581,11 @@ mod tests {
     fn getnearestcolor_dispatches_on_tccolours() {
         let _g = crate::test_util::global_state_lock();
         let saved = tccolours.load(Ordering::SeqCst);
-        let col = color_rgb { red: 0xff, green: 0xff, blue: 0xff };
+        let col = color_rgb {
+            red: 0xff,
+            green: 0xff,
+            blue: 0xff,
+        };
 
         tccolours.store(256, Ordering::SeqCst);
         let r256 = getnearestcolor(std::ptr::null(), &col);
@@ -544,7 +616,12 @@ mod tests {
         RGBtoLAB(25, 200, 50, &mut b);
         let d_ab = deltae(&a, &b);
         let d_ba = deltae(&b, &a);
-        assert!((d_ab - d_ba).abs() < 1e-9, "deltae symmetry broken: {} vs {}", d_ab, d_ba);
+        assert!(
+            (d_ab - d_ba).abs() < 1e-9,
+            "deltae symmetry broken: {} vs {}",
+            d_ab,
+            d_ba
+        );
     }
 
     /// c:41 — `deltae` between two distinct colours is strictly
@@ -558,8 +635,11 @@ mod tests {
         RGBtoLAB(0xff, 0xff, 0xff, &mut white);
         RGBtoLAB(0, 0, 0, &mut black);
         let d = deltae(&white, &black);
-        assert!(d > 0.0 && d.is_finite(),
-            "deltae(white, black) = {} — must be a finite positive value", d);
+        assert!(
+            d > 0.0 && d.is_finite(),
+            "deltae(white, black) = {} — must be a finite positive value",
+            d
+        );
     }
 
     /// c:50-74 — `RGBtoLAB` of pure black gives L=0, a=0, b=0. The
@@ -585,8 +665,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut lab = cielab::default();
         RGBtoLAB(0xff, 0xff, 0xff, &mut lab);
-        assert!((lab.L - 100.0).abs() < 1.0,
-            "L for white = {}, expected ≈ 100", lab.L);
+        assert!(
+            (lab.L - 100.0).abs() < 1.0,
+            "L for white = {}, expected ≈ 100",
+            lab.L
+        );
     }
 
     /// c:142-143 — `mapRGBto256` for pure black hits the all-zero
@@ -647,7 +730,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved = tccolours.load(Ordering::SeqCst);
         tccolours.store(0, Ordering::SeqCst);
-        let col = color_rgb { red: 100, green: 100, blue: 100 };
+        let col = color_rgb {
+            red: 100,
+            green: 100,
+            blue: 100,
+        };
         let r = getnearestcolor(std::ptr::null(), &col);
         tccolours.store(saved, Ordering::SeqCst);
         assert_eq!(r, -1);

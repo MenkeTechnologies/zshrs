@@ -21,7 +21,7 @@ use std::fmt::Write;
 /// `#define GROUPVAR ".zle.hlgroups"`. Name of the user-defined
 /// associative array that maps group names to highlight-attribute
 /// strings. Read by `getgroup` (c:82) + `scangroup` (c:117).
-pub const GROUPVAR: &str = ".zle.hlgroups";                                  // c:33
+pub const GROUPVAR: &str = ".zle.hlgroups"; // c:33
 
 /// Port of `convertattr(char *attrstr, int sgr)` from `Src/Modules/hlgroup.c:40`.
 ///
@@ -52,7 +52,8 @@ pub const GROUPVAR: &str = ".zle.hlgroups";                                  // 
 /// c:40-72 is mirrored when `sgr=true`.
 ///
 /// C signature: `static char *convertattr(char *attrstr, int sgr)`.
-pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
+pub fn convertattr(attrstr: &str, sgr: bool) -> String {
+    // c:40
     // c:40 — `match_highlight(attrstr, &atr, NULL, NULL);`
     // c:47 — `s = zattrescape(atr, sgr ? NULL : &len);`
     // Inlined — see fn-doc note about the prompt.rs gap. The
@@ -66,11 +67,11 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
         // Attribute names → SGR integers (Src/prompt.c attribute table).
         let attr_n: Option<i32> = match part {
             "" | "none" | "reset" => Some(0),
-            "bold"          => Some(1),
+            "bold" => Some(1),
             "dim" | "faint" => Some(2),
-            "italic"        => Some(3),
-            "underline"     => Some(4),
-            "blink"         => Some(5),
+            "italic" => Some(3),
+            "underline" => Some(4),
+            "blink" => Some(5),
             "reverse" | "inverse" => Some(7),
             "hidden" | "invisible" => Some(8),
             "strikethrough" => Some(9),
@@ -92,14 +93,14 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
         let bright_base = if is_fg { 90 } else { 100 };
         let prefix = if is_fg { 38 } else { 48 };
         let named: Option<i32> = match rest {
-            "black"   => Some(base),
-            "red"     => Some(base + 1),
-            "green"   => Some(base + 2),
-            "yellow"  => Some(base + 3),
-            "blue"    => Some(base + 4),
+            "black" => Some(base),
+            "red" => Some(base + 1),
+            "green" => Some(base + 2),
+            "yellow" => Some(base + 3),
+            "blue" => Some(base + 4),
             "magenta" => Some(base + 5),
-            "cyan"    => Some(base + 6),
-            "white"   => Some(base + 7),
+            "cyan" => Some(base + 6),
+            "white" => Some(base + 7),
             "default" => Some(base + 9),
             _ => None,
         };
@@ -107,18 +108,19 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
             let _ = write!(esc_stream, "\x1b[{}m", n);
             continue;
         }
-        if let Some(inner) = rest.strip_prefix("bright-")
-                                .or_else(|| rest.strip_prefix("light-"))
+        if let Some(inner) = rest
+            .strip_prefix("bright-")
+            .or_else(|| rest.strip_prefix("light-"))
         {
             let bn: Option<i32> = match inner {
-                "black"   => Some(bright_base),
-                "red"     => Some(bright_base + 1),
-                "green"   => Some(bright_base + 2),
-                "yellow"  => Some(bright_base + 3),
-                "blue"    => Some(bright_base + 4),
+                "black" => Some(bright_base),
+                "red" => Some(bright_base + 1),
+                "green" => Some(bright_base + 2),
+                "yellow" => Some(bright_base + 3),
+                "blue" => Some(bright_base + 4),
                 "magenta" => Some(bright_base + 5),
-                "cyan"    => Some(bright_base + 6),
-                "white"   => Some(bright_base + 7),
+                "cyan" => Some(bright_base + 6),
+                "white" => Some(bright_base + 7),
                 _ => None,
             };
             if let Some(n) = bn {
@@ -136,8 +138,7 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
                 let g = u8::from_str_radix(&hex[2..4], 16);
                 let b = u8::from_str_radix(&hex[4..6], 16);
                 if let (Ok(r), Ok(g), Ok(b)) = (r, g, b) {
-                    let _ = write!(esc_stream, "\x1b[{};2;{};{};{}m",
-                                   prefix, r, g, b);
+                    let _ = write!(esc_stream, "\x1b[{};2;{};{};{}m", prefix, r, g, b);
                 }
             }
         }
@@ -151,27 +152,29 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
         let mut out = String::new();
         let mut i = 0;
         while i + 1 < bytes.len() && bytes[i] == 0x1b && bytes[i + 1] == b'[' {
-            i += 2;                                                      // c:53 c += 2
-            // c:54-60 — accumulate digits, treat ; or : as separator,
-            // break on anything else.
+            i += 2; // c:53 c += 2
+                    // c:54-60 — accumulate digits, treat ; or : as separator,
+                    // break on anything else.
             while i < bytes.len() {
                 let b = bytes[i];
-                if b.is_ascii_digit() {                                  // c:54
-                    out.push(b as char);                                 // c:55
+                if b.is_ascii_digit() {
+                    // c:54
+                    out.push(b as char); // c:55
                     i += 1;
-                } else if b == b';' || b == b':' {                       // c:56
-                    out.push(';');                                       // c:57
+                } else if b == b';' || b == b':' {
+                    // c:56
+                    out.push(';'); // c:57
                     i += 1;
                 } else {
-                    break;                                               // c:59
+                    break; // c:59
                 }
             }
             // c:62-65 — `if (*c != 'm') break;` else continue with `;`.
             if i >= bytes.len() || bytes[i] != b'm' {
-                break;                                                   // c:62-63
+                break; // c:62-63
             }
-            out.push(';');                                               // c:64
-            i += 1;                                                      // c:65 c++
+            out.push(';'); // c:64
+            i += 1; // c:65 c++
         }
         // Trim trailing ';'.
         while out.ends_with(';') {
@@ -183,7 +186,7 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
         }
         out
     } else {
-        esc_stream                                                       // c:75 dupstring_wlen
+        esc_stream // c:75 dupstring_wlen
     }
 }
 
@@ -204,13 +207,14 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
 /// table; that wiring depends on a faithful Param/HashTable port
 /// which is a multi-file undertaking. Current body returns None
 /// (mirrors C's c:99-103 PM_UNSET branch). See `TODO.md`.
-pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
+pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {
+    // c:82
     // c:82-94 — pm setup with PM_SCALAR|PM_SPECIAL.
     // c:96-100 — `if (!(v = getvalue(...)) || ... PM_HASHED ... ||
     //                 (((Param) hn)->node.flags & PM_UNSET))`
     //   → c:102-103: `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
     // c:104-106 — `else: pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
-    None                                                                 // c:103 PM_UNSET
+    None // c:103 PM_UNSET
 }
 
 /// shared magic-assoc scanner behind `${(k).zle.esc}` /
@@ -228,42 +232,47 @@ pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
 /// param table). See `TODO.md`.
 /// Port of `scangroup(ScanFunc func, int flags, int sgr)` from `Src/Modules/hlgroup.c:113`.
 /// WARNING: param names don't match C — Rust=(_sgr) vs C=(func, flags, sgr)
-pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
+pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {
+    // c:113
     // c:113-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
     // c:141 — hlg = v->pm->gsu.h->getfn(v->pm)
     // c:141-130 — `pm` setup + PM_SCALAR + pmesc_gsu
     // c:141-137 — for each hashnode: `pm.u.str = convertattr(...,sgr);
     //                                   pm.node.nam = hn->nam;
     //                                   func(&pm.node, flags);`
-    Vec::new()                                                           // c:141-125 empty exit
+    Vec::new() // c:141-125 empty exit
 }
 
 /// Port of `getpmesc(UNUSED(HashTable ht), const char *name)` from `Src/Modules/hlgroup.c:141`.
 /// C body is `return getgroup(name, 0);` — escape-form variant.
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmesc(name: &str) -> Option<String> {                          // c:141
-    getgroup(name, false)                                                // c:148
+pub fn getpmesc(name: &str) -> Option<String> {
+    // c:141
+    getgroup(name, false) // c:148
 }
 
 /// Port of `scanpmesc(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/hlgroup.c:148`.
 /// C body is `scangroup(func, flags, 0);` — escape-form scanner.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanpmesc() -> Vec<(String, String)> {                            // c:148
-    scangroup(false)                                                     // c:155
+pub fn scanpmesc() -> Vec<(String, String)> {
+    // c:148
+    scangroup(false) // c:155
 }
 
 /// Port of `getpmsgr(UNUSED(HashTable ht), const char *name)` from `Src/Modules/hlgroup.c:155`.
 /// C body is `return getgroup(name, 1);` — SGR-form variant.
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmsgr(name: &str) -> Option<String> {                          // c:155
-    getgroup(name, true)                                                 // c:162
+pub fn getpmsgr(name: &str) -> Option<String> {
+    // c:155
+    getgroup(name, true) // c:162
 }
 
 /// Port of `scanpmsgr(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/hlgroup.c:162`.
 /// C body is `scangroup(func, flags, 1);` — SGR-form scanner.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanpmsgr() -> Vec<(String, String)> {                            // c:162
-    scangroup(true)                                                      // c:162
+pub fn scanpmsgr() -> Vec<(String, String)> {
+    // c:162
+    scangroup(true) // c:162
 }
 
 // =====================================================================
@@ -274,56 +283,56 @@ use crate::ported::zsh_h::module;
 
 // `partab` — port of `static struct paramdef partab[]` (hlgroup.c).
 
-
 // `module_features` — port of `static struct features module_features`
 // from hlgroup.c:170.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/hlgroup.c:182`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                // c:182
-    0                                                                    // c:197
+pub fn setup_(m: *const module) -> i32 {
+    // c:182
+    0 // c:197
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/hlgroup.c:189`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:189
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:189
     *features = featuresarray(m, module_features());
-    0                                                                    // c:204
+    0 // c:204
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/hlgroup.c:197`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:197
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:197
     handlefeatures(m, module_features(), enables) // c:211
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/hlgroup.c:204`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                 // c:204
-    0                                                                    // c:218
+pub fn boot_(m: *const module) -> i32 {
+    // c:204
+    0 // c:218
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/hlgroup.c:211`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                              // c:211
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:211
     setfeatureenables(m, module_features(), None) // c:218
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/hlgroup.c:218`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                               // c:218
-    0                                                                    // c:218
+pub fn finish_(m: *const module) -> i32 {
+    // c:218
+    0 // c:218
 }
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -357,11 +366,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -392,17 +397,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 2,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 2,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -522,8 +529,11 @@ mod tests {
     fn convertattr_bold_emits_sgr_bold() {
         let _g = crate::test_util::global_state_lock();
         let s = convertattr("bold", false);
-        assert!(s.contains("\x1b[1m") || s.contains("\x1b[1;"),
-            "bold attr must emit SGR 1, got {:?}", s);
+        assert!(
+            s.contains("\x1b[1m") || s.contains("\x1b[1;"),
+            "bold attr must emit SGR 1, got {:?}",
+            s
+        );
     }
 
     /// c:40 — Unknown attr keyword does NOT panic.
@@ -539,8 +549,11 @@ mod tests {
     fn convertattr_truecolor_max_rgb() {
         let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=#ffffff", false);
-        assert!(s.contains("38;2;255;255;255"),
-            "white truecolor must encode as 255;255;255, got {:?}", s);
+        assert!(
+            s.contains("38;2;255;255;255"),
+            "white truecolor must encode as 255;255;255, got {:?}",
+            s
+        );
     }
 
     /// c:40 — 256-color upper boundary `fg=255`.
@@ -548,8 +561,11 @@ mod tests {
     fn convertattr_256_color_upper_boundary() {
         let _g = crate::test_util::global_state_lock();
         let s = convertattr("fg=255", false);
-        assert!(s.contains("38;5;255"),
-            "256-color upper boundary 255 must encode correctly, got {:?}", s);
+        assert!(
+            s.contains("38;5;255"),
+            "256-color upper boundary 255 must encode correctly, got {:?}",
+            s
+        );
     }
 
     /// c:141 — `getpmesc` for empty/unknown name returns None.
@@ -596,8 +612,11 @@ mod tests {
     fn convertattr_bg_color_uses_40_base() {
         let _g = crate::test_util::global_state_lock();
         let s = convertattr("bg=blue", false);
-        assert!(s.contains("\x1b[44m"),
-            "c:40 — bg=blue → base 40 + 4 = 44 (got {:?})", s);
+        assert!(
+            s.contains("\x1b[44m"),
+            "c:40 — bg=blue → base 40 + 4 = 44 (got {:?})",
+            s
+        );
         // bg=red → 41
         let s = convertattr("bg=red", false);
         assert!(s.contains("\x1b[41m"));
@@ -614,12 +633,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // fg=bright-red → 91
         let s = convertattr("fg=bright-red", false);
-        assert!(s.contains("\x1b[91m"),
-            "fg=bright-red → 90+1=91 (got {:?})", s);
+        assert!(
+            s.contains("\x1b[91m"),
+            "fg=bright-red → 90+1=91 (got {:?})",
+            s
+        );
         // bg=bright-cyan → 106
         let s = convertattr("bg=bright-cyan", false);
-        assert!(s.contains("\x1b[106m"),
-            "bg=bright-cyan → 100+6=106 (got {:?})", s);
+        assert!(
+            s.contains("\x1b[106m"),
+            "bg=bright-cyan → 100+6=106 (got {:?})",
+            s
+        );
     }
 
     /// `Src/Modules/hlgroup.c:40-44` — `light-` is the alias for
@@ -628,9 +653,11 @@ mod tests {
     fn convertattr_light_prefix_is_alias_for_bright() {
         let _g = crate::test_util::global_state_lock();
         let bright = convertattr("fg=bright-green", false);
-        let light  = convertattr("fg=light-green",  false);
-        assert_eq!(bright, light,
-            "c:40 — light- and bright- prefixes must produce identical SGR codes");
+        let light = convertattr("fg=light-green", false);
+        assert_eq!(
+            bright, light,
+            "c:40 — light- and bright- prefixes must produce identical SGR codes"
+        );
     }
 
     /// `Src/Modules/hlgroup.c:40-72` — SGR-mode bg color rendering.
@@ -639,8 +666,11 @@ mod tests {
     #[test]
     fn convertattr_sgr_bg_color() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(convertattr("bg=blue", true), "44",
-            "SGR mode strips ESC[/m wrapper → bare digit string");
+        assert_eq!(
+            convertattr("bg=blue", true),
+            "44",
+            "SGR mode strips ESC[/m wrapper → bare digit string"
+        );
         assert_eq!(convertattr("bg=red", true), "41");
     }
 
@@ -652,8 +682,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Plain (escape) mode: empty output for unknown color alone.
         let s = convertattr("fg=not_a_real_color", false);
-        assert_eq!(s, "",
-            "unknown color → no escape emitted");
+        assert_eq!(s, "", "unknown color → no escape emitted");
         // SGR mode: empty output → "0" fallback per c:67-70.
         let s = convertattr("fg=not_a_real_color", true);
         assert_eq!(s, "0");
@@ -666,8 +695,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // 3-digit form "#abc" not supported per the body's `hex.len() == 6` guard.
         let s = convertattr("fg=#abc", false);
-        assert_eq!(s, "",
-            "3-digit hex must be rejected per c:40 6-digit check");
+        assert_eq!(s, "", "3-digit hex must be rejected per c:40 6-digit check");
         // 8-digit form also rejected
         let s = convertattr("fg=#abcdef00", false);
         assert_eq!(s, "");
@@ -678,10 +706,9 @@ mod tests {
     #[test]
     fn convertattr_dim_and_faint_are_aliases() {
         let _g = crate::test_util::global_state_lock();
-        let dim   = convertattr("dim", false);
+        let dim = convertattr("dim", false);
         let faint = convertattr("faint", false);
-        assert_eq!(dim, faint,
-            "dim and faint must produce identical SGR 2");
+        assert_eq!(dim, faint, "dim and faint must produce identical SGR 2");
         assert!(dim.contains("\x1b[2m"));
     }
 

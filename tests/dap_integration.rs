@@ -57,7 +57,12 @@ impl DapHandle {
         };
         sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
         let reader = BufReader::new(sock.try_clone().expect("clone"));
-        Self { _child: child, sock, reader, seq: 1 }
+        Self {
+            _child: child,
+            sock,
+            reader,
+            seq: 1,
+        }
     }
 
     fn send(&mut self, msg: &Value) {
@@ -70,7 +75,8 @@ impl DapHandle {
     fn request(&mut self, command: &str, arguments: Value) -> Value {
         let seq = self.seq;
         self.seq += 1;
-        let msg = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments });
+        let msg =
+            json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments });
         self.send(&msg);
         self.recv_response(seq)
     }
@@ -83,7 +89,9 @@ impl DapHandle {
             }
             let v = self.recv_one().expect("server EOF before response");
             let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            if ty == "response" && v.get("request_seq").and_then(|x| x.as_i64()) == Some(request_seq) {
+            if ty == "response"
+                && v.get("request_seq").and_then(|x| x.as_i64()) == Some(request_seq)
+            {
                 let success = v.get("success").and_then(|x| x.as_bool()).unwrap_or(false);
                 if !success {
                     panic!("DAP response not success for seq {}: {}", request_seq, v);
@@ -131,8 +139,12 @@ impl DapHandle {
         loop {
             let mut line = String::new();
             let n = self.reader.read_line(&mut line).ok()?;
-            if n == 0 { return None; }
-            if line == "\r\n" || line == "\n" { break; }
+            if n == 0 {
+                return None;
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
             if let Some(rest) = line.strip_prefix("Content-Length:") {
                 content_length = rest.trim().parse().ok();
             }
@@ -155,10 +167,13 @@ impl DapHandle {
 #[test]
 fn initialize_advertises_capabilities_and_emits_initialized_event() {
     let mut dap = DapHandle::spawn();
-    let body = dap.request("initialize", json!({
-        "clientID": "test", "adapterID": "zshrs",
-        "linesStartAt1": true, "columnsStartAt1": true,
-    }));
+    let body = dap.request(
+        "initialize",
+        json!({
+            "clientID": "test", "adapterID": "zshrs",
+            "linesStartAt1": true, "columnsStartAt1": true,
+        }),
+    );
     assert_eq!(body["supportsConfigurationDoneRequest"], json!(true));
     assert_eq!(body["supportsEvaluateForHovers"], json!(true));
     assert_eq!(body["supportsTerminateRequest"], json!(true));
@@ -172,10 +187,13 @@ fn set_breakpoints_acks_with_verified_true() {
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
-    let body = dap.request("setBreakpoints", json!({
-        "source": { "path": "/tmp/whatever.zsh" },
-        "breakpoints": [{ "line": 7 }, { "line": 12 }],
-    }));
+    let body = dap.request(
+        "setBreakpoints",
+        json!({
+            "source": { "path": "/tmp/whatever.zsh" },
+            "breakpoints": [{ "line": 7 }, { "line": 12 }],
+        }),
+    );
     let arr = body["breakpoints"].as_array().expect("bp array");
     assert_eq!(arr.len(), 2);
     assert_eq!(arr[0]["verified"], json!(true));
@@ -206,14 +224,20 @@ fn stacktrace_returns_one_frame_with_program_path() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
     std::fs::write(&path, "echo hello\n").expect("write program");
-    let _ = dap.request("launch", json!({
-        "program": path.to_string_lossy(),
-        "stopOnEntry": false,
-        "args": [],
-        "cwd": std::env::temp_dir().to_string_lossy(),
-    }));
+    let _ = dap.request(
+        "launch",
+        json!({
+            "program": path.to_string_lossy(),
+            "stopOnEntry": false,
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
 
-    let body = dap.request("stackTrace", json!({ "threadId": 1, "startFrame": 0, "levels": 100 }));
+    let body = dap.request(
+        "stackTrace",
+        json!({ "threadId": 1, "startFrame": 0, "levels": 100 }),
+    );
     let frames = body["stackFrames"].as_array().expect("frames");
     assert_eq!(frames.len(), 1, "expected 1 frame, got: {:?}", frames);
     assert_eq!(frames[0]["source"]["path"], json!(path.to_string_lossy()));
@@ -257,11 +281,14 @@ fn evaluate_runs_inline_zshrs_command() {
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
-    let body = dap.request("evaluate", json!({
-        "expression": "print -n hello",
-        "frameId": 1,
-        "context": "watch",
-    }));
+    let body = dap.request(
+        "evaluate",
+        json!({
+            "expression": "print -n hello",
+            "frameId": 1,
+            "context": "watch",
+        }),
+    );
     let result = body["result"].as_str().expect("result");
     assert_eq!(result, "hello", "evaluate result mismatch: {:?}", result);
     assert_eq!(body["variablesReference"], json!(0));
@@ -279,11 +306,14 @@ fn launch_streams_program_stdout_as_output_events_and_terminates() {
     let path = tmp.path().to_path_buf();
     std::fs::write(&path, "print -r -- ZSHRS_DAP_MARKER_42\n").expect("write program");
 
-    let _ = dap.request("launch", json!({
-        "program": path.to_string_lossy(),
-        "args": [],
-        "cwd": std::env::temp_dir().to_string_lossy(),
-    }));
+    let _ = dap.request(
+        "launch",
+        json!({
+            "program": path.to_string_lossy(),
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
 
     let got = dap.wait_output_containing("ZSHRS_DAP_MARKER_42", Duration::from_secs(8));
     assert!(got.is_some(), "no output event with marker text");

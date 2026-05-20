@@ -95,7 +95,9 @@ mod option_tests {
 
     #[test]
     fn dash_o_unset_after_unsetopt() {
-        assert_parity(r#"setopt errexit; unsetopt errexit; [[ -o errexit ]] && echo set || echo unset"#);
+        assert_parity(
+            r#"setopt errexit; unsetopt errexit; [[ -o errexit ]] && echo set || echo unset"#,
+        );
     }
 
     #[test]
@@ -113,8 +115,10 @@ mod hooks {
     /// output should be empty (or both shells should agree).
     #[test]
     fn hook_list_empty() {
-        assert_parity(r#"autoload -Uz add-zsh-hook 2>/dev/null
-add-zsh-hook -L 2>/dev/null | head -5"#);
+        assert_parity(
+            r#"autoload -Uz add-zsh-hook 2>/dev/null
+add-zsh-hook -L 2>/dev/null | head -5"#,
+        );
     }
 
     /// chpwd_functions array exists and starts empty.
@@ -132,10 +136,12 @@ mod heredocs {
     /// Plain heredoc emits content as stdin to a command.
     #[test]
     fn heredoc_basic() {
-        assert_parity(r#"cat <<EOF
+        assert_parity(
+            r#"cat <<EOF
 line1
 line2
-EOF"#);
+EOF"#,
+        );
     }
 
     /// `<<-` strips leading tabs.
@@ -150,17 +156,21 @@ EOF"#);
     /// Heredoc with variable expansion.
     #[test]
     fn heredoc_expands_variables() {
-        assert_parity(r#"x=hello; cat <<EOF
+        assert_parity(
+            r#"x=hello; cat <<EOF
 value: $x
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Quoted heredoc delimiter disables expansion.
     #[test]
     fn heredoc_quoted_delim_no_expand() {
-        assert_parity(r#"x=hello; cat <<'EOF'
+        assert_parity(
+            r#"x=hello; cat <<'EOF'
 value: $x
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Herestring `<<<`.
@@ -232,8 +242,10 @@ mod select_loop {
     /// immediately, exits cleanly.
     #[test]
     fn select_with_eof_input() {
-        assert_parity(r#"select x in a b c; do break; done < /dev/null
-echo done"#);
+        assert_parity(
+            r#"select x in a b c; do break; done < /dev/null
+echo done"#,
+        );
     }
 }
 
@@ -469,9 +481,7 @@ mod assocs {
     /// `unset assoc[key]`.
     #[test]
     fn assoc_unset_key() {
-        assert_parity(
-            r#"typeset -A m=(a 1 b 2 c 3); unset 'm[b]'; print -l -- "${(k)m}" | sort"#,
-        );
+        assert_parity(r#"typeset -A m=(a 1 b 2 c 3); unset 'm[b]'; print -l -- "${(k)m}" | sort"#);
     }
 
     /// `assoc[k]=val` assigns.

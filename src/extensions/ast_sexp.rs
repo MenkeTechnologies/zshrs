@@ -469,7 +469,7 @@ fn emit_str(s: &str, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-        
+
     fn parse_to_sexp(src: &str) -> String {
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
@@ -487,7 +487,11 @@ mod tests {
     fn simple_echo() {
         let _g = crate::test_util::global_state_lock();
         let s = parse_to_sexp("echo hello");
-        assert!(s.starts_with("(Program (List Sync (Sublist ()"), "got: {}", s);
+        assert!(
+            s.starts_with("(Program (List Sync (Sublist ()"),
+            "got: {}",
+            s
+        );
         assert!(s.contains(r#"(Words "echo" "hello")"#), "got: {}", s);
     }
 

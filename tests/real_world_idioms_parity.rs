@@ -24,7 +24,11 @@ fn zsh_path() -> &'static str {
     }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 struct ShellResult {
     stdout: String,
@@ -33,17 +37,39 @@ struct ShellResult {
     exit: i32,
 }
 fn run_zsh(s: &str) -> ShellResult {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    ShellResult { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> ShellResult {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-c", s]).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    ShellResult { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
-    let z = run_zsh(s); let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", s, z.stdout, r.stdout);
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh(s);
+    let r = run_zshrs(s);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        s, z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit, "exit divergence on:\n{}", s);
 }
 
@@ -211,8 +237,10 @@ echo "$((new_count - original_count))""#,
     /// `autoload` declares functions for lazy load.
     #[test]
     fn autoload_smoke() {
-        assert_parity(r#"autoload -Uz nonexistent_fn_zxqv 2>/dev/null
-echo done"#);
+        assert_parity(
+            r#"autoload -Uz nonexistent_fn_zxqv 2>/dev/null
+echo done"#,
+        );
     }
 }
 
@@ -224,15 +252,19 @@ mod logic_combos {
     /// `&&` and `||` short-circuit.
     #[test]
     fn and_or_short_circuit() {
-        assert_parity(r#"true && echo yes && echo also
-false && echo nope || echo not"#);
+        assert_parity(
+            r#"true && echo yes && echo also
+false && echo nope || echo not"#,
+        );
     }
 
     /// `[[ ]]` with `&&` outside braces.
     #[test]
     fn double_bracket_chain() {
-        assert_parity(r#"x=10
-[[ $x -gt 5 ]] && [[ $x -lt 20 ]] && echo "in range""#);
+        assert_parity(
+            r#"x=10
+[[ $x -gt 5 ]] && [[ $x -lt 20 ]] && echo "in range""#,
+        );
     }
 
     /// Conditional with grouped tests.
@@ -259,17 +291,21 @@ mod common_patterns {
     /// Parameter expansion with default + colon.
     #[test]
     fn default_colon_dash() {
-        assert_parity(r#"unset x; echo "${x:-default}"
+        assert_parity(
+            r#"unset x; echo "${x:-default}"
 x=""; echo "${x:-default}"
-x="set"; echo "${x:-default}""#);
+x="set"; echo "${x:-default}""#,
+        );
     }
 
     /// Parameter expansion with default + no colon.
     #[test]
     fn default_dash() {
-        assert_parity(r#"unset x; echo "${x-default}"
+        assert_parity(
+            r#"unset x; echo "${x-default}"
 x=""; echo "${x-default}"
-x="set"; echo "${x-default}""#);
+x="set"; echo "${x-default}""#,
+        );
     }
 
     /// `${var:?msg}` error if unset/empty.
@@ -283,8 +319,10 @@ x="set"; echo "${x-default}""#);
     /// `${var:+alt}` only-if-set.
     #[test]
     fn only_if_set() {
-        assert_parity(r#"unset x; echo "[${x:+set}]"
-x=hello; echo "[${x:+set}]""#);
+        assert_parity(
+            r#"unset x; echo "[${x:+set}]"
+x=hello; echo "[${x:+set}]""#,
+        );
     }
 
     /// `${var:=default}` assign-if-unset.
@@ -333,8 +371,10 @@ mod err_handling {
     /// `&&` chain status.
     #[test]
     fn and_chain_status() {
-        assert_parity(r#"true && true && true; echo $?
-true && false && true; echo $?"#);
+        assert_parity(
+            r#"true && true && true; echo $?
+true && false && true; echo $?"#,
+        );
     }
 }
 
@@ -358,8 +398,10 @@ mod string_parsing {
     /// `(@)` keep-array even in DQ.
     #[test]
     fn at_flag_array_keep() {
-        assert_parity(r#"a=("first item" "second item")
-print -l -- "${(@)a}""#);
+        assert_parity(
+            r#"a=("first item" "second item")
+print -l -- "${(@)a}""#,
+        );
     }
 }
 

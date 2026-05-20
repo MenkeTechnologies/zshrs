@@ -273,10 +273,7 @@ mod datetime_module {
     /// Src/Modules/datetime.c.
     #[test]
     fn epochtime_has_two_elements() {
-        assert_parity(&with_modules(
-            &["datetime"],
-            r#"print -- "${#epochtime}""#,
-        ));
+        assert_parity(&with_modules(&["datetime"], r#"print -- "${#epochtime}""#));
     }
 
     /// `$epochtime[1]` matches `$EPOCHSECONDS` to within 1 second.
@@ -397,10 +394,7 @@ mod system_module {
     /// Pinned to the per-OS table in `src/modules/system.rs`.
     #[test]
     fn errnos_length() {
-        assert_parity(&with_modules(
-            &["system"],
-            r#"print -- "count=${#errnos}""#,
-        ));
+        assert_parity(&with_modules(&["system"], r#"print -- "count=${#errnos}""#));
     }
 
     /// First 5 errno names by index — pins the platform-stable
@@ -1000,10 +994,7 @@ print -l -- "${watch[@]}""#,
     /// agree.
     #[test]
     fn watchfmt_consistent() {
-        assert_parity(&with_modules(
-            &["watch"],
-            r#"echo "[${WATCHFMT-unset}]""#,
-        ));
+        assert_parity(&with_modules(&["watch"], r#"echo "[${WATCHFMT-unset}]""#));
     }
 }
 
@@ -1379,11 +1370,10 @@ fi"#;
         // the bundle. Both must agree on the OUTPUT shape — either
         // run the test or skip cleanly.
         assert!(
-            z.stdout == r.stdout
-                || z.stdout.contains("skipped")
-                || r.stdout.contains("skipped"),
+            z.stdout == r.stdout || z.stdout.contains("skipped") || r.stdout.contains("skipped"),
             "z={:?} r={:?}",
-            z.stdout, r.stdout
+            z.stdout,
+            r.stdout
         );
     }
 }
@@ -1416,10 +1406,7 @@ mod module_load_smoke {
     use super::*;
 
     fn load_smoke(name: &str) {
-        let script = format!(
-            "zmodload zsh/{0} 2>/dev/null; echo $?",
-            name
-        );
+        let script = format!("zmodload zsh/{0} 2>/dev/null; echo $?", name);
         let _ = run_zsh(&script);
         let r = run_zshrs(&script);
         // zshrs must ALWAYS at least let the zmodload syntactically
@@ -1428,7 +1415,9 @@ mod module_load_smoke {
         assert!(
             r.exit == 0 || r.exit == 1,
             "zmodload zsh/{} produced unexpected exit {}: {:?}",
-            name, r.exit, r.stderr
+            name,
+            r.exit,
+            r.stderr
         );
     }
 

@@ -20,13 +20,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use zsh::tokens::{
-    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BAR_TOK, BARAMP, CASE, COPROC, DAMPER, DBAR,
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
     DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
-    FOR, FOREACH, FUNC, IF, INANG_TOK, INANGAMP, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, LEXERR,
-    NEWLIN, NOCORRECT, NULLTOK, OUTANG_TOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTBRACE_TOK,
-    OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN, TIME, TRINANG,
-    TYPESET, UNTIL, WHILE, ZEND,
+    FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
+    LEXERR, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
+    OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN,
+    TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
 };
 
 fn corpus_dir() -> PathBuf {
@@ -298,8 +298,14 @@ fn check_file(path: &Path) -> Result<(), String> {
 /// Slice a string by byte indices, snapping each end to the nearest
 /// preceding char boundary so UTF-8 multi-byte sequences aren't split.
 fn safe_slice(s: &str, lo: usize, hi: usize) -> &str {
-    let start = (0..=lo.min(s.len())).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
-    let end = (start..=hi.min(s.len())).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(s.len());
+    let start = (0..=lo.min(s.len()))
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(0);
+    let end = (start..=hi.min(s.len()))
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(s.len());
     &s[start..end]
 }
 
@@ -341,11 +347,7 @@ fn zshrc_lex() {
     let zsh_tokens = zsh_stream.lines().count();
     let zshrs_tokens = zshrs_stream.lines().count();
     eprintln!("~/.zshrc bytes: {}", src.len());
-    eprintln!(
-        "zsh   tokens: {} ({} bytes)",
-        zsh_tokens,
-        zsh_stream.len()
-    );
+    eprintln!("zsh   tokens: {} ({} bytes)", zsh_tokens, zsh_stream.len());
     eprintln!(
         "zshrs tokens: {} ({} bytes)",
         zshrs_tokens,
@@ -445,10 +447,6 @@ fn corpus_lexer_parity() {
         for f in &failures {
             eprintln!("{}", f);
         }
-        panic!(
-            "lexer parity FAILURES: {}/{}",
-            failures.len(),
-            corpus.len()
-        );
+        panic!("lexer parity FAILURES: {}/{}", failures.len(), corpus.len());
     }
 }

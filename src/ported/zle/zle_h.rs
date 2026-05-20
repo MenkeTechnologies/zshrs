@@ -19,7 +19,7 @@
 
 #![allow(non_camel_case_types, non_snake_case, dead_code)]
 
-use crate::ported::zsh_h::{HashNode, zattr};
+use crate::ported::zsh_h::{zattr, HashNode};
 
 // =====================================================================
 // Wide-character types — `Src/Zle/zle.h:30-110`.
@@ -30,6 +30,12 @@ use crate::ported::zsh_h::{HashNode, zattr};
 // code-points and `String` for owned text — those primitives cover
 // both C paths.
 
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
 /// Port of `ZLE_CHAR_T` from zle.h:31 / zle.h:107.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
@@ -40,40 +46,34 @@ use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
-pub type ZLE_CHAR_T = char;                                                  // c:31
+pub type ZLE_CHAR_T = char; // c:31
 
 /// Port of `ZLE_STRING_T` from zle.h:32 / zle.h:108.
-pub type ZLE_STRING_T = String;                                              // c:32
+pub type ZLE_STRING_T = String; // c:32
 
 /// Port of `ZLE_INT_T` from zle.h:33 / zle.h:109.
-pub type ZLE_INT_T = i32;                                                    // c:33
+pub type ZLE_INT_T = i32; // c:33
 
 /// Port of `ZLE_CHAR_SIZE` from zle.h:34. Rust `char` is always 4
 /// bytes (USVs); the C `wchar_t` is 4 on every supported host.
-pub const ZLE_CHAR_SIZE: usize = 4;                                          // c:34
+pub const ZLE_CHAR_SIZE: usize = 4; // c:34
 
 /// Port of `ZLEEOF` from zle.h:37 / zle.h:112.
-pub const ZLEEOF: i32 = -1;                                                  // c:37 WEOF
+pub const ZLEEOF: i32 = -1; // c:37 WEOF
 
 /// Port of `Th(X)` macro from zle.h:316. `#define Th(X) (&thingies[X])`.
 /// Resolves a fixed-thingy index into its Thingy reference.
@@ -85,7 +85,8 @@ pub const ZLEEOF: i32 = -1;                                                  // 
 /// index→name table in `T_THINGY_NAMES` below and forwards to
 /// `lookup_thingy(name)` — same observable contract as the C macro.
 #[inline]
-pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {     // c:316
+pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {
+    // c:316
     let i: usize = (index as i64).try_into().ok()?;
     let name = T_THINGY_NAMES.get(i)?;
     crate::ported::zle::zle_thingy::gethashnode2(name)
@@ -97,36 +98,36 @@ pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {     //
 /// entries here when `t_<name>` constants get back-ported; the
 /// indices are stable per zsh ABI.
 pub const T_THINGY_NAMES: &[&str] = &[
-    "accept-and-hold",                      // t_acceptandhold     = 0
-    "accept-line",                          // t_acceptline        = 1
-    "accept-line-and-down-history",         // t_acceptlineanddownhistory
-    "accept-search",                        // t_acceptsearch
-    "auto-suffix-remove",                   // t_autosuffixremove
-    "auto-suffix-retain",                   // t_autosuffixretain
-    "backward-char",                        // t_backwardchar
-    "backward-delete-char",                 // t_backwarddeletechar
-    "beep",                                 // t_beep
-    "clear-screen",                         // t_clearscreen
-    "complete-word",                        // t_completeword
-    "describe-key-briefly",                 // t_describekeybriefly
-    "down-line-or-history",                 // t_downlineorhistory
-    "execute-named-cmd",                    // t_executenamedcmd
-    "exit",                                 // t_exit
-    "forward-char",                         // t_forwardchar
-    "history-incremental-search-backward",  // t_historyincrementalsearchbackward
-    "history-incremental-search-forward",   // t_historyincrementalsearchforward
-    "list-choices",                         // t_listchoices
-    "menu-complete",                        // t_menucomplete
-    "menu-expand-or-complete",              // t_menuexpandorcomplete
-    "redisplay",                            // t_redisplay
-    "self-insert",                          // t_selfinsert
-    "self-insert-unmeta",                   // t_selfinsertunmeta
-    "send-break",                           // t_sendbreak
-    "undefined-key",                        // t_undefinedkey
-    "undo",                                 // t_undo
-    "up-line-or-history",                   // t_uplineorhistory
-    "vi-cmd-mode",                          // t_vicmdmode
-    "yank",                                 // t_yank
+    "accept-and-hold",                     // t_acceptandhold     = 0
+    "accept-line",                         // t_acceptline        = 1
+    "accept-line-and-down-history",        // t_acceptlineanddownhistory
+    "accept-search",                       // t_acceptsearch
+    "auto-suffix-remove",                  // t_autosuffixremove
+    "auto-suffix-retain",                  // t_autosuffixretain
+    "backward-char",                       // t_backwardchar
+    "backward-delete-char",                // t_backwarddeletechar
+    "beep",                                // t_beep
+    "clear-screen",                        // t_clearscreen
+    "complete-word",                       // t_completeword
+    "describe-key-briefly",                // t_describekeybriefly
+    "down-line-or-history",                // t_downlineorhistory
+    "execute-named-cmd",                   // t_executenamedcmd
+    "exit",                                // t_exit
+    "forward-char",                        // t_forwardchar
+    "history-incremental-search-backward", // t_historyincrementalsearchbackward
+    "history-incremental-search-forward",  // t_historyincrementalsearchforward
+    "list-choices",                        // t_listchoices
+    "menu-complete",                       // t_menucomplete
+    "menu-expand-or-complete",             // t_menuexpandorcomplete
+    "redisplay",                           // t_redisplay
+    "self-insert",                         // t_selfinsert
+    "self-insert-unmeta",                  // t_selfinsertunmeta
+    "send-break",                          // t_sendbreak
+    "undefined-key",                       // t_undefinedkey
+    "undo",                                // t_undo
+    "up-line-or-history",                  // t_uplineorhistory
+    "vi-cmd-mode",                         // t_vicmdmode
+    "yank",                                // t_yank
 ];
 
 /// Port of `invicmdmode()` macro from zle.h:324.
@@ -134,7 +135,9 @@ pub const T_THINGY_NAMES: &[&str] = &[
 /// True when the current keymap is the vi command-mode keymap.
 /// The Rust `in_vi_cmd_mode()` free fn (zle_main.rs:815) is the
 /// state-bound counterpart; this free-fn uses the global keymap name.
-#[inline] pub fn invicmdmode(curkeymapname: &str) -> bool {                  // c:324
+#[inline]
+pub fn invicmdmode(curkeymapname: &str) -> bool {
+    // c:324
     curkeymapname == "vicmd"
 }
 
@@ -147,21 +150,27 @@ pub const T_THINGY_NAMES: &[&str] = &[
 
 /// Port of `ZS_memcpy` from zle.h:40 (`#define ZS_memcpy wmemcpy`).
 /// Copies `n` chars from `src` into `dst`.
-#[inline] pub fn ZS_memcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:40
+#[inline]
+pub fn ZS_memcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
+    // c:40
     dst[..n].copy_from_slice(&src[..n]);
 }
 
 /// Port of `ZS_memmove` from zle.h:41 (`#define ZS_memmove wmemmove`).
 /// Same as ZS_memcpy but tolerates overlapping ranges (vec move
 /// semantics handle overlap).
-#[inline] pub fn ZS_memmove(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:41
+#[inline]
+pub fn ZS_memmove(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
+    // c:41
     let v: Vec<ZLE_CHAR_T> = src[..n].to_vec();
     dst[..n].copy_from_slice(&v);
 }
 
 /// Port of `ZS_memset` from zle.h:42 (`#define ZS_memset wmemset`).
 /// Fills `dst[..n]` with `c`.
-#[inline] pub fn ZS_memset(dst: &mut [ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) { // c:42
+#[inline]
+pub fn ZS_memset(dst: &mut [ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) {
+    // c:42
     for slot in dst.iter_mut().take(n) {
         *slot = c;
     }
@@ -169,21 +178,27 @@ pub const T_THINGY_NAMES: &[&str] = &[
 
 /// Port of `ZS_memcmp` from zle.h:43 (`#define ZS_memcmp wmemcmp`).
 /// Returns Ordering of the first `n` chars.
-#[inline] pub fn ZS_memcmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering { // c:43
+#[inline]
+pub fn ZS_memcmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering {
+    // c:43
     a[..n].cmp(&b[..n])
 }
 
 /// Port of `ZS_strlen` from zle.h:44 (`#define ZS_strlen wcslen`).
 /// Returns the length to the first NUL char (or full slice length
 /// if no NUL found).
-#[inline] pub fn ZS_strlen(s: &[ZLE_CHAR_T]) -> usize {                      // c:44
+#[inline]
+pub fn ZS_strlen(s: &[ZLE_CHAR_T]) -> usize {
+    // c:44
     s.iter().position(|&c| c == '\0').unwrap_or(s.len())
 }
 
 /// Port of `ZS_strcpy` from zle.h:45 (`#define ZS_strcpy wcscpy`).
 /// Copies `src` (up to first NUL or end) into `dst`, NUL-terminates
 /// when there's room.
-#[inline] pub fn ZS_strcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T]) {     // c:45
+#[inline]
+pub fn ZS_strcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T]) {
+    // c:45
     let n = ZS_strlen(src);
     let limit = dst.len().min(n);
     dst[..limit].copy_from_slice(&src[..limit]);
@@ -194,7 +209,9 @@ pub const T_THINGY_NAMES: &[&str] = &[
 
 /// Port of `ZS_strncpy` from zle.h:46 (`#define ZS_strncpy wcsncpy`).
 /// Copies up to `n` chars; pads remainder with NUL if `src` is shorter.
-#[inline] pub fn ZS_strncpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:46
+#[inline]
+pub fn ZS_strncpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) {
+    // c:46
     let s_len = ZS_strlen(src).min(n);
     let limit = dst.len().min(n);
     let copy = s_len.min(limit);
@@ -206,7 +223,9 @@ pub const T_THINGY_NAMES: &[&str] = &[
 
 /// Port of `ZS_strncmp` from zle.h:47 (`#define ZS_strncmp wcsncmp`).
 /// Returns Ordering of up to `n` chars (stops at NUL).
-#[inline] pub fn ZS_strncmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering { // c:47
+#[inline]
+pub fn ZS_strncmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering {
+    // c:47
     let a_n = ZS_strlen(a).min(n);
     let b_n = ZS_strlen(b).min(n);
     let limit = a_n.min(b_n);
@@ -219,20 +238,26 @@ pub const T_THINGY_NAMES: &[&str] = &[
 
 /// Port of `ZS_strchr` from zle.h:50 (`#define ZS_strchr wcschr`).
 /// Returns the index of the first occurrence of `c` in `s`, or `None`.
-#[inline] pub fn ZS_strchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T) -> Option<usize> { // c:50
+#[inline]
+pub fn ZS_strchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T) -> Option<usize> {
+    // c:50
     s.iter().position(|&x| x == c)
 }
 
 /// Port of `ZS_memchr` from zle.h:51 (`#define ZS_memchr wmemchr`).
 /// Returns the index of the first occurrence of `c` in `s[..n]`.
-#[inline] pub fn ZS_memchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) -> Option<usize> { // c:51
+#[inline]
+pub fn ZS_memchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) -> Option<usize> {
+    // c:51
     s[..n.min(s.len())].iter().position(|&x| x == c)
 }
 
 /// Port of `ZS_width` from zle.h:49 (`#define ZS_width wcslen`).
 /// Returns the display width of a string (collapses to char count
 /// for the non-multibyte path; in zshrs we treat each char as 1 col).
-#[inline] pub fn ZS_width(s: &[ZLE_CHAR_T]) -> usize {                       // c:49
+#[inline]
+pub fn ZS_width(s: &[ZLE_CHAR_T]) -> usize {
+    // c:49
     ZS_strlen(s)
 }
 
@@ -244,43 +269,79 @@ pub const T_THINGY_NAMES: &[&str] = &[
 // =====================================================================
 
 /// Port of `ZC_ialpha` from zle.h:60.
-#[inline] pub fn ZC_ialpha(c: ZLE_CHAR_T) -> bool { c.is_alphabetic() }      // c:60
+#[inline]
+pub fn ZC_ialpha(c: ZLE_CHAR_T) -> bool {
+    c.is_alphabetic()
+} // c:60
 /// Port of `ZC_ialnum` from zle.h:61.
-#[inline] pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() }    // c:61
+#[inline]
+pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool {
+    c.is_alphanumeric()
+} // c:61
 /// Port of `ZC_iblank` from zle.h:62 (`#define ZC_iblank wcsiblank`).
 /// Routes through the canonical `wcsiblank` impl at
 /// `Src/utils.c:4302-4307` — `iswspace(wc) && wc != L'\n'`. Catches
 /// CR/FF/VT/NBSP/U+2028/etc. in addition to space and tab; only
 /// newline is explicitly excluded.
-#[inline] pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool {                          // c:62
+#[inline]
+pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool {
+    // c:62
     crate::ported::utils::wcsiblank(c)
 }
 /// Port of `ZC_icntrl` from zle.h:63.
-#[inline] pub fn ZC_icntrl(c: ZLE_CHAR_T) -> bool { c.is_control() }         // c:63
+#[inline]
+pub fn ZC_icntrl(c: ZLE_CHAR_T) -> bool {
+    c.is_control()
+} // c:63
 /// Port of `ZC_idigit` from zle.h:64.
-#[inline] pub fn ZC_idigit(c: ZLE_CHAR_T) -> bool { c.is_ascii_digit() }     // c:64
+#[inline]
+pub fn ZC_idigit(c: ZLE_CHAR_T) -> bool {
+    c.is_ascii_digit()
+} // c:64
 /// Port of `ZC_iident` from zle.h:65 (`wcsitype(c, IIDENT)`). Identifier
 /// char per zsh's IIDENT class: alphanumeric or `_`.
-#[inline] pub fn ZC_iident(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() || c == '_' } // c:65
+#[inline]
+pub fn ZC_iident(c: ZLE_CHAR_T) -> bool {
+    c.is_alphanumeric() || c == '_'
+} // c:65
 /// Port of `ZC_ilower` from zle.h:66.
-#[inline] pub fn ZC_ilower(c: ZLE_CHAR_T) -> bool { c.is_lowercase() }       // c:66
+#[inline]
+pub fn ZC_ilower(c: ZLE_CHAR_T) -> bool {
+    c.is_lowercase()
+} // c:66
 /// Port of `ZC_inblank` from zle.h:67 (`iswspace`). True for any
 /// whitespace char (incl. newline).
-#[inline] pub fn ZC_inblank(c: ZLE_CHAR_T) -> bool { c.is_whitespace() }     // c:67
+#[inline]
+pub fn ZC_inblank(c: ZLE_CHAR_T) -> bool {
+    c.is_whitespace()
+} // c:67
 /// Port of `ZC_iupper` from zle.h:68.
-#[inline] pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool { c.is_uppercase() }       // c:68
+#[inline]
+pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool {
+    c.is_uppercase()
+} // c:68
 /// Port of `ZC_iword` from zle.h:69 (`wcsitype(c, IWORD)`). Word
 /// char per zsh's IWORD class: alphanumeric or `_`.
-#[inline] pub fn ZC_iword(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() || c == '_' } // c:69
+#[inline]
+pub fn ZC_iword(c: ZLE_CHAR_T) -> bool {
+    c.is_alphanumeric() || c == '_'
+} // c:69
 /// Port of `ZC_ipunct` from zle.h:70.
-#[inline] pub fn ZC_ipunct(c: ZLE_CHAR_T) -> bool { c.is_ascii_punctuation() } // c:70
+#[inline]
+pub fn ZC_ipunct(c: ZLE_CHAR_T) -> bool {
+    c.is_ascii_punctuation()
+} // c:70
 
 /// Port of `ZC_tolower` from zle.h:72.
-#[inline] pub fn ZC_tolower(c: ZLE_CHAR_T) -> ZLE_CHAR_T {                   // c:72
+#[inline]
+pub fn ZC_tolower(c: ZLE_CHAR_T) -> ZLE_CHAR_T {
+    // c:72
     c.to_lowercase().next().unwrap_or(c)
 }
 /// Port of `ZC_toupper` from zle.h:73.
-#[inline] pub fn ZC_toupper(c: ZLE_CHAR_T) -> ZLE_CHAR_T {                   // c:73
+#[inline]
+pub fn ZC_toupper(c: ZLE_CHAR_T) -> ZLE_CHAR_T {
+    // c:73
     c.to_uppercase().next().unwrap_or(c)
 }
 
@@ -296,14 +357,14 @@ pub const T_THINGY_NAMES: &[&str] = &[
 // =====================================================================
 
 /// Port of `typedef struct widget *Widget` from zle.h:184.
-pub type WidgetPtr = Box<widget>;                                            // c:184
+pub type WidgetPtr = Box<widget>; // c:184
 
 /// Port of `typedef struct thingy *Thingy` from zle.h:185.
-pub type ThingyPtr = Box<thingy>;                                            // c:185
+pub type ThingyPtr = Box<thingy>; // c:185
 
 /// Port of `ZleIntFunc` from zle.h:189. C: `int (*)(char **)` —
 /// every internal widget conforms to this signature.
-pub type ZleIntFunc = fn(args: &[String]) -> i32;                            // c:189
+pub type ZleIntFunc = fn(args: &[String]) -> i32; // c:189
 
 /// Port of `struct widget` from `Src/Zle/zle.h:191-203`.
 /// ```c
@@ -322,15 +383,17 @@ pub type ZleIntFunc = fn(args: &[String]) -> i32;                            // 
 // `widget.rs` shim. New code should use `widget` / `WidgetImpl`
 // directly.
 pub use self::WidgetImpl as WidgetFunc;
+
 pub type Widget = widget;
 
-pub struct widget {                                                          // c:191
+pub struct widget {
+    // c:191
     /// flags (see below).
-    pub flags: i32,                                                          // c:192
+    pub flags: i32, // c:192
     /// `first' thingy that names this widget.
-    pub first: Option<ThingyPtr>,                                            // c:193
+    pub first: Option<ThingyPtr>, // c:193
     /// Tagged equivalent of the C anonymous union (zle.h:194-202).
-    pub u: WidgetImpl,                                                       // c:194
+    pub u: WidgetImpl, // c:194
 }
 
 impl Clone for widget {
@@ -355,11 +418,14 @@ impl std::fmt::Debug for widget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("widget")
             .field("flags", &self.flags)
-            .field("u", &match &self.u {
-                WidgetImpl::Internal(_) => "Internal(<fn>)".to_string(),
-                WidgetImpl::UserFunc(s) => format!("UserFunc({})", s),
-                WidgetImpl::Comp { .. } => "Comp{..}".to_string(),
-            })
+            .field(
+                "u",
+                &match &self.u {
+                    WidgetImpl::Internal(_) => "Internal(<fn>)".to_string(),
+                    WidgetImpl::UserFunc(s) => format!("UserFunc({})", s),
+                    WidgetImpl::Comp { .. } => "Comp{..}".to_string(),
+                },
+            )
             .finish()
     }
 }
@@ -371,7 +437,11 @@ impl widget {
     /// Src/Zle/zle_thingy.c:281.
     pub fn internal(name: &str, func: ZleIntFunc, flags: i32) -> Self {
         let _ = name;
-        widget { flags: flags | WIDGET_INT, first: None, u: WidgetImpl::Internal(func) }
+        widget {
+            flags: flags | WIDGET_INT,
+            first: None,
+            u: WidgetImpl::Internal(func),
+        }
     }
 
     /// Resolve a built-in widget name to its canonical fn pointer
@@ -382,49 +452,72 @@ impl widget {
     /// canonical names. Unknown widget names get a no-op fn
     /// pointer (matches what `t_undefinedkey` resolves to).
     pub fn builtin(name: &str) -> Self {
-        let f = super::zle_bindings::iwidget_lookup(name)
-            .unwrap_or(|_args: &[String]| 0i32);
-        widget { flags: WIDGET_INT, first: None, u: WidgetImpl::Internal(f) }
+        let f = super::zle_bindings::iwidget_lookup(name).unwrap_or(|_args: &[String]| 0i32);
+        widget {
+            flags: WIDGET_INT,
+            first: None,
+            u: WidgetImpl::Internal(f),
+        }
     }
 
     /// Build a widget that wraps a user-defined shell function.
     /// Equivalent to `bin_zle_new()` from Src/Zle/zle_thingy.c:584.
     pub fn user_defined(name: &str, func_name: &str) -> Self {
         let _ = name;
-        widget { flags: 0i32, first: None, u: WidgetImpl::UserFunc(func_name.to_string()) }
+        widget {
+            flags: 0i32,
+            first: None,
+            u: WidgetImpl::UserFunc(func_name.to_string()),
+        }
     }
 }
 
 /// Tagged port of the `widget.u` union from `Src/Zle/zle.h:194-202`.
 /// C uses an inline anonymous union; Rust enum tags the active
 /// variant.
-pub enum WidgetImpl {                                                        // c:194
+pub enum WidgetImpl {
+    // c:194
     /// `u.fn` — pointer to internally implemented widget.
-    Internal(ZleIntFunc),                                                    // c:195
+    Internal(ZleIntFunc), // c:195
     /// `u.fnnam` — name of the shell function for user-defined widget.
-    UserFunc(String),                                                        // c:196
+    UserFunc(String), // c:196
     /// `u.comp` — completion-widget triple.
-    Comp { fn_: ZleIntFunc, wid: String, func: String },                     // c:197-201
+    Comp {
+        fn_: ZleIntFunc,
+        wid: String,
+        func: String,
+    }, // c:197-201
 }
 
 // Widget flags — `Src/Zle/zle.h:205-220`.
-pub const WIDGET_INT:    i32 = 1 << 0;   /* widget is internally implemented */            // c:205
-pub const WIDGET_NCOMP:  i32 = 1 << 1;   /* new style completion widget */                 // c:206
-pub const ZLE_MENUCMP:   i32 = 1 << 2;   /* DON'T invalidate completion list */            // c:207
-pub const ZLE_YANKAFTER: i32 = 1 << 3;                                                     // c:208
-pub const ZLE_YANKBEFORE:i32 = 1 << 4;                                                     // c:209
-pub const ZLE_YANK:      i32 = ZLE_YANKAFTER | ZLE_YANKBEFORE;                             // c:210
-pub const ZLE_LINEMOVE:  i32 = 1 << 5;   /* line-oriented movement */                      // c:211
-pub const ZLE_VIOPER:    i32 = 1 << 6;   /* widget reads further keys so wait if prefix */ // c:212
-pub const ZLE_LASTCOL:   i32 = 1 << 7;   /* command maintains lastcol correctly */         // c:213
-pub const ZLE_KILL:      i32 = 1 << 8;                                                     // c:214
-pub const ZLE_KEEPSUFFIX:i32 = 1 << 9;   /* DON'T remove added suffix */                   // c:215
-pub const ZLE_NOTCOMMAND:i32 = 1 << 10;  /* widget should not alter lastcmd */             // c:216
-pub const ZLE_ISCOMP:    i32 = 1 << 11;  /* usable for new style completion */             // c:217
-pub const WIDGET_INUSE:  i32 = 1 << 12;  /* widget is in use */                            // c:218
-pub const WIDGET_FREE:   i32 = 1 << 13;  /* request to free when no longer in use */       // c:219
-pub const ZLE_NOLAST:    i32 = 1 << 14;  /* widget should not alter lbindk */              // c:220
-
+pub const WIDGET_INT: i32 = 1 << 0; /* widget is internally implemented */
+// c:205
+pub const WIDGET_NCOMP: i32 = 1 << 1; /* new style completion widget */
+// c:206
+pub const ZLE_MENUCMP: i32 = 1 << 2; /* DON'T invalidate completion list */
+// c:207
+pub const ZLE_YANKAFTER: i32 = 1 << 3; // c:208
+pub const ZLE_YANKBEFORE: i32 = 1 << 4; // c:209
+pub const ZLE_YANK: i32 = ZLE_YANKAFTER | ZLE_YANKBEFORE; // c:210
+pub const ZLE_LINEMOVE: i32 = 1 << 5; /* line-oriented movement */
+// c:211
+pub const ZLE_VIOPER: i32 = 1 << 6; /* widget reads further keys so wait if prefix */
+// c:212
+pub const ZLE_LASTCOL: i32 = 1 << 7; /* command maintains lastcol correctly */
+// c:213
+pub const ZLE_KILL: i32 = 1 << 8; // c:214
+pub const ZLE_KEEPSUFFIX: i32 = 1 << 9; /* DON'T remove added suffix */
+// c:215
+pub const ZLE_NOTCOMMAND: i32 = 1 << 10; /* widget should not alter lastcmd */
+// c:216
+pub const ZLE_ISCOMP: i32 = 1 << 11; /* usable for new style completion */
+// c:217
+pub const WIDGET_INUSE: i32 = 1 << 12; /* widget is in use */
+// c:218
+pub const WIDGET_FREE: i32 = 1 << 13; /* request to free when no longer in use */
+// c:219
+pub const ZLE_NOLAST: i32 = 1 << 14; /* widget should not alter lbindk */
+// c:220
 
 // =====================================================================
 // Thingy — `Src/Zle/zle.h:224-235`.
@@ -433,24 +526,25 @@ pub const ZLE_NOLAST:    i32 = 1 << 14;  /* widget should not alter lbindk */   
 /// Port of `struct thingy` from `Src/Zle/zle.h:224-231`. HashNode
 /// subtype keyed by name; circular list (`samew`) of all thingies
 /// pointing at the same widget.
-pub struct thingy {                                                          // c:224
+pub struct thingy {
+    // c:224
     /// next node in the hash chain.
-    pub next: Option<HashNode>,                                              // c:225
+    pub next: Option<HashNode>, // c:225
     /// name of the thingy.
-    pub nam: String,                                                         // c:226
+    pub nam: String, // c:226
     /// TH_* flags (see below).
-    pub flags: i32,                                                          // c:227
+    pub flags: i32, // c:227
     /// reference count.
-    pub rc: i32,                                                             // c:228
+    pub rc: i32, // c:228
     /// widget named by this thingy.
-    pub widget: Option<WidgetPtr>,                                           // c:229
+    pub widget: Option<WidgetPtr>, // c:229
     /// `next' thingy (circularly) naming the same widget.
-    pub samew: Option<ThingyPtr>,                                            // c:230
+    pub samew: Option<ThingyPtr>, // c:230
 }
 
 /// `DISABLED` is `(1<<0)` (generic hashnode flag — defined in zsh.h).
 /// `TH_IMMORTAL` from zle.h:234 — can't refer to a different widget.
-pub const TH_IMMORTAL: i32 = 1 << 1;                                         // c:234
+pub const TH_IMMORTAL: i32 = 1 << 1; // c:234
 
 // =====================================================================
 // Modifier — `Src/Zle/zle.h:243-263`.
@@ -458,43 +552,58 @@ pub const TH_IMMORTAL: i32 = 1 << 1;                                         // 
 
 /// Port of `struct modifier` from `Src/Zle/zle.h:245-251`.
 /// Command modifier prefix state (numeric arg, vi cut buffer, etc.).
-pub struct modifier {                                                        // c:245
+pub struct modifier {
+    // c:245
     /// MOD_* flags (see below).
-    pub flags: i32,                                                          // c:246
+    pub flags: i32, // c:246
     /// repeat count.
-    pub mult: i32,                                                           // c:247
+    pub mult: i32, // c:247
     /// repeat count actually being edited.
-    pub tmult: i32,                                                          // c:248
+    pub tmult: i32, // c:248
     /// vi cut buffer.
-    pub vibuf: i32,                                                          // c:249
+    pub vibuf: i32, // c:249
     /// numeric base for digit arguments (usually 10).
-    pub base: i32,                                                           // c:250
+    pub base: i32, // c:250
 }
 
-pub const MOD_MULT:  i32 = 1 << 0;   /* a repeat count has been selected */                // c:253
-pub const MOD_TMULT: i32 = 1 << 1;   /* a repeat count is being entered */                 // c:254
-pub const MOD_VIBUF: i32 = 1 << 2;   /* a vi cut buffer has been selected */               // c:255
-pub const MOD_VIAPP: i32 = 1 << 3;   /* appending to the vi cut buffer */                  // c:256
-pub const MOD_NEG:   i32 = 1 << 4;   /* last command was negate argument */                // c:257
-pub const MOD_NULL:  i32 = 1 << 5;   /* throw away text for the vi cut buffer */           // c:258
-pub const MOD_CHAR:  i32 = 1 << 6;   /* force character-wise movement */                   // c:259
-pub const MOD_LINE:  i32 = 1 << 7;   /* force line-wise movement */                        // c:260
-pub const MOD_PRI:   i32 = 1 << 8;   /* OS primary selection for the vi cut buffer */      // c:261
-pub const MOD_CLIP:  i32 = 1 << 9;   /* OS clipboard for the vi cut buffer */              // c:262
-pub const MOD_OSSEL: i32 = MOD_PRI | MOD_CLIP;  /* either system selection */              // c:263
+pub const MOD_MULT: i32 = 1 << 0; /* a repeat count has been selected */
+// c:253
+pub const MOD_TMULT: i32 = 1 << 1; /* a repeat count is being entered */
+// c:254
+pub const MOD_VIBUF: i32 = 1 << 2; /* a vi cut buffer has been selected */
+// c:255
+pub const MOD_VIAPP: i32 = 1 << 3; /* appending to the vi cut buffer */
+// c:256
+pub const MOD_NEG: i32 = 1 << 4; /* last command was negate argument */
+// c:257
+pub const MOD_NULL: i32 = 1 << 5; /* throw away text for the vi cut buffer */
+// c:258
+pub const MOD_CHAR: i32 = 1 << 6; /* force character-wise movement */
+// c:259
+pub const MOD_LINE: i32 = 1 << 7; /* force line-wise movement */
+// c:260
+pub const MOD_PRI: i32 = 1 << 8; /* OS primary selection for the vi cut buffer */
+// c:261
+pub const MOD_CLIP: i32 = 1 << 9; /* OS clipboard for the vi cut buffer */
+// c:262
+pub const MOD_OSSEL: i32 = MOD_PRI | MOD_CLIP; /* either system selection */
+// c:263
 
 // =====================================================================
 // Cut-buffer flag bits — `Src/Zle/zle.h:271-280`.
 // =====================================================================
 
-pub const CUT_FRONT:   i32 = 1 << 0;   /* Text goes in front of cut buffer */              // c:271
-pub const CUT_REPLACE: i32 = 1 << 1;   /* Text replaces cut buffer */                      // c:272
+pub const CUT_FRONT: i32 = 1 << 0; /* Text goes in front of cut buffer */
+// c:271
+pub const CUT_REPLACE: i32 = 1 << 1; /* Text replaces cut buffer */
+// c:272
 /// `CUT_RAW` (zle.h:273-279). Raw character counts (not used in
 /// `cut` itself). This is used when the values are offsets into
 /// the zleline array rather than numbers of visible characters
 /// directly input by the user.
-pub const CUT_RAW:     i32 = 1 << 2;                                                       // c:273
-pub const CUT_YANK:    i32 = 1 << 3;   /* vi yank: use register 0 instead of 1-9 */        // c:280
+pub const CUT_RAW: i32 = 1 << 2; // c:273
+pub const CUT_YANK: i32 = 1 << 3; /* vi yank: use register 0 instead of 1-9 */
+// c:280
 
 // =====================================================================
 // Change (undo system) — `Src/Zle/zle.h:282-298`.
@@ -503,35 +612,38 @@ pub const CUT_YANK:    i32 = 1 << 3;   /* vi yank: use register 0 instead of 1-9
 /// Port of `struct change` from `Src/Zle/zle.h:284-295`. The undo
 /// log is a doubly-linked list of these entries.
 #[derive(Clone, Debug)]
-pub struct change {                                                          // c:284
+pub struct change {
+    // c:284
     /// previous adjacent change.
-    pub prev: Option<Box<change>>,                                           // c:285
+    pub prev: Option<Box<change>>, // c:285
     /// next adjacent change.
-    pub next: Option<Box<change>>,                                           // c:285
+    pub next: Option<Box<change>>, // c:285
     /// see CH_* below.
-    pub flags: i32,                                                          // c:286
+    pub flags: i32, // c:286
     /// history line being changed.
-    pub hist: i32,                                                           // c:287
+    pub hist: i32, // c:287
     /// offset of the text changes.
-    pub off: i32,                                                            // c:288
+    pub off: i32, // c:288
     /// characters to delete.
-    pub del: ZLE_STRING_T,                                                   // c:289
+    pub del: ZLE_STRING_T, // c:289
     /// no. of characters in del.
-    pub dell: i32,                                                           // c:290
+    pub dell: i32, // c:290
     /// characters to insert.
-    pub ins: ZLE_STRING_T,                                                   // c:291
+    pub ins: ZLE_STRING_T, // c:291
     /// no. of characters in ins.
-    pub insl: i32,                                                           // c:292
+    pub insl: i32, // c:292
     /// old cursor position.
-    pub old_cs: i32,                                                         // c:293
+    pub old_cs: i32, // c:293
     /// new cursor position.
-    pub new_cs: i32,                                                         // c:293
+    pub new_cs: i32, // c:293
     /// unique number of this change (`zlong`).
-    pub changeno: i64,                                                       // c:294
+    pub changeno: i64, // c:294
 }
 
-pub const CH_NEXT: i32 = 1 << 0;   /* next structure is also part of this change */        // c:297
-pub const CH_PREV: i32 = 1 << 1;   /* previous structure is also part of this change */    // c:298
+pub const CH_NEXT: i32 = 1 << 0; /* next structure is also part of this change */
+// c:297
+pub const CH_PREV: i32 = 1 << 1; /* previous structure is also part of this change */
+// c:298
 
 // =====================================================================
 // VI change — `Src/Zle/zle.h:300-313`.
@@ -544,15 +656,16 @@ pub const CH_PREV: i32 = 1 << 1;   /* previous structure is also part of this ch
 /// is consistently tied to raw byte input, so it is left as a
 /// character array rather than turned into wide characters. In
 /// particular, when we replay it we use `ungetbytes()`.
-pub struct vichange {                                                        // c:308
+pub struct vichange {
+    // c:308
     /// value of zmod associated with vi change.
-    pub mod_: modifier,                                                      // c:309
+    pub mod_: modifier, // c:309
     /// bytes for keys that make up the vi command.
-    pub buf: Vec<u8>,                                                        // c:310
+    pub buf: Vec<u8>, // c:310
     /// allocated size of buf.
-    pub bufsz: i32,                                                          // c:311
+    pub bufsz: i32, // c:311
     /// in-use size of buf.
-    pub bufptr: i32,                                                         // c:311
+    pub bufptr: i32, // c:311
 }
 
 // =====================================================================
@@ -567,18 +680,19 @@ pub struct vichange {                                                        // 
 
 /// Port of `KeyScanFunc` from zle.h:322.
 /// C: `void (*KeyScanFunc) (char *, Thingy, char *, void *)`.
-pub type KeyScanFunc = fn(seq: &str, t: &thingy, ext: &str, data: usize);    // c:322
+pub type KeyScanFunc = fn(seq: &str, t: &thingy, ext: &str, data: usize); // c:322
 
 // =====================================================================
 // Suffix removal — `Src/Zle/zle.h:326-333`.
 // =====================================================================
 
 /// Port of `NO_INSERT_CHAR` from zle.h:329 / zle.h:331.
-pub const NO_INSERT_CHAR: i32 = 256;                                         // c:331
+pub const NO_INSERT_CHAR: i32 = 256; // c:331
 
 /// Port of `removesuffix()` from zle.h:333.
 /// C: `iremovesuffix(NO_INSERT_CHAR, 0)`.
-pub fn removesuffix() -> i32 {                                               // c:333
+pub fn removesuffix() -> i32 {
+    // c:333
     // c:333 — `iremovesuffix(NO_INSERT_CHAR, 0)`. iremovesuffix is
     // defined in zle_misc.c; the wrapper preserves the call shape.
     0
@@ -593,87 +707,95 @@ pub fn removesuffix() -> i32 {                                               // 
 /// binary data, not NUL-terminated. `len` is a character count
 /// (N.B. number of characters, not size in bytes). `flags` uses the
 /// CUTBUFFER_* constants defined below.
-pub struct cutbuffer {                                                       // c:342
-    pub buf: ZLE_STRING_T,                                                   // c:343
-    pub len: usize,                                                          // c:344
-    pub flags: u8,                                                           // c:345
+pub struct cutbuffer {
+    // c:342
+    pub buf: ZLE_STRING_T, // c:343
+    pub len: usize,        // c:344
+    pub flags: u8,         // c:345
 }
 
 /// Port of `typedef struct cutbuffer *Cutbuffer` from zle.h:348.
-pub type CutbufferPtr = Box<cutbuffer>;                                      // c:348
+pub type CutbufferPtr = Box<cutbuffer>; // c:348
 
-pub const CUTBUFFER_LINE: u8 = 1;   /* for vi: buffer contains whole lines of data */      // c:350
-pub const KRINGCTDEF:     i32 = 8;   /* default number of buffers in the kill ring */      // c:352
+pub const CUTBUFFER_LINE: u8 = 1; /* for vi: buffer contains whole lines of data */
+// c:350
+pub const KRINGCTDEF: i32 = 8; /* default number of buffers in the kill ring */
+// c:352
 
 // =====================================================================
 // Completion modes — `Src/Zle/zle.h:354-362`.
 // =====================================================================
 
-pub const COMP_COMPLETE:        i32 = 0;                                                   // c:356
-pub const COMP_LIST_COMPLETE:   i32 = 1;                                                   // c:357
-pub const COMP_SPELL:           i32 = 2;                                                   // c:358
-pub const COMP_EXPAND:          i32 = 3;                                                   // c:359
-pub const COMP_EXPAND_COMPLETE: i32 = 4;                                                   // c:360
-pub const COMP_LIST_EXPAND:     i32 = 5;                                                   // c:361
+pub const COMP_COMPLETE: i32 = 0; // c:356
+pub const COMP_LIST_COMPLETE: i32 = 1; // c:357
+pub const COMP_SPELL: i32 = 2; // c:358
+pub const COMP_EXPAND: i32 = 3; // c:359
+pub const COMP_EXPAND_COMPLETE: i32 = 4; // c:360
+pub const COMP_LIST_EXPAND: i32 = 5; // c:361
 
 /// Port of `COMP_ISEXPAND(X)` from zle.h:362.
 #[inline]
-pub fn COMP_ISEXPAND(x: i32) -> bool { x >= COMP_EXPAND }                                  // c:362
+pub fn COMP_ISEXPAND(x: i32) -> bool {
+    x >= COMP_EXPAND
+} // c:362
 
 // =====================================================================
 // Brace runs (Brinfo) — `Src/Zle/zle.h:364-375`.
 // =====================================================================
 
 /// Port of `typedef struct brinfo *Brinfo` from zle.h:366.
-pub type BrinfoPtr = Box<brinfo>;                                            // c:366
+pub type BrinfoPtr = Box<brinfo>; // c:366
 
 /// Port of `struct brinfo` from `Src/Zle/zle.h:368-375`.
 /// One brace run during brace-expansion completion.
-pub struct brinfo {                                                          // c:368
+pub struct brinfo {
+    // c:368
     /// next in list.
-    pub next: Option<BrinfoPtr>,                                             // c:369
+    pub next: Option<BrinfoPtr>, // c:369
     /// previous (only for closing braces).
-    pub prev: Option<BrinfoPtr>,                                             // c:370
+    pub prev: Option<BrinfoPtr>, // c:370
     /// the string to insert.
-    pub str: String,                                                        // c:371
+    pub str: String, // c:371
     /// original position.
-    pub pos: i32,                                                            // c:372
+    pub pos: i32, // c:372
     /// original position, with quoting.
-    pub qpos: i32,                                                           // c:373
+    pub qpos: i32, // c:373
     /// position for current match.
-    pub curpos: i32,                                                         // c:374
+    pub curpos: i32, // c:374
 }
 
 // =====================================================================
 // Hook offsets — `Src/Zle/zle.h:377-402`.
 // =====================================================================
 
-pub const LISTMATCHESHOOK:    i32 = 0;                                                     // c:379
-pub const COMPLETEHOOK:       i32 = 1;                                                     // c:380
-pub const BEFORECOMPLETEHOOK: i32 = 2;                                                     // c:381
-pub const AFTERCOMPLETEHOOK:  i32 = 3;                                                     // c:382
-pub const ACCEPTCOMPHOOK:     i32 = 4;                                                     // c:383
-pub const INVALIDATELISTHOOK: i32 = 5;                                                     // c:384
+pub const LISTMATCHESHOOK: i32 = 0; // c:379
+pub const COMPLETEHOOK: i32 = 1; // c:380
+pub const BEFORECOMPLETEHOOK: i32 = 2; // c:381
+pub const AFTERCOMPLETEHOOK: i32 = 3; // c:382
+pub const ACCEPTCOMPHOOK: i32 = 4; // c:383
+pub const INVALIDATELISTHOOK: i32 = 5; // c:384
 
 // =====================================================================
 // Compldat — `Src/Zle/zle.h:386-394`.
 // =====================================================================
 
 /// Port of `typedef struct compldat *Compldat` from zle.h:388.
-pub type CompldatPtr = Box<compldat>;                                        // c:388
+pub type CompldatPtr = Box<compldat>; // c:388
 
 /// Port of `struct compldat` from `Src/Zle/zle.h:390-394`. Payload
 /// passed to the COMPLETEHOOK callback.
-pub struct compldat {                                                        // c:390
-    pub s: String,                                                           // c:391
-    pub lst: i32,                                                            // c:392
-    pub incmd: i32,                                                          // c:393
+pub struct compldat {
+    // c:390
+    pub s: String,  // c:391
+    pub lst: i32,   // c:392
+    pub incmd: i32, // c:393
 }
 
 /// Direct port of `listmatches()` from `Src/Zle/zle.h:398`. Fires the
 /// LISTMATCHESHOOK chain via `runhookdef`, falling back to the
 /// canonical `ilistmatches` renderer when no user hook is registered.
-pub fn listmatches() {                                                       // c:398
+pub fn listmatches() {
+    // c:398
     // c:398 — `runhookdef(LISTMATCHESHOOK, NULL)`. Returns nonzero
     // when a Hookfn handled it; 0 (or no handler registered) falls
     // through to the default renderer.
@@ -693,7 +815,8 @@ pub fn listmatches() {                                                       // 
 /// the INVALIDATELISTHOOK chain via `runhookdef`, falling back to the
 /// canonical `invalidate_list` cleanup (compresult.c:2334) when no
 /// user hook is registered.
-pub fn invalidatelist() {                                                    // c:402
+pub fn invalidatelist() {
+    // c:402
     // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL)`. Returns nonzero
     // when a Hookfn handled it; 0 or no registration falls through to
     // the default cleanup path.
@@ -712,8 +835,10 @@ pub fn invalidatelist() {                                                    // 
 // setline flags — `Src/Zle/zle.h:404-408`.
 // =====================================================================
 
-pub const ZSL_COPY:  i32 = 1;   /* Copy the argument, don't modify it */                   // c:406
-pub const ZSL_TOEND: i32 = 2;   /* Go to the end of the new line */                        // c:407
+pub const ZSL_COPY: i32 = 1; /* Copy the argument, don't modify it */
+// c:406
+pub const ZSL_TOEND: i32 = 2; /* Go to the end of the new line */
+// c:407
 
 // =====================================================================
 // Suffix type / flags — `Src/Zle/zle.h:411-422`.
@@ -721,84 +846,90 @@ pub const ZSL_TOEND: i32 = 2;   /* Go to the end of the new line */             
 
 /// Port of `enum suffixtype` from zle.h:412 (type arguments to
 /// `addsuffix()`).
-pub const SUFTYP_POSSTR: i32 = 0;   /* String of characters to match */                    // c:413
-pub const SUFTYP_NEGSTR: i32 = 1;   /* String of characters not to match */                // c:414
-pub const SUFTYP_POSRNG: i32 = 2;   /* Range of characters to match */                     // c:415
-pub const SUFTYP_NEGRNG: i32 = 3;   /* Range of characters not to match */                 // c:416
+pub const SUFTYP_POSSTR: i32 = 0; /* String of characters to match */
+// c:413
+pub const SUFTYP_NEGSTR: i32 = 1; /* String of characters not to match */
+// c:414
+pub const SUFTYP_POSRNG: i32 = 2; /* Range of characters to match */
+// c:415
+pub const SUFTYP_NEGRNG: i32 = 3; /* Range of characters not to match */
+// c:416
 
 /// Port of `enum suffixflags` from zle.h:420 (additional flags to
 /// suffixes).
-pub const SUFFLAGS_SPACE: i32 = 0x0001;   /* Add a space when removing suffix */           // c:421
+pub const SUFFLAGS_SPACE: i32 = 0x0001; /* Add a space when removing suffix */
+// c:421
 
 // =====================================================================
 // Region highlight — `Src/Zle/zle.h:425-473`.
 // =====================================================================
 
 /// `ZRH_PREDISPLAY` — region offsets include predisplay text.
-pub const ZRH_PREDISPLAY: i32 = 1;                                                         // c:428
+pub const ZRH_PREDISPLAY: i32 = 1; // c:428
 
 /// Port of `struct region_highlight` from `Src/Zle/zle.h:435-461`.
 /// Attributes used for highlighting regions and the mark.
-pub struct region_highlight {                                                // c:435
+pub struct region_highlight {
+    // c:435
     /// Attributes for the region.
-    pub atr: zattr,                                                          // c:437
+    pub atr: zattr, // c:437
     /// Explicitly set attributes for the region.
-    pub atrmask: zattr,                                                      // c:439
+    pub atrmask: zattr, // c:439
     /// Priority for this region relative to others that overlap.
-    pub layer: i32,                                                          // c:441
+    pub layer: i32, // c:441
     /// Start of the region.
-    pub start: i32,                                                          // c:443
+    pub start: i32, // c:443
     /// Start of the region in metafied ZLE line.
-    pub start_meta: i32,                                                     // c:445
+    pub start_meta: i32, // c:445
     /// End of the region: position of the first character not
     /// highlighted (the same system as for point and mark).
-    pub end: i32,                                                            // c:450
+    pub end: i32, // c:450
     /// End of the region in metafied ZLE line.
-    pub end_meta: i32,                                                       // c:452
+    pub end_meta: i32, // c:452
     /// Any of the flags defined above.
-    pub flags: i32,                                                          // c:456
+    pub flags: i32, // c:456
     /// User-settable "memo" key. Metafied.
-    pub memo: Option<String>,                                                // c:460
+    pub memo: Option<String>, // c:460
 }
 
 /// Port of `N_SPECIAL_HIGHLIGHTS` from zle.h:473.
 /// Count of special uses of region highlighting:
 /// 0=region between point and mark, 1=isearch region, 2=suffix,
 /// 3=pasted text.
-pub const N_SPECIAL_HIGHLIGHTS: i32 = 4;                                                   // c:473
+pub const N_SPECIAL_HIGHLIGHTS: i32 = 4; // c:473
 
 // =====================================================================
 // Cursor context — `Src/Zle/zle.h:475-486`.
 // =====================================================================
 
 /// Port of `enum cursorcontext` from zle.h:476.
-pub const CURC_EDIT:         i32 = 0;                                                      // c:477
-pub const CURC_COMMAND:      i32 = 1;                                                      // c:478
-pub const CURC_INSERT:       i32 = 2;                                                      // c:479
-pub const CURC_OVERWRITE:    i32 = 3;                                                      // c:480
-pub const CURC_PENDING:      i32 = 4;                                                      // c:481
-pub const CURC_REGION_START: i32 = 5;                                                      // c:482
-pub const CURC_REGION_END:   i32 = 6;                                                      // c:483
-pub const CURC_VISUAL:       i32 = 7;                                                      // c:484
-pub const CURC_DEFAULT:      i32 = 8;                                                      // c:485
+pub const CURC_EDIT: i32 = 0; // c:477
+pub const CURC_COMMAND: i32 = 1; // c:478
+pub const CURC_INSERT: i32 = 2; // c:479
+pub const CURC_OVERWRITE: i32 = 3; // c:480
+pub const CURC_PENDING: i32 = 4; // c:481
+pub const CURC_REGION_START: i32 = 5; // c:482
+pub const CURC_REGION_END: i32 = 6; // c:483
+pub const CURC_VISUAL: i32 = 7; // c:484
+pub const CURC_DEFAULT: i32 = 8; // c:485
 
 // =====================================================================
 // Cursor flag bits — `Src/Zle/zle.h:488-500`.
 // =====================================================================
 
-pub const CURF_DEFAULT:    i32 = 0;                                                        // c:488
-pub const CURF_UNDERLINE:  i32 = 1;                                                        // c:489
-pub const CURF_BAR:        i32 = 2;                                                        // c:490
-pub const CURF_BLOCK:      i32 = 3;                                                        // c:491
-pub const CURF_SHAPE_MASK: i32 = 3;                                                        // c:492
-pub const CURF_BLINK:      i32 = 1 << 2;                                                   // c:493
-pub const CURF_STEADY:     i32 = 1 << 3;                                                   // c:494
-pub const CURF_HIDDEN:     i32 = 1 << 4;                                                   // c:495
-pub const CURF_COLOR:      i32 = 1 << 5;                                                   // c:496
-pub const CURF_COLOR_MASK: u32 = (0xffffff_u32 << 8) | (CURF_COLOR as u32);                // c:497
-pub const CURF_RED_SHIFT:   i32 = 24;                                                      // c:498
-pub const CURF_GREEN_SHIFT: i32 = 16;                                                      // c:499
-pub const CURF_BLUE_SHIFT:  i32 = 8;                                                       // c:500
+pub const CURF_DEFAULT: i32 = 0; // c:488
+pub const CURF_UNDERLINE: i32 = 1; // c:489
+pub const CURF_BAR: i32 = 2; // c:490
+pub const CURF_BLOCK: i32 = 3; // c:491
+pub const CURF_SHAPE_MASK: i32 = 3; // c:492
+pub const CURF_BLINK: i32 = 1 << 2; // c:493
+pub const CURF_STEADY: i32 = 1 << 3; // c:494
+pub const CURF_HIDDEN: i32 = 1 << 4; // c:495
+pub const CURF_COLOR: i32 = 1 << 5; // c:496
+pub const CURF_COLOR_MASK: u32 = (0xffffff_u32 << 8) | (CURF_COLOR as u32); // c:497
+pub const CURF_RED_SHIFT: i32 = 24; // c:498
+pub const CURF_GREEN_SHIFT: i32 = 16; // c:499
+pub const CURF_BLUE_SHIFT: i32 = 8; // c:500
 
 // =====================================================================
 // Refresh element — `Src/Zle/zle.h:502-529`.
@@ -806,7 +937,7 @@ pub const CURF_BLUE_SHIFT:  i32 = 8;                                            
 
 /// Port of `REFRESH_CHAR` from zle.h:507 (multibyte) / zle.h:509
 /// (non-multibyte). Rust uses `char` since native UTF-8 covers both.
-pub type REFRESH_CHAR = char;                                                // c:507
+pub type REFRESH_CHAR = char; // c:507
 
 /// Port of `REFRESH_ELEMENT` from `Src/Zle/zle.h:515-526`.
 /// One character cell in the on-screen display buffer.
@@ -814,15 +945,16 @@ pub type REFRESH_CHAR = char;                                                // 
 /// contains `TXT_MULTIWORD_MASK`, an index into the set of
 /// multiword symbols (only if MULTIBYTE_SUPPORT is present).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct REFRESH_ELEMENT {                                                 // c:515
+pub struct REFRESH_ELEMENT {
+    // c:515
     /// The (possibly wide) character.
-    pub chr: REFRESH_CHAR,                                                   // c:521
+    pub chr: REFRESH_CHAR, // c:521
     /// Its attributes.
-    pub atr: zattr,                                                          // c:525
+    pub atr: zattr, // c:525
 }
 
 /// Port of `REFRESH_STRING` from zle.h:529. A string of screen cells.
-pub type REFRESH_STRING = Vec<REFRESH_ELEMENT>;                              // c:529
+pub type REFRESH_STRING = Vec<REFRESH_ELEMENT>; // c:529
 
 // =====================================================================
 // ZSH_INVALID_WCHAR — `Src/Zle/zle.h:532-553`.
@@ -836,33 +968,37 @@ pub type REFRESH_STRING = Vec<REFRESH_ELEMENT>;                              // 
 
 /// `ZSH_INVALID_WCHAR_BASE` from zle.h:541. The start of the
 /// private range we use, for 256 characters.
-pub const ZSH_INVALID_WCHAR_BASE: u32 = 0xe000;                              // c:541
+pub const ZSH_INVALID_WCHAR_BASE: u32 = 0xe000; // c:541
 
 /// Port of `ZSH_INVALID_WCHAR_TEST(x)` from zle.h:544. Detect a
 /// wide character within our range.
 #[inline]
-pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {                              // c:544
+pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {
+    // c:544
     x >= ZSH_INVALID_WCHAR_BASE && x <= ZSH_INVALID_WCHAR_BASE + 255
 }
 
 /// Port of `ZSH_INVALID_WCHAR_TO_CHAR(x)` from zle.h:548. Turn a
 /// wide character in that range back to single byte.
 #[inline]
-pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {                             // c:548
+pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {
+    // c:548
     (x - ZSH_INVALID_WCHAR_BASE) as u8
 }
 
 /// Port of `ZSH_INVALID_WCHAR_TO_INT(x)` from zle.h:550. Turn a
 /// wide character in that range to an integer.
 #[inline]
-pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {                             // c:550
+pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {
+    // c:550
     (x - ZSH_INVALID_WCHAR_BASE) as i32
 }
 
 /// Port of `ZSH_CHAR_TO_INVALID_WCHAR(x)` from zle.h:553. Turn a
 /// single byte character into a private wide character.
 #[inline]
-pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {                             // c:553
+pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {
+    // c:553
     (x as u32) + ZSH_INVALID_WCHAR_BASE
 }
 
@@ -876,16 +1012,16 @@ pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {                             // 
 /// Port of `METACHECK()` from zle.h:561.
 /// C: `DPUTS(zlemetaline == NULL, "line not metafied")`.
 #[inline]
-pub fn METACHECK() {                                                         // c:561
-    // c:561 — DPUTS only fires when DEBUG is defined; treat as
-    // no-op for release builds, same as C zle.h:566.
+pub fn METACHECK() { // c:561
+                     // c:561 — DPUTS only fires when DEBUG is defined; treat as
+                     // no-op for release builds, same as C zle.h:566.
 }
 
 /// Port of `UNMETACHECK()` from zle.h:563.
 /// C: `DPUTS(zlemetaline != NULL, "line metafied")`.
 #[inline]
-pub fn UNMETACHECK() {                                                       // c:563
-    // c:563 — see METACHECK above.
+pub fn UNMETACHECK() { // c:563
+                       // c:563 — see METACHECK above.
 }
 
 // =====================================================================
@@ -893,17 +1029,18 @@ pub fn UNMETACHECK() {                                                       // 
 // =====================================================================
 
 /// Port of `typedef struct watch_fd *Watch_fd` from zle.h:570.
-pub type WatchFdPtr = Box<watch_fd>;                                         // c:570
+pub type WatchFdPtr = Box<watch_fd>; // c:570
 
 /// Port of `struct watch_fd` from `Src/Zle/zle.h:572-578`.
 /// One `zle -F` file-descriptor watcher.
-pub struct watch_fd {                                                        // c:572
+pub struct watch_fd {
+    // c:572
     /// Function to call.
-    pub func: String,                                                        // c:574
+    pub func: String, // c:574
     /// Watched fd.
-    pub fd: i32,                                                             // c:576
+    pub fd: i32, // c:576
     /// 1 if func is called as a widget.
-    pub widget: i32,                                                         // c:578
+    pub widget: i32, // c:578
 }
 
 #[cfg(test)]
@@ -952,17 +1089,32 @@ mod tests {
     fn zs_memcmp_ordering() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
-        assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
+        assert_eq!(
+            ZS_memcmp(&['a', 'b'], &['a', 'b'], 2),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            ZS_memcmp(&['a', 'b'], &['a', 'c'], 2),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
     fn zs_strncmp_terminates_at_nul() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
-        assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
-        assert_eq!(ZS_strncmp(&['a', '\0'], &['a'], 5), std::cmp::Ordering::Equal);
+        assert_eq!(
+            ZS_strncmp(&['a', 'b'], &['a', 'b'], 2),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            ZS_strncmp(&['a', 'b'], &['a', 'c'], 2),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            ZS_strncmp(&['a', '\0'], &['a'], 5),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
@@ -983,10 +1135,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Canonical ASCII blanks.
-        assert!(ZC_iblank(' '),  "space is iblank");
+        assert!(ZC_iblank(' '), "space is iblank");
         assert!(ZC_iblank('\t'), "tab is iblank");
         // Other iswspace chars in C wcsiblank (≠ '\n'):
-        assert!(ZC_iblank('\r'),   "CR is iblank per wcsiblank");
+        assert!(ZC_iblank('\r'), "CR is iblank per wcsiblank");
         assert!(ZC_iblank('\x0c'), "FF is iblank per wcsiblank");
         assert!(ZC_iblank('\x0b'), "VT is iblank per wcsiblank");
         assert!(ZC_iblank('\u{00A0}'), "NBSP is iblank per wcsiblank");
@@ -1010,7 +1162,7 @@ mod tests {
         assert!(ZC_inblank('\n'), "newline IS iswspace");
         assert!(ZC_inblank(' '));
         assert!(ZC_inblank('\t'));
-        assert!(ZC_inblank('\r'),   "CR is iswspace");
+        assert!(ZC_inblank('\r'), "CR is iswspace");
         assert!(ZC_inblank('\x0c'), "FF is iswspace");
         assert!(ZC_inblank('\x0b'), "VT is iswspace");
         assert!(ZC_inblank('\u{00A0}'), "NBSP is iswspace");
@@ -1090,18 +1242,21 @@ mod tests {
     #[test]
     fn zle_widget_flags_match_c_zle_h_canonical_values() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(ZLE_MENUCMP,    1 << 2,  "c:207");
-        assert_eq!(ZLE_YANKAFTER,  1 << 3,  "c:208");
-        assert_eq!(ZLE_YANKBEFORE, 1 << 4,  "c:209");
-        assert_eq!(ZLE_YANK, ZLE_YANKAFTER | ZLE_YANKBEFORE,
-            "c:210 — composite");
-        assert_eq!(ZLE_LINEMOVE,   1 << 5,  "c:211");
-        assert_eq!(ZLE_VIOPER,     1 << 6,  "c:212");
-        assert_eq!(ZLE_LASTCOL,    1 << 7,  "c:213");
-        assert_eq!(ZLE_KILL,       1 << 8,  "c:214");
-        assert_eq!(ZLE_KEEPSUFFIX, 1 << 9,  "c:215");
+        assert_eq!(ZLE_MENUCMP, 1 << 2, "c:207");
+        assert_eq!(ZLE_YANKAFTER, 1 << 3, "c:208");
+        assert_eq!(ZLE_YANKBEFORE, 1 << 4, "c:209");
+        assert_eq!(
+            ZLE_YANK,
+            ZLE_YANKAFTER | ZLE_YANKBEFORE,
+            "c:210 — composite"
+        );
+        assert_eq!(ZLE_LINEMOVE, 1 << 5, "c:211");
+        assert_eq!(ZLE_VIOPER, 1 << 6, "c:212");
+        assert_eq!(ZLE_LASTCOL, 1 << 7, "c:213");
+        assert_eq!(ZLE_KILL, 1 << 8, "c:214");
+        assert_eq!(ZLE_KEEPSUFFIX, 1 << 9, "c:215");
         assert_eq!(ZLE_NOTCOMMAND, 1 << 10, "c:216");
-        assert_eq!(ZLE_ISCOMP,     1 << 11, "c:217");
-        assert_eq!(ZLE_NOLAST,     1 << 14, "c:220");
+        assert_eq!(ZLE_ISCOMP, 1 << 11, "c:217");
+        assert_eq!(ZLE_NOLAST, 1 << 14, "c:220");
     }
 }

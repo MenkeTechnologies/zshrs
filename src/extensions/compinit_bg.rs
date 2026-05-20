@@ -1,10 +1,10 @@
 //! Background compinit pre-warm — extension; no zsh C counterpart.
 #[allow(unused_imports)]
 use crate::ported::vm_helper::ShellExecutor;
-#[allow(unused_imports)]
-use std::{env, collections::HashMap, path::PathBuf};
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
+#[allow(unused_imports)]
+use std::{collections::HashMap, env, path::PathBuf};
 
 /// Result from background compinit thread.
 /// Outcome of background `compinit` autoload.

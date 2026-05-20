@@ -16,7 +16,6 @@
 //! Unknown capabilities return `None` so callers can emit `""`
 //! matching zsh's `PM_UNSET` fallback (terminfo.c:165-168).
 
-use crate::ported::utils::zwarnnam;
 use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
 use std::sync::atomic::Ordering;
 
@@ -34,10 +33,18 @@ extern "C" {
     fn tigetnum(capname: *const libc::c_char) -> libc::c_int;
     fn tigetflag(capname: *const libc::c_char) -> libc::c_int;
     fn putp(s: *const libc::c_char) -> libc::c_int;
-    fn tparm(s: *const libc::c_char, p1: libc::c_long, p2: libc::c_long,
-             p3: libc::c_long, p4: libc::c_long, p5: libc::c_long,
-             p6: libc::c_long, p7: libc::c_long, p8: libc::c_long,
-             p9: libc::c_long) -> *const libc::c_char;
+    fn tparm(
+        s: *const libc::c_char,
+        p1: libc::c_long,
+        p2: libc::c_long,
+        p3: libc::c_long,
+        p4: libc::c_long,
+        p5: libc::c_long,
+        p6: libc::c_long,
+        p7: libc::c_long,
+        p8: libc::c_long,
+        p9: libc::c_long,
+    ) -> *const libc::c_char;
 }
 
 /// Direct port of `bin_echoti(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/terminfo.c:64`.
@@ -45,23 +52,28 @@ extern "C" {
 /// in turn; numeric/boolean caps print and return; string caps go
 /// through `tparm` (with up to 9 long args) then `putp`.
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
-pub fn bin_echoti(name: &str, argv: &[String],                               // c:64
-                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_echoti(
+    name: &str,
+    argv: &[String], // c:64
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     const TERM_BAD: i32 = 1 << 1;
 
     if argv.is_empty() {
         crate::ported::utils::zwarnnam(name, "missing capability name");
         return 1;
     }
-    let s = &argv[0];                                                        // c:73 s = *argv++
+    let s = &argv[0]; // c:73 s = *argv++
     let argv_rest = &argv[1..];
 
-    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {                 // c:75
-        return 1;                                                            // c:76
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
+        // c:75
+        return 1; // c:76
     }
-    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));  // c:77
+    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive")); // c:77
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
-        return 1;                                                            // c:78
+        return 1; // c:78
     }
 
     let cs = match std::ffi::CString::new(s.as_str()) {
@@ -70,34 +82,46 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
     };
 
     // c:81 — `if (((num = tigetnum(s)) != -1) && (num != -2)) { ... }`.
-    let num = unsafe { tigetnum(cs.as_ptr()) };                              // c:81
-    if num != -1 && num != -2 {                                              // c:81
-        println!("{}", num);                                                 // c:82
-        return 0;                                                            // c:83
+    let num = unsafe { tigetnum(cs.as_ptr()) }; // c:81
+    if num != -1 && num != -2 {
+        // c:81
+        println!("{}", num); // c:82
+        return 0; // c:83
     }
 
     // c:86 — `switch (tigetflag(s)) { -1 break; 0 puts("no"); default puts("yes"); }`.
-    match unsafe { tigetflag(cs.as_ptr()) } {                                // c:86
-        -1 => {}                                                             // c:88
-        0 => { println!("no"); return 0; }                                   // c:90
-        _ => { println!("yes"); return 0; }                                  // c:93
+    match unsafe { tigetflag(cs.as_ptr()) } {
+        // c:86
+        -1 => {} // c:88
+        0 => {
+            println!("no");
+            return 0;
+        } // c:90
+        _ => {
+            println!("yes");
+            return 0;
+        } // c:93
     }
 
     // get a string-type capability                                          // c:94
     // c:97 — `t = (char *)tigetstr(s);` — string capability.
-    let t = unsafe { tigetstr(cs.as_ptr()) };                                // c:97
+    let t = unsafe { tigetstr(cs.as_ptr()) }; // c:97
     let t_addr = t as isize;
-    if t.is_null() || t_addr == -1 || unsafe { *t } == 0 {                   // c:98
+    if t.is_null() || t_addr == -1 || unsafe { *t } == 0 {
+        // c:98
         // capability doesn't exist, or (if boolean) is off                  // c:97
-        crate::ported::utils::zwarnnam(name,                                 // c:100
-            &format!("no such terminfo capability: {}", s));
-        return 1;                                                            // c:101
+        crate::ported::utils::zwarnnam(
+            name, // c:100
+            &format!("no such terminfo capability: {}", s),
+        );
+        return 1; // c:101
     }
 
     // c:104 — `if (arrlen_gt(argv, 9)) { zwarnnam(name, "too many arguments"); return 1; }`.
-    if argv_rest.len() > 9 {                                                 // c:104
-        crate::ported::utils::zwarnnam(name, "too many arguments");          // c:105
-        return 1;                                                            // c:106
+    if argv_rest.len() > 9 {
+        // c:104
+        crate::ported::utils::zwarnnam(name, "too many arguments"); // c:105
+        return 1; // c:106
     }
 
     // c:110 — `for (u = strcap; *u && !strarg; u++) strarg = !strcmp(s, *u);`
@@ -107,32 +131,40 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
     let strarg = strcap.iter().any(|c| s.as_str() == *c);
 
     // c:113 — `for (arg=0; argv[arg]; arg++) pars[arg] = ...`
-    let mut pars: [libc::c_long; 9] = [0; 9];                                // c:69
-    let mut keep_alive: Vec<std::ffi::CString> = Vec::new();                 // hold strarg pointers
+    let mut pars: [libc::c_long; 9] = [0; 9]; // c:69
+    let mut keep_alive: Vec<std::ffi::CString> = Vec::new(); // hold strarg pointers
     for (i, a) in argv_rest.iter().enumerate().take(9) {
-        if strarg && i > 0 {                                                 // c:115
+        if strarg && i > 0 {
+            // c:115
             let cs = std::ffi::CString::new(a.as_str()).unwrap_or_default();
-            pars[i] = cs.as_ptr() as libc::c_long;                           // c:116
+            pars[i] = cs.as_ptr() as libc::c_long; // c:116
             keep_alive.push(cs);
         } else {
-            pars[i] = a.parse::<libc::c_long>().unwrap_or(0);                // c:118 atoi
+            pars[i] = a.parse::<libc::c_long>().unwrap_or(0); // c:118 atoi
         }
     }
 
     // c:122 — `if (!arg) putp(t); else putp(tparm(t, pars[0..8]));`
-    if argv_rest.is_empty() {                                                // c:122
-        unsafe { putp(t); }                                                  // c:123
+    if argv_rest.is_empty() {
+        // c:122
+        unsafe {
+            putp(t);
+        } // c:123
     } else {
-        let formatted = unsafe {                                             // c:125
-            tparm(t, pars[0], pars[1], pars[2], pars[3], pars[4],
-                       pars[5], pars[6], pars[7], pars[8])
+        let formatted = unsafe {
+            // c:125
+            tparm(
+                t, pars[0], pars[1], pars[2], pars[3], pars[4], pars[5], pars[6], pars[7], pars[8],
+            )
         };
         if !formatted.is_null() {
-            unsafe { putp(formatted); }
+            unsafe {
+                putp(formatted);
+            }
         }
     }
     drop(keep_alive);
-    0                                                                        // c:128
+    0 // c:128
 }
 
 /// Initialize the terminfo database for the current `$TERM`. Must
@@ -146,18 +178,23 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
 /// init_term path; collapsed into a OnceLock here since zshrs has no
 /// per-module init function shape.
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getterminfo(name: &str) -> Option<String> {                       // c:135
+pub fn getterminfo(name: &str) -> Option<String> {
+    // c:135
     const TERM_BAD: i32 = 1 << 1;
 
     // c:142 — `if (termflags & TERM_BAD) return NULL;`
-    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {              // c:142
-        return None;                                                      // c:143
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
+        // c:142
+        return None; // c:143
     }
     // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
-    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {          // c:144
-        let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
-        if interactive {                                                  // c:144
-            return None;                                                  // c:145
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
+        // c:144
+        let interactive =
+            crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+        if interactive {
+            // c:144
+            return None; // c:145
         }
     }
 
@@ -171,8 +208,8 @@ pub fn getterminfo(name: &str) -> Option<String> {                       // c:13
     }
 
     // c:147 — `nameu = dupstring(name); unmetafy(nameu, &len);`
-    let mut buf = name.as_bytes().to_vec();                               // c:147
-    crate::ported::utils::unmetafy(&mut buf);                             // c:148
+    let mut buf = name.as_bytes().to_vec(); // c:147
+    crate::ported::utils::unmetafy(&mut buf); // c:148
     let nameu = match std::str::from_utf8(&buf) {
         Ok(s) => s.to_string(),
         Err(_) => return None,
@@ -181,28 +218,37 @@ pub fn getterminfo(name: &str) -> Option<String> {                       // c:13
 
     // c:155 — `if (((num = tigetnum(nameu)) != -1) && (num != -2)) { ... PM_INTEGER; }`
     unsafe {
-        let n = tigetnum(cname.as_ptr());                                 // c:155
-        if n != -1 && n != -2 {                                           // c:155
+        let n = tigetnum(cname.as_ptr()); // c:155
+        if n != -1 && n != -2 {
+            // c:155
             // c:156-158 — pm->u.val = num; PM_INTEGER.
-            return Some(n.to_string());                                   // c:157
+            return Some(n.to_string()); // c:157
         }
         // c:159 — `else if ((num = tigetflag(nameu)) != -1) { PM_SCALAR; }`
-        let b = tigetflag(cname.as_ptr());                                // c:159
-        if b != -1 {                                                      // c:159
+        let b = tigetflag(cname.as_ptr()); // c:159
+        if b != -1 {
+            // c:159
             // c:160 — `pm->u.str = num ? dupstring("yes") : dupstring("no");`
-            return Some(if b != 0 { "yes".to_string() } else { "no".to_string() }); // c:160
+            return Some(if b != 0 {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            }); // c:160
         }
         // c:163 — `else if ((tistr = (char *)tigetstr(nameu)) != NULL && tistr != (char *)-1)`
-        let tistr = tigetstr(cname.as_ptr());                             // c:163
+        let tistr = tigetstr(cname.as_ptr()); // c:163
         let s_addr = tistr as isize;
-        if !tistr.is_null() && s_addr != -1 {                             // c:163
+        if !tistr.is_null() && s_addr != -1 {
+            // c:163
             // c:164 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
-            let raw = std::ffi::CStr::from_ptr(tistr).to_string_lossy().into_owned();
-            return Some(crate::ported::utils::metafy(&raw));              // c:164
+            let raw = std::ffi::CStr::from_ptr(tistr)
+                .to_string_lossy()
+                .into_owned();
+            return Some(crate::ported::utils::metafy(&raw)); // c:164
         }
     }
     // c:170 — fall through to PM_UNSET → empty string.
-    None                                                                  // c:170
+    None // c:170
 }
 
 // === auto-generated stubs ===
@@ -218,122 +264,129 @@ pub fn getterminfo(name: &str) -> Option<String> {                       // c:13
 /// Rust port returns `Vec<(String, String)>` since zshrs doesn't
 /// model the ScanFunc callback shape; iteration order matches C.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanterminfo() -> Vec<(String, String)> {                         // c:177
+pub fn scanterminfo() -> Vec<(String, String)> {
+    // c:177
     let mut out = Vec::new();
 
     // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
     // termflag check at getterminfo's entry mirrors here too.
     const TERM_BAD: i32 = 1 << 1;
-    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 { return out; }
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
+        return out;
+    }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
-        if interactive { return out; }
+        let interactive =
+            crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+        if interactive {
+            return out;
+        }
     }
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
     let ok = *INITIALIZED.get_or_init(|| {
         let mut errret: libc::c_int = 0;
         unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
     });
-    if !ok { return out; }
+    if !ok {
+        return out;
+    }
 
     // c:184-194 — boolnames fallback when libtermcap doesn't export them.
     let boolnames = [
-        "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl",
-        "eo", "gn", "hc", "chts", "km", "daisy", "hs", "hls", "in", "lpix",
-        "da", "db", "mir", "msgr", "nxon", "xsb", "npc", "ndscr", "nrrmc",
-        "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
+        "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl", "eo", "gn", "hc",
+        "chts", "km", "daisy", "hs", "hls", "in", "lpix", "da", "db", "mir", "msgr", "nxon", "xsb",
+        "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
     ];
     // c:198-204 — numnames.
     let numnames = [
-        "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors",
-        "pairs", "wnum", "ncv", "nlab", "pb", "vt", "wsl", "bitwin",
-        "bitype", "bufsz", "btns", "spinh", "spinv", "maddr", "mjump",
-        "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
+        "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv",
+        "nlab", "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr",
+        "mjump", "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
     ];
     // c:208-247 — strnames: full ~290-entry list matching the C source.
     let strnames: &[&str] = &[
-        "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp",
-        "tbc", "mgc", "clear", "el1", "el", "ed", "hpa", "cmdch", "cwin",
-        "cup", "cud1", "home", "civis", "cub1", "mrcup", "cnorm", "cuf1",
-        "ll", "cuu1", "cvvis", "defc", "dch1", "dl1", "dial", "dsl", "dclk",
-        "hd", "enacs", "smacs", "smam", "blink", "bold", "smcup", "smdc",
-        "dim", "swidm", "sdrfq", "smir", "sitm", "slm", "smicm", "snlq",
-        "snrmq", "prot", "rev", "invis", "sshm", "smso", "ssubm", "ssupm",
-        "smul", "sum", "smxon", "ech", "rmacs", "rmam", "sgr0", "rmcup",
-        "rmdc", "rwidm", "rmir", "ritm", "rlm", "rmicm", "rshm", "rmso",
-        "rsubm", "rsupm", "rmul", "rum", "rmxon", "pause", "hook", "flash",
-        "ff", "fsl", "wingo", "hup", "is1", "is2", "is3", "if", "iprog",
-        "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs",
-        "kbeg", "kcbt", "kc1", "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd",
-        "kcpy", "kcrt", "kctab", "kdch1", "kdl1", "kcud1", "krmir", "kend",
-        "kent", "kel", "ked", "kext", "kf0", "kf1", "kf10", "kf11", "kf12",
-        "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2",
-        "kf20", "kf21", "kf22", "kf23", "kf24", "kf25", "kf26", "kf27",
-        "kf28", "kf29", "kf3", "kf30", "kf31", "kf32", "kf33", "kf34",
-        "kf35", "kf36", "kf37", "kf38", "kf39", "kf4", "kf40", "kf41",
-        "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49",
-        "kf5", "kf50", "kf51", "kf52", "kf53", "kf54", "kf55", "kf56",
-        "kf57", "kf58", "kf59", "kf6", "kf60", "kf61", "kf62", "kf63",
-        "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1", "kil1",
-        "kcub1", "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn",
-        "kopt", "kpp", "kprv", "kprt", "krdo", "kref", "krfr", "krpl",
-        "krst", "kres", "kcuf1", "ksav", "kBEG", "kCAN", "kCMD", "kCPY",
-        "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind",
-        "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV", "kNXT",
-        "kOPT", "kPRV", "kPRT", "kri", "kRDO", "kRPL", "kRIT", "kRES",
-        "kSAV", "kSPD", "khts", "kUND", "kspd", "kund", "kcuu1", "rmkx",
-        "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6",
-        "lf7", "lf8", "lf9", "fln", "rmln", "smln", "rmm", "smm", "mhpa",
-        "mcud1", "mcub1", "mcuf1", "mvpa", "mcuu1", "nel", "porder", "oc",
-        "op", "pad", "dch", "dl", "cud", "mcud", "ich", "indn", "il", "cub",
-        "mcub", "cuf", "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc",
-        "pfx", "pln", "mc0", "mc5p", "mc4", "mc5", "pulse", "qdial",
-        "rmclk", "rep", "rfi", "rs1", "rs2", "rs3", "rf", "rc", "vpa",
-        "sc", "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk",
-        "scp", "setf", "smgl", "smglp", "smgr", "smgrp", "hts", "smgt",
-        "smgtp", "wind", "sbim", "scsd", "rbim", "rcsd", "subcs",
-        "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0", "u1",
-        "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "wait", "xoffc",
-        "xonc", "zerom", "scesa", "bicr", "binel", "birep", "csnm",
-        "csin", "colornm", "defbi", "devt", "dispc", "endbi", "smpch",
-        "smsc", "rmpch", "rmsc", "getm", "kmous", "minfo", "pctrm",
-        "pfxl", "reqmp", "scesc", "s0ds", "s1ds", "s2ds", "s3ds",
-        "setab", "setaf", "setcolor", "smglr", "slines", "smgtb",
-        "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm", "evhlm", "sgr1",
+        "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp", "tbc", "mgc",
+        "clear", "el1", "el", "ed", "hpa", "cmdch", "cwin", "cup", "cud1", "home", "civis", "cub1",
+        "mrcup", "cnorm", "cuf1", "ll", "cuu1", "cvvis", "defc", "dch1", "dl1", "dial", "dsl",
+        "dclk", "hd", "enacs", "smacs", "smam", "blink", "bold", "smcup", "smdc", "dim", "swidm",
+        "sdrfq", "smir", "sitm", "slm", "smicm", "snlq", "snrmq", "prot", "rev", "invis", "sshm",
+        "smso", "ssubm", "ssupm", "smul", "sum", "smxon", "ech", "rmacs", "rmam", "sgr0", "rmcup",
+        "rmdc", "rwidm", "rmir", "ritm", "rlm", "rmicm", "rshm", "rmso", "rsubm", "rsupm", "rmul",
+        "rum", "rmxon", "pause", "hook", "flash", "ff", "fsl", "wingo", "hup", "is1", "is2", "is3",
+        "if", "iprog", "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs", "kbeg",
+        "kcbt", "kc1", "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd", "kcpy", "kcrt", "kctab",
+        "kdch1", "kdl1", "kcud1", "krmir", "kend", "kent", "kel", "ked", "kext", "kf0", "kf1",
+        "kf10", "kf11", "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2",
+        "kf20", "kf21", "kf22", "kf23", "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf3",
+        "kf30", "kf31", "kf32", "kf33", "kf34", "kf35", "kf36", "kf37", "kf38", "kf39", "kf4",
+        "kf40", "kf41", "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49", "kf5",
+        "kf50", "kf51", "kf52", "kf53", "kf54", "kf55", "kf56", "kf57", "kf58", "kf59", "kf6",
+        "kf60", "kf61", "kf62", "kf63", "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1",
+        "kil1", "kcub1", "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn", "kopt", "kpp",
+        "kprv", "kprt", "krdo", "kref", "krfr", "krpl", "krst", "kres", "kcuf1", "ksav", "kBEG",
+        "kCAN", "kCMD", "kCPY", "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind",
+        "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV", "kNXT", "kOPT", "kPRV", "kPRT",
+        "kri", "kRDO", "kRPL", "kRIT", "kRES", "kSAV", "kSPD", "khts", "kUND", "kspd", "kund",
+        "kcuu1", "rmkx", "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6", "lf7",
+        "lf8", "lf9", "fln", "rmln", "smln", "rmm", "smm", "mhpa", "mcud1", "mcub1", "mcuf1",
+        "mvpa", "mcuu1", "nel", "porder", "oc", "op", "pad", "dch", "dl", "cud", "mcud", "ich",
+        "indn", "il", "cub", "mcub", "cuf", "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc", "pfx",
+        "pln", "mc0", "mc5p", "mc4", "mc5", "pulse", "qdial", "rmclk", "rep", "rfi", "rs1", "rs2",
+        "rs3", "rf", "rc", "vpa", "sc", "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk",
+        "scp", "setf", "smgl", "smglp", "smgr", "smgrp", "hts", "smgt", "smgtp", "wind", "sbim",
+        "scsd", "rbim", "rcsd", "subcs", "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0",
+        "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "wait", "xoffc", "xonc", "zerom",
+        "scesa", "bicr", "binel", "birep", "csnm", "csin", "colornm", "defbi", "devt", "dispc",
+        "endbi", "smpch", "smsc", "rmpch", "rmsc", "getm", "kmous", "minfo", "pctrm", "pfxl",
+        "reqmp", "scesc", "s0ds", "s1ds", "s2ds", "s3ds", "setab", "setaf", "setcolor", "smglr",
+        "slines", "smgtb", "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm", "evhlm", "sgr1",
         "slength",
     ];
 
     // c:257-263 — boolean caps: tigetflag → "yes" / "no", emit when num != -1.
-    for cap in &boolnames {                                               // c:257
-        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
-        let n = unsafe { tigetflag(cn.as_ptr()) };                        // c:258
-        if n != -1 {                                                      // c:258
-            let v = if n != 0 { "yes" } else { "no" };                    // c:259
-            out.push((cap.to_string(), v.to_string()));                   // c:261
+    for cap in &boolnames {
+        // c:257
+        let cn = match std::ffi::CString::new(*cap) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let n = unsafe { tigetflag(cn.as_ptr()) }; // c:258
+        if n != -1 {
+            // c:258
+            let v = if n != 0 { "yes" } else { "no" }; // c:259
+            out.push((cap.to_string(), v.to_string())); // c:261
         }
     }
 
     // c:268-275 — numeric caps.
-    for cap in &numnames {                                                // c:268
-        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
-        let n = unsafe { tigetnum(cn.as_ptr()) };                         // c:269
-        if n != -1 && n != -2 {                                           // c:269
-            out.push((cap.to_string(), n.to_string()));                   // c:270-272
+    for cap in &numnames {
+        // c:268
+        let cn = match std::ffi::CString::new(*cap) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let n = unsafe { tigetnum(cn.as_ptr()) }; // c:269
+        if n != -1 && n != -2 {
+            // c:269
+            out.push((cap.to_string(), n.to_string())); // c:270-272
         }
     }
 
     // c:280-287 — string caps: tigetstr → metafy, emit when non-NULL/-1.
-    for cap in strnames {                                                 // c:280
-        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
-        let raw = unsafe { tigetstr(cn.as_ptr()) };                       // c:281
+    for cap in strnames {
+        // c:280
+        let cn = match std::ffi::CString::new(*cap) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let raw = unsafe { tigetstr(cn.as_ptr()) }; // c:281
         let s_addr = raw as isize;
-        if !raw.is_null() && s_addr != -1 {                               // c:282
+        if !raw.is_null() && s_addr != -1 {
+            // c:282
             let bytes = unsafe { std::ffi::CStr::from_ptr(raw) }
                 .to_string_lossy()
                 .into_owned();
             // c:283 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
-            out.push((cap.to_string(),
-                      crate::ported::utils::metafy(&bytes)));             // c:283-285
+            out.push((cap.to_string(), crate::ported::utils::metafy(&bytes))); // c:283-285
         }
     }
     out
@@ -359,54 +412,56 @@ use crate::ported::zsh_h::module;
 
 // `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
 
-
 // `partab` — port of `static struct paramdef partab[]` (terminfo.c).
-
 
 // `module_features` — port of `static struct features module_features`
 // from terminfo.c:307.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:316`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:316
+pub fn setup_(m: *const module) -> i32 {
+    // c:316
     // C body c:318-319 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/terminfo.c:323`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:323
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:323
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/terminfo.c:331`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:331
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:331
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/terminfo.c:338`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:338
+pub fn boot_(m: *const module) -> i32 {
+    // c:338
     // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
     //                     return 0`. Initializes the terminfo database
     //                     for echoti/$terminfo to use.
-    let _ = crate::ported::utils::zsetupterm();                              // c:359
+    let _ = crate::ported::utils::zsetupterm(); // c:359
     0
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:349`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:349
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:349
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/terminfo.c:359`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:359
+pub fn finish_(m: *const module) -> i32 {
+    // c:359
     // C body c:361-362 — `return 0`. Faithful empty-body port; the
     //                    terminfo database is process-lifetime.
     0
@@ -420,18 +475,12 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 /// editing, sgr).
 pub const COMMON_STRING_CAPS: &[&str] = &[
     // Function keys F1-F20.
-    "kf1", "kf2", "kf3", "kf4", "kf5", "kf6", "kf7", "kf8", "kf9", "kf10",
-    "kf11", "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19",
-    "kf20",
-    // Cursor / arrow keys.
-    "kcuu1", "kcud1", "kcuf1", "kcub1",
-    // Navigation.
-    "khome", "kend", "kpp", "knp",
-    // Editing.
-    "kbs", "kich1", "kdch1",
-    // Clear / cursor positioning.
-    "clear", "ed", "el", "home", "civis", "cnorm",
-    // SGR.
+    "kf1", "kf2", "kf3", "kf4", "kf5", "kf6", "kf7", "kf8", "kf9", "kf10", "kf11", "kf12", "kf13",
+    "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf20", // Cursor / arrow keys.
+    "kcuu1", "kcud1", "kcuf1", "kcub1", // Navigation.
+    "khome", "kend", "kpp", "knp", // Editing.
+    "kbs", "kich1", "kdch1", // Clear / cursor positioning.
+    "clear", "ed", "el", "home", "civis", "cnorm", // SGR.
     "smso", "rmso", "smul", "rmul", "bold", "rev", "sgr0",
     // Application keypad / alt-screen / colour.
     "smkx", "rmkx", "smcup", "rmcup", "setaf", "setab",
@@ -443,7 +492,6 @@ use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -477,11 +525,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -512,17 +556,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 1,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 1,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -547,7 +593,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         assert_eq!(bin_echoti("echoti", &[], &ops, 0), 1);
     }
@@ -560,10 +608,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
-        let r = bin_echoti("echoti",
-            &["__not_a_terminfo_cap__".to_string()], &ops, 0);
+        let r = bin_echoti("echoti", &["__not_a_terminfo_cap__".to_string()], &ops, 0);
         assert_eq!(r, 1, "echoti must reject unknown caps, not emit garbage");
     }
 
@@ -576,11 +625,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // SAFETY: env mutation is process-global. Snapshot + restore.
         let old = std::env::var_os("TERM");
-        unsafe { std::env::set_var("TERM", "dumb"); }
+        unsafe {
+            std::env::set_var("TERM", "dumb");
+        }
         let _ = scanterminfo();
         match old {
-            Some(v) => unsafe { std::env::set_var("TERM", v); },
-            None    => unsafe { std::env::remove_var("TERM"); },
+            Some(v) => unsafe {
+                std::env::set_var("TERM", v);
+            },
+            None => unsafe {
+                std::env::remove_var("TERM");
+            },
         }
     }
 

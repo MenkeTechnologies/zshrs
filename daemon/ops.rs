@@ -4,31 +4,107 @@
 /// to validate availability before issuing requests. Kept alphabetically
 /// sorted so the wire output is stable.
 pub const OP_NAMES: &[&str] = &[
-    "artifact_gc", "artifact_get", "artifact_get_by_digest", "artifact_list",
+    "artifact_gc",
+    "artifact_get",
+    "artifact_get_by_digest",
+    "artifact_list",
     "artifact_put",
-    "ask_ask", "ask_dismiss", "ask_pending", "ask_response", "ask_take",
-    "cache_del", "cache_get", "cache_list", "cache_put", "cache_stats",
-    "canonical_hydrate_view", "clean", "cmd_result", "cmd_started", "compact",
-    "complete", "config_get", "config_list", "config_set", "daemon",
-    "definitions_diff", "definitions_emit", "definitions_kinds", "definitions_query",
-    "definitions_subscribe", "definitions_unsubscribe",
-    "diff_canonical", "doctor", "export", "export_all", "export_catalog",
-    "export_shard", "export_zcompdump", "fpath_changed", "highlight",
-    "history_append", "history_query", "import_all", "import_catalog",
-    "import_history", "import_shard", "import_zcompdump", "import_zwc",
-    "info", "job_cancel", "job_input", "job_kill", "job_list", "job_output",
-    "job_resize", "job_status", "job_submit", "job_wait", "keys", "list_shells",
+    "ask_ask",
+    "ask_dismiss",
+    "ask_pending",
+    "ask_response",
+    "ask_take",
+    "cache_del",
+    "cache_get",
+    "cache_list",
+    "cache_put",
+    "cache_stats",
+    "canonical_hydrate_view",
+    "clean",
+    "cmd_result",
+    "cmd_started",
+    "compact",
+    "complete",
+    "config_get",
+    "config_list",
+    "config_set",
+    "daemon",
+    "definitions_diff",
+    "definitions_emit",
+    "definitions_kinds",
+    "definitions_query",
+    "definitions_subscribe",
+    "definitions_unsubscribe",
+    "diff_canonical",
+    "doctor",
+    "export",
+    "export_all",
+    "export_catalog",
+    "export_shard",
+    "export_zcompdump",
+    "fpath_changed",
+    "highlight",
+    "history_append",
+    "history_query",
+    "import_all",
+    "import_catalog",
+    "import_history",
+    "import_shard",
+    "import_zcompdump",
+    "import_zwc",
+    "info",
+    "job_cancel",
+    "job_input",
+    "job_kill",
+    "job_list",
+    "job_output",
+    "job_resize",
+    "job_status",
+    "job_submit",
+    "job_wait",
+    "keys",
+    "list_shells",
     "load_script",
-    "lock_acquire", "lock_list", "lock_release", "lock_try_acquire",
-    "log_level", "log_rotate", "log_stats", "metrics", "notify", "ping", "publish",
-    "pull_canonical", "push_canonical", "recorder_ingest", "register",
-    "replay_log", "schedule_add", "schedule_add_once", "schedule_list",
-    "schedule_remove", "send", "snapshot_diff", "snapshot_list",
-    "snapshot_load", "snapshot_save", "source_resolve", "stats_flush",
+    "lock_acquire",
+    "lock_list",
+    "lock_release",
+    "lock_try_acquire",
+    "log_level",
+    "log_rotate",
+    "log_stats",
+    "metrics",
+    "notify",
+    "ping",
+    "publish",
+    "pull_canonical",
+    "push_canonical",
+    "recorder_ingest",
+    "register",
+    "replay_log",
+    "schedule_add",
+    "schedule_add_once",
+    "schedule_list",
+    "schedule_remove",
+    "send",
+    "snapshot_diff",
+    "snapshot_list",
+    "snapshot_load",
+    "snapshot_save",
+    "source_resolve",
+    "stats_flush",
     "subscribe",
-    "subscribe_shard", "subscription_set_paused", "suggest", "tag", "untag",
-    "unsubscribe", "verify", "view", "watch_list", "watch_subscribe",
-    "watch_unsubscribe", "watcher_stats",
+    "subscribe_shard",
+    "subscription_set_paused",
+    "suggest",
+    "tag",
+    "untag",
+    "unsubscribe",
+    "verify",
+    "view",
+    "watch_list",
+    "watch_subscribe",
+    "watch_unsubscribe",
+    "watcher_stats",
 ];
 
 // IPC operation dispatch + handlers.
@@ -135,32 +211,32 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 
         // ---- daemon-as-service ops (docs/DAEMON_AS_SERVICE.md) ----
         // Cache (sqlite-backed namespaced KV).
-        "cache_put"   => super::cache::op_cache_put(state, args).await,
-        "cache_get"   => super::cache::op_cache_get(state, args).await,
-        "cache_del"   => super::cache::op_cache_del(state, args).await,
-        "cache_list"  => super::cache::op_cache_list(state, args).await,
+        "cache_put" => super::cache::op_cache_put(state, args).await,
+        "cache_get" => super::cache::op_cache_get(state, args).await,
+        "cache_del" => super::cache::op_cache_del(state, args).await,
+        "cache_list" => super::cache::op_cache_list(state, args).await,
         "cache_stats" => super::cache::op_cache_stats(state, args).await,
         // Lock (named cross-process mutex with PID-tied auto-release).
-        "lock_acquire"     => super::lock::op_lock_acquire(state, args).await,
+        "lock_acquire" => super::lock::op_lock_acquire(state, args).await,
         "lock_try_acquire" => super::lock::op_lock_try_acquire(state, args).await,
-        "lock_release"     => super::lock::op_lock_release(state, args).await,
-        "lock_list"        => super::lock::op_lock_list(state, args).await,
+        "lock_release" => super::lock::op_lock_release(state, args).await,
+        "lock_list" => super::lock::op_lock_list(state, args).await,
         // Artifact (content-addressed cache).
-        "artifact_put"            => super::artifact::op_artifact_put(state, args).await,
-        "artifact_get"            => super::artifact::op_artifact_get(state, args).await,
-        "artifact_get_by_digest"  => super::artifact::op_artifact_get_by_digest(state, args).await,
-        "artifact_gc"             => super::artifact::op_artifact_gc(state, args).await,
-        "artifact_list"           => super::artifact::op_artifact_list(state, args).await,
+        "artifact_put" => super::artifact::op_artifact_put(state, args).await,
+        "artifact_get" => super::artifact::op_artifact_get(state, args).await,
+        "artifact_get_by_digest" => super::artifact::op_artifact_get_by_digest(state, args).await,
+        "artifact_gc" => super::artifact::op_artifact_gc(state, args).await,
+        "artifact_list" => super::artifact::op_artifact_list(state, args).await,
         // Snapshot (tag-based canonical-state save/load/diff).
         "snapshot_save" => super::snapshot::op_snapshot_save(state, args).await,
         "snapshot_list" => super::snapshot::op_snapshot_list(state, args).await,
         "snapshot_load" => super::snapshot::op_snapshot_load(state, args).await,
         "snapshot_diff" => super::snapshot::op_snapshot_diff(state, args).await,
         // Schedule (cron-equivalent).
-        "schedule_add"      => super::schedule::op_schedule_add(state, args).await,
+        "schedule_add" => super::schedule::op_schedule_add(state, args).await,
         "schedule_add_once" => super::schedule::op_schedule_add_once(state, args).await,
-        "schedule_remove"   => super::schedule::op_schedule_remove(state, args).await,
-        "schedule_list"     => super::schedule::op_schedule_list(state, args).await,
+        "schedule_remove" => super::schedule::op_schedule_remove(state, args).await,
+        "schedule_list" => super::schedule::op_schedule_list(state, args).await,
         // Definitions (recorder catalog: query, single-record write,
         // cross-shell diff). `definitions_emit` is the universal
         // shell-recorder write API per docs/DAEMON_AS_SERVICE.md +
@@ -168,15 +244,19 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         // the federated catalog through this op.
         "definitions_query" => super::definitions::op_definitions_query(state, args).await,
         "definitions_kinds" => super::definitions::op_definitions_kinds(state, args).await,
-        "definitions_emit"  => super::definitions::op_definitions_emit(state, args).await,
-        "definitions_diff"  => super::definitions::op_definitions_diff(state, args).await,
-        "definitions_subscribe"   => super::definitions::op_definitions_subscribe(state, client_id, args).await,
-        "definitions_unsubscribe" => super::definitions::op_definitions_unsubscribe(state, client_id, args).await,
+        "definitions_emit" => super::definitions::op_definitions_emit(state, args).await,
+        "definitions_diff" => super::definitions::op_definitions_diff(state, args).await,
+        "definitions_subscribe" => {
+            super::definitions::op_definitions_subscribe(state, client_id, args).await
+        }
+        "definitions_unsubscribe" => {
+            super::definitions::op_definitions_unsubscribe(state, client_id, args).await
+        }
         // Refcounted fsnotify subscription — IPC counterpart of HTTP
         // /stream/watch. See `op_watch_subscribe` below for the contract.
-        "watch_subscribe"   => op_watch_subscribe(state, args).await,
+        "watch_subscribe" => op_watch_subscribe(state, args).await,
         "watch_unsubscribe" => op_watch_unsubscribe(state, args).await,
-        "watch_list"        => op_watch_list(state).await,
+        "watch_list" => op_watch_list(state).await,
         // Metrics (Prometheus-shaped also via GET /metrics).
         "metrics" => super::metrics::op_metrics(state, args).await,
 
@@ -1496,11 +1576,12 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // map4 borrows + clones so the source HashMap stays available for
     // the rkyv shard build below. Per-kind clone is microseconds even
     // at zpwr scale.
-    let map4 = |m: &HashMap<String, AttrRow>| -> Vec<(String, String, Option<String>, Option<u32>)> {
-        m.iter()
-            .map(|(k, (v, file, line))| (k.clone(), json_string(v), file.clone(), *line))
-            .collect()
-    };
+    let map4 =
+        |m: &HashMap<String, AttrRow>| -> Vec<(String, String, Option<String>, Option<u32>)> {
+            m.iter()
+                .map(|(k, (v, file, line))| (k.clone(), json_string(v), file.clone(), *line))
+                .collect()
+        };
     canon.replace_subsystem_with_attrs("alias", map4(&aliases), None, sid());
     canon.replace_subsystem_with_attrs("galias", map4(&galias), None, sid());
     canon.replace_subsystem_with_attrs("salias", map4(&salias), None, sid());
@@ -1564,9 +1645,7 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         sourced
             .iter()
             .enumerate()
-            .map(|(i, (p, (_v, file, line)))| {
-                (i.to_string(), json_string(p), file.clone(), *line)
-            })
+            .map(|(i, (p, (_v, file, line)))| (i.to_string(), json_string(p), file.clone(), *line))
             .collect::<Vec<_>>(),
         None,
         sid(),
@@ -1576,9 +1655,7 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         path_acc
             .iter()
             .enumerate()
-            .map(|(i, (d, (_v, file, line)))| {
-                (i.to_string(), json_string(d), file.clone(), *line)
-            })
+            .map(|(i, (d, (_v, file, line)))| (i.to_string(), json_string(d), file.clone(), *line))
             .collect::<Vec<_>>(),
         None,
         sid(),
@@ -1588,9 +1665,7 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         fpath_acc
             .iter()
             .enumerate()
-            .map(|(i, (d, (_v, file, line)))| {
-                (i.to_string(), json_string(d), file.clone(), *line)
-            })
+            .map(|(i, (d, (_v, file, line)))| (i.to_string(), json_string(d), file.clone(), *line))
             .collect::<Vec<_>>(),
         None,
         sid(),
@@ -1617,14 +1692,17 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // only in the in-memory canonical state for `zwhere` queries
     // (survives until daemon restart, then needs a recorder re-run).
     let flatten_map = |m: &HashMap<String, AttrRow>| -> HashMap<String, String> {
-        m.iter().map(|(k, (v, _, _))| (k.clone(), v.clone())).collect()
+        m.iter()
+            .map(|(k, (v, _, _))| (k.clone(), v.clone()))
+            .collect()
     };
     let flatten_vec_kv = |v: &Vec<(String, AttrRow)>| -> Vec<(String, String)> {
-        v.iter().map(|(k, (val, _, _))| (k.clone(), val.clone())).collect()
+        v.iter()
+            .map(|(k, (val, _, _))| (k.clone(), val.clone()))
+            .collect()
     };
-    let flatten_vec_v = |v: &Vec<(String, AttrRow)>| -> Vec<String> {
-        v.iter().map(|(k, _)| k.clone()).collect()
-    };
+    let flatten_vec_v =
+        |v: &Vec<(String, AttrRow)>| -> Vec<String> { v.iter().map(|(k, _)| k.clone()).collect() };
     let shard = super::shard::CanonicalShard {
         header,
         aliases: flatten_map(&aliases),
@@ -1694,11 +1772,10 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // Targeted broadcast — only clients that called `definitions_subscribe`
     // (or HTTP /stream/definitions, which auto-subscribes its synthetic
     // session) receive this frame. Silent IPC sessions stay quiet.
-    let _ = state
-        .broadcast_to_definitions_subscribers(super::ipc::Frame::event(
-            "recorder_ingested",
-            payload.clone(),
-        ));
+    let _ = state.broadcast_to_definitions_subscribers(super::ipc::Frame::event(
+        "recorder_ingested",
+        payload.clone(),
+    ));
     tracing::info!(
         events = total,
         hydrated,
@@ -1845,8 +1922,9 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         }
         "log" => {
             // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
-            for entry in
-                std::fs::read_dir(&paths.root).map_err(|e| ErrPayload::new("io", e.to_string()))?.flatten()
+            for entry in std::fs::read_dir(&paths.root)
+                .map_err(|e| ErrPayload::new("io", e.to_string()))?
+                .flatten()
             {
                 let name = entry.file_name();
                 let s = name.to_string_lossy();
@@ -2170,11 +2248,13 @@ async fn op_watch_list(state: &Arc<DaemonState>) -> OpResult {
     let subs = state.fs_watcher.list_subscriptions();
     let entries: Vec<Value> = subs
         .into_iter()
-        .map(|(id, path, count)| json!({
-            "watch_id": id,
-            "path": path,
-            "ref_count": count,
-        }))
+        .map(|(id, path, count)| {
+            json!({
+                "watch_id": id,
+                "path": path,
+                "ref_count": count,
+            })
+        })
         .collect();
     let count = entries.len();
     Ok(json!({
@@ -2564,9 +2644,9 @@ async fn op_export_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .unwrap_or_default()
         .into_iter()
         .find(|p| {
-            p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
-                s.contains(&format!("-{}.rkyv", name)) || s.contains(&name)
-            })
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.contains(&format!("-{}.rkyv", name)) || s.contains(&name))
         })
         .ok_or_else(|| ErrPayload::new("no_shard", format!("shard `{}` not found", name)))?;
 
@@ -3973,10 +4053,12 @@ async fn op_job_input(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `bytes_b64`"))?;
     let bytes = base64_decode(b64)
         .map_err(|e| ErrPayload::new("bad_args", format!("decode bytes_b64: {e}")))?;
-    let handle = state
-        .jobs
-        .pty_handle_for(id)
-        .ok_or_else(|| ErrPayload::new("not_pty", format!("job {id} is not pty-mode (resubmit with pty=true)")))?;
+    let handle = state.jobs.pty_handle_for(id).ok_or_else(|| {
+        ErrPayload::new(
+            "not_pty",
+            format!("job {id} is not pty-mode (resubmit with pty=true)"),
+        )
+    })?;
     let n = handle
         .write(&bytes)
         .map_err(|e| ErrPayload::new("write_failed", e.to_string()))?;
@@ -3994,13 +4076,11 @@ async fn op_job_resize(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let rows = args
         .get("rows")
         .and_then(Value::as_u64)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing `rows`"))?
-        as u16;
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `rows`"))? as u16;
     let cols = args
         .get("cols")
         .and_then(Value::as_u64)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing `cols`"))?
-        as u16;
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `cols`"))? as u16;
     let handle = state
         .jobs
         .pty_handle_for(id)

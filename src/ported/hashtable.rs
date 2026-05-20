@@ -17,12 +17,14 @@
 
 #![allow(non_camel_case_types)]
 
+use crate::ported::zsh_h::{
+    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF,
+    INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND,
+};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
-use crate::ported::zsh_h::{BANG_TOK, DINBRACK, INBRACE_TOK, OUTBRACE_TOK, CASE, COPROC, DOLOOP, DONE, ELIF, ELSE, ZEND, ESAC, FI, FOR, FOREACH, FUNC, IF, NOCORRECT, REPEAT, SELECT, THEN, TIME, UNTIL, WHILE, TYPESET, };
-
+use std::path::PathBuf;
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -30,7 +32,8 @@ use crate::ported::zsh_h::{BANG_TOK, DINBRACK, INBRACE_TOK, OUTBRACE_TOK, CASE, 
 // Generic hash function                                                    // c:86
 /// `hash * 33 + char` polynomial the C source uses for every
 /// HashTable lookup.
-pub fn hasher(str: &str) -> u32 {                                              // c:86
+pub fn hasher(str: &str) -> u32 {
+    // c:86
     let mut hashval: u32 = 0;
     for c in str.bytes() {
         hashval = hashval.wrapping_add(hashval.wrapping_shl(5).wrapping_add(c as u32));
@@ -59,7 +62,8 @@ pub fn hasher(str: &str) -> u32 {                                              /
 /// type has its own constructor. Provided for C name parity.
 // Get a new hash table                                                     // c:100
 /// WARNING: param names don't match C — Rust=(size, name) vs C=(size, name, printinfo)
-pub fn newhashtable(size: i32, name: &str) -> (String, i32) {               // c:100
+pub fn newhashtable(size: i32, name: &str) -> (String, i32) {
+    // c:100
     (name.to_string(), size)
 }
 
@@ -70,7 +74,8 @@ pub fn newhashtable(size: i32, name: &str) -> (String, i32) {               // c
 /// it falls out of scope. The free fn here calls clear on the
 /// passed map for C name parity at call sites that explicitly
 /// invoke deletehashtable.
-pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {                    // c:129
+pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {
+    // c:129
     ht.clear();
 }
 
@@ -93,7 +98,8 @@ pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {                    // c
 // `cmd: Option<String>` and `dir_index: Option<usize>` becomes
 // `name: Option<Vec<String>>` (the full PATH-segment slice the
 // command would be looked up against).
-pub use crate::ported::zsh_h::cmdnam as CmdName;                             // c:1301
+pub use crate::ported::zsh_h::cmdnam as CmdName;
+// c:1301
 
 /// Port of `addhashnode(HashTable ht, char *nam, void *nodeptr)` from `Src/hashtable.c:157`.
 ///
@@ -110,7 +116,8 @@ pub use crate::ported::zsh_h::cmdnam as CmdName;                             // 
 /// equivalent of `freenode`). For typed table-specific entry
 /// shapes use the table's own `add()` method.
 // Add a node to a hash table, returning the old node on replacement.      // c:168
-pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {    // c:157
+pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {
+    // c:157
     ht.insert(nam.to_string(), value);
 }
 
@@ -120,7 +127,8 @@ pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {    // 
 /// C body inserts and returns the OLD node (instead of freeing
 /// it via the freenode callback). Rust HashMap::insert already
 /// has this shape — return the displaced value.
-pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, nodeptr: T) -> Option<T> { // c:168
+pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, nodeptr: T) -> Option<T> {
+    // c:168
     ht.insert(nam.to_string(), nodeptr)
 }
 
@@ -133,7 +141,8 @@ pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, nodeptr: T) -> Op
 /// expose its DISABLED flag via the [`HashNodeFlags`] trait so
 /// the disabled filter applies.
 /// WARNING: param names don't match C — Rust=(nam) vs C=(ht, nam)
-pub fn gethashnode<'a, T: HashNodeFlags>(                                    // c:231
+pub fn gethashnode<'a, T: HashNodeFlags>(
+    // c:231
     ht: &'a HashMap<String, T>,
     nam: &str,
 ) -> Option<&'a T> {
@@ -164,7 +173,8 @@ impl cmdnam_table {
     }
 
     pub fn get(&self, name: &str) -> Option<&CmdName> {
-        self.table.get(name)
+        self.table
+            .get(name)
             .filter(|c| (c.node.flags & DISABLED as i32) == 0)
     }
 
@@ -232,12 +242,13 @@ impl cmdnam_table {
                 // segment at `dir_index` so lookup later resolves
                 // the path. Older Rust-only code stored just the
                 // index; canonical port stores the actual segment.
-                let segment = self.path.get(dir_index).cloned()
+                let segment = self
+                    .path
+                    .get(dir_index)
+                    .cloned()
                     .unwrap_or_else(|| dir.to_string());
-                self.table.insert(
-                    name.clone(),
-                    cmdnam_unhashed(&name, vec![segment]),
-                );
+                self.table
+                    .insert(name.clone(), cmdnam_unhashed(&name, vec![segment]));
             }
         }
     }
@@ -304,12 +315,14 @@ impl Default for cmdnam_table {
 // `ShFunc.body` access continue working. Type alias surfaces
 // canonical as `ShFunc`; helpers below build instances with the
 // hashnode literal pre-populated.
-pub use crate::ported::zsh_h::shfunc as ShFunc;                              // c:1316
+pub use crate::ported::zsh_h::shfunc as ShFunc;
+// c:1316
 
 /// Port of `gethashnode2(HashTable ht, const char *nam)` from `Src/hashtable.c:255`.
 ///
 /// Same as gethashnode but bypasses the DISABLED filter.
-pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a T> { // c:255
+pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a T> {
+    // c:255
     ht.get(nam)
 }
 
@@ -320,7 +333,8 @@ pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a 
 /// C body removes the node from the bucket chain and returns the
 /// removed pointer (or NULL). Rust `HashMap::remove` has the
 /// matching shape.
-pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { // c:275
+pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> {
+    // c:275
     ht.remove(nam)
 }
 
@@ -329,7 +343,12 @@ pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { 
 /// C body: `hn->flags |= DISABLED;`. Generic helper that flips
 /// the DISABLED bit on the named entry via [`HashNodeFlags`].
 pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    hn.get_mut(flags).map(|node| { node.set_disabled(true); true }).unwrap_or(false)   // c:323
+    hn.get_mut(flags)
+        .map(|node| {
+            node.set_disabled(true);
+            true
+        })
+        .unwrap_or(false) // c:323
 }
 
 impl shfunc_table {
@@ -424,13 +443,19 @@ impl Default for shfunc_table {
 // Rust-only had `name, flags: u32, token: i32` (missing the
 // hashnode embedding). Type alias surfaces the canonical struct
 // to in-file callers and external imports.
-pub use crate::ported::zsh_h::reswd as Reswd;                                // c:1246
+pub use crate::ported::zsh_h::reswd as Reswd;
+// c:1246
 
 /// Port of `enablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:332`.
 ///
 /// C body: `hn->flags &= ~DISABLED;`. Inverse of [`disablehashnode`].
 pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    hn.get_mut(flags).map(|node| { node.set_disabled(false); true }).unwrap_or(false)  // c:332
+    hn.get_mut(flags)
+        .map(|node| {
+            node.set_disabled(false);
+            true
+        })
+        .unwrap_or(false) // c:332
 }
 
 impl reswd_table {
@@ -440,38 +465,39 @@ impl reswd_table {
         // Direct port of `static struct reswd reswds[]` at
         // Src/hashtable.c:1076-1108. Token IDs are the lextok
         // constants from zsh_h.rs (zsh.h:345-371).
-        let words: [(&str, i32); 31] = [                                     // c:1076
-            ("!",         BANG_TOK),                                         // c:1077
-            ("[[",        DINBRACK),                                         // c:1078
-            ("{",         INBRACE_TOK),                                      // c:1079
-            ("}",         OUTBRACE_TOK),                                     // c:1080
-            ("case",      CASE),                                             // c:1081
-            ("coproc",    COPROC),                                           // c:1082
-            ("declare",   TYPESET),                                          // c:1083
-            ("do",        DOLOOP),                                           // c:1084
-            ("done",      DONE),                                             // c:1085
-            ("elif",      ELIF),                                             // c:1086
-            ("else",      ELSE),                                             // c:1087
-            ("end",       ZEND),                                             // c:1088
-            ("esac",      ESAC),                                             // c:1089
-            ("export",    TYPESET),                                          // c:1090
-            ("fi",        FI),                                               // c:1091
-            ("float",     TYPESET),                                          // c:1092
-            ("for",       FOR),                                              // c:1093
-            ("foreach",   FOREACH),                                          // c:1094
-            ("function",  FUNC),                                             // c:1095
-            ("if",        IF),                                               // c:1096
-            ("integer",   TYPESET),                                          // c:1097
-            ("local",     TYPESET),                                          // c:1098
-            ("nocorrect", NOCORRECT),                                        // c:1099
-            ("readonly",  TYPESET),                                          // c:1100
-            ("repeat",    REPEAT),                                           // c:1101
-            ("select",    SELECT),                                           // c:1102
-            ("then",      THEN),                                             // c:1103
-            ("time",      TIME),                                             // c:1104
-            ("typeset",   TYPESET),                                          // c:1105
-            ("until",     UNTIL),                                            // c:1106
-            ("while",     WHILE),                                            // c:1107
+        let words: [(&str, i32); 31] = [
+            // c:1076
+            ("!", BANG_TOK),          // c:1077
+            ("[[", DINBRACK),         // c:1078
+            ("{", INBRACE_TOK),       // c:1079
+            ("}", OUTBRACE_TOK),      // c:1080
+            ("case", CASE),           // c:1081
+            ("coproc", COPROC),       // c:1082
+            ("declare", TYPESET),     // c:1083
+            ("do", DOLOOP),           // c:1084
+            ("done", DONE),           // c:1085
+            ("elif", ELIF),           // c:1086
+            ("else", ELSE),           // c:1087
+            ("end", ZEND),            // c:1088
+            ("esac", ESAC),           // c:1089
+            ("export", TYPESET),      // c:1090
+            ("fi", FI),               // c:1091
+            ("float", TYPESET),       // c:1092
+            ("for", FOR),             // c:1093
+            ("foreach", FOREACH),     // c:1094
+            ("function", FUNC),       // c:1095
+            ("if", IF),               // c:1096
+            ("integer", TYPESET),     // c:1097
+            ("local", TYPESET),       // c:1098
+            ("nocorrect", NOCORRECT), // c:1099
+            ("readonly", TYPESET),    // c:1100
+            ("repeat", REPEAT),       // c:1101
+            ("select", SELECT),       // c:1102
+            ("then", THEN),           // c:1103
+            ("time", TIME),           // c:1104
+            ("typeset", TYPESET),     // c:1105
+            ("until", UNTIL),         // c:1106
+            ("while", WHILE),         // c:1107
         ];
 
         for (name, token) in words {
@@ -496,7 +522,8 @@ impl reswd_table {
     }
 
     pub fn get(&self, name: &str) -> Option<&Reswd> {
-        self.table.get(name)
+        self.table
+            .get(name)
             .filter(|r| (r.node.flags & DISABLED as i32) == 0)
     }
 
@@ -544,7 +571,9 @@ impl Default for reswd_table {
 // had a flat `name: String, flags: u32, text: String, inuse: i32`
 // (missing the hashnode embedding).
 pub use crate::ported::zsh_h::alias as Alias;
-use crate::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED};
+use crate::zsh_h::{
+    ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED,
+};
 
 /// Port of `static int hnamcmp(const void *ap, const void *bp)`
 /// from `Src/hashtable.c:341-346`. C body:
@@ -565,7 +594,7 @@ use crate::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_
 /// `functions`, `alias`, etc. sort their key listings the same way
 /// C does for Meta-encoded names.
 pub fn hnamcmp(ap: &str, bp: &str) -> std::cmp::Ordering {
-    crate::ported::utils::ztrcmp(ap, bp)                                     // c:345
+    crate::ported::utils::ztrcmp(ap, bp) // c:345
 }
 
 /// Port of `scanmatchtable(HashTable ht, Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags)` from `Src/hashtable.c:373`.
@@ -593,7 +622,7 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
         // port used `str::cmp` (naive byte-wise) which sorts Meta-
         // encoded hash keys incorrectly. Use the canonical hnamcmp
         // to match C's qsort comparator exactly.
-        entries.sort_by(|a, b| hnamcmp(a.0, b.0));                           // c:400
+        entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:400
     }
     let mut match_count = 0;
     for (name, node) in entries {
@@ -626,8 +655,8 @@ impl alias_table {
         let mut table = Self::new();
         // C addaliasnode(aliastab, "run-help", createaliasnode("man", 0));
         // at hashtable.c:1215-1216.
-        table.add(createaliasnode("run-help", "man", 0));                    // c:1215
-        table.add(createaliasnode("which-command", "whence", 0));            // c:1216
+        table.add(createaliasnode("run-help", "man", 0)); // c:1215
+        table.add(createaliasnode("which-command", "whence", 0)); // c:1216
         table
     }
 
@@ -636,7 +665,8 @@ impl alias_table {
     }
 
     pub fn get(&self, name: &str) -> Option<&Alias> {
-        self.table.get(name)
+        self.table
+            .get(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
@@ -645,7 +675,8 @@ impl alias_table {
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Alias> {
-        self.table.get_mut(name)
+        self.table
+            .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
@@ -715,8 +746,6 @@ pub fn scanhashtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
     scanmatchtable(ht, None, sorted, flags1, flags2, func)
 }
 
-
-
 /// Port of `expandhashtable(HashTable ht)` from `Src/hashtable.c:458`.
 ///
 /// C grows the bucket array when load factor exceeds threshold.
@@ -748,7 +777,8 @@ pub fn resizehashtable<T>(ht: &mut HashMap<String, T>, newsize: i32) {
 /// C body: `resizehashtable(ht, ht->hsize);` — drop all nodes
 /// while keeping the bucket array. Rust HashMap::clear preserves
 /// capacity, matching the semantic.
-pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {                     // c:519
+pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {
+    // c:519
     ht.clear();
 }
 
@@ -774,7 +804,8 @@ pub mod print_flags {
 /// chain length, so we emit name+capacity+len — the equivalent
 /// visibility under Rust's std::collections backend.
 /// WARNING: param names don't match C — Rust=(name, ht) vs C=(ht)
-pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String { // c:78
+pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String {
+    // c:78
     format!(
         "name of table   : {}\nsize of nodes[] : {}\nnumber of nodes : {}",
         name,
@@ -841,7 +872,10 @@ pub fn createcmdnamtable() {
 /// re-scan from the start.
 /// WARNING: param names don't match C — Rust=() vs C=(ht)
 pub fn emptycmdnamtable() {
-    cmdnamtab_lock().write().expect("cmdnamtab poisoned").clear();
+    cmdnamtab_lock()
+        .write()
+        .expect("cmdnamtab poisoned")
+        .clear();
 }
 
 /// Port of `hashdir(char **dirp)` from `Src/hashtable.c:634`.
@@ -903,10 +937,14 @@ pub fn printcmdnamnode(cmd: &CmdName, _path: &[String], print_flags: u32) -> Str
     // Resolved path either from cn->u.cmd (HASHED) or from first
     // entry of cn->u.name (unhashed PATH-array slice).
     let resolved = || -> Option<String> {
-        if is_hashed { cmd.cmd.clone() }
-        else { cmd.name.as_ref()
-                 .and_then(|v| v.first())
-                 .map(|seg| format!("{}/{}", seg, name)) }
+        if is_hashed {
+            cmd.cmd.clone()
+        } else {
+            cmd.name
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|seg| format!("{}/{}", seg, name))
+        }
     };
 
     if print_flags & print_flags::WHENCE_WORD != 0 {
@@ -930,7 +968,11 @@ pub fn printcmdnamnode(cmd: &CmdName, _path: &[String], print_flags: u32) -> Str
         return format!("{} is {}\n", name, name);
     }
     if print_flags & print_flags::LIST != 0 {
-        let prefix = if name.starts_with('-') { "hash -- " } else { "hash " };
+        let prefix = if name.starts_with('-') {
+            "hash -- "
+        } else {
+            "hash "
+        };
         if let Some(p) = resolved() {
             return format!("{}{}={}\n", prefix, name, p);
         }
@@ -1048,11 +1090,7 @@ pub fn enableshfuncnode(hn: &str) {
             // c:882 — `settrap(sigidx, NULL, ZSIG_FUNC)`. The TRAPxxx
             // function body resolves through shfunctab at dispatch
             // (`gettrapnode`), not via the trap arrays directly.
-            let _ = crate::ported::signals::settrap(
-                sig,
-                None,
-                crate::ported::zsh_h::ZSIG_FUNC,
-            );
+            let _ = crate::ported::signals::settrap(sig, None, crate::ported::zsh_h::ZSIG_FUNC);
         }
     }
 }
@@ -1261,31 +1299,33 @@ pub fn printreswdnode(hn: &str, printflags: u32) -> String {
 /// the C-style slot. Mirror the C structure verbatim: assign every slot
 /// either to the matching adapter or `None`, with each line citing the
 /// matching c:NNN.
-pub fn createaliastable(ht: &mut crate::ported::zsh_h::hashtable) {          // c:1188
-    fn cmpnodes_strcmp(a: &str, b: &str) -> i32 {                            // c:1193 strcmp
+pub fn createaliastable(ht: &mut crate::ported::zsh_h::hashtable) {
+    // c:1188
+    fn cmpnodes_strcmp(a: &str, b: &str) -> i32 {
+        // c:1193 strcmp
         a.cmp(b) as i32
     }
-    ht.hash        = Some(hasher);                                           // c:1190
-    ht.emptytable  = None;                                                   // c:1191
-    ht.filltable   = None;                                                   // c:1192
-    ht.cmpnodes    = Some(cmpnodes_strcmp);                                  // c:1193
-    // c:1194-1201 — addnode/getnode/getnode2/removenode/disablenode/
-    // enablenode/freenode/printnode: their C signatures are `void(*)(
-    // HashTable, char *, void *)` / `HashNode(*)(HashTable, char *)` /
-    // ... — they take untyped `void *`. The typed Rust helpers
-    // (`addhashnode<T>(ht: &mut HashMap<String, T>, ...)`) can't be
-    // coerced through the `fn(&mut hashtable, String, usize)` slot
-    // shape without per-value-type trampoline closures. Leave the
-    // slots `None`; the typed dispatch through `aliastab_lock` is the
-    // canonical Rust path for this table.
-    ht.addnode     = None;                                                   // c:1194 addhashnode
-    ht.getnode     = None;                                                   // c:1195 gethashnode
-    ht.getnode2    = None;                                                   // c:1196 gethashnode2
-    ht.removenode  = None;                                                   // c:1197 removehashnode
-    ht.disablenode = None;                                                   // c:1198 disablehashnode
-    ht.enablenode  = None;                                                   // c:1199 enablehashnode
-    ht.freenode    = None;                                                   // c:1200 freealiasnode
-    ht.printnode   = None;                                                   // c:1201 printaliasnode
+    ht.hash = Some(hasher); // c:1190
+    ht.emptytable = None; // c:1191
+    ht.filltable = None; // c:1192
+    ht.cmpnodes = Some(cmpnodes_strcmp); // c:1193
+                                         // c:1194-1201 — addnode/getnode/getnode2/removenode/disablenode/
+                                         // enablenode/freenode/printnode: their C signatures are `void(*)(
+                                         // HashTable, char *, void *)` / `HashNode(*)(HashTable, char *)` /
+                                         // ... — they take untyped `void *`. The typed Rust helpers
+                                         // (`addhashnode<T>(ht: &mut HashMap<String, T>, ...)`) can't be
+                                         // coerced through the `fn(&mut hashtable, String, usize)` slot
+                                         // shape without per-value-type trampoline closures. Leave the
+                                         // slots `None`; the typed dispatch through `aliastab_lock` is the
+                                         // canonical Rust path for this table.
+    ht.addnode = None; // c:1194 addhashnode
+    ht.getnode = None; // c:1195 gethashnode
+    ht.getnode2 = None; // c:1196 gethashnode2
+    ht.removenode = None; // c:1197 removehashnode
+    ht.disablenode = None; // c:1198 disablehashnode
+    ht.enablenode = None; // c:1199 enablehashnode
+    ht.freenode = None; // c:1200 freealiasnode
+    ht.printnode = None; // c:1201 printaliasnode
 }
 
 /// Trait exposing the DISABLED flag on a hash-node value.
@@ -1303,7 +1343,7 @@ pub trait HashNodeFlags {
     }
 }
 
-impl HashNodeFlags for Alias {  
+impl HashNodeFlags for Alias {
     fn flags(&self) -> u32 {
         self.node.flags as u32
     }
@@ -1376,10 +1416,10 @@ pub fn createaliastables() {
     let mut tab = aliastab_lock().write().expect("aliastab poisoned");
     // c:1215 — `aliastab->addnode(aliastab, ztrdup("run-help"),
     //                              createaliasnode(ztrdup("man"), 0));`
-    tab.add(createaliasnode("run-help", "man", 0));                          // c:1215
-    // c:1216 — `aliastab->addnode(aliastab, ztrdup("which-command"),
-    //                              createaliasnode(ztrdup("whence"), 0));`
-    tab.add(createaliasnode("which-command", "whence", 0));                  // c:1216
+    tab.add(createaliasnode("run-help", "man", 0)); // c:1215
+                                                    // c:1216 — `aliastab->addnode(aliastab, ztrdup("which-command"),
+                                                    //                              createaliasnode(ztrdup("whence"), 0));`
+    tab.add(createaliasnode("which-command", "whence", 0)); // c:1216
     drop(tab);
     // c:1221 — newhashtable(11, "sufaliastab", NULL)
     // c:1223 — createaliastable(sufaliastab)
@@ -1391,7 +1431,8 @@ pub fn createaliastables() {
 /// Mirrors C `addaliasnode(aliastab, name, createaliasnode(text, flags))`
 /// at hashtable.c:1230 — caller-side bundle for the
 /// hashnode+text+flags inline-build.
-pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {        // c:1230
+pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {
+    // c:1230
     Alias {
         node: crate::ported::zsh_h::hashnode {
             next: None,
@@ -1441,30 +1482,45 @@ pub fn printaliasnode(hn: &Alias, printflags: u32) -> String {
         return nam.clone();
     }
     if printflags & print_flags::WHENCE_WORD != 0 {
-        let kind = if is_suffix { "suffix alias" }
-                   else if is_global { "global alias" }
-                   else { "alias" };
+        let kind = if is_suffix {
+            "suffix alias"
+        } else if is_global {
+            "global alias"
+        } else {
+            "alias"
+        };
         return format!("{}: {}", nam, kind);
     }
     if printflags & print_flags::WHENCE_SIMPLE != 0 {
         return hn.text.clone();
     }
     if printflags & print_flags::WHENCE_CSH != 0 {
-        let qual = if is_suffix { "suffix " }
-                   else if is_global { "globally " }
-                   else { "" };
+        let qual = if is_suffix {
+            "suffix "
+        } else if is_global {
+            "globally "
+        } else {
+            ""
+        };
         return format!("{}: {}aliased to {}", nam, qual, hn.text);
     }
     if printflags & print_flags::WHENCE_VERBOSE != 0 {
-        let qual = if is_suffix { "hn suffix" }
-                   else if is_global { "hn global" }
-                   else { "an" };
+        let qual = if is_suffix {
+            "hn suffix"
+        } else if is_global {
+            "hn global"
+        } else {
+            "an"
+        };
         return format!("{} is {} alias for {}", nam, qual, hn.text);
     }
     if printflags & print_flags::LIST != 0 {
         let mut out = String::from("alias ");
-        if is_suffix { out.push_str("-s "); }
-        else if is_global { out.push_str("-g "); }
+        if is_suffix {
+            out.push_str("-s ");
+        } else if is_global {
+            out.push_str("-g ");
+        }
         if nam.starts_with('-') || nam.starts_with('+') {
             out.push_str("-- ");
         }
@@ -1496,7 +1552,8 @@ pub fn createhisttable() {
 /// bytes hashed to a different bucket than C would have.
 ///
 /// Faithful: matches `inblank` exactly (`c:50` — `space + tab`).
-pub fn histhasher(s: &str) -> u32 {                                         // c:1365
+pub fn histhasher(s: &str) -> u32 {
+    // c:1365
     // c:50 — `inblank(c)` = `c == ' ' || c == '\t'`. NOT `\n`, NOT broad.
     #[inline]
     fn is_inblank_narrow(c: char) -> bool {
@@ -1508,7 +1565,11 @@ pub fn histhasher(s: &str) -> u32 {                                         // c
 
     // c:1369 — `while (inblank(*str)) str++;` skip leading blanks.
     while let Some(&c) = chars.peek() {
-        if is_inblank_narrow(c) { chars.next(); } else { break; }
+        if is_inblank_narrow(c) {
+            chars.next();
+        } else {
+            break;
+        }
     }
 
     // c:1371 — main mix loop.
@@ -1516,7 +1577,11 @@ pub fn histhasher(s: &str) -> u32 {                                         // c
         if is_inblank_narrow(c) {
             // c:1373 — `do str++; while (inblank(*str));` collapse runs.
             while let Some(&next) = chars.peek() {
-                if is_inblank_narrow(next) { chars.next(); } else { break; }
+                if is_inblank_narrow(next) {
+                    chars.next();
+                } else {
+                    break;
+                }
             }
             // c:1374-1375 — `if (*str) hashval += (hashval << 5) + ' ';`
             if chars.peek().is_some() {
@@ -1559,7 +1624,8 @@ pub fn emptyhisttable() {
 /// Rust port passes `reduce_blanks` as an explicit 3rd arg to keep
 /// the option read out of this leaf fn (call sites at hist.c thread
 /// the option from the parent scope).
-pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering { // c:1396
+pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
+    // c:1396
     // c:50 — `inblank(c)` = `c == ' ' || c == '\t'`. NOT newline, NOT broad.
     #[inline]
     fn is_inblank_narrow(c: char) -> bool {
@@ -1584,7 +1650,7 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
         let ch2 = c2.peek().copied();
 
         match (ch1, ch2) {
-            (None, None) => return std::cmp::Ordering::Equal,                  // c:1421 — both NUL
+            (None, None) => return std::cmp::Ordering::Equal, // c:1421 — both NUL
             (None, Some(c)) => {
                 // c:1421 — *str1=0 - *str2; left shorter (Less) unless str2
                 // is all-inblank residue.
@@ -1639,7 +1705,7 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
                     }
                     return std::cmp::Ordering::Greater;
                 } else if ch1 != ch2 {
-                    return ch1.cmp(&ch2);                                       // c:1417 — *str1 - *str2
+                    return ch1.cmp(&ch2); // c:1417 — *str1 - *str2
                 } else {
                     c1.next();
                     c2.next();
@@ -1691,24 +1757,31 @@ pub fn freehistnode(nodeptr: &str) {
 /// `histlinect`. Rust port indexes into `hist_ring` (Vec replaces C's
 /// doubly-linked list); the up/down relink collapses to `Vec::remove`.
 /// WARNING: param names don't match C — Rust=(idx, unlink) vs C=(he, unlink)
-pub fn freehistdata(idx: usize, unlink: i32) {                              // c:1458
+pub fn freehistdata(idx: usize, unlink: i32) {
+    // c:1458
     use crate::ported::zsh_h::{HIST_DUP, HIST_TMPSTORE};
     let mut ring = crate::ported::hist::hist_ring.lock().unwrap();
-    let he = match ring.get(idx) { Some(h) => h, None => return };           // c:1461 if (!he) return
+    let he = match ring.get(idx) {
+        Some(h) => h,
+        None => return,
+    }; // c:1461 if (!he) return
     let nam = he.node.nam.clone();
     let flags = he.node.flags as u32;
-    if (flags & (HIST_DUP | HIST_TMPSTORE)) == 0 {                           // c:1467
-        let mut tab = histtab_lock().write().expect("histtab poisoned");     // c:1468 removehashnode(histtab, ...)
+    if (flags & (HIST_DUP | HIST_TMPSTORE)) == 0 {
+        // c:1467
+        let mut tab = histtab_lock().write().expect("histtab poisoned"); // c:1468 removehashnode(histtab, ...)
         tab.remove(&nam);
     }
     // c:1471-1473 — `zsfree(name); if (nwords) zfree(words, ...)`. Rust
     // String/Vec drop handles both; only the unlink step needs explicit
     // ring mutation.
-    if unlink != 0 {                                                         // c:1475
-        ring.remove(idx);                                                    // c:1477-1483 unlink up/down
+    if unlink != 0 {
+        // c:1475
+        ring.remove(idx); // c:1477-1483 unlink up/down
         let new_ct = ring.len() as i64;
         drop(ring);
-        crate::ported::hist::histlinect.store(new_ct, std::sync::atomic::Ordering::SeqCst); // c:1477 --histlinect
+        crate::ported::hist::histlinect.store(new_ct, std::sync::atomic::Ordering::SeqCst);
+        // c:1477 --histlinect
     }
 }
 
@@ -1722,70 +1795,84 @@ pub fn freehistdata(idx: usize, unlink: i32) {                              // c
 ///
 /// Rust port: routes through dircache_lock() with refcount-by-
 /// HashMap-value (i32). Add/remove via the (name, value) pair.
-pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {        // c:1537
+pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {
+    // c:1537
     use std::sync::atomic::Ordering;
     let mut cache = dircache_lock().lock().expect("dircache poisoned");
 
-    if value.is_none() {                                                     // c:1541
+    if value.is_none() {
+        // c:1541
         // c:1542-1543 — `if (!*name) return;`
         let key = match name.as_deref() {
-            None => return,                                                  // c:1543
+            None => return, // c:1543
             Some(s) => s.to_string(),
         };
         // c:1544-1548 — `if (!dircache_size) { zsfree(*name); *name = NULL; return; }`
-        if cache.is_empty() {                                                // c:1544
-            *name = None;                                                    // c:1546
-            return;                                                          // c:1547
+        if cache.is_empty() {
+            // c:1544
+            *name = None; // c:1546
+            return; // c:1547
         }
         // c:1550-1582 — scan cache, decrement matching entry's refs;
         // on refs==0, drop the entry. Rust keys by string equality
         // since we don't share the C pointer-identity used at c:1553.
-        if let Some(idx) = cache.iter().position(|e| e.name == key) {        // c:1550
-            cache[idx].refs -= 1;                                            // c:1555
-            if cache[idx].refs == 0 {                                        // c:1556
-                cache.remove(idx);                                           // c:1558-1577 collapsed
-                DIRCACHE_LASTENTRY.store(usize::MAX, Ordering::SeqCst);              // c:1564/1577
+        if let Some(idx) = cache.iter().position(|e| e.name == key) {
+            // c:1550
+            cache[idx].refs -= 1; // c:1555
+            if cache[idx].refs == 0 {
+                // c:1556
+                cache.remove(idx); // c:1558-1577 collapsed
+                DIRCACHE_LASTENTRY.store(usize::MAX, Ordering::SeqCst); // c:1564/1577
             }
-            *name = None;                                                    // c:1579
-            return;                                                          // c:1580
+            *name = None; // c:1579
+            return; // c:1580
         }
         // c:1583-1584 — `zsfree(*name); *name = NULL;`
-        *name = None;                                                        // c:1584
-    } else {                                                                 // c:1585
+        *name = None; // c:1584
+    } else {
+        // c:1585
         let mut v = value.unwrap().to_string();
         // c:1590-1594 — absolute-path normalization for relative input.
-        if !v.starts_with('/') {                                             // c:1590
-            let cwd = crate::ported::compat::zgetcwd();                      // c:1591 zgetcwd
-            v = format!("{}/{}", cwd, v);                                    // c:1591 zhtricat
-            if let Some(resolved) = crate::ported::utils::xsymlink(&v) {     // c:1593 xsymlink(..., 1)
-                v = resolved;                                                // c:1593
-            }                                                                // c:1593
+        if !v.starts_with('/') {
+            // c:1590
+            let cwd = crate::ported::compat::zgetcwd(); // c:1591 zgetcwd
+            v = format!("{}/{}", cwd, v); // c:1591 zhtricat
+            if let Some(resolved) = crate::ported::utils::xsymlink(&v) {
+                // c:1593 xsymlink(..., 1)
+                v = resolved; // c:1593
+            } // c:1593
         }
         // c:1602-1606 — `dircache_lastentry` fast-path: same path as last.
         let last_idx = DIRCACHE_LASTENTRY.load(Ordering::SeqCst);
-        if last_idx != usize::MAX && last_idx < cache.len()
-            && cache[last_idx].name == v
-        {
-            *name = Some(cache[last_idx].name.clone());                      // c:1604
-            cache[last_idx].refs += 1;                                       // c:1605
-            return;                                                          // c:1606
+        if last_idx != usize::MAX && last_idx < cache.len() && cache[last_idx].name == v {
+            *name = Some(cache[last_idx].name.clone()); // c:1604
+            cache[last_idx].refs += 1; // c:1605
+            return; // c:1606
         }
         // c:1607-1610 — empty-cache: allocate first entry.
-        if cache.is_empty() {                                                // c:1607
-            cache.push(dircache_entry { name: v.clone(), refs: 1 });         // c:1609-1610
+        if cache.is_empty() {
+            // c:1607
+            cache.push(dircache_entry {
+                name: v.clone(),
+                refs: 1,
+            }); // c:1609-1610
             DIRCACHE_LASTENTRY.store(0usize, Ordering::SeqCst);
             *name = Some(v);
             return;
         }
         // c:1611-1619 — scan for existing entry, bump refs.
-        if let Some(idx) = cache.iter().position(|e| e.name == v) {          // c:1612-1614
-            *name = Some(cache[idx].name.clone());                           // c:1615
-            cache[idx].refs += 1;                                            // c:1616
+        if let Some(idx) = cache.iter().position(|e| e.name == v) {
+            // c:1612-1614
+            *name = Some(cache[idx].name.clone()); // c:1615
+            cache[idx].refs += 1; // c:1616
             DIRCACHE_LASTENTRY.store(idx, Ordering::SeqCst);
             return;
         }
         // c:1620+ — push new entry.
-        cache.push(dircache_entry { name: v.clone(), refs: 1 });
+        cache.push(dircache_entry {
+            name: v.clone(),
+            refs: 1,
+        });
         let new_idx = cache.len() - 1;
         DIRCACHE_LASTENTRY.store(new_idx, Ordering::SeqCst);
         *name = Some(v);
@@ -1814,9 +1901,10 @@ pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {        // 
 /// ```
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
-pub struct dircache_entry {                                                  // c:1503
-    pub name: String,                                                        // c:1506
-    pub refs: i32,                                                           // c:1508
+pub struct dircache_entry {
+    // c:1503
+    pub name: String, // c:1506
+    pub refs: i32,    // c:1508
 }
 
 /// Command name hash table
@@ -1890,16 +1978,16 @@ pub struct alias_table {
 //   `static int dircache_size;`
 // Rust port keeps the cache as a `Mutex<Vec<dircache_entry>>` plus
 // a lastentry index. dircache_size is implicit (Vec::len()).
-static DIRCACHE_INNER: std::sync::OnceLock<
-    std::sync::Mutex<Vec<dircache_entry>>,
-> = std::sync::OnceLock::new();
-static DIRCACHE_LASTENTRY: std::sync::atomic::AtomicUsize =                  // c:1517
-    std::sync::atomic::AtomicUsize::new(usize::MAX);                         // sentinel "no last"
+static DIRCACHE_INNER: std::sync::OnceLock<std::sync::Mutex<Vec<dircache_entry>>> =
+    std::sync::OnceLock::new();
+static DIRCACHE_LASTENTRY: std::sync::atomic::AtomicUsize = // c:1517
+    std::sync::atomic::AtomicUsize::new(usize::MAX); // sentinel "no last"
 
 /// Build a hashed `cmdnam` carrying a resolved path. Mirrors C's
 /// inline `cn->u.cmd = ztrdup(path); cn->node.flags = HASHED;` at
 /// hashtable.c:704.
-pub fn cmdnam_hashed(name: &str, path: &str) -> CmdName {                    // c:704 idiom
+pub fn cmdnam_hashed(name: &str, path: &str) -> CmdName {
+    // c:704 idiom
     CmdName {
         node: crate::ported::zsh_h::hashnode {
             next: None,
@@ -1914,7 +2002,8 @@ pub fn cmdnam_hashed(name: &str, path: &str) -> CmdName {                    // 
 /// Build an unhashed `cmdnam` whose lookup will scan
 /// `path_segments`. Mirrors C's `cn->u.name = pathchecked;
 /// cn->node.flags = 0;` at hashtable.c:712.
-pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {  // c:712 idiom
+pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {
+    // c:712 idiom
     CmdName {
         node: crate::ported::zsh_h::hashnode {
             next: None,
@@ -1929,7 +2018,8 @@ pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {  // 
 /// Build a `shfunc` for the lazy-compile path with body source text.
 /// Mirrors C's `shfunctab->addnode(shfunctab, ztrdup(name), shf)`
 /// after callers populate `shf->funcdef = parse_subst_string(body)`.
-pub fn shfunc_with_body(name: &str, body: &str) -> ShFunc {                  // c:824 idiom
+pub fn shfunc_with_body(name: &str, body: &str) -> ShFunc {
+    // c:824 idiom
     ShFunc {
         node: crate::ported::zsh_h::hashnode {
             next: None,
@@ -1948,7 +2038,8 @@ pub fn shfunc_with_body(name: &str, body: &str) -> ShFunc {                  // 
 /// Build an autoload-marker `shfunc`. Mirrors C's
 /// `createshfunc(name); shf->node.flags = PM_UNDEFINED;` at
 /// hashtable.c:829.
-pub fn shfunc_autoload(name: &str) -> ShFunc {                               // c:829 idiom
+pub fn shfunc_autoload(name: &str) -> ShFunc {
+    // c:829 idiom
     ShFunc {
         node: crate::ported::zsh_h::hashnode {
             next: None,
@@ -1963,7 +2054,6 @@ pub fn shfunc_autoload(name: &str) -> ShFunc {                               // 
         body: None,
     }
 }
-
 
 /// Format a reserved word for output
 /// Format a reserved-word entry.
@@ -2052,11 +2142,19 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
             result.push_str("-- ");
         }
 
-        result.push_str(&format!("{}={}\n", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(text)));
+        result.push_str(&format!(
+            "{}={}\n",
+            crate::ported::utils::quotedzputs(name),
+            crate::ported::utils::quotedzputs(text)
+        ));
         return result;
     }
 
-    format!("{}={}\n", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(text))
+    format!(
+        "{}={}\n",
+        crate::ported::utils::quotedzputs(name),
+        crate::ported::utils::quotedzputs(text)
+    )
 }
 
 // -----------------------------------------------------------
@@ -2075,7 +2173,8 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
 /// lookups proceed without serialising on a single mutex. Holder
 /// accessor keeps the `_lock` suffix for source-stability (call
 /// sites use `.read()`/`.write()` directly).
-pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<cmdnam_table> {       // c:594
+pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<cmdnam_table> {
+    // c:594
     static CMDNAMTAB: std::sync::OnceLock<std::sync::RwLock<cmdnam_table>> =
         std::sync::OnceLock::new();
     CMDNAMTAB.get_or_init(|| std::sync::RwLock::new(cmdnam_table::new()))
@@ -2086,7 +2185,8 @@ pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<cmdnam_table> {       // c
 /// Mirrors C's `mod_export HashTable aliastab` (hashtable.c:1186).
 /// Bucket-2 read-mostly: aliases are looked up on every command word,
 /// mutated only by `alias`/`unalias`. `RwLock` per PORT_PLAN.md.
-pub fn aliastab_lock() -> &'static std::sync::RwLock<alias_table> {          // c:1186
+pub fn aliastab_lock() -> &'static std::sync::RwLock<alias_table> {
+    // c:1186
     static ALIASTAB: std::sync::OnceLock<std::sync::RwLock<alias_table>> =
         std::sync::OnceLock::new();
     ALIASTAB.get_or_init(|| std::sync::RwLock::new(alias_table::with_defaults()))
@@ -2107,7 +2207,8 @@ pub fn sufaliastab_lock() -> &'static std::sync::RwLock<alias_table> {
 /// Bucket-2 read-mostly (effectively read-only post-init): every
 /// command word is checked against reserved words; the table is
 /// populated once at startup. `RwLock` per PORT_PLAN.md.
-pub fn reswdtab_lock() -> &'static std::sync::RwLock<reswd_table> {          // c:1115
+pub fn reswdtab_lock() -> &'static std::sync::RwLock<reswd_table> {
+    // c:1115
     static RESWDTAB: std::sync::OnceLock<std::sync::RwLock<reswd_table>> =
         std::sync::OnceLock::new();
     RESWDTAB.get_or_init(|| std::sync::RwLock::new(reswd_table::new()))
@@ -2143,7 +2244,8 @@ pub fn histtab_lock() -> &'static std::sync::RwLock<HashMap<String, i32>> {
 /// functions are looked up on every function-call dispatch, mutated
 /// only by `function f()` / `unfunction` / `autoload`. `RwLock`
 /// per PORT_PLAN.md.
-pub fn shfunctab_lock() -> &'static std::sync::RwLock<shfunc_table> {        // c:808
+pub fn shfunctab_lock() -> &'static std::sync::RwLock<shfunc_table> {
+    // c:808
     static SHFUNCTAB: std::sync::OnceLock<std::sync::RwLock<shfunc_table>> =
         std::sync::OnceLock::new();
     SHFUNCTAB.get_or_init(|| std::sync::RwLock::new(shfunc_table::new()))
@@ -2242,7 +2344,7 @@ mod tests {
         // path: the encoded "a" should compare equal-ish to "a".
         // Construct via unsafe bytes since 0x83 isn't valid UTF-8
         // alone — Rust ztrcmp operates on bytes.
-        let meta_a_bytes: Vec<u8> = vec![0x83, 0x41];  // Meta + 'A'^32 = 'a'
+        let meta_a_bytes: Vec<u8> = vec![0x83, 0x41]; // Meta + 'A'^32 = 'a'
         let meta_a = unsafe { std::str::from_utf8_unchecked(&meta_a_bytes) };
         // Real "a" (0x61) vs encoded "a" (0x83 0x41): ztrcmp resolves
         // both to 0x61 at the first position → Equal. But ztrcmp also
@@ -2250,8 +2352,11 @@ mod tests {
         // by one byte unstripped. The C ztrcmp loop skips matching
         // prefix; here the first bytes differ (0x61 vs 0x83), so it
         // resolves c1=0x61, c2=(0x41^32)=0x61 → Equal. Verify.
-        assert_eq!(hnamcmp("a", meta_a), Ordering::Equal,
-            "c:345 — Meta-encoded 'a' (0x83 0x41) compares equal to real 'a'");
+        assert_eq!(
+            hnamcmp("a", meta_a),
+            Ordering::Equal,
+            "c:345 — Meta-encoded 'a' (0x83 0x41) compares equal to real 'a'"
+        );
     }
 
     #[test]
@@ -2273,22 +2378,37 @@ mod tests {
     fn histhasher_inblank_is_narrow_space_tab_only() {
         let _g = crate::test_util::global_state_lock();
         // c:1369 — leading inblank stripped; multiple equivalent forms hash same.
-        assert_eq!(histhasher("\t  hello"), histhasher("hello"),
-            "c:1369 — leading space+tab stripped before mixing");
+        assert_eq!(
+            histhasher("\t  hello"),
+            histhasher("hello"),
+            "c:1369 — leading space+tab stripped before mixing"
+        );
         // c:1373 — runs of inblank collapse to a single ' '.
-        assert_eq!(histhasher("a \t  b"), histhasher("a b"),
-            "c:1373 — interior inblank runs collapse to single space");
+        assert_eq!(
+            histhasher("a \t  b"),
+            histhasher("a b"),
+            "c:1373 — interior inblank runs collapse to single space"
+        );
 
         // Newline is NOT inblank per c:50; it must hash as itself, not collapse.
-        assert_ne!(histhasher("a\nb"), histhasher("a b"),
-            "c:50 — newline is NOT inblank; hashes as its own char");
+        assert_ne!(
+            histhasher("a\nb"),
+            histhasher("a b"),
+            "c:50 — newline is NOT inblank; hashes as its own char"
+        );
         // CR is NOT inblank.
-        assert_ne!(histhasher("a\rb"), histhasher("ab"),
-            "CR not in inblank; must mix as a character, not collapse");
+        assert_ne!(
+            histhasher("a\rb"),
+            histhasher("ab"),
+            "CR not in inblank; must mix as a character, not collapse"
+        );
         // NBSP (0xA0) is NOT inblank (it's broad Unicode whitespace
         // but NOT in C's narrow typtab class).
-        assert_ne!(histhasher("a\u{00A0}b"), histhasher("ab"),
-            "NBSP not in inblank; must mix as a character, not collapse");
+        assert_ne!(
+            histhasher("a\u{00A0}b"),
+            histhasher("ab"),
+            "NBSP not in inblank; must mix as a character, not collapse"
+        );
     }
 
     #[test]
@@ -2356,12 +2476,21 @@ mod tests {
     fn histstrcmp_strips_leading_and_trailing_inblank() {
         let _g = crate::test_util::global_state_lock();
         use std::cmp::Ordering;
-        assert_eq!(histstrcmp("  cmd", "\tcmd", false), Ordering::Equal,
-            "c:1398-1399 — leading inblank skipped (both kinds)");
-        assert_eq!(histstrcmp("cmd  ", "cmd", false), Ordering::Equal,
-            "c:1421 — trailing inblank on left collapses to end-equal");
-        assert_eq!(histstrcmp("cmd", "cmd\t\t", false), Ordering::Equal,
-            "c:1421 — trailing inblank on right collapses to end-equal");
+        assert_eq!(
+            histstrcmp("  cmd", "\tcmd", false),
+            Ordering::Equal,
+            "c:1398-1399 — leading inblank skipped (both kinds)"
+        );
+        assert_eq!(
+            histstrcmp("cmd  ", "cmd", false),
+            Ordering::Equal,
+            "c:1421 — trailing inblank on left collapses to end-equal"
+        );
+        assert_eq!(
+            histstrcmp("cmd", "cmd\t\t", false),
+            Ordering::Equal,
+            "c:1421 — trailing inblank on right collapses to end-equal"
+        );
     }
 
     #[test]
@@ -2386,12 +2515,8 @@ mod tests {
         table.add(shfunc_autoload("lazy"));
 
         assert!(table.get("myfunc").is_some());
-        assert!(
-            (table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32) == 0
-        );
-        assert!(
-            (table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32) != 0
-        );
+        assert!((table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32) == 0);
+        assert!((table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32) != 0);
 
         table.disable("myfunc");
         assert!(table.get("myfunc").is_none());
@@ -2446,8 +2571,14 @@ mod tests {
         {
             let mut g = cache.lock().unwrap();
             g.clear();
-            g.push(dircache_entry { name: "/usr/share/zsh".into(), refs: 1 });
-            g.push(dircache_entry { name: "/usr/share/zsh".into(), refs: 1 });
+            g.push(dircache_entry {
+                name: "/usr/share/zsh".into(),
+                refs: 1,
+            });
+            g.push(dircache_entry {
+                name: "/usr/share/zsh".into(),
+                refs: 1,
+            });
             // Dedupe-by-refs is the C semantic: get_or_insert bumps
             // refs on an existing entry. Verify the data shape.
             assert_eq!(g.len(), 2);
@@ -2760,8 +2891,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         createaliastables();
         let tab = aliastab_lock().read().expect("aliastab poisoned");
-        assert!(tab.get("run-help").is_some(),    "run-help default missing");
-        assert!(tab.get("which-command").is_some(),"which-command default missing");
+        assert!(tab.get("run-help").is_some(), "run-help default missing");
+        assert!(
+            tab.get("which-command").is_some(),
+            "which-command default missing"
+        );
     }
 
     /// c:86 — `hasher` is the canonical zsh string hash. Same input
@@ -2773,9 +2907,9 @@ mod tests {
     fn hasher_is_deterministic_across_calls() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(hasher("foo"), hasher("foo"));
-        assert_eq!(hasher(""),    hasher(""));
+        assert_eq!(hasher(""), hasher(""));
         // Common shell names should not collide trivially.
-        assert_ne!(hasher("ls"),  hasher("cd"));
+        assert_ne!(hasher("ls"), hasher("cd"));
         assert_ne!(hasher("foo"), hasher("bar"));
     }
 
@@ -2809,7 +2943,12 @@ mod tests {
     fn hasher_two_byte_matches_bernstein_polynomial() {
         let _g = crate::test_util::global_state_lock();
         // For "ab": h0=0; h1 = 0 + (0<<5) + 'a' = 97; h2 = 97 + (97<<5) + 'b' = 97 + 3104 + 98 = 3299.
-        assert_eq!(hasher("ab"), 97u32.wrapping_add(97u32.wrapping_shl(5)).wrapping_add(b'b' as u32));
+        assert_eq!(
+            hasher("ab"),
+            97u32
+                .wrapping_add(97u32.wrapping_shl(5))
+                .wrapping_add(b'b' as u32)
+        );
         assert_eq!(hasher("ab"), 3299);
         // Pin the exact value for "ls" — a name we'll lookup billions of times.
         let ls_expected = {
@@ -2838,8 +2977,11 @@ mod tests {
             }
             h
         };
-        assert_eq!(hasher("é"), expected,
-            "c:90 — `*(unsigned char *) str++` reads BYTES, not codepoints");
+        assert_eq!(
+            hasher("é"),
+            expected,
+            "c:90 — `*(unsigned char *) str++` reads BYTES, not codepoints"
+        );
     }
 
     /// c:157 — `addhashnode` inserts; `gethashnode2` reads back.
@@ -2866,8 +3008,10 @@ mod tests {
         addhashnode(&mut h, "key1", "val".to_string());
         let removed = removehashnode(&mut h, "key1");
         assert_eq!(removed.as_deref(), Some("val"));
-        assert!(gethashnode2(&h, "key1").is_none(),
-            "after removehashnode, lookup must miss");
+        assert!(
+            gethashnode2(&h, "key1").is_none(),
+            "after removehashnode, lookup must miss"
+        );
     }
 
     /// c:275 — `removehashnode` on a missing key returns None and

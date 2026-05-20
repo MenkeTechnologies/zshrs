@@ -8,11 +8,11 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
 use crate::ported::utils::zwarnnam;
-use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
 use std::io::Read;
-use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::{Mutex, OnceLock};
 
 /// Direct port of `recursivecmd(char *nam, int opt_noerr, int opt_recurse, int opt_safe, char **args, RecurseFunc dirpre_func, RecurseFunc dirpost_func, RecurseFunc leaf_func, void *magic)` from `Src/Modules/files.c:378`.
 /// C body (c:381-446): walk argv, dispatch each via recursivecmd_doone.
@@ -20,10 +20,18 @@ use std::os::unix::fs::PermissionsExt;
 /// in the Rust port — std::fs operations take absolute paths so the
 /// chdir dance C uses to safely descend isn't needed.
 /// WARNING: param names don't match C — Rust=(opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func) vs C=(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)
-pub fn recursivecmd<P, R, L>(                                                // c:378
-    nam: &str, opt_noerr: i32, opt_recurse: i32, opt_safe: i32,
-    args: &[String], dirpre_func: P, dirpost_func: R, leaf_func: L,
-) -> i32                                                                     // c:378
+pub fn recursivecmd<P, R, L>(
+    // c:378
+    nam: &str,
+    opt_noerr: i32,
+    opt_recurse: i32,
+    opt_safe: i32,
+    args: &[String],
+    dirpre_func: P,
+    dirpost_func: R,
+    leaf_func: L,
+) -> i32
+// c:378
 where
     P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
@@ -31,16 +39,28 @@ where
 {
     let _ = opt_noerr;
     let reccmd = recursivecmd {
-        nam, opt_noerr, opt_recurse, opt_safe,
-        dirpre_func, dirpost_func, leaf_func,
+        nam,
+        opt_noerr,
+        opt_recurse,
+        opt_safe,
+        dirpre_func,
+        dirpost_func,
+        leaf_func,
     };
     let mut err = 0i32;
-    for arg in args {                                                        // c:401
-        if (err & 2) != 0 { break; }
-        let first = if opt_safe != 0 { 0 } else { 1 };                       // c:421/c:434
-        err |= recursivecmd_doone(&reccmd, arg, arg, first);                 // c:450/c:434
+    for arg in args {
+        // c:401
+        if (err & 2) != 0 {
+            break;
+        }
+        let first = if opt_safe != 0 { 0 } else { 1 }; // c:421/c:434
+        err |= recursivecmd_doone(&reccmd, arg, arg, first); // c:450/c:434
     }
-    if err != 0 { 1 } else { 0 }                                             // c:450 !!err
+    if err != 0 {
+        1
+    } else {
+        0
+    } // c:450 !!err
 }
 
 // =====================================================================
@@ -57,13 +77,13 @@ where
     R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
 {
-    pub nam: &'a str,                                                        // c:366
-    pub opt_noerr: i32,                                                      // c:367
-    pub opt_recurse: i32,                                                    // c:368
-    pub opt_safe: i32,                                                       // c:378
-    pub dirpre_func: P,                                                      // c:378
-    pub dirpost_func: R,                                                     // c:378
-    pub leaf_func: L,                                                        // c:378
+    pub nam: &'a str,     // c:366
+    pub opt_noerr: i32,   // c:367
+    pub opt_recurse: i32, // c:368
+    pub opt_safe: i32,    // c:378
+    pub dirpre_func: P,   // c:378
+    pub dirpost_func: R,  // c:378
+    pub leaf_func: L,     // c:378
 }
 
 // =====================================================================
@@ -73,14 +93,18 @@ where
 /// Direct port of `ask()` from `Src/Modules/files.c:41`.
 /// C body (c:43-46): read one char from stdin; consume the rest of
 /// the line; return 1 for `y`/`Y`, 0 otherwise.
-pub fn ask() -> i32 {                                                        // c:41
+pub fn ask() -> i32 {
+    // c:41
     use std::io::Read;
     let mut bytes = std::io::stdin().lock().bytes();
-    let a = bytes.next().and_then(|r| r.ok()).unwrap_or(0);                  // c:43 getchar
-    for c in bytes.by_ref() {                                                // c:44-45
-        if matches!(c, Ok(b'\n') | Err(_)) { break; }
+    let a = bytes.next().and_then(|r| r.ok()).unwrap_or(0); // c:43 getchar
+    for c in bytes.by_ref() {
+        // c:44-45
+        if matches!(c, Ok(b'\n') | Err(_)) {
+            break;
+        }
     }
-    (a == b'y' || a == b'Y') as i32                                          // c:46
+    (a == b'y' || a == b'Y') as i32 // c:46
 }
 
 // =====================================================================
@@ -91,10 +115,16 @@ pub fn ask() -> i32 {                                                        // 
 /// C body (c:55-57): `sync(); return 0;`.
 // sync builtin                                                             // c:53
 /// WARNING: param names don't match C — Rust=(_nam, _args, _func) vs C=(nam, args, ops, func)
-pub fn bin_sync(_nam: &str, _args: &[String],                                // c:53
-                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    unsafe { libc::sync(); }                                                 // c:55
-    0                                                                        // c:63
+pub fn bin_sync(
+    _nam: &str,
+    _args: &[String], // c:53
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    unsafe {
+        libc::sync();
+    } // c:55
+    0 // c:63
 }
 
 // =====================================================================
@@ -106,87 +136,124 @@ pub fn bin_sync(_nam: &str, _args: &[String],                                // 
 /// each arg, strip trailing slashes; with -p walk each `/` segment.
 // mkdir builtin                                                            // c:63
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_mkdir(nam: &str, args: &[String],                                 // c:63
-                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    let oumask = unsafe { libc::umask(0) };                                  // c:65
-    let mut mode: u32 = 0o777 & !(oumask as u32);                            // c:66
+pub fn bin_mkdir(
+    nam: &str,
+    args: &[String], // c:63
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    let oumask = unsafe { libc::umask(0) }; // c:65
+    let mut mode: u32 = 0o777 & !(oumask as u32); // c:66
     let mut err = 0i32;
-    unsafe { libc::umask(oumask); }                                          // c:69
-    if OPT_ISSET(ops, b'm') {                                                // c:70
-        let str_arg = OPT_ARG(ops, b'm').unwrap_or("");                      // c:71
-        match i64::from_str_radix(str_arg, 8) {                              // c:73 zstrtol base 8
+    unsafe {
+        libc::umask(oumask);
+    } // c:69
+    if OPT_ISSET(ops, b'm') {
+        // c:70
+        let str_arg = OPT_ARG(ops, b'm').unwrap_or(""); // c:71
+        match i64::from_str_radix(str_arg, 8) {
+            // c:73 zstrtol base 8
             Ok(m) => mode = m as u32,
             Err(_) => {
-                zwarnnam(nam,                                                // c:75
-                    &format!("invalid mode `{}'", str_arg));
-                return 1;                                                    // c:76
+                zwarnnam(
+                    nam, // c:75
+                    &format!("invalid mode `{}'", str_arg),
+                );
+                return 1; // c:76
             }
         }
     }
-    let p_flag = if OPT_ISSET(ops, b'p') { 1 } else { 0 };                   // c:84
-    for arg in args {                                                        // c:80
-        let trimmed: String = if arg.starts_with('/') {                      // c:81-83
+    let p_flag = if OPT_ISSET(ops, b'p') { 1 } else { 0 }; // c:84
+    for arg in args {
+        // c:80
+        let trimmed: String = if arg.starts_with('/') {
+            // c:81-83
             let body = arg.trim_end_matches('/');
-            if body.is_empty() { "/".to_string() } else { body.to_string() }
+            if body.is_empty() {
+                "/".to_string()
+            } else {
+                body.to_string()
+            }
         } else {
             arg.trim_end_matches('/').to_string()
         };
-        if p_flag != 0 {                                                     // c:84
+        if p_flag != 0 {
+            // c:84
             let bytes = trimmed.as_bytes();
             let mut i = 0usize;
             loop {
-                while i < bytes.len() && bytes[i] == b'/' { i += 1; }        // c:88-89
-                while i < bytes.len() && bytes[i] != b'/' { i += 1; }        // c:90-91
-                if i >= bytes.len() {                                        // c:92
-                    err |= domkdir(nam, &trimmed, mode, 1);                  // c:93
+                while i < bytes.len() && bytes[i] == b'/' {
+                    i += 1;
+                } // c:88-89
+                while i < bytes.len() && bytes[i] != b'/' {
+                    i += 1;
+                } // c:90-91
+                if i >= bytes.len() {
+                    // c:92
+                    err |= domkdir(nam, &trimmed, mode, 1); // c:93
                     break;
                 }
-                let prefix = &trimmed[..i];                                  // c:97
-                let e = domkdir(nam, prefix, mode | 0o300, 1);               // c:98
-                if e != 0 {                                                  // c:99
-                    err = 1;                                                 // c:100
-                    break;                                                   // c:101
+                let prefix = &trimmed[..i]; // c:97
+                let e = domkdir(nam, prefix, mode | 0o300, 1); // c:98
+                if e != 0 {
+                    // c:99
+                    err = 1; // c:100
+                    break; // c:101
                 }
             }
         } else {
-            err |= domkdir(nam, &trimmed, mode, 0);                          // c:115
+            err |= domkdir(nam, &trimmed, mode, 0); // c:115
         }
     }
-    err                                                                      // c:115
+    err // c:115
 }
 
 /// Direct port of `domkdir(char *nam, char *path, mode_t mode, int p)` from `Src/Modules/files.c:115`.
 /// C body (c:120-141): retry up to 8 times if EEXIST + p && stat
 /// shows existing entry is itself a directory.
-pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // c:115
-    let mut n = 8;                                                           // c:120
+pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
+    // c:115
+    let mut n = 8; // c:120
     let mut last_err: i32 = 0;
-    while n > 0 {                                                            // c:122
+    while n > 0 {
+        // c:122
         n -= 1;
-        let oumask = unsafe { libc::umask(0) };                              // c:123
+        let oumask = unsafe { libc::umask(0) }; // c:123
         let mut builder = std::fs::DirBuilder::new();
         builder.mode(mode);
-        let result = builder.create(path);                                   // c:124 mkdir
-        unsafe { libc::umask(oumask); }                                      // c:125
+        let result = builder.create(path); // c:124 mkdir
+        unsafe {
+            libc::umask(oumask);
+        } // c:125
         match result {
-            Ok(()) => return 0,                                              // c:127
+            Ok(()) => return 0, // c:127
             Err(e) => last_err = e.raw_os_error().unwrap_or(0),
         }
-        if p == 0 || last_err != libc::EEXIST { break; }                     // c:129
-        match std::fs::metadata(path) {                                      // c:130 stat
-            Ok(meta) if meta.is_dir() => return 0,                           // c:138
-            Ok(_) => break,                                                  // c:139
+        if p == 0 || last_err != libc::EEXIST {
+            break;
+        } // c:129
+        match std::fs::metadata(path) {
+            // c:130 stat
+            Ok(meta) if meta.is_dir() => return 0, // c:138
+            Ok(_) => break,                        // c:139
             Err(e) => {
                 last_err = e.raw_os_error().unwrap_or(0);
-                if last_err == libc::ENOENT { continue; }                    // c:131
-                break;                                                       // c:135
+                if last_err == libc::ENOENT {
+                    continue;
+                } // c:131
+                break; // c:135
             }
         }
     }
-    zwarnnam(nam,                                                            // c:142
-        &format!("cannot make directory `{}': {}",
-            path, std::io::Error::from_raw_os_error(last_err)));
-    1                                                                        // c:150
+    zwarnnam(
+        nam, // c:142
+        &format!(
+            "cannot make directory `{}': {}",
+            path,
+            std::io::Error::from_raw_os_error(last_err)
+        ),
+    );
+    1 // c:150
 }
 
 // =====================================================================
@@ -197,43 +264,57 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // 
 /// C body (c:154-164): for each arg, call rmdir(2); accumulate err.
 // rmdir builtin                                                            // c:150
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_rmdir(nam: &str, args: &[String],                                 // c:150
-                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_rmdir(
+    nam: &str,
+    args: &[String], // c:150
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     let mut err = 0i32;
-    for arg in args {                                                        // c:154
-        let cpath = match std::ffi::CString::new(arg.as_str()) {             // c:155
+    for arg in args {
+        // c:154
+        let cpath = match std::ffi::CString::new(arg.as_str()) {
+            // c:155
             Ok(c) => c,
             Err(_) => {
-                zwarnnam(nam,                                                // c:158
-                    &format!("{}: {}", arg, "name too long"));
+                zwarnnam(
+                    nam, // c:158
+                    &format!("{}: {}", arg, "name too long"),
+                );
                 err = 1;
                 continue;
             }
         };
-        let r = unsafe { libc::rmdir(cpath.as_ptr()) };                      // c:160
-        if r != 0 {                                                          // c:160
-            zwarnnam(nam,                                                    // c:161
-                &format!("cannot remove directory `{}': {}",
-                    arg, std::io::Error::last_os_error()));
-            err = 1;                                                         // c:162
+        let r = unsafe { libc::rmdir(cpath.as_ptr()) }; // c:160
+        if r != 0 {
+            // c:160
+            zwarnnam(
+                nam, // c:161
+                &format!(
+                    "cannot remove directory `{}': {}",
+                    arg,
+                    std::io::Error::last_os_error()
+                ),
+            );
+            err = 1; // c:162
         }
     }
-    err                                                                      // c:165
+    err // c:165
 }
 
 // =====================================================================
 // BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
 // =====================================================================
 
-pub const BIN_LN: i32 = 0;                                                   // c:170
-pub const BIN_MV: i32 = 1;                                                   // c:171
+pub const BIN_LN: i32 = 0; // c:170
+pub const BIN_MV: i32 = 1; // c:171
 
-pub const MV_NODIRS:        i32 = 1 << 0;                                    // c:173
-pub const MV_FORCE:         i32 = 1 << 1;                                    // c:174
-pub const MV_INTERACTIVE:   i32 = 1 << 2;                                    // c:175
-pub const MV_ASKNW:         i32 = 1 << 3;                                    // c:176
-pub const MV_ATOMIC:        i32 = 1 << 4;                                    // c:177
-pub const MV_NOCHASETARGET: i32 = 1 << 5;                                    // c:178
+pub const MV_NODIRS: i32 = 1 << 0; // c:173
+pub const MV_FORCE: i32 = 1 << 1; // c:174
+pub const MV_INTERACTIVE: i32 = 1 << 2; // c:175
+pub const MV_ASKNW: i32 = 1 << 3; // c:176
+pub const MV_ATOMIC: i32 = 1 << 4; // c:177
+pub const MV_NOCHASETARGET: i32 = 1 << 5; // c:178
 
 /// Direct port of `bin_ln(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:200`.
 /// C body (c:209-296):
@@ -243,61 +324,81 @@ pub const MV_NOCHASETARGET: i32 = 1 << 5;                                    // 
 ///   - -i without -f → MV_INTERACTIVE
 ///   - last-arg-is-dir handling: chase into the dir for each src
 /// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
-pub fn bin_ln(nam: &str, args: &[String],                                    // c:200
-              ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+pub fn bin_ln(
+    nam: &str,
+    args: &[String], // c:200
+    ops: &crate::ported::zsh_h::options,
+    func: i32,
+) -> i32 {
     let movefn: MoveFunc;
     let mut flags: i32;
     let mut err = 0i32;
-    if func == BIN_MV {                                                      // c:209
-        movefn = mv_rename;                                                  // c:210
-        flags = if OPT_ISSET(ops, b'f') { 0 } else { MV_ASKNW };             // c:211
-        flags |= MV_ATOMIC;                                                  // c:212
+    if func == BIN_MV {
+        // c:209
+        movefn = mv_rename; // c:210
+        flags = if OPT_ISSET(ops, b'f') { 0 } else { MV_ASKNW }; // c:211
+        flags |= MV_ATOMIC; // c:212
     } else {
-        flags = if OPT_ISSET(ops, b'f') { MV_FORCE } else { 0 };             // c:215
-        if OPT_ISSET(ops, b'h') || OPT_ISSET(ops, b'n') {                    // c:217
+        flags = if OPT_ISSET(ops, b'f') { MV_FORCE } else { 0 }; // c:215
+        if OPT_ISSET(ops, b'h') || OPT_ISSET(ops, b'n') {
+            // c:217
             flags |= MV_NOCHASETARGET;
         }
-        if OPT_ISSET(ops, b's') {                                            // c:219
-            movefn = mv_symlink;                                             // c:220
+        if OPT_ISSET(ops, b's') {
+            // c:219
+            movefn = mv_symlink; // c:220
         } else {
-            movefn = mv_link;                                                // c:226
-            if !OPT_ISSET(ops, b'd') {                                       // c:227
+            movefn = mv_link; // c:226
+            if !OPT_ISSET(ops, b'd') {
+                // c:227
                 flags |= MV_NODIRS;
             }
         }
     }
-    if OPT_ISSET(ops, b'i') && !OPT_ISSET(ops, b'f') {                       // c:230
+    if OPT_ISSET(ops, b'i') && !OPT_ISSET(ops, b'f') {
+        // c:230
         flags |= MV_INTERACTIVE;
     }
     if args.is_empty() {
         zwarnnam(nam, "missing file argument");
         return 1;
     }
-    let last_idx = args.len() - 1;                                           // c:232 a = args; for(; a[1]; a++)
+    let last_idx = args.len() - 1; // c:232 a = args; for(; a[1]; a++)
     let mut have_dir = false;
-    if last_idx > 0 {                                                        // c:233
+    if last_idx > 0 {
+        // c:233
         let target = &args[last_idx];
-        if let Ok(meta) = std::fs::metadata(target) {                        // c:235 stat
-            if meta.is_dir() {                                               // c:235 S_ISDIR
+        if let Ok(meta) = std::fs::metadata(target) {
+            // c:235 stat
+            if meta.is_dir() {
+                // c:235 S_ISDIR
                 have_dir = true;
-                if (flags & MV_NOCHASETARGET) != 0 {                         // c:237
+                if (flags & MV_NOCHASETARGET) != 0 {
+                    // c:237
                     if let Ok(lmeta) = std::fs::symlink_metadata(target) {
-                        if lmeta.file_type().is_symlink() {                  // c:237 S_ISLNK
+                        if lmeta.file_type().is_symlink() {
+                            // c:237 S_ISLNK
                             // c:245-256 — multi-source symlink-to-dir
                             // resolution: error unless -f and exactly
                             // one source.
-                            if last_idx > 1 {                                // c:245
-                                zwarnnam(nam,                                // c:247
-                                    &format!("{}: not a directory", target));
-                                return 1;                                    // c:248
+                            if last_idx > 1 {
+                                // c:245
+                                zwarnnam(
+                                    nam, // c:247
+                                    &format!("{}: not a directory", target),
+                                );
+                                return 1; // c:248
                             }
-                            if (flags & MV_FORCE) != 0 {                     // c:250
-                                let _ = std::fs::remove_file(target);        // c:251 unlink
-                                have_dir = false;                            // c:252
+                            if (flags & MV_FORCE) != 0 {
+                                // c:250
+                                let _ = std::fs::remove_file(target); // c:251 unlink
+                                have_dir = false; // c:252
                             } else {
-                                zwarnnam(nam,                                // c:255
-                                    &format!("{}: file exists", target));
-                                return 1;                                    // c:256
+                                zwarnnam(
+                                    nam, // c:255
+                                    &format!("{}: file exists", target),
+                                );
+                                return 1; // c:256
                             }
                         }
                     }
@@ -305,166 +406,216 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
             }
         }
     }
-    if have_dir {                                                            // c:havedir branch
+    if have_dir {
+        // c:havedir branch
         // c:276-294 — target is dir, chase into it for each source.
         let dir = args[last_idx].trim_end_matches('/').to_string();
-        for src in &args[..last_idx] {                                       // c:281
-            let basename = match src.rsplit_once('/') {                      // c:283-285 strrchr
+        for src in &args[..last_idx] {
+            // c:281
+            let basename = match src.rsplit_once('/') {
+                // c:283-285 strrchr
                 Some((_, n)) => n,
                 None => src.as_str(),
             };
-            let dest = format!("{}/{}", dir, basename);                      // c:289 strcat
-            err |= domove(nam, movefn, src, &dest, flags);                  // c:290
+            let dest = format!("{}/{}", dir, basename); // c:289 strcat
+            err |= domove(nam, movefn, src, &dest, flags); // c:290
         }
-        return err;                                                          // c:295
+        return err; // c:295
     }
-    if last_idx > 1 {                                                        // c:265
-        zwarnnam(nam, "last of many arguments must be a directory");         // c:266
-        return 1;                                                            // c:267
+    if last_idx > 1 {
+        // c:265
+        zwarnnam(nam, "last of many arguments must be a directory"); // c:266
+        return 1; // c:267
     }
-    let (src, dest) = if args.len() < 2 {                                    // c:269 !args[1]
-        let basename = match args[0].rsplit_once('/') {                      // c:270 strrchr
+    let (src, dest) = if args.len() < 2 {
+        // c:269 !args[1]
+        let basename = match args[0].rsplit_once('/') {
+            // c:270 strrchr
             Some((_, n)) => n,
             None => args[0].as_str(),
         };
-        (args[0].clone(), basename.to_string())                              // c:272 args[1] = ptr+1
+        (args[0].clone(), basename.to_string()) // c:272 args[1] = ptr+1
     } else {
         (args[0].clone(), args[1].clone())
     };
-    domove(nam, movefn, &src, &dest, flags)                                 // c:275
+    domove(nam, movefn, &src, &dest, flags) // c:275
 }
 
 /// Direct port of `domove(char *nam, MoveFunc movefn, char *p, char *q, int flags)` from `Src/Modules/files.c:298`.
 /// C body (c:300-360): if MV_NODIRS, refuse src that is dir; if dest
 /// exists, force/interactive/asknw checks; unlink dest if not atomic;
 /// then call movefn(src, dest) and report errno on failure.
-pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 { // c:298
-    if (flags & MV_NODIRS) != 0 {                                            // c:298
-        match std::fs::symlink_metadata(p) {                                 // c:308 lstat
-            Ok(meta) if meta.is_dir() => {                                   // c:308 S_ISDIR
-                zwarnnam(nam, &format!("{}: is a directory", p));            // c:310
-                return 1;                                                    // c:311
+pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 {
+    // c:298
+    if (flags & MV_NODIRS) != 0 {
+        // c:298
+        match std::fs::symlink_metadata(p) {
+            // c:308 lstat
+            Ok(meta) if meta.is_dir() => {
+                // c:308 S_ISDIR
+                zwarnnam(nam, &format!("{}: is a directory", p)); // c:310
+                return 1; // c:311
             }
             Err(e) => {
-                zwarnnam(nam, &format!("{}: {}", p, e));                     // c:310
+                zwarnnam(nam, &format!("{}: {}", p, e)); // c:310
                 return 1;
             }
             _ => {}
         }
     }
-    if let Ok(qmeta) = std::fs::symlink_metadata(q) {                        // c:315 lstat
-        let mut doit = (flags & MV_FORCE) != 0;                              // c:316
-        if qmeta.is_dir() {                                                  // c:317 S_ISDIR
-            zwarnnam(nam, &format!("{}: cannot overwrite directory", q));    // c:319
-            return 1;                                                        // c:320
-        } else if (flags & MV_INTERACTIVE) != 0 {                            // c:322
-            eprint!("{}: replace `{}'? ", nam, q);                           // c:324-326
-            if ask() == 0 {                                                  // c:328
-                return 0;                                                    // c:329
+    if let Ok(qmeta) = std::fs::symlink_metadata(q) {
+        // c:315 lstat
+        let mut doit = (flags & MV_FORCE) != 0; // c:316
+        if qmeta.is_dir() {
+            // c:317 S_ISDIR
+            zwarnnam(nam, &format!("{}: cannot overwrite directory", q)); // c:319
+            return 1; // c:320
+        } else if (flags & MV_INTERACTIVE) != 0 {
+            // c:322
+            eprint!("{}: replace `{}'? ", nam, q); // c:324-326
+            if ask() == 0 {
+                // c:328
+                return 0; // c:329
             }
-            doit = true;                                                     // c:331
+            doit = true; // c:331
         } else if (flags & MV_ASKNW) != 0                                    // c:333
                 && !qmeta.file_type().is_symlink()                           // c:334 !S_ISLNK
                 && unsafe {                                                  // c:335 access W_OK
                     let cq = std::ffi::CString::new(q).ok();
                     cq.map(|c| libc::access(c.as_ptr(), libc::W_OK))
                         .unwrap_or(-1) != 0
-                } {
+                }
+        {
             let mode = qmeta.permissions().mode() & 0o7777;
             eprint!("{}: replace `{}', overriding mode {:04o}? ", nam, q, mode); // c:337-340
-            if ask() == 0 {                                                  // c:342
-                return 0;                                                    // c:343
+            if ask() == 0 {
+                // c:342
+                return 0; // c:343
             }
-            doit = true;                                                     // c:345
+            doit = true; // c:345
         }
-        if doit && (flags & MV_ATOMIC) == 0 {                                // c:347
-            let _ = std::fs::remove_file(q);                                 // c:348 unlink
+        if doit && (flags & MV_ATOMIC) == 0 {
+            // c:347
+            let _ = std::fs::remove_file(q); // c:348 unlink
         }
     }
-    let r = {                                                                // c:350 movefn(p, q)
+    let r = {
+        // c:350 movefn(p, q)
         let cp = std::ffi::CString::new(p).unwrap_or_default();
         let cq = std::ffi::CString::new(q).unwrap_or_default();
         movefn(&cp, &cq)
     };
-    if r != 0 {                                                              // c:350
+    if r != 0 {
+        // c:350
         let osek = std::io::Error::last_os_error();
         let errfile = if osek.raw_os_error() == Some(libc::ENOENT)           // c:352-355
-            && std::fs::symlink_metadata(p).is_ok() { q } else { p };
-        zwarnnam(nam, &format!("`{}': {}", errfile, osek));                  // c:357
-        return 1;                                                            // c:358
+            && std::fs::symlink_metadata(p).is_ok()
+        {
+            q
+        } else {
+            p
+        };
+        zwarnnam(nam, &format!("`{}': {}", errfile, osek)); // c:357
+        return 1; // c:358
     }
-    0                                                                        // c:362
+    0 // c:362
 }
 
 /// Direct port of `recursivecmd_doone(struct recursivecmd const *reccmd, char *arg, char *rp, struct dirsav *ds, int first)` from `Src/Modules/files.c:450`.
 /// C body (c:455-462): lstat the path; if recurse + S_ISDIR → dive
 /// via recursivecmd_dorec; else call leaf_func.
 /// WARNING: param names don't match C — Rust=(arg, rp, first) vs C=(reccmd, arg, rp, ds, first)
-pub fn recursivecmd_doone<P, R, L>(                                          // c:450
-    reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str, first: i32,
-) -> i32                                                                     // c:450
+pub fn recursivecmd_doone<P, R, L>(
+    // c:450
+    reccmd: &recursivecmd<P, R, L>,
+    arg: &str,
+    rp: &str,
+    first: i32,
+) -> i32
+// c:450
 where
     P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
 {
-    let st = std::fs::symlink_metadata(rp);                                  // c:455 lstat
-    if reccmd.opt_recurse != 0 {                                             // c:457
+    let st = std::fs::symlink_metadata(rp); // c:455 lstat
+    if reccmd.opt_recurse != 0 {
+        // c:457
         if let Ok(ref meta) = st {
-            if meta.is_dir() {                                               // c:458 S_ISDIR
-                return recursivecmd_dorec(reccmd, arg, rp, meta, first);    // c:465
+            if meta.is_dir() {
+                // c:458 S_ISDIR
+                return recursivecmd_dorec(reccmd, arg, rp, meta, first); // c:465
             }
         }
     }
-    let sp = st.as_ref().ok();                                               // c:465 sp
-    (reccmd.leaf_func)(arg, rp, sp)                                          // c:465
+    let sp = st.as_ref().ok(); // c:465 sp
+    (reccmd.leaf_func)(arg, rp, sp) // c:465
 }
 
 /// Direct port of `recursivecmd_dorec(struct recursivecmd const *reccmd, char *arg, char *rp, struct stat const *sp, struct dirsav *ds, int first)` from `Src/Modules/files.c:465`.
 /// C body (c:475-525): dirpre callback, opendir + readdir each entry,
 /// recurse via recursivecmd_doone, then dirpost callback.
 /// WARNING: param names don't match C — Rust=(arg, rp, sp, _first) vs C=(reccmd, arg, rp, sp, ds, first)
-pub fn recursivecmd_dorec<P, R, L>(                                          // c:465
-    reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str,
-    sp: &std::fs::Metadata, _first: i32,
-) -> i32                                                                     // c:465
+pub fn recursivecmd_dorec<P, R, L>(
+    // c:465
+    reccmd: &recursivecmd<P, R, L>,
+    arg: &str,
+    rp: &str,
+    sp: &std::fs::Metadata,
+    _first: i32,
+) -> i32
+// c:465
 where
     P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
     L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
 {
-    let err1 = (reccmd.dirpre_func)(arg, rp, Some(sp));                      // c:475 dirpre_func
-    if (err1 & 2) != 0 { return 2; }                                         // c:476
-    let dir = match std::fs::read_dir(rp) {                                  // c:489 opendir
+    let err1 = (reccmd.dirpre_func)(arg, rp, Some(sp)); // c:475 dirpre_func
+    if (err1 & 2) != 0 {
+        return 2;
+    } // c:476
+    let dir = match std::fs::read_dir(rp) {
+        // c:489 opendir
         Ok(d) => d,
         Err(e) => {
-            if reccmd.opt_noerr == 0 {                                       // c:491
-                zwarnnam(reccmd.nam, &format!("{}: {}", arg, e));            // c:492
+            if reccmd.opt_noerr == 0 {
+                // c:491
+                zwarnnam(reccmd.nam, &format!("{}: {}", arg, e)); // c:492
             }
-            return err1 | 1;                                                 // c:493
+            return err1 | 1; // c:493
         }
     };
     let mut err = err1;
-    for entry in dir.flatten() {                                             // c:497 readdir
+    for entry in dir.flatten() {
+        // c:497 readdir
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str == "." || name_str == ".." { continue; }                 // c:498
-        let narg = format!("{}/{}", arg.trim_end_matches('/'), name_str);    // c:507-510
+        if name_str == "." || name_str == ".." {
+            continue;
+        } // c:498
+        let narg = format!("{}/{}", arg.trim_end_matches('/'), name_str); // c:507-510
         let nrp = entry.path();
         let nrp_str = nrp.to_string_lossy();
-        if (err & 2) != 0 { break; }                                         // c:503
-        err |= recursivecmd_doone(reccmd, &narg, &nrp_str, 0);               // c:530
+        if (err & 2) != 0 {
+            break;
+        } // c:503
+        err |= recursivecmd_doone(reccmd, &narg, &nrp_str, 0); // c:530
     }
-    if (err & 2) != 0 { return 2; }                                          // c:530
-    err | (reccmd.dirpost_func)(arg, rp, Some(sp))                           // c:530
+    if (err & 2) != 0 {
+        return 2;
+    } // c:530
+    err | (reccmd.dirpost_func)(arg, rp, Some(sp)) // c:530
 }
 
 /// Direct port of `recurse_donothing(UNUSED(char *arg), UNUSED(char *rp), UNUSED(struct stat const *sp), UNUSED(void *magic))` from `Src/Modules/files.c:530`.
 /// C body: `return 0;`.
 /// WARNING: param names don't match C — Rust=(_arg, _rp) vs C=(arg, rp, sp, magic)
-pub fn recurse_donothing(_arg: &str, _rp: &str,                              // c:530
-                         _sp: Option<&std::fs::Metadata>) -> i32 {
-    0                                                                        // c:533
+pub fn recurse_donothing(
+    _arg: &str,
+    _rp: &str, // c:530
+    _sp: Option<&std::fs::Metadata>,
+) -> i32 {
+    0 // c:533
 }
 
 // =====================================================================
@@ -473,10 +624,10 @@ pub fn recurse_donothing(_arg: &str, _rp: &str,                              // 
 
 /// Port of `struct rmmagic` from `Src/Modules/files.c:537`.
 pub struct rmmagic<'a> {
-    pub nam: &'a str,                                                        // c:546
-    pub opt_force: i32,                                                      // c:546
-    pub opt_interact: i32,                                                   // c:546
-    pub opt_unlinkdir: i32,                                                  // c:546
+    pub nam: &'a str,       // c:546
+    pub opt_force: i32,     // c:546
+    pub opt_interact: i32,  // c:546
+    pub opt_unlinkdir: i32, // c:546
 }
 
 /// Direct port of `rm_leaf(char *arg, char *rp, struct stat const *sp, void *magic)` from `Src/Modules/files.c:546`.
@@ -485,35 +636,57 @@ pub struct rmmagic<'a> {
 ///     refuse directories; ask if interactive; warn if read-only
 ///   - unlink(rp); error path returns 1 unless -f
 /// WARNING: param names don't match C — Rust=(arg, rp, sp) vs C=(arg, rp, sp, magic)
-pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // c:546
-               rmm: &rmmagic) -> i32 {
-    if rmm.opt_unlinkdir == 0 || rmm.opt_force == 0 {                        // c:551
+pub fn rm_leaf(
+    arg: &str,
+    rp: &str,
+    sp: Option<&std::fs::Metadata>, // c:546
+    rmm: &rmmagic,
+) -> i32 {
+    if rmm.opt_unlinkdir == 0 || rmm.opt_force == 0 {
+        // c:551
         let owned;
-        let sp_use = if let Some(s) = sp { Some(s) } else {                  // c:552-554
-            owned = std::fs::symlink_metadata(rp).ok();                      // c:553 lstat
+        let sp_use = if let Some(s) = sp {
+            Some(s)
+        } else {
+            // c:552-554
+            owned = std::fs::symlink_metadata(rp).ok(); // c:553 lstat
             owned.as_ref()
         };
-        if let Some(meta) = sp_use {                                         // c:556
-            if rmm.opt_unlinkdir == 0 && meta.is_dir() {                     // c:557 S_ISDIR
-                if rmm.opt_force != 0 { return 0; }                          // c:558-559
-                zwarnnam(rmm.nam,                                            // c:560
-                    &format!("{}: is a directory", arg));
-                return 1;                                                    // c:561
+        if let Some(meta) = sp_use {
+            // c:556
+            if rmm.opt_unlinkdir == 0 && meta.is_dir() {
+                // c:557 S_ISDIR
+                if rmm.opt_force != 0 {
+                    return 0;
+                } // c:558-559
+                zwarnnam(
+                    rmm.nam, // c:560
+                    &format!("{}: is a directory", arg),
+                );
+                return 1; // c:561
             }
-            if rmm.opt_interact != 0 {                                       // c:563
-                eprint!("{}: remove `{}'? ", rmm.nam, arg);                  // c:564-568
-                if ask() == 0 { return 0; }                                  // c:570
+            if rmm.opt_interact != 0 {
+                // c:563
+                eprint!("{}: remove `{}'? ", rmm.nam, arg); // c:564-568
+                if ask() == 0 {
+                    return 0;
+                } // c:570
             } else if rmm.opt_force == 0                                     // c:571
                     && !meta.file_type().is_symlink()                        // c:572 !S_ISLNK
                     && unsafe {                                              // c:573 access W_OK
                         let crp = std::ffi::CString::new(rp).ok();
                         crp.map(|c| libc::access(c.as_ptr(), libc::W_OK))
                             .unwrap_or(-1) != 0
-                    } {
+                    }
+            {
                 let mode = meta.permissions().mode() & 0o7777;
-                eprint!("{}: remove `{}', overriding mode {:04o}? ",
-                    rmm.nam, arg, mode);                                     // c:574-579
-                if ask() == 0 { return 0; }                                  // c:581
+                eprint!(
+                    "{}: remove `{}', overriding mode {:04o}? ",
+                    rmm.nam, arg, mode
+                ); // c:574-579
+                if ask() == 0 {
+                    return 0;
+                } // c:581
             }
         }
     }
@@ -521,29 +694,39 @@ pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // 
         Ok(c) => c,
         Err(_) => return 1,
     };
-    if unsafe { libc::unlink(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {    // c:594
-        zwarnnam(rmm.nam,                                                    // c:594
-            &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:594
+    if unsafe { libc::unlink(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {
+        // c:594
+        zwarnnam(
+            rmm.nam, // c:594
+            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+        );
+        return 1; // c:594
     }
-    0                                                                        // c:594
+    0 // c:594
 }
 
 /// Direct port of `rm_dirpost(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:594`.
 /// C body (c:599-613): rmdir(rp); error path returns 1 unless -f.
 /// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
-pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // c:594
-                  rmm: &rmmagic) -> i32 {
+pub fn rm_dirpost(
+    arg: &str,
+    rp: &str,
+    _sp: Option<&std::fs::Metadata>, // c:594
+    rmm: &rmmagic,
+) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
         Ok(c) => c,
         Err(_) => return 1,
     };
-    if unsafe { libc::rmdir(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {     // c:608
-        zwarnnam(rmm.nam,                                                    // c:616
-            &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:616
+    if unsafe { libc::rmdir(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {
+        // c:608
+        zwarnnam(
+            rmm.nam, // c:616
+            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+        );
+        return 1; // c:616
     }
-    0                                                                        // c:616
+    0 // c:616
 }
 
 /// Direct port of `bin_rm(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/files.c:616`.
@@ -551,23 +734,47 @@ pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // 
 /// + rm_leaf; -f swallows the err code.
 // rm builtin                                                               // c:535
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_rm(nam: &str, args: &[String],                                    // c:616
-              ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_rm(
+    nam: &str,
+    args: &[String], // c:616
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     let rmm = rmmagic {
-        nam,                                                                 // c:621
-        opt_force:     if OPT_ISSET(ops, b'f') { 1 } else { 0 },             // c:622
-        opt_interact:  if OPT_ISSET(ops, b'i') && !OPT_ISSET(ops, b'f')      // c:623
-                       { 1 } else { 0 },
-        opt_unlinkdir: if OPT_ISSET(ops, b'd') { 1 } else { 0 },             // c:624
+        nam,                                                 // c:621
+        opt_force: if OPT_ISSET(ops, b'f') { 1 } else { 0 }, // c:622
+        opt_interact: if OPT_ISSET(ops, b'i') && !OPT_ISSET(ops, b'f')
+        // c:623
+        {
+            1
+        } else {
+            0
+        },
+        opt_unlinkdir: if OPT_ISSET(ops, b'd') { 1 } else { 0 }, // c:624
     };
     let recurse = if !OPT_ISSET(ops, b'd')                                   // c:626
-        && (OPT_ISSET(ops, b'R') || OPT_ISSET(ops, b'r')) { 1 } else { 0 };
-    let safe    = if OPT_ISSET(ops, b's') { 1 } else { 0 };                  // c:627
-    let err = recursivecmd(nam, rmm.opt_force, recurse, safe, args,          // c:625
-        |_a, _r, _s| 0,                                                      // dirpre = recurse_donothing
-        |a, r, s|    rm_dirpost(a, r, s, &rmm),                              // dirpost
-        |a, r, s|    rm_leaf(a, r, s, &rmm));                                // leaf
-    if rmm.opt_force != 0 { 0 } else { err }                                 // c:631
+        && (OPT_ISSET(ops, b'R') || OPT_ISSET(ops, b'r'))
+    {
+        1
+    } else {
+        0
+    };
+    let safe = if OPT_ISSET(ops, b's') { 1 } else { 0 }; // c:627
+    let err = recursivecmd(
+        nam,
+        rmm.opt_force,
+        recurse,
+        safe,
+        args,                                // c:625
+        |_a, _r, _s| 0,                      // dirpre = recurse_donothing
+        |a, r, s| rm_dirpost(a, r, s, &rmm), // dirpost
+        |a, r, s| rm_leaf(a, r, s, &rmm),
+    ); // leaf
+    if rmm.opt_force != 0 {
+        0
+    } else {
+        err
+    } // c:631
 }
 
 // =====================================================================
@@ -576,25 +783,32 @@ pub fn bin_rm(nam: &str, args: &[String],                                    // 
 
 /// Port of `struct chmodmagic` from `Src/Modules/files.c:642`.
 pub struct chmodmagic<'a> {
-    pub nam: &'a str,                                                        // c:642
-    pub mode: u32,                                                           // c:642
+    pub nam: &'a str, // c:642
+    pub mode: u32,    // c:642
 }
 
 /// Direct port of `chmod_dochmod(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:642`.
 /// C body (c:646-652): `chmod(rp, mode)`; warn + return 1 on failure.
 /// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
-pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:642
-                     chm: &chmodmagic) -> i32 {
+pub fn chmod_dochmod(
+    arg: &str,
+    rp: &str,
+    _sp: Option<&std::fs::Metadata>, // c:642
+    chm: &chmodmagic,
+) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
         Ok(c) => c,
         Err(_) => return 1,
     };
-    if unsafe { libc::chmod(crp.as_ptr(), chm.mode as libc::mode_t) } != 0 { // c:646
-        zwarnnam(chm.nam,                                                    // c:655
-            &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:655
+    if unsafe { libc::chmod(crp.as_ptr(), chm.mode as libc::mode_t) } != 0 {
+        // c:646
+        zwarnnam(
+            chm.nam, // c:655
+            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+        );
+        return 1; // c:655
     }
-    0                                                                        // c:655
+    0 // c:655
 }
 
 /// Direct port of `bin_chmod(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/files.c:655`.
@@ -602,26 +816,37 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
 /// over `args[1..]` applying chmod_dochmod.
 // chmod builtin                                                            // c:633
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_chmod(nam: &str, args: &[String],                                 // c:655
-                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_chmod(
+    nam: &str,
+    args: &[String], // c:655
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "missing mode");
         return 1;
     }
-    let mode = match i64::from_str_radix(&args[0], 8) {                      // c:663 zstrtol base 8
+    let mode = match i64::from_str_radix(&args[0], 8) {
+        // c:663 zstrtol base 8
         Ok(m) => m as u32,
         Err(_) => {
-            zwarnnam(nam, &format!("invalid mode `{}'", args[0]));           // c:665
-            return 1;                                                        // c:666
+            zwarnnam(nam, &format!("invalid mode `{}'", args[0])); // c:665
+            return 1; // c:666
         }
     };
     let chm = chmodmagic { nam, mode };
-    let recurse = if OPT_ISSET(ops, b'R') { 1 } else { 0 };                  // c:670
-    let safe    = if OPT_ISSET(ops, b's') { 1 } else { 0 };                  // c:670
-    recursivecmd(nam, 0, recurse, safe, &args[1..],                          // c:669
-        |a, r, s| chmod_dochmod(a, r, s, &chm),                              // dirpre
-        |_a, _r, _s| 0,                                                      // dirpost = recurse_donothing
-        |a, r, s| chmod_dochmod(a, r, s, &chm))                              // leaf
+    let recurse = if OPT_ISSET(ops, b'R') { 1 } else { 0 }; // c:670
+    let safe = if OPT_ISSET(ops, b's') { 1 } else { 0 }; // c:670
+    recursivecmd(
+        nam,
+        0,
+        recurse,
+        safe,
+        &args[1..],                             // c:669
+        |a, r, s| chmod_dochmod(a, r, s, &chm), // dirpre
+        |_a, _r, _s| 0,                         // dirpost = recurse_donothing
+        |a, r, s| chmod_dochmod(a, r, s, &chm),
+    ) // leaf
 }
 
 // =====================================================================
@@ -630,47 +855,77 @@ pub fn bin_chmod(nam: &str, args: &[String],                                 // 
 
 /// Port of `struct chownmagic` from `Src/Modules/files.c:682`.
 pub struct chownmagic<'a> {
-    pub nam: &'a str,                                                        // c:682
-    pub uid: i64,                                                            // c:682 (uid_t but -1 sentinel)
-    pub gid: i64,                                                            // c:682
+    pub nam: &'a str, // c:682
+    pub uid: i64,     // c:682 (uid_t but -1 sentinel)
+    pub gid: i64,     // c:682
 }
 
 /// Direct port of `chown_dochown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:682`.
 /// C body (c:686-692): `chown(rp, uid, gid)`; warn + return 1 on failure.
 /// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
-pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:682
-                     chm: &chownmagic) -> i32 {
+pub fn chown_dochown(
+    arg: &str,
+    rp: &str,
+    _sp: Option<&std::fs::Metadata>, // c:682
+    chm: &chownmagic,
+) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
         Ok(c) => c,
         Err(_) => return 1,
     };
-    let uid = if chm.uid < 0 { libc::uid_t::MAX } else { chm.uid as libc::uid_t };
-    let gid = if chm.gid < 0 { libc::gid_t::MAX } else { chm.gid as libc::gid_t };
-    if unsafe { libc::chown(crp.as_ptr(), uid, gid) } != 0 {                 // c:695
-        zwarnnam(chm.nam,                                                    // c:695
-            &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:695
+    let uid = if chm.uid < 0 {
+        libc::uid_t::MAX
+    } else {
+        chm.uid as libc::uid_t
+    };
+    let gid = if chm.gid < 0 {
+        libc::gid_t::MAX
+    } else {
+        chm.gid as libc::gid_t
+    };
+    if unsafe { libc::chown(crp.as_ptr(), uid, gid) } != 0 {
+        // c:695
+        zwarnnam(
+            chm.nam, // c:695
+            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+        );
+        return 1; // c:695
     }
-    0                                                                        // c:695
+    0 // c:695
 }
 
 /// Direct port of `chown_dolchown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:695`.
 /// C body (c:699-705): `lchown(rp, uid, gid)`.
 /// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
-pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // c:695
-                      chm: &chownmagic) -> i32 {
+pub fn chown_dolchown(
+    arg: &str,
+    rp: &str,
+    _sp: Option<&std::fs::Metadata>, // c:695
+    chm: &chownmagic,
+) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
         Ok(c) => c,
         Err(_) => return 1,
     };
-    let uid = if chm.uid < 0 { libc::uid_t::MAX } else { chm.uid as libc::uid_t };
-    let gid = if chm.gid < 0 { libc::gid_t::MAX } else { chm.gid as libc::gid_t };
-    if unsafe { libc::lchown(crp.as_ptr(), uid, gid) } != 0 {                // c:708
-        zwarnnam(chm.nam,                                                    // c:708
-            &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:708
+    let uid = if chm.uid < 0 {
+        libc::uid_t::MAX
+    } else {
+        chm.uid as libc::uid_t
+    };
+    let gid = if chm.gid < 0 {
+        libc::gid_t::MAX
+    } else {
+        chm.gid as libc::gid_t
+    };
+    if unsafe { libc::lchown(crp.as_ptr(), uid, gid) } != 0 {
+        // c:708
+        zwarnnam(
+            chm.nam, // c:708
+            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+        );
+        return 1; // c:708
     }
-    0                                                                        // c:708
+    0 // c:708
 }
 
 /// Direct port of `bin_chown(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:725`.
@@ -679,70 +934,101 @@ pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // 
 /// with chown_dochown or chown_dolchown for `-h`.
 // chown builtin                                                            // c:672
 /// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
-pub fn bin_chown(nam: &str, args: &[String],                                 // c:725
-                 ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+pub fn bin_chown(
+    nam: &str,
+    args: &[String], // c:725
+    ops: &crate::ported::zsh_h::options,
+    func: i32,
+) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "missing argument");
         return 1;
     }
-    let uspec = args[0].clone();                                             // c:728
-    let mut chm = chownmagic { nam, uid: -1, gid: -1 };
+    let uspec = args[0].clone(); // c:728
+    let mut chm = chownmagic {
+        nam,
+        uid: -1,
+        gid: -1,
+    };
     let mut p_idx = 0usize;
     let mut do_group_only = false;
-    if func == BIN_CHGRP {                                                   // c:733
-        chm.uid = -1;                                                        // c:734
-        do_group_only = true;                                                // c:735 goto dogroup
+    if func == BIN_CHGRP {
+        // c:733
+        chm.uid = -1; // c:734
+        do_group_only = true; // c:735 goto dogroup
     } else {
         // c:737-741 — locate `:` or `.` separator.
-        let end = uspec.find(':').or_else(|| uspec.find('.'));               // c:737-738
-        if end == Some(0) {                                                  // c:739
-            chm.uid = -1;                                                    // c:740
-            p_idx = 1;                                                       // c:741
-            do_group_only = true;                                            // c:742 goto dogroup
+        let end = uspec.find(':').or_else(|| uspec.find('.')); // c:737-738
+        if end == Some(0) {
+            // c:739
+            chm.uid = -1; // c:740
+            p_idx = 1; // c:741
+            do_group_only = true; // c:742 goto dogroup
         } else {
-            let user_part = if let Some(e) = end { &uspec[..e] } else { &uspec[..] };
+            let user_part = if let Some(e) = end {
+                &uspec[..e]
+            } else {
+                &uspec[..]
+            };
             // c:746 — getpwnam(p)
             let cuser = std::ffi::CString::new(user_part).unwrap_or_default();
-            let pwd = unsafe { libc::getpwnam(cuser.as_ptr()) };             // c:746
+            let pwd = unsafe { libc::getpwnam(cuser.as_ptr()) }; // c:746
             let uid = if !pwd.is_null() {
-                unsafe { (*pwd).pw_uid as i64 }                              // c:748
+                unsafe { (*pwd).pw_uid as i64 } // c:748
             } else {
                 let mut errp = 0i32;
-                let n = getnumeric(user_part, &mut errp);                    // c:751
-                if errp != 0 {                                               // c:752
-                    zwarnnam(nam,                                            // c:753
-                        &format!("{}: no such user", user_part));
-                    return 1;                                                // c:755
+                let n = getnumeric(user_part, &mut errp); // c:751
+                if errp != 0 {
+                    // c:752
+                    zwarnnam(
+                        nam, // c:753
+                        &format!("{}: no such user", user_part),
+                    );
+                    return 1; // c:755
                 }
                 n as i64
             };
             chm.uid = uid;
-            if let Some(e) = end {                                           // c:759
+            if let Some(e) = end {
+                // c:759
                 let group_part = &uspec[e + 1..];
-                if group_part.is_empty() {                                   // c:761
-                    let p2 = if !pwd.is_null() { pwd }                       // c:762
-                             else { unsafe { libc::getpwuid(uid as libc::uid_t) } };
-                    if p2.is_null() {                                        // c:763
-                        zwarnnam(nam,                                        // c:764
-                            &format!("{}: no such user", uspec));
-                        return 1;                                            // c:766
+                if group_part.is_empty() {
+                    // c:761
+                    let p2 = if !pwd.is_null() {
+                        pwd
                     }
-                    chm.gid = unsafe { (*p2).pw_gid as i64 };                // c:768
-                } else if group_part == ":" {                                // c:769
-                    chm.gid = -1;                                            // c:770
+                    // c:762
+                    else {
+                        unsafe { libc::getpwuid(uid as libc::uid_t) }
+                    };
+                    if p2.is_null() {
+                        // c:763
+                        zwarnnam(
+                            nam, // c:764
+                            &format!("{}: no such user", uspec),
+                        );
+                        return 1; // c:766
+                    }
+                    chm.gid = unsafe { (*p2).pw_gid as i64 }; // c:768
+                } else if group_part == ":" {
+                    // c:769
+                    chm.gid = -1; // c:770
                 } else {
                     p_idx = 0; // not used past this point
                     let cgrp = std::ffi::CString::new(group_part).unwrap_or_default();
-                    let grp = unsafe { libc::getgrnam(cgrp.as_ptr()) };      // c:773 dogroup
+                    let grp = unsafe { libc::getgrnam(cgrp.as_ptr()) }; // c:773 dogroup
                     if !grp.is_null() {
-                        chm.gid = unsafe { (*grp).gr_gid as i64 };           // c:775
+                        chm.gid = unsafe { (*grp).gr_gid as i64 }; // c:775
                     } else {
                         let mut errp = 0i32;
-                        let n = getnumeric(group_part, &mut errp);           // c:778
-                        if errp != 0 {                                       // c:779
-                            zwarnnam(nam,                                    // c:780
-                                &format!("{}: no such group", group_part));
-                            return 1;                                        // c:782
+                        let n = getnumeric(group_part, &mut errp); // c:778
+                        if errp != 0 {
+                            // c:779
+                            zwarnnam(
+                                nam, // c:780
+                                &format!("{}: no such group", group_part),
+                            );
+                            return 1; // c:782
                         }
                         chm.gid = n as i64;
                     }
@@ -750,32 +1036,52 @@ pub fn bin_chown(nam: &str, args: &[String],                                 // 
             }
         }
     }
-    if do_group_only {                                                       // c:773 dogroup label
+    if do_group_only {
+        // c:773 dogroup label
         let group_part = &uspec[p_idx..];
         let cgrp = std::ffi::CString::new(group_part).unwrap_or_default();
-        let grp = unsafe { libc::getgrnam(cgrp.as_ptr()) };                  // c:773
+        let grp = unsafe { libc::getgrnam(cgrp.as_ptr()) }; // c:773
         if !grp.is_null() {
-            chm.gid = unsafe { (*grp).gr_gid as i64 };                       // c:775
+            chm.gid = unsafe { (*grp).gr_gid as i64 }; // c:775
         } else {
             let mut errp = 0i32;
-            let n = getnumeric(group_part, &mut errp);                       // c:778
-            if errp != 0 {                                                   // c:779
-                zwarnnam(nam,                                                // c:780
-                    &format!("{}: no such group", group_part));
-                return 1;                                                    // c:782
+            let n = getnumeric(group_part, &mut errp); // c:778
+            if errp != 0 {
+                // c:779
+                zwarnnam(
+                    nam, // c:780
+                    &format!("{}: no such group", group_part),
+                );
+                return 1; // c:782
             }
             chm.gid = n as i64;
         }
     }
-    let recurse = if OPT_ISSET(ops, b'R') { 1 } else { 0 };                  // c:792
-    let safe    = if OPT_ISSET(ops, b's') { 1 } else { 0 };                  // c:792
-    let h_flag  = OPT_ISSET(ops, b'h');                                      // c:793
-    recursivecmd(nam, 0, recurse, safe, &args[1..],                          // c:791
-        |a, r, s| if h_flag { chown_dolchown(a, r, s, &chm) }
-                  else      { chown_dochown(a, r, s, &chm) },                // dirpre
-        |_a, _r, _s| 0,                                                      // dirpost = recurse_donothing
-        |a, r, s| if h_flag { chown_dolchown(a, r, s, &chm) }
-                  else      { chown_dochown(a, r, s, &chm) })                // leaf
+    let recurse = if OPT_ISSET(ops, b'R') { 1 } else { 0 }; // c:792
+    let safe = if OPT_ISSET(ops, b's') { 1 } else { 0 }; // c:792
+    let h_flag = OPT_ISSET(ops, b'h'); // c:793
+    recursivecmd(
+        nam,
+        0,
+        recurse,
+        safe,
+        &args[1..], // c:791
+        |a, r, s| {
+            if h_flag {
+                chown_dolchown(a, r, s, &chm)
+            } else {
+                chown_dochown(a, r, s, &chm)
+            }
+        }, // dirpre
+        |_a, _r, _s| 0, // dirpost = recurse_donothing
+        |a, r, s| {
+            if h_flag {
+                chown_dolchown(a, r, s, &chm)
+            } else {
+                chown_dochown(a, r, s, &chm)
+            }
+        },
+    ) // leaf
 }
 
 // =====================================================================
@@ -785,40 +1091,41 @@ pub fn bin_chown(nam: &str, args: &[String],                                 // 
 /// `LN_OPTS` — `Src/Modules/files.c:799` (`"dfhins"` when HAVE_LSTAT,
 /// `"dfi"` otherwise). zshrs targets POSIX hosts where lstat is
 /// always present, so the long form is canonical.
-pub const LN_OPTS: &str = "dfhins";                                          // c:799
+pub const LN_OPTS: &str = "dfhins"; // c:799
 
 // `module_bintab` — port of `static struct builtin bintab[]` (files.c:803)
 // in the canonical `module::Builtin` shape (the local `FilesBuiltin`
 // table above is kept for the internal dispatcher in
 // `src/extensions/` which needs the `funcid` int).
 
-
 // `module_features` — port of `static struct features module_features`
 // from files.c:828.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/files.c:838`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:838
+pub fn setup_(m: *const module) -> i32 {
+    // c:838
     // C body c:840-841 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/files.c:845`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:845
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:845
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/files.c:853`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:853
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:853
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/files.c:860`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:860
+pub fn boot_(m: *const module) -> i32 {
+    // c:860
     // C body c:862-863 — `return 0`. Faithful empty-body port; the
     //                    chmod/chown/chgrp/sync/etc. builtins register
     //                    via the bn_list feature dispatch.
@@ -826,13 +1133,15 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/files.c:867`.
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:867
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:867
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/files.c:874`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:874
+pub fn finish_(m: *const module) -> i32 {
+    // c:874
     // C body c:876-877 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
@@ -840,7 +1149,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 
 /// `bin_chown` func discriminant — `Src/Modules/files.c:41`
 /// (`enum { BIN_CHOWN, BIN_CHGRP };`).
-pub const BIN_CHOWN: i32 = 0;                                                // c:719
+pub const BIN_CHOWN: i32 = 0; // c:719
 
 // bintab[] (`static struct builtin bintab[]` at files.c:803) lives in
 // the `MODULE_BINTAB` slice below in canonical `module::Builtin` shape;
@@ -852,7 +1161,7 @@ pub const BIN_CHOWN: i32 = 0;                                                // 
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-pub const BIN_CHGRP: i32 = 1;                                                // c:719
+pub const BIN_CHGRP: i32 = 1; // c:719
 
 // =====================================================================
 // bin_ln + domove — `Src/Modules/files.c:200`, `:298`.
@@ -884,21 +1193,22 @@ pub fn mv_link(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
 /// Direct port of `getnumeric(char *p, int *errp)` from `Src/Modules/files.c:708`.
 /// C body (c:712-719): parse leading digits as base-10 unsigned long;
 /// `*errp = !!*p` after parse — set when there are trailing non-digits.
-pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // c:708
-    if !p.chars().next().is_some_and(|c| c.is_ascii_digit()) {               // c:708
-        *errp = 1;                                                           // c:713
-        return 0;                                                            // c:714
+pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {
+    // c:708
+    if !p.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        // c:708
+        *errp = 1; // c:713
+        return 0; // c:714
     }
     let end = p.find(|c: char| !c.is_ascii_digit()).unwrap_or(p.len());
-    let ret = p[..end].parse::<u64>().unwrap_or(0);                          // c:725 strtoul
-    *errp = if end < p.len() { 1 } else { 0 };                               // c:725
-    ret                                                                      // c:725
+    let ret = p[..end].parse::<u64>().unwrap_or(0); // c:725 strtoul
+    *errp = if end < p.len() { 1 } else { 0 }; // c:725
+    ret // c:725
 }
 
 use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -910,7 +1220,26 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:chgrp".to_string(), "b:chmod".to_string(), "b:chown".to_string(), "b:ln".to_string(), "b:mkdir".to_string(), "b:mv".to_string(), "b:rm".to_string(), "b:rmdir".to_string(), "b:sync".to_string(), "b:zf_chgrp".to_string(), "b:zf_chmod".to_string(), "b:zf_chown".to_string(), "b:zf_ln".to_string(), "b:zf_mkdir".to_string(), "b:zf_mv".to_string(), "b:zf_rm".to_string(), "b:zf_rmdir".to_string(), "b:zf_sync".to_string()]
+    vec![
+        "b:chgrp".to_string(),
+        "b:chmod".to_string(),
+        "b:chown".to_string(),
+        "b:ln".to_string(),
+        "b:mkdir".to_string(),
+        "b:mv".to_string(),
+        "b:rm".to_string(),
+        "b:rmdir".to_string(),
+        "b:sync".to_string(),
+        "b:zf_chgrp".to_string(),
+        "b:zf_chmod".to_string(),
+        "b:zf_chown".to_string(),
+        "b:zf_ln".to_string(),
+        "b:zf_mkdir".to_string(),
+        "b:zf_mv".to_string(),
+        "b:zf_rm".to_string(),
+        "b:zf_rmdir".to_string(),
+        "b:zf_sync".to_string(),
+    ]
 }
 
 // WARNING: NOT IN FILES.C — Rust-only module-framework shim.
@@ -932,11 +1261,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -967,17 +1292,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 18,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 18,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -987,7 +1314,9 @@ mod tests {
     fn empty_ops() -> crate::ported::zsh_h::options {
         crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         }
     }
 
@@ -1013,7 +1342,12 @@ mod tests {
         // Path is bogus on purpose: if the mode-parse early-return
         // failed, mkdir(2) would still try this path and fail
         // differently. The assertion catches the right error origin.
-        let r = bin_mkdir("mkdir", &["/tmp/zshrs_test_invalid_mode".to_string()], &ops, 0);
+        let r = bin_mkdir(
+            "mkdir",
+            &["/tmp/zshrs_test_invalid_mode".to_string()],
+            &ops,
+            0,
+        );
         assert_eq!(r, 1);
     }
 
@@ -1025,7 +1359,7 @@ mod tests {
     fn domkdir_with_p_flag_on_existing_dir_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
-        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/1);
+        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/ 1);
         assert_eq!(r, 0, "mkdir -p /tmp must succeed when /tmp already exists");
     }
 
@@ -1036,7 +1370,7 @@ mod tests {
     fn domkdir_without_p_on_existing_dir_fails() {
         let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
-        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/0);
+        let r = domkdir("mkdir", tmp.to_str().unwrap(), 0o755, /*p=*/ 0);
         assert_ne!(r, 0, "mkdir (no -p) on existing dir must fail per POSIX");
     }
 
@@ -1066,8 +1400,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         let r = bin_mkdir("mkdir", &[nested.clone()], &ops, 0);
         assert_eq!(r, 0, "mkdir -p should create the whole chain");
-        assert!(std::path::Path::new(&nested).is_dir(),
-            "leaf dir {} should exist after mkdir -p", nested);
+        assert!(
+            std::path::Path::new(&nested).is_dir(),
+            "leaf dir {} should exist after mkdir -p",
+            nested
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1098,7 +1435,8 @@ mod tests {
         let r = bin_rmdir(
             "rmdir",
             &["/__definitely_not_a_dir_xyzzy_zshrs_test__".to_string()],
-            &ops, 0,
+            &ops,
+            0,
         );
         assert_ne!(r, 0, "rmdir of nonexistent path must report failure");
     }
@@ -1124,8 +1462,10 @@ mod tests {
         let ops = empty_ops();
         let r = bin_rmdir("rmdir", &[target.clone()], &ops, 0);
         assert_eq!(r, 0, "rmdir on existing empty dir should succeed");
-        assert!(!std::path::Path::new(&target).exists(),
-            "directory should be gone after rmdir");
+        assert!(
+            !std::path::Path::new(&target).exists(),
+            "directory should be gone after rmdir"
+        );
     }
 
     /// c:838-879 — `setup_` / `boot_` / `cleanup_` / `finish_` module
@@ -1169,11 +1509,18 @@ mod tests {
         let f = format!("/tmp/zshrs_test_rm_leaf_{}.txt", pid);
         let _ = std::fs::write(&f, "x");
         assert!(std::path::Path::new(&f).exists());
-        let rmm = rmmagic { nam: "rm", opt_force: 1, opt_interact: 0, opt_unlinkdir: 0 };
+        let rmm = rmmagic {
+            nam: "rm",
+            opt_force: 1,
+            opt_interact: 0,
+            opt_unlinkdir: 0,
+        };
         let r = rm_leaf(&f, &f, None, &rmm);
         assert_eq!(r, 0, "rm_leaf on existing file must succeed");
-        assert!(!std::path::Path::new(&f).exists(),
-            "file must be gone after rm_leaf");
+        assert!(
+            !std::path::Path::new(&f).exists(),
+            "file must be gone after rm_leaf"
+        );
     }
 
     /// c:546 — `rm_leaf` on a nonexistent path with opt_force=1
@@ -1182,7 +1529,12 @@ mod tests {
     #[test]
     fn rm_leaf_force_silently_succeeds_on_missing() {
         let _g = crate::test_util::global_state_lock();
-        let rmm = rmmagic { nam: "rm", opt_force: 1, opt_interact: 0, opt_unlinkdir: 0 };
+        let rmm = rmmagic {
+            nam: "rm",
+            opt_force: 1,
+            opt_interact: 0,
+            opt_unlinkdir: 0,
+        };
         let r = rm_leaf("/__never__", "/__never__", None, &rmm);
         assert_eq!(r, 0, "rm -f on missing path must succeed silently");
     }
@@ -1224,7 +1576,9 @@ mod tests {
         let ops = empty_ops();
         assert_eq!(bin_sync("sync", &[], &ops, 0), 0);
         assert_eq!(bin_sync("sync", &["ignored".to_string()], &ops, 0), 0);
-        assert_eq!(bin_sync("sync",
-            &["a".to_string(), "b".to_string()], &ops, 0), 0);
+        assert_eq!(
+            bin_sync("sync", &["a".to_string(), "b".to_string()], &ops, 0),
+            0
+        );
     }
 }

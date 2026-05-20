@@ -74,8 +74,7 @@ fn recorder_handles_full_zsh_function_corpus_via_autoload() {
         }
         init.push('\n');
     }
-    std::fs::write(&init_path, init.as_bytes())
-        .unwrap_or_else(|e| panic!("write init: {e}"));
+    std::fs::write(&init_path, init.as_bytes()).unwrap_or_else(|e| panic!("write init: {e}"));
 
     // Bundle output path — we read it back and verify coverage.
     let bundle_path = tmp.path().join("bundle.json");
@@ -114,10 +113,13 @@ fn recorder_handles_full_zsh_function_corpus_via_autoload() {
     // Verify bundle exists + parses.
     let bundle_bytes = std::fs::read(&bundle_path)
         .unwrap_or_else(|e| panic!("read bundle: {e}\nrecorder stderr:\n{stderr}"));
-    let bundle: Value = serde_json::from_slice(&bundle_bytes)
-        .unwrap_or_else(|e| panic!("parse bundle: {e}"));
+    let bundle: Value =
+        serde_json::from_slice(&bundle_bytes).unwrap_or_else(|e| panic!("parse bundle: {e}"));
 
-    assert_eq!(bundle["shell_id"], serde_json::json!("zsh-functions-corpus-test"));
+    assert_eq!(
+        bundle["shell_id"],
+        serde_json::json!("zsh-functions-corpus-test")
+    );
 
     let events = bundle["events"]
         .as_array()
@@ -129,8 +131,7 @@ fn recorder_handles_full_zsh_function_corpus_via_autoload() {
     let captured_autoload_names: HashSet<String> = events
         .iter()
         .filter(|ev| {
-            ev["kind"].as_str() == Some("function")
-                && ev["value"].as_str() == Some("autoload")
+            ev["kind"].as_str() == Some("function") && ev["value"].as_str() == Some("autoload")
         })
         .filter_map(|ev| ev["name"].as_str().map(String::from))
         .collect();
@@ -222,8 +223,8 @@ fn recorder_survives_direct_source_of_completion_files() {
             "no bundle written for {} (recorder may have crashed before atexit)\n--- stderr ---\n{stderr}",
             path.display(),
         );
-        let body = std::fs::read_to_string(&bundle_path)
-            .unwrap_or_else(|e| panic!("read bundle: {e}"));
+        let body =
+            std::fs::read_to_string(&bundle_path).unwrap_or_else(|e| panic!("read bundle: {e}"));
         let _bundle: Value = serde_json::from_str(&body)
             .unwrap_or_else(|e| panic!("parse bundle for {}: {}\n{}", path.display(), e, body));
     }

@@ -17,14 +17,15 @@ use crate::module::ModuleLifecycle;
 /// selects which lifecycle function to dispatch. Unknown values
 /// return 1 (matches C's `zerr("bad call to modentry"); return 1`).
 /// WARNING: param names don't match C — Rust=(boot, module) vs C=(boot, m, ptr)
-pub fn modentry(boot: i32, module: &mut dyn ModuleLifecycle) -> i32 {       // c:7
+pub fn modentry(boot: i32, module: &mut dyn ModuleLifecycle) -> i32 {
+    // c:7
     match boot {
-        0 => module.setup(),                                                 // c:14
-        1 => module.boot(),                                                  // c:18
-        2 => module.cleanup(),                                                // c:22
-        3 => module.finish(),                                                 // c:26
-        4 | 5 => 0,                                                           // c:30,34 features_/enables_
-        _ => 1,                                                               // c:38-40 zerr default
+        0 => module.setup(),   // c:14
+        1 => module.boot(),    // c:18
+        2 => module.cleanup(), // c:22
+        3 => module.finish(),  // c:26
+        4 | 5 => 0,            // c:30,34 features_/enables_
+        _ => 1,                // c:38-40 zerr default
     }
 }
 
@@ -46,9 +47,9 @@ mod tests {
     fn modentry_dispatches_setup_and_boot() {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
-        assert_eq!(modentry(0, &mut m), 0);     // c:14 setup_
+        assert_eq!(modentry(0, &mut m), 0); // c:14 setup_
         assert!(!m.booted);
-        assert_eq!(modentry(1, &mut m), 0);     // c:18 boot_
+        assert_eq!(modentry(1, &mut m), 0); // c:18 boot_
         assert!(m.booted);
     }
 
@@ -56,7 +57,7 @@ mod tests {
     fn modentry_unknown_op_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
-        assert_eq!(modentry(6, &mut m), 1);     // c:38 default
+        assert_eq!(modentry(6, &mut m), 1); // c:38 default
         assert_eq!(modentry(-1, &mut m), 1);
     }
 
@@ -84,9 +85,9 @@ mod tests {
     fn modentry_features_enables_short_circuit_zero() {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
-        assert_eq!(modentry(4, &mut m), 0);     // c:30 features_
-        assert_eq!(modentry(5, &mut m), 0);     // c:34 enables_
-        // Confirm boot() wasn't invoked as side effect.
+        assert_eq!(modentry(4, &mut m), 0); // c:30 features_
+        assert_eq!(modentry(5, &mut m), 0); // c:34 enables_
+                                            // Confirm boot() wasn't invoked as side effect.
         assert!(!m.booted);
     }
 }

@@ -28,11 +28,20 @@ fn dump_reflection_emits_valid_json_with_known_categories() {
         .arg("--dump-reflection")
         .output()
         .expect("spawn");
-    assert!(out.status.success(), "exit: {:?} stderr: {}", out.status, String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "exit: {:?} stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
     let v: Value = serde_json::from_str(&stdout).expect("valid JSON");
     for cat in ["builtins", "keywords", "options", "special_vars"] {
-        assert!(v[cat].is_object(), "category `{}` missing or not an object", cat);
+        assert!(
+            v[cat].is_object(),
+            "category `{}` missing or not an object",
+            cat
+        );
         let m = v[cat].as_object().unwrap();
         assert!(!m.is_empty(), "category `{}` is empty", cat);
     }
@@ -50,7 +59,12 @@ fn docs_known_builtin_returns_markdown_card_and_exit_0() {
         .arg("cd")
         .output()
         .expect("spawn");
-    assert!(out.status.success(), "exit: {:?} stderr: {}", out.status, String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "exit: {:?} stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("**cd**"), "no bold header: {}", s);
     assert!(s.contains("working directory"), "no description: {}", s);
@@ -63,7 +77,11 @@ fn docs_known_keyword_returns_card() {
         .arg("if")
         .output()
         .expect("spawn");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("**if**"));
     assert!(s.contains("Conditional"));
@@ -90,7 +108,11 @@ fn docs_unknown_name_exits_nonzero_with_stderr_message() {
         .expect("spawn");
     assert!(!out.status.success(), "expected nonzero exit");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no docs"), "stderr did not announce miss: {}", err);
+    assert!(
+        err.contains("no docs"),
+        "stderr did not announce miss: {}",
+        err
+    );
 }
 
 #[test]
@@ -103,6 +125,9 @@ fn help_text_advertises_editor_integration_flags() {
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("--lsp"), "--lsp missing from help");
     assert!(s.contains("--dap"), "--dap missing from help");
-    assert!(s.contains("--dump-reflection"), "--dump-reflection missing from help");
+    assert!(
+        s.contains("--dump-reflection"),
+        "--dump-reflection missing from help"
+    );
     assert!(s.contains("--docs"), "--docs missing from help");
 }

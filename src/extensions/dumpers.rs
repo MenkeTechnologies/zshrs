@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 use crate::lex;
 use crate::parse;
 use crate::tokens::{
-    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BAR_TOK, BARAMP, CASE, COPROC, DAMPER, DBAR,
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
     DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
     FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
@@ -102,16 +102,37 @@ fn tok_name(t: lextok) -> &'static str {
 }
 
 const WCNAMES: &[&str] = &[
-    "WC_END",     "WC_LIST",    "WC_SUBLIST", "WC_PIPE",    "WC_REDIR",
-    "WC_ASSIGN",  "WC_SIMPLE",  "WC_TYPESET", "WC_SUBSH",   "WC_CURSH",
-    "WC_TIMED",   "WC_FUNCDEF", "WC_FOR",     "WC_SELECT",  "WC_WHILE",
-    "WC_REPEAT",  "WC_CASE",    "WC_IF",      "WC_COND",    "WC_ARITH",
-    "WC_AUTOFN",  "WC_TRY",
+    "WC_END",
+    "WC_LIST",
+    "WC_SUBLIST",
+    "WC_PIPE",
+    "WC_REDIR",
+    "WC_ASSIGN",
+    "WC_SIMPLE",
+    "WC_TYPESET",
+    "WC_SUBSH",
+    "WC_CURSH",
+    "WC_TIMED",
+    "WC_FUNCDEF",
+    "WC_FOR",
+    "WC_SELECT",
+    "WC_WHILE",
+    "WC_REPEAT",
+    "WC_CASE",
+    "WC_IF",
+    "WC_COND",
+    "WC_ARITH",
+    "WC_AUTOFN",
+    "WC_TRY",
 ];
 
 fn wc_name(kind: wordcode) -> &'static str {
     let i = kind as usize;
-    if i < WCNAMES.len() { WCNAMES[i] } else { "WC_?" }
+    if i < WCNAMES.len() {
+        WCNAMES[i]
+    } else {
+        "WC_?"
+    }
 }
 
 fn esc_bytes(out: &mut String, bytes: &[u8]) {

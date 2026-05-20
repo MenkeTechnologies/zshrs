@@ -2,17 +2,17 @@
 //!
 //! Provides zpty builtin for running sub-processes with pseudo terminals.
 
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
-use std::os::unix::io::RawFd;
-use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 use std::os::unix::io::IntoRawFd;
+use std::os::unix::io::RawFd;
 use std::process::Command;
 
 /// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
 /// to read at once from a pty's master end (1 MB).
-pub const READ_MAX: usize = 1024 * 1024;                                     // c:44
+pub const READ_MAX: usize = 1024 * 1024; // c:44
 
 /// A pseudo-terminal command session.
 /// Port of `struct ptycmd` from Src/Modules/zpty.c — the C
@@ -85,7 +85,8 @@ fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
 /// Port of `ptynonblock(int fd)` from Src/Modules/zpty.c:65 — wraps
 /// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
 #[cfg(unix)]
-pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c:65
+pub fn ptynonblock(fd: RawFd) -> io::Result<()> {
+    // c:65
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 {
@@ -106,16 +107,19 @@ pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c
 /// C signature: `static int ptygettyinfo(int fd, struct ttyinfo *ti)`.
 /// Rust port takes a mutable `&mut libc::termios` directly since
 /// `struct ttyinfo` (zsh.h) wraps termios + a few legacy fields.
-pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
-    if fd == -1 {                                                        // c:97 inverted
-        return 1;                                                        // c:118
+pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {
+    // c:97
+    if fd == -1 {
+        // c:97 inverted
+        return 1; // c:118
     }
     // c:101 — `tcgetattr(fd, &ti->tio)`.
     let r = unsafe { libc::tcgetattr(fd, ti as *mut libc::termios) };
-    if r == -1 {                                                         // c:103
-        return 1;                                                        // c:103
+    if r == -1 {
+        // c:103
+        return 1; // c:103
     }
-    0                                                                    // c:124
+    0 // c:124
 }
 
 /// Port of `ptysettyinfo(int fd, struct ttyinfo *ti)` from `Src/Modules/zpty.c:124`. Calls
@@ -123,12 +127,16 @@ pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
 /// termios state on the pty.
 ///
 /// C signature: `static void ptysettyinfo(int fd, struct ttyinfo *ti)`.
-pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:124
-    if fd == -1 {                                                        // c:124 inverted
+pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {
+    // c:124
+    if fd == -1 {
+        // c:124 inverted
         return;
     }
     // c:128-132 — `tcsetattr(fd, TCSADRAIN, &ti->tio);`
-    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios); }
+    unsafe {
+        libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios);
+    }
 }
 
 // === auto-generated stubs ===
@@ -139,11 +147,10 @@ pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:12
 /// C signature: `static Ptycmd getptycmd(char *name)`. Returns
 /// the Ptycmd or NULL.
 /// WARNING: param names don't match C — Rust=(cmds, name) vs C=(name)
-pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'a ptycmd> {  // c:153
-    cmds.get(name)                                                       // c:153-160 strcmp loop
+pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'a ptycmd> {
+    // c:153
+    cmds.get(name) // c:153-160 strcmp loop
 }
-
-
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
@@ -155,7 +162,6 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
 // END moved-from-exec-rs
-
 
 // ─── moved from src/ported/vm_helper (drift extraction) ───
 
@@ -172,10 +178,9 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // static struct features module_features                            c:884 (zpty.c)
 // =====================================================================
 
+use crate::ported::zsh_h::module;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use crate::ported::zsh_h::module;
-
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for
@@ -183,7 +188,8 @@ use crate::ported::zsh_h::module;
 /// `posix_openpt` + `grantpt` + `unlockpt` + `ptsname` + `open`.
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=() vs C=(master, retfd)
-pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c:191
+pub fn get_pty() -> io::Result<(RawFd, RawFd)> {
+    // c:191
     let master_fd = unsafe {
         let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
         if fd < 0 {
@@ -233,9 +239,18 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c
 /// sequence. zshrs's port wires through `std::process::Command`
 /// + a libc pty-spawn helper which doesn't preserve the full C
 /// child-init contract. Returns 0 on success, 1 on failure.
-pub fn newptycmd(cmds: &mut HashMap<String, ptycmd>, _nam: &str, pname: &str,                // c:310
-                 args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
-    if args.is_empty() { return 1; }
+pub fn newptycmd(
+    cmds: &mut HashMap<String, ptycmd>,
+    _nam: &str,
+    pname: &str, // c:310
+    args: &[String],
+    echo: bool,
+    nblock: bool,
+) -> i32 {
+    // c:310
+    if args.is_empty() {
+        return 1;
+    }
     let cmd_path = &args[0];
     let cmd_args = &args[1..];
 
@@ -267,15 +282,21 @@ pub fn newptycmd(cmds: &mut HashMap<String, ptycmd>, _nam: &str, pname: &str,   
 ///
 /// C signature: `static void deleteptycmd(Ptycmd cmd)`.
 /// WARNING: param names don't match C — Rust=(cmds, name) vs C=(cmd)
-pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {                    // c:490
-    if let Some(cmd) = cmds.remove(name) {                               // c:490-503 list-unlink
+pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {
+    // c:490
+    if let Some(cmd) = cmds.remove(name) {
+        // c:490-503 list-unlink
         // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
         // Rust drops String/Vec automatically on `cmd` going out
         // of scope.
         // c:508 — `zclose(cmd->fd)`.
-        unsafe { libc::close(cmd.master_fd); }
+        unsafe {
+            libc::close(cmd.master_fd);
+        }
         // c:517 — `kill(-(p->pid), SIGHUP);` — kill the process group.
-        unsafe { libc::kill(-cmd.pid, libc::SIGHUP); }
+        unsafe {
+            libc::kill(-cmd.pid, libc::SIGHUP);
+        }
         // c:517 — `zfree(p, sizeof(*p))` — Rust drop handles.
     }
 }
@@ -285,10 +306,12 @@ pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {           
 ///
 /// C signature: `static void deleteallptycmds(void)`.
 /// WARNING: param names don't match C — Rust=(cmds) vs C=()
-pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {                            // c:517
+pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {
+    // c:517
     let names: Vec<String> = cmds.keys().cloned().collect();
-    for n in names {                                                     // c:530-525
-        deleteptycmd(cmds, &n);                                          // c:530
+    for n in names {
+        // c:530-525
+        deleteptycmd(cmds, &n); // c:530
     }
 }
 
@@ -298,17 +321,22 @@ pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {                   
 /// command as finished and closes the fd.
 ///
 /// C signature: `static void checkptycmd(Ptycmd cmd)`.
-pub fn checkptycmd(cmd: &mut ptycmd) {                                   // c:530
-    if cmd.finished {                                                    // c:530 cmd->fin
+pub fn checkptycmd(cmd: &mut ptycmd) {
+    // c:530
+    if cmd.finished {
+        // c:530 cmd->fin
         return;
     }
     let mut c: u8 = 0;
     let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
-    if r <= 0 {                                                          // c:538
+    if r <= 0 {
+        // c:538
         // c:539 — `if (kill(cmd->pid, 0) < 0)` — process gone.
         if unsafe { libc::kill(cmd.pid, 0) } < 0 {
-            cmd.finished = true;                                         // c:540 cmd->fin = 1
-            unsafe { libc::close(cmd.master_fd); }                       // c:541 zclose
+            cmd.finished = true; // c:540 cmd->fin = 1
+            unsafe {
+                libc::close(cmd.master_fd);
+            } // c:541 zclose
         }
         return;
     }
@@ -322,7 +350,8 @@ pub fn checkptycmd(cmd: &mut ptycmd) {                                   // c:53
 /// `read(2)` loop that bails when `pattern` is found in the
 /// accumulated buffer or when EOF/timeout fires.
 /// WARNING: param names don't match C — Rust=(fd, pattern, timeout_ms) vs C=(nam, cmd, args, noblock, mustmatch)
-pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> { // c:548
+pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
+    // c:548
     let mut buffer = vec![0u8; 4096];
     let mut result = Vec::new();
 
@@ -383,7 +412,8 @@ pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io:
 /// Port of `ptywritestr(Ptycmd cmd, char *s, int len)` from Src/Modules/zpty.c:714 (which
 /// `ptywrite()` line 743 wraps with `-n` newline handling).
 /// WARNING: param names don't match C — Rust=(fd, data) vs C=(cmd, s, len)
-pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c:714
+pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
+    // c:714
     #[cfg(unix)]
     {
         let bytes = data.as_bytes();
@@ -407,36 +437,52 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
 /// newline.
 ///
 /// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
-pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {         // c:743
-    if !args.is_empty() {                                                // c:743
-        for (i, a) in args.iter().enumerate() {                          // c:751
+pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {
+    // c:743
+    if !args.is_empty() {
+        // c:743
+        for (i, a) in args.iter().enumerate() {
+            // c:751
             // c:752 — unmetafy + ptywritestr.
             let unmeta = crate::ported::utils::unmeta(a);
             let bytes = unmeta.as_bytes();
             let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
-            if r < 0 { return 1; }                                       // c:753
-            if i + 1 < args.len() {                                      // c:754 sp = ' '
+            if r < 0 {
+                return 1;
+            } // c:753
+            if i + 1 < args.len() {
+                // c:754 sp = ' '
                 let sp = b' ';
                 let r = unsafe { libc::write(cmd.master_fd, &sp as *const u8 as *const _, 1) };
-                if r < 0 { return 1; }
+                if r < 0 {
+                    return 1;
+                }
             }
         }
-        if nonl == 0 {                                                   // c:757
-            let nl = b'\n';                                              // c:758
+        if nonl == 0 {
+            // c:757
+            let nl = b'\n'; // c:758
             let r = unsafe { libc::write(cmd.master_fd, &nl as *const u8 as *const _, 1) };
-            if r < 0 { return 1; }                                       // c:760
+            if r < 0 {
+                return 1;
+            } // c:760
         }
-    } else {                                                             // c:763
+    } else {
+        // c:763
         // c:764-768 — `while ((n = read(0, buf, BUFSIZ)) > 0)` copy stdin.
         let mut buf = [0u8; 4096];
         loop {
             let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
+            if n <= 0 {
+                break;
+            }
             let r = unsafe { libc::write(cmd.master_fd, buf.as_ptr() as *const _, n as usize) };
-            if r < 0 { return 1; }                                       // c:768
+            if r < 0 {
+                return 1;
+            } // c:768
         }
     }
-    0                                                                    // c:771
+    0 // c:771
 }
 
 /// Port of `bin_zpty(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zpty.c:773`.
@@ -447,213 +493,243 @@ pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {         // c:74
 /// stdout/stderr based on status, returns the i32 status.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zpty(_nam: &str, args: &[String],                                 // c:773
-                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zpty(
+    _nam: &str,
+    args: &[String], // c:773
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // Per C: branches dispatch on OPT_ISSET(ops, 'X') directly. No
     // aggregator struct — Rule D forbids `*Options` bags.
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let args = &argv[..];
-    let mut cmds_guard = ptycmds().lock()
-        .unwrap_or_else(|e| { e.into_inner() });
+    let mut cmds_guard = ptycmds().lock().unwrap_or_else(|e| e.into_inner());
     let cmds: &mut HashMap<String, ptycmd> = &mut *cmds_guard;
     let (status, output): (i32, String) = (|| {
-    let mut output = String::new();
+        let mut output = String::new();
 
-    if OPT_ISSET(ops, b'd') {
-        if args.is_empty() {
-            let names: Vec<String> = cmds.keys().cloned().collect();
-            for name in names {
-                if let Some(cmd) = cmds.remove(&name) {
-                    unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
-                    unsafe { libc::close(cmd.master_fd); }
+        if OPT_ISSET(ops, b'd') {
+            if args.is_empty() {
+                let names: Vec<String> = cmds.keys().cloned().collect();
+                for name in names {
+                    if let Some(cmd) = cmds.remove(&name) {
+                        unsafe {
+                            libc::kill(cmd.pid, libc::SIGTERM);
+                        }
+                        unsafe {
+                            libc::close(cmd.master_fd);
+                        }
+                    }
+                }
+                return (0, output);
+            }
+
+            for name in args {
+                if let Some(cmd) = cmds.remove(*name) {
+                    unsafe {
+                        libc::kill(cmd.pid, libc::SIGTERM);
+                    }
+                    unsafe {
+                        libc::close(cmd.master_fd);
+                    }
+                } else {
+                    output.push_str(&format!("zpty: no such pty command: {}\n", name));
+                    return (1, output);
                 }
             }
             return (0, output);
         }
 
-        for name in args {
-            if let Some(cmd) = cmds.remove(*name) {
-                unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
-                unsafe { libc::close(cmd.master_fd); }
-            } else {
-                output.push_str(&format!("zpty: no such pty command: {}\n", name));
-                return (1, output);
-            }
-        }
-        return (0, output);
-    }
-
-    if OPT_ISSET(ops, b'L') {
-        for (name, cmd) in cmds.iter() {
-            let status = if cmd.finished {
-                "(finished)"
-            } else {
-                "(running)"
-            };
-            output.push_str(&format!("{}: {} {}\n", name, cmd.args.join(" "), status));
-        }
-        return (0, output);
-    }
-
-    if OPT_ISSET(ops, b'w') {
-        if args.len() < 2 {
-            return (1, "zpty: -w requires a pty name and data\n".to_string());
-        }
-
-        let name = args[0];
-        let data: String = args[1..].join(" ");
-
-        if let Some(cmd) = cmds.get(name) {
-            match ptywritestr(cmd.master_fd, &data) {
-                Ok(_) => (0, output),
-                Err(e) => (1, format!("zpty: write failed: {}\n", e)),
-            }
-        } else {
-            (1, format!("zpty: no such pty command: {}\n", name))
-        }
-    } else if OPT_ISSET(ops, b'r') {
-        if args.is_empty() {
-            return (1, "zpty: -r requires a pty name\n".to_string());
-        }
-
-        let name = args[0];
-        let pattern = OPT_ARG(ops, b'm');
-        let timeout: Option<i32> = OPT_ARG(ops, b'T').and_then(|s| s.parse().ok());
-
-        if let Some(cmd) = cmds.get(name) {
-            match ptyread(cmd.master_fd, pattern, timeout) {
-                Ok(data) => {
-                    output.push_str(&data);
-                    (0, output)
-                }
-                Err(e) => (1, format!("zpty: read failed: {}\n", e)),
-            }
-        } else {
-            (1, format!("zpty: no such pty command: {}\n", name))
-        }
-    } else if OPT_ISSET(ops, b't') {
-        if args.is_empty() {
-            return (1, "zpty: -t requires a pty name\n".to_string());
-        }
-
-        let name = args[0];
-        if let Some(cmd) = cmds.get(name) {
-            // Inline of the deleted pty_test helper: poll(2) with zero
-            // timeout (Src/Modules/zpty.c:773 -t branch).
-            #[cfg(unix)]
-            {
-                let mut pfd = libc::pollfd {
-                    fd: cmd.master_fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
-                if ret < 0 {
-                    (1, format!("zpty: test failed: {}\n", io::Error::last_os_error()))
-                } else if ret > 0 {
-                    (0, output)
+        if OPT_ISSET(ops, b'L') {
+            for (name, cmd) in cmds.iter() {
+                let status = if cmd.finished {
+                    "(finished)"
                 } else {
-                    (1, output)
-                }
+                    "(running)"
+                };
+                output.push_str(&format!("{}: {} {}\n", name, cmd.args.join(" "), status));
             }
-            #[cfg(not(unix))]
-            (0, output)
-        } else {
-            (1, format!("zpty: no such pty command: {}\n", name))
-        }
-    } else {
-        if args.len() < 2 {
-            return (1, "zpty: requires a name and command\n".to_string());
+            return (0, output);
         }
 
-        let name = args[0];
-        if cmds.get(name).is_some() {
-            return (1, format!("zpty: pty command {} already exists\n", name));
-        }
+        if OPT_ISSET(ops, b'w') {
+            if args.len() < 2 {
+                return (1, "zpty: -w requires a pty name and data\n".to_string());
+            }
 
-        let cmd_args: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
+            let name = args[0];
+            let data: String = args[1..].join(" ");
 
-        #[cfg(unix)]
-        {
-            match get_pty() {
-                Ok((master, slave)) => match unsafe { libc::fork() } {
-                    -1 => {
-                        unsafe { libc::close(master); }
-                        unsafe { libc::close(slave); }
-                        (
-                            1,
-                            format!("zpty: fork failed: {}\n", io::Error::last_os_error()),
-                        )
-                    }
-                    0 => {
-                        unsafe { libc::close(master); }
-                        unsafe {
-                            libc::setsid();
-                            libc::dup2(slave, 0);
-                            libc::dup2(slave, 1);
-                            libc::dup2(slave, 2);
-                            if slave > 2 {
-                                libc::close(slave);
-                            }
-                        }
+            if let Some(cmd) = cmds.get(name) {
+                match ptywritestr(cmd.master_fd, &data) {
+                    Ok(_) => (0, output),
+                    Err(e) => (1, format!("zpty: write failed: {}\n", e)),
+                }
+            } else {
+                (1, format!("zpty: no such pty command: {}\n", name))
+            }
+        } else if OPT_ISSET(ops, b'r') {
+            if args.is_empty() {
+                return (1, "zpty: -r requires a pty name\n".to_string());
+            }
 
-                        if !OPT_ISSET(ops, b'e') {
-                            // Inline of the deleted disable_echo helper
-                            // (Src/Modules/zpty.c:124 ptysettyinfo).
-                            unsafe {
-                                let mut termios: libc::termios = std::mem::zeroed();
-                                if libc::tcgetattr(0, &mut termios) >= 0 {
-                                    termios.c_lflag &= !libc::ECHO;
-                                    let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
-                                }
-                            }
-                        }
+            let name = args[0];
+            let pattern = OPT_ARG(ops, b'm');
+            let timeout: Option<i32> = OPT_ARG(ops, b'T').and_then(|s| s.parse().ok());
 
-                        let cmd = CString::new(cmd_args[0].clone()).unwrap();
-                        let c_args: Vec<CString> = cmd_args
-                            .iter()
-                            .map(|s| CString::new(s.as_str()).unwrap())
-                            .collect();
-                        let c_args_ptrs: Vec<*const libc::c_char> = c_args
-                            .iter()
-                            .map(|s| s.as_ptr())
-                            .chain(std::iter::once(std::ptr::null()))
-                            .collect();
-
-                        unsafe {
-                            libc::execvp(cmd.as_ptr(), c_args_ptrs.as_ptr());
-                            libc::_exit(1);
-                        }
-                    }
-                    pid => {
-                        unsafe { libc::close(slave); }
-
-                        if !OPT_ISSET(ops, b'b') {
-                            let _ = ptynonblock(master);
-                        }
-
-                        let pty_cmd =
-                            ptycmd::new(name, cmd_args, master, pid,
-                                        OPT_ISSET(ops, b'e'),
-                                        !OPT_ISSET(ops, b'b'));
-                        cmds.insert(pty_cmd.name.clone(), pty_cmd);
-
+            if let Some(cmd) = cmds.get(name) {
+                match ptyread(cmd.master_fd, pattern, timeout) {
+                    Ok(data) => {
+                        output.push_str(&data);
                         (0, output)
                     }
-                },
-                Err(e) => (1, format!("zpty: can't open pty: {}\n", e)),
+                    Err(e) => (1, format!("zpty: read failed: {}\n", e)),
+                }
+            } else {
+                (1, format!("zpty: no such pty command: {}\n", name))
+            }
+        } else if OPT_ISSET(ops, b't') {
+            if args.is_empty() {
+                return (1, "zpty: -t requires a pty name\n".to_string());
+            }
+
+            let name = args[0];
+            if let Some(cmd) = cmds.get(name) {
+                // Inline of the deleted pty_test helper: poll(2) with zero
+                // timeout (Src/Modules/zpty.c:773 -t branch).
+                #[cfg(unix)]
+                {
+                    let mut pfd = libc::pollfd {
+                        fd: cmd.master_fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
+                    if ret < 0 {
+                        (
+                            1,
+                            format!("zpty: test failed: {}\n", io::Error::last_os_error()),
+                        )
+                    } else if ret > 0 {
+                        (0, output)
+                    } else {
+                        (1, output)
+                    }
+                }
+                #[cfg(not(unix))]
+                (0, output)
+            } else {
+                (1, format!("zpty: no such pty command: {}\n", name))
+            }
+        } else {
+            if args.len() < 2 {
+                return (1, "zpty: requires a name and command\n".to_string());
+            }
+
+            let name = args[0];
+            if cmds.get(name).is_some() {
+                return (1, format!("zpty: pty command {} already exists\n", name));
+            }
+
+            let cmd_args: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
+
+            #[cfg(unix)]
+            {
+                match get_pty() {
+                    Ok((master, slave)) => match unsafe { libc::fork() } {
+                        -1 => {
+                            unsafe {
+                                libc::close(master);
+                            }
+                            unsafe {
+                                libc::close(slave);
+                            }
+                            (
+                                1,
+                                format!("zpty: fork failed: {}\n", io::Error::last_os_error()),
+                            )
+                        }
+                        0 => {
+                            unsafe {
+                                libc::close(master);
+                            }
+                            unsafe {
+                                libc::setsid();
+                                libc::dup2(slave, 0);
+                                libc::dup2(slave, 1);
+                                libc::dup2(slave, 2);
+                                if slave > 2 {
+                                    libc::close(slave);
+                                }
+                            }
+
+                            if !OPT_ISSET(ops, b'e') {
+                                // Inline of the deleted disable_echo helper
+                                // (Src/Modules/zpty.c:124 ptysettyinfo).
+                                unsafe {
+                                    let mut termios: libc::termios = std::mem::zeroed();
+                                    if libc::tcgetattr(0, &mut termios) >= 0 {
+                                        termios.c_lflag &= !libc::ECHO;
+                                        let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
+                                    }
+                                }
+                            }
+
+                            let cmd = CString::new(cmd_args[0].clone()).unwrap();
+                            let c_args: Vec<CString> = cmd_args
+                                .iter()
+                                .map(|s| CString::new(s.as_str()).unwrap())
+                                .collect();
+                            let c_args_ptrs: Vec<*const libc::c_char> = c_args
+                                .iter()
+                                .map(|s| s.as_ptr())
+                                .chain(std::iter::once(std::ptr::null()))
+                                .collect();
+
+                            unsafe {
+                                libc::execvp(cmd.as_ptr(), c_args_ptrs.as_ptr());
+                                libc::_exit(1);
+                            }
+                        }
+                        pid => {
+                            unsafe {
+                                libc::close(slave);
+                            }
+
+                            if !OPT_ISSET(ops, b'b') {
+                                let _ = ptynonblock(master);
+                            }
+
+                            let pty_cmd = ptycmd::new(
+                                name,
+                                cmd_args,
+                                master,
+                                pid,
+                                OPT_ISSET(ops, b'e'),
+                                !OPT_ISSET(ops, b'b'),
+                            );
+                            cmds.insert(pty_cmd.name.clone(), pty_cmd);
+
+                            (0, output)
+                        }
+                    },
+                    Err(e) => (1, format!("zpty: can't open pty: {}\n", e)),
+                }
+            }
+
+            #[cfg(not(unix))]
+            {
+                (1, "zpty: not supported on this platform\n".to_string())
             }
         }
-
-        #[cfg(not(unix))]
-        {
-            (1, "zpty: not supported on this platform\n".to_string())
-        }
-    }
     })();
     drop(cmds_guard);
     if !output.is_empty() {
-        if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
+        if status == 0 {
+            print!("{}", output);
+        } else {
+            eprint!("{}", output);
+        }
     }
     status
 }
@@ -664,48 +740,51 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
 ///
 /// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
 /// WARNING: param names don't match C — Rust=(cmds) vs C=(d, dummy)
-pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {                              // c:874
-    deleteallptycmds(cmds);                                              // c:874
-    0                                                                    // c:879
+pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {
+    // c:874
+    deleteallptycmds(cmds); // c:874
+    0 // c:879
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (zpty.c).
 
-
 // `module_features` — port of `static struct features module_features`
 // from zpty.c:884.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zpty.c:896`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:896
+pub fn setup_(m: *const module) -> i32 {
+    // c:896
     // C body c:898-899 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zpty.c:903`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:903
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:903
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zpty.c:911`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:911
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:911
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zpty.c:918`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                 // c:918
+pub fn boot_(m: *const module) -> i32 {
+    // c:918
     // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
     *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
-    let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:928 (hook handle)
+    let _ = ptyhook(&mut ptycmds().lock().unwrap()); // c:928 (hook handle)
     0
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zpty.c:928`.
-pub fn cleanup_(m: *const module) -> i32 {                              // c:928
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:928
     // c:937 — `deletehookfunc("exit", ptyhook)`. We have no live hook
     //          registry, so this is a no-op.
     // c:937 — `deleteallptycmds()`.
@@ -716,22 +795,22 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:928
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zpty.c:937`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:937
+pub fn finish_(m: *const module) -> i32 {
+    // c:937
     // C body c:939-940 — `return 0`. Faithful empty-body port; the
     //                    pty session teardown happens in cleanup_.
     0
 }
-
 
 use crate::ported::zsh_h::features as features_t;
 
 /// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
 /// C declares `static Ptycmd ptycmds;` and mutates it through the
 /// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
-pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
+pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> =
+    std::sync::OnceLock::new();
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -765,11 +844,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -778,17 +853,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -838,8 +915,12 @@ mod tests {
 
     fn ops_with_flag(c: u8) -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut o = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                              argscount: 0, argsalloc: 0 };
+        let mut o = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         o.ind[c as usize] = 1;
         o
     }
@@ -927,9 +1008,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         const SAFE_PID: i32 = i32::MAX - 1; // pgid that cannot exist
         let mut cmds: HashMap<String, ptycmd> = HashMap::new();
-        cmds.insert("a".into(), ptycmd::new("a", vec![], -1, SAFE_PID, true, false));
-        cmds.insert("b".into(), ptycmd::new("b", vec![], -1, SAFE_PID, true, false));
-        cmds.insert("c".into(), ptycmd::new("c", vec![], -1, SAFE_PID, true, false));
+        cmds.insert(
+            "a".into(),
+            ptycmd::new("a", vec![], -1, SAFE_PID, true, false),
+        );
+        cmds.insert(
+            "b".into(),
+            ptycmd::new("b", vec![], -1, SAFE_PID, true, false),
+        );
+        cmds.insert(
+            "c".into(),
+            ptycmd::new("c", vec![], -1, SAFE_PID, true, false),
+        );
         deleteptycmd(&mut cmds, "b");
         assert!(cmds.contains_key("a"));
         assert!(!cmds.contains_key("b"));
@@ -982,9 +1072,12 @@ mod tests {
     fn bin_zpty_r_unknown_session_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
-        let r = bin_zpty("zpty",
+        let r = bin_zpty(
+            "zpty",
             &["unknown-pty".to_string()],
-            &ops_with_flag(b'r'), 0);
+            &ops_with_flag(b'r'),
+            0,
+        );
         assert_ne!(r, 0, "read from unknown pty must fail");
     }
 }

@@ -10,7 +10,6 @@
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
 
 // `TimeSpec` Rust-only struct deleted — C uses `struct timespec`
 // directly (Src/compat.c:101 `zgettime(struct timespec *ts)`).
@@ -27,31 +26,35 @@ use std::os::unix::fs::MetadataExt;
 /// Returns 0 on success, -1 if `clock_gettime(CLOCK_REALTIME)`
 /// failed and `gettimeofday` fallback succeeded, -2 if both
 /// failed.
-pub fn zgettime(ts: &mut timespec) -> i32 {                                  // c:101
-    let mut ret: i32 = -1;                                                   // c:101
+pub fn zgettime(ts: &mut timespec) -> i32 {
+    // c:101
+    let mut ret: i32 = -1; // c:101
     unsafe {
         let mut dts: timespec = std::mem::zeroed();
-        if libc::clock_gettime(libc::CLOCK_REALTIME, &mut dts) < 0 {         // c:107
+        if libc::clock_gettime(libc::CLOCK_REALTIME, &mut dts) < 0 {
+            // c:107
             // c:108 — `zwarn("unable to retrieve time: %e", errno)`.
             crate::ported::utils::zwarn(&format!(
                 "unable to retrieve time: {}",
                 std::io::Error::last_os_error()
             ));
-            ret -= 1;                                                        // c:109
-        } else {                                                             // c:110
-            ret += 1;                                                        // c:111
-            ts.tv_sec = dts.tv_sec;                                          // c:112
-            ts.tv_nsec = dts.tv_nsec;                                        // c:113
+            ret -= 1; // c:109
+        } else {
+            // c:110
+            ret += 1; // c:111
+            ts.tv_sec = dts.tv_sec; // c:112
+            ts.tv_nsec = dts.tv_nsec; // c:113
         }
-        if ret != 0 {                                                        // c:117
-            let mut dtv: libc::timeval = std::mem::zeroed();                 // c:118
-            libc::gettimeofday(&mut dtv, std::ptr::null_mut());              // c:120
-            ret += 1;                                                        // c:121
-            ts.tv_sec = dtv.tv_sec;                                          // c:122
-            ts.tv_nsec = (dtv.tv_usec as libc::c_long) * 1000;               // c:123
+        if ret != 0 {
+            // c:117
+            let mut dtv: libc::timeval = std::mem::zeroed(); // c:118
+            libc::gettimeofday(&mut dtv, std::ptr::null_mut()); // c:120
+            ret += 1; // c:121
+            ts.tv_sec = dtv.tv_sec; // c:122
+            ts.tv_nsec = (dtv.tv_usec as libc::c_long) * 1000; // c:123
         }
     }
-    ret                                                                      // c:126
+    ret // c:126
 }
 
 /// Likewise with CLOCK_MONOTONIC if available.
@@ -66,40 +69,44 @@ pub fn zgettime(ts: &mut timespec) -> i32 {                                  // 
 /// is not actually monotonic -- there are reports that it can go     // c:133
 /// backwards. CLOCK_MONOTONIC_RAW does not have this problem. On top // c:133
 /// of that, it is faster to read and it has nanosecond precision.    // c:133
-pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {           // c:133
-    let mut ret: i32 = -1;                                                   // c:133
+pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {
+    // c:133
+    let mut ret: i32 = -1; // c:133
     unsafe {
-        let mut dts: timespec = std::mem::zeroed();                          // c:138
-        // c:147 — Apple prefers CLOCK_MONOTONIC_RAW; other systems
-        // use CLOCK_MONOTONIC.
+        let mut dts: timespec = std::mem::zeroed(); // c:138
+                                                    // c:147 — Apple prefers CLOCK_MONOTONIC_RAW; other systems
+                                                    // use CLOCK_MONOTONIC.
         #[cfg(target_os = "macos")]
         let clk = libc::CLOCK_MONOTONIC_RAW;
         #[cfg(not(target_os = "macos"))]
         let clk = libc::CLOCK_MONOTONIC;
-        if libc::clock_gettime(clk, &mut dts) < 0 {                          // c:148/150
+        if libc::clock_gettime(clk, &mut dts) < 0 {
+            // c:148/150
             // c:152 — `zwarn("unable to retrieve CLOCK_MONOTONIC time: %e", errno)`.
             crate::ported::utils::zwarn(&format!(
                 "unable to retrieve CLOCK_MONOTONIC time: {}",
                 std::io::Error::last_os_error()
             ));
-            ret -= 1;                                                        // c:153
+            ret -= 1; // c:153
         } else {
-            ret += 1;                                                        // c:155
-            ts.tv_sec = dts.tv_sec;                                          // c:156
-            ts.tv_nsec = dts.tv_nsec;                                        // c:157
+            ret += 1; // c:155
+            ts.tv_sec = dts.tv_sec; // c:156
+            ts.tv_nsec = dts.tv_nsec; // c:157
         }
     }
-    if ret != 0 {                                                            // c:175
-        ret = zgettime(ts);                                                  // c:175
+    if ret != 0 {
+        // c:175
+        ret = zgettime(ts); // c:175
     }
-    ret                                                                      // c:175
+    ret // c:175
 }
 
 // compute the difference between two calendar times                        // c:175
 /// Compute the difference between two times in seconds.
 /// Port of `difftime(time_t t2, time_t t1)` from Src/compat.c:175 — wraps
 /// libc's `difftime(3)` for systems lacking the prototype.
-pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // c:175
+pub fn difftime(t2: i64, t1: i64) -> f64 {
+    // c:175
     (t2 - t1) as f64
 }
 
@@ -126,7 +133,8 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // 
 /// sys_errlist[errnum]`. On HAVE_STRERROR systems the libc one
 /// is used directly; Rust's `std::io::Error::from_raw_os_error`
 /// routes through libc strerror internally.
-pub fn strerror(errnum: i32) -> String {                                     // c:194
+pub fn strerror(errnum: i32) -> String {
+    // c:194
     std::io::Error::from_raw_os_error(errnum).to_string()
 }
 
@@ -148,19 +156,18 @@ pub fn strerror(errnum: i32) -> String {                                     // 
 ///
 /// The previous Rust impl capped at 1MB which is way too high
 /// for closem() loops; matched zsh's actual cap.
-pub fn zopenmax() -> i64 {                                                   // c:300
+pub fn zopenmax() -> i64 {
+    // c:300
     // `ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307` — 64 (NOT 1024).
     // Canonical port lives in `crate::ported::zsh_system_h`; use it
     // directly so any future C-source bump propagates here.
-    const ZSH_INITIAL_OPEN_MAX: i64 =
-        crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX as i64;            // c:307
-    // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
-    // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
-    // C body's `j = OPEN_MAX` starting point is the host's NOFILE
-    // (typically 1024 on Linux, 10240 on macOS) when available;
-    // otherwise it collapses to 64. Use the canonical port.
-    const OPEN_MAX: i64 =
-        crate::ported::zsh_system_h::OPEN_MAX as i64;                        // c:313
+    const ZSH_INITIAL_OPEN_MAX: i64 = crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX as i64; // c:307
+                                                                                                // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
+                                                                                                // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
+                                                                                                // C body's `j = OPEN_MAX` starting point is the host's NOFILE
+                                                                                                // (typically 1024 on Linux, 10240 on macOS) when available;
+                                                                                                // otherwise it collapses to 64. Use the canonical port.
+    const OPEN_MAX: i64 = crate::ported::zsh_system_h::OPEN_MAX as i64; // c:313
 
     #[cfg(unix)]
     {
@@ -221,7 +228,8 @@ pub fn zopenmax() -> i64 {                                                   // 
 /// C signature: `char *zgetdir(struct dirsav *d)`. Rust port keeps
 /// the out-arg shape but adds `Option<&mut>` so callers can pass
 /// `None` (matching the `NULL` legal value the C body checks for).
-pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> { // c:355
+pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
+    // c:355
     let cwd = env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?.to_string();
 
@@ -263,10 +271,13 @@ pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
 /// `zgetcwd()` would get `None` instead of `"."` when the filesystem
 /// cwd became inaccessible (deleted dir, perm denied), diverging
 /// from zsh which always returns a non-empty string.
-pub fn zgetcwd() -> String {                                                 // c:559
+pub fn zgetcwd() -> String {
+    // c:559
     // c:561 — `ret = zgetdir(NULL);`
-    if let Some(ret) = zgetdir(None) {                                       // c:561
-        if !ret.is_empty() {                                                 // c:564 — !*ret == '\0' check
+    if let Some(ret) = zgetdir(None) {
+        // c:561
+        if !ret.is_empty() {
+            // c:564 — !*ret == '\0' check
             return ret;
         }
     }
@@ -276,14 +287,16 @@ pub fn zgetcwd() -> String {                                                 // 
     // the canonical paramtab accessor (uppercase — that's the
     // export name; the lowercase `pwd` is a C-internal symbol
     // with no Rust-side counterpart in paramtab).
-    if let Some(pwd) = crate::ported::params::getsparam("PWD") {             // c:563
-        let unmeta_pwd = crate::ported::utils::unmeta(&pwd);                 // c:563
-        if !unmeta_pwd.is_empty() {                                          // c:564
+    if let Some(pwd) = crate::ported::params::getsparam("PWD") {
+        // c:563
+        let unmeta_pwd = crate::ported::utils::unmeta(&pwd); // c:563
+        if !unmeta_pwd.is_empty() {
+            // c:564
             return unmeta_pwd;
         }
     }
     // c:564-565 — `if (!ret || *ret == '\0') ret = dupstring(".");`.
-    ".".to_string()                                                          // c:565
+    ".".to_string() // c:565
 }
 
 /// Change directory with long-pathname support.
@@ -335,36 +348,44 @@ pub fn zgetcwd() -> String {                                                 // 
 /// Now mirrors C's algorithm: try direct chdir; on long-path errno
 /// + `len >= PATH_MAX`, find slash near boundary, chdir to prefix,
 /// continue with tail.
-pub fn zchdir(dir: &str) -> i32 {                                            // c:579
+pub fn zchdir(dir: &str) -> i32 {
+    // c:579
     #[cfg(unix)]
     {
         let path_max: usize = libc::PATH_MAX as usize;
         let mut remaining: Vec<u8> = dir.as_bytes().to_vec();
-        let mut saved_currdir: i32 = -2;                                    // c:582
+        let mut saved_currdir: i32 = -2; // c:582
         loop {
             // c:585 — `if (!*dir || chdir(dir) == 0) { close + return 0; }`
             if remaining.is_empty() {
                 if saved_currdir >= 0 {
-                    unsafe { libc::close(saved_currdir); }
+                    unsafe {
+                        libc::close(saved_currdir);
+                    }
                 }
                 return 0;
             }
             let c_dir = match std::ffi::CString::new(remaining.clone()) {
                 Ok(c) => c,
-                Err(_) => return -1,  // NUL byte in path — chdir would fail anyway.
+                Err(_) => return -1, // NUL byte in path — chdir would fail anyway.
             };
             let rc = unsafe { libc::chdir(c_dir.as_ptr()) };
-            if rc == 0 {                                                    // c:585
-                if saved_currdir >= 0 {                                     // c:587
-                    unsafe { libc::close(saved_currdir); }                  // c:588
+            if rc == 0 {
+                // c:585
+                if saved_currdir >= 0 {
+                    // c:587
+                    unsafe {
+                        libc::close(saved_currdir);
+                    } // c:588
                 }
-                return 0;                                                   // c:590
+                return 0; // c:590
             }
             // c:592-594 — only the ENAMETOOLONG/ENOMEM + long path arm
             // attempts the chunked descent. Everything else gives up.
             let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             let ok_errno = err == libc::ENAMETOOLONG || err == libc::ENOMEM;
-            if !ok_errno || remaining.len() < path_max {                    // c:592-594
+            if !ok_errno || remaining.len() < path_max {
+                // c:592-594
                 break;
             }
             // c:595-596 — find last `/` strictly before PATH_MAX.
@@ -372,16 +393,17 @@ pub fn zchdir(dir: &str) -> i32 {                                            // 
             while s_idx > 0 && remaining.get(s_idx as usize) != Some(&b'/') {
                 s_idx -= 1;
             }
-            if s_idx == 0 {                                                 // c:597 — no slash to split at
+            if s_idx == 0 {
+                // c:597 — no slash to split at
                 break;
             }
             // c:600-601 — first time we split, save the cwd via `open(".")`
             // so we can restore on later failure.
-            if saved_currdir == -2 {                                        // c:600
+            if saved_currdir == -2 {
+                // c:600
                 let dot = std::ffi::CString::new(".").unwrap();
-                saved_currdir = unsafe {
-                    libc::open(dot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)
-                };
+                saved_currdir =
+                    unsafe { libc::open(dot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) };
             }
             // c:603-606 — `*s = '\0'; chdir(dir); *s = '/';`. Try the prefix.
             let prefix: Vec<u8> = remaining[..s_idx as usize].to_vec();
@@ -389,7 +411,8 @@ pub fn zchdir(dir: &str) -> i32 {                                            // 
                 Ok(c) => c,
                 Err(_) => break,
             };
-            if unsafe { libc::chdir(c_prefix.as_ptr()) } < 0 {              // c:604
+            if unsafe { libc::chdir(c_prefix.as_ptr()) } < 0 {
+                // c:604
                 break;
             }
             // c:611-614 — `while (*++s == '/') ;` skip consecutive slashes,
@@ -402,22 +425,35 @@ pub fn zchdir(dir: &str) -> i32 {                                            // 
         }
         // c:616-626 — restore on lost-cwd path; return -1 if restored,
         // -2 if even the restore failed (cwd genuinely lost).
-        if saved_currdir >= 0 {                                             // c:617
+        if saved_currdir >= 0 {
+            // c:617
             let rc = unsafe { libc::fchdir(saved_currdir) };
-            unsafe { libc::close(saved_currdir); }                          // c:619 / c:622
-            if rc < 0 {                                                     // c:618
-                return -2;                                                  // c:620
+            unsafe {
+                libc::close(saved_currdir);
+            } // c:619 / c:622
+            if rc < 0 {
+                // c:618
+                return -2; // c:620
             }
-            return -1;                                                      // c:623
+            return -1; // c:623
         }
         // c:626 — never entered the split path: it's a plain -1.
-        if saved_currdir == -2 { -1 } else { -2 }                           // c:626
+        if saved_currdir == -2 {
+            -1
+        } else {
+            -2
+        } // c:626
     }
     #[cfg(not(unix))]
     {
         let _ = (dir, env::set_current_dir);
-        if dir.is_empty() { return 0; }
-        match env::set_current_dir(dir) { Ok(_) => 0, Err(_) => -1 }
+        if dir.is_empty() {
+            return 0;
+        }
+        match env::set_current_dir(dir) {
+            Ok(_) => 0,
+            Err(_) => -1,
+        }
     }
 }
 
@@ -425,7 +461,8 @@ pub fn zchdir(dir: &str) -> i32 {                                            // 
 /// Port of `output64(zlong val)` from Src/compat.c:638 — needed in C
 /// because `%lld` printf support varied; Rust's `to_string()`
 /// handles every target.
-pub fn output64(val: i64) -> String {                                        // c:638
+pub fn output64(val: i64) -> String {
+    // c:638
     val.to_string()
 }
 
@@ -434,7 +471,8 @@ pub fn output64(val: i64) -> String {                                        // 
 /// ships its own Unicode 9 u9_wcwidth fallback because system
 /// `u9_wcwidth(3)` data ages with libc. Rust uses the
 /// `unicode-width` crate which tracks the latest UCD.
-pub fn u9_wcwidth(ucs: char) -> i32 {                                          // ucs:760
+pub fn u9_wcwidth(ucs: char) -> i32 {
+    // ucs:760
     unicode_width::UnicodeWidthChar::width(ucs)
         .map(|w| w as i32)
         .unwrap_or(if ucs.is_control() { -1 } else { 1 })
@@ -442,7 +480,8 @@ pub fn u9_wcwidth(ucs: char) -> i32 {                                          /
 
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint(wint_t ucs)` from Src/compat.c:770.
-pub fn u9_iswprint(ucs: char) -> bool {                                        // ucs:770
+pub fn u9_iswprint(ucs: char) -> bool {
+    // ucs:770
     !ucs.is_control() && u9_wcwidth(ucs) >= 0
 }
 
@@ -457,7 +496,8 @@ pub fn u9_iswprint(ucs: char) -> bool {                                        /
 /// Port of `isprint_ascii(int c)` from Src/compat.c:785 — locale-
 /// independent printable check the C source uses when locale
 /// data isn't safe to read (signal handlers, early init).
-pub fn isprint_ascii(c: char) -> bool {                                      // c:785
+pub fn isprint_ascii(c: char) -> bool {
+    // c:785
     let b = c as u32;
     (0x20..=0x7e).contains(&b)
 }
@@ -467,8 +507,9 @@ pub fn isprint_ascii(c: char) -> bool {                                      // 
 /// missing libc strstr. zshrs relies on libc; this shim delegates to
 /// `str::find` for substring location, returning the byte offset on hit
 /// or None on miss (Rust idiom for the C `char *` / `NULL` return).
-pub fn strstr(s: &str, t: &str) -> Option<usize> {                           // c:41
-    s.find(t)                                                                // c:46-51 byte-by-byte loop
+pub fn strstr(s: &str, t: &str) -> Option<usize> {
+    // c:41
+    s.find(t) // c:46-51 byte-by-byte loop
 }
 
 /// Port of `int gettimeofday(struct timeval *tv, struct timezone *tz)`
@@ -476,42 +517,75 @@ pub fn strstr(s: &str, t: &str) -> Option<usize> {                           // 
 /// — fallback that fills tv_sec from `time(NULL)` and zeroes tv_usec.
 /// Rust shim returns (sec, usec) from libc gettimeofday; mirrors the
 /// C contract of always returning 0.
-pub fn gettimeofday() -> (i64, i64) {                                        // c:86
-    #[cfg(unix)] {
+pub fn gettimeofday() -> (i64, i64) {
+    // c:86
+    #[cfg(unix)]
+    {
         let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
-        unsafe { libc::gettimeofday(&mut tv, std::ptr::null_mut()); }        // c:88-89
+        unsafe {
+            libc::gettimeofday(&mut tv, std::ptr::null_mut());
+        } // c:88-89
         (tv.tv_sec as i64, tv.tv_usec as i64)
     }
-    #[cfg(not(unix))] { (0, 0) }
+    #[cfg(not(unix))]
+    {
+        (0, 0)
+    }
 }
 
 /// Port of `unsigned long strtoul(nptr, endptr, base)` from `Src/compat.c:688`.
 /// C source under `#ifndef HAVE_STRTOUL` — fallback for systems missing
 /// libc strtoul. Returns (parsed-value, bytes-consumed) so callers can
 /// compute the equivalent of the C `*endptr = ...` out-param.
-pub fn strtoul(nptr: &str, base: u32) -> (u64, usize) {                      // c:688
+pub fn strtoul(nptr: &str, base: u32) -> (u64, usize) {
+    // c:688
     let bytes = nptr.as_bytes();
     let mut i = 0;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }      // c:704 isspace
-    let neg = i < bytes.len() && bytes[i] == b'-';                           // c:707
-    if neg || (i < bytes.len() && bytes[i] == b'+') { i += 1; }              // c:709-712
-    let (radix, start) = if (base == 0 || base == 16) && bytes.get(i).copied() == Some(b'0')
-        && bytes.get(i+1).map(|b| b.eq_ignore_ascii_case(&b'x')).unwrap_or(false) {
-        (16u32, i + 2)                                                       // c:714-718 0x prefix
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    } // c:704 isspace
+    let neg = i < bytes.len() && bytes[i] == b'-'; // c:707
+    if neg || (i < bytes.len() && bytes[i] == b'+') {
+        i += 1;
+    } // c:709-712
+    let (radix, start) = if (base == 0 || base == 16)
+        && bytes.get(i).copied() == Some(b'0')
+        && bytes
+            .get(i + 1)
+            .map(|b| b.eq_ignore_ascii_case(&b'x'))
+            .unwrap_or(false)
+    {
+        (16u32, i + 2) // c:714-718 0x prefix
     } else if base == 0 {
-        (if bytes.get(i).copied() == Some(b'0') { 8 } else { 10 }, i)        // c:719-720
+        (
+            if bytes.get(i).copied() == Some(b'0') {
+                8
+            } else {
+                10
+            },
+            i,
+        ) // c:719-720
     } else {
         (base, i)
     };
     let mut acc: u64 = 0;
     let mut consumed = start;
     for &b in &bytes[start..] {
-        let digit = if b.is_ascii_digit() { (b - b'0') as u32 }
-            else if b.is_ascii_uppercase() { (b - b'A' + 10) as u32 }
-            else if b.is_ascii_lowercase() { (b - b'a' + 10) as u32 }
-            else { break };
-        if digit >= radix { break; }
-        acc = acc.saturating_mul(radix as u64).saturating_add(digit as u64);
+        let digit = if b.is_ascii_digit() {
+            (b - b'0') as u32
+        } else if b.is_ascii_uppercase() {
+            (b - b'A' + 10) as u32
+        } else if b.is_ascii_lowercase() {
+            (b - b'a' + 10) as u32
+        } else {
+            break;
+        };
+        if digit >= radix {
+            break;
+        }
+        acc = acc
+            .saturating_mul(radix as u64)
+            .saturating_add(digit as u64);
         consumed += 1;
     }
     (if neg { acc.wrapping_neg() } else { acc }, consumed)
@@ -523,11 +597,13 @@ pub fn strtoul(nptr: &str, base: u32) -> (u64, usize) {                      // 
 /// recursive walk: try pathconf(dir); on EINVAL/ENOENT/ENOTDIR strip
 /// the last path component and retry, accumulating taillen, until we
 /// hit "/" or "." or run out.
-pub fn zpathmax(dir: &str) -> i64 {                                          // c:236
-    #[cfg(unix)] unsafe {
-        let mut buf: Vec<u8> = dir.as_bytes().to_vec();                      // c:237 char *dir buffer
-        // c:241 errno access — pick the right per-platform getter
-        // (`__error()` on macOS, `__errno_location()` on Linux/BSD).
+pub fn zpathmax(dir: &str) -> i64 {
+    // c:236
+    #[cfg(unix)]
+    unsafe {
+        let mut buf: Vec<u8> = dir.as_bytes().to_vec(); // c:237 char *dir buffer
+                                                        // c:241 errno access — pick the right per-platform getter
+                                                        // (`__error()` on macOS, `__errno_location()` on Linux/BSD).
         #[cfg(target_os = "macos")]
         let errno_loc: *mut libc::c_int = libc::__error();
         #[cfg(target_os = "linux")]
@@ -538,50 +614,63 @@ pub fn zpathmax(dir: &str) -> i64 {                                          // 
             // c:274-279 — fallback path (no working errno access).
             let dirlen = buf.len() as i64;
             let path_max = 4096i64;
-            return if dirlen >= path_max { -1 } else { path_max - dirlen };
+            return if dirlen >= path_max {
+                -1
+            } else {
+                path_max - dirlen
+            };
         }
-        let mut accumulated_taillen: libc::c_long = 0;                       // c:262 taillen accumulator
+        let mut accumulated_taillen: libc::c_long = 0; // c:262 taillen accumulator
         loop {
             let cs = match std::ffi::CString::new(buf.clone()) {
                 Ok(c) => c,
                 Err(_) => return -1,
             };
-            *errno_loc = 0;                                                  // c:241 errno = 0
-            let pathmax = libc::pathconf(cs.as_ptr(), libc::_PC_PATH_MAX);   // c:242
-            if pathmax >= 0 {                                                // c:242
+            *errno_loc = 0; // c:241 errno = 0
+            let pathmax = libc::pathconf(cs.as_ptr(), libc::_PC_PATH_MAX); // c:242
+            if pathmax >= 0 {
+                // c:242
                 if accumulated_taillen == 0 {
-                    return pathmax as i64;                                   // c:244
+                    return pathmax as i64; // c:244
                 }
                 if accumulated_taillen < pathmax {
-                    return (pathmax - accumulated_taillen) as i64;           // c:264
+                    return (pathmax - accumulated_taillen) as i64; // c:264
                 } else {
-                    *errno_loc = libc::ENAMETOOLONG;                         // c:266
+                    *errno_loc = libc::ENAMETOOLONG; // c:266
                     return -1;
                 }
             }
             let err = *errno_loc;
             if err != libc::EINVAL && err != libc::ENOENT && err != libc::ENOTDIR {
-                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
+                return if *errno_loc != 0 { -1 } else { 0 }; // c:269-272
             }
             // c:247 — strip the last '/' run.
             let tail_pos: Option<usize> = buf.iter().rposition(|&b| b == b'/');
-            let mut tail = match tail_pos { Some(t) => t, None => {
-                // c:259 — no '/': try pathconf(".") with taillen = strlen(dir)+1.
-                *errno_loc = 0;
-                let dot = std::ffi::CString::new(".").unwrap();
-                let pm = libc::pathconf(dot.as_ptr(), libc::_PC_PATH_MAX);
-                let taillen = (buf.len() + 1) as libc::c_long;
-                if pm > 0 && taillen < pm {
-                    return (pm - taillen) as i64;                            // c:264
+            let mut tail = match tail_pos {
+                Some(t) => t,
+                None => {
+                    // c:259 — no '/': try pathconf(".") with taillen = strlen(dir)+1.
+                    *errno_loc = 0;
+                    let dot = std::ffi::CString::new(".").unwrap();
+                    let pm = libc::pathconf(dot.as_ptr(), libc::_PC_PATH_MAX);
+                    let taillen = (buf.len() + 1) as libc::c_long;
+                    if pm > 0 && taillen < pm {
+                        return (pm - taillen) as i64; // c:264
+                    }
+                    if pm > 0 {
+                        *errno_loc = libc::ENAMETOOLONG;
+                    } // c:266
+                    return if *errno_loc != 0 { -1 } else { 0 }; // c:269-272
                 }
-                if pm > 0 { *errno_loc = libc::ENAMETOOLONG; }               // c:266
-                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
-            }};
-            while tail > 0 && buf[tail - 1] == b'/' { tail -= 1; }           // c:248-249
-            let taillen_now = (buf.len() - tail) as libc::c_long;            // c:262
+            };
+            while tail > 0 && buf[tail - 1] == b'/' {
+                tail -= 1;
+            } // c:248-249
+            let taillen_now = (buf.len() - tail) as libc::c_long; // c:262
             accumulated_taillen += taillen_now;
-            if tail > 0 {                                                    // c:250
-                buf.truncate(tail);                                          // c:251 *tail = 0
+            if tail > 0 {
+                // c:250
+                buf.truncate(tail); // c:251 *tail = 0
                 continue;
             } else {
                 // c:255 — exhausted the path; try pathconf("/").
@@ -589,18 +678,25 @@ pub fn zpathmax(dir: &str) -> i64 {                                          // 
                 let root = std::ffi::CString::new("/").unwrap();
                 let pm = libc::pathconf(root.as_ptr(), libc::_PC_PATH_MAX);
                 if pm > 0 && accumulated_taillen < pm {
-                    return (pm - accumulated_taillen) as i64;                // c:264
+                    return (pm - accumulated_taillen) as i64; // c:264
                 }
-                if pm > 0 { *errno_loc = libc::ENAMETOOLONG; }               // c:266
-                return if *errno_loc != 0 { -1 } else { 0 };                 // c:269-272
+                if pm > 0 {
+                    *errno_loc = libc::ENAMETOOLONG;
+                } // c:266
+                return if *errno_loc != 0 { -1 } else { 0 }; // c:269-272
             }
         }
     }
-    #[cfg(not(unix))] {
+    #[cfg(not(unix))]
+    {
         // c:274-279 — non-HAVE_PATHCONF fallback returns PATH_MAX - dirlen.
         let dirlen = dir.len() as i64;
         let path_max = 4096i64;
-        if dirlen >= path_max { -1 } else { path_max - dirlen }
+        if dirlen >= path_max {
+            -1
+        } else {
+            path_max - dirlen
+        }
     }
 }
 
@@ -627,8 +723,7 @@ mod tests {
         let r2 = zgettime_monotonic_if_available(&mut t2);
         assert!(r1 >= 0 && r2 >= 0);
         // Elapsed must be strictly positive in ns.
-        let elapsed_ns = (t2.tv_sec - t1.tv_sec) * 1_000_000_000
-                       + (t2.tv_nsec - t1.tv_nsec) as i64;
+        let elapsed_ns = (t2.tv_sec - t1.tv_sec) * 1_000_000_000 + (t2.tv_nsec - t1.tv_nsec) as i64;
         assert!(elapsed_ns > 0);
     }
 
@@ -676,9 +771,9 @@ mod tests {
         // miss + edge cases (empty needle is documented to return 0).
         assert_eq!(strstr("hello world", "world"), Some(6));
         assert_eq!(strstr("hello world", "hello"), Some(0));
-        assert_eq!(strstr("hello world", "xyz"),   None);
-        assert_eq!(strstr("", "x"),                None);
-        assert_eq!(strstr("anything", ""),         Some(0));
+        assert_eq!(strstr("hello world", "xyz"), None);
+        assert_eq!(strstr("", "x"), None);
+        assert_eq!(strstr("anything", ""), Some(0));
     }
 
     #[cfg(unix)]
@@ -742,9 +837,12 @@ mod tests {
     #[test]
     fn difftime_returns_signed_double_difference() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(difftime(1_700_000_010, 1_700_000_000),  10.0);
-        assert_eq!(difftime(1_700_000_000, 1_700_000_010), -10.0,
-            "c:178 — signed cast; t1 > t2 must be negative");
+        assert_eq!(difftime(1_700_000_010, 1_700_000_000), 10.0);
+        assert_eq!(
+            difftime(1_700_000_000, 1_700_000_010),
+            -10.0,
+            "c:178 — signed cast; t1 > t2 must be negative"
+        );
         assert_eq!(difftime(42, 42), 0.0);
     }
 
@@ -769,7 +867,7 @@ mod tests {
         assert!(!isprint_ascii('\n'));
         assert!(!isprint_ascii('\0'));
         // Non-ASCII (>= 0x80) rejected per the upper-bound at 0x7e.
-        assert!(!isprint_ascii('é'),  "c:786 — non-ASCII outside range");
+        assert!(!isprint_ascii('é'), "c:786 — non-ASCII outside range");
         assert!(!isprint_ascii('字'), "c:786 — wide char outside range");
     }
 
@@ -794,7 +892,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(u9_iswprint('a'));
         assert!(u9_iswprint(' '));
-        assert!(u9_iswprint('é'),  "Latin-1 letter is printable");
+        assert!(u9_iswprint('é'), "Latin-1 letter is printable");
         assert!(u9_iswprint('字'), "CJK ideograph is printable");
         // Controls — explicit zsh check at c:773.
         assert!(!u9_iswprint('\0'));
@@ -834,7 +932,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // ENOENT is "No such file or directory" on every Unix.
         let s = strerror(2 /* ENOENT */);
-        assert!(!s.is_empty(), "c:194 — strerror must return non-empty for ENOENT");
+        assert!(
+            !s.is_empty(),
+            "c:194 — strerror must return non-empty for ENOENT"
+        );
     }
 
     /// `Src/compat.c:307-326` — `zopenmax()` caps at
@@ -853,8 +954,11 @@ mod tests {
     fn zopenmax_caps_within_canonical_ladder() {
         let _g = crate::test_util::global_state_lock();
         // c:307 — canonical value.
-        assert_eq!(crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX, 64,
-            "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64");
+        assert_eq!(
+            crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX,
+            64,
+            "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64"
+        );
         // zopenmax() must be positive and bounded by the OPEN_MAX
         // host value (Linux: typically 1024, macOS: 10240).
         let m = zopenmax();
@@ -871,14 +975,18 @@ mod tests {
     fn zgetcwd_always_returns_non_empty() {
         let _g = crate::test_util::global_state_lock();
         let cwd = zgetcwd();
-        assert!(!cwd.is_empty(),
-            "c:564-565 — zgetcwd must NEVER return empty (falls through to dupstring(\".\"))");
+        assert!(
+            !cwd.is_empty(),
+            "c:564-565 — zgetcwd must NEVER return empty (falls through to dupstring(\".\"))"
+        );
         // First fallback (current_dir) succeeds in normal test env →
         // expect an absolute path.
         #[cfg(unix)]
         {
-            assert!(cwd.starts_with('/') || cwd == ".",
-                "c:561 — zgetdir(NULL) returns absolute path, or c:565 fallback `.`");
+            assert!(
+                cwd.starts_with('/') || cwd == ".",
+                "c:561 — zgetdir(NULL) returns absolute path, or c:565 fallback `.`"
+            );
         }
     }
 
@@ -888,8 +996,7 @@ mod tests {
     #[test]
     fn zchdir_empty_path_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zchdir(""), 0,
-            "c:585 — empty dir short-circuits to success");
+        assert_eq!(zchdir(""), 0, "c:585 — empty dir short-circuits to success");
     }
 
     /// `Src/compat.c:579-594` — direct `chdir(2)` success path: when
@@ -921,10 +1028,15 @@ mod tests {
         // chdir fails with ENOENT. C returns -1 without trying the
         // chunked descent (path < PATH_MAX so c:593 fails the gate).
         let rc = zchdir("/tmp/this_zshrs_test_path_does_not_exist_xyz_abc");
-        assert_eq!(rc, -1,
-            "c:592-594 — non-ENAMETOOLONG failure breaks loop, returns -1");
+        assert_eq!(
+            rc, -1,
+            "c:592-594 — non-ENAMETOOLONG failure breaks loop, returns -1"
+        );
         // cwd unchanged.
-        assert_eq!(std::env::current_dir().unwrap(), saved,
-            "no chdir side-effect on non-recoverable failure");
+        assert_eq!(
+            std::env::current_dir().unwrap(),
+            saved,
+            "no chdir side-effect on non-recoverable failure"
+        );
     }
 }

@@ -32,10 +32,28 @@ use super::state::DaemonState;
 /// All canonical subsystems the snapshot covers. Folded into the
 /// rkyv `CanonicalShard` on save and replayed on load.
 const SUBSYSTEMS: &[&str] = &[
-    "alias", "galias", "salias", "function", "function_autoload",
-    "env", "params", "params_typed", "bindkey", "compdef", "named_dir",
-    "zstyle", "zmodload", "setopt", "trap", "sched", "source", "zle",
-    "completion", "path", "fpath", "manpath",
+    "alias",
+    "galias",
+    "salias",
+    "function",
+    "function_autoload",
+    "env",
+    "params",
+    "params_typed",
+    "bindkey",
+    "compdef",
+    "named_dir",
+    "zstyle",
+    "zmodload",
+    "setopt",
+    "trap",
+    "sched",
+    "source",
+    "zle",
+    "completion",
+    "path",
+    "fpath",
+    "manpath",
 ];
 
 fn tag_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
@@ -101,8 +119,7 @@ pub async fn op_snapshot_save(state: &Arc<DaemonState>, args: Value) -> OpResult
     f.sync_all()
         .map_err(|e| ErrPayload::new("snapshot_write", e.to_string()))?;
     drop(f);
-    std::fs::rename(&tmp, &dest)
-        .map_err(|e| ErrPayload::new("snapshot_rename", e.to_string()))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| ErrPayload::new("snapshot_rename", e.to_string()))?;
 
     let total_rows: i64 = SUBSYSTEMS
         .iter()
@@ -179,22 +196,34 @@ pub async fn op_snapshot_load(state: &Arc<DaemonState>, args: Value) -> OpResult
     );
     rows_restored += canon.replace_subsystem(
         "galias",
-        shard.global_aliases.iter().map(|(k, v)| (k.clone(), json_str(v))),
+        shard
+            .global_aliases
+            .iter()
+            .map(|(k, v)| (k.clone(), json_str(v))),
         None,
     );
     rows_restored += canon.replace_subsystem(
         "salias",
-        shard.suffix_aliases.iter().map(|(k, v)| (k.clone(), json_str(v))),
+        shard
+            .suffix_aliases
+            .iter()
+            .map(|(k, v)| (k.clone(), json_str(v))),
         None,
     );
     rows_restored += canon.replace_subsystem(
         "function",
-        shard.functions.iter().map(|(k, v)| (k.clone(), json_str(v))),
+        shard
+            .functions
+            .iter()
+            .map(|(k, v)| (k.clone(), json_str(v))),
         None,
     );
     rows_restored += canon.replace_subsystem(
         "env",
-        shard.env_exports.iter().map(|(k, v)| (k.clone(), json_str(v))),
+        shard
+            .env_exports
+            .iter()
+            .map(|(k, v)| (k.clone(), json_str(v))),
         None,
     );
     rows_restored += canon.replace_subsystem(
@@ -214,7 +243,10 @@ pub async fn op_snapshot_load(state: &Arc<DaemonState>, args: Value) -> OpResult
     );
     rows_restored += canon.replace_subsystem(
         "named_dir",
-        shard.named_dirs.iter().map(|(k, v)| (k.clone(), json_str(v))),
+        shard
+            .named_dirs
+            .iter()
+            .map(|(k, v)| (k.clone(), json_str(v))),
         None,
     );
     rows_restored += canon.replace_subsystem(
@@ -237,7 +269,12 @@ pub async fn op_snapshot_load(state: &Arc<DaemonState>, args: Value) -> OpResult
             .setopts
             .iter()
             .map(|o| (o.clone(), "\"on\"".to_string()))
-            .chain(shard.unsetopts.iter().map(|o| (o.clone(), "\"off\"".to_string()))),
+            .chain(
+                shard
+                    .unsetopts
+                    .iter()
+                    .map(|o| (o.clone(), "\"off\"".to_string())),
+            ),
         None,
     );
     rows_restored += canon.replace_subsystem(

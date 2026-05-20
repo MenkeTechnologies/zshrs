@@ -205,7 +205,10 @@ pub fn read_config_full() -> Config {
         .and_then(|v| v.as_str())
         .map(|s| {
             ConfigSetting::parse(s).unwrap_or_else(|| {
-                tracing::warn!(value = s, "zshrs.toml: [daemon].enabled invalid; using auto");
+                tracing::warn!(
+                    value = s,
+                    "zshrs.toml: [daemon].enabled invalid; using auto"
+                );
                 ConfigSetting::Auto
             })
         })
@@ -217,7 +220,10 @@ pub fn read_config_full() -> Config {
         .and_then(|v| v.as_str())
         .map(|s| {
             SkipConfigs::parse(s).unwrap_or_else(|| {
-                tracing::warn!(value = s, "zshrs.toml: [shell].skip_configs invalid; using off");
+                tracing::warn!(
+                    value = s,
+                    "zshrs.toml: [shell].skip_configs invalid; using off"
+                );
                 SkipConfigs::Off
             })
         })
@@ -235,9 +241,7 @@ pub fn read_config_full() -> Config {
                     Some(resolve_startup_config_path(t))
                 }
             } else {
-                tracing::warn!(
-                    "zshrs.toml: [shell].startup_config must be a string; ignoring"
-                );
+                tracing::warn!("zshrs.toml: [shell].startup_config must be a string; ignoring");
                 None
             }
         });
@@ -494,7 +498,10 @@ mod tests {
         assert_eq!(ConfigSetting::parse("false"), Some(ConfigSetting::Off));
         assert_eq!(ConfigSetting::parse("no"), Some(ConfigSetting::Off));
         assert_eq!(ConfigSetting::parse("0"), Some(ConfigSetting::Off));
-        assert_eq!(ConfigSetting::parse("require"), Some(ConfigSetting::Require));
+        assert_eq!(
+            ConfigSetting::parse("require"),
+            Some(ConfigSetting::Require)
+        );
         assert_eq!(ConfigSetting::parse("on"), Some(ConfigSetting::Require));
         assert_eq!(ConfigSetting::parse("true"), Some(ConfigSetting::Require));
         assert_eq!(ConfigSetting::parse("garbage"), None);

@@ -38,13 +38,13 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::zwc::{wc_code, wc_data, ZwcFile};
+use crate::extensions::heredoc_ast::HereDocInfo;
 use crate::extensions::zsh_ast::{
     CaseArm, CaseTerm, ForList, ListFlags, SublistFlags, SublistOp, ZshAssign, ZshAssignValue,
     ZshCase, ZshCommand, ZshCond, ZshFor, ZshFuncDef, ZshIf, ZshList, ZshPipe, ZshProgram,
     ZshRedir, ZshRepeat, ZshSimple, ZshSublist, ZshTry, ZshWhile,
 };
-use crate::extensions::heredoc_ast::HereDocInfo;
+use crate::zwc::{wc_code, wc_data, ZwcFile};
 use std::path::Path;
 
 // Canonical opcode / flag / redir constants live in `ported::zsh_h`
@@ -631,10 +631,7 @@ impl<'a> Walker<'a> {
                 let init = self.read_string();
                 let cond = self.read_string();
                 let step = self.read_string();
-                (
-                    String::new(),
-                    ForList::CStyle { init, cond, step },
-                )
+                (String::new(), ForList::CStyle { init, cond, step })
             }
             _ => {
                 // WC_FOR_PPARAM: n_vars (count), var_strcodes×n.
@@ -1100,6 +1097,10 @@ mod tests {
             .expect("load")
             .expect("first function");
         let s = ast_to_sexp(&prog);
-        assert!(s.contains(r#""echo""#) && s.contains(r#""hello""#), "got: {}", s);
+        assert!(
+            s.contains(r#""echo""#) && s.contains(r#""hello""#),
+            "got: {}",
+            s
+        );
     }
 }

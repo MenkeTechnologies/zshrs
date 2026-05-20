@@ -20,17 +20,17 @@
 //! Cache key: `(canonical_path, mtime_secs, mtime_nsecs)`.
 //! Cache invalidation: mtime mismatch → re-source, update cache.
 
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+#[allow(unused_imports)]
+use crate::ported::vm_helper::ShellExecutor;
+use crate::ported::zsh_h::PM_UNDEFINED;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::env;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::os::unix::fs::MetadataExt;
-use crate::ported::zsh_h::PM_UNDEFINED;
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-#[allow(unused_imports)]
-use crate::ported::vm_helper::ShellExecutor;
+use std::sync::OnceLock;
 
 /// State snapshot for plugin delta computation.
 pub(crate) struct PluginSnapshot {
@@ -252,9 +252,10 @@ impl PluginCache {
         // semantics. Without this, fixes to paramsubst / option
         // handling don't take effect until the user manually
         // `rm ~/.zshrs/plugins.db`.
-        let _ = self
-            .conn
-            .execute("ALTER TABLE plugins ADD COLUMN binary_mtime INTEGER NOT NULL DEFAULT 0", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE plugins ADD COLUMN binary_mtime INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(())
     }
 
@@ -680,7 +681,6 @@ impl PluginCache {
     /// Run a full compaudit against fpath directories, using cache where valid.
     /// Returns list of insecure directories (empty = all secure).
     pub fn compaudit_cached(&self, fpath: &[std::path::PathBuf]) -> Vec<String> {
-
         let euid = unsafe { libc::geteuid() };
         let mut insecure = Vec::new();
 
@@ -838,8 +838,16 @@ impl crate::ported::vm_helper::ShellExecutor {
         PluginSnapshot {
             functions: self.function_names().into_iter().collect(),
             aliases: self.alias_entries().into_iter().map(|(k, _)| k).collect(),
-            global_aliases: self.global_alias_entries().into_iter().map(|(k, _)| k).collect(),
-            suffix_aliases: self.suffix_alias_entries().into_iter().map(|(k, _)| k).collect(),
+            global_aliases: self
+                .global_alias_entries()
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect(),
+            suffix_aliases: self
+                .suffix_alias_entries()
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect(),
             variables: if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_none())
@@ -865,7 +873,14 @@ impl crate::ported::vm_helper::ShellExecutor {
             options: crate::ported::options::opt_state_snapshot(),
             hooks: {
                 // Snapshot `<hook>_functions` arrays from canonical paramtab.
-                let names = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"];
+                let names = [
+                    "chpwd",
+                    "precmd",
+                    "preexec",
+                    "periodic",
+                    "zshexit",
+                    "zshaddhistory",
+                ];
                 let mut m = std::collections::HashMap::new();
                 for h in &names {
                     let arr_name = format!("{}_functions", h);
@@ -880,11 +895,15 @@ impl crate::ported::vm_helper::ShellExecutor {
             autoloads: {
                 // Walk canonical shfunctab for autoload-pending entries
                 // (PM_UNDEFINED set). Snapshot is keyed by function name.
-                crate::ported::hashtable::shfunctab_lock().read().ok()
-                    .map(|t| t.iter()
-                        .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
-                        .map(|(name, _)| name.clone())
-                        .collect())
+                crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .ok()
+                    .map(|t| {
+                        t.iter()
+                            .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
+                            .map(|(name, _)| name.clone())
+                            .collect()
+                    })
                     .unwrap_or_default()
             },
         }
@@ -924,9 +943,24 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
             }
         };
-        push_alias(&mut delta, self.alias_entries(), &snap.aliases, AliasKind::Regular);
-        push_alias(&mut delta, self.global_alias_entries(), &snap.global_aliases, AliasKind::Global);
-        push_alias(&mut delta, self.suffix_alias_entries(), &snap.suffix_aliases, AliasKind::Suffix);
+        push_alias(
+            &mut delta,
+            self.alias_entries(),
+            &snap.aliases,
+            AliasKind::Regular,
+        );
+        push_alias(
+            &mut delta,
+            self.global_alias_entries(),
+            &snap.global_aliases,
+            AliasKind::Global,
+        );
+        push_alias(
+            &mut delta,
+            self.suffix_alias_entries(),
+            &snap.suffix_aliases,
+            AliasKind::Suffix,
+        );
 
         // New/changed variables. Skip shell-special parameters whose
         // values are runtime-state, not script-state — replaying them
@@ -943,22 +977,43 @@ impl crate::ported::vm_helper::ShellExecutor {
         // the C analogue's PM_SPECIAL flag — those params don't
         // round-trip through the parameter-table dump path.
         const NON_REPLAYABLE_VARS: &[&str] = &[
-            "0", "_", "?", "$", "!", "PPID", "RANDOM", "SECONDS",
-            "EPOCHSECONDS", "EPOCHREALTIME", "LINENO", "OLDPWD", "PWD",
-            "STATUS", "OPTIND", "OPTARG", "IFS", "FUNCNAME",
-            "BASHPID", "BASH_LINENO", "BASH_SOURCE",
-            "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT", "ZSH_SUBSHELL",
-            "HISTCMD", "MATCH", "MBEGIN", "MEND",
+            "0",
+            "_",
+            "?",
+            "$",
+            "!",
+            "PPID",
+            "RANDOM",
+            "SECONDS",
+            "EPOCHSECONDS",
+            "EPOCHREALTIME",
+            "LINENO",
+            "OLDPWD",
+            "PWD",
+            "STATUS",
+            "OPTIND",
+            "OPTARG",
+            "IFS",
+            "FUNCNAME",
+            "BASHPID",
+            "BASH_LINENO",
+            "BASH_SOURCE",
+            "ZSH_ARGZERO",
+            "ZSH_EVAL_CONTEXT",
+            "ZSH_SUBSHELL",
+            "HISTCMD",
+            "MATCH",
+            "MBEGIN",
+            "MEND",
         ];
-        let mut var_keys: Vec<String> =
-            if let Ok(tab) = crate::ported::params::paramtab().read() {
-                tab.iter()
-                    .filter(|(_, pm)| pm.u_arr.is_none())
-                    .map(|(k, _)| k.clone())
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let mut var_keys: Vec<String> = if let Ok(tab) = crate::ported::params::paramtab().read() {
+            tab.iter()
+                .filter(|(_, pm)| pm.u_arr.is_none())
+                .map(|(k, _)| k.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
         var_keys.sort();
         for name in &var_keys {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
@@ -981,7 +1036,8 @@ impl crate::ported::vm_helper::ShellExecutor {
         // New arrays — iterate paramtab for PM_ARRAY entries.
         let arr_entries: Vec<(String, Vec<String>)> =
             if let Ok(tab) = crate::ported::params::paramtab().read() {
-                let mut v: Vec<(String, Vec<String>)> = tab.iter()
+                let mut v: Vec<(String, Vec<String>)> = tab
+                    .iter()
                     .filter_map(|(k, pm)| pm.u_arr.clone().map(|a| (k.clone(), a)))
                     .collect();
                 v.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1003,9 +1059,8 @@ impl crate::ported::vm_helper::ShellExecutor {
         // captures alongside scalars and arrays.
         let assoc_entries: Vec<(String, indexmap::IndexMap<String, String>)> =
             if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                let mut v: Vec<(String, indexmap::IndexMap<String, String>)> = m.iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                let mut v: Vec<(String, indexmap::IndexMap<String, String>)> =
+                    m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 v.sort_by(|a, b| a.0.cmp(&b.0));
                 v
             } else {
@@ -1044,7 +1099,14 @@ impl crate::ported::vm_helper::ShellExecutor {
         }
 
         // New hooks — read from canonical `<hook>_functions` arrays.
-        let names = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"];
+        let names = [
+            "chpwd",
+            "precmd",
+            "preexec",
+            "periodic",
+            "zshexit",
+            "zshaddhistory",
+        ];
         let mut hook_names: Vec<&&str> = names.iter().collect();
         hook_names.sort();
         for &h in hook_names {
@@ -1061,11 +1123,14 @@ impl crate::ported::vm_helper::ShellExecutor {
 
         // New autoloads — read PM_UNDEFINED entries from canonical shfunctab.
         let current_autoloads: Vec<String> = crate::ported::hashtable::shfunctab_lock()
-            .read().ok()
-            .map(|t| t.iter()
-                .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
-                .map(|(name, _)| name.clone())
-                .collect())
+            .read()
+            .ok()
+            .map(|t| {
+                t.iter()
+                    .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
+                    .map(|(name, _)| name.clone())
+                    .collect()
+            })
             .unwrap_or_default();
         let mut autoload_keys: Vec<&String> = current_autoloads.iter().collect();
         autoload_keys.sort();
@@ -1081,7 +1146,6 @@ impl crate::ported::vm_helper::ShellExecutor {
     }
     /// Replay a cached plugin delta into the executor state.
     pub(crate) fn replay_plugin_delta(&mut self, delta: &crate::plugin_cache::PluginDelta) {
-
         // Aliases
         for (name, value, kind) in &delta.aliases {
             match kind {
@@ -1104,12 +1168,34 @@ impl crate::ported::vm_helper::ShellExecutor {
         // Keeping the same exclusion list as `diff_state` so old
         // caches self-heal on next read.
         const NON_REPLAYABLE_VARS: &[&str] = &[
-            "0", "_", "?", "$", "!", "PPID", "RANDOM", "SECONDS",
-            "EPOCHSECONDS", "EPOCHREALTIME", "LINENO", "OLDPWD", "PWD",
-            "STATUS", "OPTIND", "OPTARG", "IFS", "FUNCNAME",
-            "BASHPID", "BASH_LINENO", "BASH_SOURCE",
-            "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT", "ZSH_SUBSHELL",
-            "HISTCMD", "MATCH", "MBEGIN", "MEND",
+            "0",
+            "_",
+            "?",
+            "$",
+            "!",
+            "PPID",
+            "RANDOM",
+            "SECONDS",
+            "EPOCHSECONDS",
+            "EPOCHREALTIME",
+            "LINENO",
+            "OLDPWD",
+            "PWD",
+            "STATUS",
+            "OPTIND",
+            "OPTARG",
+            "IFS",
+            "FUNCNAME",
+            "BASHPID",
+            "BASH_LINENO",
+            "BASH_SOURCE",
+            "ZSH_ARGZERO",
+            "ZSH_EVAL_CONTEXT",
+            "ZSH_SUBSHELL",
+            "HISTCMD",
+            "MATCH",
+            "MBEGIN",
+            "MEND",
         ];
         for (name, value) in &delta.variables {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {

@@ -9,32 +9,44 @@
 //! the lexer/parser parameters went away. Callers just call zcontext_*
 //! and the underlying thread_local state is what's saved/restored.
 
+use super::parse::ParseStack;
 use crate::ported::zsh_h::hist_stack;
 use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
-use std::sync::Mutex;
 use crate::zsh_h::lex_stack;
-use super::parse::{ParseStack};
+use std::sync::Mutex;
 
 /// Port of `struct context_stack` from Src/context.c:38-44.
 #[allow(non_camel_case_types)]
-pub struct context_stack {                                                   // c:52
-    pub next: Option<Box<context_stack>>,                                    // c:52
-    pub hist_stack: hist_stack,                                              // c:52
-    pub lex_stack: lex_stack,                                                 // c:52
-    pub parse_stack: ParseStack,                                             // c:52
+pub struct context_stack {
+    // c:52
+    pub next: Option<Box<context_stack>>, // c:52
+    pub hist_stack: hist_stack,           // c:52
+    pub lex_stack: lex_stack,             // c:52
+    pub parse_stack: ParseStack,          // c:52
 }
 
 /// Port of `void zcontext_save_partial(int parts)` from Src/context.c:52.
 #[allow(non_snake_case)]
-pub fn zcontext_save_partial(parts: i32) {                                   // c:52
-    crate::ported::signals::queue_signals();                                 // c:52
+pub fn zcontext_save_partial(parts: i32) {
+    // c:52
+    crate::ported::signals::queue_signals(); // c:52
 
-    let mut cs = Box::new(context_stack {                                    // c:58
+    let mut cs = Box::new(context_stack {
+        // c:58
         next: None,
         hist_stack: hist_stack {
-            histactive: 0, histdone: 0, stophist: 0, hlinesz: 0, defev: 0,
-            hline: None, hptr: None, chwords: Vec::new(),
-            chwordlen: 0, chwordpos: 0, csp: 0, hist_keep_comment: 0,
+            histactive: 0,
+            histdone: 0,
+            stophist: 0,
+            hlinesz: 0,
+            defev: 0,
+            hline: None,
+            hptr: None,
+            chwords: Vec::new(),
+            chwordlen: 0,
+            chwordpos: 0,
+            csp: 0,
+            hist_keep_comment: 0,
         },
         lex_stack: lex_stack::default(),
         parse_stack: ParseStack::default(),
@@ -42,66 +54,79 @@ pub fn zcontext_save_partial(parts: i32) {                                   // 
 
     let mut head = cstack.lock().unwrap();
 
-    let toplevel: i32 = if head.is_none() { 1 } else { 0 };                  // !cstack
-    if (parts & ZCONTEXT_HIST) != 0 {                                        // c:60
+    let toplevel: i32 = if head.is_none() { 1 } else { 0 }; // !cstack
+    if (parts & ZCONTEXT_HIST) != 0 {
+        // c:60
         crate::ported::hist::hist_context_save(&mut cs.hist_stack, toplevel); // c:61
     }
-    if (parts & ZCONTEXT_LEX) != 0 {                                         // c:63
+    if (parts & ZCONTEXT_LEX) != 0 {
+        // c:63
         crate::ported::lex::lex_context_save(&mut cs.lex_stack);
     }
-    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:80
+    if (parts & ZCONTEXT_PARSE) != 0 {
+        // c:80
         crate::ported::parse::parse_context_save(&mut cs.parse_stack);
     }
 
-    cs.next = head.take();                                                   // c:89
-    *head = Some(cs);                                                        // c:89
+    cs.next = head.take(); // c:89
+    *head = Some(cs); // c:89
 
-    crate::ported::signals::unqueue_signals();                               // c:89
+    crate::ported::signals::unqueue_signals(); // c:89
 }
 
 /// Port of `void zcontext_save(void)` from Src/context.c:80.
-pub fn zcontext_save() {                                                     // c:80
+pub fn zcontext_save() {
+    // c:80
     zcontext_save_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE);
 }
 
 /// Port of `void zcontext_restore_partial(int parts)` from Src/context.c:89.
-pub fn zcontext_restore_partial(parts: i32) {                                // c:89
+pub fn zcontext_restore_partial(parts: i32) {
+    // c:89
     let mut head = cstack.lock().unwrap();
     // c:93 — DPUTS(!cstack, "BUG: zcontext_restore() without zcontext_save()")
-    crate::DPUTS!(head.is_none(), "BUG: zcontext_restore() without zcontext_save()"); // c:93
-    let mut cs = match head.take() {                                         // c:91
+    crate::DPUTS!(
+        head.is_none(),
+        "BUG: zcontext_restore() without zcontext_save()"
+    ); // c:93
+    let mut cs = match head.take() {
+        // c:91
         Some(cs) => cs,
         None => {
             return;
         }
     };
 
-    crate::ported::signals::queue_signals();                                 // c:95
-    *head = cs.next.take();                                                  // c:96
+    crate::ported::signals::queue_signals(); // c:95
+    *head = cs.next.take(); // c:96
     let toplevel: i32 = if head.is_none() { 1 } else { 0 };
 
-    if (parts & ZCONTEXT_HIST) != 0 {                                        // c:98
+    if (parts & ZCONTEXT_HIST) != 0 {
+        // c:98
         crate::ported::hist::hist_context_restore(&cs.hist_stack, toplevel); // c:99
     }
-    if (parts & ZCONTEXT_LEX) != 0 {                                         // c:101
+    if (parts & ZCONTEXT_LEX) != 0 {
+        // c:101
         crate::ported::lex::lex_context_restore(&mut cs.lex_stack);
     }
-    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:117
+    if (parts & ZCONTEXT_PARSE) != 0 {
+        // c:117
         crate::ported::parse::parse_context_restore(&cs.parse_stack);
     }
 
-    drop(cs);                                                                // c:117
+    drop(cs); // c:117
 
-    crate::ported::signals::unqueue_signals();                               // c:117
+    crate::ported::signals::unqueue_signals(); // c:117
 }
 
 /// Port of `void zcontext_restore(void)` from Src/context.c:117.
-pub fn zcontext_restore() {                                                  // c:117
+pub fn zcontext_restore() {
+    // c:117
     zcontext_restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE);
 }
 
 /// Port of `static struct context_stack *cstack` from Src/context.c:52.
-static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:52
+static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None); // c:52
 
 #[cfg(test)]
 mod tests {
@@ -170,13 +195,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
         // Pin the exact C constants from Src/zsh.h:491-495.
-        assert_eq!(ZCONTEXT_HIST,  1 << 0);
-        assert_eq!(ZCONTEXT_LEX,   1 << 1);
+        assert_eq!(ZCONTEXT_HIST, 1 << 0);
+        assert_eq!(ZCONTEXT_LEX, 1 << 1);
         assert_eq!(ZCONTEXT_PARSE, 1 << 2);
         // Bitfield discipline: no overlapping bits.
-        assert_eq!(ZCONTEXT_HIST  & ZCONTEXT_LEX,   0);
-        assert_eq!(ZCONTEXT_HIST  & ZCONTEXT_PARSE, 0);
-        assert_eq!(ZCONTEXT_LEX   & ZCONTEXT_PARSE, 0);
+        assert_eq!(ZCONTEXT_HIST & ZCONTEXT_LEX, 0);
+        assert_eq!(ZCONTEXT_HIST & ZCONTEXT_PARSE, 0);
+        assert_eq!(ZCONTEXT_LEX & ZCONTEXT_PARSE, 0);
     }
 
     /// `Src/context.c:52-72` — `zcontext_save_partial(parts)` allocates
@@ -191,11 +216,15 @@ mod tests {
         reset_cstack();
         crate::ported::lex::lex_init("");
         zcontext_save_partial(0);
-        assert!(cstack.lock().unwrap().is_some(),
-            "c:70-71 push must fire even when no parts requested");
+        assert!(
+            cstack.lock().unwrap().is_some(),
+            "c:70-71 push must fire even when no parts requested"
+        );
         zcontext_restore_partial(0);
-        assert!(cstack.lock().unwrap().is_none(),
-            "c:96 pop must mirror the push regardless of parts mask");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "c:96 pop must mirror the push regardless of parts mask"
+        );
     }
 
     /// `Src/context.c:89-96` — `zcontext_restore_partial` reads
@@ -223,15 +252,22 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
-        for _ in 0..5 { zcontext_save(); }
+        for _ in 0..5 {
+            zcontext_save();
+        }
         // Stack now has 5 frames
         for i in (0..5).rev() {
-            assert!(cstack.lock().unwrap().is_some(),
-                "stack must still have entries before restore #{}", 5 - i);
+            assert!(
+                cstack.lock().unwrap().is_some(),
+                "stack must still have entries before restore #{}",
+                5 - i
+            );
             zcontext_restore();
         }
-        assert!(cstack.lock().unwrap().is_none(),
-            "5 restores must drain the 5 saves to empty");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "5 restores must drain the 5 saves to empty"
+        );
     }
 
     /// `Src/context.c:80` — `zcontext_save()` is a convenience
@@ -256,8 +292,10 @@ mod tests {
         zcontext_restore_partial(full);
         let after_partial = cstack.lock().unwrap().is_none();
 
-        assert_eq!(after_full, after_partial,
-            "save/restore must equal save_partial(ALL)/restore_partial(ALL)");
+        assert_eq!(
+            after_full, after_partial,
+            "save/restore must equal save_partial(ALL)/restore_partial(ALL)"
+        );
     }
 
     /// `Src/context.c:52` — Many save calls with NO matching restores
@@ -269,11 +307,15 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_cstack();
         crate::ported::lex::lex_init("");
-        for _ in 0..20 { zcontext_save(); }
+        for _ in 0..20 {
+            zcontext_save();
+        }
         // Stack should still be intact, top frame accessible
         assert!(cstack.lock().unwrap().is_some());
         // Now drain — must not panic
-        for _ in 0..20 { zcontext_restore(); }
+        for _ in 0..20 {
+            zcontext_restore();
+        }
         assert!(cstack.lock().unwrap().is_none());
     }
 }

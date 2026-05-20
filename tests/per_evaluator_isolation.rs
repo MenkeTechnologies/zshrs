@@ -47,9 +47,18 @@ fn parallel_math_eval_returns_correct_per_worker_results() {
             let expr = format!("(31 + {} * 7) * 2 - {}", tid, tid);
             let expected = ((31 + 7 * (tid as i64)) * 2) - tid as i64;
             let got = mathevali(&expr);
-            (tid, got.map(|v| (v, expected)).map_err(|e| e).and_then(|(g, e)| {
-                if g == e { Ok(g) } else { Err(format!("tid={tid} expr=`{expr}` expected={e} got={g}")) }
-            }))
+            (
+                tid,
+                got.map(|v| (v, expected))
+                    .map_err(|e| e)
+                    .and_then(|(g, e)| {
+                        if g == e {
+                            Ok(g)
+                        } else {
+                            Err(format!("tid={tid} expr=`{expr}` expected={e} got={g}"))
+                        }
+                    }),
+            )
         }));
     }
     for h in handles {
@@ -85,15 +94,16 @@ fn nested_math_eval_does_not_corrupt_across_threads() {
                 // unary/binary ops, parentheses, mixed precedence.
                 let expr = format!(
                     "((({tid} + {i}) * 2) - 1) * (({i} + 1) % 5 + 1)",
-                    tid = tid, i = i
+                    tid = tid,
+                    i = i
                 );
                 let expected: i64 = {
                     let a = (((tid as i64) + i as i64) * 2) - 1;
                     let b = ((i as i64 + 1) % 5) + 1;
                     a * b
                 };
-                let got = mathevali(&expr)
-                    .unwrap_or_else(|e| panic!("tid={tid} i={i} eval error: {e}"));
+                let got =
+                    mathevali(&expr).unwrap_or_else(|e| panic!("tid={tid} i={i} eval error: {e}"));
                 assert_eq!(
                     got, expected,
                     "math TLS corruption: tid={tid} i={i} expr=`{expr}` \
@@ -128,8 +138,7 @@ fn parallel_same_complex_expression_is_deterministic() {
             // the contention window.
             let mut last = 0;
             for _ in 0..16 {
-                last = mathevali(&e)
-                    .unwrap_or_else(|err| panic!("tid={tid} eval error: {err}"));
+                last = mathevali(&e).unwrap_or_else(|err| panic!("tid={tid} eval error: {err}"));
             }
             (tid, last)
         }));

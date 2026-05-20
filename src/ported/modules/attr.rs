@@ -35,9 +35,16 @@ use crate::ported::zsh_h::{module, options, OPT_ISSET};
 /// `value=NULL, size=0` (attr.c:107).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 /// WARNING: param names don't match C — Rust=(path, name, value, symlink) vs C=(path, name, value, size, symlink)
-pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isize { // c:37
-    let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
-    let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
+pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isize {
+    // c:37
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
     let val_ptr = if value.is_empty() {
         std::ptr::null_mut()
     } else {
@@ -47,8 +54,14 @@ pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isiz
     {
         // c:40 — `return getxattr(path, name, value, size, 0, symlink ? XATTR_NOFOLLOW: 0);`
         unsafe {
-            libc::getxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len(), 0,
-                           if symlink != 0 { XATTR_NOFOLLOW } else { 0 })
+            libc::getxattr(
+                path_c.as_ptr(),
+                name_c.as_ptr(),
+                val_ptr,
+                value.len(),
+                0,
+                if symlink != 0 { XATTR_NOFOLLOW } else { 0 },
+            )
         }
     }
     #[cfg(target_os = "linux")]
@@ -64,7 +77,9 @@ pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isiz
 /// Port of `xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)` from `Src/Modules/attr.c:37`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 /// WARNING: param names don't match C — Rust=(_path, _name, _value, _symlink) vs C=(path, name, value, size, symlink)
-pub fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> isize { -1 }
+pub fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> isize {
+    -1
+}
 
 // =====================================================================
 // xlistxattr(const char *path, char *list, size_t size, int symlink)  c:51
@@ -73,8 +88,12 @@ pub fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> 
 /// Port of `xlistxattr(const char *path, char *list, size_t size, int symlink)` from `Src/Modules/attr.c:52`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 /// WARNING: param names don't match C — Rust=(path, list, symlink) vs C=(path, list, size, symlink)
-pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {      // c:52
-    let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
+pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {
+    // c:52
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
     let list_ptr = if list.is_empty() {
         std::ptr::null_mut()
     } else {
@@ -84,8 +103,12 @@ pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {      // 
     {
         // c:55 — return listxattr(path, list, size, symlink ? XATTR_NOFOLLOW : 0);
         unsafe {
-            libc::listxattr(path_c.as_ptr(), list_ptr, list.len(),
-                            if symlink != 0 { XATTR_NOFOLLOW } else { 0 })
+            libc::listxattr(
+                path_c.as_ptr(),
+                list_ptr,
+                list.len(),
+                if symlink != 0 { XATTR_NOFOLLOW } else { 0 },
+            )
         }
     }
     #[cfg(target_os = "linux")]
@@ -101,7 +124,9 @@ pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {      // 
 /// Port of `xlistxattr(const char *path, char *list, size_t size, int symlink)` from `Src/Modules/attr.c:52`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 /// WARNING: param names don't match C — Rust=(_path, _list, _symlink) vs C=(path, list, size, symlink)
-pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize { -1 }
+pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize {
+    -1
+}
 
 // =====================================================================
 // xsetxattr(const char *path, const char *name, const void *value,
@@ -111,25 +136,59 @@ pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize { -1 }
 /// Port of `xsetxattr(const char *path, const char *name, const void *value, size_t size, int flags, int symlink)` from `Src/Modules/attr.c:67`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 /// WARNING: param names don't match C — Rust=(path, name, value, flags, symlink) vs C=(path, name, value, size, flags, symlink)
-pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32) -> i32 { // c:67
-    let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
-    let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
+pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32) -> i32 {
+    // c:67
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
     let val_ptr = value.as_ptr() as *const libc::c_void;
     #[cfg(target_os = "macos")]
     {
         // c:71 — `return setxattr(path, name, value, size, 0, flags | symlink ? XATTR_NOFOLLOW : 0);`
         // The C operator-precedence quirk: `(flags | symlink) ? ... : 0`.
-        let combined = if (flags | symlink) != 0 { XATTR_NOFOLLOW } else { 0 };
+        let combined = if (flags | symlink) != 0 {
+            XATTR_NOFOLLOW
+        } else {
+            0
+        };
         unsafe {
-            libc::setxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len(), 0, combined)
+            libc::setxattr(
+                path_c.as_ptr(),
+                name_c.as_ptr(),
+                val_ptr,
+                value.len(),
+                0,
+                combined,
+            )
         }
     }
     #[cfg(target_os = "linux")]
     {
         // c:67-78 — switch (symlink) { case 0: setxattr; default: lsetxattr; }
         match symlink {
-            0 => unsafe { libc::setxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len(), flags) },
-            _ => unsafe { libc::lsetxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len(), flags) },
+            0 => unsafe {
+                libc::setxattr(
+                    path_c.as_ptr(),
+                    name_c.as_ptr(),
+                    val_ptr,
+                    value.len(),
+                    flags,
+                )
+            },
+            _ => unsafe {
+                libc::lsetxattr(
+                    path_c.as_ptr(),
+                    name_c.as_ptr(),
+                    val_ptr,
+                    value.len(),
+                    flags,
+                )
+            },
         }
     }
 }
@@ -137,7 +196,9 @@ pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32)
 /// Port of `xsetxattr(const char *path, const char *name, const void *value, size_t size, int flags, int symlink)` from `Src/Modules/attr.c:67`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 /// WARNING: param names don't match C — Rust=(_path, _name, _value, _flags, _symlink) vs C=(path, name, value, size, flags, symlink)
-pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink: i32) -> i32 { -1 }
+pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink: i32) -> i32 {
+    -1
+}
 
 // =====================================================================
 // xremovexattr(const char *path, const char *name, int symlink)       c:82
@@ -145,14 +206,26 @@ pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink:
 
 /// Port of `xremovexattr(const char *path, const char *name, int symlink)` from `Src/Modules/attr.c:83`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {           // c:83
-    let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
-    let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
+pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {
+    // c:83
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
     #[cfg(target_os = "macos")]
     {
         // c:86 — `return removexattr(path, name, symlink ? XATTR_NOFOLLOW : 0);`
-        unsafe { libc::removexattr(path_c.as_ptr(), name_c.as_ptr(),
-                                   if symlink != 0 { XATTR_NOFOLLOW } else { 0 }) }
+        unsafe {
+            libc::removexattr(
+                path_c.as_ptr(),
+                name_c.as_ptr(),
+                if symlink != 0 { XATTR_NOFOLLOW } else { 0 },
+            )
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -167,7 +240,9 @@ pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {           // 
 /// Port of `xremovexattr(const char *path, const char *name, int symlink)` from `Src/Modules/attr.c:83`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 #[allow(unused_variables)]
-pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 { -1 }
+pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {
+    -1
+}
 
 // =====================================================================
 // bin_getattr(char *nam, char **argv, Options ops, UNUSED(int func))  c:97
@@ -175,7 +250,8 @@ pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 { -1 }
 
 /// Port of `bin_getattr(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/attr.c:98`.
 #[allow(unused_variables)]
-pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 { // c:98
+pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
+    // c:98
     // c:98 — `int ret = 0;`
     let mut ret: i32 = 0;
     // c:101 — `int val_len = 0, attr_len = 0, slen;`
@@ -200,36 +276,45 @@ pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
 
     // c:107 — `val_len = xgetxattr(file, attr, NULL, 0, symlink);`
     val_len = xgetxattr(file, attr, &mut [], symlink);
-    if val_len == 0 {                                                    // c:108
-        if let Some(p) = param {                                         // c:109
-            unsetparam(p);                                                // c:110
+    if val_len == 0 {
+        // c:108
+        if let Some(p) = param {
+            // c:109
+            unsetparam(p); // c:110
         }
-        return 0;                                                         // c:111
+        return 0; // c:111
     }
-    if val_len > 0 {                                                     // c:113
+    if val_len > 0 {
+        // c:113
         // c:114 — value = (char *)zalloc(val_len+1);
         let mut value: Vec<u8> = vec![0u8; (val_len + 1) as usize];
         // c:115 — attr_len = xgetxattr(file, attr, value, val_len, symlink);
         attr_len = xgetxattr(file, attr, &mut value[..val_len as usize], symlink);
-        if attr_len > 0 && attr_len <= val_len {                         // c:116
-            value[attr_len as usize] = b'\0';                            // c:117
+        if attr_len > 0 && attr_len <= val_len {
+            // c:116
+            value[attr_len as usize] = b'\0'; // c:117
             let val_plain = String::from_utf8_lossy(&value[..attr_len as usize]).into_owned();
-            if let Some(p) = param {                                     // c:118
+            if let Some(p) = param {
+                // c:118
                 // c:119 — setsparam(param, metafy(value, attr_len, META_DUP));
                 setsparam(p, &metafy(&val_plain));
             } else {
-                println!("{}", val_plain);                                // c:121
+                println!("{}", val_plain); // c:121
             }
         }
         // c:123 — zfree(value, val_len+1); (Vec drop reclaims)
     }
-    if val_len < 0 || attr_len < 0 || attr_len > val_len {               // c:125
+    if val_len < 0 || attr_len < 0 || attr_len > val_len {
+        // c:125
         // c:126 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
-        zwarnnam(nam, &format!("{}: {}", metafy(file), std::io::Error::last_os_error()));
+        zwarnnam(
+            nam,
+            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+        );
         // c:133 — ret = 1 + ((val_len > 0 && attr_len > val_len) || attr_len < 0);
         ret = 1 + i32::from((val_len > 0 && attr_len > val_len) || attr_len < 0);
     }
-    ret                                                                   // c:133
+    ret // c:133
 }
 
 // =====================================================================
@@ -238,7 +323,8 @@ pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
 
 /// Port of `bin_setattr(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/attr.c:133`.
 #[allow(unused_variables)]
-pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 { // c:133
+pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
+    // c:133
     // c:133 — `int ret = 0, slen, vlen;`
     let _slen: usize;
     let vlen: usize;
@@ -262,10 +348,13 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
     // c:142 — `if (xsetxattr(file, attr, value, vlen, 0, symlink))`
     if xsetxattr(file, attr, &value_bytes[..vlen], 0, symlink) != 0 {
         // c:143 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
-        zwarnnam(nam, &format!("{}: {}", metafy(file), std::io::Error::last_os_error()));
-        return 1;                                                         // c:150 ret = 1;
+        zwarnnam(
+            nam,
+            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+        );
+        return 1; // c:150 ret = 1;
     }
-    0                                                                     // c:150
+    0 // c:150
 }
 
 // =====================================================================
@@ -295,13 +384,17 @@ pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
         let mut attr_bytes = attr_arg.as_bytes().to_vec();
         unmetafy(&mut attr_bytes);
         let attr = std::str::from_utf8(&attr_bytes).unwrap_or(attr_arg);
-        if xremovexattr(&file, attr, symlink) != 0 {                     // c:159
+        if xremovexattr(&file, attr, symlink) != 0 {
+            // c:159
             // c:160 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
-            zwarnnam(nam, &format!("{}: {}", metafy(&file), std::io::Error::last_os_error()));
-            return 1;                                                     // c:169-162 ret=1; break;
+            zwarnnam(
+                nam,
+                &format!("{}: {}", metafy(&file), std::io::Error::last_os_error()),
+            );
+            return 1; // c:169-162 ret=1; break;
         }
     }
-    0                                                                     // c:169
+    0 // c:169
 }
 
 // =====================================================================
@@ -333,46 +426,55 @@ pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32
 
     // c:177 — `val_len = xlistxattr(file, NULL, 0, symlink);`
     val_len = xlistxattr(file, &mut [], symlink);
-    if val_len == 0 {                                                    // c:178
-        if let Some(p) = param {                                         // c:179
-            unsetparam(p);                                                // c:180
+    if val_len == 0 {
+        // c:178
+        if let Some(p) = param {
+            // c:179
+            unsetparam(p); // c:180
         }
-        return 0;                                                         // c:181
+        return 0; // c:181
     }
-    if val_len > 0 {                                                     // c:183
+    if val_len > 0 {
+        // c:183
         // c:184 — value = (char *)zalloc(val_len+1);
         let mut value: Vec<u8> = vec![0u8; (val_len + 1) as usize];
         // c:185 — list_len = xlistxattr(file, value, val_len, symlink);
         list_len = xlistxattr(file, &mut value[..val_len as usize], symlink);
-        if list_len > 0 && list_len <= val_len {                         // c:186
+        if list_len > 0 && list_len <= val_len {
+            // c:186
             // c:187 — `char *p = value;` — walk the NUL-separated names list.
             let names_bytes = &value[..list_len as usize];
             let raw_names: Vec<&[u8]> = names_bytes
                 .split(|&b| b == 0)
                 .filter(|s| !s.is_empty())
                 .collect();
-            if let Some(p) = param {                                     // c:188
+            if let Some(p) = param {
+                // c:188
                 // c:189-202 — build metafied char-array, setaparam(param, array)
                 let metafied_names: Vec<String> = raw_names
                     .iter()
                     .map(|n| metafy(&String::from_utf8_lossy(n)))
                     .collect();
-                setaparam(p, metafied_names);                            // c:202
+                setaparam(p, metafied_names); // c:202
             } else {
                 // c:203-206 — printf("%s\n", p) per name.
                 for n in &raw_names {
-                    println!("{}", String::from_utf8_lossy(n));         // c:204
+                    println!("{}", String::from_utf8_lossy(n)); // c:204
                 }
             }
         }
     }
-    if val_len < 0 || list_len < 0 || list_len > val_len {               // c:210
+    if val_len < 0 || list_len < 0 || list_len > val_len {
+        // c:210
         // c:211 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
-        zwarnnam(nam, &format!("{}: {}", metafy(file), std::io::Error::last_os_error()));
+        zwarnnam(
+            nam,
+            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+        );
         // c:212 — ret = 1 + (list_len > val_len || list_len < 0);
         ret = 1 + i32::from(list_len > val_len || list_len < 0);
     }
-    ret                                                                   // c:214
+    ret // c:214
 }
 
 // =====================================================================
@@ -394,18 +496,15 @@ pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32
 // attr.c:226. Dispatch through canonical `module::featuresarray`.
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (attr.c).
-
 
 // `module_features` — port of `static struct features module_features`
 // from attr.c:226.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/attr.c:236`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:236
+pub fn setup_(m: *const module) -> i32 {
+    // c:236
     // C body c:238-239 — `return 0`. Faithful empty-body port.
     0
 }
@@ -414,7 +513,7 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
-    0                                                                  // c:258
+    0 // c:258
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/attr.c:251`.
@@ -425,7 +524,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/attr.c:258`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:258
+pub fn boot_(m: *const module) -> i32 {
+    // c:258
     // C body c:260-261 — `return 0`. Faithful empty-body port; the
     //                    zgetattr/zsetattr/zdelattr/zlistattr builtins
     //                    register via the bn_list feature dispatch.
@@ -440,7 +540,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/attr.c:272`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:272
+pub fn finish_(m: *const module) -> i32 {
+    // c:272
     // C body c:274-275 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
@@ -481,13 +582,10 @@ fn unsetparam(v: &str) {
 // Tests
 // =====================================================================
 
-
-
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -499,7 +597,12 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zgetattr".to_string(), "b:zsetattr".to_string(), "b:zdelattr".to_string(), "b:zlistattr".to_string()]
+    vec![
+        "b:zgetattr".to_string(),
+        "b:zsetattr".to_string(),
+        "b:zdelattr".to_string(),
+        "b:zlistattr".to_string(),
+    ]
 }
 
 // WARNING: NOT IN ATTR.C — Rust-only module-framework shim.
@@ -521,11 +624,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -556,17 +655,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 4,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 4,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -575,7 +676,12 @@ mod tests {
     use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     #[test]
@@ -621,7 +727,11 @@ mod tests {
     fn bin_setattr_nonexistent_path_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let argv: Vec<String> = vec!["/nonexistent/path".into(), "user.test".into(), "value".into()];
+        let argv: Vec<String> = vec![
+            "/nonexistent/path".into(),
+            "user.test".into(),
+            "value".into(),
+        ];
         let rc = bin_setattr("zsetattr", &argv, &ops, 0);
         assert_eq!(rc, 1);
     }
@@ -674,9 +784,11 @@ mod tests {
     fn bin_setattr_with_bogus_path_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let argv = vec!["/__definitely_not_a_path__".to_string(),
-                        "user.test".to_string(),
-                        "value".to_string()];
+        let argv = vec![
+            "/__definitely_not_a_path__".to_string(),
+            "user.test".to_string(),
+            "value".to_string(),
+        ];
         let rc = bin_setattr("zsetattr", &argv, &ops, 0);
         assert_eq!(rc, 1, "bin_setattr on bogus path must return 1 per c:144");
     }
@@ -687,8 +799,10 @@ mod tests {
     fn bin_delattr_nonexistent_path_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let argv = vec!["/__definitely_not_a_path__".to_string(),
-                        "user.test".to_string()];
+        let argv = vec![
+            "/__definitely_not_a_path__".to_string(),
+            "user.test".to_string(),
+        ];
         let rc = bin_delattr("zdelattr", &argv, &ops, 0);
         assert_ne!(rc, 0, "delattr on bogus path must error");
     }
