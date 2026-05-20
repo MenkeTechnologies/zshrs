@@ -447,9 +447,10 @@ fn module_features() -> &'static Mutex<features_t> {
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
 
-    fn empty_ops_zs() -> crate::ported::zsh_h::options {
+    fn empty_ops_zs() -> options {
         options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),

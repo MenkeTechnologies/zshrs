@@ -1362,6 +1362,7 @@ pub fn quotename(s: &str, instring: i32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::zle::zle_h::brinfo;
     use super::*;
 
     #[test]
