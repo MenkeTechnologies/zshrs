@@ -6387,7 +6387,7 @@ pub fn unsetenv(name: &str) {
 /// `sched` builtin. Sorted ascending by `when` (epoch seconds);
 /// `addtimedfn` does an insertion sort (matches the C source's
 /// `for (;;)` walk at lines 1394-1411).
-static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec::new());
+pub static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec::new()); // c:1371 timedfns (mod_export in C)
 
 /// Get current user ID
 pub fn getuid() -> u32 {
