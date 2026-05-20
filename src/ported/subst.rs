@@ -2471,142 +2471,141 @@ pub fn paramsubst(
         // ${(flags)var…} — paren-flag block. Port of subst.c:2147+
         // flag-loop. Each flag char sets a state bit; applied as
         // post-processing on the substituted value.
-        // c:1732 — `int casmod = CASMOD_NONE;` single tri-state int
-        // tracking (L)/(U)/(C) case-modify flag. Direct port matches C
-        // shape: one var carrying CASMOD_NONE / CASMOD_LOWER /
-        // CASMOD_UPPER / CASMOD_CAPS rather than three booleans
-        // (the previous flag_lower/flag_upper/flag_caps bag-of-globals
-        // decomposition of a single C int — Rule D violation).
+        //
+        // Local declarations ordered to match C source paramsubst()
+        // c:1628-1819. Every entry cites its C declaration line.
+        // Bag-of-globals decompositions (flag_lower/upper/caps,
+        // flag_q*, flag_z_*, flag_g_*, etc.) all collapsed back to
+        // their canonical C single-int state slots per Rule D.
+
+        // c:1658 — `int isarr = 0;`. -1=force-keep-empty, 0=scalar,
+        // 1=array, 2=split-scalar (see c:1647-1657 comment). Tracked
+        // implicitly by Rust via Option<Vec<String>> in current port;
+        // a true isarr int is not yet wired in — placeholder pending
+        // full LinkList-based rewrite.
+
+        // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
+        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM);          // c:1663
+
+        // c:1669 — `int globsubst = isset(GLOBSUBST);` (handled inline
+        // at use sites via opt_state_set rather than tracked here).
+
+        // c:1673 — `int evalchar = 0;` (#) char-eval flag.
+        let mut evalchar = false;                                             // c:1673
+
+        // c:1678 — `int getlen = 0;` (handled via prefix-# arm).
+        // c:1679 — `int whichlen = 0;` (c)/(w)/(W) length-flavor int.
+        let mut whichlen: i32 = 0;                                            // c:1679
+
+        // c:1683 — `int chkset = 0;` (${+pm} flag) — see chkset
+        // handling in the body; declared locally there for now.
+
+        // c:1691 — `int vunset = 0;` — value-was-unset flag.
+        // c:1697 — `int wantt = 0;` (t) typeinfo flag.
+        let mut wantt = false;                                                // c:1697
+
+        // c:1705 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
+        // !(pf_flags & PREFORK_SINGLE) && !qt;`
+
+        // c:1708 — `char *val = NULL, **aval = NULL;` (handled via
+        // local `value: String` / `split_parts: Option<Vec<String>>`).
+
+        // c:1713-1714 — `struct value vbuf; Value v = NULL;` (vbuf/v
+        // fetchvalue path not yet wired; reads route through paramtab
+        // directly until LinkList rewrite lands).
+
+        // c:1720 — `int flags = 0;` SUB_* match flag bitmask.
+        let mut sub_flags_bits: i32 = 0;                                      // c:1720
+
+        // c:1722 — `int flnum = 0;` (I:N:) match-index flag.
+        let mut flnum: u32 = 0;                                               // c:1722
+
+        // c:1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
+        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW;        // c:1728
+        let mut indord: i32 = 0;                                              // c:1728
+
+        // c:1730 — `int unique = 0;` (u) flag.
+        let mut unique = false;                                               // c:1730
+
+        // c:1732 — `int casmod = CASMOD_NONE;`
         let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE;             // c:1732
-        // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr
-        // = 0;`. quotemod tri-state: 0 = none, positive = quote (q/b),
-        // negative = unquote (Q). quotetype counts q's (QT_SINGLE,
-        // QT_DOUBLE, QT_DOLLARS, QT_BACKSLASH_PATTERN,
-        // QT_SINGLE_OPTIONAL, QT_QUOTEDZPUTS). The previous Rust port
-        // decomposed into flag_qcount / flag_qmin / flag_qplus /
-        // flag_unquote / flag_b_pattern bools — Rule D bag-of-globals.
+
+        // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr = 0;`
         let mut quotemod: i32 = 0;                                            // c:1739
         let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE;              // c:1739
-        // quoteerr declared at c:1739 too — already at line 2525.
+        let mut quoteerr = false;                                             // c:1739
+
+        // c:1746 — `int mods = 0;` bit0=D, bit1=V.
+        let mut mods: i32 = 0;                                                // c:1746
+
+        // c:1754 — `int shsplit = 0;` LEXFLAGS_* bitmask.
+        let mut shsplit: i32 = 0;                                             // c:1754
+
+        // c:1759 — `int ssub = (pf_flags & PREFORK_SINGLE);` (read at
+        // call sites; not tracked as a local in current port).
+
+        // c:1766 — `char *sep = NULL, *spsep = NULL;`
+        let mut spsep: Option<String> = None;                                 // c:1766
+        let mut sep: Option<String> = None;                                   // c:1766
+
+        // c:1772 — `char *premul = NULL, *postmul = NULL,
+        //                *preone = NULL, *postone = NULL;`
+        let mut premul: Option<String> = None;                                // c:1772
+        let mut postmul: Option<String> = None;                               // c:1772
+        let mut preone: Option<String> = None;                                // c:1772
+        let mut postone: Option<String> = None;                               // c:1772
+
+        // c:1774 — `char *replstr = NULL;` (replacement string for
+        // ${var/pat/repl}) — handled inline in the replace arm.
+
+        // c:1776 — `zlong prenum = 0, postnum = 0;`
+        let mut prenum: i64 = 0;                                              // c:1776
+        let mut postnum: i64 = 0;                                             // c:1776
+
+        // c:1779 — `int multi_width = 0;` (MULTIBYTE_SUPPORT).
+        let mut multi_width: u32 = 0;                                         // c:1779
+
+        // c:1787 — `int copied = 0;` (handled per-arm).
+
+        // c:1793 — `int arrasg = 0;` (A)/(AA) array-assign flag.
+        let mut arrasg: i32 = 0;                                              // c:1793
+
+        // c:1798 — `int eval = 0;` (e) flag.
+        let mut eval = false;                                                 // c:1798
+
+        // c:1803 — `int aspar = 0;` (P) flag.
+        let mut aspar = false;                                                // c:1803
+
+        // c:1807 — `int presc = 0;` (%) flag counter.
+        let mut presc: i32 = 0;                                               // c:1807
+
+        // c:1811 — `int getkeys = -1;` (g) flag GETKEY_* bitmask
+        // (-1 = not seen).
+        let mut getkeys: i32 = -1;                                            // c:1811
+
         // c:1817 — `int nojoin = (pf_flags & PREFORK_SHWORDSPLIT) ?
-        // !(ifs && *ifs) && !qt : 0;`. Tri-state: 0 = default,
-        // 1 = WORDSPLIT-induced (IFS empty + !qt), 2 = forced by (@)
-        // flag (c:2164-2165). Previous Rust port used a bool (nojoin == 2) —
-        // Rule D bag-of-globals; lost the initial-value computation.
+        // !(ifs && *ifs) && !qt : 0;` (@) flag tri-state.
         let mut nojoin: i32 = if (pf_flags & PREFORK_SHWORDSPLIT) != 0 {     // c:1817
-            let ifs = vars_get("IFS").unwrap_or_default();                   // c:1817 ifs check
-            if ifs.is_empty() && !qt { 1 } else { 0 }                        // c:1817 !(ifs && *ifs) && !qt
+            let ifs = vars_get("IFS").unwrap_or_default();                   // c:1817
+            if ifs.is_empty() && !qt { 1 } else { 0 }                        // c:1817
         } else {                                                              // c:1817
             0                                                                 // c:1817
         };                                                                    // c:1817
-                                 // Temp state.arrays slot holding a nested-expansion array
-                                 // result (see line ~1755). Set when `${(@)${(@)…}…}` with
-                                 // outer `(@)` triggers multsub on the inner; cleared at end
-                                 // of paramsubst so the temp doesn't leak. Direct port of the
-                                 // multsub-driven word list C zsh threads through subst.c.
-        let mut subexp_array_temp: Option<String> = None;
-        let mut aspar = false; // c:2295 (P)
-                                         // (A) — array-assign mode for `${(A)var=val}`. (AA) →
-                                         // associative-assign: split val into key/value pairs.
-                                         // Direct port of `int arrasg = 0; case 'A': ++arrasg;`
-                                         // at subst.c:2161. Counter (not bool) so the AA double-
-                                         // form is distinguishable.
-        let mut arrasg: i32 = 0; // c:1793
-        let mut wantt = false; // c:2807 (t)
-        // (k) and (v) flag state lives in hkeys / hvals (c:1828,
-        // c:1835) declared below; no separate bools. Consumer sites
-        // test `(hkeys & SCANPM_WANTKEYS) != 0` and
-        // `(hvals & SCANPM_WANTVALS) != 0` per c:2393 / c:2398.
-        let mut evalchar = false; // c:1673 (#) char-eval
-                                       // (l:N::PRE:) left-pad / (r:N::POST:) right-pad parsed values.
-                                       // Port of subst.c:2319-2375 l/r flag arm.
-        let mut prenum: i64 = 0; // c:1776 (zlong prenum)
-        let mut postnum: i64 = 0; // c:1776 (zlong postnum)
-        let mut premul: Option<String> = None; // c:1772 (premul)
-        let mut postmul: Option<String> = None; // c:1772 (postmul)
-        let mut preone: Option<String> = None; // c:1772 (preone)
-        let mut postone: Option<String> = None; // c:1772 (postone)
-                                                // (s::) split / (j::) join separators. Port of
-                                                // subst.c:2299-2317 s/j flag arm + (f)/(F)/(0) shortcuts.
-        let mut spsep: Option<String> = None; // c:1766 (spsep — splits result)
-        let mut sep: Option<String> = None; // c:1766 (sep — joins arrays)
-                                            // (o)/(O)/(i)/(n)/(a)/(u) sort + unique flags. Port of
-                                            // subst.c:2207-2228 sortit-flag arm.
-        // c:1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
-        // SORTIT_* are bit flags (zsh_h.rs:3321-3327) ORed together.
-        // The previous Rust port decomposed into 6 separate bools
-        // (sort_active / sort_backwards / sort_case_insensitive /
-        // sort_numeric / sort_signed / sort_index_order) — Rule D
-        // bag-of-globals violation.
-        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW;        // c:1728
-        let mut indord: i32 = 0;                                              // c:1728
-        let mut unique = false; // c:2476 (u)
-        let mut eval = false; // c:2268 (e)
-        // (Q) flag at c:2261-2262 decrements quotemod; folded into the
-        // tri-state quotemod above (c:1739). No separate flag_unquote.
-        let mut quoteerr = false; // c:2264 (X)
-        // c:1746 — `int mods = 0;` single int with bit 0 = (D) flag,
-        // bit 1 = (V) flag. The previous Rust port decomposed this
-        // into flag_d_dir + flag_visible bools — Rule D bag-of-globals.
-        // Tested in C via `mods & 1` (c:4155, c:4163) and `mods & 2`
-        // (c:4157, c:4165).
-        let mut mods: i32 = 0;                                                // c:1746
-        // c:1679 — `int whichlen = 0;` single int holding the
-        // (c)/(w)/(W) length-flavor flag. 1 = char count (c), 2 =
-        // word count (w), 3 = word count with width-padding (W).
-        // Previous Rust port decomposed into 3 bools — Rule D
-        // bag-of-globals. Consumed by ${#pm} length-computation arm.
-        let mut whichlen: i32 = 0;                                            // c:1679
-        // (b) flag at c:2255-2259 sets quotemod=1, quotetype =
-        // QT_BACKSLASH_PATTERN. Folded into the tri-state vars above
-        // (c:1739). No separate flag_b_pattern.
-                                        // SUB_* flag bits accumulated by M/R/B/E/N/S/I/* in the
-                                        // flag-loop. Direct port of subst.c:2169-2199 — passed
-                                        // through to getmatch() / igetmatch() to alter the
-                                        // ${var//pat/repl}-style match disposition: return matched
-                                        // text vs rest, return position vs string, etc.
-        let mut sub_flags_bits: i32 = 0; // c:2169
-        // (D) bit moved into `mods` above (c:1746). Declared up-front
-        // so flag-loop arms can `mods |= 1` (c:2230) and
-        // `mods |= 2` (c:2233) without re-declaring.
-        // c:2140 — `int escapes = 0;` declared inside the flag-loop
-        // body in C; hoisted to function-scope here so consumer sites
-        // (untok_and_escape calls) see it without re-threading.
-        // Renamed from the previous flag_p_escapes bool per Rule E.
-        let mut escapes: bool = false;                                        // c:2140 / c:2382
-                                        // (g:SUBFLAGS:) — getkeys sub-flag bits per c:2409.
-                                        // `flag_g_seen` tracks whether the flag appeared at all
-                                        // (mirrors C `getkeys >= 0` test) — bare `(g::)` alone
-                                        // applies default getkeystring decoding to the final
-                                        // value. Each sub-letter toggles a getkeystring escape
-                                        // mode: emacs bindings (`\C-x`, `\M-y`, `^X`), POSIX
-                                        // octal (`\NNN` even without leading `0`), or extended
-                                        // ctrl (`\^X`). Direct port of subst.c:1811's
-                                        // `int getkeys = -1` initialization.
-        // c:1811 — `int getkeys = -1;`. (g) flag sets `getkeys = 0`
-        // then ORs in GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL
-        // bits per sub-letter. Consumer at c:3955 tests `getkeys >= 0`.
-        // The previous Rust port decomposed into 4 separate bools
-        // (flag_g_seen / flag_g_emacs / flag_g_octal / flag_g_ctrl) —
-        // Rule D bag-of-globals.
-        let mut getkeys: i32 = -1;                                            // c:1811
-        // c:1807 — `int presc = 0;`. Incremented per '%' flag arm
-        // (c:2406); `presc > 0` enables prompt expansion, `presc > 1`
-        // (from (%%) double-form) takes the alt-pattern. Renamed from
-        // the previous flag_pct_prompt per Rule E.
-        let mut presc: i32 = 0;                                               // c:1807
-        let mut multi_width: u32 = 0; // c:2376 (m count)
-        let mut flnum: u32 = 0; // c:1786 (I:N:)
-        // c:1754 — `int shsplit = 0;` LEXFLAGS_* bitmask:
-        //   (z)  → LEXFLAGS_ACTIVE         c:2439-2440
-        //   (Zc) → LEXFLAGS_COMMENTS_KEEP  c:2450-2452
-        //   (ZC) → LEXFLAGS_COMMENTS_STRIP c:2455-2457
-        //   (Zn) → LEXFLAGS_NEWLINE        c:2460-2462
-        // Previous Rust port decomposed into 4 bools — Rule D.
-        let mut shsplit: i32 = 0;                                             // c:1754
-        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM); // c:1663
-        let mut hkeys: u32 = 0; // c:1828
-        let mut hvals: u32 = 0; // c:1835
+
+        // c:1828 — `int hkeys = 0;` (k) flag SCANPM_WANTKEYS bits.
+        let mut hkeys: u32 = 0;                                               // c:1828
+
+        // c:1835 — `int hvals = 0;` (v) flag SCANPM_WANTVALS bits.
+        let mut hvals: u32 = 0;                                               // c:1835
+
+        // c:2140 — `int escapes = 0;` (p) flag; declared inside
+        // flag-loop in C, hoisted to function scope here.
+        let mut escapes: bool = false;                                        // c:2140
+
+        // Rust-port-only: temp slot for nested-expansion array result
+        // — NOT IN C. Set when `${(@)${(@)…}…}` outer (@) triggers
+        // multsub on the inner; cleared at end of paramsubst.
+        let mut subexp_array_temp: Option<String> = None;                    // c:N/A (Rust-only)
         if body_chars.first() == Some(&'(') {
             // c:2147
             // `~` inside `(flags)` toggles tok_arg for untok_and_escape on
