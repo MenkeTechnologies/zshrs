@@ -34,9 +34,9 @@ use std::sync::atomic::Ordering::Relaxed;
 use crate::ported::init::SHTTY;
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
 use crate::ported::zle::comp_h::{
-    Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
-    CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST,
-    CMF_PACKED, CMF_ROWS,
+    Aminfo, Chdata, Cldata, Cline, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES,
+    CGF_PACKED, CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT,
+    CMF_NOLIST, CMF_PACKED, CMF_ROWS,
 };
 use crate::ported::zle::compcore::{
     amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static,
@@ -101,7 +101,7 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {
 /// WARNING: signature change — C=(l, ins, csp, posl) vs Rust=(l) -> String
 pub fn cline_str(
     // c:165
-    l: Option<&crate::ported::zle::comp_h::Cline>,
+    l: Option<&Cline>,
 ) -> String {
     let mut out = String::new();
     let mut cur = l;

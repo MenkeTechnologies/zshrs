@@ -18,8 +18,8 @@ use std::sync::atomic::Ordering;
 use serde::{Deserialize, Serialize};
 
 use crate::ported::context::{zcontext_restore, zcontext_save};
-use crate::ported::hashtable::{aliastab_lock, reswdtab_lock};
-use crate::ported::hist::{strinbeg, strinend};
+use crate::ported::hashtable::{aliastab_lock, reswdtab_lock, sufaliastab_lock};
+use crate::ported::hist::{hist_in_word, strinbeg, strinend};
 use crate::ported::input::{inpop, inpush};
 use crate::ported::parse::HDOCS;
 use crate::ported::prompt::{cmdpop, cmdpush, CMDSTACK};
@@ -27,7 +27,7 @@ use crate::ported::string::dupstring_wlen;
 use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
-    interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
+    alias, interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
     Hat, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace,
     Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
     ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
@@ -2842,7 +2842,7 @@ fn checkalias(lextext: &str) -> bool {
 
     // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
     // aliastab->getnode(aliastab, zshlextext);`
-    let alias_clone: Option<crate::ported::zsh_h::alias> = {
+    let alias_clone: Option<alias> = {
         let guard = aliastab_lock()
             .read()
             .expect("aliastab poisoned");
@@ -2887,8 +2887,8 @@ fn checkalias(lextext: &str) -> bool {
         if let Some(dot_pos) = lextext.rfind('.') {
             if dot_pos > 0 && dot_pos + 1 < lextext.len() {
                 let suffix = &lextext[dot_pos + 1..];
-                let alias_clone: Option<crate::ported::zsh_h::alias> = {
-                    let guard = crate::ported::hashtable::sufaliastab_lock()
+                let alias_clone: Option<alias> = {
+                    let guard = sufaliastab_lock()
                         .read()
                         .expect("sufaliastab poisoned");
                     guard.get(suffix).cloned()
@@ -2913,7 +2913,7 @@ fn checkalias(lextext: &str) -> bool {
                             None,
                         );
                         // c:1941 — `an->inuse = 1;`.
-                        let mut guard = crate::ported::hashtable::sufaliastab_lock()
+                        let mut guard = sufaliastab_lock()
                             .write()
                             .expect("sufaliastab poisoned");
                         if let Some(a) = guard.get_mut(suffix) {
@@ -3261,7 +3261,7 @@ fn skipcomm() -> Result<(), ()> {
     }
 
     crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
-    crate::ported::hist::hist_in_word(1);
+    hist_in_word(1);
 
     // c:2147-2149 — install seeded raw buffers + enable recording.
     set_tokstr(new_tokstr_init);
@@ -3301,7 +3301,7 @@ fn skipcomm() -> Result<(), ()> {
                 LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
             let new_lexstop = LEX_LEXSTOP.get();
 
-            crate::ported::hist::hist_in_word(0);
+            hist_in_word(0);
             crate::ported::context::zcontext_restore_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
 
             // c:2196-2217 — splice raw back into outer lexbuf, or
