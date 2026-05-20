@@ -25,8 +25,22 @@ use crate::ported::zle::zle_main::{
     NEG_ARG, PREFIXFLAG, REGION_ACTIVE, YANKB, YANKE, ZLECS, ZLELINE, ZLELL, ZLE_RESET_NEEDED,
     ZMOD,
 };
-use crate::zle::zle_h::{MOD_NEG, MOD_TMULT};
+use std::io::Read;
 use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::SeqCst;
+
+use crate::ported::builtins::sched::zleactive;
+use crate::ported::zle::compcore::{
+    ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZLELL as ZLELL_C,
+};
+use crate::ported::utils::quotestring;
+use crate::ported::zle::complete::INCOMPFUNC;
+use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos, vifirstnonblank};
+use crate::ported::zle::zle_utils::{findbol, findeol};
+use crate::ported::zle::zle_vi::startvichange;
+use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
+use crate::zle::zle_h::{MOD_MULT, MOD_NEG, MOD_NULL, MOD_TMULT};
 
 // =====================================================================
 // Globals — `Src/Zle/zle_main.c:79-84` (live in zle_main but consumed
@@ -80,7 +94,6 @@ use crate::ported::zle::zle_word::*;
 /// WARNING: param names don't match C — Rust=(zle, zstr) vs C=(zstr, len)
 pub fn doinsert(zstr: &[char]) {
     // c:37
-    use std::sync::atomic::Ordering;
     // c:47 — `iremovesuffix(c1, 0)`. Strip pending menu-suffix first.
     if let Some(&c1) = zstr.first() {
         iremovesuffix(c1 as i32, 0);
@@ -182,7 +195,6 @@ pub fn doinsert(zstr: &[char]) {
 ///    return 0;`
 pub fn selfinsert() -> i32 {
     // c:113
-    use std::sync::atomic::Ordering::SeqCst;
     if LASTCHAR_WIDE_VALID.load(SeqCst) == 0 {
         // c:119 lastchar_wide_valid check
         LASTCHAR_WIDE.store(crate::ported::zle::compcore::LASTCHAR.load(SeqCst), SeqCst);
@@ -362,7 +374,6 @@ pub fn killwholeline() -> i32 {
 ///   `zlecs = 0; forekill(zlell, CUT_RAW); clearlist = 1; return 0;`
 pub fn killbuffer() -> i32 {
     // c:215
-    use std::sync::atomic::Ordering;
     ZLECS.store(0, Ordering::SeqCst); // c:217
     let zlell = ZLELL.load(Ordering::SeqCst) as i32;
     crate::ported::zle::zle_utils::forekill(zlell, crate::ported::zle::zle_h::CUT_RAW); // c:218
@@ -518,7 +529,6 @@ pub fn gosmacstransposechars() -> i32 {
 /// Port of `transposechars(UNUSED(char **args))` from Src/Zle/zle_misc.c:313.
 pub fn transposechars() -> i32 {
     // c:313
-    use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos};
     let mut n = ZMOD.lock().unwrap().mult;
     let neg = n < 0; // c:317
     if neg {
@@ -583,8 +593,6 @@ pub fn transposechars() -> i32 {
 /// Port of `poundinsert(UNUSED(char **args))` from Src/Zle/zle_misc.c:369.
 pub fn poundinsert() -> i32 {
     // c:369
-    use crate::ported::zle::zle_move::vifirstnonblank;
-    use std::sync::atomic::Ordering;
     // c:371-393 — `zlecs = 0; vifirstnonblank(zlenoargs);
     //              if (zleline[zlecs] != '#') { spaceinline(1);
     //                  zleline[zlecs] = '#'; zlecs = findeol();
@@ -677,7 +685,6 @@ pub fn poundinsert() -> i32 {
 /// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn acceptline() -> i32 {
     // c:401
-    use std::sync::atomic::Ordering;
     DONE.store(1, Ordering::SeqCst); // c:403 done = 1
     0 // c:404 return 0
 }
@@ -690,7 +697,6 @@ pub fn acceptline() -> i32 {
 ///      return 0;`
 pub fn acceptandhold() -> i32 {
     // c:409
-    use std::sync::atomic::Ordering;
     let zlell = ZLELL.load(Ordering::SeqCst);
     let line: String = ZLELINE.lock().unwrap().iter().take(zlell).collect();
     crate::ported::zle::zle_main::BUFSTACK
@@ -753,7 +759,6 @@ pub fn killline() -> i32 {
 /// WARNING: param names don't match C — Rust=(zle) vs C=(start, end)
 pub fn regionlines() -> (usize, usize) {
     // c:444
-    use crate::ported::zle::zle_utils::{findbol, findeol};
     // c:446 — `int origcs = zlecs`. Save cursor.
     let origcs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let start;
@@ -956,8 +961,6 @@ pub fn pastebuf(buf: &[char], mult: i32, position: i32) -> i32 {
 /// Port of `viputbefore(UNUSED(char **args))` from Src/Zle/zle_misc.c:608.
 pub fn viputbefore() -> i32 {
     // c:608
-    use crate::ported::zle::zle_h::{MOD_NULL, MOD_VIBUF};
-    use crate::ported::zle::zle_vi::startvichange;
     let n = ZMOD.lock().unwrap().mult; // c:610
     startvichange(-1); // c:612
     if n < 0 {
@@ -989,8 +992,6 @@ pub fn viputbefore() -> i32 {
 /// Port of `viputafter(UNUSED(char **args))` from Src/Zle/zle_misc.c:644.
 pub fn viputafter() -> i32 {
     // c:644
-    use crate::ported::zle::zle_h::{MOD_NULL, MOD_VIBUF};
-    use crate::ported::zle::zle_vi::startvichange;
     let n = ZMOD.lock().unwrap().mult; // c:646
     startvichange(-1); // c:648
     if n < 0 {
@@ -1024,8 +1025,6 @@ pub fn viputafter() -> i32 {
 /// Port of `putreplaceselection(UNUSED(char **args))` from Src/Zle/zle_misc.c:680.
 pub fn putreplaceselection() -> i32 {
     // c:680
-    use crate::ported::zle::zle_h::{MOD_NULL, MOD_VIBUF};
-    use crate::ported::zle::zle_vi::startvichange;
     let n = ZMOD.lock().unwrap().mult; // c:682
     let mut pos = 2; // c:686
     startvichange(-1); // c:688
@@ -1135,8 +1134,6 @@ pub fn yankpop() -> i32 {
 /// idle session.
 pub fn bracketedstring() -> String {
     // c:784
-    use std::io::Read;
-    use std::sync::atomic::Ordering;
 
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if fd < 0 {
@@ -1205,7 +1202,6 @@ pub fn bracketedstring() -> String {
 /// prevents the user from accidentally pasting shell metacharacters.
 pub fn bracketedpaste(args: &[String]) -> i32 {
     // c:814
-    use crate::ported::utils::quotestring;
     let pbuf = bracketedstring(); // c:816
     if let Some(name) = args.first() {
         // c:818
@@ -1225,7 +1221,6 @@ pub fn bracketedpaste(args: &[String]) -> i32 {
     let wpaste: Vec<char> = payload.chars().collect();
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
     // region_active, then doinsert(wpaste).
-    use crate::ported::zle::zle_h::MOD_VIBUF;
     if !ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
         ZMOD.lock().unwrap().mult = 1; // c:829
                                        // c:830-832 — `if (region_active) killregion(...)`.
@@ -1265,7 +1260,6 @@ pub fn overwritemode() -> i32 {
 /// Port of `whatcursorposition(UNUSED(char **args))` from Src/Zle/zle_misc.c:851.
 pub fn whatcursorposition() -> i32 {
     // c:851
-    use crate::ported::zle::zle_utils::findbol;
     let bol = findbol(); // c:855
     let mut msg = String::with_capacity(100);
     if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -1380,7 +1374,6 @@ pub fn parsedigit(inkey: i32) -> i32 {
 /// Port of `digitargument(UNUSED(char **args))` from Src/Zle/zle_misc.c:950.
 pub fn digitargument() -> i32 {
     // c:950
-    use crate::ported::zle::zle_h::{MOD_NEG, MOD_TMULT};
     // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
     let sign: i32 = if ZMOD.lock().unwrap().mult < 0 { -1 } else { 1 };
     // c:1045 — `parsedigit(lastchar)`.
@@ -1426,7 +1419,6 @@ pub fn digitargument() -> i32 {
 /// Refuses if a tmult is already in flight.
 pub fn negargument() -> i32 {
     // c:974
-    use crate::ported::zle::zle_h::{MOD_NEG, MOD_TMULT};
     if ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
         // c:976
         return 1; // c:977
@@ -1441,7 +1433,6 @@ pub fn negargument() -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn universalargument(args: &[String]) -> i32 {
     // c:986
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT};
     // c:988-993 — `if (*args)` short-circuit when invoked with an
     //              explicit numeric arg.
     if let Some(a) = args.first() {
@@ -1745,7 +1736,6 @@ pub static namedcmdambig: std::sync::atomic::AtomicUsize = // c:1235
 /// from `Src/Zle/zle_misc.c:1235`.
 pub fn scancompcmd(name: &str) -> i32 {
     // c:1235
-    use std::sync::atomic::Ordering;
     // c:1240 — `if (strpfx(namedcmdstr, t->nam))`.
     let prefix = namedcmdstr.lock().unwrap().clone();
     if !name.starts_with(&prefix) {
@@ -1895,8 +1885,6 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
 /// registered `suffixfunc` or just clears the list.
 pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
     // c:1699
-    use crate::ported::zle::compcore::{ZLECS, ZLELINE, ZLELL};
-    use std::sync::atomic::Ordering;
 
     // c:1701 — `if (suffixfunc) { ... }` — run shfunc if registered.
     let sf = SUFFIXFUNC
@@ -1938,19 +1926,19 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
 
     // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before ZLECS.
     if sl > 0 && keep == 0 {
-        let cs = ZLECS.load(Ordering::Relaxed) as usize;
+        let cs = ZLECS_C.load(Ordering::Relaxed) as usize;
         let drop_n = (sl as usize).min(cs);
         let new_cs = cs - drop_n;
-        if let Ok(mut g) = ZLELINE
+        if let Ok(mut g) = ZLELINE_C
             .get_or_init(|| std::sync::Mutex::new(String::new()))
             .lock()
         {
             if new_cs <= g.len() && drop_n <= cs {
                 g.drain(new_cs..cs);
             }
-            ZLELL.store(g.len() as i32, Ordering::Relaxed);
+            ZLELL_C.store(g.len() as i32, Ordering::Relaxed);
         }
-        ZLECS.store(new_cs as i32, Ordering::Relaxed);
+        ZLECS_C.store(new_cs as i32, Ordering::Relaxed);
     }
 
     // c:1796 — clear suffix list.
@@ -1966,7 +1954,6 @@ pub fn fixsuffix() {
     //                       if (sl->lenstr) zfree(sl->chars, ...);
     //                       zfree(sl, ...); suffixlist = next; }
     //                       suffixlen = 0`.
-    use std::sync::atomic::Ordering;
     suffixlist().lock().unwrap().clear();
     SUFFIXLEN.store(0, Ordering::SeqCst);
 }
@@ -2685,7 +2672,6 @@ fn suffixlist() -> &'static std::sync::Mutex<Vec<suffixset>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
 
     #[test]
     fn acceptline_sets_done() {
@@ -2710,8 +2696,6 @@ mod tests {
     fn sendbreak_sets_errflag_and_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
-        use std::sync::atomic::Ordering;
         // Reset errflag so the OR-set is observable.
         crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         let r = sendbreak();
@@ -2729,7 +2713,6 @@ mod tests {
     fn sendbreak_preserves_existing_errflag_bits() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use std::sync::atomic::Ordering;
         // c:1146 — `errflag |= ...` (OR-equal, not assign).
         crate::ported::utils::errflag.store(0x1000, Ordering::Relaxed); // pretend bit 12 was set
         sendbreak();
@@ -2749,7 +2732,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:976-981 — sets tmult=-1 + TMULT|NEG flags + prefixflag.
-        use crate::ported::zle::zle_h::{MOD_NEG, MOD_TMULT};
         zle_reset();
         // Ensure clean modifier state.
         ZMOD.lock().unwrap().tmult = 1;
@@ -2768,7 +2750,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:976-977 — if MOD_TMULT already set → return 1.
-        use crate::ported::zle::zle_h::MOD_TMULT;
         zle_reset();
         ZMOD.lock().unwrap().flags |= MOD_TMULT;
         ZMOD.lock().unwrap().tmult = 7; // some pre-existing value
@@ -2944,7 +2925,6 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1050-1051 — `if (!TMULT) tmult = 0`. First digit: tmult=0
         // then tmult = 0*10 + 1*5 = 5.
-        use crate::ported::zle::zle_h::MOD_TMULT;
         zle_reset();
         ZMOD.lock().unwrap().flags = 0;
         ZMOD.lock().unwrap().base = 10;
@@ -2963,7 +2943,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1058 — second digit: tmult = 5*10 + 1*7 = 57.
-        use crate::ported::zle::zle_h::MOD_TMULT;
         zle_reset();
         ZMOD.lock().unwrap().flags = MOD_TMULT;
         ZMOD.lock().unwrap().tmult = 5;
@@ -2993,7 +2972,6 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054-1056 — MOD_NEG: tmult = sign * newdigit, NEG cleared.
         // sign = -1 (zmult<0); first digit '3' → tmult = -1*3 = -3.
-        use crate::ported::zle::zle_h::{MOD_NEG, MOD_TMULT};
         zle_reset();
         ZMOD.lock().unwrap().flags = MOD_TMULT | MOD_NEG;
         ZMOD.lock().unwrap().tmult = -1; // set by negargument
@@ -3353,9 +3331,6 @@ mod tests {
     fn zle_usable_when_active_and_no_compfunc() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::builtins::sched::zleactive;
-        use crate::ported::zle::complete::INCOMPFUNC;
-        use std::sync::atomic::Ordering;
         zleactive.store(1, Ordering::SeqCst);
         INCOMPFUNC.store(0, Ordering::SeqCst);
         assert_eq!(super::super::zle_thingy::zle_usable(), 1);
