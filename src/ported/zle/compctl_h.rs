@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn cct_constants_correct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CCT_UNUSED, 0);
         assert_eq!(CCT_POS, 1);
         assert_eq!(CCT_CURSTR, 2);
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn cc_primary_mask_bits_distinct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let all = CC_FILES
             | CC_COMMPATH
             | CC_REMOVE
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn cc_secondary_mask_values() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CC_NOSORT, 1);
         assert_eq!(CC_XORCONT, 2);
         assert_eq!(CC_UNIQALL, 1 << 6);
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn compctl_default_zeros_fields() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let cc = Compctl::default();
         assert_eq!(cc.refc, 0);
         assert!(cc.next.is_none());
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn compcond_default_is_unused() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let c = Compcond::default();
         assert_eq!(c.typ, CCT_UNUSED);
         assert!(matches!(c.u, CompcondData::Unused));
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn compcond_data_variants() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let r = CompcondData::R {
             a: vec![0, 1],
             b: vec![2, 3],
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn cct_constants_are_unique() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let all = [
             CCT_UNUSED,
             CCT_POS,
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn compctl_default_partial_population_doesnt_clobber_other_fields() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut cc = Compctl::default();
         cc.mask = CC_FILES;
         assert_eq!(cc.mask, CC_FILES);
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn compcond_default_typ_and_data_are_consistent() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let c = Compcond::default();
         assert_eq!(c.typ, CCT_UNUSED, "tag must be UNUSED");
         assert!(

@@ -619,130 +619,130 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // "beep" → handlefeep at zle_utils.c:1405 (C source uses
         // handlefeep as the bound fn; "beep" is the canonical widget
         // name per iwidgets.list).
-        "beep" => Some(|_| super::zle_utils::handlefeep()),
-        "accept-and-hold" => Some(|_| super::zle_misc::acceptandhold()),
-        "accept-line-and-down-history" => Some(|_| super::zle_hist::acceptlineanddownhistory()),
-        "accept-line" => Some(|_| super::zle_misc::acceptline()),
-        "backward-char" => Some(|_| super::zle_move::backwardchar()),
-        "backward-delete-char" => Some(|_| super::zle_misc::backwarddeletechar()),
-        "backward-kill-word" => Some(super::zle_word::backwardkillword),
-        "backward-word" => Some(super::zle_word::backwardword),
-        "beginning-of-buffer-or-history" => Some(|_| super::zle_hist::beginningofbufferorhistory()),
-        "beginning-of-line" => Some(|_| super::zle_move::beginningofline()),
-        "capitalize-word" => Some(super::zle_word::capitalizeword),
-        "copy-prev-word" => Some(|_| super::zle_misc::copyprevword()),
-        "copy-region-as-kill" => Some(super::zle_misc::copyregionaskill),
-        "delete-char-or-list" => Some(|_| super::zle_tricky::deletecharorlist()),
-        "digit-argument" => Some(|_| super::zle_misc::digitargument()),
-        "down-case-word" => Some(super::zle_word::downcaseword),
-        "down-history" => Some(|_| super::zle_hist::downhistory()),
-        "down-line-or-history" => Some(|_| super::zle_hist::downlineorhistory()),
-        "end-of-buffer-or-history" => Some(|_| super::zle_hist::endofbufferorhistory()),
-        "end-of-line" => Some(|_| super::zle_move::endofline()),
-        "expand-history" => Some(|_| super::zle_tricky::expandhistory()),
-        "expand-or-complete" => Some(|_| super::zle_tricky::expandorcomplete()),
-        "forward-char" => Some(|_| super::zle_move::forwardchar()),
-        "forward-word" => Some(super::zle_word::forwardword),
+        "beep" => Some(|_| handlefeep()),
+        "accept-and-hold" => Some(|_| acceptandhold()),
+        "accept-line-and-down-history" => Some(|_| acceptlineanddownhistory()),
+        "accept-line" => Some(|_| acceptline()),
+        "backward-char" => Some(|_| backwardchar()),
+        "backward-delete-char" => Some(|_| backwarddeletechar()),
+        "backward-kill-word" => Some(backwardkillword),
+        "backward-word" => Some(backwardword),
+        "beginning-of-buffer-or-history" => Some(|_| beginningofbufferorhistory()),
+        "beginning-of-line" => Some(|_| beginningofline()),
+        "capitalize-word" => Some(capitalizeword),
+        "copy-prev-word" => Some(|_| copyprevword()),
+        "copy-region-as-kill" => Some(copyregionaskill),
+        "delete-char-or-list" => Some(|_| deletecharorlist()),
+        "digit-argument" => Some(|_| digitargument()),
+        "down-case-word" => Some(downcaseword),
+        "down-history" => Some(|_| downhistory()),
+        "down-line-or-history" => Some(|_| downlineorhistory()),
+        "end-of-buffer-or-history" => Some(|_| endofbufferorhistory()),
+        "end-of-line" => Some(|_| endofline()),
+        "expand-history" => Some(|_| expandhistory()),
+        "expand-or-complete" => Some(|_| expandorcomplete()),
+        "forward-char" => Some(|_| forwardchar()),
+        "forward-word" => Some(forwardword),
         "history-incremental-search-backward" => {
-            Some(|_| super::zle_hist::historyincrementalsearchbackward())
+            Some(|_| historyincrementalsearchbackward())
         }
         "history-incremental-search-forward" => {
-            Some(|_| super::zle_hist::historyincrementalsearchforward())
+            Some(|_| historyincrementalsearchforward())
         }
-        "history-search-backward" => Some(|_| super::zle_hist::historysearchbackward()),
-        "history-search-forward" => Some(|_| super::zle_hist::historysearchforward()),
-        "insert-last-word" => Some(|_| super::zle_hist::insertlastword()),
-        "kill-line" => Some(|_| super::zle_misc::killline()),
-        "kill-whole-line" => Some(|_| super::zle_misc::killwholeline()),
-        "kill-word" => Some(super::zle_word::killword),
-        "list-choices" => Some(|_| super::zle_tricky::listchoices()),
-        "list-expand" => Some(|_| super::zle_tricky::listexpand()),
-        "neg-argument" => Some(|_| super::zle_misc::negargument()),
-        "pound-insert" => Some(|_| super::zle_misc::poundinsert()),
-        "push-line" => Some(|_| super::zle_hist::pushline()),
-        "quote-line" => Some(|_| super::zle_misc::quoteline()),
-        "quote-region" => Some(|_| super::zle_misc::quoteregion()),
-        "quoted-insert" => Some(|_| super::zle_misc::quotedinsert()),
-        "redo" => Some(|_| super::zle_utils::redo()),
-        "self-insert-unmeta" => Some(|_| super::zle_misc::selfinsertunmeta()),
-        "self-insert" => Some(|_| super::zle_misc::selfinsert()),
-        "send-break" => Some(|_| super::zle_misc::sendbreak()),
-        "set-mark-command" => Some(|_| super::zle_move::setmarkcommand()),
-        "spell-word" => Some(|_| super::zle_tricky::spellword()),
-        "transpose-chars" => Some(|_| super::zle_misc::transposechars()),
-        "transpose-words" => Some(super::zle_word::transposewords),
-        "undefined-key" => Some(|_| super::zle_misc::undefinedkey()),
-        "undo" => Some(super::zle_utils::undo),
-        "up-case-word" => Some(super::zle_word::upcaseword),
-        "up-history" => Some(|_| super::zle_hist::uphistory()),
-        "up-line-or-history" => Some(|_| super::zle_hist::uplineorhistory()),
-        "vi-add-eol" => Some(|_| super::zle_vi::viaddeol()),
-        "vi-add-next" => Some(|_| super::zle_vi::viaddnext()),
-        "vi-backward-blank-word" => Some(super::zle_word::vibackwardblankword),
-        "vi-backward-char" => Some(|_| super::zle_move::vibackwardchar()),
-        "vi-backward-delete-char" => Some(|_| super::zle_vi::vibackwarddeletechar()),
-        "vi-backward-kill-word" => Some(super::zle_word::vibackwardkillword),
-        "vi-backward-word" => Some(super::zle_word::vibackwardword),
-        "vi-change-eol" => Some(|_| super::zle_vi::vichangeeol()),
-        "vi-change-whole-line" => Some(|_| super::zle_vi::vichangewholeline()),
-        "vi-change" => Some(|_| super::zle_vi::vichange()),
-        "vi-cmd-mode" => Some(|_| super::zle_vi::vicmdmode()),
-        "vi-delete-char" => Some(|_| super::zle_vi::videletechar()),
-        "vi-delete" => Some(|_| super::zle_vi::videlete()),
-        "vi-digit-or-beginning-of-line" => Some(|_| super::zle_vi::vidigitorbeginningofline()),
-        "vi-down-line-or-history" => Some(|_| super::zle_hist::vidownlineorhistory()),
-        "vi-end-of-line" => Some(|_| super::zle_move::viendofline()),
-        "vi-fetch-history" => Some(|_| super::zle_hist::vifetchhistory()),
-        "vi-find-next-char-skip" => Some(|_| super::zle_move::vifindnextcharskip()),
-        "vi-find-next-char" => Some(|_| super::zle_move::vifindnextchar()),
-        "vi-find-prev-char-skip" => Some(|_| super::zle_move::vifindprevcharskip()),
-        "vi-find-prev-char" => Some(|_| super::zle_move::vifindprevchar()),
-        "vi-first-non-blank" => Some(|_| super::zle_move::vifirstnonblank()),
-        "vi-forward-blank-word-end" => Some(super::zle_word::viforwardblankwordend),
-        "vi-forward-blank-word" => Some(super::zle_word::viforwardblankword),
-        "vi-forward-char" => Some(|_| super::zle_move::viforwardchar()),
-        "vi-forward-word-end" => Some(super::zle_word::viforwardwordend),
-        "vi-forward-word" => Some(super::zle_word::viforwardword),
-        "vi-goto-column" => Some(|_| super::zle_move::vigotocolumn()),
+        "history-search-backward" => Some(|_| historysearchbackward()),
+        "history-search-forward" => Some(|_| historysearchforward()),
+        "insert-last-word" => Some(|_| insertlastword()),
+        "kill-line" => Some(|_| killline()),
+        "kill-whole-line" => Some(|_| killwholeline()),
+        "kill-word" => Some(killword),
+        "list-choices" => Some(|_| listchoices()),
+        "list-expand" => Some(|_| listexpand()),
+        "neg-argument" => Some(|_| negargument()),
+        "pound-insert" => Some(|_| poundinsert()),
+        "push-line" => Some(|_| pushline()),
+        "quote-line" => Some(|_| quoteline()),
+        "quote-region" => Some(|_| quoteregion()),
+        "quoted-insert" => Some(|_| quotedinsert()),
+        "redo" => Some(|_| redo()),
+        "self-insert-unmeta" => Some(|_| selfinsertunmeta()),
+        "self-insert" => Some(|_| selfinsert()),
+        "send-break" => Some(|_| sendbreak()),
+        "set-mark-command" => Some(|_| setmarkcommand()),
+        "spell-word" => Some(|_| spellword()),
+        "transpose-chars" => Some(|_| transposechars()),
+        "transpose-words" => Some(transposewords),
+        "undefined-key" => Some(|_| undefinedkey()),
+        "undo" => Some(undo),
+        "up-case-word" => Some(upcaseword),
+        "up-history" => Some(|_| uphistory()),
+        "up-line-or-history" => Some(|_| uplineorhistory()),
+        "vi-add-eol" => Some(|_| viaddeol()),
+        "vi-add-next" => Some(|_| viaddnext()),
+        "vi-backward-blank-word" => Some(vibackwardblankword),
+        "vi-backward-char" => Some(|_| vibackwardchar()),
+        "vi-backward-delete-char" => Some(|_| vibackwarddeletechar()),
+        "vi-backward-kill-word" => Some(vibackwardkillword),
+        "vi-backward-word" => Some(vibackwardword),
+        "vi-change-eol" => Some(|_| vichangeeol()),
+        "vi-change-whole-line" => Some(|_| vichangewholeline()),
+        "vi-change" => Some(|_| vichange()),
+        "vi-cmd-mode" => Some(|_| vicmdmode()),
+        "vi-delete-char" => Some(|_| videletechar()),
+        "vi-delete" => Some(|_| videlete()),
+        "vi-digit-or-beginning-of-line" => Some(|_| vidigitorbeginningofline()),
+        "vi-down-line-or-history" => Some(|_| vidownlineorhistory()),
+        "vi-end-of-line" => Some(|_| viendofline()),
+        "vi-fetch-history" => Some(|_| vifetchhistory()),
+        "vi-find-next-char-skip" => Some(|_| vifindnextcharskip()),
+        "vi-find-next-char" => Some(|_| vifindnextchar()),
+        "vi-find-prev-char-skip" => Some(|_| vifindprevcharskip()),
+        "vi-find-prev-char" => Some(|_| vifindprevchar()),
+        "vi-first-non-blank" => Some(|_| vifirstnonblank()),
+        "vi-forward-blank-word-end" => Some(viforwardblankwordend),
+        "vi-forward-blank-word" => Some(viforwardblankword),
+        "vi-forward-char" => Some(|_| viforwardchar()),
+        "vi-forward-word-end" => Some(viforwardwordend),
+        "vi-forward-word" => Some(viforwardword),
+        "vi-goto-column" => Some(|_| vigotocolumn()),
         // vi-goto-mark / vi-goto-mark-line / vi-set-mark read a
         // second key char before dispatching (C body c:887/c:929/c:872).
         // The keymap-level dispatch supplies the char via
         // `getrestchar_keybuf`; this fn-ptr wrapper passes NUL since
         // the dispatch is from a static table — the body re-reads
         // the next key itself.
-        "vi-goto-mark-line" => Some(|_| super::zle_move::vigotomarkline('\0')),
-        "vi-goto-mark" => Some(|_| super::zle_move::vigotomark('\0')),
-        "vi-history-search-backward" => Some(|_| super::zle_hist::vihistorysearchbackward()),
-        "vi-history-search-forward" => Some(|_| super::zle_hist::vihistorysearchforward()),
-        "vi-indent" => Some(|_| super::zle_vi::viindent()),
-        "vi-insert-bol" => Some(|_| super::zle_vi::viinsertbol()),
-        "vi-insert" => Some(|_| super::zle_vi::viinsert()),
-        "vi-join" => Some(|_| super::zle_vi::vijoin()),
-        "vi-kill-eol" => Some(|_| super::zle_vi::vikilleol()),
-        "vi-kill-line" => Some(|_| super::zle_vi::vikillline()),
-        "vi-match-bracket" => Some(|_| super::zle_move::vimatchbracket()),
-        "vi-open-line-above" => Some(|_| super::zle_vi::viopenlineabove()),
-        "vi-open-line-below" => Some(|_| super::zle_vi::viopenlinebelow()),
-        "vi-put-after" => Some(|_| super::zle_misc::viputafter()),
-        "vi-put-before" => Some(|_| super::zle_misc::viputbefore()),
-        "vi-quoted-insert" => Some(|_| super::zle_vi::viquotedinsert()),
-        "vi-repeat-change" => Some(|_| super::zle_vi::virepeatchange()),
-        "vi-repeat-find" => Some(|_| super::zle_move::virepeatfind()),
-        "vi-repeat-search" => Some(|_| super::zle_hist::virepeatsearch()),
-        "vi-replace-chars" => Some(|_| super::zle_vi::vireplacechars()),
-        "vi-replace" => Some(|_| super::zle_vi::vireplace()),
-        "vi-rev-repeat-find" => Some(|_| super::zle_move::virevrepeatfind()),
-        "vi-rev-repeat-search" => Some(|_| super::zle_hist::virevrepeatsearch()),
-        "vi-set-buffer" => Some(|_| super::zle_vi::visetbuffer()),
-        "vi-set-mark" => Some(|_| super::zle_move::visetmark('\0')),
-        "vi-substitute" => Some(|_| super::zle_vi::visubstitute()),
-        "vi-swap-case" => Some(|_| super::zle_vi::viswapcase()),
-        "vi-unindent" => Some(|_| super::zle_vi::viunindent()),
-        "vi-up-line-or-history" => Some(|_| super::zle_hist::viuplineorhistory()),
-        "vi-yank-whole-line" => Some(|_| super::zle_vi::viyankwholeline()),
-        "visual-line-mode" => Some(|_| super::zle_move::visuallinemode()),
-        "visual-mode" => Some(|_| super::zle_move::visualmode()),
-        "yank-pop" => Some(|_| super::zle_misc::yankpop()),
+        "vi-goto-mark-line" => Some(|_| vigotomarkline('\0')),
+        "vi-goto-mark" => Some(|_| vigotomark('\0')),
+        "vi-history-search-backward" => Some(|_| vihistorysearchbackward()),
+        "vi-history-search-forward" => Some(|_| vihistorysearchforward()),
+        "vi-indent" => Some(|_| viindent()),
+        "vi-insert-bol" => Some(|_| viinsertbol()),
+        "vi-insert" => Some(|_| viinsert()),
+        "vi-join" => Some(|_| vijoin()),
+        "vi-kill-eol" => Some(|_| vikilleol()),
+        "vi-kill-line" => Some(|_| vikillline()),
+        "vi-match-bracket" => Some(|_| vimatchbracket()),
+        "vi-open-line-above" => Some(|_| viopenlineabove()),
+        "vi-open-line-below" => Some(|_| viopenlinebelow()),
+        "vi-put-after" => Some(|_| viputafter()),
+        "vi-put-before" => Some(|_| viputbefore()),
+        "vi-quoted-insert" => Some(|_| viquotedinsert()),
+        "vi-repeat-change" => Some(|_| virepeatchange()),
+        "vi-repeat-find" => Some(|_| virepeatfind()),
+        "vi-repeat-search" => Some(|_| virepeatsearch()),
+        "vi-replace-chars" => Some(|_| vireplacechars()),
+        "vi-replace" => Some(|_| vireplace()),
+        "vi-rev-repeat-find" => Some(|_| virevrepeatfind()),
+        "vi-rev-repeat-search" => Some(|_| virevrepeatsearch()),
+        "vi-set-buffer" => Some(|_| visetbuffer()),
+        "vi-set-mark" => Some(|_| visetmark('\0')),
+        "vi-substitute" => Some(|_| visubstitute()),
+        "vi-swap-case" => Some(|_| viswapcase()),
+        "vi-unindent" => Some(|_| viunindent()),
+        "vi-up-line-or-history" => Some(|_| viuplineorhistory()),
+        "vi-yank-whole-line" => Some(|_| viyankwholeline()),
+        "visual-line-mode" => Some(|_| visuallinemode()),
+        "visual-mode" => Some(|_| visualmode()),
+        "yank-pop" => Some(|_| yankpop()),
         // Below: widget names that map to C fns with non-1:1 names
         // (per iwidgets.list). C uses the same fn for multiple
         // widget names — dispatch by bindk->nam inside the body.
@@ -762,34 +762,34 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
             let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
             let out = if fd >= 0 { fd } else { 1 };
             let _ = crate::ported::utils::write_loop(out, b"\x1b[H\x1b[2J");
-            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+            ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
             0
         }),
         "redisplay" => Some(|_| {
-            crate::ported::zle::zle_main::ZLE_RESET_NEEDED
+            ZLE_RESET_NEEDED
                 .store(1, std::sync::atomic::Ordering::SeqCst);
             0
         }),
         "yank" => Some(|_| {
-            let ring = crate::ported::zle::zle_main::KILLRING.lock().unwrap();
+            let ring = KILLRING.lock().unwrap();
             let text = match ring.front() {
                 Some(t) => t.clone(),
                 None => return 1,
             };
             drop(ring);
-            let cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-            let mut line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+            let cs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+            let mut line = ZLELINE.lock().unwrap();
             for (i, c) in text.iter().enumerate() {
                 line.insert(cs + i, *c);
             }
             let new_ll = line.len();
             drop(line);
-            crate::ported::zle::zle_main::ZLELL.store(new_ll, std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLECS
+            ZLELL.store(new_ll, std::sync::atomic::Ordering::SeqCst);
+            ZLECS
                 .store(cs + text.len(), std::sync::atomic::Ordering::SeqCst);
             0
         }),
-        "vi-yank" => Some(super::zle_vi::viyank),
+        "vi-yank" => Some(viyank),
         "which-command" => Some(super::zle_misc::processcmd),
         "run-help" => Some(super::zle_misc::processcmd),
         "get-line" => Some(super::zle_misc::zgetline),
@@ -811,7 +811,7 @@ mod tests {
     #[test]
     fn bindkey_returns_false_for_unknown_keymap() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         assert!(!bindkey("no-such-keymap", "^A", "self-insert"));
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         // Pick a sequence unlikely to clash with the default emacs map.
@@ -909,7 +909,7 @@ mod tests {
     #[test]
     fn bindlistout_empty_for_unknown_keymap() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert!(bindlistout("does-not-exist").is_empty());
     }
 
@@ -970,7 +970,7 @@ mod tests {
     #[test]
     fn bindkey_unknown_widget_binds_anyway_matching_c() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let ok = bindkey("main", "\\C-x", "user-widget-not-yet-defined");
         assert!(
             ok,

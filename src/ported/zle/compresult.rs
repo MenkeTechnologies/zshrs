@@ -31,6 +31,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
+use crate::ported::init::SHTTY;
 use crate::ported::utils::write_loop;
 use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
@@ -760,7 +761,7 @@ pub fn calclist(showall: i32) -> i32 {
     LASTINVCOUNT.with(|c| c.set(invcount)); // c:1512
 
     let am =
-        crate::ported::zle::compcore::amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut groups = am.lock().unwrap();
     let nmatches = crate::ported::zle::compcore::nmatches.load(Relaxed);
     let mut mlens: Vec<i32> = vec![0; (nmatches + 1) as usize];
@@ -1293,7 +1294,7 @@ pub fn asklist() -> i32 {
         } else {
             format!("zsh: do you wish to see all {} lines? ", listdat.nlines)
         };
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out, prompt.as_bytes());
 
@@ -1364,7 +1365,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
     //          `shout`. Resolve once and reuse for every emission so
     //          a single SHTTY load covers the whole render.
     let out_fd: i32 = {
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Ordering::Relaxed);
         if fd >= 0 {
             fd
         } else {
@@ -1388,7 +1389,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         crate::ported::zle::zle_refresh::tcoutclear(true); // c:1988 tcout(TCCLEAREOD)
     }
 
-    let groups = crate::ported::zle::compcore::amatches
+    let groups = amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
         .lock()
         .ok()
@@ -1516,7 +1517,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
 pub fn bld_all_str() -> String {
     // c:2187
 
-    let groups = crate::ported::zle::compcore::amatches
+    let groups = amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
         .lock()
         .ok()
@@ -1624,7 +1625,7 @@ pub fn iprintm(
     let mut len: i32;
     // c:2243 — C writes through `printfmt`/`fputs(s, shout)`. Route Rust
     //          to SHTTY so the visible-byte stream matches.
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
 
     if let Some(d) = disp_now {

@@ -17,7 +17,8 @@
 
 pub use crate::signals_h::{signal_default, signal_ignore};
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
-use crate::ported::builtin::{BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT};
+use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
+use crate::ported::options::optlookup;
 use crate::ported::params::locallevel as LOCALLEVEL;
 use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
@@ -374,7 +375,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
                 let interact =
-                    isset(crate::ported::options::optlookup("interactive"));
+                    isset(optlookup("interactive"));
                 if !interact {
                     unsafe {
                         libc::_exit(libc::SIGPIPE);
@@ -388,9 +389,9 @@ extern "C" fn zhandler(sig: libc::c_int) {
                         crate::ported::init::SHTTY.load(Ordering::SeqCst);
                     let on_tty = shtty >= 0 && unsafe { libc::isatty(shtty) } != 0;
                     if !on_tty {
-                        crate::ported::builtin::STOPMSG // c:439
+                        STOPMSG // c:439
                             .store(1, Ordering::Relaxed);
-                        crate::ported::builtin::zexit(libc::SIGPIPE, ZEXIT_SIGNAL);
+                        zexit(libc::SIGPIPE, ZEXIT_SIGNAL);
                         // c:440
                     }
                 }
@@ -400,8 +401,8 @@ extern "C" fn zhandler(sig: libc::c_int) {
             // c:445
             if handletrap(libc::SIGHUP) == 0 {
                 // c:447 — `stopmsg = 1; zexit(SIGHUP, ZEXIT_SIGNAL);`
-                crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed);
-                crate::ported::builtin::zexit(libc::SIGHUP, ZEXIT_SIGNAL); // c:448
+                STOPMSG.store(1, Ordering::Relaxed);
+                zexit(libc::SIGHUP, ZEXIT_SIGNAL); // c:448
             }
         }
         libc::SIGINT => {
@@ -410,11 +411,11 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
                 let privileged =
-                    isset(crate::ported::options::optlookup("privileged"));
+                    isset(optlookup("privileged"));
                 let interactive =
-                    isset(crate::ported::options::optlookup("interactive"));
+                    isset(optlookup("interactive"));
                 if privileged && interactive {
-                    crate::ported::builtin::zexit(libc::SIGINT, ZEXIT_SIGNAL);
+                    zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
                 let cur = errflag.load(Ordering::Relaxed);
@@ -473,8 +474,8 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     errflag.store(0, Ordering::Relaxed);
                     // c:487 — `zwarn("timeout");`
                     crate::ported::utils::zwarn("timeout"); // c:487
-                    crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:488
-                    crate::ported::builtin::zexit(libc::SIGALRM, ZEXIT_SIGNAL); // c:489
+                    STOPMSG.store(1, Ordering::Relaxed); // c:488
+                    zexit(libc::SIGALRM, ZEXIT_SIGNAL); // c:489
                 }
             }
         }
@@ -754,7 +755,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
         let posix_traps =
-            isset(crate::ported::options::optlookup("posixtraps")); // c:746
+            isset(optlookup("posixtraps")); // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {
