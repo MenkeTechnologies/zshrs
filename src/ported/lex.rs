@@ -12,39 +12,30 @@
 //! - Comments
 //! - Continuation lines
 
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 
-// =============================================================================
-// Lexer-domain types — `enum lextok` (lextok), reserved-word table. These
-// belong in lex.rs because they describe the lexer's output. Char tokens
-// (Pound/Stringg/Inpar/…), REDIR_* and COND_* constants live as flat
-// `pub const`s in `super::zsh_h` per `Src/zsh.h:144-679` and are used from
-// here directly — do NOT wrap them in Rust enums or sub-modules.
-// =============================================================================
+use serde::{Deserialize, Serialize};
 
-// Character tokens — port of `Src/zsh.h:144-224` `#define Pound … #define
-// Marker`. Imported with the zsh_h.rs disambiguation (Stringg → Stringg,
-// OutangProc → OutangProc) so the lex.rs body keeps the original C-style
-// short names without colliding with `STRING_LEX` (the lextok=34 constant).
-use crate::ported::input::inpush;
-use crate::ported::prompt::{cmdpop, cmdpush};
-use crate::ported::utils::zerr;
-use crate::ported::zsh_h::INP_ALIAS;
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use crate::ported::hashtable::{aliastab_lock, reswdtab_lock};
+use crate::ported::hist::{strinbeg, strinend};
+use crate::ported::input::{inpop, inpush};
+use crate::ported::parse::HDOCS;
+use crate::ported::prompt::{cmdpop, cmdpush, CMDSTACK};
+use crate::ported::string::dupstring_wlen;
+use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
+use crate::ported::zle::compcore::WE;
 use crate::ported::zsh_h::{
-    isset, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, ERRFLAG_INT, Hat, Inang, ZCONTEXT_LEX, ZCONTEXT_PARSE,
-    Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack,
-    Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+    isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
+    Hat, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace,
+    Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
     ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
     CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE,
-    HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES, INTERACTIVECOMMENTS, KSHGLOB, META,
-    POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS, SHORTREPEAT,
+    ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES, INP_ALIAS,
+    INTERACTIVECOMMENTS, KSHGLOB, META, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
+    SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
-
-use crate::zsh_h::lex_stack;
-use crate::ztype_h::itok;
+use crate::ported::ztype_h::itok;
 
 /// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
@@ -180,7 +171,7 @@ pub fn zshlex() {
     // into the parallel AST-glue `LEX_HEREDOCS` Vec.
     if tok() == NEWLIN || tok() == ENDINPUT {
         // c:279 — `while (hdocs)`
-        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(|h| h.take()) {
+        while let Some(mut node) = HDOCS.with_borrow_mut(|h| h.take()) {
             // c:280 — `struct heredocs *next = hdocs->next;`
             let next: Option<Box<crate::ported::zsh_h::heredocs>> = node.next.take();
             // c:281 — `char *doc, *munged_term;`
@@ -209,7 +200,7 @@ pub fn zshlex() {
                 // c:292 — `zerr("here document too large");`
                 zerr("here document too large");
                 // c:293-297 — while (hdocs) { next = hdocs->next; zfree(hdocs); hdocs = next; }
-                crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = None);
+                HDOCS.with_borrow_mut(|h| *h = None);
                 // c:298 — `tok = LEXERR;`
                 set_tok(LEXERR);
                 // c:299 — break out of the while.
@@ -240,7 +231,7 @@ pub fn zshlex() {
             // c:303 — `zfree(hdocs, sizeof(struct heredocs));`
             drop(node);
             // c:304 — `hdocs = next;`
-            crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = next);
+            HDOCS.with_borrow_mut(|h| *h = next);
         }
     }
 
@@ -981,7 +972,7 @@ fn gettok() -> lextok {
                 // LEXERR : ENDINPUT;`
                 use std::sync::atomic::Ordering;
                 LEX_LEXSTOP.set(true);
-                return if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+                return if errflag.load(Ordering::Relaxed) != 0 {
                     LEXERR
                 } else {
                     ENDINPUT
@@ -2550,7 +2541,7 @@ pub fn parsestr(s: &str) -> Result<String, String> {
         Err(msg) => {
             let untok = untokenize(s); // c:1699
             let _ = untok;
-            let ef = crate::ported::utils::errflag // c:1700
+            let ef = errflag // c:1700
                 .load(std::sync::atomic::Ordering::Relaxed);
             if (ef & crate::ported::zsh_h::ERRFLAG_INT) == 0 {
                 // c:1700
@@ -2592,13 +2583,13 @@ pub fn parsestr(s: &str) -> Result<String, String> {
 /// string on success.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     let untok = untokenize(s); // c:1716 `untokenize(*s);`
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len()); // c:1717
+    let dup = dupstring_wlen(&untok, untok.len()); // c:1717
                                                                           // c:1715 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
     inpush(&dup, 0, None);
     // c:1718 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
+    strinbeg(0);
     // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
     // `add()` writes append onto our copy. `lexbuf.ptr/siz/len` are
     // reset; tokstr is aliased to the buffer.
@@ -2613,13 +2604,13 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     // c:1723-1725 — `if (tokstr) *s = tokstr; *lexbuf.ptr = '\0';`
     let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
     // c:1726 `strinend();`
-    crate::ported::hist::strinend();
+    strinend();
     // c:1727 `inpop();`
-    crate::ported::input::inpop();
+    inpop();
     // c:1730 — DPUTS(cmdsp, "BUG: parsestr: cmdstack not empty.")
     crate::DPUTS!(
         // c:1730
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1730
+        CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1730
         "BUG: parsestr: cmdstack not empty."                              // c:1730
     );
     // c:1729 `zcontext_restore();`
@@ -2657,13 +2648,13 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     }
     let l = s.len();
     let untok = untokenize(s); // c:1749 `untokenize(t = dupstring_wlen(s, l));`
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    let dup = dupstring_wlen(&untok, untok.len());
     // c:1748 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1750 `inpush(t, 0, NULL);`
     inpush(&dup, 0, None);
     // c:1751 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
+    strinbeg(0);
     // c:1763-1765 — seed lexbuf and run dquote_parse with the
     // caller's `endchar` + `sub=false` (zshrs's API omits the C `sub`
     // arg — all current callers pass 0).
@@ -2678,12 +2669,12 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     crate::DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
                                                                   // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
                                                                   // `zcontext_restore();`
-    crate::ported::hist::strinend();
-    crate::ported::input::inpop();
+    strinend();
+    inpop();
     // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
     crate::DPUTS!(
         // c:1785
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
+        CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
         "BUG: parse_subscript: cmdstack not empty."                       // c:1785
     );
     crate::ported::context::zcontext_restore();
@@ -2721,13 +2712,13 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     }
     let l = s.len();
     let untok = untokenize(s); // c:1804
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    let dup = dupstring_wlen(&untok, untok.len());
     // c:1803 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
     inpush(&dup, 0, None);
     // c:1806 `strinbeg(0);`
-    crate::ported::hist::strinbeg(0);
+    strinbeg(0);
     // c:1807-1809 — seed lexbuf with the input string.
     LEX_LEXBUF.with_borrow_mut(|b| {
         b.ptr = Some(String::with_capacity(l + 1));
@@ -2747,13 +2738,13 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     let err = errflag.load(Ordering::Relaxed); // c:1813
     let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
     // c:1814 `strinend();`
-    crate::ported::hist::strinend();
+    strinend();
     // c:1815 `inpop();`
-    crate::ported::input::inpop();
+    inpop();
     // c:1816 — DPUTS(cmdsp, "BUG: parse_subst_string: cmdstack not empty.")
     crate::DPUTS!(
         // c:1816
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1816 cmdsp != 0
+        CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1816 cmdsp != 0
         "BUG: parse_subst_string: cmdstack not empty."                    // c:1816
     );
     // c:1817 `zcontext_restore();`
@@ -2796,13 +2787,13 @@ pub fn gotword() {
         // else { wb = zlemetacs + addedx; if (we < wb) we = wb; }`.
         if zlemetacs >= nwb {
             crate::ported::zle::compcore::WB.store(nwb, Ordering::SeqCst);
-            crate::ported::zle::compcore::WE.store(nwe, Ordering::SeqCst);
+            WE.store(nwe, Ordering::SeqCst);
         } else {
             let wb_new = zlemetacs + addedx;
             crate::ported::zle::compcore::WB.store(wb_new, Ordering::SeqCst);
-            let we_cur = crate::ported::zle::compcore::WE.load(Ordering::SeqCst);
+            let we_cur = WE.load(Ordering::SeqCst);
             if we_cur < wb_new {
-                crate::ported::zle::compcore::WE.store(wb_new, Ordering::SeqCst);
+                WE.store(wb_new, Ordering::SeqCst);
             }
         }
         // c:1895 — `lexflags = 0;`
@@ -2838,7 +2829,7 @@ fn checkalias(lextext: &str) -> bool {
         if tok() != STRING_LEX {
             return false;
         }
-        let is_reswd = crate::ported::hashtable::reswdtab_lock()
+        let is_reswd = reswdtab_lock()
             .read()
             .expect("reswdtab poisoned")
             .get(lextext)
@@ -2851,7 +2842,7 @@ fn checkalias(lextext: &str) -> bool {
     // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
     // aliastab->getnode(aliastab, zshlextext);`
     let alias_clone: Option<crate::ported::zsh_h::alias> = {
-        let guard = crate::ported::hashtable::aliastab_lock()
+        let guard = aliastab_lock()
             .read()
             .expect("aliastab poisoned");
         guard.get(lextext).cloned()
@@ -2876,7 +2867,7 @@ fn checkalias(lextext: &str) -> bool {
                 Some(lextext.to_string()),
             );
             // c:1929 — `an->inuse = 1;`.
-            let mut guard = crate::ported::hashtable::aliastab_lock()
+            let mut guard = aliastab_lock()
                 .write()
                 .expect("aliastab poisoned");
             if let Some(a) = guard.get_mut(lextext) {
@@ -2996,7 +2987,7 @@ pub fn exalias() -> bool {
                 v.extend(t.iter().map(|(k, _)| k.clone()));
             }
             // Aliases.
-            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
+            if let Ok(t) = aliastab_lock().read() {
                 v.extend(t.iter().map(|(k, _)| k.clone()));
             }
             // Command names (from cmdnamtab — hashed $PATH lookups).
@@ -3108,7 +3099,7 @@ pub fn exalias() -> bool {
         // get their turn.
         let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
         let rw_tok: Option<lextok> = if reswd_path_eligible {
-            let guard = crate::ported::hashtable::reswdtab_lock()
+            let guard = reswdtab_lock()
                 .read()
                 .expect("reswdtab poisoned");
             guard.get(&lextext).map(|r| r.token)
@@ -4695,7 +4686,7 @@ mod tests {
     fn parse_subst_string_handles_nulstring_sentinel() {
         let _g = crate::test_util::global_state_lock();
         // Clear errflag so other tests don't poison the assertion.
-        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
         // c:1802 — empty input is a no-op success.
         assert!(parse_subst_string("").is_ok(), "c:1802 — empty input → Ok");
         // c:1802 — nulstring (a single Nularg char) is a no-op success.

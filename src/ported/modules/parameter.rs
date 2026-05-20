@@ -14,9 +14,13 @@
 //! $modules, $dirstack, $history, $historywords, $options, $nameddirs, $userdirs
 
 use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, shfunctab_lock};
+use crate::ported::hist::hist_ring;
 use crate::ported::jobs::selectjobtab;
+use crate::ported::module::MODULESTAB;
+use crate::ported::options::{dosetopt, optlookup};
+use crate::ported::params::{deleteparamtable, getstrvalue, realparamtab};
 use crate::ported::utils::zwarn;
-use crate::ported::zsh_h::ND_USERNAME;
+use crate::ported::zsh_h::{hashtable, value, INTERACTIVE, ND_USERNAME};
 use crate::ported::zsh_h::{
     hashnode, nameddir, param as ParamStruct, HashNode, HashTable, Param, ALIAS_GLOBAL,
     ALIAS_SUFFIX, DISABLED,
@@ -263,7 +267,7 @@ pub fn scanpmparameters(
        // re-enter paramtab without deadlock — C is single-threaded so
        // walks the live table directly.
     let entries: Vec<(String, u32, String)> = {
-        let tab = crate::ported::params::realparamtab()
+        let tab = realparamtab()
             .read()
             .expect("realparamtab poisoned"); // c:135 realparamtab walk
         tab.iter()
@@ -356,7 +360,7 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
         // c:178
         return; // c:179
     }
-    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    let ht_ref: &hashtable = unsafe { &**ht };
     i = 0; // c:181 for (i = 0;
     while i < ht_ref.hsize {
         // c:181 i < ht->hsize; i++)
@@ -364,7 +368,7 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
         while let Some(node) = hn.clone() {
             // c:182 hn;
             // c:184-189 — struct value v (block-scoped per C).
-            let mut v = crate::ported::zsh_h::value {
+            let mut v = value {
                 pm: None,        // c:189 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(), // c:188 v.arr = NULL
                 scanflags: 0,    // c:186
@@ -374,7 +378,7 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
             };
             // c:183/191/192 — `cn = zshcalloc(...); cn->node.flags
             //   = HASHED; cn->u.cmd = ztrdup(getstrvalue(&v));`
-            let path = crate::ported::params::getstrvalue(Some(&mut v));
+            let path = getstrvalue(Some(&mut v));
             let cn = crate::ported::hashtable::cmdnam_hashed(&node.nam, &path);
             // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
             if let Ok(mut tab) = cmdnamtab_lock().write() {
@@ -389,7 +393,7 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
     if !ht.is_null() {
         // c:203
         let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        crate::ported::params::deleteparamtable(Some(owned)); // c:204
+        deleteparamtable(Some(owned)); // c:204
     }
 }
 
@@ -656,7 +660,7 @@ pub fn setfunctions(pm: Param, ht: *mut HashTable, dis: i32) {
         // c:349
         return; // c:350
     }
-    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    let ht_ref: &hashtable = unsafe { &**ht };
     i = 0; // c:352 for (i = 0;
     while i < ht_ref.hsize {
         // c:352 i < ht->hsize; i++)
@@ -664,7 +668,7 @@ pub fn setfunctions(pm: Param, ht: *mut HashTable, dis: i32) {
         while let Some(node) = hn.clone() {
             // c:353 hn;
             // c:354-359 — struct value v; (block-scoped per C).
-            let mut v = crate::ported::zsh_h::value {
+            let mut v = value {
                 pm: None,        // c:359 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(), // c:358 v.arr = NULL
                 scanflags: 0,    // c:356 v.scanflags = 0
@@ -677,7 +681,7 @@ pub fn setfunctions(pm: Param, ht: *mut HashTable, dis: i32) {
             // we get empty. Future port: thread a paramtab lookup through.
             setfunction(
                 &node.nam,
-                crate::ported::params::getstrvalue(Some(&mut v)),
+                getstrvalue(Some(&mut v)),
                 dis,
             );
             hn = node.next; // c:353 hn = hn->next
@@ -688,7 +692,7 @@ pub fn setfunctions(pm: Param, ht: *mut HashTable, dis: i32) {
     if !ht.is_null() {
         // c:364
         let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        crate::ported::params::deleteparamtable(Some(owned)); // c:365
+        deleteparamtable(Some(owned)); // c:365
     }
 }
 
@@ -1342,13 +1346,13 @@ pub fn setpmoption(pm: Param, value: String) {
         return;
     }
     let nam = pm.node.nam.clone();
-    let n = crate::ported::options::optlookup(&nam); // c:934
+    let n = optlookup(&nam); // c:934
     if n == 0 {
         zwarn(&format!("no such option: {}", nam)); // c:932
         return;
     }
     let on = val == "on";
-    crate::ported::options::dosetopt(n, on as i32, 0); // c:953
+    dosetopt(n, on as i32, 0); // c:953
 }
 
 /// Port of `unsetpmoption(Param pm, UNUSED(int exp))` from Src/Modules/parameter.c:941.
@@ -1357,9 +1361,9 @@ pub fn setpmoption(pm: Param, value: String) {
 pub fn unsetpmoption(pm: Param, exp: i32) {
     // c:941
     // c:941-951 — dosetopt(optlookup(name), 0, ...) i.e. unset the option.
-    let n = crate::ported::options::optlookup(&pm.node.nam);
+    let n = optlookup(&pm.node.nam);
     if n != 0 {
-        crate::ported::options::dosetopt(n, 0, 0); // c:949
+        dosetopt(n, 0, 0); // c:949
     }
 }
 
@@ -1379,7 +1383,7 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
         // c:958
         return; // c:959
     }
-    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    let ht_ref: &hashtable = unsafe { &**ht };
     i = 0; // c:961 for (i = 0;
     while i < ht_ref.hsize {
         // c:961 i < ht->hsize; i++)
@@ -1387,7 +1391,7 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
         while let Some(node) = hn.clone() {
             // c:962 hn;
             // c:963-969 — struct value v (block-scoped).
-            let mut v = crate::ported::zsh_h::value {
+            let mut v = value {
                 pm: None,        // c:969 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(), // c:968 v.arr = NULL
                 scanflags: 0,
@@ -1397,7 +1401,7 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
             };
             // c:964 — char *val (block-scoped).
             let val: String;
-            val = crate::ported::params::getstrvalue(Some(&mut v)); // c:971 val = getstrvalue(&v)
+            val = getstrvalue(Some(&mut v)); // c:971 val = getstrvalue(&v)
             if val.is_empty() || (val != "on" && val != "off") {
                 // c:972
                 zwarn(
@@ -1406,9 +1410,9 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
                 );
             } else {
                 // c:974 — dosetopt(optlookup(hn->nam), (val && strcmp(val, "off")), 0, opts);
-                let n = crate::ported::options::optlookup(&node.nam);
+                let n = optlookup(&node.nam);
                 let on: i32 = if val != "off" { 1 } else { 0 };
-                if n == 0 || crate::ported::options::dosetopt(n, on, 0) != 0 {
+                if n == 0 || dosetopt(n, on, 0) != 0 {
                     // c:975-976 — failure path: can't change option.
                     zwarn(
                         // c:976
@@ -1424,7 +1428,7 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
     if !ht.is_null() {
         // c:979
         let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        crate::ported::params::deleteparamtable(Some(owned)); // c:980
+        deleteparamtable(Some(owned)); // c:980
     }
 }
 
@@ -1442,7 +1446,7 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
     // the synth records that the name is valid but the on/off value
     // is empty; the executor-side caller (fusevm_bridge magic_assoc
     // dispatch) substitutes the live value before returning.
-    let valid = crate::ported::options::optlookup(name) > 0; // c:1003
+    let valid = optlookup(name) > 0; // c:1003
     let (value, found) = if valid {
         (String::new(), true) // c:1005 (value-blank, executor fills)
     } else {
@@ -1516,7 +1520,7 @@ pub fn scanpmoptions(
 pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1040
     // c:1052 — `m = (Module)modulestab->getnode2(modulestab, name)`.
-    let modtab = crate::ported::module::MODULESTAB.lock().unwrap();
+    let modtab = MODULESTAB.lock().unwrap();
     let module_present = modtab.modules.contains_key(name);
     let autoload_present = modtab.autoload_builtins.values().any(|v| v == name)
         || modtab.autoload_conditions.values().any(|v| v == name)
@@ -1598,7 +1602,7 @@ pub fn scanpmmodules(
     };
     // c:1088-1100 — modulestab walk, emit each loaded module.
     let modules: Vec<String> = {
-        let tab = crate::ported::module::MODULESTAB.lock().unwrap();
+        let tab = MODULESTAB.lock().unwrap();
         tab.modules.keys().cloned().collect() // c:1088
     };
     for name in modules {
@@ -1636,7 +1640,7 @@ pub fn scanpmmodules(
     }
     // c:1119-1124 — realparamtab PM_AUTOLOAD entries.
     let auto_param_modules: Vec<String> = {
-        let tab = crate::ported::module::MODULESTAB.lock().unwrap();
+        let tab = MODULESTAB.lock().unwrap();
         tab.autoload_params.values().cloned().collect() // c:1121
     };
     for m in auto_param_modules {
@@ -1759,7 +1763,7 @@ pub fn scanpmhistory(
     // Snapshot (histnum, command) pairs so func() can re-enter without
     // deadlocking on the hist_ring mutex.
     let entries: Vec<(i64, String)> = {
-        let ring = crate::ported::hist::hist_ring.lock().unwrap(); // c:1196 walk via up_histent
+        let ring = hist_ring.lock().unwrap(); // c:1196 walk via up_histent
         ring.iter()
             .rev() // c:1199 up_histent walks newest→oldest
             .map(|h| (h.histnum, h.node.nam.clone()))
@@ -1810,7 +1814,7 @@ pub fn histwgetfn(pm: *mut ParamStruct) -> Vec<String> {
     // (hist.rs:27) carries the same `histent` shape (node.nam + words
     // + nwords); read the lock then iterate.
     let mut out: Vec<String> = Vec::new();
-    let ring = crate::ported::hist::hist_ring.lock();
+    let ring = hist_ring.lock();
     if let Ok(ring) = ring {
         // c:1229-1247 — newest entry first.
         for he in ring.iter().rev() {
@@ -2345,7 +2349,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
     }
 
     // c:1560-1579 — second loop: install entries from `ht`.
-    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    let ht_ref: &hashtable = unsafe { &**ht };
     i = 0; // c:1560 for (i = 0;
     while i < ht_ref.hsize {
         // c:1560 i < ht->hsize; i++)
@@ -2354,7 +2358,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
             // c:1561 hn;
             next = node.next.clone(); // c:1561 hn = hn->next (lifted into named local)
                                       // c:1562-1568 — struct value v (block-scoped per C).
-            let mut v = crate::ported::zsh_h::value {
+            let mut v = value {
                 pm: None,        // c:1568 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(), // c:1567 v.arr = NULL
                 scanflags: 0,
@@ -2364,7 +2368,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
             };
             // c:1563 — char *val (block-scoped per C).
             let val: String;
-            val = crate::ported::params::getstrvalue(Some(&mut v)); // c:1570 val = getstrvalue(&v)
+            val = getstrvalue(Some(&mut v)); // c:1570 val = getstrvalue(&v)
             if val.is_empty() {
                 // c:1570 !val
                 zwarn("invalid value: ''"); // c:1571
@@ -2390,19 +2394,19 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
     // watching).
     let saved_interactive = crate::ported::zsh_h::isset(
         // c:1584
-        crate::ported::zsh_h::INTERACTIVE,
+        INTERACTIVE,
     );
     crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::INTERACTIVE),
+        &crate::ported::zsh_h::opt_name(INTERACTIVE),
         false,
     ); // c:1585
     if !ht.is_null() {
         // c:1587
         let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        crate::ported::params::deleteparamtable(Some(owned)); // c:1588
+        deleteparamtable(Some(owned)); // c:1588
     }
     crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::INTERACTIVE),
+        &crate::ported::zsh_h::opt_name(INTERACTIVE),
         saved_interactive,
     ); // c:1589
 }
@@ -3587,14 +3591,14 @@ mod scan_callback_tests {
             old: None,
             level: 0,
         };
-        crate::ported::params::realparamtab()
+        realparamtab()
             .write()
             .unwrap()
             .insert("ZSHRS_TEST_SP_A".to_string(), Box::new(pm));
         scanpmparameters(std::ptr::null_mut(), Some(counting_func), 0);
         let observed = COLLECTED_COUNT.load(Ordering::SeqCst);
         // Cleanup before asserting so failures don't leak state.
-        crate::ported::params::realparamtab()
+        realparamtab()
             .write()
             .unwrap()
             .remove("ZSHRS_TEST_SP_A");
@@ -3613,14 +3617,14 @@ mod scan_callback_tests {
     fn scanpmhistory_empty_ring_invokes_zero_callbacks() {
         let _g = crate::test_util::global_state_lock();
         reset_counters();
-        let snapshot: Vec<_> = crate::ported::hist::hist_ring
+        let snapshot: Vec<_> = hist_ring
             .lock()
             .unwrap()
             .drain(..)
             .collect();
         scanpmhistory(std::ptr::null_mut(), Some(counting_func), 0);
         let observed = COLLECTED_COUNT.load(Ordering::SeqCst);
-        crate::ported::hist::hist_ring
+        hist_ring
             .lock()
             .unwrap()
             .extend(snapshot);
