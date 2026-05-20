@@ -243,17 +243,58 @@ pub fn zwarnnam(cmd: &str, msg: &str) {                                      // 
     zwarning(Some(cmd), msg);                                                // c:235
 }
 
-/// Debug printf (from utils.c dputs) - only active in debug builds
 /// Port of `dputs(VA_ALIST1(const char *message))` from `Src/utils.c:253`.
-/// WARNING: param names don't match C — Rust=(msg) vs C=()
-pub fn dputs(msg: &str) {
-    #[cfg(debug_assertions)]
-    {
-        eprintln!("BUG: {}", msg);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = msg;
+///
+/// C body (c:253-270):
+/// ```c
+/// mod_export void dputs(const char *message)
+/// {
+///     char *filename;
+///     FILE *file;
+///     if ((filename = getsparam_u("ZSH_DEBUG_LOG")) != NULL &&
+///         (file = fopen(filename, "a")) != NULL) {
+///         zerrmsg(file, message, ap);
+///         fclose(file);
+///     } else
+///         zerrmsg(stderr, message, ap);
+/// }
+/// ```
+///
+/// Previous Rust port was a FAKE — `eprintln!("BUG: {}", msg)` ignored
+/// `$ZSH_DEBUG_LOG` entirely (which is the whole point of dputs — to
+/// route debug output to a user-specified log file). Re-port now
+/// consults paramtab via `getsparam_u`, opens the log in append mode,
+/// and routes the message there; falls back to stderr per c:268.
+///
+/// Rust signature drift: takes `&str` instead of va_args; callers
+/// pre-format via Rust's `format!` (same pattern as `zerrmsg`).
+pub fn dputs(msg: &str) {                                                    // c:253
+    use std::io::Write;
+    // c:263 — `getsparam_u("ZSH_DEBUG_LOG")`. The `_u` variant
+    // unmetafies the result (utils.rs's getsparam_u port at
+    // params.rs:3831 wraps getsparam + unmeta).
+    let log_file = crate::ported::params::getsparam_u("ZSH_DEBUG_LOG");      // c:263
+    // c:264 — `fopen(filename, "a")` — append mode.
+    let opened = log_file.as_ref().and_then(|p| {                            // c:264
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok()
+    });
+    // Shared format logic: lineno prefix + msg + newline, matching
+    // zerrmsg at c:296-308. Built once, written to file or stderr.
+    let lineno = crate::ported::lex::lineno() as i32;
+    let shinstdin = crate::ported::zsh_h::isset(crate::ported::zsh_h::SHINSTDIN);
+    let locallevel = crate::ported::params::locallevel
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let prefix = if (!shinstdin || locallevel != 0) && lineno != 0 {
+        format!("{}: ", lineno)
+    } else {
+        String::new()
+    };
+    let line = format!("{}{}\n", prefix, msg);
+    if let Some(mut f) = opened {                                            // c:265 zerrmsg(file, ...)
+        let _ = f.write_all(line.as_bytes());                                // c:265
+        // c:266 — `fclose(file)` — handled by Drop when `f` goes out of scope.
+    } else {                                                                  // c:267 else stderr
+        let _ = std::io::stderr().write_all(line.as_bytes());                // c:268 zerrmsg(stderr, ...)
     }
 }
 
@@ -273,32 +314,6 @@ pub fn dputs(msg: &str) {
 /// symbol (zwarnnam). The Rust port has no equivalent linker
 /// problem; this is preserved as a no-op for symbol-table parity.
 pub fn zz_plural_z_alpha() {}                                                // c:282
-
-/// Port of `is_nicechar(int c)` from `Src/utils.c:531-539`.
-/// ```c
-/// c &= 0xff;
-/// if (ZISPRINT(c)) return 0;
-/// if (c & 0x80)    return !isset(PRINTEIGHTBIT);
-/// return (c == 0x7f || c == '\n' || c == '\t' || c < 0x20);
-/// ```
-/// "Nice" means "needs escape-formatting when printed" — so
-/// returns true for control chars + (under PRINTEIGHTBIT off)
-/// high-bit bytes. The previous Rust port treated all `!c.is_ascii()`
-/// as nice unconditionally — divergent for users running with
-/// `setopt printeightbit` (very common for non-ASCII filenames).
-pub fn is_nicechar(c: char) -> bool {
-    let cu = (c as u32) & 0xff;
-    // c:534 — `if (ZISPRINT(c)) return 0;` — printable ASCII is not nice.
-    if crate::ported::ztype_h::ZISPRINT(cu as u8) {
-        return false;
-    }
-    // c:536 — high-bit byte path.
-    if (cu & 0x80) != 0 {
-        return !crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT);
-    }
-    // c:538 — ASCII control chars (DEL/\n/\t/<0x20).
-    cu == 0x7f || cu == b'\n' as u32 || cu == b'\t' as u32 || cu < 0x20
-}
 
 /// Port of `zerrmsg(FILE *file, const char *fmt, va_list ap)` from `Src/utils.c:289`.
 ///
@@ -872,23 +887,47 @@ pub fn xsymlinks(s: &str) -> std::io::Result<String> {                       // 
 /// "path expansion failed, using root directory" warning and
 /// returns `Some("/")`.
 ///
-/// The C source dispatches through `chrealpath()` (Src/hist.c:1971,
-/// mode 'P' = physical resolution); the Rust port uses
-/// `fs::canonicalize()` which is the libc `realpath(3)` wrapper —
-/// same semantics for the symlink-resolution path that `xsymlink`
-/// exercises.
+/// C body (c:971-980):
+/// ```c
+/// char *xsymlink(char *s, int heap)
+/// {
+///     if (*s != '/') return NULL;
+///     *xbuf = '\0';
+///     if (!chrealpath(&s, 'P', heap)) {
+///         zwarn("path expansion failed, using root directory");
+///         return heap ? dupstring("/") : ztrdup("/");
+///     }
+///     return s;
+/// }
+/// ```
+///
+/// Previous Rust port was a FAKE — called `std::fs::canonicalize`
+/// directly with the rationale "same semantics for symlink-
+/// resolution". That bypassed the canonical `chrealpath` port
+/// (hist.rs:2311) which handles the partial-prefix walk + xbuf
+/// state that `fs::canonicalize` doesn't replicate. Re-port now
+/// matches C line-by-line.
+///
+/// Rust signature drift: `heap` param dropped — Rust strings always
+/// live on the heap; the C `heap` flag toggles between zhalloc
+/// (heap arena) and ztrdup (process-wide) allocation which has no
+/// distinction in Rust. Always defaults to `false` (ztrdup arm) at
+/// the chrealpath call.
 pub fn xsymlink(path: &str) -> Option<String> {                             // c:971
-    // C: if (*s != '/') return NULL;
-    if !path.starts_with('/') {
+    // c:973 — `if (*s != '/') return NULL;`
+    if !path.starts_with('/') {                                              // c:973
         return None;
     }
-    match std::fs::canonicalize(path) {
-        Ok(p) => Some(p.to_string_lossy().into_owned()),
-        Err(_) => {
-            // C: zwarn("path expansion failed, using root directory");
-            //    return heap ? dupstring("/") : ztrdup("/");
-            zwarn("path expansion failed, using root directory");
-            Some("/".to_string())
+    // c:974 — `*xbuf = '\0';`  Reset the xbuf cursor; no-op in Rust
+    // (xbuf is an internal chrealpath buffer not exposed at this level).
+    // c:975 — `if (!chrealpath(&s, 'P', heap))`
+    match crate::ported::hist::chrealpath(path, b'P', false) {              // c:975
+        Some(r) => Some(r),                                                   // c:979 return s
+        None => {                                                             // c:976 failure arm
+            // c:977 — `zwarn("path expansion failed, using root directory");`
+            zwarn("path expansion failed, using root directory");            // c:977
+            // c:978 — `return heap ? dupstring("/") : ztrdup("/");`
+            Some("/".to_string())                                             // c:978
         }
     }
 }
