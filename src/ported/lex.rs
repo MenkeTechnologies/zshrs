@@ -17,6 +17,7 @@ use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{aliastab_lock, reswdtab_lock};
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::input::{inpop, inpush};
@@ -24,9 +25,9 @@ use crate::ported::parse::HDOCS;
 use crate::ported::prompt::{cmdpop, cmdpush, CMDSTACK};
 use crate::ported::string::dupstring_wlen;
 use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
-use crate::ported::zle::compcore::WE;
+use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
-    isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
+    interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
     Hat, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace,
     Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
     ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
@@ -1101,7 +1102,7 @@ fn gettok() -> lextok {
     // (the safe default for non-completion non-string-eval paths).
     let lexflags = LEX_LEXFLAGS.get();
     let allow_comment_via_flags = (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0)
-        && (!crate::ported::zsh_h::interact() || unset(SHINSTDIN));
+        && (!interact() || unset(SHINSTDIN));
     if c as i32 == crate::ported::hist::hashchar.load(std::sync::atomic::Ordering::SeqCst)
         && !LEX_NOCOMMENTS.get()
         && (isset(INTERACTIVECOMMENTS) || allow_comment_via_flags)
@@ -2585,7 +2586,7 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     let untok = untokenize(s); // c:1716 `untokenize(*s);`
     let dup = dupstring_wlen(&untok, untok.len()); // c:1717
                                                                           // c:1715 `zcontext_save();`
-    crate::ported::context::zcontext_save();
+    zcontext_save();
     // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
     inpush(&dup, 0, None);
     // c:1718 `strinbeg(0);`
@@ -2614,7 +2615,7 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
         "BUG: parsestr: cmdstack not empty."                              // c:1730
     );
     // c:1729 `zcontext_restore();`
-    crate::ported::context::zcontext_restore();
+    zcontext_restore();
     if parse_err {
         // C parsestrnoerr (lex.c:1713) returns the offending char so the
         // caller (parsestr at lex.c:1694) can format `zerr("parse error
@@ -2650,7 +2651,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     let untok = untokenize(s); // c:1749 `untokenize(t = dupstring_wlen(s, l));`
     let dup = dupstring_wlen(&untok, untok.len());
     // c:1748 `zcontext_save();`
-    crate::ported::context::zcontext_save();
+    zcontext_save();
     // c:1750 `inpush(t, 0, NULL);`
     inpush(&dup, 0, None);
     // c:1751 `strinbeg(0);`
@@ -2677,7 +2678,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
         "BUG: parse_subscript: cmdstack not empty."                       // c:1785
     );
-    crate::ported::context::zcontext_restore();
+    zcontext_restore();
     if parse_err {
         return None;
     }
@@ -2714,7 +2715,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     let untok = untokenize(s); // c:1804
     let dup = dupstring_wlen(&untok, untok.len());
     // c:1803 `zcontext_save();`
-    crate::ported::context::zcontext_save();
+    zcontext_save();
     // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
     inpush(&dup, 0, None);
     // c:1806 `strinbeg(0);`
@@ -2748,7 +2749,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
         "BUG: parse_subst_string: cmdstack not empty."                    // c:1816
     );
     // c:1817 `zcontext_restore();`
-    crate::ported::context::zcontext_restore();
+    zcontext_restore();
     // c:1819 — `errflag = err | (errflag & ERRFLAG_INT);`. Restore the
     // saved errflag, OR'ing in any ERRFLAG_INT bit set during parse
     // (user interrupt must survive). The previous Rust port skipped
@@ -2786,11 +2787,11 @@ pub fn gotword() {
         // c:1887-1893 — `if (zlemetacs >= nwb) { wb = nwb; we = nwe; }
         // else { wb = zlemetacs + addedx; if (we < wb) we = wb; }`.
         if zlemetacs >= nwb {
-            crate::ported::zle::compcore::WB.store(nwb, Ordering::SeqCst);
+            WB.store(nwb, Ordering::SeqCst);
             WE.store(nwe, Ordering::SeqCst);
         } else {
             let wb_new = zlemetacs + addedx;
-            crate::ported::zle::compcore::WB.store(wb_new, Ordering::SeqCst);
+            WB.store(wb_new, Ordering::SeqCst);
             let we_cur = WE.load(Ordering::SeqCst);
             if we_cur < wb_new {
                 WE.store(wb_new, Ordering::SeqCst);
@@ -2963,7 +2964,7 @@ pub fn exalias() -> bool {
     let inbufflags_alias =
         (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) != 0;
     let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
-    if crate::ported::zsh_h::interact()
+    if interact()
         && isset(SHINSTDIN)
         && !strin_set
         && LEX_INCASEPAT.get() <= 0
@@ -4195,7 +4196,7 @@ pub fn untokenize(s: &str) -> String {
 /// changes propagate automatically (typtab is a runtime table).
 pub fn has_token(s: &str) -> bool {
     // c:2282 (Src/utils.c)
-    s.bytes().any(crate::ported::ztype_h::itok)
+    s.bytes().any(itok)
 }
 
 #[cfg(test)]
@@ -4492,18 +4493,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Pound = \u{84} per zsh.h:159. ITOK byte; untokenize should
         // strip or replace it (the literal byte must NOT survive).
-        let with_pound = format!("a{}b", crate::ported::zsh_h::Pound);
+        let with_pound = format!("a{}b", Pound);
         let cleaned = untokenize(&with_pound);
         assert!(
-            !cleaned.contains(crate::ported::zsh_h::Pound),
+            !cleaned.contains(Pound),
             "Pound (\\u{{84}}) sentinel must be replaced (got {cleaned:?})"
         );
         // Marker = \u{a2} per zsh.h:224. NOT in ITOK range. C's
         // untokenize doesn't touch it — passes through verbatim.
-        let with_marker = format!("x{}y", crate::ported::zsh_h::Marker);
+        let with_marker = format!("x{}y", Marker);
         let cleaned = untokenize(&with_marker);
         assert!(
-            cleaned.contains(crate::ported::zsh_h::Marker),
+            cleaned.contains(Marker),
             "Marker (\\u{{a2}}) is NOT ITOK; must pass through untokenize verbatim"
         );
     }

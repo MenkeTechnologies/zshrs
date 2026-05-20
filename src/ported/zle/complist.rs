@@ -25,15 +25,16 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering as O;
 
 use crate::ported::init::SHTTY;
+use crate::ported::mem::popheap;
 use crate::ported::params::getsparam;
-use crate::ported::zsh_h::Patprog;
-use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG};
+use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{adjustcolumns, adjustlines, errflag, write_loop};
 use crate::ported::zle::comp_h::{
     Cmatch, Cmgroup, CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST,
 };
-use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE};
-use crate::ported::zle::zle_refresh::{tcout, NLNCT};
+use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
+use crate::ported::zsh_h::{isset, Patprog};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
@@ -308,7 +309,7 @@ pub fn getcols(_unused: &str) -> i32 {
         let ec_len = mc.files[COL_EC].col.len() as i32;
         let max_len = if ma_len < ec_len { ec_len } else { ma_len };
         MAX_CAPLEN.store(max_len, Ordering::SeqCst); // c:526-528
-        crate::ported::signals::unqueue_signals(); // c:529
+        unqueue_signals(); // c:529
         return 0; // c:530
     }
 
@@ -331,7 +332,7 @@ pub fn getcols(_unused: &str) -> i32 {
             };
         }
     }
-    crate::ported::signals::unqueue_signals(); // c:540
+    unqueue_signals(); // c:540
 
     // c:543-549 — default-fill loop for unset color slots.
     let defcols: [&str; NUM_COLS] = [
@@ -978,7 +979,7 @@ pub fn compprintlist(showall: i32) -> i32 {
     }
 
     // c:1389-1391 — clear-line budget for the current paint.
-    let listdat_nlines = crate::ported::zle::compcore::listdat
+    let listdat_nlines = listdat
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
@@ -1036,7 +1037,7 @@ pub fn compprintlist(showall: i32) -> i32 {
 
         // c:1405 — `char **pp = g->ylist;`
         let pp = &g.ylist;
-        let onlyexpl: i32 = crate::ported::zle::compcore::listdat
+        let onlyexpl: i32 = listdat
             .get()
             .and_then(|m| m.lock().ok().map(|g| g.onlyexpl))
             .unwrap_or(0);
@@ -1914,7 +1915,7 @@ pub fn complistmatches() -> i32 {
     let zterm_columns = adjustcolumns() as i32;
     let nlnct = NLNCT.load(Ordering::SeqCst);
     let mselect = MSELECT.load(Ordering::SeqCst);
-    let minfo_asked = crate::ported::zle::compcore::MINFO
+    let minfo_asked = MINFO
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.asked))
         .unwrap_or(0);
@@ -1933,7 +1934,7 @@ pub fn complistmatches() -> i32 {
     crate::ported::mem::pushheap();
 
     // c:2023-2024 — save EXTENDEDGLOB; force it on for the listing pass.
-    let extendedglob = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    let extendedglob = isset(crate::ported::zsh_h::EXTENDEDGLOB);
     // c:2024 — `opts[EXTENDEDGLOB] = 1;` — option mutation not yet
     // exposed as a free fn; the typed `setopt(EXTENDEDGLOB)` path
     // would set the bit. Carry-through.
@@ -1945,7 +1946,7 @@ pub fn complistmatches() -> i32 {
     let calc_changed = crate::ported::zle::compresult::calclist(if mselect >= 0 { 1 } else { 0 });
     let mlastcols = MLASTCOLS.load(Ordering::SeqCst);
     let mlastlines = MLASTLINES.load(Ordering::SeqCst);
-    let listdat_nlines: i32 = crate::ported::zle::compcore::listdat
+    let listdat_nlines: i32 = listdat
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
@@ -1954,13 +1955,13 @@ pub fn complistmatches() -> i32 {
     MNEW.store(if mnew { 1 } else { 0 }, Ordering::SeqCst);
 
     // c:2031-2040 — empty list / no-zle bail-out.
-    let usezle = crate::ported::zsh_h::isset(crate::ported::zsh_h::USEZLE);
+    let usezle = isset(crate::ported::zsh_h::USEZLE);
     if listdat_nlines == 0 || (mselect >= 0 && !(usezle/* && !termflags && complastprompt valid */))
     {
         SHOWINGLIST.store(0, Ordering::SeqCst);
         LISTSHOWN.store(0, Ordering::SeqCst);
         NOSELECT.store(1, Ordering::SeqCst);
-        crate::ported::mem::popheap();
+        popheap();
         return 1;
     }
 
@@ -1991,7 +1992,7 @@ pub fn complistmatches() -> i32 {
             // c:2063
             CLEARFLAG.store(1, Ordering::SeqCst); // c:2064
                                                                                    // c:2065 — minfo.asked = listdat.nlines + nlnct <= zterm_lines
-            if let Some(m) = crate::ported::zle::compcore::MINFO.get() {
+            if let Some(m) = MINFO.get() {
                 if let Ok(mut g) = m.lock() {
                     g.asked = if listdat_nlines + nlnct <= zterm_lines {
                         1
@@ -2006,7 +2007,7 @@ pub fn complistmatches() -> i32 {
         let r = crate::ported::zle::compresult::asklist();
         if r != 0 {
             // c:2070
-            crate::ported::mem::popheap();
+            popheap();
             NOSELECT.store(1, Ordering::SeqCst);
             return 1;
         }
@@ -2080,7 +2081,7 @@ pub fn complistmatches() -> i32 {
     MOLINE.store(MLINE.load(Ordering::SeqCst), Ordering::SeqCst); // c:2116
 
     // c:2118-2120 — `amatches = oamatches; popheap();`
-    crate::ported::mem::popheap();
+    popheap();
     let _ = extendedglob; // c:2121 opts[EXTENDEDGLOB] = extendedglob
 
     NOSELECT.load(Ordering::SeqCst) // c:2123 return noselect
@@ -2226,7 +2227,7 @@ pub fn setmstatus(
     let mut ret: Option<String> = None; // c:2206
 
     let zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
-    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
+    let zlemetall = ZLEMETALL.load(Ordering::SeqCst);
     let lastend = crate::ported::zle::compcore::LASTEND.load(Ordering::SeqCst);
     let wb = crate::ported::zle::compcore::WB.load(Ordering::SeqCst);
 
@@ -2398,7 +2399,7 @@ pub fn msearch() -> i32 {
     let mut x = MCOL.load(Ordering::SeqCst);
     let mut y = MLINE.load(Ordering::SeqCst);
     let mcols = MCOLS.load(Ordering::SeqCst);
-    let listdat_nlines = crate::ported::zle::compcore::listdat
+    let listdat_nlines = listdat
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines))
         .unwrap_or(0);
@@ -2602,7 +2603,7 @@ pub fn domenuselect() -> i32 {
             ZLEMETACS.store(0, Ordering::SeqCst);
             foredel(
                 // c:2455
-                crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
+                ZLEMETALL.load(Ordering::SeqCst),
                 0,
             );
             spaceinline(l); // c:2456
@@ -2640,7 +2641,7 @@ pub fn domenuselect() -> i32 {
     // isn't yet ported. Without it the loop can't progress. Return
     // from the prologue with the snapshot state set up; the live
     // dispatch lands when the menuselect keymap port arrives.
-    crate::ported::signals::unqueue_signals();
+    unqueue_signals();
 
     let _ = (oe, step, mode, status);
     0

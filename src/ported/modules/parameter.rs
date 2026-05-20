@@ -13,9 +13,12 @@
 //! Provides special parameters: $commands, $functions, $aliases, $builtins,
 //! $modules, $dirstack, $history, $historywords, $options, $nameddirs, $userdirs
 
-use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, shfunctab_lock};
+use crate::ported::hashnameddir::nameddirtab;
+use crate::ported::hashtable::{
+    aliastab_lock, cmdnam_hashed, cmdnamtab_lock, shfunctab_lock, sufaliastab_lock,
+};
 use crate::ported::hist::hist_ring;
-use crate::ported::jobs::selectjobtab;
+use crate::ported::jobs::{getjob, selectjobtab, sigmsg};
 use crate::ported::module::MODULESTAB;
 use crate::ported::options::{dosetopt, optlookup};
 use crate::ported::params::{deleteparamtable, getstrvalue, realparamtab};
@@ -320,7 +323,7 @@ pub fn setpmcommand(pm: Param, value: String) {
     //   cn->u.cmd = ztrdup(value); cmdnamtab->addnode(...)`. The
     //   helper bundles the hashnode literal so the call-site stays
     //   one line.
-    let cn = crate::ported::hashtable::cmdnam_hashed(&pm.node.nam, &value); // c:173-156
+    let cn = cmdnam_hashed(&pm.node.nam, &value); // c:173-156
     if let Ok(mut tab) = cmdnamtab_lock().write() {
         tab.add(cn); // c:173 addnode
     }
@@ -374,7 +377,7 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
             // c:183/191/192 — `cn = zshcalloc(...); cn->node.flags
             //   = HASHED; cn->u.cmd = ztrdup(getstrvalue(&v));`
             let path = getstrvalue(Some(&mut v));
-            let cn = crate::ported::hashtable::cmdnam_hashed(&node.nam, &path);
+            let cn = cmdnam_hashed(&node.nam, &path);
             // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
             if let Ok(mut tab) = cmdnamtab_lock().write() {
                 tab.add(cn);
@@ -1881,7 +1884,7 @@ pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {
     };
     // c:1293-1294 — if (*pend) job = getjob(name, NULL);
     let job = if pend_nonempty {
-        crate::ported::jobs::getjob(name, "")
+        getjob(name, "")
     } else {
         job
     };
@@ -2028,15 +2031,15 @@ pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
             }
         } else if (pn.status & 0xff) == 0x7f {
             // c:1369 WIFSTOPPED
-            crate::ported::jobs::sigmsg((pn.status >> 8) & 0xff).to_string()
+            sigmsg((pn.status >> 8) & 0xff).to_string()
         } else if (pn.status & 0x80) != 0 {
             // c:1371 WCOREDUMP
             format!(
                 "{} (core dumped)",
-                crate::ported::jobs::sigmsg(pn.status & 0x7f)
+                sigmsg(pn.status & 0x7f)
             )
         } else {
-            crate::ported::jobs::sigmsg(pn.status & 0x7f).to_string() // c:1374 WTERMSIG
+            sigmsg(pn.status & 0x7f).to_string() // c:1374 WTERMSIG
         };
         ret.push_str(&format!(":{}={}", pn.pid, state)); // c:1376
     }
@@ -2057,7 +2060,7 @@ pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {
     };
     let job = if pend_nonempty {
         // c:1400-1401
-        crate::ported::jobs::getjob(name, "")
+        getjob(name, "")
     } else {
         job
     };
@@ -2180,7 +2183,7 @@ pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     };
     let job = if pend_nonempty {
         // c:1472-1473
-        crate::ported::jobs::getjob(name, "")
+        getjob(name, "")
     } else {
         job
     };
@@ -2299,7 +2302,7 @@ pub fn setpmnameddir(pm: Param, value: String) {
 #[allow(unused_variables)]
 pub fn unsetpmnameddir(pm: Param, exp: i32) {
     // c:1534
-    if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
+    if let Ok(mut tab) = nameddirtab().lock() {
         // c:1536 — HashNode hd = nameddirtab->removenode(nameddirtab, pm->node.nam);
         let _hd = tab.remove(&pm.node.nam);
         // c:1538-1539 — if (hd) nameddirtab->freenode(hd); — Rust Drop on scope exit.
@@ -2329,7 +2332,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
     // The Rust `HashMap<String, nameddir>` doesn't expose buckets by `i`;
     // we walk all entries collecting keys to remove (C's combined
     // removenode+freenode = HashMap::remove).
-    if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
+    if let Ok(mut tab) = nameddirtab().lock() {
         i = 0;
         let _ = i; // c:1552 (consumed by virtual walk)
         let to_remove: Vec<String> = tab
@@ -2660,7 +2663,7 @@ pub fn unsetpmalias(pm: Param, exp: i32) {
 #[allow(unused_variables)]
 pub fn unsetpmsalias(pm: Param, exp: i32) {
     // c:1759
-    if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
+    if let Ok(mut tab) = sufaliastab_lock().write() {
         // c:1761 — HashNode hd = sufaliastab->removenode(sufaliastab, pm->node.nam);
         let _hd = tab.remove(&pm.node.nam);
         // c:1763-1764 — if (hd) sufaliastab->freenode(hd); — Rust Drop on scope exit.
@@ -2902,7 +2905,7 @@ pub fn getalias(
     flags: i32,
 ) -> Option<Param> {
     let table = if (flags & ALIAS_SUFFIX) != 0 {
-        crate::ported::hashtable::sufaliastab_lock()
+        sufaliastab_lock()
     } else {
         aliastab_lock()
     };
@@ -3029,7 +3032,7 @@ pub fn scanaliases(
     // matching the flag filter.
     if let Some(f) = func {
         let lock = if alflags == ALIAS_SUFFIX {
-            crate::ported::hashtable::sufaliastab_lock()
+            sufaliastab_lock()
         } else {
             aliastab_lock()
         };
