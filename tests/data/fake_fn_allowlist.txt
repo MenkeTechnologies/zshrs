@@ -1165,7 +1165,6 @@ par_sublist_wordcode
 par_pipe_wordcode
 par_cmd_wordcode
 par_simple_wordcode
-par_simple_wordcode_impl
 par_arith_wordcode
 par_loop_body_wordcode
 par_case_wordcode
@@ -1203,7 +1202,6 @@ exec_select_wordcode
 exec_case_wordcode
 exec_if_wordcode
 exec_while_wordcode
-par_subsh_wordcode_impl
 exec_repeat_wordcode
 exec_funcdef_wordcode
 exec_subsh_wordcode
@@ -1474,7 +1472,6 @@ opt_isset
 output_truecolor
 par_cond_top
 par_redir_with_id
-par_redir_wordcode_inner
 parse_anon_funcdef
 parse_arith
 parse_cond_and

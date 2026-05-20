@@ -4652,7 +4652,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
         *cmplx = 1;
         // c:966-968 — `while (IS_REDIROP(tok)) { nr += par_redir(&r, NULL); }`
         while IS_REDIROP(tok()) {
-            nr += par_redir_wordcode(&mut r);
+            nr += par_redir_wordcode(&mut r, None);
         }
     }
     // c:970-1066 — token-dispatch switch.
@@ -4701,12 +4701,12 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
             // c:1011 — `*cmplx = 1;`
             *cmplx = 1;
             cmdpush(CS_SUBSH as u8);
-            par_subsh_wordcode_impl(cmplx, zsh_construct);
+            par_subsh_wordcode(cmplx, zsh_construct);
             cmdpop();
         }
         INBRACE_TOK => {
             cmdpush(CS_CURSH as u8);
-            par_subsh_wordcode_impl(cmplx, zsh_construct);
+            par_subsh_wordcode(cmplx, zsh_construct);
             cmdpop();
         }
         FUNC => {
@@ -4733,7 +4733,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
                 PARSER_INPARTIME.with(|c| c.set(false));
             } else {
                 set_tok(STRING_LEX);
-                let sr = par_simple_wordcode_impl(cmplx, nr);
+                let sr = par_simple_wordcode(cmplx, nr);
                 if sr == 0 && nr == 0 {
                     return false;
                 }
@@ -4745,7 +4745,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
         }
         _ => {
             // c:1054 — `if (!(sr = par_simple(cmplx, nr)))`
-            let sr = par_simple_wordcode_impl(cmplx, nr);
+            let sr = par_simple_wordcode(cmplx, nr);
             if sr == 0 {
                 if nr == 0 {
                     return false;
@@ -4762,7 +4762,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
     if IS_REDIROP(tok()) {
         *cmplx = 1;
         while IS_REDIROP(tok()) {
-            let _ = par_redir_wordcode(&mut r);
+            let _ = par_redir_wordcode(&mut r, None);
         }
     }
     // c:1072-1075 — `incmdpos=1; incasepat=0; incond=0; intypeset=0;`
@@ -5874,7 +5874,7 @@ pub const FDHEAD_WORDS: usize = size_of::<fdhead>() / 4;
 /// `{...}` brace group (cursh) plus optional `always { ... }`
 /// trailing block. C uses a single function with `zsh_construct=1`
 /// for `{...}` and 0 for `(...)`.
-pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
+pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
     // c:1621 — `enum lextok otok = tok;`
     let otok = tok();
     // c:1622 — `int oecused = ecused, p, pp;`
@@ -5974,20 +5974,6 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
             };
         });
     }
-}
-
-/// Wrapper for `(...)` subshell — calls `par_subsh_wordcode_impl(0)`.
-pub fn par_subsh_wordcode(cmplx: &mut i32) {
-    par_subsh_wordcode_impl(cmplx, 0);
-}
-
-/// Wrapper for `{...}` brace group (cursh) — calls
-/// `par_subsh_wordcode_impl(1)`. C uses the same `par_subsh`
-/// function with `zsh_construct=1`; the Rust split exists because
-/// the par_cmd dispatch at parse.rs:1446 already named them
-/// separately.
-pub fn par_cursh_wordcode(cmplx: &mut i32) {
-    par_subsh_wordcode_impl(cmplx, 1);
 }
 
 /// Port of `par_time(void)` from `Src/parse.c:1787`. `time PIPE`
@@ -6094,7 +6080,7 @@ pub fn par_arith_wordcode() {
 /// and `name() { body }` funcdef detection — those paths are
 /// progressively wired into the AST parser; this wordcode-emitter
 /// covers the simple `cmd args...` case + interleaved redirs.
-pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
+pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
     // c:1838-1841 — `int oecused = ecused, isnull = 1, r, argc = 0,
     //   p, isfunc = 0, sr = 0;`
     //   `int c = *cmplx, nrediradd, assignments = 0, ppost = 0,
@@ -6271,7 +6257,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // WCB_REDIR + fd + ecstrcode(name) at offset `r`
                 // via ecispace, shifting any later words down.
                 *cmplx = 1;
-                let added = par_redir_wordcode(&mut r);
+                let added = par_redir_wordcode(&mut r, None);
                 if added == 0 {
                     break;
                 }
@@ -6353,7 +6339,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                             //     p += nrediradd; sr += nrediradd; }`
                             if IS_REDIROP(tok()) && tokfd() == -1 {
                                 *cmplx = 1;
-                                let nrediradd = par_redir_wordcode_inner(&mut r, Some(&idstring));
+                                let nrediradd = par_redir_wordcode(&mut r, Some(&idstring));
                                 p += nrediradd as usize;
                                 sr += nrediradd;
                             } else if postassigns > 0 {
@@ -6497,7 +6483,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // p += nrediradd; if (ppost) ppost += nrediradd;
                 // sr += nrediradd;`
                 *cmplx = 1;
-                let added = par_redir_wordcode(&mut r);
+                let added = par_redir_wordcode(&mut r, None);
                 if added == 0 {
                     break;
                 }
@@ -6671,7 +6657,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                             // p += nrediradd; ppost += nrediradd if ppost;
                             // sr += nrediradd; parg += nrediradd;
                             *cmplx = 1;
-                            let added = par_redir_wordcode(&mut r);
+                            let added = par_redir_wordcode(&mut r, None);
                             if added == 0 {
                                 break;
                             }
@@ -6747,13 +6733,6 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
     1 + sr
 }
 
-/// Wrapper for callers without a cmplx accumulator. Allocates a
-/// local cmplx and ignores it — only used by legacy dispatch sites.
-pub fn par_simple_wordcode() {
-    let mut cmplx: i32 = 0;
-    par_simple_wordcode_impl(&mut cmplx, 0);
-}
-
 /// Port of `par_redir(int *rp, char *idstring)` from
 /// `Src/parse.c:2229-2345` — the wordcode-emitting variant that
 /// pushes WCB_REDIR + fd + ecstrcode(name) into ECBUF. Distinct
@@ -6763,14 +6742,12 @@ pub fn par_simple_wordcode() {
 /// Returns the number of wordcodes added (3 for the basic shape,
 /// 4 with idstring, 5 for HEREDOC[DASH] which carries the
 /// terminator strings inline). Returns 0 on parse error.
-fn par_redir_wordcode(rp: &mut usize) -> i32 {
-    par_redir_wordcode_inner(rp, None)
-}
-
-/// par_redir variant taking the `idstring` parameter for the
-/// `{var}>file` shape. C signature `par_redir(int *rp, char *idstring)`
-/// passes NULL when there's no var-id. Rust uses Option<&str>.
-fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
+///
+/// `idstring` mirrors C's `char *idstring` parameter — `None` =
+/// NULL (no `{var}>file` brace-FD shape), `Some(id)` = the captured
+/// `{var}` name. C callers without a var pass NULL inline; Rust
+/// callers do the same with `None`.
+fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
     // c:2231 — `int r = *rp, type, fd1, oldcmdpos, oldnc, ncodes;`
     let r: usize = *rp;
     let mut r#type: i32;
