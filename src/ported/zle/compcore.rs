@@ -117,7 +117,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
                                                                                      // Inlined `char_from_qt(x)` as `(x as u8) as char`.
     let head_q: char = if instring == crate::ported::zsh_h::QT_NONE {
         // c:305
-        crate::ported::zsh_h::QT_BACKSLASH as u8 as char
+        QT_BACKSLASH as u8 as char
     } else {
         instring as u8 as char
     };
@@ -926,11 +926,11 @@ pub fn multiquote(s: &str, ign: i32) -> String {
             // c:1073
             let qt = match q as i32 {
                 // c:1074
-                x if x == QT_BACKSLASH => crate::ported::zsh_h::QT_BACKSLASH,
+                x if x == QT_BACKSLASH => QT_BACKSLASH,
                 x if x == QT_SINGLE => crate::ported::zsh_h::QT_SINGLE,
                 x if x == QT_DOUBLE => crate::ported::zsh_h::QT_DOUBLE,
                 x if x == QT_DOLLARS => crate::ported::zsh_h::QT_DOLLARS,
-                _ => crate::ported::zsh_h::QT_BACKSLASH,
+                _ => QT_BACKSLASH,
             };
             cur = crate::ported::utils::quotestring(&cur, qt);
         }
@@ -3684,7 +3684,7 @@ fn goto_compend(ret: i32) -> i32 {
 // `COMP_LIST_COMPLETE` / `QT_NONE_STUB` / `QT_BACKSLASH_STUB` local
 // aliases deleted — call sites now reach the real C-side constants
 // directly (`crate::ported::zle::zle_h::COMP_LIST_COMPLETE`,
-// `crate::ported::zsh_h::QT_NONE`, `crate::ported::zsh_h::QT_BACKSLASH`).
+// `crate::ported::zsh_h::QT_NONE`, `QT_BACKSLASH`).
 // The local `COMP_LIST_COMPLETE = 2` was a value-mismatch bug (the
 // real constant is 1 per `Src/Zle/zle.h:357`).
 

@@ -3090,7 +3090,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // base-10). With `convbase` now ported (params.rs:6577), honor
         // `pm.base` so `typeset -i 16 x=255` renders as `0xff` rather
         // than `255` per zsh's `$x`-expansion + `typeset -p`.
-        crate::ported::params::convbase_underscore(
+        convbase_underscore(
             intgetfn(pm),
             if pm.base > 0 { pm.base as u32 } else { 10 }, // c:2373 pm->base
             pm.width, // c:2373 pm->width for underscore grouping
@@ -3099,7 +3099,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // c:2375
         // c:2377 — `convfloat(getfn(pm), pm->base, pm->flags, NULL)`.
         // Route through convfloat_underscore which honors pm.width.
-        crate::ported::params::convfloat_underscore(floatgetfn(pm), pm.width)
+        convfloat_underscore(floatgetfn(pm), pm.width)
     } else if t == PM_SCALAR || t == PM_NAMEREF {
         // c:2380
         strgetfn(pm)
@@ -3730,7 +3730,7 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         let s = if (val.type_ & MN_INTEGER) != 0 {
             // c:2862
             // c:2864 — `convbase_underscore(val.u.l, pm->base, pm->width)`.
-            crate::ported::params::convbase_underscore(
+            convbase_underscore(
                 val.l,
                 if pm.base > 0 { pm.base as u32 } else { 10 },
                 pm.width,
@@ -3738,7 +3738,7 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         } else {
             // c:2867
             // c:2869 — `convfloat_underscore(val.u.d, pm->width)`.
-            crate::ported::params::convfloat_underscore(val.d, pm.width)
+            convfloat_underscore(val.d, pm.width)
         };
         pm.u_str = Some(s); // c:2871 setstrvalue → store
     } else if t == PM_INTEGER {
@@ -4998,9 +4998,9 @@ pub fn assignnparam(
             } else if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
                 // c:2862-2871 — convbase/convfloat → u_str.
                 let s_rendered = if val.type_ == MN_FLOAT {
-                    crate::ported::params::convfloat_underscore(val.d, pm.width)
+                    convfloat_underscore(val.d, pm.width)
                 } else {
-                    crate::ported::params::convbase_underscore(
+                    convbase_underscore(
                         val.l,
                         if pm.base > 0 { pm.base as u32 } else { 10 },
                         pm.width,
@@ -10153,7 +10153,7 @@ mod tests {
             Some("test_value_42")                              // c:3076
         ); // c:3076
            // Cleanup so other tests don't see leaked param.
-        let _ = crate::ported::params::paramtab()
+        let _ = paramtab()
             .write()
             .unwrap()
             .remove(name); // c:3819
@@ -10180,7 +10180,7 @@ mod tests {
             getsparam(name).is_some(),
             "param must be set before remove path"
         );
-        let _ = crate::ported::params::paramtab()
+        let _ = paramtab()
             .write()
             .unwrap()
             .remove(name);
@@ -10198,7 +10198,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let name = "ZSHRS_TEST_ARR_X";
         crate::ported::params::assignaparam(name, vec!["a".into(), "b".into(), "c".into()], 0);
-        let tab = crate::ported::params::paramtab()
+        let tab = paramtab()
             .read()
             .expect("paramtab poisoned");
         let pm = tab.get(name).expect("param installed");
@@ -10208,7 +10208,7 @@ mod tests {
             "assignaparam stores all three elements"
         );
         drop(tab);
-        let _ = crate::ported::params::paramtab()
+        let _ = paramtab()
             .write()
             .unwrap()
             .remove(name);
@@ -10304,15 +10304,15 @@ mod tests {
     #[test]
     fn homesetfn_stores_value_for_getfn() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::params::homegetfn();
-        crate::ported::params::homesetfn("/tmp/zshrs_test_home".to_string());
+        let saved = homegetfn();
+        homesetfn("/tmp/zshrs_test_home".to_string());
         assert_eq!(
-            crate::ported::params::homegetfn(),
+            homegetfn(),
             "/tmp/zshrs_test_home",
             "c:5121-5126 — homesetfn → homegetfn round-trip"
         );
         // Restore.
-        crate::ported::params::homesetfn(saved);
+        homesetfn(saved);
     }
 
     /// `Src/params.c:5125-5126` — empty input becomes `ztrdup("")`.
@@ -10320,14 +10320,14 @@ mod tests {
     #[test]
     fn homesetfn_empty_input_stores_empty() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::params::homegetfn();
-        crate::ported::params::homesetfn(String::new());
+        let saved = homegetfn();
+        homesetfn(String::new());
         assert_eq!(
-            crate::ported::params::homegetfn(),
+            homegetfn(),
             "",
             "c:5126 — empty x stores empty (no panic)"
         );
-        crate::ported::params::homesetfn(saved);
+        homesetfn(saved);
     }
 
     /// `Src/params.c:5004-5011` — `errnosetfn(x)` writes errno
@@ -10338,14 +10338,14 @@ mod tests {
     fn errnosetfn_writes_through_to_libc_errno_getfn() {
         let _g = crate::test_util::global_state_lock();
         // Set errno to a small int.
-        crate::ported::params::errnosetfn(42);
+        errnosetfn(42);
         assert_eq!(
-            crate::ported::params::errnogetfn(),
+            errnogetfn(),
             42,
             "c:5006 — errno = (int)x; subsequent getfn must read it back"
         );
-        crate::ported::params::errnosetfn(0);
-        assert_eq!(crate::ported::params::errnogetfn(), 0);
+        errnosetfn(0);
+        assert_eq!(errnogetfn(), 0);
     }
 
     /// `Src/params.c:5008-5010` — truncation check fires when
@@ -10362,11 +10362,11 @@ mod tests {
         // i64::MAX → truncates to i32 = -1 → warning fires inside.
         // The store at c:5008 happens; whether the warning's libc
         // calls then overwrite errno is implementation-defined.
-        crate::ported::params::errnosetfn(i64::MAX);
+        errnosetfn(i64::MAX);
         // Just verify the call returned (no panic) and getfn works.
-        let _ = crate::ported::params::errnogetfn();
+        let _ = errnogetfn();
         // Reset.
-        crate::ported::params::errnosetfn(0);
+        errnosetfn(0);
     }
 
     /// `Src/params.c:5090-5093` — non-ASCII chars in HISTCHARS
@@ -10419,7 +10419,7 @@ mod tests {
         let saved_hist = histsiz.load(Ordering::SeqCst);
 
         // c:4976 — value < 1 floors at 1.
-        crate::ported::params::histsizesetfn(0);
+        histsizesetfn(0);
         assert_eq!(histsizegetfn(), 1, "c:4976 — HISTSIZE 0 must floor at 1");
         assert_eq!(
             histsiz.load(Ordering::SeqCst),
@@ -10428,11 +10428,11 @@ mod tests {
         );
 
         // Negative floors too.
-        crate::ported::params::histsizesetfn(-5);
+        histsizesetfn(-5);
         assert_eq!(histsizegetfn(), 1, "c:4976 — negative floors at 1");
 
         // Positive passes through.
-        crate::ported::params::histsizesetfn(500);
+        histsizesetfn(500);
         assert_eq!(histsizegetfn(), 500);
         assert_eq!(histsiz.load(Ordering::SeqCst), 500);
 
@@ -10451,7 +10451,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Inject zunderscore containing a Pound token byte (\u{84})
         // and verify it gets stripped by untokenize in the return.
-        let saved = crate::ported::params::zunderscore_lock()
+        let saved = zunderscore_lock()
             .lock()
             .unwrap()
             .clone();
@@ -10463,7 +10463,7 @@ mod tests {
         s.push('a');
         s.push(pound);
         s.push('b');
-        *crate::ported::params::zunderscore_lock().lock().unwrap() = s;
+        *zunderscore_lock().lock().unwrap() = s;
 
         let result = crate::ported::params::underscoregetfn();
         // c:5156 — untokenize replaces Pound (ITOK) with '#'
@@ -10478,7 +10478,7 @@ mod tests {
         );
 
         // Restore.
-        *crate::ported::params::zunderscore_lock().lock().unwrap() = saved;
+        *zunderscore_lock().lock().unwrap() = saved;
     }
 
     /// `Src/params.c:4954-4961` — `argzerogetfn` returns `posixzero`

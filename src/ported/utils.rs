@@ -3087,7 +3087,7 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
                     let shtty = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
                     if fd != shtty {
                         // c:2935
-                        crate::ported::utils::zwarn(
+                        zwarn(
                             // c:2936
                             &format!("read failed: {}", e),
                         );
@@ -3153,7 +3153,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
                     let shtty = SHTTY_FD.load(std::sync::atomic::Ordering::Relaxed);
                     if fd != shtty {
                         // c:2960
-                        crate::ported::utils::zwarn(
+                        zwarn(
                             // c:2961
                             &format!("write failed: {}", e),
                         );
@@ -8156,7 +8156,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let f = std::fs::File::create(dir.path().join("regular")).unwrap();
         let fd = f.as_raw_fd();
-        let (changed, mode) = crate::ported::utils::setblock_fd(true, fd);
+        let (changed, mode) = setblock_fd(true, fd);
         assert!(
             !changed,
             "c:2599 — regular files short-circuit; setblock_fd must NOT report a change"
@@ -8190,7 +8190,7 @@ mod tests {
             "test setup: NONBLOCK should be set"
         );
         // Call setblock_fd to ENABLE blocking (clear NONBLOCK).
-        let (changed, _mode) = crate::ported::utils::setblock_fd(true, read_fd);
+        let (changed, _mode) = setblock_fd(true, read_fd);
         assert!(
             changed,
             "c:2611 — turnonblocking=true on a NONBLOCK pipe must report state change"
@@ -9759,7 +9759,7 @@ mod tests {
             return;
         }
         // No addlockfd call → fd is NOT in the flock table.
-        let r = crate::ported::utils::zcloselockfd(fd);
+        let r = zcloselockfd(fd);
         assert_eq!(r, -1, "c:2160-2161 — non-lock fd must return -1, NOT 0");
         unsafe {
             libc::close(fd);
@@ -9777,8 +9777,8 @@ mod tests {
         if fd < 0 {
             return;
         }
-        crate::ported::utils::addlockfd(fd, true);
-        let r = crate::ported::utils::zcloselockfd(fd);
+        addlockfd(fd, true);
+        let r = zcloselockfd(fd);
         assert_eq!(r, 0, "c:2162-2163 — FDT_FLOCK fd → zclose + return 0");
         // After zcloselockfd, the underlying close() has fired.
         // close() returning -1 with EBADF would confirm that, but
@@ -9798,7 +9798,7 @@ mod tests {
         if fd < 0 {
             return;
         }
-        crate::ported::utils::fdtable_set(fd, FDT_FLOCK);
+        fdtable_set(fd, FDT_FLOCK);
         let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
             max_fd >= fd,
@@ -9807,7 +9807,7 @@ mod tests {
             fd
         );
         // Cleanup.
-        crate::ported::utils::fdtable_set(fd, FDT_UNUSED);
+        fdtable_set(fd, FDT_UNUSED);
         unsafe {
             libc::close(fd);
         }
@@ -9827,14 +9827,14 @@ mod tests {
             return;
         }
         // cloexec=true → FDT_FLOCK (lock dies on exec).
-        crate::ported::utils::addlockfd(fd, true);
+        addlockfd(fd, true);
         assert_eq!(
             fdtable_get(fd),
             FDT_FLOCK,
             "c:2117 — cloexec=true → FDT_FLOCK"
         );
         // cloexec=false → FDT_FLOCK_EXEC (lock survives exec).
-        crate::ported::utils::addlockfd(fd, false);
+        addlockfd(fd, false);
         assert_eq!(
             fdtable_get(fd),
             FDT_FLOCK_EXEC,
