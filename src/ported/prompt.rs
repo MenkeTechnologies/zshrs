@@ -2705,7 +2705,7 @@ const CMDSTACKSZ: usize = 256;
 // for interior mutability since the contents are owned `Vec<u8>`.
 // the command stack for use with %_ in prompts                             // c:53
 thread_local! {
-    static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {                  // c:56
+    pub static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {              // c:56 (cmdstack[] global)
         std::cell::RefCell::new(Vec::new())
     };
 }
