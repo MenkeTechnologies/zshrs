@@ -18,10 +18,13 @@ use crate::ported::string::dyncat;
 use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self};
-use crate::ported::zsh_h::{ Bnullkeep, Pound,
-    isset, BAREGLOBQUAL, Bnull, BRACECCL, CASEGLOB, Dnull, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT,
-    Inang, LISTTYPES, MARKDIRS, META, NULLGLOB, Nularg, NUMERICGLOBSORT, Outang, Snull, SUB_GLOBAL,
-    SUB_LIST, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST, SUB_END, SUB_LONG, SUB_START};
+use crate::ported::zsh_h::{
+    isset, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL,
+    CASEGLOB, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, META, MULTIOS,
+    NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE,
+    REDIR_MERGEIN, REDIR_MERGEOUT, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH,
+    SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
+};
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
@@ -1353,10 +1356,6 @@ pub fn xpandredir(
     fn_: &mut crate::ported::zsh_h::redir, // c:2150
     redirtab: &mut Vec<crate::ported::zsh_h::redir>,
 ) -> i32 {
-    use crate::ported::zsh_h::{
-        isset, IS_DASH, MULTIOS, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN,
-        REDIR_MERGEOUT,
-    };
     use std::sync::atomic::Ordering::SeqCst;
     let mut ret = 0; // c:2156
     let name = match fn_.name.as_deref() {
@@ -1488,7 +1487,6 @@ pub fn igetmatch(
     _n: i32, // c:2832
     replstr: Option<&str>,
 ) -> i32 {
-    use crate::ported::zsh_h::{SUB_ALL, SUB_LIST, SUB_MATCH, SUB_REST, SUB_SUBSTR};
 
     // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-
     // anchor replacement loop with multibyte tracking. Rust port walks
@@ -4881,10 +4879,9 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use tempfile::TempDir;
-    use crate::builtin::LASTVAL;
-    use crate::options::{opt_state_set, opt_state_unset};
-    use crate::utils::errflag;
-    use crate::zsh_h::{redir, REDIR_CLOSE, REDIR_MERGEOUT, REDIR_WRITE};
+
+    use crate::ported::options::{opt_state_set, opt_state_unset};
+    use crate::ported::zsh_h::{redir, REDIR_WRITE};
 
     fn setup_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();

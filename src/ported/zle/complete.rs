@@ -35,15 +35,18 @@ use std::sync::Mutex;
 use crate::ported::glob::{remnulargs, tokenize};
 use crate::ported::params::{createparam, paramtab};
 use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::pattern::range_type;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zle::comp_h::{
-    Cmatcher, Cpattern, CAF_MATSORT, CMF_HIDE, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT,
-    CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
+    Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
+    CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_FILE, CMF_HIDE, CMF_INTER,
+    CMF_ISPAR, CMF_LEFT, CMF_LINE, CMF_NOLIST, CMF_REMOVE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
+    CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::{compcore, compresult};
 use crate::ported::zsh_h::{
     module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
-    PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET,
+    PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET, PP_UNKWN,
 };
 
 // =====================================================================
@@ -580,7 +583,6 @@ pub fn parse_pattern<'a>(
     i32,
     bool,
 ) {
-    use crate::ported::zle::comp_h::{Cpattern, CPAT_ANY, CPAT_CHAR};
     let mut ret: Option<Box<Cpattern>> = None;
     let mut tail_ptr: *mut Option<Box<Cpattern>> = &mut ret;
     let mut rest = s;
@@ -674,9 +676,6 @@ pub fn parse_class<'a>(
     p: &mut Cpattern, // c:480
     iptr: &'a str,
 ) -> &'a str {
-    use crate::ported::pattern::range_type;
-    use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS};
-    use crate::ported::zsh_h::PP_UNKWN;
     let bytes = iptr.as_bytes();
     if bytes.is_empty() {
         return iptr;
@@ -885,10 +884,6 @@ pub fn bin_compadd(
     // c:613-820 — flag-arg parse loop. Walk argv consuming `-X arg`
     // pairs into the `Cadata` struct; per-flag dispatch ports the C
     // switch at c:621-820.
-    use crate::ported::zle::comp_h::{
-        CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_NOSORT, CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON,
-        CMF_FILE, CMF_HIDE, CMF_ISPAR, CMF_NOLIST, CMF_REMOVE,
-    };
     let mut dat = crate::ported::zle::comp_h::Cadata::default();
     dat.dummies = -1;
     let mut idx = 0usize;
@@ -2138,7 +2133,6 @@ pub fn comp_setunset(
     mut kset: i32,
     mut kunset: i32,
 ) {
-    use crate::ported::zsh_h::PM_UNSET;
     // c:1532 — `if (comprpms && (rset >= 0 || runset >= 0))`.
     if rset >= 0 || runset >= 0 {
         // c:1532
@@ -2467,8 +2461,6 @@ fn lock_vec(g: &'static std::sync::OnceLock<Mutex<Vec<String>>>) -> &'static Mut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS};
-    use crate::zle::comp_h::CPAT_ANY;
 
     #[test]
     fn classes_basic_cclass() {

@@ -4041,7 +4041,6 @@ pub fn inittyptab() {
     t[0] |= IMETA as u32; // c:4195
                           // c:4196-4197 — Meta + Marker marked IMETA.
     {
-        use crate::ported::zsh_h::{Marker, META};
         t[META as usize] |= IMETA as u32;
         t[Marker as usize] |= IMETA as u32;
     }
@@ -4054,7 +4053,6 @@ pub fn inittyptab() {
     // leading `$` as part of an identifier prefix → `$=cmd` lexes
     // as ENVSTRING instead of STRING.
     {
-        use crate::ported::zsh_h::{Pound, LAST_NORMAL_TOK};
         let lo = Pound as usize;
         let hi = LAST_NORMAL_TOK as usize;
         for t0 in lo..=hi {
@@ -4065,7 +4063,6 @@ pub fn inittyptab() {
     // c:4135-4136 — `for (t0 = Snull; t0 <= Nularg; t0++)
     //                    typtab[t0] |= ITOK | IMETA | INULL;`
     {
-        use crate::ported::zsh_h::{Nularg, Snull};
         let lo = Snull as usize;
         let hi = Nularg as usize;
         for t0 in lo..=hi {
@@ -4079,8 +4076,6 @@ pub fn inittyptab() {
     // skips a doubled blank (`s[1]==c`) so the IWSEP bit doesn't
     // mark "blank repeated → no-skip" IFS chars. Mirrors C exactly.
     {
-        use crate::ported::zsh_h::{DEFAULT_IFS, META};
-        use crate::ported::ztype_h::{ISEP as ZT_ISEP, IWSEP as ZT_IWSEP};
         // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
         let ifs = ifsgetfn();
         let src: String = if ifs.is_empty() {
@@ -4129,8 +4124,6 @@ pub fn inittyptab() {
     // Drops to ASCII-only under MULTIBYTE_SUPPORT (the non-ASCII path
     // routes through wordchars_wide).
     {
-        use crate::ported::zsh_h::META;
-        use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
         use crate::ported::ztype_h::IWORD as ZT_IWORD;
         let wc = wordcharsgetfn();
         let src: String = if wc.is_empty() {
@@ -4160,7 +4153,6 @@ pub fn inittyptab() {
     // of the hardcoded SPECCHARS string. Drives glob-special and
     // quote-special detection.
     {
-        use crate::ported::zsh_h::SPECCHARS;
         use crate::ported::ztype_h::ISPECIAL as ZT_ISPECIAL;
         for &b in SPECCHARS.as_bytes() {
             t[b as usize] |= ZT_ISPECIAL as u32; // c:4254
@@ -4170,7 +4162,6 @@ pub fn inittyptab() {
     // c:4255-4256 — comma special only when ZTF_SP_COMMA was set
     // via `makecommaspecial(1)`. KSH_GLOB / extended-glob path.
     {
-        use crate::ported::ztype_h::{ISPECIAL as ZT_ISPECIAL, ZTF_SP_COMMA};
         let flags = *TYPTAB_FLAGS.lock().unwrap();
         if (flags & ZTF_SP_COMMA) != 0 {
             // c:4255
@@ -4182,7 +4173,6 @@ pub fn inittyptab() {
     // bangchar != 0. Sets ZTF_BANGCHAR flag bit then marks the
     // bangchar byte ISPECIAL.
     {
-        use crate::ported::ztype_h::{ISPECIAL as ZT_ISPECIAL, ZTF_BANGCHAR, ZTF_INTERACT};
         let bangchar = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
         let flags = *TYPTAB_FLAGS.lock().unwrap();
         let interact_flag = (flags & ZTF_INTERACT) != 0;
@@ -4199,7 +4189,6 @@ pub fn inittyptab() {
     // c:4262-4263 — PATCHARS walk. ORs IPATTERN onto every member.
     // Used by pattern compilation to detect glob metachars.
     {
-        use crate::ported::zsh_h::PATCHARS;
         use crate::ported::ztype_h::IPATTERN as ZT_IPATTERN;
         for &b in PATCHARS.as_bytes() {
             t[b as usize] |= ZT_IPATTERN as u32; // c:4263
