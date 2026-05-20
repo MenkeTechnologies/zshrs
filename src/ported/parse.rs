@@ -29,11 +29,18 @@ use super::zsh_h::{
     WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SUBLIST_COPROC,
     WC_SUBLIST_NOT,
 };
-use crate::ported::utils::{zerr, zwarnnam};
+use crate::ported::utils::{zerr, zwarnnam, errflag, ERRFLAG_ERROR};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
+// Names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever').
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 // Direct port of `Src/parse.c:287-289` grow-policy constants.
 const EC_INIT_SIZE: i32 = 256;
@@ -3615,7 +3622,6 @@ pub fn try_dump_file(
 /// Returns an Eprog (the wordcode dump body) if `<file>.zwc` exists
 /// and is newer than `<file>`, else None.
 pub fn try_source_file(file: &str) -> Option<String> {                       // c:3795
-    use std::fs;
 
     // c:3802-3805 — if ((tail = strrchr(file, '/'))) tail++; else tail = file;
     let tail = match file.rfind('/') {
@@ -8707,7 +8713,6 @@ esac"#;
                 | ((b1 as u32) << 11)
                 | ((b2 as u32) << 19)
         }
-        use crate::ported::zsh_h::{eprog, estate};
         let mk_state = |word: u32| -> estate {
             let p = eprog {
                 flags: 0,
@@ -8751,11 +8756,6 @@ esac"#;
     #[test]
     fn init_parse_status_resets_all_lexer_parser_flags() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::lex::{
-            incasepat, incond, incmdpos, infor, inrepeat, inredir,
-            intypeset, set_incasepat, set_incond, set_incmdpos,
-            set_infor, set_inrepeat, set_inredir, set_intypeset,
-        };
         // Dirty every flag to a non-default value.
         set_incasepat(5);
         set_incond(7);
