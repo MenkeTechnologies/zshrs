@@ -835,7 +835,7 @@ pub fn histsubchar(c_in: i32) -> i32 {                                       // 
                     }
                 }
                 b'A' => {                                                    // c:856
-                    match chrealpath(&sline) {                               // c:857
+                    match chrealpath(&sline, b'A', false) {                  // c:857 chrealpath(&sline, 'A', 0)
                         Some(new) => sline = new,
                         None => {
                             herrflush();                                     // c:858
@@ -2308,11 +2308,15 @@ pub fn chabspath(input: &str) -> Option<String> {
 /// Handles non-existent paths by walking parent prefixes until one
 /// resolves, then re-appending the remaining tail (matches the C
 /// fallback at c:2027-2030).
-pub fn chrealpath(path: &str) -> Option<String> {                            // c:1971
+///
+/// Signature now matches C (Rule B): `path`, `mode` ('A' or 'P'),
+/// `use_heap` (ignored — Rust strings are heap by default).
+pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> { // c:1971
     // c:1983 — DPUTS1(mode != 'A' && mode != 'P', "chrealpath: mode='%c' is invalid", mode)
-    // Skipped: the Rust signature omits the `mode` param (Rule B
-    // signature gap pending). Wire when the full chrealpath signature
-    // lands: pub fn chrealpath(path, mode: u8, use_heap: bool).
+    crate::DPUTS1!(                                                          // c:1983
+        mode != b'A' && mode != b'P',                                         // c:1983
+        "chrealpath: mode='{}' is invalid", mode as char                     // c:1983
+    );
     // c:1985-1986 — if (!**junkptr) return 1; (empty input is success)
     if path.is_empty() {
         return Some(String::new());
@@ -4240,7 +4244,7 @@ mod chrealpath_tests {
     #[test]
     fn chrealpath_rejects_relative_path() {
         let _g = crate::test_util::global_state_lock();
-        let r = chrealpath("relative/path");
+        let r = chrealpath("relative/path", b'P', false);                    // c:1971
         assert!(r.is_none(),
             "c:1999-2000 — relative path MUST return None; got {:?}", r);
     }
@@ -4253,7 +4257,7 @@ mod chrealpath_tests {
     #[test]
     fn chrealpath_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        let r = chrealpath("");
+        let r = chrealpath("", b'P', false);                                 // c:1971
         assert_eq!(r.as_deref(), Some(""),
             "c:1985-1986 — empty input returns Some(empty), not None");
     }
@@ -4277,7 +4281,8 @@ mod chrealpath_tests {
         // dir.path() is an absolute, canonicalized path.
         let probe = dir.path().join("nonexistent_sub/nonexistent_tail");
         let probe_str = probe.to_str().unwrap();
-        let r = chrealpath(probe_str).expect("partial-prefix walk → Some");
+        let r = chrealpath(probe_str, b'P', false)                           // c:1971
+            .expect("partial-prefix walk → Some");
         // The C semantics: prefix walks back to dir.path() (which
         // exists), and the tail "nonexistent_sub/nonexistent_tail"
         // gets re-spliced. Result must end with the unresolvable tail.
