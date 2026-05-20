@@ -20,7 +20,10 @@ use crate::ported::zsh_h::{
     PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR,
     PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER,
 };
-use crate::ported::zsh_h::{SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS};
+use crate::ported::zsh_h::{
+    FS_EVAL, FS_SOURCE, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
+    STAT_NOPRINT, STAT_STOPPED,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -120,7 +123,6 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:99-140 — `if ((pm = (Param)paramtab->getnode2(paramtab, name)))`
     //              then dispatch on `PM_TYPE(pm->node.flags)` for the
     //              type-letter. paramtab is bucket-2-consolidated now.
-    use crate::ported::zsh_h::{PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_TYPE};
     let value = {
         let tab = crate::ported::params::paramtab().read().unwrap();
         tab.get(name)
@@ -1059,7 +1061,6 @@ pub fn funcsourcetracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String>
 #[allow(unused_variables)]
 pub fn funcfiletracegetfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:711
-    use crate::ported::zsh_h::{FS_EVAL, FS_SOURCE};
     // c:717 — for (f = funcstack, num = 0; f; f = f->prev, num++);
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
     let mut ret: Vec<String> = Vec::with_capacity(stack.len());
@@ -1510,7 +1511,6 @@ pub fn scanpmoptions(
 #[allow(unused_variables)]
 pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1040
-    use crate::ported::zsh_h::{PM_READONLY, PM_SCALAR, PM_SPECIAL, PM_UNSET};
     // c:1052 — `m = (Module)modulestab->getnode2(modulestab, name)`.
     let modtab = crate::ported::module::MODULESTAB.lock().unwrap();
     let module_present = modtab.modules.contains_key(name);
@@ -1868,7 +1868,6 @@ pub fn pmjobtext(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 #[allow(unused_variables)]
 pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1277
-    use crate::ported::zsh_h::{PM_READONLY, PM_SCALAR, PM_SPECIAL, PM_UNSET, STAT_NOPRINT};
     // c:1284-1287 — alloc PM_SCALAR|PM_READONLY param with name.
     // c:1289 — selectjobtab(&jtab, &jmax);
     let (jtab, jmax) = crate::ported::jobs::selectjobtab();
@@ -1974,7 +1973,6 @@ pub fn scanpmjobtexts(
 #[allow(unused_variables)]
 pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
     // c:1340
-    use crate::ported::zsh_h::{SP_RUNNING, STAT_DONE, STAT_STOPPED};
     let curjob = *crate::ported::jobs::CURJOB
         .get_or_init(|| std::sync::Mutex::new(-1))
         .lock()
@@ -2048,7 +2046,6 @@ pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 #[allow(unused_variables)]
 pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1385
-    use crate::ported::zsh_h::{PM_READONLY, PM_SCALAR, PM_SPECIAL, PM_UNSET, STAT_NOPRINT};
     let (jtab, jmax) = crate::ported::jobs::selectjobtab(); // c:1397
     let (job, pend_nonempty) = match name.parse::<i32>() {
         // c:1399
@@ -2172,7 +2169,6 @@ pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {
 #[allow(unused_variables)]
 pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1457
-    use crate::ported::zsh_h::{PM_READONLY, PM_SCALAR, PM_SPECIAL, PM_UNSET, STAT_NOPRINT};
     let (jtab, jmax) = crate::ported::jobs::selectjobtab(); // c:1469
     let (job, pend_nonempty) = match name.parse::<i32>() {
         // c:1471
@@ -3561,7 +3557,6 @@ mod scan_callback_tests {
     #[test]
     fn scanpmparameters_invokes_func_per_param() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
         reset_counters();
         // Seed realparamtab.
         let pm = param {
@@ -3673,7 +3668,6 @@ mod scan_callback_tests {
     #[test]
     fn getpmmodule_unknown_module_marks_unset() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{PM_SPECIAL, PM_UNSET};
         let pm = getpmmodule(std::ptr::null_mut(), "definitely_not_a_loaded_module_xyz")
             .expect("must return Some");
         assert_eq!(
@@ -3862,7 +3856,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn unset_param_renders_as_empty_string() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_UNSET;
         // Even with type + modifier flags set, PM_UNSET wins.
         let s = paramtypestr(&pm(PM_INTEGER | PM_UNSET | PM_READONLY));
         assert_eq!(
@@ -3877,7 +3870,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn autoload_param_renders_as_undefined() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_AUTOLOAD;
         assert_eq!(
             paramtypestr(&pm(PM_AUTOLOAD)),
             "undefined",
@@ -3911,7 +3903,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn nameref_param_renders_as_nameref() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_NAMEREF;
         assert_eq!(
             paramtypestr(&pm(PM_NAMEREF)),
             "nameref",
@@ -3927,7 +3918,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn left_modifier_renders_dash_left_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_LEFT;
         let s = paramtypestr(&pm(PM_SCALAR | PM_LEFT));
         assert!(
             s.contains("-left"),
@@ -3938,7 +3928,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn right_b_modifier_renders_dash_right_blanks_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_RIGHT_B;
         let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_B));
         assert!(
             s.contains("-right_blanks"),
@@ -3949,7 +3938,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn right_z_modifier_renders_dash_right_zeros_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_RIGHT_Z;
         let s = paramtypestr(&pm(PM_SCALAR | PM_RIGHT_Z));
         assert!(
             s.contains("-right_zeros"),
@@ -3960,7 +3948,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn lower_modifier_renders_dash_lower_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_LOWER;
         let s = paramtypestr(&pm(PM_SCALAR | PM_LOWER));
         assert!(
             s.contains("-lower"),
@@ -3971,7 +3958,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn upper_modifier_renders_dash_upper_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_UPPER;
         let s = paramtypestr(&pm(PM_SCALAR | PM_UPPER));
         assert!(
             s.contains("-upper"),
@@ -3982,7 +3968,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn tagged_modifier_renders_dash_tag_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_TAGGED;
         let s = paramtypestr(&pm(PM_SCALAR | PM_TAGGED));
         assert!(
             s.contains("-tag"),
@@ -3993,7 +3978,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn tied_modifier_renders_dash_tied_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_TIED;
         let s = paramtypestr(&pm(PM_SCALAR | PM_TIED));
         assert!(
             s.contains("-tied"),
@@ -4004,7 +3988,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn unique_modifier_renders_dash_unique_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_UNIQUE;
         let s = paramtypestr(&pm(PM_SCALAR | PM_UNIQUE));
         assert!(
             s.contains("-unique"),
@@ -4015,7 +3998,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn hide_modifier_renders_dash_hide_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_HIDE;
         let s = paramtypestr(&pm(PM_SCALAR | PM_HIDE));
         assert!(
             s.contains("-hide"),
@@ -4026,7 +4008,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn hideval_modifier_renders_dash_hideval_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_HIDEVAL;
         let s = paramtypestr(&pm(PM_SCALAR | PM_HIDEVAL));
         assert!(
             s.contains("-hideval"),
@@ -4037,7 +4018,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn special_modifier_renders_dash_special_suffix() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_SPECIAL;
         let s = paramtypestr(&pm(PM_SCALAR | PM_SPECIAL));
         assert!(
             s.contains("-special"),
@@ -4054,7 +4034,6 @@ mod paramtypestr_table_tests {
     #[test]
     fn multiple_modifiers_concatenate_in_c_source_order() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{PM_EXPORTED, PM_LEFT, PM_READONLY};
         let mut p = pm(PM_INTEGER | PM_LEFT | PM_READONLY | PM_EXPORTED);
         p.level = 1;
         let s = paramtypestr(&p);
