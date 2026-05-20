@@ -57,40 +57,31 @@
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
 // arms and the parity tests can reference by bare name.
 #[allow(unused_imports)]
+use std::ffi::CString;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
-use crate::ported::hist::{
-    casemodify, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER,
-};
-use crate::ported::modules::parameter::*;
-// Bulk-import the most-used cross-module names so the bodies below
-// stay close to the C source visually instead of being drowned in
-// fully-qualified `crate::ported::*::` paths.
 use crate::ported::hashnameddir::nameddirtab;
 use crate::ported::hashtable::{aliastab_lock, shfunctab_lock};
-use crate::ported::hist::hsubl;
-use crate::ported::params::{assignsparam, getarrvalue, getsparam, paramtab, paramtab_hashed_storage};
-use crate::ported::pattern::patmatch;
-use crate::ported::utils::errflag;
-use crate::ported::zsh_h::{
-    LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, QT_BACKSLASH_PATTERN,
-    SHFILEEXPANSION, SORTIT_ANYOLDHOW,
+use crate::ported::hist::{
+    casemodify, hsubl, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER,
+    CASMOD_UPPER,
 };
+use crate::ported::modules::parameter::*;
+use crate::ported::params::{
+    assignsparam, getarrvalue, getsparam, paramtab, paramtab_hashed_storage,
+};
+use crate::ported::pattern::patmatch;
 use crate::ported::string::dyncat;
-use crate::ported::utils::{getkeystring, quotestring};
-use crate::ported::utils::{xsymlinks, zerr};
+use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{cached_regex, slice_array_zero_based, slice_positionals};
-use crate::ported::zsh_h::PM_HASHED;
-use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
 use crate::ported::zsh_h::{
-    PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER,
-    PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE,
-    PM_UPPER,
+    hashnode, param, Param, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
+    PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER,
+    PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED,
+    PM_TIED, PM_UNIQUE, PM_UPPER, QT_BACKSLASH_PATTERN, SHFILEEXPANSION, SORTIT_ANYOLDHOW,
 };
-use std::ffi::CString;
-use std::sync::atomic::AtomicUsize;
-
-use std::sync::atomic::Ordering;
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result

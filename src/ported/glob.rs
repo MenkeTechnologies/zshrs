@@ -15,18 +15,13 @@ use crate::ported::sort::zstrcmp;
 use crate::ported::builtin::LASTVAL;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::string::dyncat;
-use crate::ported::utils::zerr;
-use crate::ported::utils::{errflag, init_dirsav, lchdir, restoredir};
+use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self};
-use crate::ported::zsh_h::Bnullkeep;
-use crate::ported::zsh_h::Pound;
-use crate::ported::zsh_h::{
+use crate::ported::zsh_h::{ Bnullkeep, Pound,
     isset, BAREGLOBQUAL, Bnull, BRACECCL, CASEGLOB, Dnull, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT,
     Inang, LISTTYPES, MARKDIRS, META, NULLGLOB, Nularg, NUMERICGLOBSORT, Outang, Snull, SUB_GLOBAL,
-    SUB_LIST, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
-};
-use crate::ported::zsh_h::{SUB_END, SUB_LONG, SUB_START};
+    SUB_LIST, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST, SUB_END, SUB_LONG, SUB_START};
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
