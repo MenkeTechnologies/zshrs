@@ -12,7 +12,8 @@ use crate::ported::utils::zerr;
 use crate::ported::zsh_h::Marker;
 use crate::ported::zsh_h::SCANPM_WANTINDEX;
 use crate::ported::zsh_h::VALFLAG_SUBST;
-use crate::ported::hist::{bangchar, hashchar, hatchar};
+use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, savehistsiz};
+use crate::ported::utils::set_locallevel;
 use crate::ported::zsh_h::{gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar};
 use crate::ported::zsh_h::{hashnode, isset as isset_opt, HashTable, Param};
 use crate::ported::zsh_h::{SCANPM_ISVAR_AT, SCANPM_NONAMEREF};
@@ -397,7 +398,7 @@ pub fn loadparamnode(
         pm = None;
         // c:561-563 — `zerr("autoloading module %s failed to define
         // parameter: %s", mn, nam)`.
-        crate::ported::utils::zerr(&format!(
+        zerr(&format!(
             "autoloading module {} failed to define parameter: {}",
             modname, nam
         ));
@@ -1721,7 +1722,7 @@ pub fn createparamtable() {
     // canonical read is through paramtab (which has the parsed
     // integer post-import). Falls back to env for the rare case
     // where paramtab hasn't seen the import yet.
-    let new_shlvl: i32 = crate::ported::params::getsparam("SHLVL")
+    let new_shlvl: i32 = getsparam("SHLVL")
         .or_else(|| std::env::var("SHLVL").ok())
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
@@ -2795,7 +2796,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
         Some(p) => p,
         None => {
             // c:2020 — `zerr("invalid subscript")`.
-            crate::ported::utils::zerr("invalid subscript");
+            zerr("invalid subscript");
             *pptr = ""; // c:2021
             return 1; // c:2022
         }
@@ -3331,7 +3332,7 @@ pub fn getintvalue(v: Option<&mut value>) -> i64 {
 /// matheval), then PM_TYPE: PM_INTEGER → mn.l = pm->gsu.i->getfn,
 /// PM_EFLOAT|PM_FFLOAT → mn.type=MN_FLOAT; mn.d = pm->gsu.f->getfn,
 /// else matheval(getstrvalue(v)).
-pub fn getnumvalue(v: Option<&mut value>) -> crate::ported::math::mnumber {
+pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
     let v = match v {
         Some(v) => v,
         None => {
@@ -3590,13 +3591,13 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         t if t == PM_EFLOAT || t == PM_FFLOAT => {
             if let Some(ref s) = val {
                 let mn = if (flags & ASSPM_ENV_IMPORT) != 0 {
-                    crate::ported::math::mnumber {
+                    mnumber {
                         l: 0,
                         d: s.parse::<f64>().unwrap_or(0.0),
                         type_: MN_FLOAT,
                     }
                 } else {
-                    crate::ported::math::matheval(s).unwrap_or(crate::ported::math::mnumber {
+                    crate::ported::math::matheval(s).unwrap_or(mnumber {
                         l: 0,
                         d: 0.0,
                         type_: MN_FLOAT,
@@ -3696,7 +3697,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
 /// `pm->gsu.i->setfn(pm, val.u.l)`; PM_EFLOAT|PM_FFLOAT →
 /// `pm->gsu.f->setfn(pm, val.u.d)`. EXECOPT/PM_READONLY checks
 /// at top.
-pub fn setnumvalue(v: Option<&mut value>, val: crate::ported::math::mnumber) {
+pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
     // c:2860 — `if (unset(EXECOPT)) return;`. In NO_EXEC mode, param
     // mutations must be skipped so dry-run shell evaluation doesn't
     // leak state into the param table. The previous Rust port skipped
@@ -3797,13 +3798,13 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
 
     // c:2899-2904 — PM_READONLY rejection.
     if pm.node.flags & PM_READONLY as i32 != 0 {
-        crate::ported::utils::zerr(&format!("read-only variable: {}", pm.node.nam));
+        zerr(&format!("read-only variable: {}", pm.node.nam));
         return;
     }
     // c:2905-2911 — type guard.
     let t = PM_TYPE(pm.node.flags as u32);
     if t & (PM_ARRAY | PM_HASHED) == 0 {
-        crate::ported::utils::zerr(&format!(
+        zerr(&format!(
             "{}: attempt to assign array value to non-array",
             pm.node.nam
         ));
@@ -3811,7 +3812,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     }
     // c:2913-2917 — VALFLAG_EMPTY rejection.
     if v.valflags & VALFLAG_EMPTY != 0 {
-        crate::ported::utils::zerr(&format!(
+        zerr(&format!(
             "{}: assignment to invalid subscript range",
             pm.node.nam
         ));
@@ -3836,7 +3837,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         return;
     }
     if t == PM_HASHED {
-        crate::ported::utils::zerr(&format!(
+        zerr(&format!(
             "{}: attempt to set slice of associative array",
             pm.node.nam
         ));
@@ -4359,12 +4360,12 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         zerr(&format!("not an identifier: {}", s)); // c:3204
         errflag.fetch_or(
             // c:3206
-            crate::ported::utils::ERRFLAG_ERROR,
+            ERRFLAG_ERROR,
             std::sync::atomic::Ordering::Relaxed,
         );
         return None; // c:3207
     }
-    crate::ported::signals::queue_signals(); // c:3209
+    queue_signals(); // c:3209
 
     // c:3210 — `strchr(s, '[')`. Split the leading name from the
     // subscript while preserving C's `*ss = '\0'` / `*ss = '['`
@@ -4417,7 +4418,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             if (pm.node.flags as u32 & PM_READONLY) != 0 {
                 zerr(&format!("read-only variable: {}", pm.node.nam)); // c:3217
                 drop(tab);
-                crate::ported::signals::unqueue_signals(); // c:3220
+                unqueue_signals(); // c:3220
                 return None; // c:3221
             }
         }
@@ -4463,7 +4464,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
         let cloned = pm.clone();
         drop(tab);
-        crate::ported::signals::unqueue_signals(); // c:3344
+        unqueue_signals(); // c:3344
         return Some(cloned); // c:3345
     }
 
@@ -4508,7 +4509,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         if (pm.node.flags as u32 & PM_READONLY) != 0 {
             zerr(&format!("read-only variable: {}", pm.node.nam)); // c:3217
             drop(tab);
-            crate::ported::signals::unqueue_signals(); // c:3220
+            unqueue_signals(); // c:3220
             return None; // c:3221
         }
         // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
@@ -4541,10 +4542,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             drop(tab);
             errflag.fetch_or(
                 // c:3263
-                crate::ported::utils::ERRFLAG_ERROR,
+                ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
             );
-            crate::ported::signals::unqueue_signals(); // c:3262
+            unqueue_signals(); // c:3262
             return None; // c:3264
         }
     }
@@ -4584,7 +4585,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             .unwrap()
             .insert(name.to_string(), pm_back); // c:3343
     } // c:3343
-    crate::ported::signals::unqueue_signals(); // c:3344
+    unqueue_signals(); // c:3344
     cloned // c:3345
 }
 
@@ -4678,7 +4679,7 @@ pub fn assignaparam(
     use crate::ported::utils::ERRFLAG_ERROR;
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
-        crate::ported::utils::zerr(&format!("not an identifier: {}", name));
+        zerr(&format!("not an identifier: {}", name));
         errflag.fetch_or(ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
         return None;
     }
@@ -4696,7 +4697,7 @@ pub fn assignaparam(
                 .unwrap_or(false)
         };
         if is_hashed {
-            crate::ported::utils::zerr(&format!(
+            zerr(&format!(
                 "{}: attempt to set slice of associative array",
                 base
             ));
@@ -4799,12 +4800,12 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
 pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
-        crate::ported::utils::zerr(&format!("not an identifier: {}", name));
+        zerr(&format!("not an identifier: {}", name));
         return None;
     }
     // c:3617-3621 — `if (strchr(s, '[')) { zerr; return NULL }`.
     if name.contains('[') {
-        crate::ported::utils::zerr("nested associative arrays not yet supported");
+        zerr("nested associative arrays not yet supported");
         return None;
     }
 
@@ -4869,7 +4870,7 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
 /// None until `createparam` lands.
 pub fn assignnparam(
     s: &str,
-    val: crate::ported::math::mnumber,
+    val: mnumber,
     flags: i32,
 ) -> Option<Box<param>> {
     // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
@@ -4877,7 +4878,7 @@ pub fn assignnparam(
         zerr(&format!("not an identifier: {}", s)); // c:3667
         errflag.fetch_or(
             // c:3669
-            crate::ported::utils::ERRFLAG_ERROR,
+            ERRFLAG_ERROR,
             std::sync::atomic::Ordering::Relaxed,
         );
         return None; // c:3670
@@ -5031,7 +5032,7 @@ pub fn assignnparam(
 /// resulting Param.
 pub fn setnparam(
     s: &str,
-    val: crate::ported::math::mnumber,
+    val: mnumber,
 ) -> Option<Param> {
     assignnparam(s, val, ASSPM_WARN as i32) // c:3748
 }
@@ -5055,7 +5056,7 @@ pub fn setnparam(
 ///      pointer the caller may want to read back.
 pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<Param> {
     // c:3757-3759 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
-    let mnval = crate::ported::math::mnumber {
+    let mnval = mnumber {
         l: val,
         d: 0.0,
         type_: MN_INTEGER,
@@ -5085,7 +5086,7 @@ pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<Param> {
 /// right PM_INTEGER flag.
 pub fn setiparam(s: &str, val: i64) -> Option<Param> {
     // c:3770-3771 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
-    let mnval = crate::ported::math::mnumber {
+    let mnval = mnumber {
         l: val,
         d: 0.0,
         type_: MN_INTEGER,
@@ -5132,13 +5133,13 @@ pub fn setiparam_no_convert(s: &str, val: i64) -> Option<Param> {
 pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
     // c:3796
     let s = pm.node.nam.clone(); // c:3796
-    crate::ported::signals::queue_signals(); // c:3799
+    queue_signals(); // c:3799
                                              // c:3800-3807 — paramtab->getnode2 / getnode reachability check.
                                              // Without paramtab vtable wired we cannot detect the hidden-
                                              // variable case, so we proceed; a future port of paramtab
                                              // adds the check at this site.
     unsetparam_pm(pm, 0, 1); // c:3819
-    crate::ported::signals::unqueue_signals(); // c:3819
+    unqueue_signals(); // c:3819
     let _ = createparam(&s, flags); // c:3819
     0 // c:3819
 }
@@ -5164,7 +5165,7 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 /// safe.
 pub fn unsetparam(name: &str) {
     // c:3819
-    crate::ported::signals::queue_signals(); // c:3825
+    queue_signals(); // c:3825
                                              // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
                                              // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
                                              //
@@ -5202,7 +5203,7 @@ pub fn unsetparam(name: &str) {
                 .insert(name.to_string(), pm_owned);
         }
     }
-    crate::ported::signals::unqueue_signals(); // c:3832
+    unqueue_signals(); // c:3832
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
@@ -5392,7 +5393,7 @@ pub fn arrhashsetfn(
 
     // c:4129-4131 — odd count → error.
     if alen % 2 != 0 {
-        crate::ported::utils::zerr("bad set of key/value pairs for associative array");
+        zerr("bad set of key/value pairs for associative array");
         return;
     }
 
@@ -6467,7 +6468,7 @@ pub fn argzerosetfn(x: String) {
     if !x.is_empty() {
         // c:4940 — isset(POSIXARGZERO) reject.
         if isset(crate::ported::zsh_h::POSIXARGZERO) {
-            crate::ported::utils::zerr("read-only variable: 0"); // c:4941
+            zerr("read-only variable: 0"); // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
             crate::ported::utils::set_argzero(Some(crate::ported::string::ztrdup(&x)));
@@ -6523,7 +6524,7 @@ pub fn histsizesetfn(v: i64) {
     *histsiz_lock().lock().expect("histsiz poisoned") = v.max(1);
     // c:4977 — mirror into the hist.rs atomic so resizehistents()
     // sees the new size, then trigger the prune.
-    crate::ported::hist::histsiz.store(v.max(1), std::sync::atomic::Ordering::SeqCst);
+    histsiz.store(v.max(1), std::sync::atomic::Ordering::SeqCst);
     crate::ported::hist::resizehistents(); // c:4977
 }
 
@@ -6556,7 +6557,7 @@ pub fn savehistsizesetfn(v: i64) {
     // Mirror to hist.rs::savehistsiz so the writer-side cap
     // matches the just-assigned value. C uses a single global;
     // the Rust port's twin-storage requires sync writes.
-    crate::ported::hist::savehistsiz.store(clamped, std::sync::atomic::Ordering::SeqCst);
+    savehistsiz.store(clamped, std::sync::atomic::Ordering::SeqCst);
     // c:4994
 }
 
@@ -8018,7 +8019,7 @@ pub fn setloopvar(name: &str, value: &str) {
 /// nameref chain backend isn't available.
 /// Port of `setscope(Param pm)` from `Src/params.c:6382`.
 pub fn setscope(pm: &mut param) {
-    crate::ported::signals::queue_signals();
+    queue_signals();
     if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
         // Refname is stored in pm.u_str for nameref-typed params.
         let refname = pm.u_str.clone();
@@ -8049,7 +8050,7 @@ pub fn setscope(pm: &mut param) {
             }
         }
     }
-    crate::ported::signals::unqueue_signals();
+    unqueue_signals();
 }
 
 /// ```c
@@ -8809,7 +8810,7 @@ mod gsu_tests {
     fn savehistsizesetfn_syncs_to_hist_module() {
         let _g = crate::test_util::global_state_lock();
         let original_params = savehistsizegetfn();
-        let original_hist = crate::ported::hist::savehistsiz.load(Ordering::SeqCst);
+        let original_hist = savehistsiz.load(Ordering::SeqCst);
         // Set via the setfn — both storages must reflect the value.
         savehistsizesetfn(12345);
         assert_eq!(
@@ -8818,7 +8819,7 @@ mod gsu_tests {
             "c:4994 — params.rs Mutex<i64> reflects new value"
         );
         assert_eq!(
-            crate::ported::hist::savehistsiz.load(Ordering::SeqCst),
+            savehistsiz.load(Ordering::SeqCst),
             12345,
             "c:4994 — hist.rs AtomicI64 synced (was the previous gap)"
         );
@@ -8826,13 +8827,13 @@ mod gsu_tests {
         savehistsizesetfn(-99);
         assert_eq!(savehistsizegetfn(), 0, "c:4998 — params.rs clamps to 0");
         assert_eq!(
-            crate::ported::hist::savehistsiz.load(Ordering::SeqCst),
+            savehistsiz.load(Ordering::SeqCst),
             0,
             "c:4998 — hist.rs clamps to 0 too"
         );
         // Restore.
         savehistsizesetfn(original_params);
-        crate::ported::hist::savehistsiz.store(original_hist, Ordering::SeqCst);
+        savehistsiz.store(original_hist, Ordering::SeqCst);
     }
 
     #[test]
@@ -9383,7 +9384,7 @@ mod tests {
         opt_state_set("exec", true);
         unsetparam("gs_f");
         // Stash a float via the setnumvalue / setnparam path.
-        let v = crate::ported::math::mnumber {
+        let v = mnumber {
             l: 0,
             d: 2.5,
             type_: crate::ported::math::MN_FLOAT,
@@ -9464,7 +9465,7 @@ mod tests {
         SCOPEREFS.with(|s| s.borrow_mut().clear());
 
         // Set up: locallevel = 3, push a PM_NAMEREF param with base=5 onto SCOPEREFS[3].
-        crate::ported::utils::set_locallevel(3);
+        set_locallevel(3);
         let pm = param {
             node: hashnode {
                 next: None,
@@ -9513,7 +9514,7 @@ mod tests {
 
         // Cleanup
         paramtab().write().unwrap().remove("ref1");
-        crate::ported::utils::set_locallevel(0);
+        set_locallevel(0);
     }
 
     /// `endparamscope` MUST NOT reset `base` on PM_UPPER namerefs
@@ -9529,7 +9530,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
 
-        crate::ported::utils::set_locallevel(3);
+        set_locallevel(3);
         let pm = param {
             node: hashnode {
                 next: None,
@@ -9582,7 +9583,7 @@ mod tests {
         );
 
         paramtab().write().unwrap().remove("up_ref");
-        crate::ported::utils::set_locallevel(0);
+        set_locallevel(0);
     }
 
     /// `setscope_base` does NOT push when `base <= pm.level` (the C
@@ -10148,7 +10149,7 @@ mod tests {
         crate::ported::params::assignsparam(name, "test_value_42", 0); // c:3193
         assert_eq!(
             // c:3076
-            crate::ported::params::getsparam(name).as_deref(), // c:3076
+            getsparam(name).as_deref(), // c:3076
             Some("test_value_42")                              // c:3076
         ); // c:3076
            // Cleanup so other tests don't see leaked param.
@@ -10164,7 +10165,7 @@ mod tests {
     #[test]
     fn getsparam_unknown_param_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(crate::ported::params::getsparam("ZSHRS_TEST_DEFINITELY_UNSET").is_none());
+        assert!(getsparam("ZSHRS_TEST_DEFINITELY_UNSET").is_none());
     }
 
     /// c:3819 — direct paramtab.remove drops the entry; subsequent
@@ -10176,7 +10177,7 @@ mod tests {
         let name = "ZSHRS_TEST_UNSET_FLOW";
         crate::ported::params::assignsparam(name, "to_be_removed", 0);
         assert!(
-            crate::ported::params::getsparam(name).is_some(),
+            getsparam(name).is_some(),
             "param must be set before remove path"
         );
         let _ = crate::ported::params::paramtab()
@@ -10184,7 +10185,7 @@ mod tests {
             .unwrap()
             .remove(name);
         assert!(
-            crate::ported::params::getsparam(name).is_none(),
+            getsparam(name).is_none(),
             "after remove, getsparam must return None"
         );
     }
@@ -10230,7 +10231,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Default state.
-        crate::ported::params::histcharssetfn(None);
+        histcharssetfn(None);
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
             b'!' as i32
@@ -10244,7 +10245,7 @@ mod tests {
             b'#' as i32
         );
         // Set HISTCHARS to "@:%".
-        crate::ported::params::histcharssetfn(Some("@:%".to_string()));
+        histcharssetfn(Some("@:%".to_string()));
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
             b'@' as i32,
@@ -10261,7 +10262,7 @@ mod tests {
             "c:5097 — hashchar = third byte of HISTCHARS"
         );
         // Restore.
-        crate::ported::params::histcharssetfn(None);
+        histcharssetfn(None);
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
             b'!' as i32
@@ -10282,14 +10283,14 @@ mod tests {
         let _g = HISTCHARS_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::params::histcharssetfn(Some("@&%".to_string()));
+        histcharssetfn(Some("@&%".to_string()));
         assert_eq!(
             crate::ported::params::histcharsgetfn(),
             "@&%",
             "c:5068-5073 — getfn reads atomic globals setfn wrote"
         );
         // Restore default and verify round-trip.
-        crate::ported::params::histcharssetfn(None);
+        histcharssetfn(None);
         assert_eq!(
             crate::ported::params::histcharsgetfn(),
             "!^#",
@@ -10379,11 +10380,11 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Reset to defaults.
-        crate::ported::params::histcharssetfn(None);
+        histcharssetfn(None);
         let bang_before = bangchar.load(Ordering::SeqCst);
         let hat_before = hatchar.load(Ordering::SeqCst);
         // Try to set HISTCHARS with non-ASCII char.
-        crate::ported::params::histcharssetfn(Some("é".to_string()));
+        histcharssetfn(Some("é".to_string()));
         // c:5092 — rejection returns BEFORE any state changes.
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
@@ -10415,13 +10416,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved_param = histsizegetfn();
-        let saved_hist = crate::ported::hist::histsiz.load(Ordering::SeqCst);
+        let saved_hist = histsiz.load(Ordering::SeqCst);
 
         // c:4976 — value < 1 floors at 1.
         crate::ported::params::histsizesetfn(0);
         assert_eq!(histsizegetfn(), 1, "c:4976 — HISTSIZE 0 must floor at 1");
         assert_eq!(
-            crate::ported::hist::histsiz.load(Ordering::SeqCst),
+            histsiz.load(Ordering::SeqCst),
             1,
             "c:4977 — mirror into hist::histsiz so resizehistents sees it"
         );
@@ -10433,11 +10434,11 @@ mod tests {
         // Positive passes through.
         crate::ported::params::histsizesetfn(500);
         assert_eq!(histsizegetfn(), 500);
-        assert_eq!(crate::ported::hist::histsiz.load(Ordering::SeqCst), 500);
+        assert_eq!(histsiz.load(Ordering::SeqCst), 500);
 
         // Restore.
         *crate::ported::params::histsiz_lock().lock().unwrap() = saved_param;
-        crate::ported::hist::histsiz.store(saved_hist, Ordering::SeqCst);
+        histsiz.store(saved_hist, Ordering::SeqCst);
     }
 
     /// `Src/params.c:5152-5158` — `underscoregetfn` returns

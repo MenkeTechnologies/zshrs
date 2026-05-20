@@ -1722,6 +1722,7 @@ pub fn redo_widget() -> i32 {
 
 #[cfg(test)]
 mod findbol_findeol_tests {
+    use crate::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
     use super::*;
     use crate::zle::zle_main::zle_test_setup;
 

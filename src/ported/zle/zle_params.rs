@@ -1100,6 +1100,7 @@ mod region_active_tests {
 
 #[cfg(test)]
 mod trap_tests {
+    use crate::zle::zle_main::{zle_test_setup, zleaftertrap, zlebeforetrap};
 
     #[test]
     fn zlebeforetrap_returns_zero() {
@@ -1375,6 +1376,8 @@ mod batch_getters_tests {
 
 #[cfg(test)]
 mod keybuf_tests {
+    use crate::zle::zle_keymap::{freekeynode, KeyBinding};
+    use crate::zle::zle_main::zle_test_setup;
 
     #[test]
     fn addkeybuf_plain_byte() {
