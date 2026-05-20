@@ -1183,7 +1183,6 @@ mod tests {
     use super::*;
 
     fn empty_ops_pp() -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -1269,7 +1268,6 @@ mod tests {
         // about. `param` contains a `String` (`node.nam`) whose Vec
         // uses NonNull internally — `std::mem::zeroed()` is UB. Build
         // it field by field per the C struct layout in zsh_h:906-928.
-        use crate::ported::zsh_h::{hashnode, param};
         let pm = param {
             node: hashnode {
                 next: None,

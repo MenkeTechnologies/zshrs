@@ -7849,7 +7849,6 @@ mod tests {
     #[test]
     fn nulstring_matches_canonical_nularg_byte() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::Nularg;
         assert_eq!(Nularg as u32, 0xa1, "Src/zsh.h:206 — Nularg must be 0xa1");
         // NULSTRING is the str form of just the Nularg char.
         assert_eq!(
@@ -8487,9 +8486,6 @@ mod tests {
     #[test]
     fn token_byte_constants_match_zsh_h_canonical_values() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{
-            Dnull, Equals, Hat, Inbrack, Inpar, Outbrack, Outpar, Snull, Stringg, Tick, Tilde,
-        };
         assert_eq!(Stringg as u32, 0x85, "Src/zsh.h:160 Stringg = $");
         assert_eq!(Hat as u32, 0x86, "Src/zsh.h:161 Hat = ^");
         assert_eq!(Inpar as u32, 0x88, "Src/zsh.h:163 Inpar = (");

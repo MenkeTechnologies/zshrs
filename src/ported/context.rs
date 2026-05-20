@@ -193,7 +193,6 @@ mod tests {
     #[test]
     fn zcontext_flag_bits_are_distinct_and_nonzero() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
         // Pin the exact C constants from Src/zsh.h:491-495.
         assert_eq!(ZCONTEXT_HIST, 1 << 0);
         assert_eq!(ZCONTEXT_LEX, 1 << 1);
@@ -277,7 +276,6 @@ mod tests {
     #[test]
     fn zcontext_save_equals_save_partial_full_mask() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
         let full = ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE;
 
         reset_cstack();
