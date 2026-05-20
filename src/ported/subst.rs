@@ -2471,9 +2471,13 @@ pub fn paramsubst(
         // ${(flags)var…} — paren-flag block. Port of subst.c:2147+
         // flag-loop. Each flag char sets a state bit; applied as
         // post-processing on the substituted value.
-        let mut flag_lower = false; // c:2197 (L)
-        let mut flag_upper = false; // c:2200 (U)
-        let mut flag_caps = false; // c:2203 (C)
+        // c:1732 — `int casmod = CASMOD_NONE;` single tri-state int
+        // tracking (L)/(U)/(C) case-modify flag. Direct port matches C
+        // shape: one var carrying CASMOD_NONE / CASMOD_LOWER /
+        // CASMOD_UPPER / CASMOD_CAPS rather than three booleans
+        // (the previous flag_lower/flag_upper/flag_caps bag-of-globals
+        // decomposition of a single C int — Rule D violation).
+        let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE;             // c:1732
         let mut flag_qcount: u32 = 0; // c:2237 (q)
         let mut flag_qmin = false; // c:2245 (q-)
         let mut flag_qplus = false; // c:2245 (q+)
@@ -2587,15 +2591,15 @@ pub fn paramsubst(
                             break;
                         }
                     } // c:2147
-                    'L' => {
-                        flag_lower = true;
-                    } // c:2197
-                    'U' => {
-                        flag_upper = true;
-                    } // c:2200
-                    'C' => {
-                        flag_caps = true;
-                    } // c:2203
+                    'L' => {                                                  // c:2197
+                        casmod = crate::ported::zsh_h::CASMOD_LOWER;         // c:2198
+                    }                                                         // c:2199
+                    'U' => {                                                  // c:2200
+                        casmod = crate::ported::zsh_h::CASMOD_UPPER;         // c:2201
+                    }                                                         // c:2202
+                    'C' => {                                                  // c:2203
+                        casmod = crate::ported::zsh_h::CASMOD_CAPS;          // c:2204
+                    }                                                         // c:2205
                     'q' => {
                         // c:2237
                         // (q-) → SINGLE_OPTIONAL: bslashquote only if
@@ -4897,18 +4901,16 @@ pub fn paramsubst(
             }
             out
         };
-        if flag_lower || flag_upper || flag_caps {
-            // c:2197
-            let transform = |s: &str| -> String {
-                // c:3937
-                if flag_lower {
-                    s.to_lowercase()
-                } else if flag_upper {
-                    s.to_uppercase()
-                } else {
-                    cap_word(s)
-                }
-            };
+        if casmod != crate::ported::zsh_h::CASMOD_NONE {                     // c:3937 if (casmod != CASMOD_NONE)
+            let transform = |s: &str| -> String {                            // c:3937
+                if casmod == crate::ported::zsh_h::CASMOD_LOWER {            // c:3937 CASMOD_LOWER
+                    s.to_lowercase()                                          // c:3937
+                } else if casmod == crate::ported::zsh_h::CASMOD_UPPER {     // c:3937 CASMOD_UPPER
+                    s.to_uppercase()                                          // c:3937
+                } else {                                                      // c:3937 CASMOD_CAPS
+                    cap_word(s)                                               // c:3937
+                }                                                             // c:3937
+            };                                                                // c:3937
             if let Some(parts) = split_parts.clone() {
                 // c:3937
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
