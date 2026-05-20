@@ -16,7 +16,7 @@ deleted on sight by the maintainer. No exceptions.
 If you read nothing else in this file, read this. Every violation is
 deleted on sight; the maintainer does not negotiate.
 
-Do not use fully qualified names that are not in C.  C imports the names.  So Rust does too.  No imports inside functions.
+Do not use fully qualified names that are not in C.  C imports the names.  So Rust does too.  No imports inside functions, only imports at top of file organized by file.
 
 ### Rule 0 — ASK BEFORE INVENTING ANY NEW FN/STRUCT/STATIC NAME
 
