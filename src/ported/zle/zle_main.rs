@@ -27,7 +27,11 @@ use super::zle_thingy::Thingy;
 use crate::ported::builtin::LASTVAL;
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::init::SHTTY;
-use crate::ported::utils::{write_loop, zwarnnam};
+use crate::ported::mem::unqueue_signals;
+use crate::ported::module::{addhookfunc, deletehookfunc};
+use crate::ported::params::getsparam;
+use crate::ported::utils::{errflag, write_loop, zwarnnam};
+use crate::ported::zle::compcore::LASTCHAR;
 use crate::ported::zle::zle_keymap::{
     curkeymap, curkeymapname, keymapnamtab, linkkeymap, openkeymap, selectkeymap, LOCALKEYMAP,
 };
@@ -394,7 +398,7 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
         b
     };
 
-    crate::ported::zle::compcore::LASTCHAR
+    LASTCHAR
         .store((b as ZleInt) as i32, SeqCst);
     Some(b)
 }
@@ -566,7 +570,7 @@ pub fn zlecore() {
         // EOF on empty line: matches C's eofchar branch
         // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
         if ZLELL.load(SeqCst) == 0
-            && crate::ported::zle::compcore::LASTCHAR.load(SeqCst)
+            && LASTCHAR.load(SeqCst)
                 == EOFCHAR.load(SeqCst)
             && (ZLEREADFLAGS
                 .load(SeqCst)
@@ -859,7 +863,7 @@ pub fn bin_vared(
                                     // \$TERM param. The previous Rust port read \`std::env::var(\"TERM\")\`
                                     // — same env-vs-paramtab divergence family as the prior
                                     // termcap / datetime / newuser fixes.
-    let term = crate::ported::params::getsparam("TERM").unwrap_or_default();
+    let term = getsparam("TERM").unwrap_or_default();
     if term == "emacs" {
         // c:1691
         zwarnnam(name, "ZLE not enabled"); // c:1692
@@ -926,11 +930,11 @@ pub fn bin_vared(
     };
     if !exists && !OPT_ISSET(ops, b'c') {
         // c:1728
-        crate::ported::mem::unqueue_signals(); // c:1729
+        unqueue_signals(); // c:1729
         zwarnnam(name, &format!("no such variable: {}", varname)); // c:1730
         return 1; // c:1731
     }
-    crate::ported::mem::unqueue_signals();
+    unqueue_signals();
     // c:1841-1860 — zleread(ZLCON_VARED) drives the actual edit. Static-
     // link path: the live ZLE editor isn't reachable from this lib-side
     // entrypoint. Delegate to vared_zle_run when the ZLE entrypoint is
@@ -953,7 +957,7 @@ pub fn bin_vared(
     //                `std::env::var` instead of `getsparam`. Both
     //                routes now match C: SHTTY (stdout fallback) and
     //                paramtab.
-    let current = crate::ported::params::getsparam(varname).unwrap_or_default();
+    let current = getsparam(varname).unwrap_or_default();
     {
         use std::sync::atomic::Ordering;
         let fd = SHTTY.load(Ordering::Relaxed);
@@ -1090,9 +1094,9 @@ pub fn recursiveedit() -> i32 {
     ZLE_RECURSIVE.fetch_add(1, SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
     ZLE_RECURSIVE.fetch_sub(1, SeqCst);
-    let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
+    let cur_errflag = errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
-    crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+    errflag.store(0, Ordering::Relaxed);
     DONE.store(0, SeqCst); // c:1993
     locerror // c:1995
 }
@@ -1425,8 +1429,8 @@ pub fn boot_(_m: *const module) -> i32 {
     // The trap hookdefs are registered as part of init.rs's `zshhooks[]`
     // (entries 1 and 2). With real Hookfn fn pointers now flowing
     // through `addhookfunc`, the trap thunks attach directly.
-    crate::ported::module::addhookfunc("before_trap", zlebeforetrap); // c:2303
-    crate::ported::module::addhookfunc("after_trap", zleaftertrap); // c:2304
+    addhookfunc("before_trap", zlebeforetrap); // c:2303
+    addhookfunc("after_trap", zleaftertrap); // c:2304
 
     // Register comphooks defs. C zsh's complete-module setup_() does
     // `addhookdefs(m, comphooks, ...)` (complete.c:1766) with the
@@ -1481,8 +1485,8 @@ pub fn cleanup_(_m: *const module) -> i32 {
     }
     // c:2318-2319 — `deletehookfunc("before_trap", zlebeforetrap);
     //                deletehookfunc("after_trap",  zleaftertrap);`
-    crate::ported::module::deletehookfunc("before_trap", zlebeforetrap); // c:2318
-    crate::ported::module::deletehookfunc("after_trap", zleaftertrap); // c:2319
+    deletehookfunc("before_trap", zlebeforetrap); // c:2318
+    deletehookfunc("after_trap", zleaftertrap); // c:2319
                                                                        // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
                                                                        // explicit-name unlink from keymapnamtab so the next module load starts
                                                                        // fresh.
