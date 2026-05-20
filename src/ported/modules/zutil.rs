@@ -7,11 +7,12 @@
 //!
 //! Provides zstyle, zformat, zparseopts builtins.
 
-use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::OPT_ISSET;
-use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
+use crate::ported::zsh_h::{hashnode, param, Param, ERRFLAG_INT, PM_ARRAY};
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::atomic::Ordering;
 
 /// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
 /// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
@@ -717,9 +718,6 @@ pub fn addstyle(name: &str) -> Option<Style> {
 /// scalar form). Returns empty Vec on error or unset.
 pub fn evalstyle(p: &Stypat) -> Vec<String> {
     // c:413
-    use crate::ported::utils::errflag;
-    use crate::ported::zsh_h::ERRFLAG_INT;
-    use std::sync::atomic::Ordering;
 
     // c:415 — int ef = errflag;
     let ef = errflag.load(Ordering::Relaxed);

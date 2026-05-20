@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use super::zle_bindings::{EMACSBIND, METABIND, VICMDBIND, VIINSBIND};
 use super::zle_thingy::Thingy;
 use std::io::Write;
 
@@ -1689,7 +1690,6 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 /// canonical `EMACSBIND` / `METABIND` tables in
 /// `zle_bindings.rs` (which mirror `Src/Zle/zle_bindings.c:88-253`).
 pub fn setup_emacs_keymap(km: &mut Keymap) {
-    use super::zle_bindings::{EMACSBIND, METABIND};
 
     // c:1326-1329 — first 32 entries come from emacsbind table.
     for i in 0..32 {
@@ -1757,7 +1757,6 @@ pub fn setup_emacs_keymap(km: &mut Keymap) {
 /// driven by the canonical `VIINSBIND` table
 /// (`Src/Zle/zle_bindings.c:256-289`).
 pub fn setup_viins_keymap(km: &mut Keymap) {
-    use super::zle_bindings::VIINSBIND;
 
     // c:1326-1329 — first 32 entries from viinsbind.
     for i in 0..32 {
@@ -1792,7 +1791,6 @@ pub fn setup_viins_keymap(km: &mut Keymap) {
 /// driven by the canonical `VICMDBIND` table
 /// (`Src/Zle/zle_bindings.c:292-421`).
 pub fn setup_vicmd_keymap(km: &mut Keymap) {
-    use super::zle_bindings::VICMDBIND;
 
     // c:1342-1343 — 0-127 from vicmdbind.
     for i in 0..128 {

@@ -14,7 +14,7 @@ use crate::ported::zsh_h::EMULATE_FULLY;
 use crate::ported::zsh_h::OPT_SIZE;
 use crate::ported::zsh_h::{
     APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES,
-    MAILWARNING, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
+    MAILWARNING, MULTIBYTE, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
 };
 use std::sync::atomic::AtomicI32;
 
@@ -805,8 +805,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     // The previous Rust port skipped this tail entirely; flipping
     // BANGHIST off would still leave `!` flagged ISPECIAL in the
     // typtab, defeating the option's purpose.
-    use crate::ported::zsh_h::{BANGHIST, MULTIBYTE, SHINSTDIN as SHINSTDIN_C};
-    if ret == 0 && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN_C)
+    if ret == 0 && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN)
     // c:879-882
     {
         crate::ported::utils::inittyptab(); // c:883
@@ -1718,7 +1717,6 @@ mod tests {
     #[test]
     fn dosetopt_emacs_vi_mutual_exclusion() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{EMACSMODE, VIMODE};
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // Pre-set both ON to prove the toggle clears the other.
@@ -1987,7 +1985,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
-        use crate::ported::zsh_h::{INTERACTIVE, SHINSTDIN, SINGLECOMMAND};
 
         // Save current state to restore at end of test.
         let saved_interactive = opt_state_get("interactive").unwrap_or(false);

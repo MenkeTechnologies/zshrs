@@ -843,7 +843,6 @@ mod tests {
     #[test]
     fn test_minus_s_size_gt_zero() {
         let _g = crate::test_util::global_state_lock();
-        use std::io::Write;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
 
@@ -941,7 +940,6 @@ mod tests {
     #[test]
     fn test_dash_nt_dash_ot_compare_mtime() {
         let _g = crate::test_util::global_state_lock();
-        use std::io::Write;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
 
@@ -978,7 +976,6 @@ mod tests {
     #[test]
     fn test_dash_r_dash_w_access_check() {
         let _g = crate::test_util::global_state_lock();
-        use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
 
