@@ -24,32 +24,28 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::ported::module::{gethookdef, runhookdef};
 use crate::ported::params::{getsparam, paramtab, paramtab_hashed_storage, setaparam, setsparam};
-use crate::ported::signals::unqueue_signals;
-use crate::ported::zle::comp_h::{Cadata, Ccmakedat, Cline, Cmlist, Menuinfo};
-use crate::ported::zle::complete::{COMPQSTACK, INCOMPFUNC};
-use crate::ported::zle::compmatch::{bld_parts, cline_matched};
-use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-use crate::ported::zle::compresult::{do_ambig_menu, ztat};
-use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
-use crate::ported::zle::zle_tricky::{ORIGCS, ORIGLINE, VALIDLIST};
-use crate::ported::zsh_h::{
-    isset, Bnull, Inbrace, Outbrace, Stringg, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
-    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES,
-    SORTIT_NUMERICALLY,
-    Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qstring, Quest, Snull, Star, Tilde,
-};
-
-// --- AUTO: cross-zle hoisted-fn use glob ---
+use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::zle::comp_h::{
-    Aminfo, Cexpl, Cmatch, Cmgroup, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL,
-    CGF_UNIQCON, CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR,
-    CMF_PARNEST, CMF_ROWS,
-    CAF_ALL, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL,
-    CAF_UNIQCON,
+    Aminfo, Brinfo, Cadata, Ccmakedat, Cexpl, Cline, Cmatch, Cmgroup, Cmlist, Menuinfo, CAF_ALL,
+    CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL,
+    CAF_UNIQCON, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL, CGF_UNIQCON,
+    CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR, CMF_PARNEST,
+    CMF_ROWS,
 };
-use crate::ported::zle::complete::COMPLIST;
-use crate::ported::zle::complete::{COMPIPREFIX, COMPPREFIX, COMPSUFFIX};
+use crate::ported::zle::complete::{COMPIPREFIX, COMPLIST, COMPPREFIX, COMPQSTACK, COMPSUFFIX, INCOMPFUNC};
+use crate::ported::zle::compmatch::{bld_parts, cline_matched};
+use crate::ported::zle::compresult::{do_ambig_menu, ztat};
+use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
+use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
+use crate::ported::zle::zle_tricky::{MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB};
+use crate::ported::zsh_h::{
+    isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring,
+    Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
+    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES,
+    SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY,
+};
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 #[allow(unused_imports)]
@@ -69,8 +65,6 @@ use crate::ported::zle::zle_params::*;
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
-use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
-use crate::ported::zle::zle_tricky::{USEGLOB, WOULDINSTAB};
 #[allow(unused_imports)]
 use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
@@ -560,9 +554,9 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
     // 0 when no Hookfn is registered (matches c:993-995: empty funcs
     // and h->def NULL → return 0).
     let mut ret: i32 = 0;
-    let h_menu_start = crate::ported::module::gethookdef("menu_start");
+    let h_menu_start = gethookdef("menu_start");
     if !h_menu_start.is_null() {
-        ret = crate::ported::module::runhookdef(h_menu_start, std::ptr::null_mut());
+        ret = runhookdef(h_menu_start, std::ptr::null_mut());
     }
 
     if ret == 0 {
@@ -1581,7 +1575,7 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
         //          else if ((val = getsparam(nam))) { arr = {val, NULL}; }`
         // Read directly from paramtab: arrays first, then hashed
         // assoc-array values, then scalar wrapped in a 1-element array.
-        crate::ported::signals::queue_signals();
+        queue_signals();
         let result = {
             let tab = match paramtab().read() {
                 Ok(t) => t,
@@ -1619,7 +1613,7 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // c:2022
 
-    crate::ported::signals::queue_signals(); // c:2028
+    queue_signals(); // c:2028
 
     // c:2030-2034 — fetchvalue with SCANPM_MATCHMANY → scan the
     //                hashed param's keys/values. We approximate by
@@ -3578,12 +3572,12 @@ pub static lastend: AtomicI32 = AtomicI32::new(0); // c:276
 
 /// Port of `mod_export Brinfo brbeg` from `Src/Zle/zle_tricky.c`.
 /// Linked list of opening-brace positions in the word being completed.
-pub static BRBEG: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>> =
+pub static BRBEG: OnceLock<Mutex<Option<Box<Brinfo>>>> =
     OnceLock::new(); // zle_tricky.c brbeg
 
 /// Port of `mod_export Brinfo brend` from `Src/Zle/zle_tricky.c`.
 /// Linked list of closing-brace positions in the word being completed.
-pub static BREND: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>> =
+pub static BREND: OnceLock<Mutex<Option<Box<Brinfo>>>> =
     OnceLock::new(); // zle_tricky.c brend
 
 /// Port of `static int oldmenucmp` from compcore.c:457.
@@ -4131,11 +4125,11 @@ fn errflag_get() -> bool {
 /// (or 0 when no handler fires).
 fn runhookdef_compcore(hook: &str) -> i32 {
     // c:990
-    let h = crate::ported::module::gethookdef(hook);
+    let h = gethookdef(hook);
     if h.is_null() {
         return 0;
     }
-    crate::ported::module::runhookdef(h, std::ptr::null_mut())
+    runhookdef(h, std::ptr::null_mut())
 }
 
 /// Direct port of `runhookdef(COMPCTLMAKEHOOK, &dat)` from
