@@ -57,8 +57,9 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
 
     // c:73-77 — switch(id). Only ZREGEX_EXTENDED is defined.
     if id != ZREGEX_EXTENDED {
-        // c:188-191 default: DPUTS("bad regex option"); goto CLEAN.
-        return 0;
+        // c:199 — DPUTS(1, "bad regex option"); goto CLEAN_BASEMETA;
+        crate::DPUTS!(true, "bad regex option");                              // c:199
+        return 0;                                                             // c:200
     }
 
     // c:74-76 — flag computation. POSIX REG_EXTENDED is implicit
