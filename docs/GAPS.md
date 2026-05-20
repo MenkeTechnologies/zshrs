@@ -2423,6 +2423,30 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: edit-mode `fc N M` re-edits commands N..M; with empty -c session, that's the recurse-endlessly path. zshrs's prefix-search used `N` and reported `event not found: N` (wrong category for the range-edit form). Added a `positional.len() == 2 && both_numeric` precheck that emits zsh's recurse diagnostic. Test: `test_fc_2_numeric_positionals_recurse`.
 
+## Closed (eighty-eighth-pass — heredoc body collection + logical cd)
+
+### `cat <<EOF\nline\nEOF` heredoc body never collected (parse-error)
+
+`par_redir_with_id` (parse.rs:7357) called `zshlex()` to advance past the heredoc terminator word BEFORE pushing onto `HDOCS`. The wordcode variant at parse.rs:6894-6908 has the right order (push then advance) — the AST variant had drifted. Net effect: zshlex's NEWLIN-handler drained an empty `HDOCS`, the parser then consumed the body lines as fresh commands, and the second NEWLIN's drain found the terminator on the first read so `gethere()` returned empty content. Output: parse error + body executed as commands.
+
+Fix: defer the trailing `zshlex()` to after the `HDOCS`/`LEX_HEREDOCS` push, matching the wordcode variant.
+
+Tests now passing: `heredoc_basic`, `heredoc_dash_strips_tabs`, `heredoc_expands_variables`, `heredoc_quoted_delim_no_expand` in `tests/advanced_parity.rs`.
+
+### `parsestrnoerr` read from wrong input source (heredoc expansion errored)
+
+`gethere()` calls `parsestr()` to expand `$var` / `$(cmd)` / `$((expr))` in unquoted-terminator heredoc bodies. The Rust `parsestrnoerr` (lex.rs:2592) called `inpush()` (input.c's input-stack API) but `hgetc()` (lex.rs:3736) reads directly from `LEX_INPUT`/`LEX_POS` — `inpush` writes to `inbuf`, which the lexer never consults. So `dquote_parse` immediately hit EOF (pos was at end of outer script) and returned Err, triggering a spurious "parse error" that aborted the entire script.
+
+Fix: in `parsestrnoerr`, save+swap `LEX_INPUT`/`LEX_POS` around `dquote_parse` to point at the heredoc body, appending a `\0` sentinel so the `endchar='\0'` termination triggers cleanly (mirroring C's `dupstring_wlen` trailing-NUL).
+
+### `cd /tmp` returned `/private/tmp` (logical PWD lost on symlink dirs)
+
+`cd_new_pwd` (builtin.rs) wrote PWD via `std::env::current_dir()` after `bin_cd` had already set the logical `dest_path` into the paramtab. `current_dir()` always returns the OS-resolved physical path, so on macOS `/tmp` (symlink to `/private/tmp`) the logical write got stomped. The doc-comment at line 1669 even said PWD is "now done by the caller" — the stale stomping lines were never removed.
+
+Fix: drop the stale PWD/OLDPWD re-write block in `cd_new_pwd`; `bin_cd` is the authoritative writer. This also fixes the double-shift bug where OLDPWD got overwritten with the new PWD instead of preserving the pre-cd value.
+
+Test now passing: `subshell_cd_isolated` in `tests/advanced_parity.rs`.
+
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
 ### `${${a:l}:r}` nested expansion now applies outer modifier/replace to inner result
