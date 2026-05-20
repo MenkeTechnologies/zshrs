@@ -77,10 +77,19 @@ use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{cached_regex, slice_array_zero_based, slice_positionals};
 use crate::ported::zsh_h::{
-    hashnode, param, Param, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
-    PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER,
-    PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED,
-    PM_TIED, PM_UNIQUE, PM_UPPER, QT_BACKSLASH_PATTERN, SHFILEEXPANSION, SORTIT_ANYOLDHOW,
+    hashnode, isset, param, Bnull, Bnullkeep, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
+    Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Param,
+    Pound, Qstring, Qtick, Snull, Stringg, Tick, Tilde, ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE,
+    DISABLED, HASHED, IGNOREBRACES, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP,
+    LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME,
+    MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED,
+    PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B,
+    PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN,
+    PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT,
+    PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, QT_BACKSLASH_PATTERN,
+    QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS,
+    SHFILEEXPANSION, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
+    SORTIT_SOMEHOW,
 };
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
@@ -371,11 +380,6 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
 // drifted: local `STRING` → canonical `Stringg`, local
 // `OUTANGPROC` → canonical `OutangProc`. All other constants
 // matched bit-for-bit but living in two places invited future drift.
-use crate::ported::zsh_h::{
-    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang,
-    OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Snull, Stringg,
-    Tick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS,
-};
 // c:zsh.h:159-224 + scan flags c:1953-1973
 
 ///
@@ -1102,10 +1106,6 @@ pub fn quotesubst(str: &str) -> String {
 // PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
 // `flags & prefork_flags::X` test silently mis-tested the wrong
 // bit. Canonical defs imported from `crate::ported::zsh_h` below.
-use crate::ported::zsh_h::{
-    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
-    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
-};
 // c:zsh.h:2020-2042
 
 /// Glob entries in a linked list
@@ -2565,7 +2565,7 @@ pub fn paramsubst(
         let mut unique = false; // c:1730
 
         // c:1732 — `int casmod = CASMOD_NONE;`
-        let mut casmod: i32 = crate::ported::zsh_h::CASMOD_NONE; // c:1732
+        let mut casmod: i32 = CASMOD_NONE; // c:1732
 
         // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr = 0;`
         let mut quotemod: i32 = 0; // c:1739
@@ -2721,10 +2721,10 @@ pub fn paramsubst(
                             quotemod = 1; // c:2244
                             quotetype = if next == Some('+') {
                                 // c:2245
-                                crate::ported::zsh_h::QT_QUOTEDZPUTS // c:2245
+                                QT_QUOTEDZPUTS // c:2245
                             } else {
                                 // c:2246
-                                crate::ported::zsh_h::QT_SINGLE_OPTIONAL // c:2246
+                                QT_SINGLE_OPTIONAL // c:2246
                             }; // c:2246
                         } else {
                             // c:2247
@@ -2845,20 +2845,20 @@ pub fn paramsubst(
                         // c:2207
                         if sortit == 0 {
                             // c:2208 if (!sortit)
-                            sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW; // c:2209
+                            sortit |= SORTIT_SOMEHOW; // c:2209
                         } // c:2209
                     } // c:2210
                     'O' => {
                         // c:2211
-                        sortit |= crate::ported::zsh_h::SORTIT_BACKWARDS; // c:2212
+                        sortit |= SORTIT_BACKWARDS; // c:2212
                     } // c:2213
                     'i' => {
                         // c:2214
-                        sortit |= crate::ported::zsh_h::SORTIT_IGNORING_CASE; // c:2215
+                        sortit |= SORTIT_IGNORING_CASE; // c:2215
                     } // c:2216
                     'n' => {
                         // c:2217
-                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY; // c:2218
+                        sortit |= SORTIT_NUMERICALLY; // c:2218
                     } // c:2219
                     '-' => {
                         // c:2220 case '-': case Dash:
@@ -2867,7 +2867,7 @@ pub fn paramsubst(
                     } // c:2223
                     'a' => {
                         // c:2224
-                        sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW; // c:2225
+                        sortit |= SORTIT_SOMEHOW; // c:2225
                         indord = 1; // c:2226
                     } // c:2227
                     'u' => {
@@ -3017,7 +3017,7 @@ pub fn paramsubst(
                                 // c:2457
                                 } else if ch == 'n' {
                                     // c:2460
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_NEWLINE;
+                                    shsplit |= LEXFLAGS_NEWLINE;
                                     // c:2462
                                 } // c:2463
                                 idx += 1; // c:2448
@@ -5104,7 +5104,7 @@ pub fn paramsubst(
             }
             out
         };
-        if casmod != crate::ported::zsh_h::CASMOD_NONE {
+        if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
                 // c:3937
@@ -5166,7 +5166,7 @@ pub fn paramsubst(
                 // — skip sort entirely.
                 if indord == 0 {
                     // c:4292 if (!indord)
-                    if (sortit & crate::ported::zsh_h::SORTIT_NUMERICALLY) != 0 {
+                    if (sortit & SORTIT_NUMERICALLY) != 0 {
                         // c:4189 SORTIT_NUMERICALLY
                         // SORTIT_NUMERICALLY_SIGNED (c:2222) is a
                         // bit-OR on top of NUMERICALLY; f64 parse
@@ -5178,7 +5178,7 @@ pub fn paramsubst(
                             let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
                             na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
                         }); // c:4189
-                    } else if (sortit & crate::ported::zsh_h::SORTIT_IGNORING_CASE) != 0 {
+                    } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
                         // c:4187 SORTIT_IGNORING_CASE
                         sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
                     } else {
@@ -5186,7 +5186,7 @@ pub fn paramsubst(
                         sorted.sort(); // c:4180
                     } // c:4187
                 } // c:4292
-                if (sortit & crate::ported::zsh_h::SORTIT_BACKWARDS) != 0 {
+                if (sortit & SORTIT_BACKWARDS) != 0 {
                     // c:4294 SORTIT_BACKWARDS
                     sorted.reverse(); // c:4191
                 } // c:4294
@@ -5449,7 +5449,7 @@ pub fn paramsubst(
                         // c:2456
                         in_comment = true; // c:2456
                     } // c:2456
-                    '\n' if (shsplit & crate::ported::zsh_h::LEXFLAGS_NEWLINE) != 0 => {
+                    '\n' if (shsplit & LEXFLAGS_NEWLINE) != 0 => {
                         // c:2461 (n: nl as ws)
                         push_word(&mut cur, &mut words); // c:2461
                     } // c:2461
@@ -5730,7 +5730,7 @@ pub fn paramsubst(
         // which dispatches by quotetype.
         let quote_one = |s: &str| -> String {
             // c:4030
-            if quotetype == crate::ported::zsh_h::QT_SINGLE_OPTIONAL {
+            if quotetype == QT_SINGLE_OPTIONAL {
                 // c:2245 (q-)
                 let needs = s.chars().any(|c| {
                     // c:2245
@@ -5763,7 +5763,7 @@ pub fn paramsubst(
                     // c:2245
                     s.to_string() // c:2245
                 } // c:2245
-            } else if quotetype == crate::ported::zsh_h::QT_QUOTEDZPUTS {
+            } else if quotetype == QT_QUOTEDZPUTS {
                 // c:2245 (q+)
                 quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
             } else if quotemod > 0 {
@@ -6647,7 +6647,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         Err(_) => crate::math::mnumber {
             l: 0,
             d: 0.0,
-            type_: crate::ported::zsh_h::MN_UNSET,
+            type_: MN_UNSET,
         },
     };
 
@@ -6660,14 +6660,14 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         .as_ref()
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0); // c:4492
-    let b: String = if v.type_ == crate::ported::zsh_h::MN_UNSET {
+    let b: String = if v.type_ == MN_UNSET {
         "0".to_string() // c:4498 — MN_UNSET falls through to zero in practice
-    } else if (v.type_ == crate::ported::zsh_h::MN_FLOAT) && outputradix == 0 {
+    } else if (v.type_ == MN_FLOAT) && outputradix == 0 {
         // c:4493-4494
         crate::ported::params::convfloat_underscore(v.d, outputunderscore)
     } else {
         // c:4496-4498
-        let l = if (v.type_ == crate::ported::zsh_h::MN_FLOAT) {
+        let l = if (v.type_ == MN_FLOAT) {
             v.d as i64
         } else {
             v.l
@@ -7660,7 +7660,6 @@ fn scanpmbuiltins() -> String {
 // `pub mod multsub_flags { … }` — DELETED per user directive; was
 // a Rust-only u32 wrapper duplicating the canonical i32 constants
 // in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
-use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START};
 // c:zsh.h:2046-2059
 
 /// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
@@ -8660,8 +8659,6 @@ pub fn sub_flags_get() -> i32 {
 // and `Bnullkeep = '\u{a0}'`. Both already imported from
 // `crate::ported::zsh_h` at the top of this file (Dnull) and
 // available there (Bnullkeep). Bringing Bnullkeep into scope.
-use crate::ported::zsh_h::Bnullkeep;
-use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, IGNOREBRACES};
 
 /// Write the paramsubst flag bitmask. Equivalent to C's
 /// `sub_flags = X` at `Src/subst.c:2169`.
