@@ -19,8 +19,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // Re-export the canonical `compctl.h` ports from compctl_h.rs so
 // callers within compctl.rs reference the legit names. The four
@@ -46,14 +45,11 @@ use crate::ported::zle::complete::parse_cmatcher;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 // =====================================================================
 // COMP_* — `compctl` operation flags from `Src/Zle/compctl.c:53-60`.

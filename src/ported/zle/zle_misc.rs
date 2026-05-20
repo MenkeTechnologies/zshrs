@@ -25,16 +25,14 @@ use crate::ported::zle::zle_main::{
     MULT, NEG_ARG, PREFIXFLAG, REGION_ACTIVE, YANKB, YANKE, ZLECS, ZLELINE, ZLELL,
     ZLE_RESET_NEEDED, ZMOD,
 };
-use crate::ported::zle::compcore::LASTCHAR;
+use crate::ported::zle::compcore::{
+    LASTCHAR, ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZLELL as ZLELL_C,
+};
 use std::io::Read;
-use std::sync::atomic::AtomicI32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::atomic::Ordering::SeqCst;
 
 use crate::ported::builtins::sched::zleactive;
-use crate::ported::zle::compcore::{
-    ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZLELL as ZLELL_C,
-};
 use crate::ported::utils::{errflag, quotestring};
 use crate::ported::zle::complete::INCOMPFUNC;
 use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos, vifirstnonblank};
@@ -50,7 +48,8 @@ use crate::zle::zle_h::{MOD_MULT, MOD_NEG, MOD_NULL, MOD_TMULT};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*,
+    deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_move::*, zle_params::*,
+    zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `int done` from `Src/Zle/zle_main.c:79`. Non-zero when
 /// the editor session should terminate (`accept-line`,
@@ -58,10 +57,6 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_hist::*, zle_main::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 /// Port of `doinsert(ZLE_STRING_T zstr, int len)` from `Src/Zle/zle_misc.c:37`.
 /// ```c

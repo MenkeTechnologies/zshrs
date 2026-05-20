@@ -20,7 +20,8 @@ use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 // in scope via the `zle_misc::*` glob below.
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*,
+    deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main, zle_main::*, zle_misc::*,
+    zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_word::*,
 };
 /// Port of `int virangeflag;` from `Src/Zle/zle_vi.c:36`. Set during
 /// vi range-pending operations to suppress the cursor-included
@@ -28,15 +29,7 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_hist::*,
-};
-use crate::ported::zle::zle_main;
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_word::*,
-};
 
 /// Direct port of `int vichange(UNUSED(char **args))` from
 /// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered

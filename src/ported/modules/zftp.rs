@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::ported::builtin::SFCONTEXT;
 use crate::ported::params::getiparam;
 use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::options;
+use crate::ported::zsh_h::{module, options};
 
 /// Port of `zftp_session(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2889`.
 #[allow(unused_variables)]
@@ -4247,7 +4247,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 // static struct features module_features                            c:3163 (zftp.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zftp.c:3196`.
 #[allow(unused_variables)]

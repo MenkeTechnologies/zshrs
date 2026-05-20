@@ -12,6 +12,9 @@
 #![allow(clippy::approx_constant)]
 
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features, module};
+use crate::random_real::random_real;
 
 // libm bindings used by the math-function dispatcher. Direct port
 // of the calls C's `math_func()` (Src/Modules/mathfunc.c:172-436)
@@ -66,7 +69,7 @@ pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {
             let _ = trimmed;
             mnumber {
                 l: 0,
-                d: crate::ported::modules::random_real::random_real(),
+                d: random_real(),
                 type_: MN_FLOAT,
             }
         }
@@ -190,8 +193,6 @@ pub const MF_YN: i32 = 47; // c:84
 // static struct mathfunc mftab[]                                    c:497
 // static struct features module_features                            c:540
 // =====================================================================
-
-use crate::ported::zsh_h::module;
 
 // ============================================================
 // MS_* — port of the anonymous `enum {}` at mathfunc.c:90.
@@ -385,9 +386,8 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
     ret // c:434
 }
 
-use std::sync::{Mutex, OnceLock};
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -395,7 +395,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
 /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "f:abs".to_string(),
         "f:acos".to_string(),
@@ -454,7 +454,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -467,7 +467,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -497,9 +497,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 0,
             cd_list: None,

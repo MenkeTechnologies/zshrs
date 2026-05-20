@@ -21,7 +21,10 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
 
-use super::zle_h::{widget, ZLE_LASTCOL, ZLE_NOTCOMMAND};
+use super::zle_h::{
+    MOD_CHAR, MOD_CLIP, MOD_LINE, MOD_MULT, MOD_NEG, MOD_NULL, MOD_OSSEL, MOD_PRI, MOD_TMULT,
+    MOD_VIAPP, MOD_VIBUF, ZLE_LASTCOL, ZLE_NOTCOMMAND, widget,
+};
 use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
 use crate::ported::builtin::LASTVAL;
@@ -189,10 +192,6 @@ impl Default for modifier {
     }
 }
 
-use super::zle_h::{
-    MOD_CHAR, MOD_CLIP, MOD_LINE, MOD_MULT, MOD_NEG, MOD_NULL, MOD_OSSEL, MOD_PRI, MOD_TMULT,
-    MOD_VIAPP, MOD_VIBUF,
-};
 
 /// Port of `breakread(int fd, char *buf, int n)` from Src/Zle/zle_main.c:381.
 pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {

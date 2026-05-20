@@ -32,7 +32,8 @@ use crate::ported::zsh_h::{zattr, HashNode};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `ZLE_CHAR_T` from zle.h:31 / zle.h:107.
 
@@ -40,10 +41,6 @@ use crate::ported::zle::{
 #[allow(unused_imports)]
 // (was: use crate::ported::zle::widget::*; — widget.rs deleted)
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub type ZLE_CHAR_T = char; // c:31
 

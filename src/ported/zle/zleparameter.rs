@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*,
+    deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Format a widget's type label as `$widgets[name]` would show it.
 /// Port of `widgetstr(Widget w)` from Src/Zle/zleparameter.c. The C source
@@ -24,10 +25,6 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*,
-    zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     // c:37

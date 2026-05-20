@@ -19,14 +19,13 @@
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::Ordering;
 
-use crate::ported::params::locallevel;
+use crate::ported::params::{
+    getstrvalue, getvalue, getvaluearr, locallevel, paramtab, setaparam, setarrvalue, sethparam,
+    setiparam, setsparam, setstrvalue,
+};
 use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
 use crate::ported::lex::untokenize;
 use crate::ported::mem::ztrdup;
-use crate::ported::params::{
-    getstrvalue, getvalue, getvaluearr, paramtab, setaparam, setarrvalue, sethparam, setiparam,
-    setsparam, setstrvalue,
-};
 use crate::ported::pattern::{haswilds, patcompile, pattry, Patprog};
 use crate::ported::string::tricat;
 use crate::ported::utils::{
@@ -56,17 +55,14 @@ use crate::ported::ztype_h::{iblank, idigit, imeta, inblank};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `CRT_SIMPLE` from `Src/Zle/computil.c:79`. Plain match row.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 // =====================================================================
 // `_describe`-completion types — direct ports of the C structs at

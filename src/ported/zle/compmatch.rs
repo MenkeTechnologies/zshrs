@@ -36,7 +36,8 @@ use crate::ported::pattern::pattry;
 use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `cpatterns_same(Cpattern a, Cpattern b)` from `Src/Zle/compmatch.c:42`.
 /// ```c
@@ -70,10 +71,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn cpatterns_same(
     // c:44
@@ -488,8 +485,7 @@ pub fn cline_setlens(l: &mut Option<Box<Cline>>, both: i32) {
 // — `Src/Zle/compmatch.c:283-317`.
 // =====================================================================
 
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Port of `cline_matched(Cline p)` from `Src/Zle/compmatch.c:254`.
 /// ```c

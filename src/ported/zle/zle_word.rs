@@ -62,14 +62,11 @@ use super::zle_h::MOD_MULT;
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*,
 };
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*,
-};
 
 // Local aliases routing to the canonical `ZC_*` predicates in
 // `zle_h.rs:246-271` (port of `Src/Zle/zle.h:60-73`). Re-defining

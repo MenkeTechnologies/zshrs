@@ -9,15 +9,16 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::zle_h::{widget, WidgetImpl};
 use super::zle_h::{
-    TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP,
+    TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, WidgetImpl, ZLE_ISCOMP, ZLE_KEEPSUFFIX,
+    ZLE_MENUCMP, widget,
 };
 use crate::ported::zsh_h::DISABLED;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*,
+    deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
 /// reference to a widget. `ThingyFlags` deleted — C uses an `int
@@ -25,10 +26,6 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*,
-    zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.

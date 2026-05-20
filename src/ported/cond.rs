@@ -27,7 +27,7 @@ use std::path::Path;
 use crate::glob::matchpat;
 use crate::ported::zsh_h::{
     COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT, COND_OT, COND_REGEX,
-    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
+    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, isset, unset,
 };
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
@@ -580,7 +580,6 @@ pub fn optison(name: &str, s: &str) -> i32 {
 // / `(!opts[X])`. Re-exported from the canonical port in zsh_h.rs
 // which reads the live opt_state, NOT a fresh `ShellOptions::new()`
 // (the latter returns defaults and would be wrong).
-use crate::ported::zsh_h::{isset, unset};
 
 /// Port of `cond_str(char **args, int num, int raw)` from `Src/cond.c:525-535`.
 ///

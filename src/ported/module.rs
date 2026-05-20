@@ -18,12 +18,10 @@ use crate::ported::params::{paramtab, unsetparam_pm};
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{zwarn, zwarnnam};
 use crate::ported::zsh_h::{
-    builtin, conddef, funcwrap, hookdef, mathfunc, options, paramdef, HOOKF_ALL, Hookfn,
-};
-use crate::ported::zsh_h::{
-    BINF_AUTOALL, CONDF_AUTOALL, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S,
-    MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT,
-    PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE,
+    BINF_AUTOALL, CONDF_AUTOALL, HOOKF_ALL, Hookfn, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B,
+    MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT,
+    PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED,
+    PM_TYPE, builtin, conddef, funcwrap, hookdef, mathfunc, options, paramdef,
 };
 use crate::zsh_h::module;
 use once_cell::sync::Lazy;
