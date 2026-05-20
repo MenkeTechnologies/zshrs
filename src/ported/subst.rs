@@ -61,13 +61,17 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
+use crate::ported::exec::getoutput;
+use crate::ported::glob::xpandbraces;
 use crate::ported::hashnameddir::nameddirtab;
-use crate::ported::hashtable::{aliastab_lock, shfunctab_lock};
+use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, shfunctab_lock, sufaliastab_lock};
 use crate::ported::hist::{
-    casemodify, hsubl, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER,
-    CASMOD_UPPER,
+    casemodify, hsubl, hsubpatopt, hsubr, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS,
+    CASMOD_LOWER, CASMOD_UPPER,
 };
+use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
+use crate::ported::options::opt_state_set;
 use crate::ported::params::{
     assignsparam, getarrvalue, getsparam, paramtab, paramtab_hashed_storage,
 };
@@ -305,7 +309,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // splits the node into N nodes.
                 //
                 // Routes through canonical
-                // crate::ported::glob::xpandbraces; treats >1
+                // xpandbraces; treats >1
                 // result as a positive hasbraces hit.
                 if !isset(IGNOREBRACES) && (flags & PREFORK_SINGLE == 0) {
                     // c:166
@@ -319,7 +323,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                             Some(d) => d.to_string(),
                             None => break,
                         };
-                        let expanded = crate::ported::glob::xpandbraces(&cur, false); // c:171
+                        let expanded = xpandbraces(&cur, false); // c:171
                         if expanded.len() <= 1 {
                             break;
                         } // c:170 (!hasbraces)
@@ -826,7 +830,7 @@ fn stringsubst(
                         std::fs::read_to_string(path).unwrap_or_default()
                     } else {
                         // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                        crate::ported::exec::getoutput(&cmd)
+                        getoutput(&cmd)
                     };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -1015,7 +1019,7 @@ fn stringsubst(
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
                                                                           // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                let output = crate::ported::exec::getoutput(&cmd);
+                let output = getoutput(&cmd);
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237
@@ -2143,7 +2147,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
     } // c:1445
 
     // C: `ret = mathevali(p);` — evaluate as integer math.
-    let ret = match crate::ported::math::mathevali(&expanded) {
+    let ret = match mathevali(&expanded) {
         // c:1447
         Ok(n) => n,            // c:1447
         Err(_) => return None, // c:1448
@@ -2253,7 +2257,7 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
     // invalid math expr stays local.
     // (Rust port has no global errflag — the Result type carries
     // the error directly.)
-    let ires = match crate::ported::math::mathevali(ptr) {
+    let ires = match mathevali(ptr) {
         // c:1497
         Ok(n) => n, // c:1497
         Err(_) => {
@@ -3195,12 +3199,12 @@ pub fn paramsubst(
             if c == '~' {
                 if body_chars.get(idx + 1).copied() == Some('~') {
                     if !qt {
-                        crate::ported::options::opt_state_set("globsubst", false);
+                        opt_state_set("globsubst", false);
                     }
                     idx += 2;
                 } else {
                     if !qt {
-                        crate::ported::options::opt_state_set("globsubst", true);
+                        opt_state_set("globsubst", true);
                     }
                     idx += 1;
                 }
@@ -3967,7 +3971,7 @@ pub fn paramsubst(
                                 names.join(" ")
                             }),
                         "commands" => {
-                            crate::ported::hashtable::cmdnamtab_lock()
+                            cmdnamtab_lock()
                                 .read()
                                 .ok()
                                 .map(|t| {
@@ -6978,8 +6982,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 3
             };
             *hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
-            *crate::ported::hist::hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
-            crate::ported::hist::hsubpatopt
+            *hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
+            hsubpatopt
                 .store(mode as i32, Ordering::Relaxed); // c:4673
                                                                            // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
                                                                            // rejoins. Pull through the same code path :& uses
@@ -7019,10 +7023,10 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             // c:4531
             let last_subst = {
                 let p_opt = hsubl.lock().unwrap().clone();
-                let r_opt = crate::ported::hist::hsubr.lock().unwrap().clone();
+                let r_opt = hsubr.lock().unwrap().clone();
                 match (p_opt, r_opt) {
                     (Some(p), Some(r)) => {
-                        let mode = crate::ported::hist::hsubpatopt
+                        let mode = hsubpatopt
                             .load(Ordering::Relaxed)
                             as u8;
                         Some((p, r, mode))
@@ -7425,7 +7429,7 @@ fn scanpmgaliases() -> String {
 
 /// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
 fn scanpmsaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock()
+    sufaliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7526,7 +7530,7 @@ fn scanpmdisgaliases() -> String {
 
 /// `scanpmdissaliases` — disabled-suffix-aliases arm.
 fn scanpmdissaliases() -> String {
-    crate::ported::hashtable::sufaliastab_lock()
+    sufaliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7543,7 +7547,7 @@ fn scanpmdissaliases() -> String {
 /// HASHED arm reads `cmd` (resolved path); unhashed reads first
 /// path segment in `name` (Vec<String>) joined with the cmd name.
 fn scanpmcommands() -> String {
-    crate::ported::hashtable::cmdnamtab_lock()
+    cmdnamtab_lock()
         .read()
         .ok()
         .map(|t| {

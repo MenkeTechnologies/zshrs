@@ -32,15 +32,18 @@ use crate::ported::init::zleentry;
 use crate::ported::jobs::gettrapnode;
 use crate::ported::mem::{zsfree, ztrdup};
 use crate::ported::options::optlookup;
-use crate::ported::params::locallevel as LOCALLEVEL;
+use crate::ported::params::{getiparam, locallevel as LOCALLEVEL, ttyidlegetfn};
 use crate::ported::signals_h::{
     SIGNUM, TRAPCOUNT as TRAPCOUNT_H, VSIGCOUNT,
 };
-use crate::ported::utils::{errflag, locallevel as locallevel_fn, ERRFLAG_ERROR, RESETNEEDED};
+use crate::ported::utils::{
+    errflag, inc_locallevel, locallevel as locallevel_fn, zerr, zwarn, ERRFLAG_ERROR, RESETNEEDED,
+};
 use crate::ported::zsh_h::{
-    isset, Eprog, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE,
-    POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAPSASYNC, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED,
-    ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
+    isset, Eprog, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, HUP,
+    INTERACTIVE, LOCALTRAPS, MONITOR, POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAPSASYNC,
+    TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC,
+    ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
 };
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
 // getsigidx / getsigname live in `jobs.rs` per C source split:
@@ -297,7 +300,7 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {
         .unwrap_or(0);
     let int_trapped = (int_state & !ZSIG_IGNORED) != 0;
     let trapsasync_set = isset(
-        crate::ported::zsh_h::TRAPSASYNC, // c:228 isset(TRAPSASYNC)
+        TRAPSASYNC, // c:228 isset(TRAPSASYNC)
     );
     if !(wait_cmd || trapsasync_set || int_trapped) {
         unsafe {
@@ -452,7 +455,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:476-489 — idle vs TMOUT branch. The previous Rust
                 // port commented "Skip the still idle re-arm" claiming
                 // no ttyidlegetfn port — but it IS ported at
-                // `crate::ported::params::ttyidlegetfn`. Now wired
+                // `ttyidlegetfn`. Now wired
                 // exactly per C.
                 //
                 // C body (c:478-484):
@@ -461,8 +464,8 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 //   if (idle >= 0 && idle < tmout)
                 //       alarm(tmout - idle);
                 //   else { /* timeout exit */ }
-                let idle = crate::ported::params::ttyidlegetfn(); // c:478
-                let tmout = crate::ported::params::getiparam("TMOUT"); // c:479
+                let idle = ttyidlegetfn(); // c:478
+                let tmout = getiparam("TMOUT"); // c:479
                 if idle >= 0 && idle < tmout {
                     // c:481 — `alarm(tmout - idle);` — re-arm for
                     // remaining idle window. Previously this branch
@@ -482,7 +485,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     // c:486 — `errflag = noerrs = 0;`
                     errflag.store(0, Ordering::Relaxed);
                     // c:487 — `zwarn("timeout");`
-                    crate::ported::utils::zwarn("timeout"); // c:487
+                    zwarn("timeout"); // c:487
                     STOPMSG.store(1, Ordering::Relaxed); // c:488
                     zexit(libc::SIGALRM, ZEXIT_SIGNAL); // c:489
                 }
@@ -521,7 +524,7 @@ pub fn killrunjobs(from_signal: i32) {
     // c:506
     // c:512 — `if (unset(HUP)) return;`. HUP option gates the
     // whole walk: when `setopt nohup`, jobs survive shell exit.
-    if !isset(crate::ported::zsh_h::HUP) {
+    if !isset(HUP) {
         // c:512
         return;
     }
@@ -569,7 +572,7 @@ pub fn killrunjobs(from_signal: i32) {
     // c:524 — `if (killed) zwarn("warning: %d jobs SIGHUPed", killed);`
     if killed != 0 {
         // c:524
-        crate::ported::utils::zwarn(&format!("warning: {} jobs SIGHUPed", killed));
+        zwarn(&format!("warning: {} jobs SIGHUPed", killed));
         // c:524
     }
 }
@@ -671,11 +674,11 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     // the `zerr` emission — silently failing with no diagnostic.
     // C names the specific signal in the error so the user knows
     // which trap was rejected.
-    let jobbing = isset(crate::ported::zsh_h::MONITOR); // c:696
+    let jobbing = isset(MONITOR); // c:696
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         // c:697 — `zerr("can't trap SIG%s in interactive shells", sigs[sig])`.
         let signame = getsigname(sig);
-        crate::ported::utils::zerr(&format!("can't trap SIG{} in interactive shells", signame));
+        zerr(&format!("can't trap SIG{} in interactive shells", signame));
         return 1; // c:699
     }
 
@@ -728,7 +731,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
         // SIGRTMIN+1 signal — the signal would still fire and the
         // default action would kick in instead of being suppressed.
         #[cfg(target_os = "linux")]
-        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+        if sig >= VSIGCOUNT && sig < TRAPCOUNT_H {
             signal_ignore(SIGNUM(sig)); // c:722
         }
     } else {
@@ -748,7 +751,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
         // store the trap but NEVER install the libc handler, so the
         // signal would fire with default action (terminate the shell).
         #[cfg(target_os = "linux")]
-        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+        if sig >= VSIGCOUNT && sig < TRAPCOUNT_H {
             install_handler(SIGNUM(sig)); // c:735
         }
     }
@@ -806,7 +809,7 @@ pub fn removetrap(sig: i32) {
     if sig == -1 {
         return;
     }
-    let jobbing = isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(MONITOR);
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         return;
     }
@@ -825,7 +828,7 @@ pub fn removetrap(sig: i32) {
     let cond_local_or_exit = if sig == SIGEXIT {
         !isset(POSIXTRAPS) // c:771 sig==SIGEXIT branch
     } else {
-        isset(crate::ported::zsh_h::LOCALTRAPS) // c:771 else branch
+        isset(LOCALTRAPS) // c:771 else branch
     };
     if DONTSAVETRAP.load(Ordering::Relaxed) == 0                             // c:769
         && cond_local_or_exit
@@ -883,7 +886,7 @@ pub fn removetrap(sig: i32) {
     // (no-longer-trapped) shell handler.
     #[cfg(target_os = "linux")]
     {
-        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+        if sig >= VSIGCOUNT && sig < TRAPCOUNT_H {
             signal_default(SIGNUM(sig)); // c:818
         }
     }
@@ -967,7 +970,7 @@ pub fn starttrapscope() {
         // c:865-867 — bump locallevel so the dosavetrap inside
         // unsettrap tags the save entry with the outer scope's
         // level. Rust's locallevel is a global counter in utils.rs.
-        crate::ported::utils::inc_locallevel();
+        inc_locallevel();
         unsettrap(SIGEXIT); // c:866
         crate::ported::utils::dec_locallevel();
     }
@@ -1135,7 +1138,7 @@ pub fn handletrap(sig: i32) -> i32 {
         // the alarm-reset can now mirror C exactly.
         #[cfg(unix)]
         unsafe {
-            let tmout = crate::ported::params::getiparam("TMOUT");
+            let tmout = getiparam("TMOUT");
             if tmout > 0 {
                 libc::alarm(tmout as u32); // c:996
             }
