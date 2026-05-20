@@ -14,11 +14,13 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-
 use crate::ported::builtin::SFCONTEXT;
 use crate::ported::params::getiparam;
 use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::{module, options};
+use std::sync::{Mutex, OnceLock};
+
+
 
 /// Port of `zftp_session(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2889`.
 #[allow(unused_variables)]
@@ -4603,7 +4605,6 @@ pub static OALTIME: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64:
 
 // `zftp_cleanup` is defined above at c:3128; the exit hook calls it.
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

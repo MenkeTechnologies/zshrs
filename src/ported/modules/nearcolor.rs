@@ -18,9 +18,11 @@
 #![allow(non_snake_case)]
 
 use std::sync::atomic::Ordering;
-
 use crate::ported::init::tccolours;
 use crate::ported::zsh_h::{color_rgb, features, hookdef, module};
+use std::sync::{Mutex, OnceLock};
+
+
 
 // =====================================================================
 // struct cielab { double L, a, b; };                                 c:35
@@ -447,7 +449,6 @@ fn deletehookdeffunc(_h: *const hookdef, _f: fn(*const hookdef, *const color_rgb
     1 // c:972
 }
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 

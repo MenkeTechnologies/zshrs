@@ -18,6 +18,9 @@
 
 use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
 use std::sync::atomic::Ordering;
+use crate::ported::zsh_h::module;
+use std::sync::{Mutex, OnceLock};
+
 
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
@@ -408,7 +411,6 @@ pub fn scanterminfo() -> Vec<(String, String)> {
 // static struct features module_features                            c:307 (terminfo.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 // `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
 
@@ -488,7 +490,6 @@ pub const COMMON_STRING_CAPS: &[&str] = &[
     "cup", "ich1", "dch1", "il1", "dl1",
 ];
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

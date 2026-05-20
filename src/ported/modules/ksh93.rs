@@ -27,13 +27,17 @@
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
-
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setsparam};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
 use crate::ported::zsh_h::{eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET};
 use crate::ported::ztype_h::INAMESPC;
+pub use crate::ported::options::emulation;
+pub use crate::ported::params::locallevel;
+use crate::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
+
+
 
 // =====================================================================
 // /* Implementing "namespace" requires creating a new keword.  Hrm. */ c:34
@@ -652,15 +656,12 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>
 // `emulation` lives in `crate::ported::options::emulation` per Rule C
 // (its C definition is `Src/options.c:36`, not `ksh93.c`). The
 // `EMULATION(bits)` macro at zsh.h:2347 tests bits against it.
-pub use crate::ported::options::emulation;
 
 // `locallevel` lives in `crate::ported::params::locallevel` per Rule C
 // (its C definition is `Src/params.c:54`, not `ksh93.c`). Bumped by
 // `startparamscope` on function entry, decremented by `endparamscope`
 // on return. `ksh93_wrapper` increments before `createparam()` and
 // decrements after.
-pub use crate::ported::params::locallevel;
-use crate::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
 
 /// `curkeymapname` — `char *` global from `Src/Zle/zle_keymap.c`,
 /// declared `extern` at c:189. Holds the active keymap name.

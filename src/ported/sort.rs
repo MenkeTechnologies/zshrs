@@ -32,18 +32,19 @@
 //!   `wcrtomb` dance at sort.c:341-368).
 
 use std::cmp::Ordering;
-
 use crate::zsh_h::{
     SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_BACKSLASHES, SORTIT_IGNORING_CASE,
     SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW,
 };
+use crate::ported::zsh_h::sortelt;
+use libc;
+use std::ffi::CString;
+
+
 
 // SortElt struct + impl deleted — the canonical sort-element type is
 // `crate::ported::zsh_h::sortelt` (port of `struct sortelt` at
 // `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
-use crate::ported::zsh_h::sortelt;
-use libc;
-use std::ffi::CString;
 
 /// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
 ///

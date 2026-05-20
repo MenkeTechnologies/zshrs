@@ -20,9 +20,12 @@
 #![allow(non_snake_case)]
 
 use std::ffi::CString;
-
 use crate::ported::utils::{metafy, unmetafy, zwarnnam};
 use crate::ported::zsh_h::{features, module, options, OPT_ISSET, MAX_OPS};
+use std::sync::{Mutex, OnceLock};
+use crate::params::setsparam;
+
+
 
 // =====================================================================
 // xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)  c:36
@@ -579,8 +582,6 @@ fn unsetparam(v: &str) {
 // Tests
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::params::setsparam;
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 

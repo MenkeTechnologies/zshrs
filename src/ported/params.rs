@@ -11,10 +11,8 @@ use std::env;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
 use fusevm::Value;
 use indexmap::IndexMap;
-
 use crate::config_h::DEFAULT_TMPPREFIX;
 use crate::func_body_fmt::FuncBodyFmt;
 use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, savehistsiz};
@@ -51,6 +49,9 @@ use crate::ported::zsh_h::{
     SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
     WARNCREATEGLOBAL, WARNNESTEDVAR,
 };
+pub use crate::ported::zsh_h::{TERM_UNKNOWN, param};
+
+
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
 /// (under `#ifdef USE_LOCALE`). Set to 1 by `scanendscope` when a
@@ -139,7 +140,6 @@ pub static locallevel: std::sync::atomic::AtomicI32 = // c:54
 // C; do not reintroduce one.
 // ---------------------------------------------------------------------------
 
-pub use crate::ported::zsh_h::{TERM_UNKNOWN, param};
 
 /// Port of `LCIPDEF(name)` from `Src/params.c:324` —
 /// `IPDEF2(name, lc_blah_gsu, PM_UNSET)`.

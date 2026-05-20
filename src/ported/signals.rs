@@ -19,12 +19,10 @@ pub use crate::signals_h::{signal_default, signal_ignore};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-
 use nix::sys::signal::{
     sigprocmask, SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal, SigmaskHow,
 };
 use nix::unistd::getpid;
-
 use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
@@ -46,11 +44,18 @@ use crate::ported::zsh_h::{
     ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
 };
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
+pub use crate::ported::jobs::{getsigidx, getsigname};
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::r#loop::try_tryflag;
+use crate::sched::zleactive;
+use crate::utils::getshfunc;
+
+
+
 // getsigidx / getsigname live in `jobs.rs` per C source split:
 // `getsigidx` at `Src/jobs.c:3047`, `getsigname` at `Src/jobs.c:3087`.
 // Re-export from the canonical home so callers using
 // `crate::ported::signals::getsigidx` continue to compile.
-pub use crate::ported::jobs::{getsigidx, getsigname};
 
 /// Per-slot trap-queue signals. Port of `static int
 /// trap_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:92`.
@@ -901,10 +906,6 @@ pub fn removetrap(sig: i32) {
 // continue to compile, and the QUEUEING_ENABLED state is shared
 // across all callers (instead of split between two parallel
 // SignalQueue/QUEUEING_ENABLED counters).
-pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
-use crate::r#loop::try_tryflag;
-use crate::sched::zleactive;
-use crate::utils::getshfunc;
 
 /// Remove a trap completely and reset to default disposition.
 /// Port of `removetrap(int sig)` from Src/signals.c:772.

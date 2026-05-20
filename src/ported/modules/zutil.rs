@@ -7,14 +7,18 @@
 //!
 //! Provides zstyle, zformat, zparseopts builtins.
 
-use crate::ported::params::{assignaparam, getaparam, setaparam, setsparam, unsetparam};
+use crate::ported::options::opt_state_set;
+use crate::ported::params::{assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam};
+use crate::ported::pattern::{patcompile, patmatch, pattry};
+use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::{
-    ERRFLAG_INT, HashNode, OPT_ISSET, PM_ARRAY, Param, Patprog, hashnode, module, options, param,
-};
+use crate::ported::zsh_h::{eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param, Patprog, ERRFLAG_INT, EXTENDEDGLOB, OPT_ISSET, PAT_STATIC, PM_ARRAY};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;
+use std::sync::{Mutex, OnceLock};
+use crate::ported::builtin::PPARAMS;
+use crate::ported::mem::{popheap, pushheap};
 
 /// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
 /// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
@@ -22,7 +26,7 @@ use std::sync::atomic::Ordering;
 #[allow(non_snake_case)]
 pub fn savematch(m: &mut MatchData) {
     // c:40
-    crate::ported::signals_h::queue_signals(); // c:44
+    queue_signals(); // c:44
                                                // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
                                                // captures. The previous Rust port hardcoded `a = None` for all
                                                // three because the fabricated `getaparam(Option<&mut value>)` sig
@@ -31,7 +35,7 @@ pub fn savematch(m: &mut MatchData) {
     m.r#match = getaparam("match"); // c:45-46
     m.mbegin = getaparam("mbegin"); // c:47-48
     m.mend = getaparam("mend"); // c:49-50
-    crate::ported::signals_h::unqueue_signals(); // c:51
+    unqueue_signals(); // c:51
 }
 
 /// Port of `static void restorematch(MatchData *m)` from
@@ -101,7 +105,7 @@ pub struct stypat {
     pub pat: String,                                 // c:99 char *pat
     pub prog: Option<Patprog>, // c:100 Patprog prog (compiled)
     pub weight: u64,                                 // c:101 zulong weight
-    pub eval: Option<crate::ported::zsh_h::Eprog>,   // c:102 Eprog eval
+    pub eval: Option<Eprog>,   // c:102 Eprog eval
     pub vals: Vec<String>,                           // c:103 char **vals
 }
 pub type Stypat = Box<stypat>;
@@ -109,7 +113,7 @@ pub type Stypat = Box<stypat>;
 /// `Style` mirroring Src/Modules/zutil.c:91-94.
 #[allow(non_camel_case_types)]
 pub struct style {
-    pub node: crate::ported::zsh_h::hashnode, // c:92 struct hashnode node
+    pub node: hashnode, // c:92 struct hashnode node
     pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
 }
 pub type Style = Box<style>;
@@ -121,8 +125,8 @@ pub type Style = Box<style>;
 /// since the table is process-global and `bin_zstyle` /
 /// `lookupstyle` / `testforstyle` all need to share it.
 #[allow(non_upper_case_globals)]
-pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<style_table>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(style_table::new())); // c:209
+pub static zstyletab: std::sync::LazyLock<Mutex<style_table>> =
+    std::sync::LazyLock::new(|| Mutex::new(style_table::new())); // c:209
 
 /// Port of `freestylepatnode(Stypat p)` from Src/Modules/zutil.c:111.
 /// C: `static void freestylepatnode(Stypat p)` — drops pat/prog/vals/eval.
@@ -202,7 +206,7 @@ impl style_table {
         if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
             existing.vals = values; // c:328
             existing.eval = if eval {
-                Some(Box::new(crate::ported::zsh_h::eprog::default()))
+                Some(Box::new(eprog::default()))
             } else {
                 None
             }; // c:329
@@ -244,8 +248,8 @@ impl style_table {
         // record Some(Box<eprog>::default()) as a non-NULL sentinel
         // when eval=true to preserve the C "is eval?" check semantics,
         // None otherwise.
-        let eval_eprog: Option<crate::ported::zsh_h::Eprog> = if eval {
-            Some(Box::new(crate::ported::zsh_h::eprog::default()))
+        let eval_eprog: Option<Eprog> = if eval {
+            Some(Box::new(eprog::default()))
         } else {
             None
         };
@@ -278,7 +282,7 @@ impl style_table {
                     if p.pat == "*" {
                         true
                     } else {
-                        crate::ported::pattern::patmatch(&p.pat, context)
+                        patmatch(&p.pat, context)
                     }
                 })
                 .map(|p| p.vals.as_slice())
@@ -324,7 +328,7 @@ impl style_table {
                     let matches = if pat.pat == "*" {
                         true
                     } else {
-                        crate::ported::pattern::patmatch(&pat.pat, ctx)
+                        patmatch(&pat.pat, ctx)
                     };
                     if !matches {
                         continue;
@@ -704,7 +708,7 @@ pub fn addstyle(name: &str) -> Option<Style> {
     // c:403
     Some(Box::new(style {
         // c:405 zshcalloc + return
-        node: crate::ported::zsh_h::hashnode {
+        node: hashnode {
             next: None,
             nam: name.to_string(),
             flags: 0,
@@ -739,15 +743,15 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {
     }
     // c:427-433 — `if ((ret = getaparam("reply"))) ret = arrdup(ret);
     //              else if ((str = getsparam("reply"))) ret = [str];`
-    crate::ported::signals::queue_signals();
+    queue_signals();
     let ret = if let Some(arr) = getaparam("reply") {
         arr
-    } else if let Some(s) = crate::ported::params::getsparam("reply") {
+    } else if let Some(s) = getsparam("reply") {
         vec![s]
     } else {
         Vec::new()
     };
-    crate::ported::signals::unqueue_signals();
+    unqueue_signals();
     // c:435 — unsetparam("reply");
     unsetparam("reply");
     ret
@@ -910,9 +914,9 @@ pub fn bin_zstyle(
                 return 1;
             }
             let pat = &args[2];
-            let prog = match crate::ported::pattern::patcompile(
+            let prog = match patcompile(
                 pat,
-                crate::ported::zsh_h::PAT_STATIC,
+                PAT_STATIC,
                 None,
             ) {
                 Some(p) => p,
@@ -920,7 +924,7 @@ pub fn bin_zstyle(
             };
             for v in &vals {
                 // c:738
-                if crate::ported::pattern::pattry(&prog, v) {
+                if pattry(&prog, v) {
                     // c:739
                     return 0; // c:741
                 }
@@ -1197,7 +1201,7 @@ pub fn bin_zformat(
             // c:1083 — setaparam(args[0], ret). Direct write to paramtab
             // since the canonical params::setaparam takes HashMap refs and
             // the executor isn't threaded into bin_zformat.
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Ok(mut tab) = paramtab().write() {
                 let pm: Param = Box::new(param {
                     node: hashnode {
                         next: None,
@@ -1697,14 +1701,14 @@ pub fn bin_zregexparse(
     let _ = (var1, var2, subj);
 
     // c:1494 — `oldextendedglob = opts[EXTENDEDGLOB]; opts[EXTENDEDGLOB] = 1;`
-    let oldext = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB); // c:1494
-    crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
+    let oldext = isset(EXTENDEDGLOB); // c:1494
+    opt_state_set(
+        &opt_name(EXTENDEDGLOB),
         true,
     ); // c:1496
 
     // c:1499 — `pushheap(); rparsestates = newlinklist();`
-    crate::ported::mem::pushheap(); // c:1499
+    pushheap(); // c:1499
 
     // c:1500 — `if (setjmp(rparseerr) || rparsealt(&result, &rparseerr) ||
     // *rparseargs)`. rparsealt is a stub here (the alternation parser
@@ -1749,9 +1753,9 @@ pub fn bin_zregexparse(
         let _ = (var1, var2, subj);
     }
 
-    crate::ported::mem::popheap(); // c:1513
-    crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
+    popheap(); // c:1513
+    opt_state_set(
+        &opt_name(EXTENDEDGLOB),
         oldext,
     ); // c:1514
     ret // c:1515
@@ -2446,7 +2450,7 @@ pub fn bin_zparseopts(
             flat.push(joined);
         }
         if !keep || !flat.is_empty() {
-            crate::ported::params::sethparam(&aname, flat);
+            sethparam(&aname, flat);
         }
     }
 
@@ -2456,7 +2460,7 @@ pub fn bin_zparseopts(
             crate::fusevm_bridge::with_executor(|exec| {
                 exec.set_pparams(new_params.clone());
             });
-            if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            if let Ok(mut pp) = PPARAMS.lock() {
                 *pp = new_params;
             }
         } else {
@@ -2665,9 +2669,8 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
     out
 }
 
-use std::sync::{Mutex, OnceLock};
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -2678,7 +2681,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:zformat".to_string(),
         "b:zparseopts".to_string(),
@@ -2693,7 +2696,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -2706,7 +2709,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -2736,9 +2739,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 4,
             cd_list: None,

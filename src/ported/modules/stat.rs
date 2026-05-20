@@ -15,9 +15,12 @@
 //!   - bin_stat       `[c:368]`
 //!   - 6 module loaders
 
-use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{zstrtol, ztrftime, zwarnnam};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
+use std::sync::{Mutex, OnceLock};
+use crate::ported::params::{setaparam, sethparam, setsparam};
+use crate::ported::zsh_h::{features, module, options};
 
 // ============================================================
 // Port of `enum statnum` from `Src/Modules/stat.c:33-35`.
@@ -208,7 +211,7 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
         // c:199
         // c:200 — `ztrftime(buf, ..., timefmt, localtime(&tim), nsecs);`
         let st = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tim.max(0) as u64);
-        let formatted = crate::ported::utils::ztrftime("%a %b %e %k:%M:%S %Z %Y", st);
+        let formatted = ztrftime("%a %b %e %k:%M:%S %Z %Y", st);
         out.push_str(&formatted);
         if (flags & STF_RAW) != 0 {
             // c:211
@@ -297,7 +300,7 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
 pub fn bin_stat(
     nam: &str,
     args: &[String], // c:368
-    _ops_unused: &crate::ported::zsh_h::options,
+    _ops_unused: &options,
     _func: i32,
 ) -> i32 {
     // c:370-374 — locals.
@@ -383,7 +386,7 @@ pub fn bin_stat(
                             zwarnnam(nam, "missing file descriptor");
                             return 1;
                         }
-                        let (val, endptr) = crate::ported::utils::zstrtol(args[i], 10);
+                        let (val, endptr) = zstrtol(args[i], 10);
                         if !endptr.is_empty() {
                             zwarnnam(nam, "bad file descriptor");
                             return 1;
@@ -429,7 +432,7 @@ pub fn bin_stat(
             // c:469
             // c:472 — `setaparam(arrnam, names);` — array of element names.
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
-            crate::ported::params::setsparam(name, &joined.join(":"));
+            setsparam(name, &joined.join(":"));
         } else {
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
             println!("{}", joined.join(" ")); // c:478 putchar
@@ -550,7 +553,7 @@ pub fn bin_stat(
     if let Some(name) = arrnam {
         // c:setaparam
         // c — `setaparam(name, zarrdup(array_out));` — real indexed array.
-        crate::ported::params::setaparam(&name, array_out); // c:params.c:3595
+        setaparam(&name, array_out); // c:params.c:3595
     }
     if let Some(name) = hashnam {
         // c:sethparam
@@ -561,7 +564,7 @@ pub fn bin_stat(
             flat.push(k);
             flat.push(v);
         }
-        crate::ported::params::sethparam(&name, flat); // c:params.c:3602
+        sethparam(&name, flat); // c:params.c:3602
     }
     0
 }
@@ -648,8 +651,6 @@ pub const STF_RAW: i32 = 8;
 // static struct builtin bintab[]                                    c:638
 // static struct features module_features                            c:642
 // =====================================================================
-
-use crate::ported::zsh_h::module;
 pub const STF_PICK: i32 = 16;
 pub const STF_ARRAY: i32 = 32;
 pub const STF_GMT: i32 = 64;
@@ -664,9 +665,7 @@ pub static STATELTS: &[&str] = &[
     "blksize", "blocks", "link",
 ];
 
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -677,7 +676,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:stat".to_string(), "b:zstat".to_string()]
 }
 
@@ -687,7 +686,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -700,7 +699,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -730,9 +729,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 2,
             cd_list: None,

@@ -9,12 +9,15 @@
 /// C signature matches exactly: `static int bin_zsocket(char *nam,
 /// char **args, Options ops, UNUSED(int func))`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET, module};
+use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET, module, features, options};
+use std::sync::{Mutex, OnceLock};
+use crate::ported::params::setiparam;
+use crate::ported::utils::{addmodulefd, errflag, fdtable_get, fdtable_set, movefd, redup, zerrnam, zwarnnam};
 
 pub fn bin_zsocket(
     nam: &str,
     args: &[String], // c:57
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     let mut soun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
@@ -39,33 +42,33 @@ pub fn bin_zsocket(
         targetfd = darg.parse::<i32>().unwrap_or(0); // c:71 atoi
         if targetfd == 0 {
             // c:72
-            crate::ported::utils::zwarnnam(nam, &format!("{} is an invalid argument to -d", darg)); // c:73
+            zwarnnam(nam, &format!("{} is an invalid argument to -d", darg)); // c:73
             return 1; // c:75
         }
         // c:78-82 — `if (targetfd <= max_zsh_fd && fdtable[targetfd] != FDT_UNUSED)`.
         // Static-link path: query the per-process fdtable accessor.
-        if crate::ported::utils::fdtable_get(targetfd) != FDT_UNUSED {
+        if fdtable_get(targetfd) != FDT_UNUSED {
             // c:78
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam, // c:79
                 &format!("file descriptor {} is in use by the shell", targetfd),
             );
             return 1; // c:81
-        }
+        } else {}
     }
 
     if OPT_ISSET(ops, b'l') {
         // c:85
         if args.is_empty() {
             // c:88
-            crate::ported::utils::zwarnnam(nam, "-l requires an argument");
+            zwarnnam(nam, "-l requires an argument");
             return 1; // c:90
         }
         let localfn = args[0].as_str(); // c:93
         sfd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:95
         if sfd == -1 {
             // c:97
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!("socket error: {} ", std::io::Error::last_os_error()),
             ); // c:98
@@ -89,7 +92,7 @@ pub fn bin_zsocket(
         };
         if r != 0 {
             // c:106
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!(
                     "could not bind to {}: {}",
@@ -104,7 +107,7 @@ pub fn bin_zsocket(
         }
         if unsafe { libc::listen(sfd, 1) } != 0 {
             // c:112
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!(
                     "could not listen on socket: {}",
@@ -116,12 +119,12 @@ pub fn bin_zsocket(
             } // c:115
             return 1; // c:116
         }
-        crate::ported::utils::addmodulefd(sfd, FDT_EXTERNAL); // c:119 FDT_EXTERNAL
+        addmodulefd(sfd, FDT_EXTERNAL); // c:119 FDT_EXTERNAL
         if targetfd != 0 {
             // c:121
             sfd = redup(sfd, targetfd); // c:122
         } else {
-            sfd = crate::ported::utils::movefd(sfd); // c:126 movefd
+            sfd = movefd(sfd); // c:126 movefd
         }
         if sfd == -1 {
             // c:128
@@ -146,13 +149,13 @@ pub fn bin_zsocket(
         // c:143
         if args.is_empty() {
             // c:147
-            crate::ported::utils::zwarnnam(nam, "-a requires an argument");
+            zwarnnam(nam, "-a requires an argument");
             return 1; // c:149
         }
         let lfd = args[0].parse::<i32>().unwrap_or(0); // c:152 atoi
         if lfd == 0 {
             // c:154
-            crate::ported::utils::zwarnnam(nam, "invalid numerical argument");
+            zwarnnam(nam, "invalid numerical argument");
             return 1; // c:156
         }
         if test != 0 {
@@ -170,7 +173,7 @@ pub fn bin_zsocket(
             // c:166
             else if r == -1 {
                 // c:167
-                crate::ported::utils::zwarnnam(
+                zwarnnam(
                     nam,
                     &format!("poll error: {}", std::io::Error::last_os_error()),
                 ); // c:169
@@ -194,15 +197,15 @@ pub fn bin_zsocket(
             }
             let osek = std::io::Error::last_os_error().raw_os_error();
             if osek != Some(libc::EINTR)
-                || crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
+                || errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
             {
                 rfd = r;
                 break;
-            }
+            } else {}
         }
         if rfd == -1 {
             // c:199
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!(
                     "could not accept connection: {}",
@@ -211,7 +214,7 @@ pub fn bin_zsocket(
             ); // c:200
             return 1; // c:201
         }
-        crate::ported::utils::addmodulefd(rfd, FDT_EXTERNAL); // c:204 FDT_EXTERNAL
+        addmodulefd(rfd, FDT_EXTERNAL); // c:204 FDT_EXTERNAL
         if targetfd != 0 {
             // c:206
             sfd = redup(rfd, targetfd); // c:207
@@ -249,13 +252,13 @@ pub fn bin_zsocket(
         // c:225
         if args.is_empty() {
             // c:227
-            crate::ported::utils::zwarnnam(nam, "zsocket requires an argument");
+            zwarnnam(nam, "zsocket requires an argument");
             return 1; // c:229
         }
         sfd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:233
         if sfd == -1 {
             // c:235
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!(
                     "socket creation failed: {}",
@@ -282,7 +285,7 @@ pub fn bin_zsocket(
         };
         if err != 0 {
             // c:243
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!("connection failed: {}", std::io::Error::last_os_error()),
             ); // c:244
@@ -291,7 +294,7 @@ pub fn bin_zsocket(
             } // c:245
             return 1; // c:246
         }
-        crate::ported::utils::addmodulefd(sfd, FDT_EXTERNAL); // c:251 FDT_EXTERNAL
+        addmodulefd(sfd, FDT_EXTERNAL); // c:251 FDT_EXTERNAL
         if targetfd != 0 {
             // c:253
             if redup(sfd, targetfd) < 0 {
@@ -382,11 +385,7 @@ pub fn finish_(m: *const module) -> i32 {
     0 // c:327
 }
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::params::setiparam;
-use crate::ported::utils::{fdtable_set, redup, zerrnam};
-
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -397,7 +396,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:zsocket".to_string()]
 }
 
@@ -407,7 +406,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -420,7 +419,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -450,9 +449,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,
@@ -493,8 +492,8 @@ mod tests {
         assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), 1);
     }
 
-    fn empty_ops() -> crate::ported::zsh_h::options {
-        crate::ported::zsh_h::options {
+    fn empty_ops() -> options {
+        options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
             argscount: 0,

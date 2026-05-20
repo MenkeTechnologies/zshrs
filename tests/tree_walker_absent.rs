@@ -36,6 +36,7 @@ use std::path::PathBuf;
 
 fn read_exec_rs() -> String {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("src");
     p.push("vm_helper.rs");
     fs::read_to_string(&p).unwrap_or_else(|e| panic!("cannot read {}: {}", p.display(), e))
 }

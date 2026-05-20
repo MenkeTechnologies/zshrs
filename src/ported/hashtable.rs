@@ -26,10 +26,14 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-
 use crate::compat::zgetcwd;
 use crate::hist::hist_ring;
 use crate::jobs::getsigidx;
+use crate::signals::{settrap, unsettrap};
+use crate::utils::{xsymlink, ztrcmp};
+use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, HIST_DUP, HIST_TMPSTORE, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED, ZSIG_FUNC};
+
+
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -571,9 +575,6 @@ impl Default for reswd_table {
 // `text: String` (c:1255) + `inuse: i32` (c:1256); the Rust-only
 // had a flat `name: String, flags: u32, text: String, inuse: i32`
 // (missing the hashnode embedding).
-use crate::signals::{settrap, unsettrap};
-use crate::utils::{xsymlink, ztrcmp};
-use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, HIST_DUP, HIST_TMPSTORE, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED, ZSIG_FUNC};
 
 /// Port of `static int hnamcmp(const void *ap, const void *bp)`
 /// from `Src/hashtable.c:341-346`. C body:

@@ -20,13 +20,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-// Re-export the canonical `compctl.h` ports from compctl_h.rs so
-// callers within compctl.rs reference the legit names. The four
-// types (Compctlp/Patcomp/Compcond/Compctl + CompcondData) are
-// direct ports of the C structs declared in Src/Zle/compctl.h.
 use std::os::unix::fs::PermissionsExt;
-
 use crate::ported::builtin::findcmd;
 use crate::ported::pattern::patmatch;
 use crate::ported::utils::errflag;
@@ -41,13 +35,21 @@ use crate::ported::zle::compctl_h::{
     CC_SPECIALS, CC_STOPPED, CC_UNIQALL, CC_UNIQCON, CC_USERS, CC_VARS, CC_XORCONT,
 };
 use crate::ported::zle::complete::parse_cmatcher;
-
-// --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::{QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE};
+
+
+// Re-export the canonical `compctl.h` ports from compctl_h.rs so
+// callers within compctl.rs reference the legit names. The four
+// types (Compctlp/Patcomp/Compcond/Compctl + CompcondData) are
+// direct ports of the C structs declared in Src/Zle/compctl.h.
+
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 
@@ -2908,7 +2910,6 @@ pub(crate) fn boot_() -> i32 {
 
 /// `instring` — quoting context. Port of `int instring;`. The QT_*
 /// values are the C enum at `Src/zsh.h:253-292` (ported in zsh_h.rs).
-use crate::ported::zsh_h::{QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE};
 
 /// Cleanup hook — port of `cleanup_(UNUSED(Module m))` from Src/Zle/compctl.c:4058.
 ///

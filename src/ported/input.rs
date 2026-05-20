@@ -18,6 +18,11 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write, self};
+use crate::ported::zsh_h::{
+    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
+};
+pub use crate::ported::zsh_h::META;
+
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
@@ -42,9 +47,6 @@ const INSTACK_INITIAL: usize = 4; // c:122
 // Src/zsh.h:467-476. The canonical mirror lives in
 // `crate::ported::zsh_h::INP_*` (matching the C bit positions
 // exactly); this file uses those constants directly.
-use crate::ported::zsh_h::{
-    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
-};
 
 // ---------------------------------------------------------------------------
 // SHIN buffer helpers — direct ports of input.c:159/171/181/200/218/267.
@@ -543,7 +545,6 @@ const SHIN_BUF_SIZE: usize = 8192;
 /// Re-export of `META` from zsh_h.rs (canonical port of `Src/zsh.h:144`).
 /// Duplicate declarations of the Meta byte invite drift; keep one
 /// source of truth.
-pub use crate::ported::zsh_h::META;
 
 /// Check if a character needs Meta-encoding in the SHIN buffer.
 ///

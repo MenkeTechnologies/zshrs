@@ -18,6 +18,7 @@
 
 use crate::ported::zsh_h::{features, module};
 use std::sync::{Mutex, OnceLock};
+use crate::DPUTS;
 use crate::options::{opt_state_get, opt_state_set, optlookup};
 use crate::ported::params::{setiparam, setsparam};
 use crate::ported::utils::zwarnnam;
@@ -66,7 +67,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // c:73-77 — switch(id). Only ZREGEX_EXTENDED is defined.
     if id != ZREGEX_EXTENDED {
         // c:199 — DPUTS(1, "bad regex option"); goto CLEAN_BASEMETA;
-        crate::DPUTS!(true, "bad regex option"); // c:199
+        DPUTS!(true, "bad regex option"); // c:199
         return 0; // c:200
     }
 

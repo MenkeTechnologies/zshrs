@@ -4,7 +4,7 @@
 //! Uses the Rust `regex` crate which provides Perl-compatible regex syntax.
 
 use crate::ported::utils::{metafy, zstrtol, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options, isset, MB_CHARLEN, KSHARRAYS};
+use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options, isset, MB_CHARLEN, KSHARRAYS, features, MAX_OPS};
 use regex::Regex;
 
 use std::sync::{Mutex, OnceLock};
@@ -688,7 +688,7 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -699,7 +699,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:pcre_compile".to_string(),
         "b:pcre_match".to_string(),
@@ -714,7 +714,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -727,7 +727,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -757,9 +757,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 3,
             cd_list: None,
@@ -776,7 +776,6 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
         options {

@@ -28,6 +28,8 @@ use crate::ported::options::{opt_state_get, opt_state_set};
 use crate::ported::params::{isident, paramtab, setiparam, setsparam};
 use crate::ported::utils::{metafy, movefd, unmeta, zclose, zstrtol, zwarnnam};
 use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
+use std::sync::{Mutex, OnceLock};
+
 
 const SYSREAD_BUFSIZE: usize = 8192; // c:45
 
@@ -1401,7 +1403,6 @@ pub static SYS_ERRNAMES: &[(&str, i32)] = &[
 /// New code should use `SYS_ERRNAMES` (matches the C identifier).
 pub static ERRNO_NAMES: &[(&str, i32)] = SYS_ERRNAMES;
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

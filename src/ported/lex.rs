@@ -14,9 +14,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
-
 use serde::{Deserialize, Serialize};
-
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{aliastab_lock, reswdtab_lock, sufaliastab_lock};
 use crate::ported::hist::{hist_in_word, strinbeg, strinend};
@@ -37,6 +35,19 @@ use crate::ported::zsh_h::{
     SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
 use crate::ported::ztype_h::itok;
+pub use super::zsh_h::{
+    AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR, DINANG,
+    DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG,
+    DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI, FOR, FOREACH,
+    FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, IS_REDIROP, LEXERR,
+    LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
+    LEXFLAGS_NEWLINE, LEXFLAGS_ZLE, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG,
+    OUTANGBANG, OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR,
+    SEPER, STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND, lextok,
+};
+pub use crate::heredoc_ast::HereDoc;
+
+
 
 /// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
@@ -717,16 +728,6 @@ pub fn isnumglob() -> bool {
 // bit flags from `Src/zsh.h:2293-2315`. The constants live in
 // `super::zsh_h:2532-2537`; access via plain `&` / `|` ops, not a
 // Rust struct.
-pub use super::zsh_h::{
-    AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR, DINANG,
-    DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG,
-    DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI, FOR, FOREACH,
-    FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, IS_REDIROP, LEXERR,
-    LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
-    LEXFLAGS_NEWLINE, LEXFLAGS_ZLE, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG,
-    OUTANGBANG, OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR,
-    SEPER, STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND, lextok,
-};
 
 // `struct LexBuf` (fake Rust-only paraphrase) DELETED. The canonical
 // port of `struct lexbufstate` (zsh.h:3069-3079) lives at
@@ -856,7 +857,6 @@ impl lexbufstate {
 // resolving. Both die in Phase 9e (PORT_PLAN.md) when the wordcode
 // port reinstates C's `struct heredocs` shape (zsh.h:1152) +
 // `gethere()` body collection.
-pub use crate::heredoc_ast::HereDoc;
 
 // =============================================================================
 // Lexer state — thread-local file-statics matching zsh's lex.c file-statics.

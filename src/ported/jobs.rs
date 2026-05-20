@@ -21,7 +21,6 @@ use std::process::Child;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
 use crate::ported::params::{getsparam, setsparam, unsetparam};
@@ -32,6 +31,9 @@ use crate::ported::zsh_h::{
     MONITOR, OPT_ISSET, POSIXBUILTINS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED,
     STAT_SUPERJOB, isset, job, options, process,
 };
+pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING, timeinfo};
+
+
 
 /// job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
@@ -180,7 +182,6 @@ pub fn findproc(jobtab: &[job], pid: i32, aux: bool) -> Option<(usize, usize, bo
 // `TimeInfo` / `ChildTimes` deleted — both folded into canonical
 // `timeinfo` at `zsh_h.rs:2153` (direct port of `struct timeinfo`
 // from `Src/zsh.h:1099`).
-pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING, timeinfo};
 
 // Canonical `process` / `job` live in `zsh_h.rs:1166,1180` — direct
 // ports of `struct process` / `struct job` from `Src/zsh.h:1117,1058`.

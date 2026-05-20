@@ -6,19 +6,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
-
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::Component::*;
 use std::sync::atomic::Ordering::SeqCst;
-
 use crate::ported::glob::remnulargs;
 use crate::ported::hashtable::addhistnode;
-// NOTE: `inbufflags` and `inbufct` are NOT imported because the
-// hist.rs body uses `let inbufflags = ...` shadowing — Rust treats
-// imported names as constant-patterns in `let` LHS, breaking that
-// idiom. They stay as `crate::ported::input::inbufflags` until
-// the shadowing pattern is refactored.
 use crate::ported::input::{ingetc, inputsetline, inungetc};
 use crate::ported::lex::{parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP};
 use crate::ported::options::dosetopt;
@@ -36,6 +29,15 @@ pub use crate::ported::zsh_h::{
     CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER, HISTFLAG_DONE, HISTFLAG_NOEXEC,
     HISTFLAG_RECALL, HISTFLAG_SETTY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE,
 };
+use crate::signals::queue_signals;
+
+
+
+// NOTE: `inbufflags` and `inbufct` are NOT imported because the
+// hist.rs body uses `let inbufflags = ...` shadowing — Rust treats
+// imported names as constant-patterns in `let` LHS, breaking that
+// idiom. They stay as `crate::ported::input::inbufflags` until
+// the shadowing pattern is refactored.
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -4347,7 +4349,6 @@ static strin: AtomicI32 = AtomicI32::new(0);
 // This is the same consolidation pattern applied to the prior HIST_*
 // flag-value drift fix and the BINF/CONDF/MFF duplicates in
 // module.rs — single source of truth for C-pinned bit values.
-use crate::signals::queue_signals;
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`

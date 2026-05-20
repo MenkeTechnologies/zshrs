@@ -8,6 +8,8 @@ use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+
 
 /// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
 /// to read at once from a pty's master end (1 MB).
@@ -177,7 +179,6 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // static struct features module_features                            c:884 (zpty.c)
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for
