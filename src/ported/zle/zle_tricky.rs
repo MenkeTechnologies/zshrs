@@ -70,7 +70,7 @@ pub fn usetab(keybuf: &[u8]) -> i32 {
     }
     // c:189-191 — walk back from cursor-1 to BOL; only \t and ' '
     //              allowed for usetab to fire.
-    let mut i = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let mut i = ZLECS.load(Ordering::SeqCst);
     while i > 0 {
         let c = ZLELINE.lock().unwrap()[i - 1];
         if c == '\n' {
@@ -99,7 +99,7 @@ pub fn completecall(args: &[String]) -> i32 {
     // Without compwidget bound this dispatches to docomplete with the
     // default COMP_COMPLETE type so user-defined completion widgets
     // still cause a completion attempt.
-    docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
+    docomplete(COMP_COMPLETE)
 }
 
 /// Port of `completeword(char **args)` from Src/Zle/zle_tricky.c:216.
@@ -181,12 +181,12 @@ pub fn deletecharorlist() -> i32 {
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:275
                                             // c:277-279 — `if (zlecs == zlell) return docomplete(COMP_LIST_COMPLETE);
                                             //              else deletechar()`.
-    if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-        == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+    if ZLECS.load(Ordering::SeqCst)
+        == ZLELL.load(Ordering::SeqCst)
     {
         docomplete(COMP_LIST_COMPLETE)
     } else {
-        crate::ported::zle::zle_misc::deletechar()
+        deletechar()
     }
 }
 
@@ -263,7 +263,7 @@ pub fn acceptandmenucomplete() -> i32 {
         return 1;
     }
     MENUCMP.store(2, Ordering::SeqCst);
-    docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
+    docomplete(COMP_COMPLETE)
 }
 
 /// Port of `checkparams(char *p)` from Src/Zle/zle_tricky.c:435.
@@ -714,7 +714,7 @@ pub fn get_comp_string() -> Option<String> {
         .iter()
         .collect();
     let cs = ZLECS
-        .load(std::sync::atomic::Ordering::SeqCst)
+        .load(Ordering::SeqCst)
         .min(snap.len());
     let bytes = snap.as_bytes();
     let mut start = cs;
@@ -754,12 +754,12 @@ pub fn inststrlen(
             .lock()
             .unwrap()
             .insert(
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i,
+                ZLECS.load(Ordering::SeqCst) + i,
                 ch,
             );
     }
     if move_cursor {
-        ZLECS.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.fetch_add(n, Ordering::SeqCst);
         // c:2241
     }
     len
@@ -791,7 +791,7 @@ pub fn docompletion() -> i32 {
     crate::ported::zle::compcore::do_completion(
         "",
         0,
-        crate::ported::zle::zle_h::COMP_LIST_COMPLETE,
+        COMP_LIST_COMPLETE,
     )
 }
 
@@ -989,14 +989,14 @@ pub fn fixmagicspace() {
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
     crate::ported::zle::compcore::LASTCHAR.store(
-        (b' ' as crate::ported::zle::zle_main::ZleInt) as i32,
-        std::sync::atomic::Ordering::SeqCst,
+        (b' ' as ZleInt) as i32,
+        Ordering::SeqCst,
     );
-    crate::ported::zle::zle_main::LASTCHAR_WIDE.store(
-        (b' ' as crate::ported::zle::zle_main::ZleInt) as i32,
-        std::sync::atomic::Ordering::SeqCst,
+    LASTCHAR_WIDE.store(
+        (b' ' as ZleInt) as i32,
+        Ordering::SeqCst,
     );
-    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
+    LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);
 }
 
 /// Port of `magicspace(char **args)` from Src/Zle/zle_tricky.c:2882.
@@ -1011,10 +1011,10 @@ pub fn magicspace() -> i32 {
             .lock()
             .unwrap()
             .insert(
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+                ZLECS.load(Ordering::SeqCst),
                 ' ',
             );
-        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.fetch_add(1, Ordering::SeqCst);
     }
     ret
 }
@@ -1050,7 +1050,7 @@ pub fn getcurcmd() -> Option<String> {
         .iter()
         .collect();
     let cs = ZLECS
-        .load(std::sync::atomic::Ordering::SeqCst)
+        .load(Ordering::SeqCst)
         .min(snap.len());
     let prefix = &snap[..cs];
     let mut last_seg_start = 0;
@@ -1082,7 +1082,7 @@ pub fn processcmd() -> i32 {
     };
     let m = ZMOD.lock().unwrap().mult; // c:2974
     ZMOD.lock().unwrap().mult = 1; // c:2981
-    let _ = crate::ported::zle::zle_hist::pushline(); // c:2982
+    let _ = pushline(); // c:2982
     ZMOD.lock().unwrap().mult = m; // c:2983
                                                                  // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
                                                                  //           Without bindk live we use the literal "run-help " marker
@@ -1094,13 +1094,13 @@ pub fn processcmd() -> i32 {
             .lock()
             .unwrap()
             .insert(
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i,
+                ZLECS.load(Ordering::SeqCst) + i,
                 ch,
             );
     }
     ZLECS.fetch_add(
         combined.chars().count(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     0
 }
@@ -1151,7 +1151,7 @@ pub fn expandcmdpath() -> i32 {
     // c:3022 — zlecs = cmdwb;
     ZLECS.store(cmdwb, Ordering::SeqCst);
     // c:3023 — foredel(cmdwe - cmdwb, CUT_RAW);
-    crate::ported::zle::zle_utils::foredel((cmdwe - cmdwb) as i32, 0);
+    foredel((cmdwe - cmdwb) as i32, 0);
     // c:3024-3027 — splice the resolved full path in place of the deleted span.
     {
         let mut zl = ZLELINE.lock().unwrap();
@@ -1161,7 +1161,7 @@ pub fn expandcmdpath() -> i32 {
         }
     }
     let str_chars = str_full.chars().count();
-    crate::ported::zle::zle_main::ZLELL.fetch_add(str_chars, Ordering::SeqCst);
+    ZLELL.fetch_add(str_chars, Ordering::SeqCst);
     // c:3028 — zlecs = oldcs;
     // c:3029-3033 — if (zlecs >= cmdwe - 1) zlecs += str_chars - (cmdwe - cmdwb);
     let new_cs = if oldcs >= cmdwe.saturating_sub(1) {
@@ -1178,13 +1178,13 @@ pub fn expandorcompleteprefix() -> i32 {
     // c:3041
     COMPPREF.store(1, Ordering::SeqCst); // c:3045
     let ret = expandorcomplete(); // c:3046
-    if ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0
+    if ZLECS.load(Ordering::SeqCst) > 0
         && ZLELINE.lock().unwrap()
-            [ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1]
+            [ZLECS.load(Ordering::SeqCst) - 1]
             == ' '
     {
         // c:3047
-        crate::ported::zle::zle_misc::makesuffixstr(None, Some("\\-"), 0); // c:3048
+        makesuffixstr(None, Some("\\-"), 0); // c:3048
     }
     COMPPREF.store(0, Ordering::SeqCst); // c:3049
     ret
@@ -1201,7 +1201,7 @@ pub fn endoflist() -> i32 {
         // c:3060 — clearflag = 0;
         CLEARFLAG.store(0, Ordering::SeqCst);
         // c:3061 — trashzle();
-        crate::ported::zle::zle_main::trashzle();
+        trashzle();
         // c:3063-3064 — for (i = lastlistlen; i > 0; i--) putc('\n', shout);
         //               Without a live shout pipe, log the request rather
         //               than emit raw '\n' to stdout.
@@ -1347,13 +1347,13 @@ pub fn quotename(s: &str, instring: i32) -> String {
         instring
     };
     let qt = if raw == QT_BACKSLASH {
-        crate::ported::zsh_h::QT_BACKSLASH
+        QT_BACKSLASH
     } else if raw == QT_SINGLE {
-        crate::ported::zsh_h::QT_SINGLE
+        QT_SINGLE
     } else if raw == QT_DOUBLE {
-        crate::ported::zsh_h::QT_DOUBLE
+        QT_DOUBLE
     } else if raw == QT_DOLLARS {
-        crate::ported::zsh_h::QT_DOLLARS
+        QT_DOLLARS
     } else {
         QT_NONE
     };

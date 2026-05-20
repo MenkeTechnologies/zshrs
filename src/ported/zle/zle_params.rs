@@ -82,11 +82,11 @@ pub fn makezleparams(_ro: i32) {
     // c:194
 
     let line = ZLELINE_C
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let cs = ZLECS_C.load(std::sync::atomic::Ordering::Relaxed) as usize;
+    let cs = ZLECS_C.load(Ordering::Relaxed) as usize;
     let (lbuf, rbuf) = if cs <= line.len() {
         (line[..cs].to_string(), line[cs..].to_string())
     } else {
@@ -98,11 +98,11 @@ pub fn makezleparams(_ro: i32) {
     let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
     let _ = setiparam(
         "CURSOR",
-        ZLECS_C.load(std::sync::atomic::Ordering::Relaxed) as i64,
+        ZLECS_C.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[3]
     let _ = setiparam(
         "NUMERIC",
-        ZMULT_C.load(std::sync::atomic::Ordering::Relaxed) as i64,
+        ZMULT_C.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[7]
        // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
@@ -137,15 +137,15 @@ pub fn set_buffer(s: &str) {
     *ZLELINE.lock().unwrap() = s.chars().collect();
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS.store(
         ZLECS
-            .load(std::sync::atomic::Ordering::SeqCst)
-            .min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+            .load(Ordering::SeqCst)
+            .min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 pub fn get_buffer() -> String {
@@ -163,10 +163,10 @@ pub fn get_buffer() -> String {
 pub fn set_cursor(pos: usize) {
     // c:267
     ZLECS.store(
-        pos.min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+        pos.min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// `$CURSOR` accessor — current cursor position (0-indexed).
@@ -174,7 +174,7 @@ pub fn set_cursor(pos: usize) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_cursor() -> usize {
     // c:281
-    ZLECS.load(std::sync::atomic::Ordering::SeqCst)
+    ZLECS.load(Ordering::SeqCst)
 }
 
 /// `$crate::ported::zle::zle_main::MARK=pos` setter — clamp to buffer length.
@@ -182,9 +182,9 @@ pub fn get_cursor() -> usize {
 /// WARNING: param names don't match C — Rust=(pos) vs C=(pm, x)
 pub fn set_mark(pos: usize) {
     // c:299
-    crate::ported::zle::zle_main::MARK.store(
-        pos.min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+    MARK.store(
+        pos.min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
 }
 
@@ -193,7 +193,7 @@ pub fn set_mark(pos: usize) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_mark() -> usize {
     // c:311
-    crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst)
+    MARK.load(Ordering::SeqCst)
 }
 
 /// Port of `set_region_active(UNUSED(Param pm), zlong x)` from `Src/Zle/zle_params.c:318`.
@@ -214,7 +214,7 @@ pub fn set_region_active(
     // c:320 — `region_active = (int)!!x`. !!x: 0→0, anything else→1.
     REGION_ACTIVE.store(
         if x != 0 { 1 } else { 0 },
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
 }
 
@@ -229,7 +229,7 @@ pub fn set_region_active(
 /// `$REGION_ACTIVE` getter — returns the current region_active flag.
 pub fn get_region_active() -> i64 {
     // c:325
-    REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) as i64
+    REGION_ACTIVE.load(Ordering::SeqCst) as i64
     // c:325 return region_active
 }
 
@@ -240,18 +240,18 @@ pub fn get_region_active() -> i64 {
 pub fn set_lbuffer(s: &str) {
     // c:332
     let rbuf: String = ZLELINE.lock().unwrap()
-        [ZLECS.load(std::sync::atomic::Ordering::SeqCst)..]
+        [ZLECS.load(Ordering::SeqCst)..]
         .iter()
         .collect();
     *ZLELINE.lock().unwrap() =
         s.chars().chain(rbuf.chars()).collect();
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS
-        .store(s.chars().count(), std::sync::atomic::Ordering::SeqCst);
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        .store(s.chars().count(), Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// `$LBUFFER` accessor — text before the cursor.
@@ -260,7 +260,7 @@ pub fn set_lbuffer(s: &str) {
 pub fn get_lbuffer() -> String {
     // c:355
     ZLELINE.lock().unwrap()
-        [..ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
+        [..ZLECS.load(Ordering::SeqCst)]
         .iter()
         .collect()
 }
@@ -271,16 +271,16 @@ pub fn get_lbuffer() -> String {
 pub fn set_rbuffer(s: &str) {
     // c:364
     let lbuf: String = ZLELINE.lock().unwrap()
-        [..ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
+        [..ZLECS.load(Ordering::SeqCst)]
         .iter()
         .collect();
     *ZLELINE.lock().unwrap() =
         lbuf.chars().chain(s.chars()).collect();
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// `$RBUFFER` accessor — text after the cursor.
@@ -289,7 +289,7 @@ pub fn set_rbuffer(s: &str) {
 pub fn get_rbuffer() -> String {
     // c:384
     ZLELINE.lock().unwrap()
-        [ZLECS.load(std::sync::atomic::Ordering::SeqCst)..]
+        [ZLECS.load(Ordering::SeqCst)..]
         .iter()
         .collect()
 }
@@ -368,7 +368,7 @@ pub fn get_widgetstyle() -> String {
 pub fn get_lwidget() -> String {
     // c:449
     // c:449 — `return (lbindk ? lbindk->nam : "")`.
-    crate::ported::zle::zle_main::LBINDK
+    LBINDK
         .lock()
         .unwrap()
         .as_ref()
@@ -460,13 +460,13 @@ pub fn set_histno(x: i64) {
     // quietgethist NULL-result early-return).
     let idx = x.max(0) as usize;
     if idx
-        <= crate::ported::zle::zle_main::history()
+        <= history()
             .lock()
             .unwrap()
             .entries
             .len()
     {
-        crate::ported::zle::zle_main::history()
+        history()
             .lock()
             .unwrap()
             .cursor = idx;
@@ -478,7 +478,7 @@ pub fn get_histno() -> i64 {
     // c:514
     // c:514 — `return histline`. zshrs tracks the editing history
     // line via the History.cursor field (offset into entries Vec).
-    crate::ported::zle::zle_main::history()
+    history()
         .lock()
         .unwrap()
         .cursor as i64
@@ -519,7 +519,7 @@ pub fn get_pending() -> usize {
 /// inside a `recursive-edit` widget call).
 pub fn get_recursive() -> i64 {
     // c:535
-    ZLE_RECURSIVE.load(std::sync::atomic::Ordering::SeqCst) as i64
+    ZLE_RECURSIVE.load(Ordering::SeqCst) as i64
     // c:535 return zle_recursive
 }
 
@@ -527,14 +527,14 @@ pub fn get_recursive() -> i64 {
 pub fn get_yankstart() -> i64 {
     // c:542
     // c:542 — `return yankb`.
-    YANKB.load(std::sync::atomic::Ordering::SeqCst) as i64
+    YANKB.load(Ordering::SeqCst) as i64
 }
 
 /// Port of `get_yankend(UNUSED(Param pm))` from Src/Zle/zle_params.c:549.
 pub fn get_yankend() -> i64 {
     // c:549
     // c:542 — `return yanke`.
-    YANKE.load(std::sync::atomic::Ordering::SeqCst) as i64
+    YANKE.load(Ordering::SeqCst) as i64
 }
 
 /// Port of `get_yankactive(UNUSED(Param pm))` from Src/Zle/zle_params.c:556.
@@ -542,7 +542,7 @@ pub fn get_yankactive() -> i64 {
     // c:556
     // c:549 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
     let last =
-        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst) as i32;
+        LASTCMD.load(Ordering::SeqCst) as i32;
     let yank = ((last & ZLE_YANK) != 0) as i64;
     let yankafter = ((last & ZLE_YANKAFTER) != 0) as i64;
     yank + yankafter
@@ -553,7 +553,7 @@ pub fn set_yankstart(i: i64) {
     // c:563
     // c:563 — `yankb = i`.
     YANKB
-        .store(i.max(0) as usize, std::sync::atomic::Ordering::SeqCst);
+        .store(i.max(0) as usize, Ordering::SeqCst);
 }
 
 /// Port of `set_yankend(UNUSED(Param pm), zlong i)` from Src/Zle/zle_params.c:570.
@@ -561,14 +561,14 @@ pub fn set_yankend(i: i64) {
     // c:570
     // c:563 — `yanke = i`.
     YANKE
-        .store(i.max(0) as usize, std::sync::atomic::Ordering::SeqCst);
+        .store(i.max(0) as usize, Ordering::SeqCst);
 }
 
 /// Port of `get_isearchmatchstart(UNUSED(Param pm))` from Src/Zle/zle_params.c:577.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchstart() -> i64 {
     // c:577
-    crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::Relaxed) as i64
+    ISEARCH_STARTPOS.load(Ordering::Relaxed) as i64
     // c:579
 }
 
@@ -576,14 +576,14 @@ pub fn get_isearchmatchstart() -> i64 {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchend() -> i64 {
     // c:584
-    crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::Relaxed) as i64 // c:577
+    ISEARCH_ENDPOS.load(Ordering::Relaxed) as i64 // c:577
 }
 
 /// Port of `get_isearchmatchactive(UNUSED(Param pm))` from Src/Zle/zle_params.c:591.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchactive() -> i64 {
     // c:591
-    crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::Relaxed) as i64 // c:577
+    ISEARCH_ACTIVE.load(Ordering::Relaxed) as i64 // c:577
 }
 
 /// Port of `get_suffixstart(UNUSED(Param pm))` from `Src/Zle/zle_params.c:598`.
@@ -598,8 +598,8 @@ pub fn get_isearchmatchactive() -> i64 {
 /// (cursor minus suffix length).
 pub fn get_suffixstart() -> i64 {
     // c:598
-    let suffixlen = crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed);
-    (ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i64)
+    let suffixlen = SUFFIXLEN.load(Ordering::Relaxed);
+    (ZLECS.load(Ordering::SeqCst) as i64)
         - (suffixlen as i64) // c:600 zlecs - suffixlen
 }
 
@@ -615,7 +615,7 @@ pub fn get_suffixstart() -> i64 {
 /// auto-removed FROM the cursor backward).
 pub fn get_suffixend() -> i64 {
     // c:605
-    ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i64
+    ZLECS.load(Ordering::SeqCst) as i64
     // c:605 return zlecs
 }
 
@@ -632,7 +632,7 @@ pub fn get_suffixend() -> i64 {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_suffixactive() -> i64 {
     // c:612
-    crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed) as i64 // c:614 return suffixlen
+    SUFFIXLEN.load(Ordering::Relaxed) as i64 // c:614 return suffixlen
 }
 
 /// `$CUTBUFFER` accessor — most-recent kill-ring entry.
@@ -747,8 +747,8 @@ pub fn set_register(name: char, value: &str) -> i32 {
     // c:769-772 — `vbuf = &vibuf[name-offset]; if (*value)
     //              vbuf->buf = stringaszleline(value, 0, &n, ...);
     //              vbuf->len = n`.
-    if (idx as usize) < crate::ported::zle::zle_main::vibuf().lock().unwrap().len() {
-        crate::ported::zle::zle_main::vibuf().lock().unwrap()[idx as usize] =
+    if (idx as usize) < vibuf().lock().unwrap().len() {
+        vibuf().lock().unwrap()[idx as usize] =
             value.chars().collect();
     }
     0
@@ -781,7 +781,7 @@ pub fn scan_registers(_ht: i32, func: Option<crate::ported::zsh_h::ScanFunc>, fl
         Some(f) => f,
         None => return,
     };
-    let buf = crate::ported::zle::zle_main::vibuf()
+    let buf = vibuf()
         .lock()
         .unwrap()
         .clone(); // c:794 vibuf walk
@@ -837,9 +837,9 @@ pub fn get_registers(name: &str) -> Option<String> {
         return None; // c:822-824 (vbuf==-1)
     };
     // c:798 — `pm->u.str = zlelineasstring(vibuf[i].buf, ...)`.
-    if (idx as usize) < crate::ported::zle::zle_main::vibuf().lock().unwrap().len() {
+    if (idx as usize) < vibuf().lock().unwrap().len() {
         Some(
-            crate::ported::zle::zle_main::vibuf().lock().unwrap()[idx as usize]
+            vibuf().lock().unwrap()[idx as usize]
                 .iter()
                 .collect::<String>(),
         )
@@ -870,7 +870,7 @@ pub fn unset_registers(exp: i32) {
     // C body c:859-870 — `if (exp) { for (i...) { vibuf[i].buf=NULL;
     //                              vibuf[i].len = 0; } stdunsetfn(...) }`.
     if exp != 0 {
-        for buf in crate::ported::zle::zle_main::vibuf()
+        for buf in vibuf()
             .lock()
             .unwrap()
             .iter_mut()
@@ -909,8 +909,8 @@ pub fn get_prepost(text: &str, len: usize) -> String {
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_predisplay(x: Option<&str>) {
     // c:886
-    let mut buf = crate::ported::zle::zle_misc::PREDISPLAY
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+    let mut buf = PREDISPLAY
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap(); // c:888 &predisplay
     let mut len = buf.chars().count();
@@ -934,8 +934,8 @@ pub fn get_predisplay() -> String {
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_postdisplay(x: Option<&str>) {
     // c:900
-    let mut buf = crate::ported::zle::zle_misc::POSTDISPLAY
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+    let mut buf = POSTDISPLAY
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap(); // c:902 &postdisplay
     let mut len = buf.chars().count();
@@ -1000,7 +1000,7 @@ pub fn get_lsearch() -> String {
 pub fn get_context() -> &'static str {
     // c:942
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
-    match crate::ported::zle::zle_main::ZLECONTEXT.load(std::sync::atomic::Ordering::SeqCst) {
+    match ZLECONTEXT.load(Ordering::SeqCst) {
         x if x == ZLCON_LINE_CONT => "cont", // c:945-946
         x if x == ZLCON_SELECT => "select",  // c:949-950
         x if x == ZLCON_VARED => "vared",    // c:953-954
@@ -1016,7 +1016,7 @@ pub fn get_context() -> &'static str {
 pub fn get_zle_state() -> String {
     let mut state = String::new();
 
-    if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
+    if (INSMODE.load(Ordering::SeqCst) != 0) {
         state.push_str("insert");
     } else {
         state.push_str("overwrite");
@@ -1033,7 +1033,7 @@ pub fn get_zle_state() -> String {
 /// Sub-port of `get_zle_state(UNUSED(Param pm))` (Src/Zle/zle_params.c) which
 /// emits "insert" / "overwrite" + " " + "vicmd" / "main".
 pub fn is_insert_mode() -> bool {
-    (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0)
+    (INSMODE.load(Ordering::SeqCst) != 0)
 }
 
 /// `$REGION_ACTIVE` accessor — non-zero when a visual selection
@@ -1042,8 +1042,8 @@ pub fn is_insert_mode() -> bool {
 /// C source returns 1/2 (charwise/linewise); our simplified
 /// boolean compares mark vs cursor.
 pub fn is_region_active() -> bool {
-    crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst)
-        != ZLECS.load(std::sync::atomic::Ordering::SeqCst)
+    MARK.load(Ordering::SeqCst)
+        != ZLECS.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]
@@ -1056,11 +1056,11 @@ mod region_active_tests {
         let _g = zle_test_setup();
         // c:327 — `return region_active`.
         zle_reset();
-        REGION_ACTIVE.store(0, std::sync::atomic::Ordering::SeqCst);
+        REGION_ACTIVE.store(0, Ordering::SeqCst);
         assert_eq!(get_region_active(), 0);
-        REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
+        REGION_ACTIVE.store(1, Ordering::SeqCst);
         assert_eq!(get_region_active(), 1);
-        REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst);
+        REGION_ACTIVE.store(2, Ordering::SeqCst);
         assert_eq!(get_region_active(), 2);
     }
 
@@ -1072,27 +1072,27 @@ mod region_active_tests {
         zle_reset();
         set_region_active(0);
         assert_eq!(
-            REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+            REGION_ACTIVE.load(Ordering::SeqCst),
             0
         );
         set_region_active(1);
         assert_eq!(
-            REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+            REGION_ACTIVE.load(Ordering::SeqCst),
             1
         );
         set_region_active(99);
         assert_eq!(
-            REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+            REGION_ACTIVE.load(Ordering::SeqCst),
             1
         );
         set_region_active(-1);
         assert_eq!(
-            REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+            REGION_ACTIVE.load(Ordering::SeqCst),
             1
         );
         set_region_active(0);
         assert_eq!(
-            REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+            REGION_ACTIVE.load(Ordering::SeqCst),
             0
         );
     }
@@ -1137,7 +1137,7 @@ mod numeric_tests {
         set_numeric(7);
         assert_eq!(ZMOD.lock().unwrap().mult, 7);
         // Only MULT remains; TMULT and NEG are gone.
-        assert!(ZMOD.lock().unwrap().flags & MOD_MULT != 0);
+        assert_ne!(ZMOD.lock().unwrap().flags & MOD_MULT, 0);
         assert_eq!(
             ZMOD.lock().unwrap().flags & MOD_TMULT,
             0
@@ -1172,7 +1172,7 @@ mod numeric_tests {
         unset_numeric(0);
         // Unchanged.
         assert_eq!(ZMOD.lock().unwrap().mult, 5);
-        assert!(ZMOD.lock().unwrap().flags & MOD_MULT != 0);
+        assert_ne!(ZMOD.lock().unwrap().flags & MOD_MULT, 0);
     }
 }
 
@@ -1197,7 +1197,7 @@ mod suffix_tests {
         let _g = zle_test_setup();
         // c:607 — `return zlecs`.
         zle_reset();
-        ZLECS.store(11, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.store(11, Ordering::SeqCst);
         assert_eq!(get_suffixend(), 11);
     }
 
@@ -1207,7 +1207,7 @@ mod suffix_tests {
         let _g = zle_test_setup();
         // c:600 — `return zlecs - suffixlen`.
         zle_reset();
-        ZLECS.store(20, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.store(20, Ordering::SeqCst);
         SUFFIXLEN.store(5, Ordering::SeqCst);
         assert_eq!(get_suffixstart(), 15);
         SUFFIXLEN.store(0, Ordering::SeqCst);
@@ -1244,7 +1244,7 @@ mod widget_tests {
         let _g = zle_test_setup();
         // c:451 — `return (lbindk ? lbindk->nam : "")`.
         zle_reset();
-        *crate::ported::zle::zle_main::LBINDK.lock().unwrap() = Some(Thingy::new("forward-char"));
+        *LBINDK.lock().unwrap() = Some(Thingy::new("forward-char"));
         assert_eq!(get_lwidget(), "forward-char");
     }
 
@@ -1261,9 +1261,9 @@ mod widget_tests {
         let _g = zle_test_setup();
         // c:537 — `return zle_recursive`.
         zle_reset();
-        ZLE_RECURSIVE.store(0, std::sync::atomic::Ordering::SeqCst);
+        ZLE_RECURSIVE.store(0, Ordering::SeqCst);
         assert_eq!(get_recursive(), 0);
-        ZLE_RECURSIVE.store(5, std::sync::atomic::Ordering::SeqCst);
+        ZLE_RECURSIVE.store(5, Ordering::SeqCst);
         assert_eq!(get_recursive(), 5);
     }
 }
@@ -1313,7 +1313,7 @@ mod batch_getters_tests {
     fn get_histno_reads_history_cursor() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_main::history()
+        history()
             .lock()
             .unwrap()
             .cursor = 7;
@@ -1351,8 +1351,8 @@ mod batch_getters_tests {
     fn get_yankstart_yankend_read_fields() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        YANKB.store(3, std::sync::atomic::Ordering::SeqCst);
-        YANKE.store(8, std::sync::atomic::Ordering::SeqCst);
+        YANKB.store(3, Ordering::SeqCst);
+        YANKE.store(8, Ordering::SeqCst);
         assert_eq!(get_yankstart(), 3);
         assert_eq!(get_yankend(), 8);
     }
@@ -1364,11 +1364,11 @@ mod batch_getters_tests {
         set_yankstart(5);
         set_yankend(11);
         assert_eq!(
-            YANKB.load(std::sync::atomic::Ordering::SeqCst),
+            YANKB.load(Ordering::SeqCst),
             5
         );
         assert_eq!(
-            YANKE.load(std::sync::atomic::Ordering::SeqCst),
+            YANKE.load(Ordering::SeqCst),
             11
         );
     }
@@ -1539,7 +1539,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register 'a' (idx 0).
         set_register('a', "hello");
-        let s: String = crate::ported::zle::zle_main::vibuf().lock().unwrap()[0]
+        let s: String = vibuf().lock().unwrap()[0]
             .iter()
             .collect();
         assert_eq!(s, "hello");
@@ -1553,7 +1553,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register '0' → idx 26.
         set_register('0', "zero");
-        let s: String = crate::ported::zle::zle_main::vibuf().lock().unwrap()[26]
+        let s: String = vibuf().lock().unwrap()[26]
             .iter()
             .collect();
         assert_eq!(s, "zero");
@@ -1600,27 +1600,27 @@ mod widget_killring_tests {
     fn set_histno_clamps_to_entries_len() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_main::history()
+        history()
             .lock()
             .unwrap()
             .entries
-            .push(crate::ported::zle::zle_hist::HistEntry {
+            .push(HistEntry {
                 line: "ls".to_string(),
                 num: 1,
                 time: None,
             });
-        crate::ported::zle::zle_main::history()
+        history()
             .lock()
             .unwrap()
             .entries
-            .push(crate::ported::zle::zle_hist::HistEntry {
+            .push(HistEntry {
                 line: "cd".to_string(),
                 num: 2,
                 time: None,
             });
         set_histno(1);
         assert_eq!(
-            crate::ported::zle::zle_main::history()
+            history()
                 .lock()
                 .unwrap()
                 .cursor,
@@ -1628,13 +1628,13 @@ mod widget_killring_tests {
         );
         // Beyond-end clamp: x > entries.len() → no change (early
         // return mirrors C's `quietgethist returns NULL → return`).
-        crate::ported::zle::zle_main::history()
+        history()
             .lock()
             .unwrap()
             .cursor = 7;
         set_histno(99);
         assert_eq!(
-            crate::ported::zle::zle_main::history()
+            history()
                 .lock()
                 .unwrap()
                 .cursor,

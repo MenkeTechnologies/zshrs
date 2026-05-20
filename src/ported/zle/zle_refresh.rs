@@ -682,7 +682,7 @@ pub fn zrefresh() {
 
     let prompt = prompt().to_string();
     let rprompt = rprompt().to_string();
-    let cursor = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let cursor = ZLECS.load(Ordering::SeqCst);
 
     let prompt_width = countprompt(&prompt);
     let rprompt_width = countprompt(&rprompt);
@@ -971,7 +971,7 @@ pub fn refreshline(ln: i32) {
     // 1: pad out new buffer with spaces                                 // c:1783-1784
     let put_rpmpt = PUT_RPMPT.load(Ordering::SeqCst);
     let oput_rpmpt = OPUT_RPMPT.load(Ordering::SeqCst);
-    let winw = crate::ported::zle::zle_refresh::WINW.load(Ordering::SeqCst);
+    let winw = WINW.load(Ordering::SeqCst);
     if cleareol                                                          // c:1786
             || (nllen == 0 && (ln != 0 || put_rpmpt == 0))                   // c:1787
             || (ln == 0 && put_rpmpt != oput_rpmpt)
@@ -1079,8 +1079,8 @@ pub fn refreshline(ln: i32) {
     }
 
     // 2b: automargin niceness                                           // c:1837
-    let vcs = crate::ported::zle::zle_refresh::VCS.load(Ordering::SeqCst);
-    let mut vln = crate::ported::zle::zle_refresh::VLN.load(Ordering::SeqCst);
+    let vcs = VCS.load(Ordering::SeqCst);
+    let mut vln = VLN.load(Ordering::SeqCst);
     if hasam_v && vcs == winw {
         // c:1839
         // c:1840 — `if (nbuf[vln] && nbuf[vln][vcs + 1].chr == '\n')`
@@ -1090,8 +1090,8 @@ pub fn refreshline(ln: i32) {
             // c:1840
             vln += 1; // c:1841
             let new_vcs = 1; // c:1841 vcs = 1
-            crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
-            crate::ported::zle::zle_refresh::VCS.store(new_vcs, Ordering::SeqCst);
+            VLN.store(vln, Ordering::SeqCst);
+            VCS.store(new_vcs, Ordering::SeqCst);
             // c:1842-1845 — zputc(nbuf[vln]) / zputc(&zr_sp)
             if ln == vln {
                 // c:1846 better safe than sorry
@@ -1107,15 +1107,15 @@ pub fn refreshline(ln: i32) {
         } else {
             // c:1852
             vln += 1; // c:1853 vln++, vcs = 0
-            crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
-            crate::ported::zle::zle_refresh::VCS.store(0, Ordering::SeqCst);
+            VLN.store(vln, Ordering::SeqCst);
+            VCS.store(0, Ordering::SeqCst);
             // c:1854 — zputc(&zr_nl)
         }
     }
     ins_last = 0; // c:1857
 
     // 2c: prompt-line head skip                                         // c:1859-1860
-    let lpromptw = crate::ported::zle::zle_refresh::LPROMPTW.load(Ordering::SeqCst);
+    let lpromptw = LPROMPTW.load(Ordering::SeqCst);
     if ln == 0 && lpromptw != 0 {
         // c:1862
         i = lpromptw - ccs; // c:1863
@@ -1168,7 +1168,7 @@ pub fn refreshline(ln: i32) {
             {
                 // c:1908-1913 — print the deferred last char.
                 // !!! STUB: zputc — defer.
-                crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
+                VCS.store(vcs + 1, Ordering::SeqCst);
                 return; // c:1913
             }
             if char_ins <= 0 || ccs >= winw {
@@ -1208,7 +1208,7 @@ pub fn refreshline(ln: i32) {
                 // !!! STUB: tc_delchars — Src/Zle/zle_refresh.c.
             } else {
                 // c:1936
-                crate::ported::zle::zle_refresh::VCS.store(vcs + i_pad, Ordering::SeqCst);
+                VCS.store(vcs + i_pad, Ordering::SeqCst);
                 // c:1937
                 // c:1938-1939 — for (i--; i > 0; ) zputc(&zr_pad)
                 // !!! STUB: zputc — defer.
@@ -1229,7 +1229,7 @@ pub fn refreshline(ln: i32) {
                 // c:1949 (DPUTS guard)
                 // c:1958 — zwrite(nl, i)
                 // !!! STUB: zwrite — Src/Zle/zle_refresh.c.
-                crate::ported::zle::zle_refresh::VCS.store(vcs + i_write, Ordering::SeqCst);
+                VCS.store(vcs + i_write, Ordering::SeqCst);
                 // c:1959
             }
             if col_cleareol >= 0 {
@@ -1280,7 +1280,7 @@ pub fn refreshline(ln: i32) {
             }
 
             // c:2012-2060 — TCINS try-block: find chars to insert.
-            let zterm_lines = crate::ported::zle::zle_refresh::WINH.load(Ordering::SeqCst);
+            let zterm_lines = WINH.load(Ordering::SeqCst);
             if (tclen.lock().unwrap()[crate::ported::zsh_h::TCINS as usize] != 0)  /* tccan(TCINS) per zsh.h:2682 */ && vln != zterm_lines - 1
             {
                 // c:2012
@@ -1297,7 +1297,7 @@ pub fn refreshline(ln: i32) {
                             } // c:2018 nl += i
                         }
                         char_ins += i_try; // c:2025
-                        crate::ported::zle::zle_refresh::VCS.store(vcs + i_try, Ordering::SeqCst);
+                        VCS.store(vcs + i_try, Ordering::SeqCst);
                         ccs += i_try; // c:2026
                                       // c:2031-2047 — truncate oldline if past right edge.
                         let mut k = 0i32;
@@ -1348,7 +1348,7 @@ pub fn refreshline(ln: i32) {
                 ol.remove(0); // c:2087 ol++
             }
             ccs += 1; // c:2088
-            crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
+            VCS.store(vcs + 1, Ordering::SeqCst);
 
             // c:2094-2095 — WEOF do-while: zshrs has no WEOF sentinel.
             break;
@@ -1868,13 +1868,13 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     // until termcap-output primitives land.
     if winpos != owinpos {
         // c:2595
-        singmoveto(&mut crate::ported::zle::zle_refresh::RefreshState::new(), 0);
+        singmoveto(&mut RefreshState::new(), 0);
         // c:2603
     }
 
     // c:2680 (function tail) — `singmoveto(nvcs);`
     singmoveto(
-        &mut crate::ported::zle::zle_refresh::RefreshState::new(),
+        &mut RefreshState::new(),
         nvcs as usize,
     );
 
@@ -1907,7 +1907,7 @@ pub fn zle_refresh_finish() {
     freevideo(&mut state); // c:2722
     let mut rh = REGION_HIGHLIGHTS.lock().unwrap(); // c:2724 if (region_highlights)
     if !rh.is_empty() {
-        crate::ported::zle::zle_utils::free_region_highlights_memos(); // c:2726
+        free_region_highlights_memos(); // c:2726
         rh.clear(); // c:2727-2729 zfree + NULL
     }
     drop(rh);
@@ -2084,19 +2084,19 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
             ..TextAttr::default()
         });
 
-    if REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) != 0 {
-        let (lo, hi) = if crate::ported::zle::zle_main::MARK
-            .load(std::sync::atomic::Ordering::SeqCst)
-            <= ZLECS.load(std::sync::atomic::Ordering::SeqCst)
+    if REGION_ACTIVE.load(Ordering::SeqCst) != 0 {
+        let (lo, hi) = if MARK
+            .load(Ordering::SeqCst)
+            <= ZLECS.load(Ordering::SeqCst)
         {
             (
-                crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+                MARK.load(Ordering::SeqCst),
+                ZLECS.load(Ordering::SeqCst),
             )
         } else {
             (
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst),
-                crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+                ZLECS.load(Ordering::SeqCst),
+                MARK.load(Ordering::SeqCst),
             )
         };
         let lo = lo.min(buf_len);
@@ -2591,7 +2591,7 @@ pub fn set_region_highlight(aval: Option<&[String]>) {
         }; // c:537-538
         let strp = rest2.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:541
                                                                               // c:545 — match_highlight(strp, ...) into attr fields.
-        let attr = crate::ported::zle::zle_refresh::match_highlight(strp);
+        let attr = match_highlight(strp);
         // c:551 — memo= field extraction.
         let memo = if let Some(rest) = strp.strip_prefix("memo=") {
             // c:517,551
@@ -2871,11 +2871,11 @@ mod tests {
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
         ZLELL.store(
             ZLELINE.lock().unwrap().len(),
-            std::sync::atomic::Ordering::SeqCst,
+            Ordering::SeqCst,
         );
-        crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
-        ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
-        REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
+        MARK.store(2, Ordering::SeqCst);
+        ZLECS.store(7, Ordering::SeqCst);
+        REGION_ACTIVE.store(1, Ordering::SeqCst); // charwise visual
         let attrs = compute_render_attrs();
         assert_eq!(attrs.len(), 11);
         // [0..2) and [7..11) are unstyled.
@@ -2897,10 +2897,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "abcdef".chars().collect();
-        ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
-        ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
-        REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst); // linewise — same swap behavior
+        ZLELL.store(6, Ordering::SeqCst);
+        MARK.store(5, Ordering::SeqCst);
+        ZLECS.store(1, Ordering::SeqCst);
+        REGION_ACTIVE.store(2, Ordering::SeqCst); // linewise — same swap behavior
         let attrs = compute_render_attrs();
         // Range collapses to (1..5).
         assert!(attrs[0].is_none());
@@ -2994,12 +2994,12 @@ mod tests {
         // When the user sets `zle_highlight=(region:fg=red,bold)` via
         // zle_set_highlight, vi visual-mode should paint the region
         // with that attr instead of the default standout.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abcde".chars().collect();
-        ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
-        ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
-        REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
+        ZLELL.store(5, Ordering::SeqCst);
+        MARK.store(1, Ordering::SeqCst);
+        ZLECS.store(4, Ordering::SeqCst);
+        REGION_ACTIVE.store(1, Ordering::SeqCst);
         zle_set_highlight(
             &mut highlight().lock().unwrap(),
             &["region:fg=red,bold"],
@@ -3019,7 +3019,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "abcde".chars().collect();
-        ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        ZLELL.store(5, Ordering::SeqCst);
         let custom = TextAttr {
             bold: true,
             fg_color: Some(1),

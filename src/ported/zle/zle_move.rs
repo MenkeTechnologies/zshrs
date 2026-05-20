@@ -443,7 +443,7 @@ pub fn setmarkcommand() -> i32 {
         REGION_ACTIVE.store(0, std::sync::atomic::Ordering::SeqCst); // c:486
         return 0; // c:487
     }
-    crate::ported::zle::zle_main::MARK.store(
+    MARK.store(
         ZLECS.load(std::sync::atomic::Ordering::SeqCst),
         std::sync::atomic::Ordering::SeqCst,
     ); // c:489 mark = zlecs
@@ -481,8 +481,8 @@ pub fn exchangepointandmark() -> i32 {
         REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // c:501
         return 0; // c:502
     }
-    let x = crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst); // c:504 x = mark
-    crate::ported::zle::zle_main::MARK.store(
+    let x = MARK.load(std::sync::atomic::Ordering::SeqCst); // c:504 x = mark
+    MARK.store(
         ZLECS.load(std::sync::atomic::Ordering::SeqCst),
         std::sync::atomic::Ordering::SeqCst,
     ); // c:505 mark = zlecs
@@ -515,7 +515,7 @@ pub fn visualmode() -> i32 {
             REGION_ACTIVE.store(0, std::sync::atomic::Ordering::SeqCst);
         } // c:525-527
         0 => {
-            crate::ported::zle::zle_main::MARK.store(
+            MARK.store(
                 ZLECS.load(std::sync::atomic::Ordering::SeqCst),
                 std::sync::atomic::Ordering::SeqCst,
             ); // c:529 fall-through to case 2
@@ -541,7 +541,7 @@ pub fn visuallinemode() -> i32 {
             REGION_ACTIVE.store(0, std::sync::atomic::Ordering::SeqCst);
         } // c:549-551
         0 => {
-            crate::ported::zle::zle_main::MARK.store(
+            MARK.store(
                 ZLECS.load(std::sync::atomic::Ordering::SeqCst),
                 std::sync::atomic::Ordering::SeqCst,
             ); // c:553
@@ -580,8 +580,8 @@ pub fn vigotocolumn() -> i32 {
     // C body (c:574-590): findline(&x, &y); n = zmult; if (n>=0) move
     //                    forward n cols from bol (n--); else from eol
     //                    backward.
-    let bol = crate::ported::zle::zle_utils::findbol();
-    let eol = crate::ported::zle::zle_utils::findeol();
+    let bol = findbol();
+    let eol = findeol();
     let n = ZMOD.lock().unwrap().mult;
     let target = if n >= 0 {
         let off = if n > 0 { (n as usize) - 1 } else { 0 };
@@ -700,7 +700,7 @@ pub fn vimatchbracket() -> i32 {
 /// can't sit ON the trailing newline (DECPOS(lim) excludes it).
 pub fn viforwardchar() -> i32 {
     // c:660
-    let mut lim = crate::ported::zle::zle_utils::findeol(); // c:660
+    let mut lim = findeol(); // c:660
     let mut n = ZMOD.lock().unwrap().mult; // c:663
     if n < 0 {
         // c:665
@@ -766,7 +766,7 @@ pub fn vibackwardchar() -> i32 {
         ZMOD.lock().unwrap().mult = saved;
         return ret;
     }
-    if ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_utils::findbol() {
+    if ZLECS.load(std::sync::atomic::Ordering::SeqCst) == findbol() {
         // c:694
         return 1; // c:695
     }
@@ -808,7 +808,7 @@ pub fn viendofline() -> i32 {
             return 1;
         }
         ZLECS.store(
-            crate::ported::zle::zle_utils::findeol() + 1,
+            findeol() + 1,
             std::sync::atomic::Ordering::SeqCst,
         );
     }
@@ -833,7 +833,7 @@ pub fn viendofline() -> i32 {
 pub fn vibeginningofline() -> i32 {
     // c:728
     ZLECS.store(
-        crate::ported::zle::zle_utils::findbol(),
+        findbol(),
         std::sync::atomic::Ordering::SeqCst,
     ); // c:708
     0 // c:731
@@ -845,7 +845,7 @@ pub fn vifindnextchar() -> i32 {
     // C body (c:740-746): `if ((vfindchar = vigetkey()) != ZLEEOF) {
     //                    vfinddir=1; tailadd=0; return vifindchar(0,args); }
     //                    return 1`.
-    let c = crate::ported::zle::zle_vi::vigetkey();
+    let c = vigetkey();
     if c < 0 {
         return 1;
     }
@@ -859,7 +859,7 @@ pub fn vifindnextchar() -> i32 {
 pub fn vifindprevchar() -> i32 {
     // c:751
     // C body (c:752-758): same as vifindnextchar but vfinddir=-1.
-    let c = crate::ported::zle::zle_vi::vigetkey();
+    let c = vigetkey();
     if c < 0 {
         return 1;
     }
@@ -873,7 +873,7 @@ pub fn vifindprevchar() -> i32 {
 pub fn vifindnextcharskip() -> i32 {
     // c:763
     // C body (c:764-770): vfinddir=1, tailadd=-1 (land just before).
-    let c = crate::ported::zle::zle_vi::vigetkey();
+    let c = vigetkey();
     if c < 0 {
         return 1;
     }
@@ -887,7 +887,7 @@ pub fn vifindnextcharskip() -> i32 {
 pub fn vifindprevcharskip() -> i32 {
     // c:775
     // C body (c:776-782): vfinddir=-1, tailadd=1 (land just after).
-    let c = crate::ported::zle::zle_vi::vigetkey();
+    let c = vigetkey();
     if c < 0 {
         return 1;
     }
@@ -1025,7 +1025,7 @@ pub fn virevrepeatfind() -> i32 {
 pub fn vifirstnonblank() -> i32 {
     // c:862
     ZLECS.store(
-        crate::ported::zle::zle_utils::findbol(),
+        findbol(),
         std::sync::atomic::Ordering::SeqCst,
     ); // c:862
     while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -1053,7 +1053,7 @@ pub fn visetmark(ch: char) -> i32 {
         return 1;
     }
     let idx = (ch as u8 - b'a') as usize; // c:879
-    crate::ported::zle::zle_main::vimarks().lock().unwrap()[idx] = Some((
+    vimarks().lock().unwrap()[idx] = Some((
         ZLECS.load(std::sync::atomic::Ordering::SeqCst),
         history().lock().unwrap().cursor as i32,
     )); // c:880
@@ -1070,7 +1070,7 @@ pub fn vigotomark(ch: char) -> i32 {
         '\'' | '`' => 26,                        // c:898 ' / ` mark
         _ => return 1,
     };
-    if let Some((cs, hist)) = crate::ported::zle::zle_main::vimarks().lock().unwrap()[idx] {
+    if let Some((cs, hist)) = vimarks().lock().unwrap()[idx] {
         // c:903
         ZLECS.store(
             cs.min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
@@ -1234,7 +1234,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:566 — `region_active = 0; return 0`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
         let r = deactivateregion();
         assert_eq!(r, 0);
@@ -1246,13 +1246,13 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:489-490 — `mark = zlecs; region_active = 1`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
         ZMOD.lock().unwrap().mult = 1;
         let r = setmarkcommand();
         assert_eq!(r, 0);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+            MARK.load(std::sync::atomic::Ordering::SeqCst),
             7
         );
         assert_eq!(REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1263,9 +1263,9 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:485-487 — `if (zmult < 0) { region_active = 0; return 0; }`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
+        MARK.store(5, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
         ZMOD.lock().unwrap().mult = -1;
         let r = setmarkcommand();
@@ -1273,7 +1273,7 @@ mod region_tests {
         assert_eq!(REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 0);
         // mark NOT updated because we returned early.
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+            MARK.load(std::sync::atomic::Ordering::SeqCst),
             5
         );
     }
@@ -1283,17 +1283,17 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:504-506 — swap zlecs and mark.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
         ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(8, std::sync::atomic::Ordering::SeqCst);
+        MARK.store(8, std::sync::atomic::Ordering::SeqCst);
         ZMOD.lock().unwrap().mult = 1;
         let r = exchangepointandmark();
         assert_eq!(r, 0);
         assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 8);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+            MARK.load(std::sync::atomic::Ordering::SeqCst),
             3
         );
         // c:509-510 — zmult > 0 → activate region.
@@ -1306,16 +1306,16 @@ mod region_tests {
         let _g = zle_test_setup();
         // c:500-502 — `if (zmult == 0) { region_active = 1; return 0; }`.
         // No swap occurs.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(8, std::sync::atomic::Ordering::SeqCst);
+        MARK.store(8, std::sync::atomic::Ordering::SeqCst);
         ZMOD.lock().unwrap().mult = 0;
         let r = exchangepointandmark();
         assert_eq!(r, 0);
         // No swap.
         assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+            MARK.load(std::sync::atomic::Ordering::SeqCst),
             8
         );
         assert_eq!(REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1326,11 +1326,11 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:507-508 — `if (zlecs > zlell) zlecs = zlell`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hi".chars().collect();
         ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::MARK.store(99, std::sync::atomic::Ordering::SeqCst); // mark beyond zlell
+        MARK.store(99, std::sync::atomic::Ordering::SeqCst); // mark beyond zlell
         ZMOD.lock().unwrap().mult = 1;
         exchangepointandmark();
         // After swap zlecs would be 99, clamped to 2.
@@ -1345,7 +1345,7 @@ mod region_tests {
         let _g = zle_test_setup();
         // c:121-126 — `zlecs++; alignmultiwordright(...)`. Vec<char>
         // makes alignment a no-op.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1360,7 +1360,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:132-137 — `zlecs--; alignmultiwordleft(...)`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -1389,7 +1389,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:457-458 — `while (zlecs < zlell && n--) INCCS();`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
         ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1405,7 +1405,7 @@ mod region_tests {
         let _g = zle_test_setup();
         // c:457 — `while (zlecs < zlell && ...)`. Walking past end
         // is bounded.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "ab".chars().collect();
         ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1419,7 +1419,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:476-477 — `while (zlecs > 0 && n--) DECCS();`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
         ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(8, std::sync::atomic::Ordering::SeqCst);
@@ -1434,7 +1434,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:476 — `while (zlecs > 0 && ...)`. Doesn't underflow.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "ab".chars().collect();
         ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1448,7 +1448,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:445-450 — `if (n < 0) { zmult = -n; ret = backwardchar(); ... }`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hello".chars().collect();
         ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
@@ -1481,7 +1481,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:730 — `zlecs = findbol()`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
         ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(9, std::sync::atomic::Ordering::SeqCst); // 'h' in "ghi"
@@ -1495,7 +1495,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:694-695 — at findbol → return 1 without moving.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
         ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(4, std::sync::atomic::Ordering::SeqCst); // 'd' (right after newline)
@@ -1522,7 +1522,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:674-675 — at findeol → return 1.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
         ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(3, std::sync::atomic::Ordering::SeqCst); // at '\n'
@@ -1548,7 +1548,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:676 — `while (n-- && zlecs < lim)`.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "ab".chars().collect();
         ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1564,7 +1564,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:864-866 — bol then skip space/tab.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "   hello".chars().collect();
         ZLELL.store(8, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(5, std::sync::atomic::Ordering::SeqCst); // somewhere mid-word
@@ -1578,7 +1578,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:865 — ZC_iblank includes tab.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "\t\t\tfoo".chars().collect();
         ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1591,7 +1591,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // No leading blanks → cursor lands at bol.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "hello".chars().collect();
         ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1604,7 +1604,7 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:865 — `while zlecs != zlell` exits cleanly when only blanks.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "   ".chars().collect();
         ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1619,7 +1619,7 @@ mod region_tests {
         let _g = zle_test_setup();
         // c:864 — `zlecs = findbol()`. With multiline buffer, jump
         // to start of CURRENT line, then skip blanks.
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = "abc\n   def".chars().collect();
         ZLELL.store(10, std::sync::atomic::Ordering::SeqCst);
         ZLECS.store(8, std::sync::atomic::Ordering::SeqCst); // 'e' in 'def'
@@ -1638,7 +1638,7 @@ mod region_tests {
     fn vifirstnonblank_skips_wide_whitespace_per_wcsiblank() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         // VT, FF, CR, NBSP, then 'x' — wcsiblank true for all four.
         let buf: Vec<char> = vec!['\x0b', '\x0c', '\r', '\u{00A0}', 'x'];
         *ZLELINE.lock().unwrap() = buf;
@@ -1660,7 +1660,7 @@ mod region_tests {
     fn vifirstnonblank_stops_at_newline_per_wcsiblank() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         // Buffer: "  \n  x" — leading 2 spaces, newline, then more.
         *ZLELINE.lock().unwrap() = "  \n  x".chars().collect();
         ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);

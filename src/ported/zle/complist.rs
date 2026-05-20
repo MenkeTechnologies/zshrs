@@ -28,9 +28,11 @@ use crate::ported::init::SHTTY;
 use crate::ported::params::getsparam;
 use crate::ported::zsh_h::Patprog;
 use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG};
-use crate::ported::utils::{errflag, write_loop};
-use crate::ported::zle::comp_h::{CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
-use crate::ported::zle::compcore::ZLEMETACS;
+use crate::ported::utils::{adjustcolumns, adjustlines, errflag, write_loop};
+use crate::ported::zle::comp_h::{
+    Cmatch, Cmgroup, CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST,
+};
+use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE};
 use crate::ported::zle::zle_refresh::{tcout, NLNCT};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.

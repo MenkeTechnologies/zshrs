@@ -198,7 +198,7 @@ impl Process {
             status: SP_RUNNING,
             text: String::new(),
             ti: timeinfo::default(),
-            bgtime: Some(std::time::Instant::now()),
+            bgtime: Some(Instant::now()),
             endtime: None,
         }
     }
@@ -746,7 +746,7 @@ pub fn update_job(job: &mut Job) -> bool {
     job.stat |= stat::DONE | stat::CHANGED;
     job.stat &= !stat::STOPPED;
     // c:545 — lastval2 = val;
-    LASTVAL2.store(val, std::sync::atomic::Ordering::SeqCst);
+    LASTVAL2.store(val, Ordering::SeqCst);
 
     // c:550-555 — `if (jn->stat & STAT_CURSH) inforeground = 1;
     //               else if (job == thisjob) { lastval = val; inforeground = 2; }`
@@ -1076,7 +1076,7 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
     };
     // c:1074 — `if (zleactive) return 0;`. ZLE is line-editing the
     // prompt; never spew a timing line into the editor.
-    if zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
+    if zleactive.load(Ordering::Relaxed) != 0
     // c:1074
     {
         return false;
@@ -1481,7 +1481,7 @@ pub fn deletejob(jn: &mut Job, disowning: bool) {
         #[cfg(unix)]
         unsafe {
             let pgrp =
-                crate::ported::modules::clone::mypgrp.load(std::sync::atomic::Ordering::Relaxed);
+                crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed);
             if pgrp > 0 {
                 libc::tcsetpgrp(0, pgrp); // c:1516 attachtty(mypgrp)
             }
@@ -1827,7 +1827,7 @@ pub fn spawnjob() {
     // c:1900 — `if (!subsh) {` — when this isn't a subshell.
     // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
     // (0 = top-level shell).
-    let in_subsh = crate::ported::exec::FORKLEVEL.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    let in_subsh = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed) > 0;
     if !in_subsh {
         // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
         //                  { curjob = thisjob; setprevjob(); }`
@@ -2271,7 +2271,7 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable
             // Rust's String wrappers — accumulate length conservatively.
             hackspace += 1 + entry.len(); // c:2207-style p+1
         }
-        std::env::set_var("__zshrs_hackspace", hackspace.to_string()); // record for jobs -Z
+        env::set_var("__zshrs_hackspace", hackspace.to_string()); // record for jobs -Z
     }
     table // c:2210 done
 }
@@ -2338,8 +2338,8 @@ pub type Bgstatus = Box<bgstatus>; // c:2300
 /// ordered list so the oldest entry can be evicted when the cap is
 /// reached. Stored as `Vec<bgstatus>` since the order is the only
 /// thing we'd ever need from a linked list here.
-pub static bgstatus_list: std::sync::Mutex<Vec<bgstatus>> = // c:2302
-    std::sync::Mutex::new(Vec::new());
+pub static bgstatus_list: Mutex<Vec<bgstatus>> = // c:2302
+    Mutex::new(Vec::new());
 
 /// Port of `static long bgstatus_count;` (jobs.c:2304). Reaches
 /// `_SC_CHILD_MAX` and stops (addbgstatus then evicts oldest).
@@ -2445,7 +2445,7 @@ pub fn bin_fg(
         {
             let _ = title;
         }
-        crate::ported::mem::unqueue_signals(); // c:2449
+        unqueue_signals(); // c:2449
         return 0; // c:2450
     }
 
@@ -2476,7 +2476,7 @@ pub fn bin_fg(
     let _ = lng;
 
     // c:2461-2465 — fg/bg need job control.
-    let jobbing = isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(MONITOR);
     if (func == BIN_FG || func == BIN_BG) && !jobbing {
         // c:2461
         zwarnnam(name, "no job control in this shell."); // c:2463
@@ -2506,7 +2506,7 @@ pub fn bin_fg(
     // c:2483-2486 — set stopmsg=2 so zexit doesn't complain about
     // stopped jobs if the user immediately runs `exit` after `jobs`.
     if func == BIN_JOBS {
-        crate::ported::builtin::STOPMSG.store(2, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::STOPMSG.store(2, Ordering::Relaxed);
         // c:2486
     }
 
@@ -2895,7 +2895,7 @@ pub fn bin_kill(
         } else if arg.starts_with('%') {
             // c:2985 jobspec
             // c:2989 — `if ((p = getjob(*argv, nam)) == -1)`.
-            let p = crate::ported::jobs::getjob(arg, nam);
+            let p = getjob(arg, nam);
             if p < 0 {
                 // c:2989
                 returnval += 1; // c:2990
@@ -3146,7 +3146,7 @@ pub fn gettrapnode(sig: i32, ignoredisable: bool) -> Option<String> {
         hit.map(|f| f.node.nam.clone())
     };
     // c:3131 — sprintf(fname, "TRAP%s", sigs[sig]);
-    let fname = format!("TRAP{}", crate::ported::signals::getsigname(sig));
+    let fname = format!("TRAP{}", getsigname(sig));
     // c:3132 — if ((hn = getptr(shfunctab, fname))) return hn;
     if let Some(n) = getptr(&fname) {
         return Some(n);
@@ -3214,7 +3214,7 @@ pub fn bin_suspend(
     }
     // c:3177 — `if (jobbing)`. jobbing is the job-control-enabled flag;
     // tracks the MONITOR option.
-    let jobbing = isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(MONITOR);
 
     if jobbing {
         // c:3177
@@ -3720,7 +3720,7 @@ mod tests {
         // Disable both thresholds AND simulate zleactive — if STAT_TIMED
         // doesn't short-circuit, every other condition would return false.
         unsetparam("REPORTMEMORY");
-        zleactive.store(1, std::sync::atomic::Ordering::SeqCst);
+        zleactive.store(1, Ordering::SeqCst);
 
         let mut job = Job::default();
         job.stat = stat::INUSE | stat::TIMED;
@@ -3729,7 +3729,7 @@ mod tests {
         let reported = should_report_time(&job, -1.0);
 
         // Cleanup before assert so a failure doesn't leak state.
-        zleactive.store(0, std::sync::atomic::Ordering::SeqCst);
+        zleactive.store(0, Ordering::SeqCst);
         assert!(
             reported,
             "c:1052-1053 — STAT_TIMED MUST short-circuit to true regardless of threshold/zleactive"
@@ -3748,7 +3748,7 @@ mod tests {
         for (i, text) in ["echo a", "grep b", "tee c"].iter().enumerate() {
             let mut p = Process::new(1000 + i as i32);
             p.bgtime = Some(now);
-            p.endtime = Some(now + std::time::Duration::from_millis(10));
+            p.endtime = Some(now + Duration::from_millis(10));
             p.text = text.to_string();
             job.procs.push(p);
         }
@@ -3787,7 +3787,7 @@ mod tests {
     #[test]
     fn update_job_done_writes_lastval2() {
         let _g = crate::test_util::global_state_lock();
-        LASTVAL2.store(-1, std::sync::atomic::Ordering::SeqCst);
+        LASTVAL2.store(-1, Ordering::SeqCst);
         let mut job = Job::default();
         let mut p1 = Process::new(1001);
         p1.status = 0; // exited 0 (WIFEXITED && WEXITSTATUS=0)
@@ -3800,7 +3800,7 @@ mod tests {
         assert!(job.stat & stat::DONE != 0);
         assert!(job.stat & stat::CHANGED != 0);
         assert_eq!(
-            LASTVAL2.load(std::sync::atomic::Ordering::SeqCst),
+            LASTVAL2.load(Ordering::SeqCst),
             7,
             "lastval2 = WEXITSTATUS of last proc"
         );
@@ -3989,7 +3989,7 @@ mod tests {
         for (i, ms) in [100u64, 300, 600].iter().enumerate() {
             let mut p = Process::new(8000 + i as i32);
             p.bgtime = Some(t0);
-            p.endtime = Some(t0 + std::time::Duration::from_millis(*ms));
+            p.endtime = Some(t0 + Duration::from_millis(*ms));
             p.text = format!("p{}", i);
             job.procs.push(p);
         }
@@ -4024,7 +4024,7 @@ mod tests {
         job.stat = stat::INUSE | stat::TIMED | stat::DONE;
         let mut p = Process::new(42);
         p.bgtime = Some(Instant::now());
-        p.endtime = Some(Instant::now() + std::time::Duration::from_millis(5));
+        p.endtime = Some(Instant::now() + Duration::from_millis(5));
         p.text = "echo hi".to_string();
         p.status = 0; // exited 0
         job.procs.push(p);
@@ -4112,7 +4112,7 @@ mod tests {
     #[test]
     fn update_job_last_proc_signaled_sets_high_bit_val() {
         let _g = crate::test_util::global_state_lock();
-        LASTVAL2.store(-1, std::sync::atomic::Ordering::SeqCst);
+        LASTVAL2.store(-1, Ordering::SeqCst);
 
         let mut job = Job::default();
         let mut p1 = Process::new(6001);
@@ -4123,7 +4123,7 @@ mod tests {
         job.procs.push(p2);
 
         assert!(update_job(&mut job));
-        let lv2 = LASTVAL2.load(std::sync::atomic::Ordering::SeqCst);
+        let lv2 = LASTVAL2.load(Ordering::SeqCst);
         assert_eq!(
             lv2 & 0o200,
             0o200,
@@ -4434,9 +4434,9 @@ mod tests {
         assert_eq!(stat::STOPPED, crate::ported::zsh_h::STAT_STOPPED);
         assert_eq!(stat::TIMED, crate::ported::zsh_h::STAT_TIMED);
         assert_eq!(stat::DONE, crate::ported::zsh_h::STAT_DONE);
-        assert_eq!(stat::SUPERJOB, crate::ported::zsh_h::STAT_SUPERJOB);
-        assert_eq!(stat::INUSE, crate::ported::zsh_h::STAT_INUSE);
-        assert_eq!(stat::ATTACH, crate::ported::zsh_h::STAT_ATTACH);
+        assert_eq!(stat::SUPERJOB, STAT_SUPERJOB);
+        assert_eq!(stat::INUSE, STAT_INUSE);
+        assert_eq!(stat::ATTACH, STAT_ATTACH);
         assert_eq!(stat::BUILTIN, crate::ported::zsh_h::STAT_BUILTIN);
     }
 
@@ -4696,7 +4696,7 @@ mod tests {
     }
 
     /// Serialise tests that mutate the global ZLE-active flag.
-    static ZLEACTIVE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ZLEACTIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Pin: STAT_TIMED short-circuits **regardless of zleactive** per
     /// `Src/jobs.c:1052-1053` — the STAT_TIMED check happens BEFORE
@@ -4728,10 +4728,10 @@ mod tests {
         // elapsed-time threshold: bgtime now, endtime now + 10s,
         // reporttime=1s.
         let mut job = Job::new();
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let mut p = Process::new(1);
         p.bgtime = Some(now);
-        p.endtime = Some(now + std::time::Duration::from_secs(10));
+        p.endtime = Some(now + Duration::from_secs(10));
         job.procs.push(p);
         // With zleactive=1, suppressed.
         assert!(!should_report_time(&job, 1.0));
@@ -4749,10 +4749,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let mut job = Job::new();
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let mut p = Process::new(1);
         p.bgtime = Some(now);
-        p.endtime = Some(now + std::time::Duration::from_secs(10));
+        p.endtime = Some(now + Duration::from_secs(10));
         job.procs.push(p);
         assert!(!should_report_time(&job, -1.0));
     }
@@ -4768,7 +4768,7 @@ mod tests {
     }
 
     /// Serialise tests that mutate JOBTAB + PWD param.
-    static JOBPWD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static JOBPWD_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Pin: `setjobpwd()` writes `pwd` to every IN-USE job that
     /// doesn't already have one, per `Src/jobs.c:1886-1888`. The

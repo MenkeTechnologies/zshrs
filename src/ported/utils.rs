@@ -23,8 +23,14 @@ use crate::ported::lex::lineno;
 // 'no imports inside FNs ever'). Aliased ZT_* names disambiguate
 // ztype_h constants from same-named locals/module-names.
 use crate::ported::options::dosetopt;
+use crate::ported::builtin::SFCONTEXT;
 use crate::ported::hashnameddir::nameddirtab;
-use crate::ported::params::{assignsparam, getaparam, getsparam, isident, locallevel as LOCALLEVEL};
+use crate::ported::hashtable::shfunctab_lock;
+use crate::ported::options::opt_state_set;
+use crate::ported::params::{
+    assignsparam, getaparam, getsparam, ifsgetfn, isident, locallevel as LOCALLEVEL,
+    wordcharsgetfn, wordcharssetfn,
+};
 use crate::ported::ztype_h::ZISPRINT;
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
@@ -1508,7 +1514,7 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
     let mut ret: i32 = 0; // c:1475
 
     // c:1495 — `if ((shfunc = getshfunc(name))) { doshfunc(...); stat = 0; }`
-    let shf_exists = crate::ported::hashtable::shfunctab_lock()
+    let shf_exists = shfunctab_lock()
         .read()
         .map(|t| t.get(name).is_some())
         .unwrap_or(false);
@@ -1533,7 +1539,7 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
             .unwrap_or_default(); // c:1512 getaparam
         for fn_name in arr {
             // c:1514 ; *arr ;
-            let exists = crate::ported::hashtable::shfunctab_lock()
+            let exists = shfunctab_lock()
                 .read()
                 .map(|t| t.get(&fn_name).is_some())
                 .unwrap_or(false);
@@ -1655,9 +1661,9 @@ pub(crate) fn printprompt4() {
     // c:utils.c:1723,1726,1730 — `t = opts[XTRACE]; opts[XTRACE] = 0;
     //                              promptexpand(...);  opts[XTRACE] = t;`
     let saved = isset(XTRACE);
-    crate::ported::options::opt_state_set(&opt_name(XTRACE), false);
+    opt_state_set(&opt_name(XTRACE), false);
     let prefix = crate::prompt::expand_prompt(&prefix_template);
-    crate::ported::options::opt_state_set(&opt_name(XTRACE), saved);
+    opt_state_set(&opt_name(XTRACE), saved);
     eprint!("{}", prefix);
 }
 
@@ -3800,7 +3806,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 /// function-text mapping; bytecode dispatch happens in fusevm
 /// at call time).
 pub fn getshfunc(nam: &str) -> Option<String> {
-    let tab = crate::ported::hashtable::shfunctab_lock()
+    let tab = shfunctab_lock()
         .read()
         .expect("shfunctab poisoned");
     tab.get(nam).and_then(|f| f.body.clone())
@@ -3822,7 +3828,7 @@ pub fn subst_string_by_func(
     orig: &str,
 ) -> Option<Vec<String>> // c:4017
 {
-    let osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed); // c:4019
+    let osc = SFCONTEXT.load(Ordering::Relaxed); // c:4019
     let osm = crate::ported::builtin::STOPMSG.load(Ordering::Relaxed);
     let old_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
     let mut args: Vec<String> = Vec::with_capacity(3); // c:4020-4026
@@ -3832,7 +3838,7 @@ pub fn subst_string_by_func(
         args.push(a.to_string()); // c:4025
     }
     args.push(orig.to_string()); // c:4026
-    crate::ported::builtin::SFCONTEXT // c:4027
+    SFCONTEXT // c:4027
         .store(crate::ported::zsh_h::SFC_SUBST, Ordering::Relaxed);
     INCOMPFUNC.store(0, Ordering::Relaxed); // c:4028
 
@@ -3848,7 +3854,7 @@ pub fn subst_string_by_func(
         getaparam("reply") // c:4033
     };
 
-    crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed); // c:4035
+    SFCONTEXT.store(osc, Ordering::Relaxed); // c:4035
     crate::ported::builtin::STOPMSG.store(osm, Ordering::Relaxed); // c:4036
     INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed); // c:4037
     ret // c:4038
@@ -4095,7 +4101,7 @@ pub fn inittyptab() {
         use crate::ported::zsh_h::{DEFAULT_IFS, META};
         use crate::ported::ztype_h::{ISEP as ZT_ISEP, IWSEP as ZT_IWSEP};
         // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
-        let ifs = crate::ported::params::ifsgetfn();
+        let ifs = ifsgetfn();
         let src: String = if ifs.is_empty() {
             DEFAULT_IFS.to_string()
         } else {
@@ -4145,7 +4151,7 @@ pub fn inittyptab() {
         use crate::ported::zsh_h::META;
         use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
         use crate::ported::ztype_h::IWORD as ZT_IWORD;
-        let wc = crate::ported::params::wordcharsgetfn();
+        let wc = wordcharsgetfn();
         let src: String = if wc.is_empty() {
             DEFAULT_WORDCHARS.to_string()
         } else {
@@ -4330,13 +4336,13 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
         // through `std::env::var("WORDCHARS")` which is the libc
         // process environment — never reflects runtime `WORDCHARS=:`
         // assignments inside the shell.
-        let w = crate::ported::params::wordcharsgetfn();
+        let w = wordcharsgetfn();
         return w.chars().any(|x| x == c);
     }
     if cls == ISEP {
         // c:4366
         // c:4367 — same canonical-global pattern for IFS.
-        let ifs = crate::ported::params::ifsgetfn();
+        let ifs = ifsgetfn();
         return ifs.chars().any(|x| x == c);
     }
     let _ = IALNUM;
@@ -4539,7 +4545,7 @@ pub fn attachtty(pgrp: i32) {
                 ));
                 let _ = io::stderr().flush(); // c:4798
             }
-            crate::ported::options::opt_state_set("monitor", false); // c:4815 opts[MONITOR]=0
+            opt_state_set("monitor", false); // c:4815 opts[MONITOR]=0
             ATTACHTTY_EP.store(1, Ordering::Relaxed); // c:4815
         }
     } else if rc != -1 {
@@ -9687,12 +9693,12 @@ mod tests {
             return;
         }
         // Save and set WORDCHARS to a single non-ASCII char.
-        let saved = crate::ported::params::wordcharsgetfn();
-        crate::ported::params::wordcharssetfn("é".to_string());
+        let saved = wordcharsgetfn();
+        wordcharssetfn("é".to_string());
         // 'é' is alphanumeric per Unicode → IWORD returns true via
         // is_alphanumeric short-circuit at c:4353. So we can't pin
         // the WORDCHARS-specific path with 'é'. Use a non-alnum char.
-        crate::ported::params::wordcharssetfn(":".to_string());
+        wordcharssetfn(":".to_string());
         // ':' is ASCII so wcsitype routes through TYPTAB (which now
         // has IWORD on ':' because wordcharssetfn called inittyptab).
         assert!(
@@ -9700,7 +9706,7 @@ mod tests {
             "c:4364 — wordchars membership through canonical global"
         );
         // Restore.
-        crate::ported::params::wordcharssetfn(saved);
+        wordcharssetfn(saved);
     }
 
     /// `Src/utils.c:2090-2097` — `addmodulefd(fd, fdt)`. Stores the
@@ -9951,7 +9957,7 @@ mod tests {
         if !isset(MULTIBYTE) {
             return;
         }
-        let saved = crate::ported::params::ifsgetfn();
+        let saved = ifsgetfn();
         crate::ported::params::ifssetfn(":".to_string());
         assert!(
             wcsitype(':', ISEP as u32),
