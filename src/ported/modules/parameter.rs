@@ -20,17 +20,12 @@ use crate::ported::module::MODULESTAB;
 use crate::ported::options::{dosetopt, optlookup};
 use crate::ported::params::{deleteparamtable, getstrvalue, realparamtab};
 use crate::ported::utils::zwarn;
-use crate::ported::zsh_h::{hashtable, value, INTERACTIVE, ND_USERNAME};
-use crate::ported::zsh_h::{
+use crate::ported::zsh_h::{hashtable, value, INTERACTIVE, ND_USERNAME,
     hashnode, nameddir, param as ParamStruct, HashNode, HashTable, Param, ALIAS_GLOBAL,
     ALIAS_SUFFIX, DISABLED,
-};
-use crate::ported::zsh_h::{
     PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL,
     PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR,
     PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER,
-};
-use crate::ported::zsh_h::{
     FS_EVAL, FS_SOURCE, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
     STAT_NOPRINT, STAT_STOPPED,
 };

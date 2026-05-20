@@ -11,12 +11,11 @@
 use std::env;
 use std::fs;
 
-use crate::ported::zsh_system_h::timespec;
 use std::os::unix::fs::MetadataExt;
 use crate::params::getsparam;
 use crate::ported::zsh_h::dirsav;
 use crate::utils::{unmeta, zwarn};
-use crate::zsh_system_h::{OPEN_MAX, ZSH_INITIAL_OPEN_MAX};
+use crate::zsh_system_h::{timespec, OPEN_MAX, ZSH_INITIAL_OPEN_MAX};
 
 /// Provide clock time with nanoseconds.
 ///

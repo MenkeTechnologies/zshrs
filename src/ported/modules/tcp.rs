@@ -15,11 +15,7 @@
 //! `thread_local!` Vec replacing the linked list (per PORT_PLAN
 //! Phase 2 bucket-1: file-statics → thread_local).
 
-use crate::ported::modules::tcp_h::tcp_session;
-use crate::ported::modules::tcp_h::tcp_sockaddr;
-use crate::ported::modules::tcp_h::ZTCP_INBOUND;
-use crate::ported::modules::tcp_h::ZTCP_LISTEN;
-use crate::ported::modules::tcp_h::ZTCP_ZFTP;
+use crate::ported::modules::tcp_h::{tcp_session, tcp_sockaddr, ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP};
 use crate::ported::utils::{zerrnam, zwarnnam};
 use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
 use std::net::ToSocketAddrs;
