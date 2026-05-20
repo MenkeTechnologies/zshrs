@@ -2529,9 +2529,12 @@ pub fn paramsubst(
         // Tested in C via `mods & 1` (c:4155, c:4163) and `mods & 2`
         // (c:4157, c:4165).
         let mut mods: i32 = 0;                                                // c:1746
-        let mut flag_char_count = false; // c:2275 (c)
-        let mut flag_word_count = false; // c:2278 (w)
-        let mut flag_word_count_w = false; // c:2281 (W)
+        // c:1679 — `int whichlen = 0;` single int holding the
+        // (c)/(w)/(W) length-flavor flag. 1 = char count (c), 2 =
+        // word count (w), 3 = word count with width-padding (W).
+        // Previous Rust port decomposed into 3 bools — Rule D
+        // bag-of-globals. Consumed by ${#pm} length-computation arm.
+        let mut whichlen: i32 = 0;                                            // c:1679
         let mut flag_b_pattern = false; // c:2255 (b)
                                         // SUB_* flag bits accumulated by M/R/B/E/N/S/I/* in the
                                         // flag-loop. Direct port of subst.c:2169-2199 — passed
@@ -2852,15 +2855,15 @@ pub fn paramsubst(
                     'b' => {
                         flag_b_pattern = true;
                     } // c:2255 (b)
-                    'w' => {
-                        flag_word_count = true;
-                    } // c:2278 (w)
-                    'c' => {
-                        flag_char_count = true;
-                    } // c:2275 (c)
-                    'W' => {
-                        flag_word_count_w = true;
-                    } // c:2281 (W)
+                    'c' => {                                                  // c:2275
+                        whichlen = 1;                                         // c:2276
+                    }                                                         // c:2277
+                    'w' => {                                                  // c:2278
+                        whichlen = 2;                                         // c:2279
+                    }                                                         // c:2280
+                    'W' => {                                                  // c:2281
+                        whichlen = 3;                                         // c:2282
+                    }                                                         // c:2283
                     'z' => {
                         flag_z_tokenize = true;
                     } // c:2439 (z)
@@ -5482,32 +5485,27 @@ pub fn paramsubst(
         }
 
         // (c)/(w)/(W) length variants — char count, word count
-        // (whitespace-split), word count (W = WS_NULL).
-        // Port of subst.c:2275-2281 whichlen.
-        if flag_char_count {
-            // c:2275
+        // (whitespace-split), word count (W = WS_NULL). Single
+        // tri-state `whichlen` int per c:1679. Switch arms below
+        // mirror C's whichlen == 1/2/3 dispatch in ${#pm}'s body.
+        if whichlen == 1 {                                                    // c:2276 whichlen == 1 (c)
             // (m) flag, when set, counts cells via wcpadwidth (so
             // wide chars count 2). Without (m): plain chars.count().
-            // Direct port of subst.c:2275 whichlen + multi_width.
-            value = if multi_width > 0 {
-                // c:2275
-                value
-                    .chars() // c:2376
-                    .map(|c| wcpadwidth(c, multi_width as i32) as usize) // c:2376
-                    .sum::<usize>() // c:2376
-                    .to_string() // c:2376
-            } else {
-                // c:2275
-                value.chars().count().to_string() // c:2275
-            }; // c:2275
-        } else if flag_word_count {
-            // c:2278
-            value = value.split_whitespace().count().to_string(); // c:2278
-        } else if flag_word_count_w {
-            // c:2281
+            value = if multi_width > 0 {                                      // c:2276
+                value                                                          // c:2376
+                    .chars()                                                   // c:2376
+                    .map(|c| wcpadwidth(c, multi_width as i32) as usize)      // c:2376
+                    .sum::<usize>()                                            // c:2376
+                    .to_string()                                               // c:2376
+            } else {                                                           // c:2276
+                value.chars().count().to_string()                             // c:2276
+            };                                                                 // c:2276
+        } else if whichlen == 2 {                                             // c:2279 whichlen == 2 (w)
+            value = value.split_whitespace().count().to_string();             // c:2279
+        } else if whichlen == 3 {                                             // c:2282 whichlen == 3 (W)
             // (W) — count words including empty fields.
-            let parts: Vec<&str> = value.split(|c: char| c.is_whitespace()).collect();
-            value = parts.len().to_string(); // c:2281
+            let parts: Vec<&str> = value.split(|c: char| c.is_whitespace()).collect(); // c:2282
+            value = parts.len().to_string();                                  // c:2282
         }
 
         // Quote flags operate per-element when array-shaped — direct
