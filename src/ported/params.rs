@@ -12,8 +12,9 @@ use crate::ported::utils::zerr;
 use crate::ported::zsh_h::Marker;
 use crate::ported::zsh_h::SCANPM_WANTINDEX;
 use crate::ported::zsh_h::VALFLAG_SUBST;
+use crate::ported::hist::{bangchar, hashchar, hatchar};
 use crate::ported::zsh_h::{gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar};
-use crate::ported::zsh_h::{hashnode, isset as isset_opt, Param};
+use crate::ported::zsh_h::{hashnode, isset as isset_opt, HashTable, Param};
 use crate::ported::zsh_h::{SCANPM_ISVAR_AT, SCANPM_NONAMEREF};
 use fusevm::Value;
 use indexmap::IndexMap;
@@ -77,7 +78,7 @@ pub static FOUNDPARAM: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
 /// Port of `rprompt_indent_unsetfn(Param pm, int exp)` from `Src/params.c:152`. C
 /// body: `stdunsetfn(pm, exp); rprompt_indent = 1;` — keeps in
 /// sync with init_term().
-pub fn rprompt_indent_unsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
+pub fn rprompt_indent_unsetfn(pm: &mut param, exp: i32) {
     stdunsetfn(pm, exp);
     *RPROMPT_INDENT.lock().unwrap() = 1;
 }
@@ -312,7 +313,7 @@ pub fn IPDEF10(A: &str, B: usize) -> paramdef {
 /// param-callback signatures yet — wiring them requires the
 /// hashtable backend refactor).
 #[allow(unused_variables)]
-pub fn newparamtable(size: i32, name: &str) -> Option<crate::ported::zsh_h::HashTable> {
+pub fn newparamtable(size: i32, name: &str) -> Option<HashTable> {
     let hsize = if size == 0 { 17 } else { size };
     let mut nodes: Vec<Option<crate::ported::zsh_h::HashNode>> = Vec::with_capacity(hsize as usize);
     for _ in 0..hsize {
@@ -360,10 +361,10 @@ pub fn newparamtable(size: i32, name: &str) -> Option<crate::ported::zsh_h::Hash
 /// WARNING: param names don't match C — Rust=(pm, nam) vs C=(ht, pm, nam)
 pub fn loadparamnode(
     // c:544
-    _ht: &crate::ported::zsh_h::HashTable,
-    pm: Option<crate::ported::zsh_h::Param>,
+    _ht: &HashTable,
+    pm: Option<Param>,
     nam: &str,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     // c:546 — `if (pm && (pm->flags & PM_AUTOLOAD) && pm->u.str)`.
     let (level, modname) = match &pm {
         Some(p) if p.node.flags & PM_AUTOLOAD as i32 != 0 && p.u_str.is_some() => {
@@ -381,7 +382,7 @@ pub fn loadparamnode(
     // c:551 — walk pm->old back to original level.
     while let Some(ref p) = pm {
         if p.level > level {
-            pm = p.old.clone().map(|b| crate::ported::zsh_h::Param::from(b));
+            pm = p.old.clone().map(|b| Param::from(b));
         } else {
             break;
         }
@@ -608,179 +609,179 @@ pub const special_params: &[special_paramdef] = &[
     },
     special_paramdef {
         name: "$",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "?",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "HISTCMD",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "LINENO",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "PPID",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "ZSH_SUBSHELL",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     // Settable integer variables
     special_paramdef {
         name: "COLUMNS",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "LINES",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "ZLE_RPROMPT_INDENT",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "SHLVL",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "FUNCNEST",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "OPTIND",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     special_paramdef {
         name: "TRY_BLOCK_ERROR",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     special_paramdef {
         name: "TRY_BLOCK_INTERRUPT",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     // Scalar variables bound to C globals
     special_paramdef {
         name: "OPTARG",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "NULLCMD",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "POSTEDIT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "READNULLCMD",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PS1",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "RPS1",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "RPROMPT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "PS2",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "RPS2",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "RPROMPT2",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "PS3",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PS4",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT_SUID,
         tied_name: None,
     },
     special_paramdef {
         name: "SPROMPT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly arrays
     special_paramdef {
         name: "*",
-        pm_type: crate::ported::zsh_h::PM_ARRAY,
-        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_ARRAY,
+        pm_flags: PM_READONLY | PM_DONTIMPORT,
         tied_name: None,
     },
     special_paramdef {
         name: "@",
-        pm_type: crate::ported::zsh_h::PM_ARRAY,
-        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_ARRAY,
+        pm_flags: PM_READONLY | PM_DONTIMPORT,
         tied_name: None,
     },
     // ===================================================================
@@ -794,160 +795,160 @@ pub const special_params: &[special_paramdef] = &[
     // Tied colon-separated/array pairs
     special_paramdef {
         name: "CDPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("cdpath"),
     },
     special_paramdef {
         name: "FIGNORE",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("fignore"),
     },
     special_paramdef {
         name: "FPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("fpath"),
     },
     special_paramdef {
         name: "MAILPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("mailpath"),
     },
     special_paramdef {
         name: "PATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("path"),
     },
     special_paramdef {
         name: "PSVAR",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("psvar"),
     },
     special_paramdef {
         name: "ZSH_EVAL_CONTEXT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_READONLY | PM_TIED,
         tied_name: Some("zsh_eval_context"),
     },
     special_paramdef {
         name: "MODULE_PATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT | crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT | PM_TIED,
         tied_name: Some("module_path"),
     },
     special_paramdef {
         name: "MANPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_TIED,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_TIED,
         tied_name: Some("manpath"),
     },
     // Locale
     special_paramdef {
         name: "LANG",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_ALL",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_COLLATE",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_CTYPE",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_MESSAGES",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_NUMERIC",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
         name: "LC_TIME",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     // Zsh-only aliases
     special_paramdef {
         name: "ARGC",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "HISTCHARS",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     special_paramdef {
         name: "status",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         name: "prompt",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PROMPT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PROMPT2",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PROMPT3",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "PROMPT4",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         name: "argv",
-        pm_type: crate::ported::zsh_h::PM_ARRAY,
+        pm_type: PM_ARRAY,
         pm_flags: 0,
         tied_name: None,
     },
     // pipestatus array
     special_paramdef {
         name: "pipestatus",
-        pm_type: crate::ported::zsh_h::PM_ARRAY,
+        pm_type: PM_ARRAY,
         pm_flags: 0,
         tied_name: None,
     },
@@ -966,57 +967,57 @@ pub const special_params_sh: &[special_paramdef] = &[
     special_paramdef {
         // c:448
         name: "CDPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:449
         name: "FIGNORE",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:450
         name: "FPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:451
         name: "MAILPATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:452
         name: "PATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:453
         name: "PSVAR",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     special_paramdef {
         // c:454
         name: "ZSH_EVAL_CONTEXT",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     special_paramdef {
         // c:457 (security comment)
         name: "MODULE_PATH",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
 ];
@@ -1028,9 +1029,9 @@ pub const special_params_sh: &[special_paramdef] = &[
 /// Stub: needs HashTable + autoload + nameref resolve.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
 pub fn getparamnode(
-    ht: &crate::ported::zsh_h::HashTable,
+    ht: &HashTable,
     nam: &str,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
     let pm = paramtab().read().unwrap().get(nam).cloned();
     let pm = loadparamnode(ht, pm, nam);
@@ -1059,9 +1060,9 @@ pub fn getparamnode(
 /// global `outtable`; Rust port plumbs it in explicitly.
 /// WARNING: param names don't match C — Rust=(pm, _flags, outtable) vs C=(hn, flags)
 pub fn scancopyparams(
-    pm: &mut crate::ported::zsh_h::param,
+    pm: &mut param,
     _flags: i32,
-    outtable: &mut std::collections::HashMap<String, Box<crate::ported::zsh_h::param>>,
+    outtable: &mut std::collections::HashMap<String, Box<param>>,
 ) {
     // c:586-588 — `tpm = (Param) zshcalloc(...); copyparam(tpm, pm, 0); addnode(...)`.
     let mut tpm = Box::new(pm.clone()); // c:586 zshcalloc
@@ -1082,9 +1083,9 @@ pub fn scancopyparams(
 /// which isn't wired yet (callers receive the empty allocated
 /// table — same shape the C source returns when `ht` is empty).
 pub fn copyparamtable(
-    ht: Option<&crate::ported::zsh_h::HashTable>,
+    ht: Option<&HashTable>,
     name: &str,
-) -> Option<crate::ported::zsh_h::HashTable> {
+) -> Option<HashTable> {
     let ht = ht?;
     newparamtable(ht.hsize, name)
 }
@@ -1095,7 +1096,7 @@ pub fn copyparamtable(
 /// each entry so unset callbacks fire. Rust port: `Drop` cascades
 /// through `Box<hashtable>` to clear all `nodes`; consume the
 /// table by value to mirror the C ownership transfer.
-pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
+pub fn deleteparamtable(t: Option<HashTable>) {
     // c:616-623 — `int odelunset = delunset; delunset = 1;` save/
     // restore so the inner free path fires every entry's unsetfn.
     let odelunset = DELUNSET.swap(1, std::sync::atomic::Ordering::Relaxed); // c:620-621
@@ -1117,7 +1118,7 @@ pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
 /// `paramvalarr`. Rust port mirrors against a counter passed by
 /// reference (no static-mutable in safe Rust).
 /// WARNING: param names don't match C — Rust=(_hn, flags, numparamvals) vs C=(hn, flags)
-pub fn scancountparams(_hn: &crate::ported::zsh_h::param, flags: i32, numparamvals: &mut u32) {
+pub fn scancountparams(_hn: &param, flags: i32, numparamvals: &mut u32) {
     *numparamvals += 1;
     if (flags as u32 & SCANPM_WANTKEYS) != 0 && (flags as u32 & SCANPM_WANTVALS) != 0 {
         *numparamvals += 1;
@@ -1136,7 +1137,7 @@ pub fn scancountparams(_hn: &crate::ported::zsh_h::param, flags: i32, numparamva
 /// WARNING: param names don't match C — Rust=(flags) vs C=(hn, flags)
 pub fn scanparamvals(
     // c:644
-    pm: &mut crate::ported::zsh_h::param,
+    pm: &mut param,
     flags: i32,
 ) {
     let f = flags as u32;
@@ -1235,7 +1236,7 @@ pub fn scanparamvals(
 /// callers don't need to thread the HashTable wrapper through.
 /// Port of `paramvalarr(HashTable ht, int flags)` from `Src/params.c:689`.
 #[allow(unused_variables)]
-pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {
+pub fn paramvalarr(ht: &HashTable, flags: i32) -> Vec<String> {
     // c:689
     // c:691-692 — DPUTS((flags & (SCANPM_MATCHKEY|SCANPM_MATCHVAL)) && !scanprog,
     //                 "BUG: scanning hash without scanprog set");
@@ -1470,9 +1471,9 @@ pub fn createparamtable() {
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
     let add_special =
         |ip: &special_paramdef,
-         tab: &mut std::collections::HashMap<String, crate::ported::zsh_h::Param>| {
-            let pm = Box::new(crate::ported::zsh_h::param {
-                node: crate::ported::zsh_h::hashnode {
+         tab: &mut std::collections::HashMap<String, Param>| {
+            let pm = Box::new(param {
+                node: hashnode {
                     next: None,
                     nam: ip.name.to_string(),
                     flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
@@ -1802,11 +1803,11 @@ pub fn createparamtable() {
     }
     {
         let mut tab = paramtab().write().unwrap();
-        let pm = Box::new(crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = Box::new(param {
+            node: hashnode {
                 next: None,
                 nam: "signals".to_string(),
-                flags: (crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_SPECIAL) as i32,
+                flags: (PM_ARRAY | crate::ported::zsh_h::PM_SPECIAL) as i32,
             },
             u_data: 0,
             u_arr: Some(signals_arr),
@@ -1844,7 +1845,7 @@ static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
 /// installs the standard get/set/unset vtable matching the
 /// param's PM_TYPE so subsequent assignment dispatches go
 /// through `pm->gsu.X->setfn`.
-pub fn assigngetset(pm: &mut crate::ported::zsh_h::param) {
+pub fn assigngetset(pm: &mut param) {
     match PM_TYPE(pm.node.flags as u32) {
         x if x == PM_SCALAR || x == PM_NAMEREF => {
             pm.gsu_s = Some(Box::new(gsu_scalar {
@@ -1918,7 +1919,7 @@ pub fn createparam(
     // c:1030
     name: &str,
     mut flags: i32,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     // c:1034-1035 — when paramtab != realparamtab (we're inside
     // a hash-element scope), strip PM_EXPORTED + add PM_HASHELEM.
     // Without paramtab/realparamtab live yet, this branch is
@@ -1935,7 +1936,7 @@ pub fn createparam(
     // can decide reuse-vs-shadow. PM_RO_BY_DESIGN / PM_NAMEREF
     // chase branches (c:1043-1104) elided — covered when nameref
     // / readonly-by-design Params are wired.
-    let oldpm: Option<crate::ported::zsh_h::Param> = if !name.is_empty() {
+    let oldpm: Option<Param> = if !name.is_empty() {
         paramtab().read().ok().and_then(|t| t.get(name).cloned())
     } else {
         None
@@ -1971,7 +1972,7 @@ pub fn createparam(
         None => false,
     };
 
-    let mut pm: crate::ported::zsh_h::Param = if reuse {
+    let mut pm: Param = if reuse {
         // c:1132-1134 — `pm = oldpm; pm->base = pm->width = 0;
         // oldpm = pm->old;` Reuse the entry already in paramtab.
         let mut existing = oldpm.unwrap(); // safe: reuse=true requires Some
@@ -1983,8 +1984,8 @@ pub fn createparam(
         // outer Param into pm.old (c:1137) so endparamscope can
         // restore it. c:1144 paramtab->removenode is implicit since
         // we re-insert below.
-        Box::new(crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        Box::new(param {
+            node: hashnode {
                 next: None,
                 nam: name.to_string(),
                 flags: 0,
@@ -2037,7 +2038,7 @@ pub fn shempty() {}
 /// Port of `setsparam(char *s, char *val)` from Src/params.c:3350.
 /// C body: `return assignsparam(s, val, ASSPM_WARN);`
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
-pub fn setsparam(s: &str, val: &str) -> Option<crate::ported::zsh_h::Param> {
+pub fn setsparam(s: &str, val: &str) -> Option<Param> {
     assignsparam(s, val, ASSPM_WARN as i32) // c:3352
 }
 
@@ -2063,7 +2064,7 @@ pub fn setsparam(s: &str, val: &str) -> Option<crate::ported::zsh_h::Param> {
 /// HashMap<String, T> rather than C-style vtable dispatch; the
 /// returned Param carries the empty hash and PM_HASHED flag so
 /// callers can fill it via the standard array/hash setfn path.
-pub fn createspecialhash(name: &str, flags: i32) -> Option<crate::ported::zsh_h::Param> {
+pub fn createspecialhash(name: &str, flags: i32) -> Option<Param> {
     // c:1186 — `createparam(name, PM_SPECIAL|PM_HASHED|flags)`.
     let mut pm = createparam(name, (PM_SPECIAL | PM_HASHED) as i32 | flags)?;
 
@@ -2151,8 +2152,8 @@ pub fn createspecialhash(name: &str, flags: i32) -> Option<crate::ported::zsh_h:
 /// WARNING: param names don't match C — Rust=(pm, fakecopy) vs C=(tpm, pm, fakecopy)
 pub fn copyparam(
     // c:1236
-    tpm: &mut crate::ported::zsh_h::param,
-    pm: &mut crate::ported::zsh_h::param,
+    tpm: &mut param,
+    pm: &mut param,
     fakecopy: i32,
 ) {
     tpm.node.flags = pm.node.flags; // c:1244
@@ -3414,7 +3415,7 @@ pub fn getnumvalue(v: Option<&mut value>) -> crate::ported::math::mnumber {
 ///
 /// Both formatter ports exist (`params::convbase`, `utils::convfloat`).
 /// Wire them so the env-side representation matches C.
-pub fn export_param(pm: &mut crate::ported::zsh_h::param) {
+pub fn export_param(pm: &mut param) {
     // c:2653
     let t = PM_TYPE(pm.node.flags as u32);
     if (t & (PM_ARRAY | PM_HASHED)) != 0 {
@@ -3801,7 +3802,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     }
     // c:2905-2911 — type guard.
     let t = PM_TYPE(pm.node.flags as u32);
-    if t & (crate::ported::zsh_h::PM_ARRAY | PM_HASHED) == 0 {
+    if t & (PM_ARRAY | PM_HASHED) == 0 {
         crate::ported::utils::zerr(&format!(
             "{}: attempt to assign array value to non-array",
             pm.node.nam
@@ -3926,7 +3927,7 @@ pub fn getiparam(s: &str) -> i64 {
     // the param is typed numeric; check paramtab first for that case.
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(s) {
-            if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0 {
+            if (pm.node.flags as u32 & PM_INTEGER) != 0 {
                 return pm.u_val;
             }
         }
@@ -3949,7 +3950,7 @@ pub fn getnparam(s: &str) -> (i64, f64, bool) {
             if (fl & (crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT)) != 0 {
                 return (pm.u_dval as i64, pm.u_dval, true);
             }
-            if (fl & crate::ported::zsh_h::PM_INTEGER) != 0 {
+            if (fl & PM_INTEGER) != 0 {
                 return (pm.u_val, pm.u_val as f64, false);
             }
         }
@@ -4216,7 +4217,7 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
 /// observable effect — the whole point of the option is the
 /// user-visible warning.
 pub fn check_warn_pm(
-    pm: &crate::ported::zsh_h::param,
+    pm: &param,
     pmtype: &str,
     created: i32,
     may_warn_about_nested_vars: i32,
@@ -4352,7 +4353,7 @@ pub enum getarg_out<'a> {
 /// are documented but elided where unreachable from current
 /// callers — none of those code paths are exercised by zshrs's
 /// existing call sites.
-pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<crate::ported::zsh_h::Param> {
+pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
         zerr(&format!("not an identifier: {}", s)); // c:3204
@@ -4650,9 +4651,9 @@ use std::time::Duration;
 // callbacks, intrusive `next` chain, scope-stacked iterators) is
 // not yet wired; until it is, the typed map is the operative
 // storage.
-static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, crate::ported::zsh_h::Param>>> =
+static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> =
     OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, crate::ported::zsh_h::Param>>> =
+static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> =
     OnceLock::new();
 
 /// Array parameter assignment (no subscript).
@@ -4672,7 +4673,7 @@ pub fn assignaparam(
     name: &str,
     val: Vec<String>,
     flags: i32,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     // c:3357
     use crate::ported::utils::ERRFLAG_ERROR;
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
@@ -4781,7 +4782,7 @@ pub fn assignaparam(
 /// "warn on creation" tracking is not yet ported. Call shape
 /// preserved so callers can use this where C calls setaparam.
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
-pub fn setaparam(name: &str, val: Vec<String>) -> Option<crate::ported::zsh_h::Param> {
+pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
     assignaparam(name, val, crate::ported::zsh_h::ASSPM_WARN)
 }
@@ -4795,7 +4796,7 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<crate::ported::zsh_h::P
 ///   - PM_READONLY rejection
 ///   - resetparam(PM_HASHED) for type-change
 ///   - PM_SPECIAL type-change reject (c:3637)
-pub fn sethparam(name: &str, val: Vec<String>) -> Option<crate::ported::zsh_h::Param> {
+pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
@@ -4870,7 +4871,7 @@ pub fn assignnparam(
     s: &str,
     val: crate::ported::math::mnumber,
     flags: i32,
-) -> Option<Box<crate::ported::zsh_h::param>> {
+) -> Option<Box<param>> {
     // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
         zerr(&format!("not an identifier: {}", s)); // c:3667
@@ -5031,7 +5032,7 @@ pub fn assignnparam(
 pub fn setnparam(
     s: &str,
     val: crate::ported::math::mnumber,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     assignnparam(s, val, ASSPM_WARN as i32) // c:3748
 }
 
@@ -5052,7 +5053,7 @@ pub fn setnparam(
 ///      every call hardcoded ASSPM_WARN regardless.
 ///   2. Returned void instead of Param — losing the new param
 ///      pointer the caller may want to read back.
-pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<crate::ported::zsh_h::Param> {
+pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<Param> {
     // c:3757-3759 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
     let mnval = crate::ported::math::mnumber {
         l: val,
@@ -5082,7 +5083,7 @@ pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<crate::ported::zsh_
 /// `assignnparam` IS now ported (params.rs:4403). Route through it
 /// matching C exactly so integer-typed params get created with the
 /// right PM_INTEGER flag.
-pub fn setiparam(s: &str, val: i64) -> Option<crate::ported::zsh_h::Param> {
+pub fn setiparam(s: &str, val: i64) -> Option<Param> {
     // c:3770-3771 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
     let mnval = crate::ported::math::mnumber {
         l: val,
@@ -5098,7 +5099,7 @@ pub fn setiparam(s: &str, val: i64) -> Option<crate::ported::zsh_h::Param> {
 /// gets converted back. Low technology rules." It uses convbase
 /// to render decimal then calls assignsparam.
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
-pub fn setiparam_no_convert(s: &str, val: i64) -> Option<crate::ported::zsh_h::Param> {
+pub fn setiparam_no_convert(s: &str, val: i64) -> Option<Param> {
     assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
 }
 
@@ -5128,7 +5129,7 @@ pub fn setiparam_no_convert(s: &str, val: i64) -> Option<crate::ported::zsh_h::P
 /// the hidden-shadow case (a local var hiding the global `pm` we
 /// were handed) — without the paramtab vtable we skip the check
 /// and proceed to unset+create.
-pub fn resetparam(pm: &mut crate::ported::zsh_h::param, flags: i32) -> i32 {
+pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
     // c:3796
     let s = pm.node.nam.clone(); // c:3796
     crate::ported::signals::queue_signals(); // c:3799
@@ -5214,7 +5215,7 @@ pub fn unsetparam(name: &str) {
 /// `delenv`/`adduserdir` helpers — direct port retains only the
 /// in-memory mutation of `pm` that doesn't touch the table.
 #[allow(unused_variables)]
-pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, altflag: i32, exp: i32) -> i32 {
+pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     // c:3850 — `if ((pm->node.flags & PM_READONLY) && pm->level <= locallevel)`.
     // The previous Rust port hardcoded `pm.level <= 0` with a
     // "locallevel global not yet ported — assume 0" comment, but
@@ -5263,31 +5264,31 @@ pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, altflag: i32, exp: i3
 
 /// Port of `intgetfn(Param pm)` from `Src/params.c:3993`. C body:
 /// `return pm->u.val;`
-pub fn intgetfn(pm: &crate::ported::zsh_h::param) -> i64 {
+pub fn intgetfn(pm: &param) -> i64 {
     pm.u_val
 }
 
 /// Port of `intsetfn(Param pm, zlong x)` from `Src/params.c:4002`. C body:
 /// `pm->u.val = x;`
-pub fn intsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
+pub fn intsetfn(pm: &mut param, x: i64) {
     pm.u_val = x;
 }
 
 /// Port of `floatgetfn(Param pm)` from `Src/params.c:4011`. C body:
 /// `return pm->u.dval;`
-pub fn floatgetfn(pm: &crate::ported::zsh_h::param) -> f64 {
+pub fn floatgetfn(pm: &param) -> f64 {
     pm.u_dval
 }
 
 /// Port of `floatsetfn(Param pm, double x)` from `Src/params.c:4020`. C body:
 /// `pm->u.dval = x;`
-pub fn floatsetfn(pm: &mut crate::ported::zsh_h::param, x: f64) {
+pub fn floatsetfn(pm: &mut param, x: f64) {
     pm.u_dval = x;
 }
 
 /// Port of `strgetfn(Param pm)` from `Src/params.c:4029`. C body:
 /// `return pm->u.str ? pm->u.str : (char *) hcalloc(1);`
-pub fn strgetfn(pm: &crate::ported::zsh_h::param) -> String {
+pub fn strgetfn(pm: &param) -> String {
     pm.u_str.clone().unwrap_or_default()
 }
 
@@ -5310,7 +5311,7 @@ pub fn strgetfn(pm: &crate::ported::zsh_h::param) -> String {
 /// AUTONAMEDIRS`, every scalar assignment to a path-shaped value
 /// should register a named-directory entry for `~name` expansion;
 /// the Rust port silently dropped that behavior.
-pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {
+pub fn strsetfn(pm: &mut param, x: String) {
     // c:4040
     pm.u_str = Some(x.clone()); // c:4044 pm->u.str = x
                                 // c:4045-4046 — `if (!(PM_HASHELEM) && (PM_NAMEDDIR || isset(AUTONAMEDIRS)))`.
@@ -5325,14 +5326,14 @@ pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {
 
 /// Port of `arrgetfn(Param pm)` from `Src/params.c:4057`. C body:
 /// `return pm->u.arr ? pm->u.arr : &nullarray;`
-pub fn arrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
+pub fn arrgetfn(pm: &param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
 /// Port of `arrsetfn(Param pm, char **x)` from `Src/params.c:4066`. C body frees
 /// the old array, applies PM_UNIQUE filter via `uniqarray()`, then
 /// stores. Calls `arrfixenv(ename, x)` for tied colon-arrays.
-pub fn arrsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
+pub fn arrsetfn(pm: &mut param, x: Vec<String>) {
     let val = if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
         simple_arrayuniq(x)
     } else {
@@ -5346,14 +5347,14 @@ pub fn arrsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
 
 /// Port of `hashgetfn(Param pm)` from `Src/params.c:4084`. C body:
 /// `return pm->u.hash;`
-pub fn hashgetfn(pm: &crate::ported::zsh_h::param) -> Option<&crate::ported::zsh_h::HashTable> {
+pub fn hashgetfn(pm: &param) -> Option<&HashTable> {
     pm.u_hash.as_ref()
 }
 
 /// Port of `hashsetfn(Param pm, HashTable x)` from `Src/params.c:4093`. C body:
 /// `if (pm->u.hash && pm->u.hash != x) deleteparamtable(pm->u.hash);
 ///  pm->u.hash = x;`
-pub fn hashsetfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::HashTable) {
+pub fn hashsetfn(pm: &mut param, x: HashTable) {
     pm.u_hash = Some(x);
 }
 
@@ -5379,7 +5380,7 @@ pub fn hashsetfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::
 /// a structural port and emits diagnostic on the odd-count path.
 pub fn arrhashsetfn(
     // c:4113
-    pm: &mut crate::ported::zsh_h::param,
+    pm: &mut param,
     val: Vec<String>,
     _flags: i32,
 ) {
@@ -5423,11 +5424,11 @@ pub fn arrhashsetfn(
 /// Port of `nullstrsetfn(UNUSED(Param pm), char *x)` from `Src/params.c:4180`. C body:
 /// `zsfree(x);` — frees but doesn't store. Rust drop handles free.
 #[allow(unused_variables)]
-pub fn nullstrsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {}
+pub fn nullstrsetfn(pm: &mut param, x: String) {}
 
 /// Port of `nullunsetfn(UNUSED(Param pm), UNUSED(int exp))` from `Src/params.c:4192`. C body: empty.
 #[allow(unused_variables)]
-pub fn nullunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {}
+pub fn nullunsetfn(pm: &mut param, exp: i32) {}
 
 /// Port of `stdunsetfn(Param pm, UNUSED(int exp))` from `Src/params.c:3955`. C body:
 /// dispatches `pm->gsu->setfn(pm, NULL)` per `PM_TYPE`, clears
@@ -5440,7 +5441,7 @@ pub fn nullunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {}
 /// the "setfn(pm, NULL)" effect by zeroing the matching union
 /// member instead of calling through the vtable.
 #[allow(unused_variables)]
-pub fn stdunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
+pub fn stdunsetfn(pm: &mut param, exp: i32) {
     match PM_TYPE(pm.node.flags as u32) {
         PM_SCALAR | PM_NAMEREF => {
             pm.u_str = None;
@@ -5472,12 +5473,12 @@ pub fn stdunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
 /// Port of `nullintsetfn(UNUSED(Param pm), UNUSED(zlong x))` from `Src/params.c:4187`. C body:
 /// empty (no-op setter for read-only int params).
 #[allow(unused_variables)]
-pub fn nullintsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {}
+pub fn nullintsetfn(pm: &mut param, x: i64) {}
 
 /// Port of `nullsethashfn(UNUSED(Param pm), HashTable x)` from `Src/params.c:4104`. C body:
 /// `deleteparamtable(x);` — frees the supplied table, doesn't store.
 #[allow(unused_variables)]
-pub fn nullsethashfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::HashTable) {
+pub fn nullsethashfn(pm: &mut param, x: HashTable) {
     // Rust drop semantics free `x` when this scope ends.
 }
 
@@ -5492,13 +5493,13 @@ pub fn nullsethashfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh
 
 /// Port of `intvargetfn(Param pm)` from `Src/params.c:4202`. C body:
 /// `return *pm->u.valptr;`
-pub fn intvargetfn(pm: &crate::ported::zsh_h::param) -> i64 {
+pub fn intvargetfn(pm: &param) -> i64 {
     pm.u_val
 }
 
 /// Port of `intvarsetfn(Param pm, zlong x)` from `Src/params.c:4213`. C body:
 /// `*pm->u.valptr = x;`
-pub fn intvarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
+pub fn intvarsetfn(pm: &mut param, x: i64) {
     pm.u_val = x;
 }
 
@@ -5521,7 +5522,7 @@ pub fn intvarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
 /// changed" semantics. Effect: setting `LINES=80` would re-issue
 /// `setiparam("COLUMNS", ...)` recursively, churning the
 /// paramtab for no reason.
-pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
+pub fn zlevarsetfn(pm: &mut param, x: i64) {
     // c:4226
     pm.u_val = x; // c:4230 *p = x;
                   // c:4231-4232 — `2 + (p == &zterm_columns)` selects 2 for LINES
@@ -5535,25 +5536,25 @@ pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
 
 /// Port of `strvarsetfn(Param pm, char *x)` from `Src/params.c:4249`. C body:
 /// `zsfree(*q); *q = x;` where `q = (char **)pm->u.data`.
-pub fn strvarsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
+pub fn strvarsetfn(pm: &mut param, x: Option<String>) {
     pm.u_str = x;
 }
 
 /// Port of `strvargetfn(Param pm)` from `Src/params.c:4263`. C body:
 /// `s = *((char **)pm->u.data); return s ? s : hcalloc(1);`
-pub fn strvargetfn(pm: &crate::ported::zsh_h::param) -> String {
+pub fn strvargetfn(pm: &param) -> String {
     pm.u_str.clone().unwrap_or_default()
 }
 
 /// Port of `arrvargetfn(Param pm)` from `Src/params.c:4279`. C body:
 /// `arrptr = *((char ***)pm->u.data); return arrptr ?: &nullarray;`
-pub fn arrvargetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
+pub fn arrvargetfn(pm: &param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
 /// Port of `arrvarsetfn(Param pm, char **x)` from `Src/params.c:4294`. C body
 /// frees old, applies PM_UNIQUE, handles PM_SPECIAL+NULL → mkarray.
-pub fn arrvarsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
+pub fn arrvarsetfn(pm: &mut param, x: Vec<String>) {
     let val = if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
         simple_arrayuniq(x)
     } else {
@@ -5573,7 +5574,7 @@ pub fn colonarrgetfn(arr: &[String]) -> String {
 /// Port of `colonarrsetfn(Param pm, char *x)` from `Src/params.c:4329`. C body
 /// splits the colon-string into an array and stores via the
 /// generic arrvarsetfn.
-pub fn colonarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
+pub fn colonarrsetfn(pm: &mut param, x: Option<String>) {
     let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0; // c:4339
     let arr = match x {
         Some(s) => crate::ported::utils::colonsplit(&s, uniq), // c:4339
@@ -5584,7 +5585,7 @@ pub fn colonarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
 
 /// Port of `tiedarrgetfn(Param pm)` from `Src/params.c:4348`. C body:
 /// `return *((Tieddata)pm->u.data)->arrptr;`
-pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
+pub fn tiedarrgetfn(pm: &param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
@@ -5609,7 +5610,7 @@ pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
 /// /MAILPATH/PSVAR/MODULE_PATH which all use colon separators —
 /// the joinchar field on the C-side tieddata wasn't ported to the
 /// Rust Param struct yet).
-pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
+pub fn tiedarrsetfn(pm: &mut param, x: Option<String>) {
     // c:4357
 
     // c:4361-4368 — free old / clear PM_DEFAULTED on tied counterpart.
@@ -5666,7 +5667,7 @@ pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
 ///   pm->ename = NULL;                       // c:4393
 ///   pm->flags &= ~PM_TIED;                  // c:4393
 ///   pm->flags |= PM_UNSET;                  // c:4393
-pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {
+pub fn tiedarrunsetfn(pm: &mut param, _exp: i32) {
     // c:4393
     // c:4400 — invoke the scalar setfn with NULL (frees backing array).
     tiedarrsetfn(pm, None);
@@ -5904,7 +5905,7 @@ pub fn setrawseconds(x: f64) {
 /// WARNING: param names don't match C — Rust=(on, off) vs C=(pm, on, off)
 pub fn setsecondstype(
     // c:4630
-    pm: &mut crate::ported::zsh_h::param,
+    pm: &mut param,
     on: i32,
     off: i32,
 ) -> i32 {
@@ -6701,9 +6702,9 @@ pub fn keyboardhacksetfn(x: String) {
 /// which reads from three separate `unsigned char` globals.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn histcharsgetfn() -> String {
-    let b = crate::ported::hist::bangchar.load(Ordering::SeqCst) as u8;
-    let h = crate::ported::hist::hatchar.load(Ordering::SeqCst) as u8;
-    let p = crate::ported::hist::hashchar.load(Ordering::SeqCst) as u8;
+    let b = bangchar.load(Ordering::SeqCst) as u8;
+    let h = hatchar.load(Ordering::SeqCst) as u8;
+    let p = hashchar.load(Ordering::SeqCst) as u8;
     // c:5068-5073 — terminal NUL trims unset chars (default-`!^#` is
     // 3 non-NUL bytes); explicit NULs are skipped to match C `buf[3]
     // = '\0'` C-string truncation semantics.
@@ -6768,9 +6769,9 @@ pub fn histcharssetfn(x: Option<String>) {
     // Sync all three per-char atomic globals so lex/hist callers
     // see the new HISTCHARS. (Previously hashchar was a `const char`
     // in lex.rs — promoted to atomic this iteration.)
-    crate::ported::hist::bangchar.store(new_chars[0] as i32, Ordering::SeqCst);
-    crate::ported::hist::hatchar.store(new_chars[1] as i32, Ordering::SeqCst);
-    crate::ported::hist::hashchar.store(new_chars[2] as i32, Ordering::SeqCst);
+    bangchar.store(new_chars[0] as i32, Ordering::SeqCst);
+    hatchar.store(new_chars[1] as i32, Ordering::SeqCst);
+    hashchar.store(new_chars[2] as i32, Ordering::SeqCst);
     // c:5104 — `inittyptab();`. The bangchar special bit in typtab
     // depends on the current `bangchar` global; reseed.
     inittyptab();
@@ -7466,8 +7467,8 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
 /// Port of `startparamscope()` (Src/init.c) — the C source pushes the
 /// current scope counter so `local`-declared params disappear on function
 /// exit. Rust port operates on the bucket-2 holder `paramtab` via a
-/// `&mut crate::ported::zsh_h::HashTable` argument.
-pub fn startparamscope(_table: &mut crate::ported::zsh_h::HashTable) {
+/// `&mut HashTable` argument.
+pub fn startparamscope(_table: &mut HashTable) {
     crate::ported::utils::inc_locallevel();
 }
 
@@ -7605,7 +7606,7 @@ pub fn endparamscope() {
 /// global isn't yet ported. `setsecondstype`/`setrawseconds`/
 /// `delenv` are not yet in zshrs and route through best-effort
 /// no-ops for now (C macros / Src/params.c:5900 / Src/params.c:5900).
-pub fn scanendscope(pm: &mut crate::ported::zsh_h::param, _flags: i32) {
+pub fn scanendscope(pm: &mut param, _flags: i32) {
     // c:5900
     let cur_local = locallevel.load(std::sync::atomic::Ordering::Relaxed);
     if pm.level <= cur_local {
@@ -7698,7 +7699,7 @@ pub fn scanendscope(pm: &mut crate::ported::zsh_h::param, _flags: i32) {
 /// step here is the optional unsetfn dispatch when `DELUNSET` is
 /// non-zero. The remaining drop cascade fires when `_hn`
 /// (`Box<param>`) leaves scope.
-pub fn freeparamnode(mut _hn: crate::ported::zsh_h::Param) {
+pub fn freeparamnode(mut _hn: Param) {
     // c:5977
     // c:5977-5987 — `if (delunset) pm->gsu.s->unsetfn(pm, 1);`.
     if DELUNSET.load(std::sync::atomic::Ordering::Relaxed) != 0 {
@@ -7719,7 +7720,7 @@ pub fn freeparamnode(mut _hn: crate::ported::zsh_h::Param) {
 /// `printf("%ld")`; PM_EFLOAT/PM_FFLOAT: `convfloat(...)`;
 /// PM_ARRAY: `( v1 v2 ... )` with `\n  ` separators on
 /// PRINT_LINE; PM_HASHED: same shape via scan callback.
-pub fn printparamvalue(p: &mut crate::ported::zsh_h::param, printflags: i32) {
+pub fn printparamvalue(p: &mut param, printflags: i32) {
     if (printflags & PRINT_KV_PAIR) == 0 {
         print!("=");
     }
@@ -7803,7 +7804,7 @@ pub fn printparamvalue(p: &mut crate::ported::zsh_h::param, printflags: i32) {
 /// of the common path: skip-on-`.`-prefix without WITH_NAMESPACE,
 /// skip-on-PM_UNSET (with the POSIX preserve), AUTOLOAD gating,
 /// then `nam` + `=value` via `printparamvalue`.
-pub fn printparamnode(hn: &mut crate::ported::zsh_h::param, mut printflags: i32) {
+pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     const PRINT_WITH_NAMESPACE: i32 = 1 << 8; // matches createspecial print enum
     let f = hn.node.flags as u32;
     if (f & PM_HASHELEM) == 0
@@ -7893,8 +7894,8 @@ pub fn printparamnode(hn: &mut crate::ported::zsh_h::param, mut printflags: i32)
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn resolve_nameref(
     // c:6325
-    pm: Option<crate::ported::zsh_h::Param>,
-) -> Option<crate::ported::zsh_h::Param> {
+    pm: Option<Param>,
+) -> Option<Param> {
     resolve_nameref_rec(pm, None, 0) // c:6327
 }
 
@@ -7909,10 +7910,10 @@ pub fn resolve_nameref(
 /// `realparamtab` — pending the HashTable vtable.
 #[allow(unused_variables)]
 pub fn resolve_nameref_rec(
-    pm: Option<crate::ported::zsh_h::Param>,
-    stop: Option<&crate::ported::zsh_h::param>,
+    pm: Option<Param>,
+    stop: Option<&param>,
     keep_lastref: i32,
-) -> Option<crate::ported::zsh_h::Param> {
+) -> Option<Param> {
     let pm_ref = pm.as_deref()?;
     let f = pm_ref.node.flags as u32;
     if (f & PM_NAMEREF) == 0 || (f & PM_UNSET) != 0 || pm_ref.width != 0 {
@@ -8016,7 +8017,7 @@ pub fn setloopvar(name: &str, value: &str) {
 /// against existing helpers and falls through cleanly when the
 /// nameref chain backend isn't available.
 /// Port of `setscope(Param pm)` from `Src/params.c:6382`.
-pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
+pub fn setscope(pm: &mut param) {
     crate::ported::signals::queue_signals();
     if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
         // Refname is stored in pm.u_str for nameref-typed params.
@@ -8065,7 +8066,7 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
 /// records the param's name on `SCOPEREFS[base]` so a future
 /// scope-pop can resolve upper/nameref references.
 /// Port of `setscope_base(Param pm, int base)` from `Src/params.c:6438`.
-pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {
+pub fn setscope_base(pm: &mut param, base: i32) {
     // c:6438
     // c:6440 — `if ((pm->base = base) > pm->level) {`
     pm.base = base;
@@ -8112,9 +8113,9 @@ thread_local! {
 /// const Param ref)`.
 /// WARNING: param names don't match C — Rust=(pm, reference) vs C=(pm, ref)
 pub fn upscope(
-    mut pm: crate::ported::zsh_h::Param,
-    reference: &crate::ported::zsh_h::param,
-) -> crate::ported::zsh_h::Param {
+    mut pm: Param,
+    reference: &param,
+) -> Param {
     if (reference.node.flags as u32 & PM_UPPER) != 0 {
         while pm.level > reference.level - 1 {
             match pm.old.take() {
@@ -8519,7 +8520,7 @@ fn dontimport(flags: i32) -> i32 {
     // c:796
     let flags = flags as u32;
     // c:799-800 — `if (flags & PM_DONTIMPORT) return 1`.
-    if flags & crate::ported::zsh_h::PM_DONTIMPORT != 0 {
+    if flags & PM_DONTIMPORT != 0 {
         // c:799
         return 1; // c:800
     }
@@ -9047,62 +9048,62 @@ mod gsu_tests {
         // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
         histcharssetfn(Some("Q".to_string()));
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'Q' as i32
         );
-        assert_eq!(crate::ported::hist::hatchar.load(Ordering::SeqCst), 0);
-        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), 0);
+        assert_eq!(hatchar.load(Ordering::SeqCst), 0);
+        assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 2-char: bangchar=='X', hatchar=='Y', hashchar=='\0'.
         histcharssetfn(Some("XY".to_string()));
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'X' as i32
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b'Y' as i32
         );
-        assert_eq!(crate::ported::hist::hashchar.load(Ordering::SeqCst), 0);
+        assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 3-char: bangchar=='A', hatchar=='B', hashchar=='C'.
         histcharssetfn(Some("ABC".to_string()));
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'A' as i32
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b'B' as i32
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'C' as i32
         );
         // 4+ char: c:5087-5088 truncates to 3.
         histcharssetfn(Some("WXYZ".to_string()));
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'W' as i32
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b'X' as i32
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'Y' as i32
         );
         // Reset to default.
         histcharssetfn(None);
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'!' as i32
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b'^' as i32
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'#' as i32
         );
     }
@@ -9149,14 +9150,14 @@ fn foundparam_lock() -> &'static std::sync::Mutex<Option<String>> {
 /// Mirrors C's `paramtab->...` dereference by handing back the
 /// inner RwLock; callers `.read()` for lookups and `.write()` for
 /// mutation, operating on the `HashMap<String, Param>` directly.
-pub fn paramtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+pub fn paramtab() -> &'static RwLock<HashMap<String, Param>> {
     PARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Accessor for the global `realparamtab` (Src/params.c:515).
 /// Same role as `paramtab` for the not-currently-redirected case;
 /// the alias-flip during assoc-array iteration isn't modelled yet.
-pub fn realparamtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+pub fn realparamtab() -> &'static RwLock<HashMap<String, Param>> {
     REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -9183,8 +9184,8 @@ mod tests {
     fn setscope_base_pushes_name_when_base_above_level() {
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
-        let mut pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let mut pm = param {
+            node: hashnode {
                 next: None,
                 nam: "foo".to_string(),
                 flags: 0,
@@ -9243,8 +9244,8 @@ mod tests {
         opt_state_set("exec", true);
         unsetparam("aa_nr");
         // Insert a PM_NAMEREF param directly.
-        let pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = param {
+            node: hashnode {
                 next: None,
                 nam: "aa_nr".to_string(),
                 flags: (PM_NAMEREF | PM_SCALAR) as i32,
@@ -9413,11 +9414,11 @@ mod tests {
         opt_state_set("exec", true);
         unsetparam("hex_param");
         // Manually insert a PM_INTEGER param with base=16.
-        let pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = param {
+            node: hashnode {
                 next: None,
                 nam: "hex_param".to_string(),
-                flags: crate::ported::zsh_h::PM_INTEGER as i32,
+                flags: PM_INTEGER as i32,
             },
             u_data: 0,
             u_arr: None,
@@ -9464,8 +9465,8 @@ mod tests {
 
         // Set up: locallevel = 3, push a PM_NAMEREF param with base=5 onto SCOPEREFS[3].
         crate::ported::utils::set_locallevel(3);
-        let pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = param {
+            node: hashnode {
                 next: None,
                 nam: "ref1".to_string(),
                 flags: (PM_NAMEREF | PM_SCALAR) as i32,
@@ -9529,8 +9530,8 @@ mod tests {
         SCOPEREFS.with(|s| s.borrow_mut().clear());
 
         crate::ported::utils::set_locallevel(3);
-        let pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = param {
+            node: hashnode {
                 next: None,
                 nam: "up_ref".to_string(),
                 flags: (PM_NAMEREF | PM_SCALAR | PM_UPPER) as i32,
@@ -9590,8 +9591,8 @@ mod tests {
     fn setscope_base_no_push_when_base_below_level() {
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
-        let mut pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let mut pm = param {
+            node: hashnode {
                 next: None,
                 nam: "bar".to_string(),
                 flags: 0,
@@ -9632,8 +9633,8 @@ mod tests {
     fn setscope_base_equal_level_does_not_push() {
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
-        let mut pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let mut pm = param {
+            node: hashnode {
                 next: None,
                 nam: "edge".to_string(),
                 flags: 0,
@@ -10231,42 +10232,42 @@ mod tests {
         // Default state.
         crate::ported::params::histcharssetfn(None);
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'!' as i32
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b'^' as i32
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'#' as i32
         );
         // Set HISTCHARS to "@:%".
         crate::ported::params::histcharssetfn(Some("@:%".to_string()));
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'@' as i32,
             "c:5095 — bangchar = first byte of HISTCHARS"
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             b':' as i32,
             "c:5096 — hatchar = second byte of HISTCHARS"
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'%' as i32,
             "c:5097 — hashchar = third byte of HISTCHARS"
         );
         // Restore.
         crate::ported::params::histcharssetfn(None);
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             b'!' as i32
         );
         assert_eq!(
-            crate::ported::hist::hashchar.load(Ordering::SeqCst),
+            hashchar.load(Ordering::SeqCst),
             b'#' as i32
         );
     }
@@ -10379,18 +10380,18 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         // Reset to defaults.
         crate::ported::params::histcharssetfn(None);
-        let bang_before = crate::ported::hist::bangchar.load(Ordering::SeqCst);
-        let hat_before = crate::ported::hist::hatchar.load(Ordering::SeqCst);
+        let bang_before = bangchar.load(Ordering::SeqCst);
+        let hat_before = hatchar.load(Ordering::SeqCst);
         // Try to set HISTCHARS with non-ASCII char.
         crate::ported::params::histcharssetfn(Some("é".to_string()));
         // c:5092 — rejection returns BEFORE any state changes.
         assert_eq!(
-            crate::ported::hist::bangchar.load(Ordering::SeqCst),
+            bangchar.load(Ordering::SeqCst),
             bang_before,
             "c:5092 — bangchar unchanged after non-ASCII rejection"
         );
         assert_eq!(
-            crate::ported::hist::hatchar.load(Ordering::SeqCst),
+            hatchar.load(Ordering::SeqCst),
             hat_before
         );
     }
@@ -11045,8 +11046,8 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.insert(
                 name.to_string(),
-                Box::new(crate::ported::zsh_h::param {
-                    node: crate::ported::zsh_h::hashnode {
+                Box::new(param {
+                    node: hashnode {
                         next: None,
                         nam: name.to_string(),
                         flags: (PM_SCALAR | flags) as i32,
@@ -11338,11 +11339,11 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.insert(
                 "zshrs_test_gethp_scalar".to_string(),
-                Box::new(crate::ported::zsh_h::param {
-                    node: crate::ported::zsh_h::hashnode {
+                Box::new(param {
+                    node: hashnode {
                         next: None,
                         nam: "zshrs_test_gethp_scalar".to_string(),
-                        flags: crate::ported::zsh_h::PM_SCALAR as i32,
+                        flags: PM_SCALAR as i32,
                     },
                     u_data: 0,
                     u_arr: None,
@@ -11381,8 +11382,8 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.insert(
                 "zshrs_test_gethp_hash".to_string(),
-                Box::new(crate::ported::zsh_h::param {
-                    node: crate::ported::zsh_h::hashnode {
+                Box::new(param {
+                    node: hashnode {
                         next: None,
                         nam: "zshrs_test_gethp_hash".to_string(),
                         flags: crate::ported::zsh_h::PM_HASHED as i32,
@@ -11453,11 +11454,11 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.insert(
                 name.to_string(),
-                Box::new(crate::ported::zsh_h::param {
-                    node: crate::ported::zsh_h::hashnode {
+                Box::new(param {
+                    node: hashnode {
                         next: None,
                         nam: name.to_string(),
-                        flags: crate::ported::zsh_h::PM_ARRAY as i32,
+                        flags: PM_ARRAY as i32,
                     },
                     u_data: 0,
                     u_arr: Some(arr),
@@ -11483,11 +11484,11 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.insert(
                 name.to_string(),
-                Box::new(crate::ported::zsh_h::param {
-                    node: crate::ported::zsh_h::hashnode {
+                Box::new(param {
+                    node: hashnode {
                         next: None,
                         nam: name.to_string(),
-                        flags: crate::ported::zsh_h::PM_SCALAR as i32,
+                        flags: PM_SCALAR as i32,
                     },
                     u_data: 0,
                     u_arr: None,
