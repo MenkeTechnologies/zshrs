@@ -275,6 +275,9 @@ pub fn execbuiltin(args: Vec<String>, assigns: Vec<crate::ported::zsh_h::asgment
 
     // c:264-268 — `if (!bn->handlerfunc)` early-exit.
     if bn_ref.handlerfunc.is_none() {                                        // c:264
+        // c:265 — DPUTS(1, "Missing builtin detected too late")
+        crate::DPUTS!(true, "Missing builtin detected too late");            // c:265
+        // c:266 — deletebuiltin(bn->node.nam) — not yet ported here.
         return 1;                                                            // c:267
     }
 
