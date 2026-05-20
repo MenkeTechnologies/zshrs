@@ -1,4 +1,4 @@
-//! Job control for zshrs
+//! job control for zshrs
 //!
 //! Port from zsh/Src/jobs.c
 //!
@@ -33,7 +33,7 @@ use crate::ported::zsh_h::{
     STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
 };
 
-/// Job status flags. `i32` to match C's `int stat` field on
+/// job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
 ///
 /// **Bit values MUST match C's `STAT_*` defines verbatim** at
@@ -90,7 +90,7 @@ pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
 }
 
 // change job table entry from stopped to running                           // c:163
-/// Port of `makerunning(Job jn)` from `Src/jobs.c:167`.
+/// Port of `makerunning(job jn)` from `Src/jobs.c:167`.
 ///
 /// C body:
 /// ```c
@@ -106,9 +106,9 @@ pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
 /// to SP_RUNNING, and recurses into the linked subjob if this is a
 // change job table entry from stopped to running                           // c:167
 /// superjob. The previous Rust port called `job.make_running()`
-/// which mutates only the single Job — missing the superjob
+/// which mutates only the single job — missing the superjob
 /// recursion. This port walks the table to handle the recursion.
-pub fn makerunning(jobtab: &mut [Job], idx: usize) {
+pub fn makerunning(jobtab: &mut [job], idx: usize) {
     if idx >= jobtab.len() {
         return;
     }
@@ -130,7 +130,7 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
 
 // Find process and job associated with pid.                                // c:191
 // Return 1 if search was successful, else return 0.                        // c:191
-/// Port of `int findproc(pid_t pid, Job *jptr, Process *pptr, int aux)`
+/// Port of `int findproc(pid_t pid, job *jptr, process *pptr, int aux)`
 /// from `Src/jobs.c:191`.
 ///
 /// C body (c:198-236) walks `jobtab[1..=maxjob]`:
@@ -145,7 +145,7 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
 /// **WARNING: param names don't match C** — Rust (jobtab, pid, aux)
 /// vs C (pid, **jptr, **pptr, int aux). Returns `Some((job_idx,
 /// proc_idx, aux_was_true))` rather than mutating out-pointers.
-pub fn findproc(jobtab: &[Job], pid: i32, aux: bool) -> Option<(usize, usize, bool)> {
+pub fn findproc(jobtab: &[job], pid: i32, aux: bool) -> Option<(usize, usize, bool)> {
     // c:191
     let mut last_match: Option<(usize, usize, bool)> = None;
     // c:198 — `for (i = 1; i <= maxjob; i++)`. Index 0 (the shell
@@ -158,7 +158,7 @@ pub fn findproc(jobtab: &[Job], pid: i32, aux: bool) -> Option<(usize, usize, bo
             continue;
         }
         // c:209-210 — walk EITHER procs OR auxprocs based on aux.
-        let procs: &[Process] = if aux { &job.auxprocs } else { &job.procs };
+        let procs: &[process] = if aux { &job.auxprocs } else { &job.procs };
         for (pi, proc) in procs.iter().enumerate() {
             if proc.pid == pid {
                 // c:228
@@ -184,18 +184,18 @@ pub use crate::ported::zsh_h::timeinfo;
 
 // Canonical `process` / `job` live in `zsh_h.rs:1166,1180` — direct
 // ports of `struct process` / `struct job` from `Src/zsh.h:1117,1058`.
-// jobs.rs uses them via `Process` / `Job` aliases to keep call sites
+// jobs.rs uses them via `process` / `job` aliases to keep call sites
 // readable (Rust convention favors CamelCase at use-sites; the
 // underlying type is the lowercase C-faithful canonical).
-pub use crate::ported::zsh_h::job as Job;
-pub use crate::ported::zsh_h::process as Process;
+use crate::ported::zsh_h::job;
+use crate::ported::zsh_h::process;
 
-impl Process {
+impl process {
     /// Build a fresh entry. Matches C's `update_process()` init shape
     /// (`Src/jobs.c:363` — `pn->pid = pid; pn->status = SP_RUNNING;`
     /// before the first wait).
     pub fn new(pid: i32) -> Self {
-        Process {
+        process {
             pid,
             status: SP_RUNNING,
             text: String::new(),
@@ -237,7 +237,7 @@ impl Process {
     }
 }
 
-impl Job {
+impl job {
     /// Empty job slot — mirrors C's `memset(jn, 0, sizeof(*jn))`
     /// done in `initjob_reuse()` (`Src/jobs.c:574`).
     pub fn new() -> Self {
@@ -310,17 +310,17 @@ impl Job {
 ///
 /// C body:
 /// ```c
-/// Job jn;
+/// job jn;
 /// if (job < 0) { DPUTS(1, "job number invalid"); return 0; }
 /// jn = jobtab + job;
 /// return jn->procs || jn->auxprocs;
 /// ```
 ///
-/// Takes the job index (not a `&Job`) because the C signature is
+/// Takes the job index (not a `&job`) because the C signature is
 /// `int hasprocs(int job)`. Bounds-checks the index — out-of-range
 /// returns false (matching C's negative-index DPUTS+0 path).
 /// WARNING: param names don't match C — Rust=(jobtab, job) vs C=(job)
-pub fn hasprocs(jobtab: &[Job], job: usize) -> bool {
+pub fn hasprocs(jobtab: &[job], job: usize) -> bool {
     jobtab
         .get(job)
         .map(|j| !j.procs.is_empty() || !j.auxprocs.is_empty())
@@ -340,7 +340,7 @@ pub fn hasprocs(jobtab: &[Job], job: usize) -> bool {
 /// the Rust port — silently returned super-job indices for entries
 /// that hadn't yet had a process-group leader assigned, breaking
 /// job-control SIGCONT relay paths.
-pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {
+pub fn super_job(jobtab: &[job], job_idx: usize) -> Option<usize> {
     // c:260
     for (i, job) in jobtab.iter().enumerate() {
         if (job.stat & stat::SUPERJOB) != 0 && job.other as usize == job_idx && job.gleader != 0
@@ -355,9 +355,9 @@ pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {
 /// Handle subjob completion (from jobs.c handle_sub)
 /// Port of `handle_sub(int job, int fg)` from `Src/jobs.c:274`.
 /// WARNING: param names don't match C — Rust=(jobtab, super_idx, fg) vs C=(job, fg)
-pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) -> i32 {
+pub fn handle_sub(jobtab: &mut [job], super_idx: usize, fg: bool) -> i32 {
     // c:274
-    // c:277 — `Job jn = jobtab + job, sj = jobtab + jn->other;`
+    // c:277 — `job jn = jobtab + job, sj = jobtab + jn->other;`
     let sub_idx = jobtab[super_idx].other as usize;
     if sub_idx >= jobtab.len() {
         return 0;
@@ -517,7 +517,7 @@ pub fn get_usage() -> timeinfo {
     timeinfo::default()
 }
 
-/// Port of `update_process(Process pn, int status)` from `Src/jobs.c:363`.
+/// Port of `update_process(process pn, int status)` from `Src/jobs.c:363`.
 ///
 /// C body:
 /// ```c
@@ -538,7 +538,7 @@ pub fn get_usage() -> timeinfo {
 /// diffs that against the current `get_usage()` to attribute per-
 /// process rusage. Without this snapshot pre-wait, all diffs are 0
 /// (the previous Rust port had this bug).
-pub fn update_process(pn: &mut Process, status: i32) {
+pub fn update_process(pn: &mut process, status: i32) {
     // c:362
     let prev = CHILD_USAGE_PREV.with(|c| c.borrow().clone()); // c:366-367
     let now = get_usage(); // c:374 get_usage()
@@ -588,7 +588,7 @@ thread_local! {
 #[cfg(unix)]
 /// Port of `check_cursh_sig(int sig)` from `Src/jobs.c:397`.
 /// WARNING: param names don't match C — Rust=(jobtab, sig) vs C=(sig)
-pub fn check_cursh_sig(jobtab: &[Job], sig: i32) {
+pub fn check_cursh_sig(jobtab: &[job], sig: i32) {
     for job in jobtab {
         if (job.stat & stat::CURSH) != 0 && !job.is_done() {
             for proc in &job.procs {
@@ -602,7 +602,7 @@ pub fn check_cursh_sig(jobtab: &[Job], sig: i32) {
     }
 }
 
-/// Port of `storepipestats(Job jn, int inforeground, int fixlastval)` from `Src/jobs.c:420`.
+/// Port of `storepipestats(job jn, int inforeground, int fixlastval)` from `Src/jobs.c:420`.
 ///
 /// C body decodes each process's wait-status into a normalised
 /// pipestats entry (signal-bit-or-exit-code) and tracks the
@@ -622,7 +622,7 @@ pub fn check_cursh_sig(jobtab: &[Job], sig: i32) {
 /// Returns `(pipestats, pipefail)` — the decoded array and the
 /// last non-zero entry (0 if all succeeded).
 /// WARNING: param names don't match C — Rust=(job) vs C=(jn, inforeground, fixlastval)
-pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
+pub fn storepipestats(job: &job) -> (Vec<i32>, i32) {
     let mut stats = Vec::with_capacity(job.procs.len().min(MAX_PIPESTATS));
     let mut pipefail = 0;
     for p in job.procs.iter().take(MAX_PIPESTATS) {
@@ -652,7 +652,7 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
 /// Update job status after process change (from jobs.c update_job)
 /// Returns true if the job is now done or stopped (status committed),
 /// false if any proc is still running (no update needed).
-pub fn update_job(job: &mut Job) -> bool {
+pub fn update_job(job: &mut job) -> bool {
     // c:460
     // c:467-474 — `for (pn = jn->auxprocs; pn; pn = pn->next) {
     //                 if (WIFCONTINUED(pn->status)) pn->status = SP_RUNNING;
@@ -725,9 +725,9 @@ pub fn update_job(job: &mut Job) -> bool {
             job.stat |= stat::CHANGED | stat::STOPPED; // c:514
                                                        // c:515-538 — find the super-job; killpg(super.gleader, SIGTSTP);
                                                        //              mark super CHANGED|STOPPED. Without a job-index-
-                                                       //              from-Job reverse lookup wired here (we'd need
+                                                       //              from-job reverse lookup wired here (we'd need
                                                        //              the JOBTAB position, but Rust callers usually
-                                                       //              hold the &mut Job by &mut [Job][i]), defer the
+                                                       //              hold the &mut job by &mut [job][i]), defer the
                                                        //              SIGTSTP to whoever owns the jobtab.
                                                        // Documented gap — the caller in fusevm_bridge that does the
                                                        // wait3 dispatch knows the index and handles the super hop.
@@ -756,7 +756,7 @@ pub fn update_job(job: &mut Job) -> bool {
     let _inforeground: i32 = if (job.stat & stat::CURSH) != 0 {
         1
     } else {
-        // We don't know `thisjob == job_idx` from `&mut Job` alone;
+        // We don't know `thisjob == job_idx` from `&mut job` alone;
         // the caller (wait-loop) knows the index and handles lastval.
         0
     };
@@ -768,8 +768,8 @@ pub fn update_job(job: &mut Job) -> bool {
 pub static LASTVAL2: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Update a background job after waitpid (from jobs.c update_bg_job)
-/// Port of `update_bg_job(Job jn, pid_t pid, int status)` from `Src/jobs.c:677`.
-pub fn update_bg_job(jn: &mut [Job], pid: i32, status: i32) -> bool {
+/// Port of `update_bg_job(job jn, pid_t pid, int status)` from `Src/jobs.c:677`.
+pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
     // Try primary procs first, then auxprocs — C `findproc` takes
     // an explicit `aux` arg and the caller decides which subset is
     // relevant. update_bg_job needs to handle BOTH because the
@@ -994,14 +994,14 @@ pub fn printtime(
 }
 
 /// Dump timing info for a job (from jobs.c dumptime).
-/// Port of `dumptime(Job jn)` from `Src/jobs.c:1020`.
+/// Port of `dumptime(job jn)` from `Src/jobs.c:1020`.
 ///
 /// C body iterates each process in the pipeline and prints one
 /// `printtime` line per process using that process's own bgtime/
 /// endtime/ti/text — c:1027-1029. The previous Rust port aggregated
 /// into a single timeinfo, which printed 1 line for a 3-stage
 /// pipeline instead of C's 3.
-pub fn dumptime(job: &Job) -> Option<String> {
+pub fn dumptime(job: &job) -> Option<String> {
     // c:1020
     if job.procs.is_empty() {
         // c:1025-1026
@@ -1032,7 +1032,7 @@ pub fn dumptime(job: &Job) -> Option<String> {
     }
 }
 
-/// Port of `static int should_report_time(Job j)` from `Src/jobs.c:1038-1080`.
+/// Port of `static int should_report_time(job j)` from `Src/jobs.c:1038-1080`.
 /// ```c
 /// /* if the time keyword was used */
 /// if (j->stat & STAT_TIMED) return 1;
@@ -1051,7 +1051,7 @@ pub fn dumptime(job: &Job) -> Option<String> {
 /// `$REPORTTIME` (and `$REPORTMEMORY`) reading is the caller's
 /// responsibility — Rust takes the thresholds as parameters rather
 /// than calling getvalue inside.
-pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
+pub fn should_report_time(job: &job, reporttime: f64) -> bool {
     // c:1039
     // Read both thresholds from paramtab — matches C's
     // `getvalue(REPORTTIME)` and `getvalue(REPORTMEMORY)` reads.
@@ -1168,7 +1168,7 @@ pub fn sigmsg(sig: i32) -> &'static str {
 // find length of longest signame, check to see                             // c:1178
 // if we really need to print this job                                      // c:1179
 pub fn printjob(
-    job: &Job,
+    job: &job,
     job_num: usize,
     long_format: bool,
     cur_job: Option<usize>,
@@ -1284,7 +1284,7 @@ pub fn printjob(
 /// Stores either a temp-file name (to delete on job exit) or an
 /// open fd (to close on job exit). C uses a `Jobfile` struct with
 /// a tagged union; Rust port encodes the fd-only case as a
-/// `<fd:N>` sentinel string in the `Vec<String>` since the Job
+/// `<fd:N>` sentinel string in the `Vec<String>` since the job
 /// struct stores `filelist: Vec<String>` for now.
 ///
 /// `name == None` → store `<fd:N>`; `name == Some(s)` → store `s`.
@@ -1295,7 +1295,7 @@ pub fn printjob(
 // Rust idiom replacement: `Vec::push` covers the C `LinkList`+
 // `zalloc(strlen+1)` add path; the `<fd:N>` sentinel string encodes
 // the same Jobfile.is_fd discriminant the C source uses inline.
-pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {
+pub fn addfilelist(job: &mut job, name: Option<&str>, fd: i32) {
     match name {
         Some(n) => job.filelist.push(n.to_string()),
         None => job.filelist.push(format!("<fd:{}>", fd)),
@@ -1307,7 +1307,7 @@ pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {
 /// `<fd:N>` sentinels (added by `addfilelist(None, fd)`) are
 /// kept in both branches — they're the input/output fds for
 /// process substitution and need closing only at job exit.
-pub fn pipecleanfilelist(filelist: &mut Job, proc_subst_only: bool) {
+pub fn pipecleanfilelist(filelist: &mut job, proc_subst_only: bool) {
     // c:1397
     if proc_subst_only {
         // c:1397
@@ -1340,7 +1340,7 @@ pub fn pipecleanfilelist(filelist: &mut Job, proc_subst_only: bool) {
 /// dispatches `unlink(jf->u.name)` if `is_fd == 0` else
 /// `close(jf->u.fd)`. The `disowning` flag suppresses the
 /// `unlink`/`close` so files survive the disown.
-pub fn deletefilelist(file_list: &mut Job, disowning: bool) {
+pub fn deletefilelist(file_list: &mut job, disowning: bool) {
     // c:1422
     if !disowning {
         // c:1422
@@ -1378,7 +1378,7 @@ pub fn deletefilelist(file_list: &mut Job, disowning: bool) {
 /// the table. Called from the shell-exit path. The C source skips
 /// index 0 (job 0 is unused / "the shell itself"); Rust port does
 /// the same with `iter_mut().skip(1)`.
-pub fn cleanfilelists(jobtab: &mut [Job]) {
+pub fn cleanfilelists(jobtab: &mut [job]) {
     // c:1447 — DPUTS(shell_exiting >= 0, "BUG: cleanfilelists() before exit")
     crate::DPUTS!(
         // c:1447
@@ -1392,7 +1392,7 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
     }
 }
 
-/// Port of `void freejob(Job jn, int deleting)` from `Src/jobs.c:1457-1495`.
+/// Port of `void freejob(job jn, int deleting)` from `Src/jobs.c:1457-1495`.
 /// ```c
 /// pn = jn->procs; jn->procs = NULL; free each;
 /// pn = jn->auxprocs; jn->auxprocs = NULL; free each;
@@ -1415,7 +1415,7 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
 /// next job reuse of the slot. Now resets all fields per C. The
 /// STAT_WASSUPER recursive delete (c:1480-1488) requires jobtab
 /// access and is left as a doc comment until the caller wires it.
-pub fn freejob(jn: &mut Job, deleting: bool) {
+pub fn freejob(jn: &mut job, deleting: bool) {
     // c:1457
     let _ = deleting; // STAT_WASSUPER recursive path not yet wired.
                       // c:1461-1466 — `procs = NULL; free each`. Rust Drop on Vec covers.
@@ -1443,7 +1443,7 @@ pub fn freejob(jn: &mut Job, deleting: bool) {
     jn.text.clear();
 }
 
-/// Port of `void deletejob(Job jn, int disowning)` from `Src/jobs.c:1511-1526`.
+/// Port of `void deletejob(job jn, int disowning)` from `Src/jobs.c:1511-1526`.
 /// ```c
 /// deletefilelist(jn->filelist, disowning);
 /// if (jn->stat & STAT_ATTACH) {
@@ -1451,7 +1451,7 @@ pub fn freejob(jn: &mut Job, deleting: bool) {
 ///     adjustwinsize(0);
 /// }
 /// if (jn->stat & STAT_SUPERJOB) {
-///     Job jno = jobtab + jn->other;
+///     job jno = jobtab + jn->other;
 ///     if (jno->stat & STAT_SUBJOB)
 ///         jno->stat |= STAT_SUBJOB_ORPHANED;
 /// }
@@ -1463,7 +1463,7 @@ pub fn freejob(jn: &mut Job, deleting: bool) {
 /// corrupting the next slot reuse. The STAT_ATTACH (attachtty) and
 /// STAT_SUPERJOB recursive cleanup paths require substrate not yet
 /// wired (mypgrp, jobtab[] reference); doc-pinned for follow-up.
-pub fn deletejob(jn: &mut Job, disowning: bool) {
+pub fn deletejob(jn: &mut job, disowning: bool) {
     // c:1512
     // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
     // disowning, files are NOT deleted from disk; the filelist entries
@@ -1488,7 +1488,7 @@ pub fn deletejob(jn: &mut Job, disowning: bool) {
         }
         // c:1517 — `adjustwinsize(0);` — Rust adjust* are lazy-read.
     }
-    // c:1519-1523 — `if (jn->stat & STAT_SUPERJOB) { Job jno = jobtab +
+    // c:1519-1523 — `if (jn->stat & STAT_SUPERJOB) { job jno = jobtab +
     //                jn->other; if (jno->stat & STAT_SUBJOB)
     //                  jno->stat |= STAT_SUBJOB_ORPHANED; }`.
     if (jn.stat & STAT_SUPERJOB) != 0 {
@@ -1513,10 +1513,10 @@ pub fn deletejob(jn: &mut Job, disowning: bool) {
 /// Add process to job (from jobs.c addproc lines 1537-1597)
 /// Port of `addproc(pid_t pid, char *text, int aux, struct timespec *bgtime, int gleader, int list_pipe_job_used)` from `Src/jobs.c:1538`.
 /// WARNING: param names don't match C — Rust=(job, pid, text, aux) vs C=(pid, text, aux, bgtime, gleader, list_pipe_job_used)
-pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
+pub fn addproc(job: &mut job, pid: i32, text: &str, aux: bool) {
     // c:1538
-    let proc = Process::new(pid);
-    let proc = Process {
+    let proc = process::new(pid);
+    let proc = process {
         pid,
         status: SP_RUNNING,
         text: text.to_string(),
@@ -1548,9 +1548,9 @@ pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
 ///
 /// Returns true if any in-use job in the table has a non-empty
 /// filelist. Walks the whole table — the previous Rust port took
-/// a single `&Job` and returned `!job.filelist.is_empty()`, which
+/// a single `&job` and returned `!job.filelist.is_empty()`, which
 /// is the wrong shape (C iterates).
-pub fn havefiles(jobtab: &[Job]) -> bool {
+pub fn havefiles(jobtab: &[job]) -> bool {
     // c:1605
     jobtab.iter().any(|j| j.stat != 0 && !j.filelist.is_empty())
 }
@@ -1590,7 +1590,7 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
 /// Wait for job (from jobs.c zwaitjob lines 1673-1750)
 /// Port of `zwaitjob(int job, int wait_cmd)` from `Src/jobs.c:1673`.
 /// WARNING: param names don't match C — Rust=(job) vs C=(job, wait_cmd)
-pub fn zwaitjob(job: &mut Job) -> Option<i32> {
+pub fn zwaitjob(job: &mut job) -> Option<i32> {
     // c:1673
     if job.procs.is_empty() {
         return Some(0);
@@ -1614,7 +1614,7 @@ pub fn zwaitjob(job: &mut Job) -> Option<i32> {
 
 // wait for running job to finish                                           // c:1763
 /// Wait for all foreground jobs to finish (from jobs.c waitjobs)
-pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {
+pub fn waitjobs(jobtab: &mut [job], thisjob: usize) {
     // c:1763
     if thisjob < jobtab.len() {
         while !jobtab[thisjob].is_done() && !jobtab[thisjob].is_stopped() {
@@ -1698,14 +1698,14 @@ pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {
     // c:1800-1817 — `if (monitor && oldmaxjob) { snapshot to oldjobtab }`.
     if monitor != 0 && new_oldmax > 0 {
         // c:1800
-        let mut snap: Vec<Job> = jobs[..new_oldmax].iter().cloned().collect(); // c:1803-1806
+        let mut snap: Vec<job> = jobs[..new_oldmax].iter().cloned().collect(); // c:1803-1806
                                                                                // c:1809-1810 — `if (thisjob != -1 && thisjob < oldmaxjob)
                                                                                //                  memset(oldjobtab+thisjob, 0, ...)`.
         let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
         if thisjob >= 0 && (thisjob as usize) < new_oldmax {
             // c:1809
             // Zero the slot — Rust uses Default::default().
-            snap[thisjob as usize] = Job::default(); // c:1810
+            snap[thisjob as usize] = job::default(); // c:1810
         }
         // c:1816 — `--oldmaxjob;` C decrement before exposure.
         if let Some(om) = OLDMAXJOB.get() {
@@ -1751,19 +1751,19 @@ pub fn clearoldjobtab() {
 
 // Get a free entry in the job table and initialize it.                    // c:1862
 /// Initialize a new job entry (from jobs.c initjob)
-pub fn initjob(jobtab: &mut Vec<Job>) -> usize {
+pub fn initjob(jobtab: &mut Vec<job>) -> usize {
     // c:1862
     // Find an empty slot or add a new one
     for (i, job) in jobtab.iter().enumerate() {
         if (job.stat & stat::INUSE) == 0 {
-            jobtab[i] = Job::new();
+            jobtab[i] = job::new();
             jobtab[i].stat = stat::INUSE;
             return i;
         }
     }
     // Expand table
     let idx = jobtab.len();
-    let mut job = Job::new();
+    let mut job = job::new();
     job.stat = stat::INUSE;
     jobtab.push(job);
     idx
@@ -1781,7 +1781,7 @@ pub fn initjob(jobtab: &mut Vec<Job>) -> usize {
 ///
 /// Walks every IN-USE job and stamps its `pwd` with the current
 /// shell `pwd` (from `Src/builtin.c:1240` after `bin_cd`). The
-/// previous Rust port took a `&mut Job` ref and was a no-op (just
+/// previous Rust port took a `&mut job` ref and was a no-op (just
 /// captured cwd then dropped it) — every `cd` left the in-flight
 /// job's pwd unset, and `jobs` output showed empty `(pwd: )` for
 /// jobs that started before the cd.
@@ -2025,14 +2025,14 @@ pub fn setcurjob() {
 }
 
 // Find the job table for reporting jobs                                   // c:2042
-/// Port of `selectjobtab(Job *jtabp, int *jmaxp)` from `Src/jobs.c:2042`.
+/// Port of `selectjobtab(job *jtabp, int *jmaxp)` from `Src/jobs.c:2042`.
 ///
-/// C signature: `mod_export void selectjobtab(Job *jtabp, int *jmaxp)`
+/// C signature: `mod_export void selectjobtab(job *jtabp, int *jmaxp)`
 ///
 /// In subshell, uses saved `oldjobtab`/`oldmaxjob`; otherwise uses
 /// the main `jobtab`/`maxjob` globals. Returns `(table, maxjob)`.
 /// WARNING: param names don't match C — Rust=() vs C=(jtabp, jmaxp)
-pub fn selectjobtab() -> (Vec<Job>, usize) {
+pub fn selectjobtab() -> (Vec<job>, usize) {
     let oldtab = OLDJOBTAB
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
@@ -2081,7 +2081,7 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
     // c:2063
     let mut jobnum: i32; // c:2063
     let mymaxjob: i32; // c:2065
-    let myjobtab: Vec<Job>; // c:2066
+    let myjobtab: Vec<job>; // c:2066
 
     let (tab, max) = selectjobtab(); // c:2068
     myjobtab = tab;
@@ -2225,7 +2225,7 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
 /// C body allocates the `jobtab[]` array sized to `MAXJOBS_ALLOC`,
 /// `memset`s to zero, and seeds the `setproctitle`/argv-rewriting
 /// state used by `jobs -Z`. Rust port pre-allocates the table to
-/// `MAXJOBS_ALLOC` empty `Job` slots so `expandjobtab` doesn't
+/// `MAXJOBS_ALLOC` empty `job` slots so `expandjobtab` doesn't
 /// need to grow until index 50+ is reached.
 ///
 /// `jobs -Z` (argv overwrite) is not yet ported; the argv/envp
@@ -2299,18 +2299,18 @@ pub const MAX_MAXJOBS: usize = 1000;
 /// would be exceeded. The previous Rust port grew the table
 /// unconditionally without the cap, and used `<= needed` instead
 /// of growing by full chunks.
-pub fn expandjobtab(jobtab: &mut Vec<Job>, _needed: usize) -> bool {
+pub fn expandjobtab(jobtab: &mut Vec<job>, _needed: usize) -> bool {
     let newsize = jobtab.len() + MAXJOBS_ALLOC;
     if newsize > MAX_MAXJOBS {
         return false;
     }
-    jobtab.resize_with(newsize, Job::new);
+    jobtab.resize_with(newsize, job::new);
     true
 }
 
 /// Shrink job table if possible (from jobs.c maybeshrinkjobtab)
 /// Port of `maybeshrinkjobtab` from `Src/jobs.c:2259`.
-pub fn maybeshrinkjobtab(jobtab: &mut Vec<Job>) {
+pub fn maybeshrinkjobtab(jobtab: &mut Vec<job>) {
     while jobtab
         .last()
         .map(|j| (j.stat & stat::INUSE) == 0)
@@ -2875,7 +2875,7 @@ pub fn bin_kill(
     for arg in &argv[idx..] {
         if let Some(num) = arg.strip_prefix('-') {
             // c:3030
-            // Process-group kill: `-PID` → killpg(PID, sig).
+            // process-group kill: `-PID` → killpg(PID, sig).
             match num.parse::<i32>() {
                 Ok(pgid) => {
                     let r = unsafe { libc::killpg(pgid, sig) }; // c:3032
@@ -3253,7 +3253,7 @@ pub fn bin_suspend(
 ///
 /// Internal helper uses passed table to avoid re-locking.
 /// WARNING: param names don't match C — Rust=(s, jobtab, maxjob, thisjob) vs C=(s)
-fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32> {
+fn findjobnam(s: &str, jobtab: &[job], maxjob: i32, thisjob: i32) -> Option<i32> {
     let mut jobnum = maxjob; // c:2037
     while jobnum >= 0 {
         // c:2037
@@ -3467,7 +3467,7 @@ pub static PREVJOB: OnceLock<Mutex<i32>> = OnceLock::new();
 
 // the job table                                                             // c:85
 /// Port of `jobtab` from `Src/jobs.c:88`.
-pub static JOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+pub static JOBTAB: OnceLock<Mutex<Vec<job>>> = OnceLock::new();
 
 // Size of the job table.                                                    // c:91
 /// Port of `jobtabsize` from `Src/jobs.c:93`.
@@ -3479,7 +3479,7 @@ pub static MAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
 
 // If we have entered a subshell, the original shell's job table.            // c:100
 /// Port of `oldjobtab` from `Src/jobs.c:101`.
-static OLDJOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+static OLDJOBTAB: OnceLock<Mutex<Vec<job>>> = OnceLock::new();
 
 // The size of that.                                                         // c:103
 /// Port of `oldmaxjob` from `Src/jobs.c:104`.
@@ -3499,7 +3499,7 @@ pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
 pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
 /// Wait for a single specific job (from jobs.c waitonejob)
-pub fn waitonejob(job: &mut Job) {
+pub fn waitonejob(job: &mut job) {
     for proc in &mut job.procs {
         if proc.is_running() {
             if let Some(_status) = waitforpid(proc.pid) {
@@ -3685,8 +3685,8 @@ mod tests {
         // Clear PARAMTAB state so this test's REPORTMEMORY isn't
         // contaminated by earlier tests.
         setsparam("REPORTMEMORY", "100");
-        let mut job = Job::default();
-        let mut proc = Process::new(123);
+        let mut job = job::default();
+        let mut proc = process::new(123);
         proc.ti.maxrss = 256; // > 100 KB threshold
         proc.bgtime = Some(Instant::now());
         proc.endtime = Some(Instant::now());
@@ -3702,8 +3702,8 @@ mod tests {
     fn should_report_time_no_thresholds_false() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("REPORTMEMORY");
-        let mut job = Job::default();
-        job.procs.push(Process::new(1));
+        let mut job = job::default();
+        job.procs.push(process::new(1));
         assert!(!should_report_time(&job, -1.0));
     }
 
@@ -3722,9 +3722,9 @@ mod tests {
         unsetparam("REPORTMEMORY");
         zleactive.store(1, Ordering::SeqCst);
 
-        let mut job = Job::default();
+        let mut job = job::default();
         job.stat = stat::INUSE | stat::TIMED;
-        job.procs.push(Process::new(9001));
+        job.procs.push(process::new(9001));
 
         let reported = should_report_time(&job, -1.0);
 
@@ -3743,10 +3743,10 @@ mod tests {
     fn dumptime_emits_one_line_per_process() {
         let _g = crate::test_util::global_state_lock();
         setsparam("TIMEFMT", "%J");
-        let mut job = Job::default();
+        let mut job = job::default();
         let now = Instant::now();
         for (i, text) in ["echo a", "grep b", "tee c"].iter().enumerate() {
-            let mut p = Process::new(1000 + i as i32);
+            let mut p = process::new(1000 + i as i32);
             p.bgtime = Some(now);
             p.endtime = Some(now + Duration::from_millis(10));
             p.text = text.to_string();
@@ -3763,13 +3763,13 @@ mod tests {
     fn handle_sub_clears_superjob_sets_wassuper_on_done() {
         let _g = crate::test_util::global_state_lock();
         // Two-job table: super at idx 0, sub at idx 1.
-        let mut tab = vec![Job::default(), Job::default()];
+        let mut tab = vec![job::default(), job::default()];
         tab[0].stat = stat::INUSE | stat::SUPERJOB;
         tab[0].other = 1;
         tab[0].gleader = unsafe { libc::getpgrp() };
         // Add one exited proc to the super so the WASSUPER branch
         // (c:293-326) executes cleanly without the signaled branch.
-        let mut p = Process::new(unsafe { libc::getpid() });
+        let mut p = process::new(unsafe { libc::getpid() });
         p.status = 0; // exited 0 (WIFEXITED && WEXITSTATUS==0)
         tab[0].procs.push(p);
         // Subjob: marked DONE with no procs (the c:279 trigger).
@@ -3788,10 +3788,10 @@ mod tests {
     fn update_job_done_writes_lastval2() {
         let _g = crate::test_util::global_state_lock();
         LASTVAL2.store(-1, Ordering::SeqCst);
-        let mut job = Job::default();
-        let mut p1 = Process::new(1001);
+        let mut job = job::default();
+        let mut p1 = process::new(1001);
         p1.status = 0; // exited 0 (WIFEXITED && WEXITSTATUS=0)
-        let mut p2 = Process::new(1002);
+        let mut p2 = process::new(1002);
         p2.status = 7 << 8; // exited 7 (last proc, sets val)
         job.procs.push(p1);
         job.procs.push(p2);
@@ -3811,8 +3811,8 @@ mod tests {
     #[test]
     fn update_job_running_returns_false() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::default();
-        let mut p = Process::new(2001);
+        let mut job = job::default();
+        let mut p = process::new(2001);
         p.status = SP_RUNNING;
         job.procs.push(p);
         assert!(!update_job(&mut job));
@@ -3830,13 +3830,13 @@ mod tests {
     #[test]
     fn update_job_running_auxproc_short_circuits_before_main_walk() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::default();
+        let mut job = job::default();
         // Main proc has fully EXITED.
-        let mut main = Process::new(10001);
+        let mut main = process::new(10001);
         main.status = 0; // exited 0
         job.procs.push(main);
         // But an auxproc is still RUNNING.
-        let mut aux = Process::new(10002);
+        let mut aux = process::new(10002);
         aux.status = SP_RUNNING;
         job.auxprocs.push(aux);
 
@@ -3867,8 +3867,8 @@ mod tests {
     #[test]
     fn update_job_stopped_sets_stopped_changed() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::default();
-        let mut p = Process::new(3001);
+        let mut job = job::default();
+        let mut p = process::new(3001);
         p.status = 0x117f; // WIFSTOPPED-shaped (lower bits = 0x7f, upper = sig)
         job.procs.push(p);
         let committed = update_job(&mut job);
@@ -3896,7 +3896,7 @@ mod tests {
     fn spawnjob_deletes_empty_job() {
         let _g = crate::test_util::global_state_lock();
         // Wire up THISJOB → 1; JOBTAB[1] empty INUSE job.
-        let mut tab_init = vec![Job::default(); 3];
+        let mut tab_init = vec![job::default(); 3];
         tab_init[1].stat = stat::INUSE;
         *JOBTAB
             .get_or_init(|| Mutex::new(Vec::new()))
@@ -3917,14 +3917,14 @@ mod tests {
     #[test]
     fn handle_sub_stopped_branch_propagates() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::default(), Job::default()];
+        let mut tab = vec![job::default(), job::default()];
         tab[0].stat = stat::INUSE | stat::SUPERJOB;
         tab[0].other = 1;
-        let mut p = Process::new(1234);
+        let mut p = process::new(1234);
         p.status = SP_RUNNING;
         tab[0].procs.push(p);
         tab[1].stat = stat::INUSE | stat::STOPPED;
-        let mut sp = Process::new(5678);
+        let mut sp = process::new(5678);
         sp.status = 0x117f; // WIFSTOPPED w/ TSTP-ish status
         tab[1].procs.push(sp);
 
@@ -3939,7 +3939,7 @@ mod tests {
     #[test]
     fn dumptime_empty_job_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        let job = Job::default();
+        let job = job::default();
         assert!(dumptime(&job).is_none());
     }
 
@@ -3955,8 +3955,8 @@ mod tests {
     fn dumptime_skips_proc_without_endtime() {
         let _g = crate::test_util::global_state_lock();
         setsparam("TIMEFMT", "%E");
-        let mut job = Job::default();
-        let mut p = Process::new(11001);
+        let mut job = job::default();
+        let mut p = process::new(11001);
         p.bgtime = Some(Instant::now());
         p.endtime = None; // backgrounded, not yet reaped
         p.text = "incomplete".to_string();
@@ -3983,11 +3983,11 @@ mod tests {
     fn dumptime_uses_per_process_elapsed() {
         let _g = crate::test_util::global_state_lock();
         setsparam("TIMEFMT", "%E");
-        let mut job = Job::default();
+        let mut job = job::default();
         let t0 = Instant::now();
         // Three procs with distinct elapsed times: 100ms, 300ms, 600ms.
         for (i, ms) in [100u64, 300, 600].iter().enumerate() {
-            let mut p = Process::new(8000 + i as i32);
+            let mut p = process::new(8000 + i as i32);
             p.bgtime = Some(t0);
             p.endtime = Some(t0 + Duration::from_millis(*ms));
             p.text = format!("p{}", i);
@@ -4020,9 +4020,9 @@ mod tests {
     fn printjob_appends_timing_when_stat_timed() {
         let _g = crate::test_util::global_state_lock();
         setsparam("TIMEFMT", "%J");
-        let mut job = Job::default();
+        let mut job = job::default();
         job.stat = stat::INUSE | stat::TIMED | stat::DONE;
-        let mut p = Process::new(42);
+        let mut p = process::new(42);
         p.bgtime = Some(Instant::now());
         p.endtime = Some(Instant::now() + Duration::from_millis(5));
         p.text = "echo hi".to_string();
@@ -4051,9 +4051,9 @@ mod tests {
     #[test]
     fn update_job_subjob_stop_sets_flags_before_early_return() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::default();
+        let mut job = job::default();
         job.stat = stat::INUSE | stat::SUBJOB; // mark as SUBJOB pre-stop
-        let mut p = Process::new(7001);
+        let mut p = process::new(7001);
         p.status = 0x117f; // WIFSTOPPED-shaped (low byte = 0x7F)
         job.procs.push(p);
 
@@ -4081,9 +4081,9 @@ mod tests {
     #[test]
     fn update_job_already_stopped_short_circuits() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::default();
+        let mut job = job::default();
         job.stat = stat::INUSE | stat::STOPPED; // pre-stopped, not SUBJOB
-        let mut p = Process::new(12001);
+        let mut p = process::new(12001);
         p.status = 0x117f; // WIFSTOPPED-shaped
         job.procs.push(p);
 
@@ -4114,10 +4114,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         LASTVAL2.store(-1, Ordering::SeqCst);
 
-        let mut job = Job::default();
-        let mut p1 = Process::new(6001);
+        let mut job = job::default();
+        let mut p1 = process::new(6001);
         p1.status = 0; // exited 0 (clean predecessor)
-        let mut p2 = Process::new(6002);
+        let mut p2 = process::new(6002);
         p2.status = 15; // killed by SIGTERM
         job.procs.push(p1);
         job.procs.push(p2);
@@ -4139,7 +4139,7 @@ mod tests {
     #[test]
     fn test_process_new() {
         let _g = crate::test_util::global_state_lock();
-        let proc = Process::new(1234);
+        let proc = process::new(1234);
         assert_eq!(proc.pid, 1234);
         assert!(proc.is_running());
     }
@@ -4147,7 +4147,7 @@ mod tests {
     #[test]
     fn test_job_new() {
         let _g = crate::test_util::global_state_lock();
-        let job = Job::new();
+        let job = job::new();
         assert_eq!(job.stat, 0);
         assert!(!job.is_done());
         assert!(!job.is_stopped());
@@ -4159,11 +4159,11 @@ mod tests {
     #[test]
     fn test_job_make_running() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::new();
+        let mut job = job::new();
         job.stat |= stat::STOPPED;
-        job.procs.push(Process {
+        job.procs.push(process {
             status: 0x007f,
-            ..Process::new(1234)
+            ..process::new(1234)
         }); // Stopped
 
         job.make_running();
@@ -4174,7 +4174,7 @@ mod tests {
     #[test]
     fn test_format_job() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::new();
+        let mut job = job::new();
         job.text = "vim file.txt".to_string();
         job.stat |= stat::STOPPED;
 
@@ -4210,11 +4210,11 @@ mod tests {
     #[test]
     fn test_havefiles_walks_table() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::new(), Job::new(), Job::new()];
+        let mut tab = vec![job::new(), job::new(), job::new()];
         tab[1].stat = stat::INUSE;
         tab[1].filelist = vec!["/tmp/foo".to_string()];
         assert!(havefiles(&tab));
-        // Job marked but no files → no.
+        // job marked but no files → no.
         tab[1].filelist.clear();
         assert!(!havefiles(&tab));
         // Files but no stat (released slot) → C `jobtab[i].stat &&` requires both.
@@ -4226,15 +4226,15 @@ mod tests {
     #[test]
     fn test_storepipestats_decodes_status() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::new();
-        // Process 1: exit 0
-        let mut p1 = Process::new(100);
+        let mut job = job::new();
+        // process 1: exit 0
+        let mut p1 = process::new(100);
         p1.status = 0;
-        // Process 2: exit 1 (status 0x0100)
-        let mut p2 = Process::new(101);
+        // process 2: exit 1 (status 0x0100)
+        let mut p2 = process::new(101);
         p2.status = 0x0100;
-        // Process 3: signal 9 (SIGKILL — status low-byte 0x09)
-        let mut p3 = Process::new(102);
+        // process 3: signal 9 (SIGKILL — status low-byte 0x09)
+        let mut p3 = process::new(102);
         p3.status = 0x09;
         job.procs = vec![p1, p2, p3];
         let (stats, pipefail) = storepipestats(&job);
@@ -4248,7 +4248,7 @@ mod tests {
     #[test]
     fn test_expandjobtab_respects_max() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::new(); 950];
+        let mut tab = vec![job::new(); 950];
         // 950 + 50 = 1000 ≤ MAX_MAXJOBS, OK.
         assert!(expandjobtab(&mut tab, 0));
         assert_eq!(tab.len(), 1000);
@@ -4260,7 +4260,7 @@ mod tests {
     #[test]
     fn test_addfilelist_fd_vs_name() {
         let _g = crate::test_util::global_state_lock();
-        let mut job = Job::new();
+        let mut job = job::new();
         addfilelist(&mut job, Some("/tmp/zshrs-test.X"), -1);
         addfilelist(&mut job, None, 7);
         assert_eq!(job.filelist.len(), 2);
@@ -4271,8 +4271,8 @@ mod tests {
     #[test]
     fn test_hasprocs_index_bounded() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::new(), Job::new()];
-        tab[0].procs.push(Process::new(1));
+        let mut tab = vec![job::new(), job::new()];
+        tab[0].procs.push(process::new(1));
         assert!(hasprocs(&tab, 0));
         assert!(!hasprocs(&tab, 1));
         // Out-of-range returns false (matches C's negative-job DPUTS+0).
@@ -4282,9 +4282,9 @@ mod tests {
     #[test]
     fn test_makerunning_clears_stopped() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::new(), Job::new()];
+        let mut tab = vec![job::new(), job::new()];
         tab[0].stat = stat::STOPPED;
-        let mut p = Process::new(42);
+        let mut p = process::new(42);
         p.status = 0x7f; // WIFSTOPPED
         tab[0].procs.push(p);
         makerunning(&mut tab, 0);
@@ -4378,7 +4378,7 @@ mod tests {
     #[test]
     fn deletefilelist_disown_clears_all_entries() {
         let _g = crate::test_util::global_state_lock();
-        let mut j = Job::new();
+        let mut j = job::new();
         addfilelist(&mut j, Some("/tmp/a"), -1);
         addfilelist(&mut j, None, 7);
         assert_eq!(j.filelist.len(), 2);
@@ -4395,7 +4395,7 @@ mod tests {
     #[test]
     fn super_job_returns_none_for_top_level_job() {
         let _g = crate::test_util::global_state_lock();
-        let tab = vec![Job::new()];
+        let tab = vec![job::new()];
         assert!(super_job(&tab, 0).is_none());
     }
 
@@ -4448,7 +4448,7 @@ mod tests {
     #[test]
     fn deletejob_calls_freejob_to_clear_all_state() {
         let _g = crate::test_util::global_state_lock();
-        let mut jn = Job::new();
+        let mut jn = job::new();
         jn.pwd = Some("/tmp/deletejob-pwd".to_string());
         jn.other = 42;
         jn.stty_in_env = 1;
@@ -4468,7 +4468,7 @@ mod tests {
     #[test]
     fn freejob_resets_all_per_job_state_fields() {
         let _g = crate::test_util::global_state_lock();
-        let mut jn = Job::new();
+        let mut jn = job::new();
         // Pre-populate every freejob-reset field.
         jn.pwd = Some("/tmp/saved-pwd".to_string());
         jn.gleader = 12345;
@@ -4500,8 +4500,8 @@ mod tests {
     #[test]
     fn super_job_requires_nonzero_gleader() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab = vec![Job::new(), Job::new(), Job::new()];
-        // Job 2 is a super-job of sub-job 1 BUT no gleader yet.
+        let mut tab = vec![job::new(), job::new(), job::new()];
+        // job 2 is a super-job of sub-job 1 BUT no gleader yet.
         tab[2].stat |= stat::SUPERJOB;
         tab[2].other = 1;
         tab[2].gleader = 0;
@@ -4524,7 +4524,7 @@ mod tests {
     #[test]
     fn findproc_unknown_pid_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        let tab: Vec<Job> = vec![Job::new(), Job::new()];
+        let tab: Vec<job> = vec![job::new(), job::new()];
         assert!(findproc(&tab, 99999, false).is_none());
         assert!(findproc(&tab, 99999, true).is_none());
     }
@@ -4535,9 +4535,9 @@ mod tests {
     #[test]
     fn findproc_known_pid_returns_correct_indices() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab: Vec<Job> = vec![Job::new(), Job::new()];
+        let mut tab: Vec<job> = vec![job::new(), job::new()];
         tab[1].stat = stat::INUSE;
-        let mut p = Process::new(12345);
+        let mut p = process::new(12345);
         p.status = SP_RUNNING;
         tab[1].procs.push(p);
         // Search non-aux side — should hit.
@@ -4562,15 +4562,15 @@ mod tests {
     #[test]
     fn findproc_skips_stat_done_jobs() {
         let _g = crate::test_util::global_state_lock();
-        let mut tab: Vec<Job> = vec![Job::new(), Job::new(), Job::new()];
-        // Job 1: STAT_DONE with pid 7777 — must be skipped.
+        let mut tab: Vec<job> = vec![job::new(), job::new(), job::new()];
+        // job 1: STAT_DONE with pid 7777 — must be skipped.
         tab[1].stat = stat::DONE | stat::INUSE;
-        let mut p1 = Process::new(7777);
+        let mut p1 = process::new(7777);
         p1.status = 0; // exited
         tab[1].procs.push(p1);
-        // Job 2: live job with the SAME pid (recycled).
+        // job 2: live job with the SAME pid (recycled).
         tab[2].stat = stat::INUSE;
-        let mut p2 = Process::new(7777);
+        let mut p2 = process::new(7777);
         p2.status = SP_RUNNING;
         tab[2].procs.push(p2);
         // Search for pid 7777 — must hit job 2, not job 1.
@@ -4707,7 +4707,7 @@ mod tests {
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let prev = zleactive.load(Ordering::Relaxed);
         zleactive.store(1, Ordering::Relaxed);
-        let mut job = Job::new();
+        let mut job = job::new();
         job.stat |= stat::TIMED;
         // STAT_TIMED returns true even with zleactive=1 and no procs.
         assert!(should_report_time(&job, -1.0));
@@ -4727,9 +4727,9 @@ mod tests {
         // Build a job with one proc that would otherwise satisfy the
         // elapsed-time threshold: bgtime now, endtime now + 10s,
         // reporttime=1s.
-        let mut job = Job::new();
+        let mut job = job::new();
         let now = Instant::now();
-        let mut p = Process::new(1);
+        let mut p = process::new(1);
         p.bgtime = Some(now);
         p.endtime = Some(now + Duration::from_secs(10));
         job.procs.push(p);
@@ -4748,9 +4748,9 @@ mod tests {
     fn should_report_time_negative_threshold_suppresses() {
         let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
-        let mut job = Job::new();
+        let mut job = job::new();
         let now = Instant::now();
-        let mut p = Process::new(1);
+        let mut p = process::new(1);
         p.bgtime = Some(now);
         p.endtime = Some(now + Duration::from_secs(10));
         job.procs.push(p);
@@ -4763,7 +4763,7 @@ mod tests {
     fn should_report_time_no_procs_returns_false() {
         let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
-        let job = Job::new(); // no procs, no STAT_TIMED
+        let job = job::new(); // no procs, no STAT_TIMED
         assert!(!should_report_time(&job, 0.0));
     }
 
@@ -4772,7 +4772,7 @@ mod tests {
 
     /// Pin: `setjobpwd()` writes `pwd` to every IN-USE job that
     /// doesn't already have one, per `Src/jobs.c:1886-1888`. The
-    /// previous Rust port took a `&mut Job` and was a no-op — every
+    /// previous Rust port took a `&mut job` and was a no-op — every
     /// `cd` left in-flight jobs with no pwd.
     #[test]
     fn setjobpwd_stamps_pwd_on_inuse_jobs_without_one() {
@@ -4785,19 +4785,19 @@ mod tests {
         {
             let mut tab = tab.lock().unwrap();
             tab.clear();
-            tab.push(Job::new()); // index 0 — skipped
-                                  // Job 1: INUSE, no pwd — should get stamped.
-            let mut j1 = Job::new();
+            tab.push(job::new()); // index 0 — skipped
+                                  // job 1: INUSE, no pwd — should get stamped.
+            let mut j1 = job::new();
             j1.stat = stat::INUSE;
             j1.pwd = None;
             tab.push(j1);
-            // Job 2: INUSE, already has pwd — should be PRESERVED.
-            let mut j2 = Job::new();
+            // job 2: INUSE, already has pwd — should be PRESERVED.
+            let mut j2 = job::new();
             j2.stat = stat::INUSE;
             j2.pwd = Some("/preserved".to_string());
             tab.push(j2);
-            // Job 3: NOT in use (stat=0) — should NOT get stamped.
-            let mut j3 = Job::new();
+            // job 3: NOT in use (stat=0) — should NOT get stamped.
+            let mut j3 = job::new();
             j3.stat = 0;
             j3.pwd = None;
             tab.push(j3);

@@ -32,14 +32,18 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use libc::time_t;
-
+use crate::DPUTS;
+use crate::init::zleentry;
+use crate::mem::popheap;
+use crate::ported::mem::pushheap;
 use crate::ported::utils::{
     addprepromptfn, addtimedfn, delprepromptfn, deltimedfn, unmeta, zjoin, zstrtol, ztrftime,
     zwarnnam,
 };
-use crate::ported::zsh_h::{options, VERBOSE};
+use crate::ported::zsh_h::{isset, options, param, VERBOSE, MAX_OPS};
 use crate::ported::ztype_h::idigit;
-
+use crate::utils::TIMED_FNS;
+use crate::zsh_h::{features, module};
 // =====================================================================
 // typedef struct schedcmd  *Schedcmd;                                c:35
 // =====================================================================
@@ -185,7 +189,7 @@ pub(crate) fn checksched() -> i32 {
         if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0 && zleactive.load(Ordering::Relaxed) != 0
         // c:120
         {
-            crate::ported::init::zleentry(ZLE_CMD_TRASH); // c:121
+            zleentry(ZLE_CMD_TRASH); // c:121
         }
         execstring(&sch.cmd, 0, 0, "sched"); // c:122
                                              // C: zsfree(sch->cmd); zfree(sch, sizeof(struct schedcmd));
@@ -215,9 +219,9 @@ pub(crate) fn checksched() -> i32 {
              * We've already deleted the function from the list.
              */                                                      // c:138-140
             // c:141-142 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (1)")
-            crate::DPUTS!(
+            DPUTS!(
                 // c:141
-                !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:141 timedfns && firstnode(timedfns)
+                !TIMED_FNS.lock().unwrap().is_empty(), // c:141 timedfns && firstnode(timedfns)
                 "BUG: already timed fn (1)"                                  // c:142
             );
             schedaddtimed(); // c:143
@@ -302,9 +306,9 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
                 if still_have {
                     // c:181 if (schedcmds)
                     // c:182 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (2)")
-                    crate::DPUTS!(
+                    DPUTS!(
                         // c:182
-                        !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:182
+                        !TIMED_FNS.lock().unwrap().is_empty(), // c:182
                         "BUG: already timed fn (2)"                                  // c:182
                     );
                     schedaddtimed(); // c:183
@@ -532,9 +536,9 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
             *head2 = Some(sch_new); // c:318 schedcmds = sch;
             drop(head2);
             // c:319 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (3)")
-            crate::DPUTS!(
+            DPUTS!(
                 // c:319
-                !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:319
+                !TIMED_FNS.lock().unwrap().is_empty(), // c:319
                 "BUG: already timed fn (3)"                                  // c:319
             );
             schedaddtimed(); // c:320
@@ -554,9 +558,9 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
         *head = Some(sch_new); // c:331 schedcmds = sch;
         drop(head);
         // c:332 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (4)")
-        crate::DPUTS!(
+        DPUTS!(
             // c:332
-            !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:332
+            !TIMED_FNS.lock().unwrap().is_empty(), // c:332
             "BUG: already timed fn (4)"                                  // c:332
         );
         schedaddtimed(); // c:333
@@ -575,7 +579,7 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
 /// `struct param *` (zsh.h:539); ported as `*const param` to keep the
 /// pointer shape (the param is UNUSED in C — pointer is never dereffed).
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub(crate) fn schedgetfn(_pm: *const crate::ported::zsh_h::param) -> Vec<String> {
+pub(crate) fn schedgetfn(_pm: *const param) -> Vec<String> {
     let mut i: usize; // c:341
                       // C: int i; struct schedcmd *sch; char **ret, **aptr;
                       // for (i = 0, sch = schedcmds; sch; sch = sch->next, i++);          // c:347-348
@@ -617,14 +621,14 @@ pub(crate) fn schedgetfn(_pm: *const crate::ported::zsh_h::param) -> Vec<String>
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Builtins/sched.c:396`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn setup_(m: *const module) -> i32 {
     // c:396
     0 // c:411
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Builtins/sched.c:403`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     // c:403
     *features = featuresarray(m, module_features()); // c:418
     0 // c:418
@@ -632,14 +636,14 @@ pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<Stri
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Builtins/sched.c:411`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:411
     handlefeatures(m, module_features(), enables) // c:418
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/sched.c:418`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn boot_(m: *const module) -> i32 {
     // c:418
     addprepromptfn(checksched_thunk); // c:426 addprepromptfn(&checksched);
     0 // c:426
@@ -652,7 +656,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
 ///   for (sch = schedcmds; sch; sch = schn) { schn = sch->next; zsfree(sch->cmd); zfree(sch, sizeof(*sch)); }
 ///   delprepromptfn(&checksched);
 ///   return setfeatureenables(m, &module_features, NULL);
-pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {
     // c:426
     // struct schedcmd *sch, *schn;                                       // c:426
     if schedcmds_lock().lock().unwrap().is_some() {
@@ -678,7 +682,7 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/sched.c:443`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn finish_(m: *const module) -> i32 {
     // c:443
     0 // c:443
 }
@@ -704,7 +708,7 @@ static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
 // `module_features` — port of `static struct features module_features`
 // from sched.c:386. Bucket-2 shared global; OnceLock-init since
 // `features` contains fn-pointer fields not const-initializable.
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Init-on-first-use accessors. C dereferences the statics directly — Rust
 // requires the OnceLock get-or-init dance. Inlined at call sites would
@@ -730,14 +734,14 @@ fn checksched_thunk() {
 // =====================================================================
 
 // `featuresarray` lives in `Src/module.c:3279`.
-fn featuresarray(_m: *const crate::ported::zsh_h::module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:sched".to_string(), "p:zsh_scheduled_events".to_string()]
 }
 
 // `handlefeatures` lives in `Src/module.c:3388`.
 fn handlefeatures(
-    m: *const crate::ported::zsh_h::module,
-    f: &Mutex<crate::ported::zsh_h::features>,
+    m: *const module,
+    f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -749,7 +753,7 @@ fn handlefeatures(
 }
 
 // `getfeatureenables` lives in `Src/module.c:3314`.
-fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<crate::ported::zsh_h::features>) -> Vec<i32> {
+fn getfeatureenables(_m: *const module, f: &Mutex<features>) -> Vec<i32> {
     let g = f.lock().unwrap();
     let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
     vec![0; total as usize]
@@ -757,8 +761,8 @@ fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<crate::p
 
 // `setfeatureenables` lives in `Src/module.c:3350`.
 fn setfeatureenables(
-    _m: *const crate::ported::zsh_h::module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _m: *const module,
+    _f: &Mutex<features>,
     _e: Option<&Vec<i32>>,
 ) -> i32 {
     0
@@ -793,12 +797,12 @@ pub static zleactive: AtomicI32 = AtomicI32::new(0);
 /// WARNING: param names match C — Rust=(s, dont_change_job, exiting, context) vs C=(s, dont_change_job, exiting, context)
 fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {
     // c:1228
-    crate::ported::mem::pushheap(); // c:1232
-    if crate::ported::zsh_h::isset(VERBOSE as i32) {
+    pushheap(); // c:1232
+    if isset(VERBOSE as i32) {
         // c:1233
         // c:1234-1236 — zputs(s, stderr); fputc('\n'); fflush.
         eprintln!("{}", s); // c:1234-1236
-    }
+    } else {}
     // c:1238 — prog = parse_string(s, 0)
     //   parse_string isn't ported as a free fn; the bytecode pipeline
     //   compiles strings through stryke/fusevm. Bridge eval lives in
@@ -806,7 +810,7 @@ fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {
     //   loop; this stub keeps the heap bracket + verbose echo so the
     //   call-shape matches C exactly.
     let _ = (dont_change_job, exiting, context); // c:1239 execode args
-    crate::ported::mem::popheap(); // c:1240
+    popheap(); // c:1240
 }
 
 // =====================================================================
@@ -835,9 +839,9 @@ fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None, // c:387 bintab
             bn_size: 1,    // sizeof(bintab)/sizeof(*bintab) — sched
             cd_list: None, // c:388
@@ -855,9 +859,7 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 mod tests {
     use super::*;
 
-    use crate::ported::zsh_h::{options, MAX_OPS};
-
-    static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TEST_SERIAL: Mutex<()> = Mutex::new(());
 
     fn empty_ops() -> options {
         options {
@@ -1085,7 +1087,7 @@ mod tests {
     #[test]
     fn module_lifecycle_shims_all_return_zero() {
         let _g = crate::test_util::global_state_lock();
-        let m: *const crate::ported::zsh_h::module = std::ptr::null();
+        let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
         assert_eq!(boot_(m), 0);
         assert_eq!(cleanup_(m), 0);

@@ -22,7 +22,7 @@
 use std::ffi::CString;
 
 use crate::ported::utils::{metafy, unmetafy, zwarnnam};
-use crate::ported::zsh_h::{module, options, OPT_ISSET};
+use crate::ported::zsh_h::{features, module, options, OPT_ISSET};
 
 // =====================================================================
 // xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)  c:36
@@ -559,16 +559,13 @@ const XATTR_NOFOLLOW: i32 = 0x0001;
 /// `ksh93::setsparam(name, val)` which provides the env-var-shim
 /// implementation matching the C signature.
 /// WARNING: param names don't match C — Rust=(name, value) vs C=(PM_HASHED)
-fn setsparam(name: &str, value: &str) {
-    crate::ported::params::setsparam(name, value);
-}
 
 /// Port of `setaparam(char *s, char **aval)` from `Src/params.c:3595` — delegates to
 /// `ksh93::setsparam` with the value colon-joined (PATH-style array
 /// shape that the env-var bridge unpacks at read time).
 /// WARNING: param names don't match C — Rust=(name, value) vs C=(s, val, flags)
 fn setaparam(name: &str, value: Vec<String>) {
-    crate::ported::params::setsparam(name, &value.join(":"));
+    setsparam(name, &value.join(":"));
 }
 
 /// Port of `unsetparam(char *s)` from `Src/params.c:3819` — env::remove_var
@@ -583,8 +580,9 @@ fn unsetparam(v: &str) {
 // =====================================================================
 
 use std::sync::{Mutex, OnceLock};
+use crate::params::setsparam;
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -595,7 +593,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:zgetattr".to_string(),
         "b:zsetattr".to_string(),
@@ -610,7 +608,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -623,7 +621,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -653,9 +651,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 4,
             cd_list: None,
@@ -672,7 +670,6 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
         options {
