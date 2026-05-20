@@ -31,7 +31,6 @@
 //! `pph_*`) shape-match C's signatures but their `gsu_closure` chain
 //! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
 
-use crate::ported::params::locallevel as LOCALLEVEL;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{param, OPT_ISSET, PM_DECLARED, PM_HIDE, PM_REMOVABLE, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET};
 use std::sync::atomic::Ordering;
@@ -91,7 +90,7 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
         return;
     }
     let pm_level = unsafe { (*hn).level };
-    let cur_local = LOCALLEVEL.load(Ordering::Relaxed);
+    let cur_local = crate::ported::params::locallevel.load(Ordering::Relaxed);
     if pm_level != cur_local {
         return;
     } // c:83 only act on this scope's entries
@@ -267,7 +266,7 @@ pub fn bin_private(
     }
 
     // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
-    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+    let locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed);
     if locallevel == 0 {
         // c:235
         let warn =
@@ -391,7 +390,7 @@ pub fn pps_getfn(pm: *mut param) -> String {
         return String::new();
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) >= pm_level {
         // c:292
         // c:293 — gsu->getfn(pm). Static-link path: read the param's
         // u_str field directly since the gsu_closure indirection
@@ -421,8 +420,8 @@ pub fn pps_setfn(pm: *mut param, x: &str) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(Ordering::Relaxed)
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(Ordering::Relaxed)
             > private_wraplevel.load(Ordering::Relaxed)
     {
         // c:304
@@ -457,7 +456,7 @@ pub fn pps_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) <= pm_level {
         // c:317
         // c:318 — gsu->unsetfn(pm, explicit). Set u_str to None.
         unsafe {
@@ -486,7 +485,7 @@ pub fn ppi_getfn(pm: *mut param) -> i64 {
         return 0;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) >= pm_level {
         // c:340
         unsafe { (*pm).u_val } // c:340 gsu->getfn
     } else {
@@ -501,8 +500,8 @@ pub fn ppi_setfn(pm: *mut param, x: i64) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(Ordering::Relaxed)
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(Ordering::Relaxed)
             > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
@@ -520,7 +519,7 @@ pub fn ppi_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) <= pm_level {
         // c:357
         unsafe {
             (*pm).u_val = 0;
@@ -547,7 +546,7 @@ pub fn ppf_getfn(pm: *mut param) -> f64 {
         return 0.0;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) >= pm_level {
         // c:380
         unsafe { (*pm).u_dval } // c:380
     } else {
@@ -562,8 +561,8 @@ pub fn ppf_setfn(pm: *mut param, x: f64) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(Ordering::Relaxed)
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(Ordering::Relaxed)
             > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
@@ -581,7 +580,7 @@ pub fn ppf_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) <= pm_level {
         // c:397
         unsafe {
             (*pm).u_dval = 0.0;
@@ -608,7 +607,7 @@ pub fn ppa_getfn(pm: *mut param) -> Vec<String> {
         return Vec::new();
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) >= pm_level {
         // c:421
         unsafe { (*pm).u_arr.clone().unwrap_or_default() } // c:421
     } else {
@@ -623,8 +622,8 @@ pub fn ppa_setfn(pm: *mut param, x: Vec<String>) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(Ordering::Relaxed)
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(Ordering::Relaxed)
             > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
@@ -642,7 +641,7 @@ pub fn ppa_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) <= pm_level {
         // c:438
         unsafe {
             (*pm).u_arr = None;
@@ -683,7 +682,7 @@ pub fn pph_getfn(pm: *mut param) -> Option<()> {
         return None;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) >= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) >= pm_level {
         // c:463
         unsafe { (*pm).u_hash.as_ref().map(|_| ()) } // c:463
     } else {
@@ -702,8 +701,8 @@ pub fn pph_setfn(
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) == pm_level
-        || LOCALLEVEL.load(Ordering::Relaxed)
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(Ordering::Relaxed)
             > private_wraplevel.load(Ordering::Relaxed)
     {
         unsafe {
@@ -721,7 +720,7 @@ pub fn pph_unsetfn(pm: *mut param, explicit: i32) {
         return;
     }
     let pm_level = unsafe { (*pm).level };
-    if LOCALLEVEL.load(Ordering::Relaxed) <= pm_level {
+    if crate::ported::params::locallevel.load(Ordering::Relaxed) <= pm_level {
         // c:480
         unsafe {
             (*pm).u_hash = None;
@@ -759,7 +758,7 @@ pub fn scopeprivate(hn: *mut param, onoff: i32) {
         return;
     }
     let pm_level = unsafe { (*hn).level };
-    let local = LOCALLEVEL.load(Ordering::Relaxed);
+    let local = crate::ported::params::locallevel.load(Ordering::Relaxed);
     if pm_level != local {
         return;
     } // c:515
@@ -837,7 +836,7 @@ pub fn wrap_private(
     _name: *mut libc::c_char,
 ) -> i32 {
     // c:550
-    let local = LOCALLEVEL.load(Ordering::Relaxed);
+    let local = crate::ported::params::locallevel.load(Ordering::Relaxed);
     let pwl = private_wraplevel.load(Ordering::Relaxed);
     if pwl < local {
         // c:552
@@ -876,7 +875,7 @@ pub fn getprivatenode(pm: *mut param) -> *mut param {
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
         let fakelvl = FAKELEVEL.load(Ordering::Relaxed);
-        let local = LOCALLEVEL.load(Ordering::Relaxed);
+        let local = crate::ported::params::locallevel.load(Ordering::Relaxed);
         let pwl = private_wraplevel.load(Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
             break;
@@ -913,7 +912,7 @@ pub fn getprivatenode2(pm: *mut param) -> *mut param {
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
         let fakelvl = FAKELEVEL.load(Ordering::Relaxed);
-        let local = LOCALLEVEL.load(Ordering::Relaxed);
+        let local = crate::ported::params::locallevel.load(Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
             break;
         }
@@ -929,7 +928,7 @@ pub fn getprivatenode2(pm: *mut param) -> *mut param {
 }
 
 // `locallevel` is the global from `Src/init.c:166`, mirrored as
-// `LOCALLEVEL: AtomicI32`. Read inline
+// `crate::ported::params::locallevel: AtomicI32`. Read inline
 // at every call site below — `ksh93::locallevel.load(Relaxed)`.
 
 /// Port of `printprivatenode(HashNode hn, int printflags)` from `Src/Modules/param_private.c:632`.
@@ -963,7 +962,7 @@ pub fn printprivatenode(hn: *mut param, printflags: i32) {
             && fakelvl > pm_level
             && (pm_flags & PM_UNSET as i32) != 0;
         let cond = (fakelvl == 0 || unset_in_fake)
-            && LOCALLEVEL.load(Ordering::Relaxed)
+            && crate::ported::params::locallevel.load(Ordering::Relaxed)
                 > pm_level
             && is_private(cur) != 0;
         if !cond {
