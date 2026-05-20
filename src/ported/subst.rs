@@ -2569,7 +2569,11 @@ pub fn paramsubst(
         // (D) bit moved into `mods` above (c:1746). Declared up-front
         // so flag-loop arms can `mods |= 1` (c:2230) and
         // `mods |= 2` (c:2233) without re-declaring.
-        let mut flag_p_escapes = false; // c:2382 (p)
+        // c:2140 — `int escapes = 0;` declared inside the flag-loop
+        // body in C; hoisted to function-scope here so consumer sites
+        // (untok_and_escape calls) see it without re-threading.
+        // Renamed from the previous flag_p_escapes bool per Rule E.
+        let mut escapes: bool = false;                                        // c:2140 / c:2382
                                         // (g:SUBFLAGS:) — getkeys sub-flag bits per c:2409.
                                         // `flag_g_seen` tracks whether the flag appeared at all
                                         // (mirrors C `getkeys >= 0` test) — bare `(g::)` alone
@@ -2586,7 +2590,11 @@ pub fn paramsubst(
         // (flag_g_seen / flag_g_emacs / flag_g_octal / flag_g_ctrl) —
         // Rule D bag-of-globals.
         let mut getkeys: i32 = -1;                                            // c:1811
-        let mut flag_pct_prompt: u32 = 0; // c:2405 (% prompt count)
+        // c:1807 — `int presc = 0;`. Incremented per '%' flag arm
+        // (c:2406); `presc > 0` enables prompt expansion, `presc > 1`
+        // (from (%%) double-form) takes the alt-pattern. Renamed from
+        // the previous flag_pct_prompt per Rule E.
+        let mut presc: i32 = 0;                                               // c:1807
         let mut multi_width: u32 = 0; // c:2376 (m count)
         let mut flnum: u32 = 0; // c:1786 (I:N:)
         // c:1754 — `int shsplit = 0;` LEXFLAGS_* bitmask:
@@ -2738,7 +2746,7 @@ pub fn paramsubst(
                             let s1: String = body_chars[s1_start..idx].iter().collect();
                             // STR1 — untok_and_escape(s + arglen, escapes,
                             // tok_arg); escapes is `(p)` in this block.
-                            let s1 = untok_and_escape(&s1, flag_p_escapes, tok_arg);
+                            let s1 = untok_and_escape(&s1, escapes, tok_arg);
                             if is_left {
                                 premul = Some(s1);
                             } else {
@@ -2756,7 +2764,7 @@ pub fn paramsubst(
                                     idx += 1;
                                 }
                                 let s2: String = body_chars[s2_start..idx].iter().collect();
-                                let s2 = untok_and_escape(&s2, flag_p_escapes, tok_arg);
+                                let s2 = untok_and_escape(&s2, escapes, tok_arg);
                                 if is_left {
                                     preone = Some(s2);
                                 } else {
@@ -2983,10 +2991,10 @@ pub fn paramsubst(
                         multi_width += 1;
                     } // c:2376 (m)
                     'p' => {
-                        flag_p_escapes = true;
+                        escapes = true;
                     } // c:2382
                     '%' => {
-                        flag_pct_prompt += 1;
+                        presc += 1;
                     } // c:2405 (% prompt-expand)
                     'f' => {
                         spsep = Some("\n".to_string());
@@ -3012,7 +3020,7 @@ pub fn paramsubst(
                             idx += 1;
                         }
                         let arg: String = body_chars[s_start..idx].iter().collect(); // c:2308
-                        let arg = untok_and_escape(&arg, flag_p_escapes, tok_arg); // c:2309-2312
+                        let arg = untok_and_escape(&arg, escapes, tok_arg); // c:2309-2312
                         if is_split {
                             spsep = Some(arg);
                         } else {
@@ -5130,7 +5138,7 @@ pub fn paramsubst(
         // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
         // etc. Per-element on arrays. Direct port of subst.c:2405 /
         // 3977 presc handling.
-        if flag_pct_prompt > 0 {
+        if presc > 0 {
             // c:2405
             // Canonical prompt expansion (Src/prompt.c:182 promptexpand).
             let prompt_one = |s: &str| -> String {
