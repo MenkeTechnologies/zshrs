@@ -2933,10 +2933,6 @@ impl ShellExecutor {
     // you'll get a duplicate-definition error when the recorder
     // feature is enabled.
 
-    pub(crate) fn builtin_pwd_with_args(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_pwd("pwd", args, &ops, 0)
-    }
     pub(crate) fn bin_zcompile(&mut self, args: &[String]) -> i32 {
         // C-faithful dispatch via the canonical port in
         // `src/ported/parse.rs::bin_zcompile` (port of `Src/parse.c:3180`).

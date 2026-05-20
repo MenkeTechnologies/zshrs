@@ -198,7 +198,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("pwd", &args) {
             return Value::Status(s);
         }
-        let status = with_executor(|exec| exec.builtin_pwd_with_args(&args));
+        // Route through the canonical execbuiltin path so the `rLP`
+        // optstr at BUILTINS["pwd"] is parsed into `ops`.
+        let status = dispatch_builtin("pwd", args);
         Value::Status(status)
     });
 
