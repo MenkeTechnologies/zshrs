@@ -1283,6 +1283,15 @@ pub fn clprintm(
     let mselect = MSELECT.load(Ordering::SeqCst);
     let mcols = MCOLS.load(Ordering::SeqCst);
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let mlines_v = MLINES.load(Ordering::SeqCst);                            // c:1735
+
+    // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
+    //                      "clprintm called with ml too large (%d/%d)",
+    //                      ml, mlines)
+    crate::DPUTS2!(                                                          // c:1735
+        mselect >= 0 && ml >= mlines_v,                                       // c:1735
+        "clprintm called with ml too large ({}/{})", ml, mlines_v            // c:1736-1737
+    );
 
     // c:1738-1741 — group-change detection: reset last_cap so the
     // next zcputs writes a fresh color prefix.
