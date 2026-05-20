@@ -47,6 +47,16 @@ use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::utils::errflag;
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
+// Bulk-import the most-used cross-module names so the bodies below
+// stay close to the C source visually instead of being drowned in
+// fully-qualified `crate::ported::*::` paths. (`param` is re-exported
+// further down at line ~136 via `pub use`.)
+#[allow(unused_imports)]
+use crate::ported::zsh_h::value;
+#[allow(unused_imports)]
+use crate::ported::utils::{ztrdup_metafy, zwarn, unmeta, inittyptab};
+#[allow(unused_imports)]
+use crate::ported::options::{opt_state_get, opt_state_set};
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
 /// (under `#ifdef USE_LOCALE`). Set to 1 by `scanendscope` when a
@@ -1069,7 +1079,7 @@ pub fn scanparamvals(                                                        // 
             return;
         }
     }
-    let mut vbuf = crate::ported::zsh_h::value {
+    let mut vbuf = value {
         pm: None,                      // placeholder; real C re-binds
         arr: Vec::new(),
         scanflags: 0,
@@ -1177,7 +1187,7 @@ pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<Stri
 ///     v->start = 0; v->end = numparamvals + 1; return v->arr;
 /// } else return NULL;
 /// ```
-pub fn getvaluearr(v: Option<&mut crate::ported::zsh_h::value>) -> Vec<String> {
+pub fn getvaluearr(v: Option<&mut value>) -> Vec<String> {
     let v = match v { Some(v) => v, None => return Vec::new() };
     if !v.arr.is_empty() {
         return v.arr.clone();
@@ -1214,7 +1224,7 @@ pub fn getvaluearr(v: Option<&mut crate::ported::zsh_h::value>) -> Vec<String> {
 /// dispatch in cond.c and the readonly-check inside builtin.c.
 /// Port of `issetvar(char *name)` from `Src/params.c:732`.
 pub fn issetvar(name: &str) -> i32 {                                         // c:732
-    let mut vbuf = crate::ported::zsh_h::value {
+    let mut vbuf = value {
         pm: None,
         arr: Vec::new(),
         scanflags: 0,
@@ -1406,11 +1416,11 @@ pub fn createparamtable() {                                                  // 
     // the param table; the Rust port mirrors this.
     setsparam(
         "TMPPREFIX",
-        &crate::ported::utils::ztrdup_metafy(DEFAULT_TMPPREFIX),
+        &ztrdup_metafy(DEFAULT_TMPPREFIX),
     );                                                                       // c:870
     setsparam(
         "TIMEFMT",
-        &crate::ported::utils::ztrdup_metafy(
+        &ztrdup_metafy(
             crate::ported::zsh_system_h::DEFAULT_TIMEFMT,
         ),
     );                                                                       // c:871
@@ -1429,7 +1439,7 @@ pub fn createparamtable() {                                                  // 
     } else {
         String::new()
     };
-    setsparam("HOST", &crate::ported::utils::ztrdup_metafy(&hostname));      // c:875
+    setsparam("HOST", &ztrdup_metafy(&hostname));      // c:875
 
     // c:878-882 — LOGNAME from `getlogin()` libc syscall (with
     // \`cached_username\` as fallback when DISABLE_DYNAMIC_NSS).
@@ -1454,7 +1464,7 @@ pub fn createparamtable() {                                                  // 
     } else {
         logname
     };
-    setsparam("LOGNAME", &crate::ported::utils::ztrdup_metafy(&logname));    // c:878
+    setsparam("LOGNAME", &ztrdup_metafy(&logname));    // c:878
 
     // c:891 — pushheap() / c:921 — popheap(). Wraps the env-import
     // loop so per-iter allocations land on the heap zone.
@@ -1607,14 +1617,14 @@ pub fn createparamtable() {                                                  // 
         .as_ref()
         .map(|u| u.machine().to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    setsparam("CPUTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));    // c:954/960
+    setsparam("CPUTYPE", &ztrdup_metafy(&cputype));    // c:954/960
     setsparam(                                                               // c:961
         "MACHTYPE",
-        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::MACHTYPE),
+        &ztrdup_metafy(crate::ported::config_h::MACHTYPE),
     );
     setsparam(                                                               // c:962
         "OSTYPE",
-        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::OSTYPE),
+        &ztrdup_metafy(crate::ported::config_h::OSTYPE),
     );
     let tty_str = {
         let p = unsafe { libc::ttyname(0) };
@@ -1626,10 +1636,10 @@ pub fn createparamtable() {                                                  // 
             String::new()
         }
     };
-    setsparam("TTY", &crate::ported::utils::ztrdup_metafy(&tty_str));        // c:963
+    setsparam("TTY", &ztrdup_metafy(&tty_str));        // c:963
     setsparam(                                                               // c:964
         "VENDOR",
-        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::VENDOR),
+        &ztrdup_metafy(crate::ported::config_h::VENDOR),
     );
     let argv0 = std::env::args().next().unwrap_or_default();
     setsparam(
@@ -1638,13 +1648,13 @@ pub fn createparamtable() {                                                  // 
     );                                                                       // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
-        &crate::ported::utils::ztrdup_metafy(
+        &ztrdup_metafy(
             crate::ported::patchlevel::ZSH_VERSION,
         ),
     );                                                                       // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
     setsparam(
         "ZSH_PATCHLEVEL",
-        &crate::ported::utils::ztrdup_metafy(
+        &ztrdup_metafy(
             crate::ported::patchlevel::ZSH_PATCHLEVEL,
         ),
     );                                                                       // c:967
@@ -1661,7 +1671,7 @@ pub fn createparamtable() {                                                  // 
     for &(name, _num) in
         crate::ported::signals_h::SIGS.iter()
     {
-        signals_arr.push(crate::ported::utils::ztrdup_metafy(name));
+        signals_arr.push(ztrdup_metafy(name));
     }
     // RT-signal range (Linux-only; macOS SIGS table already includes
     // the realtime names and rtsigname returns "" out of range).
@@ -1670,7 +1680,7 @@ pub fn createparamtable() {                                                  // 
         for sig in libc::SIGRTMIN()..=libc::SIGRTMAX() {
             let nm = crate::ported::signals::rtsigname(sig);
             if !nm.is_empty() {
-                signals_arr.push(crate::ported::utils::ztrdup_metafy(&nm));
+                signals_arr.push(ztrdup_metafy(&nm));
             }
         }
     }
@@ -2629,7 +2639,7 @@ pub(crate) fn getarg<'a>(
 ///   - Flag-prefixed subscript forms `[(r)val]` / `[(i)val]` /
 ///     `[(I)pat]` route through getarg's separate dispatcher
 ///     because the Rust getarg has a different signature from C.
-pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags: i32) -> i32 { // c:2001
+pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 { // c:2001
 
     let s = *pptr;
     // c:2006 — `*s++ = '['`. Caller asserts s[0] is '[' (or its
@@ -2734,10 +2744,10 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
 /// wrapper around `fetchvalue` with the SCANPM_CHECKING flag set
 /// so unset params don't trigger creation.
 pub fn getvalue<'a>(
-    v: Option<&'a mut crate::ported::zsh_h::value>,
+    v: Option<&'a mut value>,
     pptr: &mut &str,
     bracks: i32,
-) -> Option<&'a mut crate::ported::zsh_h::value> {
+) -> Option<&'a mut value> {
     fetchvalue(v, pptr, bracks, SCANPM_CHECKING as i32)
 }
 
@@ -2758,11 +2768,11 @@ pub fn getvalue<'a>(
 /// REFSLICE/upscope path for nameref-of-array-element is deferred
 /// pending the GETREFNAME/upscope ports.
 pub fn fetchvalue<'a>(                                                       // c:2180
-    v: Option<&'a mut crate::ported::zsh_h::value>,
+    v: Option<&'a mut value>,
     pptr: &mut &str,
     bracks: i32,
     scanflags: i32,
-) -> Option<&'a mut crate::ported::zsh_h::value> {
+) -> Option<&'a mut value> {
 
     let s = *pptr;
     let bytes = s.as_bytes();
@@ -2800,7 +2810,7 @@ pub fn fetchvalue<'a>(                                                       // 
 
     if ppar > 0 {                                                            // c:2217-2225 positional
         if let Some(v) = v {
-            *v = crate::ported::zsh_h::value {
+            *v = value {
                 pm: None,
                 arr: Vec::new(),
                 scanflags: 0,
@@ -2842,7 +2852,7 @@ pub fn fetchvalue<'a>(                                                       // 
 
     if let Some(v) = v {
         // c:2274-2282 — populate Value from pm.
-        *v = crate::ported::zsh_h::value {
+        *v = value {
             pm: Some(pm.clone()),
             arr: Vec::new(),
             scanflags: 0,
@@ -2894,7 +2904,7 @@ pub fn fetchvalue<'a>(                                                       // 
 /// PM_EFLOAT|PM_FFLOAT (`convfloat`), PM_SCALAR|PM_NAMEREF
 /// (`pm->gsu.s->getfn(pm)`). Then PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z
 /// padding when VALFLAG_SUBST is set.
-pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
+pub fn getstrvalue(v: Option<&mut value>) -> String {
 
     let v = match v { Some(v) => v, None => return String::new() };
     // c:2344-2348 — `if (VALFLAG_INV && !PM_HASHED) return sprintf("%d", v->start)`.
@@ -3140,7 +3150,7 @@ pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
 ///     return (zlong)v->pm->gsu.f->getfn(v->pm);
 /// return mathevali(getstrvalue(v));
 /// ```
-pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
+pub fn getintvalue(v: Option<&mut value>) -> i64 {
     let v = match v { Some(v) => v, None => return 0 };
     if (v.valflags & VALFLAG_INV) != 0 {
         return v.start as i64;
@@ -3173,7 +3183,7 @@ pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
 /// matheval), then PM_TYPE: PM_INTEGER → mn.l = pm->gsu.i->getfn,
 /// PM_EFLOAT|PM_FFLOAT → mn.type=MN_FLOAT; mn.d = pm->gsu.f->getfn,
 /// else matheval(getstrvalue(v)).
-pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported::math::mnumber {
+pub fn getnumvalue(v: Option<&mut value>) -> crate::ported::math::mnumber {
     let v = match v { Some(v) => v, None => return mnumber { l: 0, d: 0.0, type_: MN_INTEGER } };
     if (v.valflags & VALFLAG_INV) != 0 {
         return mnumber { l: v.start as i64, d: 0.0, type_: MN_INTEGER };
@@ -3243,7 +3253,7 @@ pub fn export_param(pm: &mut crate::ported::zsh_h::param) {                  // 
 /// Port of `setstrvalue(Value v, char *val)` from `Src/params.c:2685`. C body is a
 /// one-liner: `assignstrvalue(v, val, 0);` — the real workhorse
 /// is `assignstrvalue` (params.c:2692).
-pub fn setstrvalue(v: Option<&mut crate::ported::zsh_h::value>, val: &str) {
+pub fn setstrvalue(v: Option<&mut value>, val: &str) {
     assignstrvalue(v, Some(val.to_string()), 0);
 }
 
@@ -3262,7 +3272,7 @@ pub fn setstrvalue(v: Option<&mut crate::ported::zsh_h::value>, val: &str) {
 /// preserved.
 /// Port of `assignstrvalue(Value v, char *val, int flags)` from `Src/params.c:2692`.
 pub fn assignstrvalue(
-    v: Option<&mut crate::ported::zsh_h::value>,
+    v: Option<&mut value>,
     val: Option<String>,
     flags: i32,
 ) {
@@ -3473,7 +3483,7 @@ pub fn assignstrvalue(
 /// `pm->gsu.i->setfn(pm, val.u.l)`; PM_EFLOAT|PM_FFLOAT →
 /// `pm->gsu.f->setfn(pm, val.u.d)`. EXECOPT/PM_READONLY checks
 /// at top.
-pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::ported::math::mnumber) {
+pub fn setnumvalue(v: Option<&mut value>, val: crate::ported::math::mnumber) {
     // c:2860 — `if (unset(EXECOPT)) return;`. In NO_EXEC mode, param
     // mutations must be skipped so dry-run shell evaluation doesn't
     // leak state into the param table. The previous Rust port skipped
@@ -3539,7 +3549,7 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
 /// Pending: ASSPM_AUGMENT prepend (c:2945-2954), PM_UNIQUE dedupe
 /// after assign (c:2966-2967), VALFLAG_INV + !KSHARRAYS off-by-one
 /// (c:2938-2942).
-pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // c:2895
+pub fn setarrvalue(v: &mut value, val: Vec<String>) {  // c:2895
     // c:2897-2898 — `if (unset(EXECOPT)) return;`. Match the same
     // NO_EXEC bail as setnumvalue at c:2860. Without it,
     // `zsh -n -c 'arr=(a b c)'` would mutate arr during a parse-
@@ -3830,7 +3840,7 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
 /// param as a Meta-stripped C string suitable for `setlocale`.
 pub fn getsparam_u(s: &str) -> Option<String> {                              // c:3089
     // c:3092 — `if ((s = getsparam(s))) return unmeta(s);`
-    getsparam(s).map(|v| crate::ported::utils::unmeta(&v))
+    getsparam(s).map(|v| unmeta(&v))
 }
 
 /// Port of `char **getaparam(char *s)` from `Src/params.c:3101-3110`.
@@ -4000,7 +4010,7 @@ pub fn check_warn_pm(
                 format!("{} parameter {} set in enclosing scope in function {}",
                         pmtype, pm.node.nam, frame.name)
             };
-            crate::ported::utils::zwarn(&msg);                                 // c:3189
+            zwarn(&msg);                                 // c:3189
             break;                                                             // c:3190
         }
     }
@@ -4255,7 +4265,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
     // write only touched `pm.u_str`.
     let taken = tab.remove(name).unwrap();                                   // c:3343
     drop(tab);                                                               // c:3343
-    let mut v = crate::ported::zsh_h::value {                                // c:3343
+    let mut v = value {                                // c:3343
         pm: Some(taken),                                                     // c:3343
         arr: Vec::new(),                                                     // c:3343
         scanflags: 0,                                                        // c:3343
@@ -4405,7 +4415,7 @@ pub fn assignaparam(
     };
     // c:3397-3400 — PM_NAMEREF: can't change type of a named reference.
     if existed && (prior_flags as u32 & PM_NAMEREF) != 0 {
-        crate::ported::utils::zwarn(&format!(
+        zwarn(&format!(
             "{}: can't change type of a named reference",
             name
         ));
@@ -4577,7 +4587,7 @@ pub fn assignnparam(
     if unset(EXECOPT) {
         return None;
     }
-    let mut vbuf = crate::ported::zsh_h::value {
+    let mut vbuf = value {
         pm: None,
         arr: Vec::new(),
         scanflags: 0,
@@ -5502,7 +5512,7 @@ pub fn intsecondssetfn(x: i64) {
     // if truncation lost information. Rust port previously used `zerr`
     // and early-returned (skipping the store) — divergent from C.
     if new_sec < 0 {
-        crate::ported::utils::zwarn("SECONDS truncated on assignment");
+        zwarn("SECONDS truncated on assignment");
         // c:4585 — C still stores; Rust represents shtimer as Duration
         // which is non-negative. We clamp to zero to preserve the
         // "store-anyway" semantic for the time-display path, even
@@ -5638,13 +5648,13 @@ pub fn usernamesetfn(x: String) {                                            // 
                     let _ = libc::initgroups(cstr.as_ptr(), (*pwd).pw_gid as _);
                     // c:4671 — setgid(pswd->pw_gid).
                     if libc::setgid((*pwd).pw_gid) != 0 {                    // c:4673
-                        crate::ported::utils::zwarn(&format!(
+                        zwarn(&format!(
                             "failed to change group ID: {}",
                             std::io::Error::last_os_error()
                         ));
                     } else if libc::setuid((*pwd).pw_uid) != 0 {             // c:4675
                         // c:4675-4676 — setuid failed.
-                        crate::ported::utils::zwarn(&format!(
+                        zwarn(&format!(
                             "failed to change user ID: {}",
                             std::io::Error::last_os_error()
                         ));
@@ -5655,7 +5665,7 @@ pub fn usernamesetfn(x: String) {                                            // 
                         *cached_username_lock()
                             .lock()
                             .expect("username poisoned") =
-                            crate::ported::utils::ztrdup_metafy(&name_str);
+                            ztrdup_metafy(&name_str);
                     }
                 }
             }
@@ -5800,7 +5810,7 @@ pub fn ifssetfn(x: String) {
     // c:4795 — `inittyptab()` rebuilds the typtab[] ISEP/IWSEP bits
     // from the new IFS. Without this, every word-split path stays
     // pinned to the old separator set and silently mis-splits.
-    crate::ported::utils::inittyptab();
+    inittyptab();
 }
 
 // -----------------------------------------------------------
@@ -5885,7 +5895,7 @@ pub fn setlang(x: Option<&str>) {                                            // 
     }
     // c:4860 — `setlocale(LC_ALL, x ? unmeta(x) : "");`
     let locale_arg = match x {
-        Some(s) => crate::ported::utils::unmeta(s),
+        Some(s) => unmeta(s),
         None => String::new(),
     };
     // The previous Rust port skipped the libc setlocale call.
@@ -5922,7 +5932,7 @@ pub fn setlang(x: Option<&str>) {                                            // 
     // c:4868 — `inittyptab();`. The locale change may shift which
     // bytes are isalpha/isalnum/etc under the typtab init, so the
     // table must be rebuilt.
-    crate::ported::utils::inittyptab();
+    inittyptab();
 }
 
 /// Port of `lc_allsetfn(Param pm, char *x)` from `Src/params.c:4873`.
@@ -5964,7 +5974,7 @@ pub fn lc_allsetfn(x: Option<String>) {                                       //
         }
         Some(s) => {
             // c:4889 — `setlocale(LC_ALL, unmeta(x));`
-            let unmeta = crate::ported::utils::unmeta(&s);                    // c:4889 unmeta(x)
+            let unmeta = unmeta(&s);                    // c:4889 unmeta(x)
             let cstr = std::ffi::CString::new(unmeta.as_bytes())
                 .unwrap_or_default();
             unsafe {
@@ -5973,7 +5983,7 @@ pub fn lc_allsetfn(x: Option<String>) {                                       //
             env::set_var("LC_ALL", &s);
             clear_mbstate();                                                  // c:4891
             // c:4892 — `inittyptab();` rebuild typtab for new LC_CTYPE.
-            crate::ported::utils::inittyptab();                               // c:4892
+            inittyptab();                               // c:4892
         }
     }
 }
@@ -5997,7 +6007,7 @@ pub fn lc_allsetfn(x: Option<String>) {                                       //
 pub fn langsetfn(x: String) {                                                 // c:4898
     // c:4901 — `setlang(unmeta(x));`. Strip Meta bytes before
     // passing to libc setlocale.
-    let unmeta_x = crate::ported::utils::unmeta(&x);                          // c:4901 unmeta(x)
+    let unmeta_x = unmeta(&x);                          // c:4901 unmeta(x)
     setlang(Some(&unmeta_x));
 }
 
@@ -6043,7 +6053,7 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {                                 //
     // assigning `LC_NUMERIC=tr_TR.UTF-8` never flipped libc's
     // numeric-formatting category.
     if let Some(v) = val {
-        let unmeta = crate::ported::utils::unmeta(&v);                        // c:4928 unmeta(x)
+        let unmeta = unmeta(&v);                        // c:4928 unmeta(x)
         env::set_var(pm, &unmeta);
         for (name, category) in LC_NAMES {                                  // c:4925
             if *name == pm {                                                  // c:4926 strcmp
@@ -6062,7 +6072,7 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {                                 //
     // The previous Rust port skipped this; char-classification
     // predicates would stay pinned to the prior locale's class
     // set even after `LC_CTYPE=` was assigned.
-    crate::ported::utils::inittyptab();                                       // c:4931
+    inittyptab();                                       // c:4931
 }
 
 /// Direct port of `static void argzerosetfn(UNUSED(Param pm),
@@ -6196,7 +6206,7 @@ pub fn errnosetfn(x: i64) {                                                  // 
     // store happens unconditionally; the warning fires only on
     // truncation. Previously used `zerr` — divergent.
     if truncated as i64 != x {                                               // c:5008
-        crate::ported::utils::zwarn("errno truncated on assignment");        // c:5009
+        zwarn("errno truncated on assignment");        // c:5009
     }
 }
 
@@ -6276,20 +6286,20 @@ pub fn keyboardhacksetfn(x: String) {                                         //
     // c:5044 — `unmetafy(x, &len)` — strip Meta-encoded pairs.
     // Run on the byte buffer so the protocol matches C's pointer
     // walk; the Rust `unmeta()` helper does the same fold.
-    let unmeta = crate::ported::utils::unmeta(&x);                            // c:5044 unmetafy(x)
+    let unmeta = unmeta(&x);                            // c:5044 unmetafy(x)
     let bytes = unmeta.as_bytes();
     // c:5046-5049 — `if (len > 1) { len = 1; zwarn(...); }`. The
     // length check happens AFTER unmetafy so a 2-byte Meta pair
     // representing a single byte doesn't trigger the warning.
     if bytes.len() > 1 {
-        crate::ported::utils::zwarn("Only one KEYBOARD_HACK character can be defined");
+        zwarn("Only one KEYBOARD_HACK character can be defined");
     }
     let c = bytes.first().copied().unwrap_or(0);
     // c:5050-5054 — ASCII check runs on the unmetafied byte, NOT
     // the raw Meta byte. With unmetafy now in place this works as
     // C intended.
     if c >= 0x80 {                                                            // c:5051 !isascii(...)
-        crate::ported::utils::zwarn("KEYBOARD_HACK can only contain ASCII characters");
+        zwarn("KEYBOARD_HACK can only contain ASCII characters");
         return;
     }
     // c:5056 — `keyboardhackchar = len ? (unsigned char) x[0] : '\0';`
@@ -6344,7 +6354,7 @@ pub fn histcharssetfn(x: Option<String>) {                                    //
         }
         Some(s) => {
             // c:5086 — `unmetafy(x, &len)`. Strip Meta pairs first.
-            let unmeta = crate::ported::utils::unmeta(&s);                   // c:5086 unmetafy(x)
+            let unmeta = unmeta(&s);                   // c:5086 unmetafy(x)
             let bytes = unmeta.as_bytes();
             // c:5087-5088 — `if (len > 3) len = 3;`. Truncation
             // applies AFTER unmetafy.
@@ -6354,7 +6364,7 @@ pub fn histcharssetfn(x: Option<String>) {                                    //
                     // c:5091 — C uses `zwarn` (informational), NOT
                     // `zerr` (fatal). Function returns early without
                     // updating any globals.
-                    crate::ported::utils::zwarn(
+                    zwarn(
                         "HISTCHARS can only contain ASCII characters");
                     return;
                 }
@@ -6380,7 +6390,7 @@ pub fn histcharssetfn(x: Option<String>) {                                    //
     crate::ported::hist::hashchar.store(new_chars[2] as i32, Ordering::SeqCst);
     // c:5104 — `inittyptab();`. The bangchar special bit in typtab
     // depends on the current `bangchar` global; reseed.
-    crate::ported::utils::inittyptab();
+    inittyptab();
 }
 
 /// Port of `homegetfn(UNUSED(Param pm))` from `Src/params.c:5109`. C body: `return home;`
@@ -6434,7 +6444,7 @@ pub fn wordcharssetfn(x: String) {
     // c:5143 — `inittyptab()` rebuilds typtab IWORD bits from the
     // new WORDCHARS. Without this, every IWORD lookup stays pinned
     // to the old set and silently mis-classifies word boundaries.
-    crate::ported::utils::inittyptab();
+    inittyptab();
 }
 
 /// Port of `underscoregetfn(UNUSED(Param pm))` from `Src/params.c:5152`. C body:
@@ -8208,7 +8218,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "-" => {
             let mut letters = String::from("569X");
             let opt = |n: &str| {
-                crate::ported::options::opt_state_get(n).unwrap_or(false)
+                opt_state_get(n).unwrap_or(false)
             };
             if opt("errexit")  { letters.push('e'); }
             if !opt("rcs")     { letters.push('f'); }
@@ -8404,9 +8414,9 @@ mod gsu_tests {
         // c:2860 — setnumvalue bails when unset(EXECOPT). The unit-test
         // env doesn't run through createoptiontable so we set "exec"
         // explicitly to simulate normal runtime.
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         // Build a scalar Param with no special base/width.
         let mut pm = Box::new(param {
             node: hashnode { next: None, nam: "x".to_string(), flags: PM_SCALAR as i32 },
@@ -8431,7 +8441,7 @@ mod gsu_tests {
             "c:2871 — setnumvalue must store the rendered integer; \
              was previously dropped via `let _ = s;`");
         let _ = pm;
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     #[test]
@@ -8683,7 +8693,7 @@ mod tests {
     #[test]
     fn assignaparam_rejects_slice_into_hashed() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("aa_h");
         // Create a hashed param.
         sethparam("aa_h", vec!["k".to_string(), "v".to_string()]);
@@ -8693,7 +8703,7 @@ mod tests {
         let result = assignaparam("aa_h[idx]", vec!["x".to_string()], 0);
         assert!(result.is_none(), "slice into hashed must return None");
         unsetparam("aa_h");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `assignaparam` rejects type change of a PM_NAMEREF param
@@ -8703,7 +8713,7 @@ mod tests {
     fn assignaparam_rejects_nameref_type_change() {
         use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR};
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("aa_nr");
         // Insert a PM_NAMEREF param directly.
         let pm = crate::ported::zsh_h::param {
@@ -8727,7 +8737,7 @@ mod tests {
         assert!(pm.node.flags as u32 & PM_NAMEREF != 0, "PM_NAMEREF preserved");
 
         unsetparam("aa_nr");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `assignaparam` with ASSPM_AUGMENT against a scalar param must
@@ -8740,7 +8750,7 @@ mod tests {
     fn assignaparam_augment_prepends_old_scalar() {
         use crate::ported::zsh_h::ASSPM_AUGMENT;
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("aa_aug");
         // Seed a scalar.
         setsparam("aa_aug", "old");
@@ -8754,7 +8764,7 @@ mod tests {
         assert_eq!(arr, vec!["old".to_string(), "new1".to_string(), "new2".to_string()],
             "c:3408-3411 — scalar prepended at index 0, then new values follow");
         unsetparam("aa_aug");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `assignaparam` against a PM_UNIQUE-flagged target dedupes
@@ -8768,7 +8778,7 @@ mod tests {
     fn assignaparam_unique_flag_dedupes_values() {
         use crate::ported::zsh_h::PM_UNIQUE;
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("aa_uniq");
         // Seed an empty PM_ARRAY|PM_UNIQUE.
         setaparam("aa_uniq", vec![]);
@@ -8791,7 +8801,7 @@ mod tests {
         assert!(pm_check.node.flags as u32 & PM_UNIQUE != 0,
             "PM_UNIQUE flag preserved across assignment");
         unsetparam("aa_uniq");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `getsparam` reads PM_INTEGER params via convbase, not via
@@ -8802,12 +8812,12 @@ mod tests {
     #[test]
     fn getsparam_returns_integer_via_convbase() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("gs_int");
         setiparam("gs_int", 999);
         assert_eq!(getsparam("gs_int").as_deref(), Some("999"));
         unsetparam("gs_int");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `getsparam` reads PM_FFLOAT params via convfloat. Same fix
@@ -8815,7 +8825,7 @@ mod tests {
     #[test]
     fn getsparam_returns_float_via_convfloat() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("gs_f");
         // Stash a float via the setnumvalue / setnparam path.
         let v = crate::ported::math::mnumber { l: 0, d: 2.5, type_: crate::ported::math::MN_FLOAT };
@@ -8826,7 +8836,7 @@ mod tests {
         assert!(s.parse::<f64>().map(|f| (f - 2.5).abs() < 1e-6).unwrap_or(false),
             "expected ~2.5 round-trip, got {:?}", s);
         unsetparam("gs_f");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `getsparam` against a non-default `pm.base` integer param must
@@ -8837,7 +8847,7 @@ mod tests {
     #[test]
     fn getsparam_integer_honors_pm_base() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         unsetparam("hex_param");
         // Manually insert a PM_INTEGER param with base=16.
         let pm = crate::ported::zsh_h::param {
@@ -8859,7 +8869,7 @@ mod tests {
             "c:2364 — base-16 must render hex digits; got {:?}", s);
 
         unsetparam("hex_param");
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `endparamscope` clears `SCOPEREFS[old_locallevel]` and resets
@@ -9115,9 +9125,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:2897 — setarrvalue bails when unset(EXECOPT). Set "exec"
         // for the unit-test env (real zsh defaults exec=true).
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         // C-faithful: setarrvalue takes a Value pointing at a Param
         // with u_arr set. Construct one inline.
         use crate::ported::zsh_h::{hashnode, param, PM_ARRAY};
@@ -9129,7 +9139,7 @@ mod tests {
             gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
             base: 0, width: 0, env: None, ename: None, old: None, level: 0,
         });
-        let mut v = crate::ported::zsh_h::value {
+        let mut v = value {
             pm: Some(pm),
             arr: Vec::new(),
             scanflags: 0,
@@ -9140,7 +9150,7 @@ mod tests {
         setarrvalue(&mut v, vec!["X".into(), "Y".into()]);
         let arr = v.pm.unwrap().u_arr.unwrap();
         assert_eq!(arr, vec!["a", "X", "Y", "d"]);
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     #[test]
@@ -9467,9 +9477,9 @@ mod tests {
         // createoptiontable so we set "exec" explicitly to simulate
         // normal runtime. Mirrors the same setup used by
         // `setnumvalue_stores_int_value_into_scalar_pm` above.
-        let saved_exec = crate::ported::options::opt_state_get("exec")        // c:2697
+        let saved_exec = opt_state_get("exec")        // c:2697
             .unwrap_or(false);                                                // c:2697
-        crate::ported::options::opt_state_set("exec", true);                  // c:2697
+        opt_state_set("exec", true);                  // c:2697
         let name = "ZSHRS_TEST_ASSIGN_GET";                                   // c:3193
         crate::ported::params::assignsparam(name, "test_value_42", 0);        // c:3193
         assert_eq!(                                                            // c:3076
@@ -9478,7 +9488,7 @@ mod tests {
         );                                                                     // c:3076
         // Cleanup so other tests don't see leaked param.
         let _ = crate::ported::params::paramtab().write().unwrap().remove(name); // c:3819
-        crate::ported::options::opt_state_set("exec", saved_exec);            // c:2697
+        opt_state_set("exec", saved_exec);            // c:2697
     }
 
     /// c:3076 — getsparam on a non-existent param returns None.
@@ -9993,10 +10003,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{param, hashnode, value, PM_ARRAY};
 
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
 
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
         let pm = Box::new(param {
             node: hashnode {
                 next: None, nam: "noexec_arr".to_string(),
@@ -10023,13 +10033,13 @@ mod tests {
             "c:2897 — NO_EXEC: setarrvalue must NOT replace u_arr");
 
         // With exec=true, the same call replaces.
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         setarrvalue(&mut v, vec!["new1".to_string(), "new2".to_string()]);
         let arr = v.pm.as_ref().unwrap().u_arr.clone().unwrap_or_default();
         assert_eq!(arr, vec!["new1".to_string(), "new2".to_string()],
             "with EXEC set, setarrvalue replaces u_arr");
 
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setnumvalue` EXECOPT bail per `Src/params.c:2860`.
@@ -10042,11 +10052,11 @@ mod tests {
         use crate::ported::zsh_h::{param, hashnode, value, PM_INTEGER};
         use crate::ported::math::{mnumber, MN_INTEGER};
 
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
 
         // c:2860 — NO_EXEC: setnumvalue must not mutate the param.
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
         let mut pm = Box::new(param {
             node: hashnode {
                 next: None, nam: "ne".to_string(),
@@ -10074,14 +10084,14 @@ mod tests {
              (was {} but should stay 999)", stored);
 
         // With exec=true, the same call mutates.
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         setnumvalue(Some(&mut v), val);
         let stored = v.pm.as_ref().unwrap().u_val;
         assert_eq!(stored, 42,
             "with EXEC set, setnumvalue stores u_val = 42");
 
         let _ = pm;
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `$-` rendering to honor `set -n` (noexec). The previous
@@ -10091,23 +10101,23 @@ mod tests {
     #[test]
     fn dash_param_rendering_honors_noexec_via_exec_negation() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::options::opt_state_get("exec")
+        let saved = opt_state_get("exec")
             .unwrap_or(false);
 
         // With exec=true (default), $- should NOT include 'n'.
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         let s = lookup_special_var("-").unwrap_or_default();
         assert!(!s.contains('n'),
             "exec=true → $-=`{}` must NOT include 'n'", s);
 
         // With exec=false (`set -n`), $- SHOULD include 'n'.
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
         let s = lookup_special_var("-").unwrap_or_default();
         assert!(s.contains('n'),
             "exec=false → $-=`{}` MUST include 'n' (was silently dropped \
              when reading non-existent option name `noexec`)", s);
 
-        crate::ported::options::opt_state_set("exec", saved);
+        opt_state_set("exec", saved);
     }
 
     /// Pin `TERM_UNKNOWN` bit value to the canonical C value at
@@ -10141,9 +10151,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{value, param, hashnode, PM_INTEGER};
 
-        let saved_cbases_top = crate::ported::options::opt_state_get("cbases")
+        let saved_cbases_top = opt_state_get("cbases")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("cbases", true);
+        opt_state_set("cbases", true);
 
         // Build a PM_INTEGER param with u_val=255 and base=16.
         let mut pm = Box::new(param {
@@ -10172,12 +10182,12 @@ mod tests {
             rendered);
 
         // Base-8 (octal) with OCTALZEROES.
-        let saved_oct = crate::ported::options::opt_state_get("octalzeroes")
+        let saved_oct = opt_state_get("octalzeroes")
             .unwrap_or(false);
-        let saved_cbases = crate::ported::options::opt_state_get("cbases")
+        let saved_cbases = opt_state_get("cbases")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("cbases", true);
-        crate::ported::options::opt_state_set("octalzeroes", true);
+        opt_state_set("cbases", true);
+        opt_state_set("octalzeroes", true);
         pm.base = 8;
         pm.u_val = 8;
         v.pm = Some(pm.clone());
@@ -10185,8 +10195,8 @@ mod tests {
         assert_eq!(rendered, "010",
             "c:2373 — PM_INTEGER base=8 with OCTALZEROES renders as `010`, got {:?}",
             rendered);
-        crate::ported::options::opt_state_set("cbases", saved_cbases);
-        crate::ported::options::opt_state_set("octalzeroes", saved_oct);
+        opt_state_set("cbases", saved_cbases);
+        opt_state_set("octalzeroes", saved_oct);
 
         // Base=0 (default) → base-10.
         pm.base = 0;
@@ -10196,7 +10206,7 @@ mod tests {
         assert_eq!(rendered, "42",
             "c:2373 — PM_INTEGER base=0 defaults to base-10");
 
-        crate::ported::options::opt_state_set("cbases", saved_cbases_top);
+        opt_state_set("cbases", saved_cbases_top);
     }
 
     /// Pin `unsetparam` to its canonical C body at `Src/params.c:3819-3833`.
@@ -10209,9 +10219,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{PM_NAMEREF, PM_READONLY, PM_SCALAR};
 
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
 
         // Helper: install a scalar param with the given flag-set.
         fn install(name: &str, value: &str, flags: u32) {
@@ -10268,7 +10278,7 @@ mod tests {
             tab.remove(ro_name);
             tab.remove(plain_name);
         }
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `assigniparam` to its canonical C body at `Src/params.c:3754-3761`.
@@ -10279,9 +10289,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_INTEGER;
 
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
 
         let name = "zshrs_test_assigniparam_x";
         {
@@ -10315,7 +10325,7 @@ mod tests {
             let mut tab = paramtab().write().unwrap();
             tab.remove(name);
         }
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setnparam` to its canonical C body at `Src/params.c:3745-3749`.
@@ -10328,9 +10338,9 @@ mod tests {
         use crate::ported::math::{mnumber, MN_INTEGER as MN_INT, MN_FLOAT as MN_FLT};
         use crate::ported::zsh_h::{PM_INTEGER, PM_FFLOAT};
 
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
 
         // Clean up any leftover.
         let int_name = "zshrs_test_setnparam_i";
@@ -10372,7 +10382,7 @@ mod tests {
             tab.remove(int_name);
             tab.remove(flt_name);
         }
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `setiparam` to its canonical C body at `Src/params.c:3767-3773`.
@@ -10388,9 +10398,9 @@ mod tests {
         // Real zsh startup sets exec=true; the unit-test env doesn't run
         // through `createoptiontable` so we set "exec" explicitly to
         // simulate normal runtime.
-        let saved_exec = crate::ported::options::opt_state_get("exec")
+        let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
 
         // Clean up any leftover.
         {
@@ -10433,7 +10443,7 @@ mod tests {
             tab.remove(name);
         }
         // Restore EXECOPT.
-        crate::ported::options::opt_state_set("exec", saved_exec);
+        opt_state_set("exec", saved_exec);
     }
 
     /// Pin `gethparam` / `gethkparam` to their canonical C bodies at

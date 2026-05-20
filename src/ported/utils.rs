@@ -13,8 +13,7 @@ use crate::ported::zsh_h::{
     PRINTEIGHTBIT, XTRACE,
 };
 use std::sync::atomic::Ordering;
-use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS};
-use crate::ported::zsh_h::{QT_BACKTICK, QT_SINGLE_OPTIONAL, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL};
+use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS,QT_BACKTICK, QT_SINGLE_OPTIONAL, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL};
 use std::os::unix::io::RawFd;
 use std::time::UNIX_EPOCH;
 use libc::{S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP, S_IXOTH, S_IXUSR};
@@ -30,6 +29,21 @@ use std::ffi::CString;
 use crate::ported::zsh_h::{EMULATE_KSH, EMULATE_SH, EMULATION};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicI64;
+use crate::init::zleentry;
+use crate::params::getsparam_u;
+// Most-used cross-module names, lifted to top-of-file imports so the
+// bodies below stay close to the C source visually instead of being
+// drowned in `crate::ported::*::` qualification noise.
+use crate::ported::params::getsparam;
+use crate::ported::lex::lineno;
+use crate::ported::hist::chrealpath;
+use crate::ported::signals::{queue_signals, unqueue_signals};
+// SHTTY imported under an alias to avoid collision with the
+// `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
+// (Rule E — C uses SHTTY as both the global and the parameter name).
+use crate::ported::init::SHTTY as SHTTY_FD;
+use crate::ported::zsh_h::FDT_UNUSED;
+use crate::zsh_h::{SHINSTDIN, ZLE_CMD_TRASH};
 
 /// Set a wide-char array from a multibyte source string.
 /// Port of `set_widearray(char *mb_array, Widechar_array wca)` from `Src/utils.c:69`.
@@ -111,8 +125,8 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     // was discarded; the canonical zleentry port at init.rs:905 was
     // never actually called from the warning path).
     if unsafe { libc::isatty(2) } != 0 {                                     // c:96
-        let _ = crate::ported::init::zleentry(                               // c:96
-            crate::ported::zsh_h::ZLE_CMD_TRASH                              // c:96
+        let _ = zleentry(                               // c:96
+            ZLE_CMD_TRASH                              // c:96
         );
     }
     let scriptname = scriptname_lock().lock().unwrap().clone();
@@ -126,9 +140,7 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     // always taking the `shinstdin == false` path regardless of
     // actual option state. Route through canonical isset() so the
     // option state drives the prefix.
-    let shinstdin = crate::ported::zsh_h::isset(
-        crate::ported::zsh_h::SHINSTDIN
-    );
+    let shinstdin = isset( SHINSTDIN );
     let prefix: String = scriptname
         .or(argzero)
         .unwrap_or_default();
@@ -156,7 +168,7 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     // SHINSTDIN unset or locallevel != 0) then formatted message + \n.
     // Direct port of utils.c:301-308. Route through lex::lineno()
     // (parser-advanced counter) — same fix as the zerrmsg call below.
-    let lineno = crate::ported::lex::lineno() as i32;
+    let lineno = lineno() as i32;
     if (!shinstdin || locallevel != 0) && lineno != 0 {
         let _ = stderr_lock.write_all(format!("{}: ", lineno).as_bytes());
     } else {
@@ -273,15 +285,15 @@ pub fn dputs(msg: &str) {                                                    // 
     // c:263 — `getsparam_u("ZSH_DEBUG_LOG")`. The `_u` variant
     // unmetafies the result (utils.rs's getsparam_u port at
     // params.rs:3831 wraps getsparam + unmeta).
-    let log_file = crate::ported::params::getsparam_u("ZSH_DEBUG_LOG");      // c:263
+    let log_file = getsparam_u("ZSH_DEBUG_LOG");      // c:263
     // c:264 — `fopen(filename, "a")` — append mode.
     let opened = log_file.as_ref().and_then(|p| {                            // c:264
         std::fs::OpenOptions::new().create(true).append(true).open(p).ok()
     });
     // Shared format logic: lineno prefix + msg + newline, matching
     // zerrmsg at c:296-308. Built once, written to file or stderr.
-    let lineno = crate::ported::lex::lineno() as i32;
-    let shinstdin = crate::ported::zsh_h::isset(crate::ported::zsh_h::SHINSTDIN);
+    let lineno = lineno() as i32;
+    let shinstdin = isset(SHINSTDIN);
     let locallevel = crate::ported::params::locallevel
         .load(std::sync::atomic::Ordering::Relaxed);
     let prefix = if (!shinstdin || locallevel != 0) && lineno != 0 {
@@ -336,7 +348,7 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // 
     //
     // Route through lex::lineno() so the parser-advanced counter
     // drives the error prefix.
-    let lineno = crate::ported::lex::lineno() as i32;
+    let lineno = lineno() as i32;
     // c:310 — `unset(SHINSTDIN)`. Same fix as zwarning: route through
     // canonical isset() rather than the never-updated separate Mutex.
     let shinstdin = crate::ported::zsh_h::isset(
@@ -641,7 +653,7 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {                             // 
         let p = PathBuf::from(prog);
         return if p.exists() { Some(p) } else { None };
     }
-    if let Some(path_var) = crate::ported::params::getsparam("PATH") {
+    if let Some(path_var) = getsparam("PATH") {
         for dir in path_var.split(':') {                                     // c:773
             let full_path = PathBuf::from(dir).join(prog);
             // c:776 — `funmeta = unmeta(buf)`. The previous Rust port
@@ -699,7 +711,7 @@ pub fn findpwd(s: &str) -> Option<String> {                                 // c
     // symlinks is disabled). The Rust port reads `$PWD` since
     // shell-set `PWD` mirrors C's `pwd` global; falls back to
     // `getcwd()` when unset.
-    let pwd = crate::ported::params::getsparam("PWD")
+    let pwd = getsparam("PWD")
         .or_else(|| std::env::current_dir().ok()
             .map(|p| p.to_string_lossy().into_owned()))
         .unwrap_or_default();                                                // c:798
@@ -947,7 +959,7 @@ pub fn xsymlink(path: &str) -> Option<String> {                             // c
     // c:974 — `*xbuf = '\0';`  Reset the xbuf cursor; no-op in Rust
     // (xbuf is an internal chrealpath buffer not exposed at this level).
     // c:975 — `if (!chrealpath(&s, 'P', heap))`
-    match crate::ported::hist::chrealpath(path, b'P', false) {              // c:975
+    match chrealpath(path, b'P', false) {              // c:975
         Some(r) => Some(r),                                                   // c:979 return s
         None => {                                                             // c:976 failure arm
             // c:977 — `zwarn("path expansion failed, using root directory");`
@@ -997,7 +1009,7 @@ pub fn print_if_link(s: &str, all: bool) {                                   // 
         // The previous Rust port called std::fs::canonicalize directly —
         // a fake that bypassed the canonical chrealpath port (hist.rs:2311).
         let mut resolved = s.to_string();                                    // c:1015 &s in/out
-        if let Some(r) = crate::ported::hist::chrealpath(&resolved, b'P', false) { // c:1015
+        if let Some(r) = chrealpath(&resolved, b'P', false) { // c:1015
             resolved = r;
             if resolved != s_at_entry {                                       // c:1015 strcmp(s, s_at_entry)
                 print!(" -> ");                                              // c:1016
@@ -1049,7 +1061,7 @@ pub fn substnamedir(s: &str) -> String {                                     // 
     // named dir), then scans nameddirtab. Duplicate that ordering
     // here without the pre-format, so we can apply quotestring on
     // just the residue.
-    let home = crate::ported::params::getsparam("HOME").unwrap_or_default(); // c:1133
+    let home = getsparam("HOME").unwrap_or_default(); // c:1133
     if !home.is_empty() && home.len() > 1 && s.starts_with(&home) {          // c:1138-1141
         let rest = &s[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
@@ -1148,7 +1160,7 @@ pub fn finddir(path: &str) -> Option<String> {                              // c
     // the shell. Route through `getsparam("HOME")` to match: paramtab
     // is the canonical store and the env-fallback path picks up
     // pre-paramtab-init reads.
-    let home = crate::ported::params::getsparam("HOME").unwrap_or_default(); // c:1133-1134 (homenode.dir = home)
+    let home = getsparam("HOME").unwrap_or_default(); // c:1133-1134 (homenode.dir = home)
     if !home.is_empty() && home.len() > 1 && path.starts_with(&home) {      // c:1138-1141
         let rest = &path[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
@@ -1240,7 +1252,7 @@ pub fn getnameddir(name: &str) -> Option<String> {                           // 
         }
     }
     // c:1260 — `if ((s = getsparam(name)) && *s == '/')`. paramtab read.
-    if let Some(s) = crate::ported::params::getsparam(name) {
+    if let Some(s) = getsparam(name) {
         if s.starts_with('/') {
             adduserdir(name, &s, 0, true);                                   // c:1264
             return Some(s);
@@ -1511,8 +1523,8 @@ pub(crate) fn printprompt4() {
     // honour user-set values, fall back to the same emulation
     // default C uses at init.c:1192.
     let posix = EMULATION(EMULATE_KSH | EMULATE_SH);                         // c:init.c:1192
-    let prefix_template = crate::ported::params::getsparam("PS4")
-        .or_else(|| crate::ported::params::getsparam("PROMPT4"))
+    let prefix_template = getsparam("PS4")
+        .or_else(|| getsparam("PROMPT4"))
         .unwrap_or_else(|| {
             if posix {
                 "+ ".to_string()                                             // c:init.c:1192
@@ -1557,7 +1569,7 @@ pub fn freestr(_s: String) {}
 pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           // c:2231
     #[cfg(unix)]
     {
-        crate::ported::signals::queue_signals();                             // c:2239
+        queue_signals();                             // c:2239
         let old_umask = unsafe { libc::umask(0o177) };                       // c:2240
         let mut failures = 0;                                                // c:2255
         let mut result: Option<(i32, String)> = None;
@@ -1593,7 +1605,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           //
             }
         }
         unsafe { libc::umask(old_umask); }                                   // c:2273
-        crate::ported::signals::unqueue_signals();                           // c:2274
+        unqueue_signals();                           // c:2274
         result
     }
     #[cfg(not(unix))]
@@ -1613,7 +1625,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           //
 /// the SHTTY=-1 case naturally returns Err from fdgettyinfo → None.
 #[cfg(unix)]
 pub fn gettyinfo() -> Option<libc::termios> {                                // c:1746
-    fdgettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed)).ok()     // c:1748
+    fdgettyinfo(SHTTY_FD.load(Ordering::Relaxed)).ok()     // c:1748
 }
 
 /// Emit the `$PS4` xtrace prefix to stderr.
@@ -1648,7 +1660,7 @@ pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
 /// naturally yields Err → false from fdsettyinfo.
 #[cfg(unix)]
 pub fn settyinfo(ti: &libc::termios) -> bool {                               // c:1778
-    fdsettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed), ti).is_ok() // c:1780
+    fdsettyinfo(SHTTY_FD.load(Ordering::Relaxed), ti).is_ok() // c:1780
 }
 
 /// Apply terminal mode to a file descriptor, with EINTR retry.
@@ -1693,7 +1705,7 @@ pub fn adjustlines() -> usize {                                             // c
         }
     }
     // c:1844 fallback — paramtab `$LINES`, not OS env.
-    crate::ported::params::getsparam("LINES")
+    getsparam("LINES")
         .and_then(|s| s.parse().ok())
         .unwrap_or(24)
 }
@@ -1718,7 +1730,7 @@ pub fn adjustcolumns() -> usize {                                           // c
     // c:1820 fallback — `if (zterm_columns <= 0) zterm_columns =
     //                    tccolumns > 0 ? tccolumns : 80`. C consults
     //                    `getsparam("COLUMNS")` (paramtab), not OS env.
-    crate::ported::params::getsparam("COLUMNS")
+    getsparam("COLUMNS")
         .and_then(|s| s.parse().ok())
         .unwrap_or(80)
 }
@@ -1772,7 +1784,7 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {                          // 
 
     // c:1898-1917 — TIOCGWINSZ probe.
     if getwinsz != 0 || from == 1 {                                          // c:1898
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let shtty = SHTTY_FD.load(Ordering::Relaxed);
         if shtty == -1 {                                                     // c:1900
             return (adjustcolumns(), adjustlines());                         // c:1901
         }
@@ -2123,12 +2135,12 @@ pub fn zcloselockfd(fd: i32) -> i32 {                                    // c:21
 /// the file (matches C — only `gettempfile` creates).
 pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { // c:2178
     let suffix = if prefix.is_some() { ".XXXXXX" } else { "XXXXXX" };       // c:2178
-    crate::ported::signals::queue_signals();                                 // c:2182
+    queue_signals();                                 // c:2182
     let prefix_owned: String = match prefix {                                // c:2183
         Some(p) => p.to_string(),
         // c:2184 — `getsparam("TMPPREFIX")`. Read from paramtab (not OS
         //          env); fall back to compile-time default when unset.
-        None => crate::ported::params::getsparam("TMPPREFIX")
+        None => getsparam("TMPPREFIX")
             .unwrap_or_else(|| crate::ported::config_h::DEFAULT_TMPPREFIX.to_string()),
     };
     let template = format!("{}{}", prefix_owned, suffix);                    // c:2186-2188
@@ -2142,7 +2154,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { //
         .unwrap_or(0);
     let unique = format!("{:x}{:x}", pid, nanos & 0xffffff);
     let name = template.replace("XXXXXX", &unique);
-    crate::ported::signals::unqueue_signals();                               // c:2221
+    unqueue_signals();                               // c:2221
     Some(name)
 }
 
@@ -2705,7 +2717,7 @@ pub fn checkrmall(s: &str) -> bool {                                         // 
     // c:2873-2878 — `if (*s != '/')` build absolute via pwd prefix.
     let s_owned: String;                                                      // c:2873
     let s_abs: &str = if !s.starts_with('/') {                               // c:2873
-        let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default(); // c:2874 pwd[1]
+        let pwd = getsparam("PWD").unwrap_or_default(); // c:2874 pwd[1]
         s_owned = if pwd.len() > 1 {                                          // c:2874 if (pwd[1])
             crate::ported::string::tricat(&pwd, "/", s)                       // c:2875 zhtricat
         } else {                                                              // c:2876
@@ -2817,7 +2829,7 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {              //
                         continue;                                             // c:2934
                     }
                     // c:2935-2936 — `if (fd != SHTTY) zwarn("read failed: %e", errno);`
-                    let shtty = crate::ported::init::SHTTY
+                    let shtty = SHTTY_FD
                         .load(std::sync::atomic::Ordering::Relaxed);
                     if fd != shtty {                                          // c:2935
                         crate::ported::utils::zwarn(                          // c:2936
@@ -2878,7 +2890,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {                 //
                         continue;                                             // c:2959
                     }
                     // c:2960-2961 — `if (fd != SHTTY) zwarn("write failed: %e", errno);`
-                    let shtty = crate::ported::init::SHTTY
+                    let shtty = SHTTY_FD
                         .load(std::sync::atomic::Ordering::Relaxed);
                     if fd != shtty {                                          // c:2960
                         crate::ported::utils::zwarn(                          // c:2961
@@ -2935,7 +2947,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {                 //
 pub fn read1char(echo: i32) -> i32 {                                          // c:2972
     #[cfg(unix)]
     {
-        let shtty = crate::ported::init::SHTTY
+        let shtty = SHTTY_FD
             .load(std::sync::atomic::Ordering::Relaxed);
         if shtty < 0 {
             return -1;
@@ -2987,7 +2999,7 @@ pub fn noquery(purge: bool) -> i32 {                                         // 
     let mut val: libc::c_int = 0;                                            // c:2992
     #[cfg(unix)]
     {
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);      // c:2999
+        let shtty = SHTTY_FD.load(Ordering::Relaxed);      // c:2999
         if shtty == -1 {
             return 0;
         }
@@ -3441,7 +3453,7 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // 
     let sep_str: &str = match sep {
         Some(s) => s,                                                        // c:3936
         None => {
-            let ifs = crate::ported::params::getsparam("IFS").unwrap_or_default();
+            let ifs = getsparam("IFS").unwrap_or_default();
             // c:3938 — if (ifs && *ifs != ' ') sep = first MB char of ifs;
             if !ifs.is_empty() && !ifs.starts_with(' ') {
                 ifs_storage = ifs.chars().next().map(|c| c.to_string()).unwrap_or_default();
@@ -3624,12 +3636,12 @@ pub fn hmkarray(s: &str) -> Vec<String> {
 /// default. The Rust port writes via `write_loop` to mirror C's
 /// raw-write semantics.
 pub fn zbeep() {                                                             // c:4105
-    crate::ported::signals::queue_signals();                                 // c:4105
+    queue_signals();                                 // c:4105
     if let Ok(zbeep) = std::env::var("ZBEEP") {                              // c:4109
         let (decoded, _) = getkeystring(&zbeep);                             // c:4111
         #[cfg(unix)]
         {
-            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let shtty = SHTTY_FD.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, decoded.as_bytes());               // c:4112
             } else {
@@ -3638,10 +3650,10 @@ pub fn zbeep() {                                                             // 
         }
         #[cfg(not(unix))]
         eprint!("{}", decoded);
-    } else if isset(crate::ported::zsh_h::BEEP) {// c:4113
+    } else if isset(BEEP) {// c:4113
         #[cfg(unix)]
         {
-            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let shtty = SHTTY_FD.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, b"\x07");                          // c:4114
             } else {
@@ -3651,7 +3663,7 @@ pub fn zbeep() {                                                             // 
         #[cfg(not(unix))]
         eprint!("\x07");
     }
-    crate::ported::signals::unqueue_signals();                               // c:4115
+    unqueue_signals();                               // c:4115
 }
 
 /// Free array (no-op in Rust, provided for API compat)
@@ -4186,7 +4198,7 @@ pub fn attachtty(pgrp: i32) {                                                // 
     if !(crate::ported::zsh_h::jobbing() && crate::ported::zsh_h::interact()) {
         return;                                                              // c:4779
     }
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);          // c:4781
+    let shtty = SHTTY_FD.load(Ordering::Relaxed);          // c:4781
     if shtty == -1 {
         return;
     }
@@ -4221,7 +4233,7 @@ pub fn attachtty(pgrp: i32) {                                                // 
 /// Port of `pid_t gettygrp(void)` from Src/utils.c:4815.
 #[cfg(unix)]
 pub fn gettygrp() -> i32 {                                                   // c:4815
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let shtty = SHTTY_FD.load(Ordering::Relaxed);
     if shtty == -1 {                                                         // c:4819
         return -1;                                                           // c:4820
     }
@@ -6504,8 +6516,8 @@ pub fn gethostname() -> String {
     }
     // gethostname(2) failure fallback. C consults `$HOST` /
     // `cached_hostname`. Read paramtab; fall back to "localhost".
-    crate::ported::params::getsparam("HOST")
-        .or_else(|| crate::ported::params::getsparam("HOSTNAME"))
+    getsparam("HOST")
+        .or_else(|| getsparam("HOSTNAME"))
         .unwrap_or_else(|| "localhost".to_string())
 }
 
@@ -6698,9 +6710,9 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {              //
 /// any fd that has not been explicitly set, matching the C source's
 /// post-`growfdtable` zero-fill behaviour at Src/utils.c:1979.
 pub fn fdtable_get(fd: i32) -> i32 {                                     // c:utils.c:fdtable[fd]
-    if fd < 0 { return crate::ported::zsh_h::FDT_UNUSED; }
+    if fd < 0 { return FDT_UNUSED; }
     let g = fdtable_lock().lock().unwrap();
-    g.get(fd as usize).copied().unwrap_or(crate::ported::zsh_h::FDT_UNUSED)
+    g.get(fd as usize).copied().unwrap_or(FDT_UNUSED)
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
@@ -6716,7 +6728,7 @@ pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:ut
     if fd < 0 { return; }
     let mut g = fdtable_lock().lock().unwrap();
     if (fd as usize) >= g.len() {
-        g.resize((fd as usize) + 1, crate::ported::zsh_h::FDT_UNUSED);
+        g.resize((fd as usize) + 1, FDT_UNUSED);
     }
     g[fd as usize] = kind;
     // c:1982 — `max_zsh_fd = fd;` (with `if (fd <= max_zsh_fd) return;`
@@ -9099,7 +9111,7 @@ mod tests {
         assert_eq!(meta.permissions().mode() & 0o111, 0,
             "test setup: must be non-executable");
         // Set PATH to /tmp.
-        let saved_path = crate::ported::params::getsparam("PATH");
+        let saved_path = getsparam("PATH");
         crate::ported::params::assignsparam("PATH", "/tmp", 0);
         // pathprog should find the file.
         let r = pathprog(&test_name);
@@ -9123,7 +9135,7 @@ mod tests {
         if std::fs::create_dir(&path).is_err() {
             return;
         }
-        let saved_path = crate::ported::params::getsparam("PATH");
+        let saved_path = getsparam("PATH");
         crate::ported::params::assignsparam("PATH", "/tmp", 0);
         let r = pathprog(&test_name);
         // Cleanup.
@@ -9412,14 +9424,14 @@ mod tests {
         // Test environment: SHTTY is -1 (no controlling tty bound
         // by the port). C-side would `read(-1, ...)` which fails;
         // Rust port should fail-fast with -1.
-        let saved = crate::ported::init::SHTTY
+        let saved = SHTTY_FD
             .load(std::sync::atomic::Ordering::Relaxed);
-        crate::ported::init::SHTTY.store(-1, std::sync::atomic::Ordering::Relaxed);
+        SHTTY_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
         let got = read1char(0);  // echo=0
         assert_eq!(got, -1,
             "c:2978 — SHTTY=-1 → read fails → return -1");
         // Restore.
-        crate::ported::init::SHTTY.store(saved, std::sync::atomic::Ordering::Relaxed);
+        SHTTY_FD.store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `Src/utils.c:1989-2012` — `movefd(fd)` dups fd to >= 10 (so it
