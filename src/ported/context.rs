@@ -12,6 +12,7 @@
 use super::parse::ParseStack;
 use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE, lex_stack, hist_stack};
 use std::sync::Mutex;
+use crate::DPUTS;
 use crate::hist::{hist_context_restore, hist_context_save};
 use crate::lex::{lex_context_restore, lex_context_save};
 use crate::parse::{parse_context_restore, parse_context_save};
@@ -87,7 +88,7 @@ pub fn zcontext_restore_partial(parts: i32) {
     // c:89
     let mut head = cstack.lock().unwrap();
     // c:93 — DPUTS(!cstack, "BUG: zcontext_restore() without zcontext_save()")
-    crate::DPUTS!(
+    DPUTS!(
         head.is_none(),
         "BUG: zcontext_restore() without zcontext_save()"
     ); // c:93

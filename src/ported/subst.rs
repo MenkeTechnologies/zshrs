@@ -59,7 +59,7 @@
 #[allow(unused_imports)]
 use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
+use crate::DPUTS;
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 use crate::ported::exec::getoutput;
 use crate::ported::glob::xpandbraces;
@@ -1221,7 +1221,7 @@ pub fn singsub(s: &str) -> String {
                                                                // c:524 — DPUTS asserts the list is now empty (singsub never
                                                                // produces more than one word). Rust port wires the canonical
                                                                // DPUTS macro from zsh_h.rs.
-    crate::DPUTS!(
+    DPUTS!(
         list.nodes.len() > 1, // c:524
         "BUG: singsub() produced more than one word!"
     ); // c:524

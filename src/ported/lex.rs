@@ -15,6 +15,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use serde::{Deserialize, Serialize};
+use crate::DPUTS;
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{aliastab_lock, reswdtab_lock, sufaliastab_lock};
 use crate::ported::hist::{hist_in_word, strinbeg, strinend};
@@ -2595,6 +2596,23 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     zcontext_save();
     // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
     inpush(&dup, 0, None);
+    // zshrs-only: `hgetc()` (lex.rs:3736) reads directly from
+    // LEX_INPUT/LEX_POS — the inpush call above feeds inbuf for the
+    // input.c side but NOT the lexer's char-source. Swap LEX_INPUT/
+    // LEX_POS to the dup string here so dquote_parse's hgetc calls
+    // observe the right body, then restore the prior values after
+    // dquote_parse returns. zcontext_save / lex_context_save do NOT
+    // currently carry LEX_INPUT/LEX_POS through the saved frame.
+    let saved_lex_input = LEX_INPUT.with_borrow(|s| s.clone());
+    let saved_lex_pos = LEX_POS.get();
+    // Append the '\0' sentinel C's dupstring_wlen carries — dquote_parse
+    // returns Ok when hgetc returns endchar ('\0' here); without the
+    // terminator hgetc returns None at EOF and dquote_parse errors.
+    let mut input_with_nul = dup.clone();
+    input_with_nul.push('\0');
+    LEX_INPUT.with_borrow_mut(|b| *b = input_with_nul);
+    LEX_POS.set(0);
+    LEX_LEXSTOP.set(false);
     // c:1718 `strinbeg(0);`
     strinbeg(0);
     // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
@@ -2614,8 +2632,12 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     strinend();
     // c:1727 `inpop();`
     inpop();
+    // Restore LEX_INPUT/LEX_POS so the outer lexer resumes where it
+    // left off. Pairs with the swap above.
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
     // c:1730 — DPUTS(cmdsp, "BUG: parsestr: cmdstack not empty.")
-    crate::DPUTS!(
+    DPUTS!(
         // c:1730
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1730
         "BUG: parsestr: cmdstack not empty."                              // c:1730
@@ -2673,13 +2695,13 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     let parse_err = dquote_parse(endchar, false).is_err();
     let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
     // c:1771 — DPUTS(toklen > l, "Bad length for parsed subscript")
-    crate::DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
+    DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
                                                                   // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
                                                                   // `zcontext_restore();`
     strinend();
     inpop();
     // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
-    crate::DPUTS!(
+    DPUTS!(
         // c:1785
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
         "BUG: parse_subscript: cmdstack not empty."                       // c:1785
@@ -2749,7 +2771,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     // c:1815 `inpop();`
     inpop();
     // c:1816 — DPUTS(cmdsp, "BUG: parse_subst_string: cmdstack not empty.")
-    crate::DPUTS!(
+    DPUTS!(
         // c:1816
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1816 cmdsp != 0
         "BUG: parse_subst_string: cmdstack not empty."                    // c:1816

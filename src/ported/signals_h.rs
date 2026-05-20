@@ -22,6 +22,7 @@
 
 use crate::ported::signals::{queue_front, queue_rear, signal_mask_queue, signal_queue};
 use std::sync::atomic::{AtomicI32, Ordering};
+use crate::{DPUTS, DPUTS2};
 use crate::signals::{queue_in, queueing_enabled};
 // ---------------------------------------------------------------------------
 // Pseudo-signal indexes (c:34-46).
@@ -298,7 +299,7 @@ pub fn queue_signals() {
 pub fn unqueue_signals() {
     // c:92/114
     // c:93 — DPUTS(!queueing_enabled, "BUG: unqueue_signals called but not queueing")
-    crate::DPUTS!(
+    DPUTS!(
         // c:93
         queueing_enabled.load(Ordering::SeqCst) == 0, // c:93
         "BUG: unqueue_signals called but not queueing"                        // c:93
@@ -336,7 +337,7 @@ pub fn restore_queue_signals(q: i32) {
     //                    "BUG: q = %d != queue_in = %d", q, queue_in)
     let qi = queue_in.load(Ordering::SeqCst); // c:105
     let qe = queueing_enabled.load(Ordering::SeqCst); // c:105
-    crate::DPUTS2!(
+    DPUTS2!(
         // c:105
         qe != 0 && qi != q, // c:105
         "BUG: q = {} != queue_in = {}",

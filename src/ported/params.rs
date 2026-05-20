@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use fusevm::Value;
 use indexmap::IndexMap;
 use crate::config_h::DEFAULT_TMPPREFIX;
+use crate::{DPUTS, DPUTS2};
 use crate::func_body_fmt::FuncBodyFmt;
 use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, savehistsiz};
 #[allow(unused_imports)]
@@ -1221,7 +1222,7 @@ pub fn paramvalarr(ht: &HashTable, flags: i32) -> Vec<String> {
     // c:691-692 — DPUTS((flags & (SCANPM_MATCHKEY|SCANPM_MATCHVAL)) && !scanprog,
     //                 "BUG: scanning hash without scanprog set");
     let scanprog_set = scanprog_lock().lock().unwrap().is_some(); // c:691 !scanprog test
-    crate::DPUTS!(
+    DPUTS!(
         // c:691
         (flags as u32 & (SCANPM_MATCHKEY | SCANPM_MATCHVAL)) != 0 && !scanprog_set, // c:691
         "BUG: scanning hash without scanprog set"                                   // c:692
@@ -1859,7 +1860,7 @@ pub fn assigngetset(pm: &mut param) {
         }
         _ => {
             // c:1015 — DPUTS(1, "BUG: tried to create param node without valid flag")
-            crate::DPUTS!(true, "BUG: tried to create param node without valid flag");
+            DPUTS!(true, "BUG: tried to create param node without valid flag");
             // c:1015
         }
     }
@@ -1933,7 +1934,7 @@ pub fn createparam(
     let cur_locallevel = locallevel.load(Ordering::Relaxed);
     // c:1106-1107 — DPUTS(oldpm && oldpm->level > locallevel,
     //                    "BUG: old local parameter not deleted");
-    crate::DPUTS!(
+    DPUTS!(
         // c:1106
         match &oldpm {
             // c:1106
@@ -3079,7 +3080,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         strgetfn(pm)
     } else {
         // c:2384
-        crate::DPUTS!(true, "BUG: param node without valid type"); // c:2385
+        DPUTS!(true, "BUG: param node without valid type"); // c:2385
         String::new() // c:2386 s = "" (line c:2384)
     };
 
@@ -3881,7 +3882,7 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         // c:3030
         (start_idx + val_len).max(pre_len) // c:3030
     };
-    crate::DPUTS2!(
+    DPUTS2!(
         // c:3030
         arr.len() != expected, // c:3030
         "setarrvalue: wrong allocation: {} 1= {}",
@@ -7000,7 +7001,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {
 pub fn zputenv(str: &str) -> i32 {
     // c:5325
     // c:5327 — DPUTS(!str, "Attempt to put null string into environment.")
-    crate::DPUTS!(
+    DPUTS!(
         str.is_empty(),
         "Attempt to put null string into environment."
     ); // c:5327
@@ -7031,7 +7032,7 @@ pub fn zputenv(str: &str) -> i32 {
         // c:5355 else
         // c:5356 — DPUTS(1, "bad environment string").
         // With no `=`, treat `str` as a bare name with empty value.
-        crate::DPUTS!(true, "bad environment string"); // c:5356
+        DPUTS!(true, "bad environment string"); // c:5356
         env::set_var(str, ""); // c:5357
         0
     }

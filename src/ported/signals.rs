@@ -23,6 +23,7 @@ use nix::sys::signal::{
     sigprocmask, SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal, SigmaskHow,
 };
 use nix::unistd::getpid;
+use crate::DPUTS;
 use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
@@ -694,7 +695,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
 
     // c:709-710 — DPUTS((flags & ZSIG_FUNC) && l,
     //                   "BUG: trap function has passed eval list, too")
-    crate::DPUTS!(
+    DPUTS!(
         // c:709
         (flags & ZSIG_FUNC) != 0 && l.is_some(), // c:709
         "BUG: trap function has passed eval list, too"  // c:710

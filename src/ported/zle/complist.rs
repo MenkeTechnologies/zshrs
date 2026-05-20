@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-
+use crate::DPUTS2;
 use crate::ported::init::SHTTY;
 use crate::ported::mem::popheap;
 use crate::ported::params::getsparam;
@@ -1492,7 +1492,7 @@ pub fn clprintm(
     // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
     //                      "clprintm called with ml too large (%d/%d)",
     //                      ml, mlines)
-    crate::DPUTS2!(
+    DPUTS2!(
         // c:1735
         mselect >= 0 && ml >= mlines_v, // c:1735
         "clprintm called with ml too large ({}/{})",
