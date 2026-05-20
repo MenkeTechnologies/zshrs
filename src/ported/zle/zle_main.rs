@@ -14,15 +14,6 @@
 //! - bin_vared() - vared builtin
 //! - zle_main_entry() - module entry point
 
-use crate::ported::builtin::LASTVAL;
-use crate::ported::builtins::sched::zleactive;
-use crate::ported::init::SHTTY;
-use crate::ported::utils::{write_loop, zwarnnam};
-use crate::ported::zle::zle_keymap::{curkeymapname, selectkeymap};
-use crate::ported::zle::zle_misc::DONE;
-use crate::ported::zsh_h::{
-    hookdef, module, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR,
-};
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -30,16 +21,25 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
 
-use crate::ported::zsh_h::{
-    ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC,
-    ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE,
-    ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH,
-};
-
-use super::zle_h::widget as Widget;
-use super::zle_h::{ZLE_LASTCOL, ZLE_NOTCOMMAND};
+use super::zle_h::{widget as Widget, ZLE_LASTCOL, ZLE_NOTCOMMAND};
 use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
+use crate::ported::builtin::LASTVAL;
+use crate::ported::builtins::sched::zleactive;
+use crate::ported::init::SHTTY;
+use crate::ported::utils::{write_loop, zwarnnam};
+use crate::ported::zle::zle_keymap::{
+    curkeymap, curkeymapname, keymapnamtab, linkkeymap, openkeymap, selectkeymap, LOCALKEYMAP,
+};
+use crate::ported::zle::zle_misc::DONE;
+use crate::ported::zle::zle_thingy::rthingy_nocreate;
+use crate::ported::zle::termquery::mark_output;
+use crate::ported::zsh_h::{
+    hookdef, module, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR, ZLE_CMD_ADD_TO_LINE,
+    ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
+    ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP,
+    ZLE_CMD_TRASH, ZLRF_HISTORY,
+};
 
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
@@ -592,7 +592,7 @@ pub fn zlecore() {
                 == EOFCHAR.load(SeqCst)
             && (ZLEREADFLAGS
                 .load(SeqCst)
-                & crate::ported::zsh_h::ZLRF_HISTORY)
+                & ZLRF_HISTORY)
                 != 0
         {
             EOFSENT.store(1, SeqCst);
@@ -709,7 +709,7 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {
     // Look up `.NAME` and dispatch to execzlefunc; the dot-prefixed
     // func guarantees we hit the immortal/canonical thingy.
     let dotted = format!(".{}", func);
-    if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {
+    if rthingy_nocreate(&dotted) {
         // c:1406
         // c:1407 — `return execzlefunc(immortal, args, 0, 0)`.
         return execzlefunc(&dotted, args);
@@ -737,7 +737,7 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {
 pub fn execzlefunc(name: &str, args: &[String]) -> i32 {
     // c:1420
     // c:1420 — `if (!func) return 1`.
-    if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {
+    if !rthingy_nocreate(name) {
         // c:1422
         return 1;
     }
@@ -818,14 +818,14 @@ pub fn savekeymap(
     //                       if (*savemap != km) { refkeymap(*savemap);
     //                           linkkeymap(km, oldname, 0); } return 0; }
     //                       else return 1`.
-    let km = crate::ported::zle::zle_keymap::openkeymap(newname)?;
-    let saved = crate::ported::zle::zle_keymap::openkeymap(oldname);
+    let km = openkeymap(newname)?;
+    let saved = openkeymap(oldname);
     let same = saved
         .as_ref()
         .map(|s| std::sync::Arc::ptr_eq(s, &km))
         .unwrap_or(false);
     if !same {
-        crate::ported::zle::zle_keymap::linkkeymap(km, oldname, 0);
+        linkkeymap(km, oldname, 0);
     }
     if same {
         None
@@ -845,7 +845,7 @@ pub fn restorekeymap(
     //                       oldname, 0); unrefkeymap(savemap); }
     //                       else if (newname) zwarnnam(...)`.
     if let Some(km) = savemap {
-        crate::ported::zle::zle_keymap::linkkeymap(km, oldname, 0);
+        linkkeymap(km, oldname, 0);
     }
 }
 
@@ -1069,7 +1069,7 @@ pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {
 /// Port of whereis(UNUSED(char **args)) from zle_main.c
 pub fn whereis(widget_name: &str) -> Vec<String> {
     let mut bindings = Vec::new();
-    let tab = crate::ported::zle::zle_keymap::keymapnamtab()
+    let tab = keymapnamtab()
         .lock()
         .unwrap();
     for (name, node) in tab.iter() {
@@ -1508,7 +1508,7 @@ pub fn cleanup_(_m: *const module) -> i32 {
                                                                        // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
                                                                        // explicit-name unlink from keymapnamtab so the next module load starts
                                                                        // fresh.
-    if let Ok(mut tab) = crate::ported::zle::zle_keymap::keymapnamtab().lock() {
+    if let Ok(mut tab) = keymapnamtab().lock() {
         tab.clear();
     }
     0 // c:2325
@@ -1856,11 +1856,11 @@ pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> 
         }
         x if x == ZLE_CMD_PREEXEC => {
             // c:2187
-            crate::ported::zle::termquery::mark_output(true); // c:2188 mark_output(1)
+            mark_output(true); // c:2188 mark_output(1)
         }
         x if x == ZLE_CMD_POSTEXEC => {
             // c:2191
-            crate::ported::zle::termquery::mark_output(false); // c:2192 mark_output(0)
+            mark_output(false); // c:2192 mark_output(0)
         }
         x if x == ZLE_CMD_CHPWD => {
             // c:2195
@@ -2008,11 +2008,11 @@ pub fn in_vi_cmd_mode() -> bool {
 /// host-driven concerns that the bin can layer on top.
 pub fn get_key_cmd() -> Option<Thingy> {
     let km = {
-        let local = crate::ported::zle::zle_keymap::LOCALKEYMAP
+        let local = LOCALKEYMAP
             .lock()
             .unwrap()
             .clone();
-        let cur = crate::ported::zle::zle_keymap::curkeymap
+        let cur = curkeymap
             .lock()
             .unwrap()
             .clone();
@@ -2215,12 +2215,12 @@ pub fn describe_key_briefly() {
         let thingy = if c as u32 > 255 {
             None
         } else {
-            let km = crate::ported::zle::zle_keymap::LOCALKEYMAP
+            let km = LOCALKEYMAP
                 .lock()
                 .unwrap()
                 .clone()
                 .or_else(|| {
-                    crate::ported::zle::zle_keymap::curkeymap
+                    curkeymap
                         .lock()
                         .unwrap()
                         .clone()
@@ -2361,7 +2361,7 @@ pub static PREFIXFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// flags passed to `zleread()` controlling history/setty behaviour.
 /// Default value matches input.c:418 (`ZLRF_HISTORY | ZLRF_NOSETTY`).
 pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(
-    crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
+    ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
 );
 
 /// Port of `int zlecontext` from `Src/Zle/zle_main.c`. ZLCON_*

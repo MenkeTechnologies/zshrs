@@ -21,13 +21,14 @@ use std::sync::atomic::Ordering;
 
 use crate::ported::builtin::LOCALLEVEL;
 use crate::ported::glob::{remnulargs, tokenize};
-use crate::ported::string::tricat;
-use crate::ported::utils::{adjustcolumns, inittyptab, niceztrlen};
-use crate::ported::zsh_h::{options, MAX_OPS};
 use crate::ported::lex::untokenize;
+use crate::ported::mem::ztrdup;
 use crate::ported::params::{setaparam, setsparam};
 use crate::ported::pattern::{haswilds, patcompile, pattry};
-use crate::ported::utils::{quotestring, strpfx, zwarnnam, ztrlen};
+use crate::ported::string::tricat;
+use crate::ported::utils::{
+    adjustcolumns, inittyptab, niceztrlen, quotestring, set_noerrs, strpfx, zwarnnam, ztrlen,
+};
 use crate::ported::zle::comp_h::{Cmatcher, CMF_LEFT, CMF_RIGHT};
 use crate::ported::zle::compcore::{comppatmatch, rembslash};
 use crate::ported::zle::compmatch::pattern_match;
@@ -36,7 +37,7 @@ use crate::ported::zle::complete::{
     COMPWORDS, INCOMPFUNC,
 };
 use crate::ported::zle::compresult::ztat;
-use crate::ported::zsh_h::{OPT_ISSET, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH};
+use crate::ported::zsh_h::{options, MAX_OPS, OPT_ISSET, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH};
 use crate::ported::ztype_h::{iblank, idigit, inblank};
 
 // =====================================================================
@@ -948,11 +949,11 @@ pub fn cd_arrcat(a: &[String], b: &[String]) -> Vec<String> {
     let mut r: Vec<String> = Vec::with_capacity(a.len() + b.len()); // c:449
     for s in a {
         // c:453 for (; *a; a++)
-        r.push(crate::ported::mem::ztrdup(s)); // c:454 *p++ = ztrdup(*a)
+        r.push(ztrdup(s)); // c:454 *p++ = ztrdup(*a)
     }
     for s in b {
         // c:455 for (; *b; b++)
-        r.push(crate::ported::mem::ztrdup(s)); // c:456 *p++ = ztrdup(*b)
+        r.push(ztrdup(s)); // c:456 *p++ = ztrdup(*b)
     }
     // c:458 — `*p = NULL;` — Rust Vec doesn't need a sentinel
     r // c:460
@@ -3014,7 +3015,7 @@ pub fn ca_get_opt(
                     let is_match = if p.args.is_none() || p.r#type == CAO_NEXT {
                         name == line
                     } else {
-                        crate::ported::utils::strpfx(name, line)
+                        strpfx(name, line)
                     };
                     if is_match {
                         let l = name.len();
@@ -5483,9 +5484,9 @@ pub fn cv_quote_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {
     // c:3196-3199 — `ne = noerrs; noerrs = 2; parse_subst_string(name);
     //                noerrs = ne`. The parse_subst_string port (lex.rs:3797)
     // returns Result; we discard errors so noerrs=2/restore is a no-op.
-    crate::ported::utils::set_noerrs(2);
+    set_noerrs(2);
     let parsed = crate::ported::lex::parse_subst_string(&s).ok();
-    crate::ported::utils::set_noerrs(0);
+    set_noerrs(0);
     if let Some(p) = parsed {
         s = p;
     }
@@ -7010,7 +7011,7 @@ pub fn cfp_test_exact(
 ///   - CPAT_CCLASS / CPAT_EQUIV / CPAT_CHAR: `[classchar+addchar]`
 ///   - CPAT_ANY: `?`
 pub fn cfp_matcher_range(
-    ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>], // c:4307
+    ms: &[Option<Box<Cmatcher>>], // c:4307
     add: &str,
 ) -> String {
     use crate::ported::zle::comp_h::{Cpattern, CMF_RIGHT};
@@ -9189,7 +9190,7 @@ mod tests {
     fn cfp_matcher_range_no_matchers_verbatim() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let ms: Vec<Option<Box<crate::ported::zle::comp_h::Cmatcher>>> = vec![None, None, None];
+        let ms: Vec<Option<Box<Cmatcher>>> = vec![None, None, None];
         let r = cfp_matcher_range(&ms, "abc");
         assert_eq!(r, "abc");
     }
