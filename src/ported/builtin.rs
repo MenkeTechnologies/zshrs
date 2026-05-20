@@ -35,11 +35,12 @@ use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::parse::{Redirect, ShellCommand};
 use crate::ported::compat::zgetcwd;
-use crate::ported::exec::TRAP_STATE;
-use crate::ported::hashnameddir::{nameddirtab, printnameddirnode};
+use crate::ported::config_h::DEFAULT_PATH;
+use crate::ported::exec::{getfpfunc, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_STATE};
+use crate::ported::hashnameddir::{emptynameddirtable, nameddirtab, printnameddirnode};
 use crate::ported::hashtable::{
-    aliastab_lock, cmdnamtab_lock, dircache_set, hnamcmp, reswdtab_lock, shfunctab_lock,
-    sufaliastab_lock, Alias,
+    aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
+    reswdtab_lock, shfunctab_lock, sufaliastab_lock, Alias,
 };
 use crate::ported::hist::{readhistfile, savehistfile};
 use crate::ported::init::sourcelevel as sourcelevel_init;
@@ -3517,7 +3518,7 @@ pub fn eval_autoload(
     let _d = OPT_ISSET(ops, b'd');
     // loadautofn lives in Src/exec.c:5050 — full fpath search + parse_string
     // + install. Static-link path: returns 0 (success), so `!loadautofn` is 1.
-    let r = crate::ported::exec::loadautofn(shf, mode, 1, _d as i32); // c:3193
+    let r = loadautofn(shf, mode, 1, _d as i32); // c:3193
     if r == 0 {
         1
     } else {
@@ -3553,7 +3554,7 @@ pub fn check_autoload(
         // dir first via spec_path[].
         if (shf_mut.node.flags as u32 & PM_LOADDIR) != 0 && shf_mut.filename.is_some() {
             let spec = vec![shf_mut.filename.clone().unwrap_or_default()];
-            if crate::ported::exec::getfpfunc(
+            if getfpfunc(
                 &shf_mut.node.nam,
                 &mut None, // c:3206
                 Some(&spec),
@@ -3579,7 +3580,7 @@ pub fn check_autoload(
         }
         // c:3219-3231 — fpath walk via getfpfunc + dircache_set install.
         let mut dir_path: Option<String> = None;
-        if crate::ported::exec::getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
+        if getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
             && dir_path.is_some()
         {
             // c:3220-3228 — dircache_set + relative-path absolutize.
@@ -3921,7 +3922,7 @@ pub fn bin_functions(
                 (*src_ptr).funcdef = None;
             }
             // c:3419 — `loadautofn(shf, 1, 0, 0)`.
-            if crate::ported::exec::loadautofn(src_ptr, 1, 0, 0) != 0 {
+            if loadautofn(src_ptr, 1, 0, 0) != 0 {
                 // c:3420-3421 — autoload failed.
                 return 1;
             }
@@ -5249,9 +5250,9 @@ pub fn bin_hash(
             // c:4256 — `emptyhashtable(cmdnamtab)` /
             // `emptynameddirtable()`.
             if dir_mode {
-                crate::ported::hashnameddir::emptynameddirtable();
+                emptynameddirtable();
             } else {
-                crate::ported::hashtable::emptycmdnamtable();
+                emptycmdnamtable();
             }
         }
         if OPT_ISSET(ops, b'f') {
@@ -5510,13 +5511,13 @@ pub fn bin_unhash(
                 .map(|mut g| g.clear());
         }
         Tab::NamedDir => {
-            crate::ported::hashnameddir::emptynameddirtable();
+            emptynameddirtable();
         }
         Tab::Shfunc => {
             let _ = shfunctab_table().lock().map(|mut g| g.clear());
         }
         Tab::CmdNam => {
-            crate::ported::hashtable::emptycmdnamtable();
+            emptycmdnamtable();
         } // c:4389
     };
     let remove_one = |t: &Tab, nm: &str| -> bool {
@@ -5806,7 +5807,7 @@ pub fn bin_alias(
                     aliastab_lock()
                 };
                 if let Ok(mut t) = lock.write() {
-                    let a = crate::ported::hashtable::createaliasnode(n, v, flags1); // c:4527
+                    let a = createaliasnode(n, v, flags1); // c:4527
                     t.add(a);
                 }
                 continue;
@@ -5835,7 +5836,7 @@ pub fn bin_alias(
                     || (OPT_ISSET(ops, b'r') && (fl & (ALIAS_GLOBAL | ALIAS_SUFFIX) as u32) == 0)
                     || (OPT_ISSET(ops, b'g') && (fl & ALIAS_GLOBAL as u32) != 0);
                 if show {
-                    let a = crate::ported::hashtable::createaliasnode(&nm, &txt, fl);
+                    let a = createaliasnode(&nm, &txt, fl);
                     print_alias(&a, printflags);
                 }
             }
@@ -6402,7 +6403,7 @@ pub fn bin_break(
                                                        // POSIX semantics keep $? from before the trap fired.
                 let posixtraps = isset(optlookup("posixtraps"));
                 let cur_state = TRAP_STATE.load(Ordering::Relaxed);
-                let cur_return = crate::ported::exec::TRAP_RETURN.load(Ordering::Relaxed);
+                let cur_return = TRAP_RETURN.load(Ordering::Relaxed);
                 if cur_state == TRAP_STATE_PRIMED      // c:5845
                     && cur_return == -2                                      // c:5845
                     && !(posixtraps && implicit)
@@ -6413,7 +6414,7 @@ pub fn bin_break(
                         TRAP_STATE_FORCE_RETURN,
                         Ordering::Relaxed,
                     );
-                    crate::ported::exec::TRAP_RETURN.store(num, Ordering::Relaxed);
+                    TRAP_RETURN.store(num, Ordering::Relaxed);
                     // c:5853
                 }
                 return num; // c:5855
@@ -6452,7 +6453,7 @@ pub fn bin_break(
             // BIN_EXIT isn't possible mid-match; inline the same
             // guard logic here.
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
@@ -6503,7 +6504,7 @@ pub fn bin_break(
         // unwinding the function stack.
         x if x == BIN_EXIT => {
             let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let forklevel = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed);
+            let forklevel = FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
@@ -8906,7 +8907,7 @@ pub static CONTFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Same single-storage rationale as LOCALLEVEL above — C zsh has
 // only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
-// Rust port is `crate::ported::init::sourcelevel` (lowercase,
+// Rust port is `sourcelevel_init` (lowercase,
 // matches C name). Re-export that single storage so the bin_break
 // reader and the bin_dot bumps address the same atomic; without
 // this, `bin_dot` could increment one global while `bin_break`
@@ -9217,7 +9218,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     // c:897
     // c:903-908 — if (default_path) { search_defpath; return; }
     if default_path != 0 {
-        for dir in crate::ported::config_h::DEFAULT_PATH.split(':') {
+        for dir in DEFAULT_PATH.split(':') {
             if dir.is_empty() {
                 continue;
             }
@@ -9408,7 +9409,7 @@ mod tests {
         );
         let p = resolved.unwrap();
         assert!(
-            crate::ported::config_h::DEFAULT_PATH
+            DEFAULT_PATH
                 .split(':')
                 .any(|d| p.starts_with(d)),
             "resolved path must be under one of DEFAULT_PATH's dirs; got {:?}",
