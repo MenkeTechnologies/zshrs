@@ -4,6 +4,9 @@
 
 use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
 use crate::ported::lex::ENDINPUT;
+use crate::ported::params::getsparam;
+use crate::ported::signals::{install_handler, signal_ignore};
+use crate::ported::utils::errflag;
 use crate::zsh_h::{
     islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
     HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
@@ -477,7 +480,7 @@ pub fn init_term() -> i32 {
     //      (Src/zsh.h:1985 = 0x01). C sets TERM_UNKNOWN (0x02 per
     //      Src/zsh.h:1986). Same bit-value drift family as the
     //      earlier TERM_UNKNOWN params.rs fix.
-    let term = crate::ported::params::getsparam("TERM").unwrap_or_default();
+    let term = getsparam("TERM").unwrap_or_default();
     if term.is_empty() {
         // c:777
         crate::ported::params::TERMFLAGS
@@ -752,7 +755,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         let exename = crate::ported::utils::unmeta(&exename); // c:1318
                                                               // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
                                                               //          Read paramtab; was reading OS env which can lag.
-        let cwd = crate::ported::params::getsparam("PWD").map(|s| crate::ported::utils::unmeta(&s));
+        let cwd = getsparam("PWD").map(|s| crate::ported::utils::unmeta(&s));
         let mypath = getmypath(
             Some(&exename), // c:1320
             cwd.as_deref(),
@@ -847,19 +850,19 @@ pub fn init_signals() {
             // not modeled — see above).
         }
         // c:1414-1416 — `#ifndef QDEBUG signal_ignore(SIGQUIT)`.
-        crate::ported::signals::signal_ignore(libc::SIGQUIT);
+        signal_ignore(libc::SIGQUIT);
 
         // c:1418-1421 — SIGHUP: if parent installed SIG_IGN, clear
         // the HUP option; otherwise install our handler.
-        if crate::ported::signals::signal_ignore(libc::SIGHUP) == libc::SIG_IGN {
+        if signal_ignore(libc::SIGHUP) == libc::SIG_IGN {
             crate::ported::options::dosetopt(crate::ported::zsh_h::HUP, 0, 0); // c:1419
         } else {
-            crate::ported::signals::install_handler(libc::SIGHUP); // c:1421
+            install_handler(libc::SIGHUP); // c:1421
         }
-        crate::ported::signals::install_handler(libc::SIGCHLD); // c:1422
+        install_handler(libc::SIGCHLD); // c:1422
         #[cfg(not(target_os = "haiku"))]
         {
-            crate::ported::signals::install_handler(libc::SIGWINCH); // c:1424
+            install_handler(libc::SIGWINCH); // c:1424
                                                                      // c:1425 — `winch_block()`. SIGWINCH unblocked at the
                                                                      // prompt-display boundary (preprompt at utils.c). Not
                                                                      // yet modeled — leaves SIGWINCH unblocked, the safe
@@ -868,16 +871,16 @@ pub fn init_signals() {
 
         // c:1427-1431 — interactive-only handlers.
         if crate::ported::zsh_h::interact() {
-            crate::ported::signals::install_handler(libc::SIGPIPE); // c:1428
-            crate::ported::signals::install_handler(libc::SIGALRM); // c:1429
-            crate::ported::signals::signal_ignore(libc::SIGTERM); // c:1430
+            install_handler(libc::SIGPIPE); // c:1428
+            install_handler(libc::SIGALRM); // c:1429
+            signal_ignore(libc::SIGTERM); // c:1430
         }
 
         // c:1432-1436 — `if (jobbing)` job-control signal ignores.
         if crate::ported::zsh_h::jobbing() {
-            crate::ported::signals::signal_ignore(libc::SIGTTOU); // c:1433
-            crate::ported::signals::signal_ignore(libc::SIGTSTP); // c:1434
-            crate::ported::signals::signal_ignore(libc::SIGTTIN); // c:1435
+            signal_ignore(libc::SIGTTOU); // c:1433
+            signal_ignore(libc::SIGTSTP); // c:1434
+            signal_ignore(libc::SIGTTIN); // c:1435
         }
     }
 }
@@ -914,7 +917,7 @@ pub fn run_init_scripts() {
             }
             // c:1456-1468 — if (interact) { … getsparam("ENV"); source(s); }
             if interact {
-                if let Some(s) = crate::ported::params::getsparam("ENV") {
+                if let Some(s) = getsparam("ENV") {
                     let _ = source(&s);
                 }
             }
@@ -1027,10 +1030,10 @@ pub fn sourcehome(s: &str) {
     //                                                 ?: getsparam("HOME"))`
     //          paramtab read; was OS env.
     let h = if is_posix {
-        crate::ported::params::getsparam("HOME")
+        getsparam("HOME")
     } else {
-        crate::ported::params::getsparam("ZDOTDIR")
-            .or_else(|| crate::ported::params::getsparam("HOME"))
+        getsparam("ZDOTDIR")
+            .or_else(|| getsparam("HOME"))
     };
     let h = match h {
         // c:1685-1689
@@ -1283,7 +1286,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 let hstop = stophist.load(Ordering::SeqCst); // c:130
                 stophist.store(3, Ordering::SeqCst); // c:131
                                                      // c:133-138 — reset errflag for preprompt
-                crate::ported::utils::errflag.store(0, Ordering::SeqCst); // c:139 errflag = 0
+                errflag.store(0, Ordering::SeqCst); // c:139 errflag = 0
                 crate::ported::utils::preprompt(); // c:140
                 if stophist.load(Ordering::SeqCst) != 3 {
                     // c:141
@@ -1293,7 +1296,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     stophist.store(hstop, Ordering::SeqCst); // c:144
                 }
                 // c:146-149 — reset errflag again
-                crate::ported::utils::errflag.store(0, Ordering::SeqCst); // c:150
+                errflag.store(0, Ordering::SeqCst); // c:150
             }
         }
         use_exit_printed.store(0, Ordering::SeqCst); // c:153
@@ -1305,7 +1308,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             crate::ported::hist::hend(None); // c:158
                                              // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
             let tok_v = crate::ported::lex::tok(); // c:159 tok
-            let errflag_v = crate::ported::utils::errflag.load(Ordering::SeqCst);
+            let errflag_v = errflag.load(Ordering::SeqCst);
             let lexerr_break = tok_v == LEXERR && (!isset(SHINSTDIN) || toplevel == 0);
             let endinput_break = tok_v == ENDINPUT && errflag_v == 0;
             if endinput_break || lexerr_break || justonce != 0 {
@@ -1405,7 +1408,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                         std::ptr::null_mut(),
                     );
                     crate::ported::mem::zsfree(cmdstr); // c:205
-                    crate::ported::utils::errflag.fetch_and(
+                    errflag.fetch_and(
                         // c:214 errflag &= ~ERRFLAG_ERROR
                         !crate::ported::utils::ERRFLAG_ERROR,
                         Ordering::SeqCst,
@@ -1456,7 +1459,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             crate::ported::builtin::realexit(); // c:233
         }
         // c:234 — `if (((!interact || sourcelevel) && errflag) || retflag) break;`
-        let errflag_v = crate::ported::utils::errflag.load(Ordering::SeqCst);
+        let errflag_v = errflag.load(Ordering::SeqCst);
         let interact_v = isset(INTERACTIVE);
         let srclvl = sourcelevel.load(Ordering::SeqCst);
         let retflag_v = crate::ported::builtin::RETFLAG.load(Ordering::SeqCst);
@@ -1483,7 +1486,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         }
         let _ = histlinect.load(Ordering::SeqCst); // silence unused alias
     }
-    err = crate::ported::utils::errflag.load(Ordering::SeqCst); // c:245 err = errflag
+    err = errflag.load(Ordering::SeqCst); // c:245 err = errflag
     if toplevel == 0 {
         // c:246 !toplevel
         crate::ported::context::zcontext_restore(); // c:247
