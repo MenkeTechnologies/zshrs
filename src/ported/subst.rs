@@ -2513,8 +2513,10 @@ pub fn paramsubst(
                                          // form is distinguishable.
         let mut arrasg: i32 = 0; // c:1793
         let mut wantt = false; // c:2807 (t)
-        let mut flag_keys = false; // c:2247 (k)
-        let mut flag_values = false; // c:2256 (v)
+        // (k) and (v) flag state lives in hkeys / hvals (c:1828,
+        // c:1835) declared below; no separate bools. Consumer sites
+        // test `(hkeys & SCANPM_WANTKEYS) != 0` and
+        // `(hvals & SCANPM_WANTVALS) != 0` per c:2393 / c:2398.
         let mut evalchar = false; // c:1673 (#) char-eval
                                        // (l:N::PRE:) left-pad / (r:N::POST:) right-pad parsed values.
                                        // Port of subst.c:2319-2375 l/r flag arm.
@@ -3050,8 +3052,10 @@ pub fn paramsubst(
                 }
                 idx += 1;
             }
-            flag_keys = (hkeys & SCANPM_WANTKEYS) != 0; // c:2393 → (k) assoc keys
-            flag_values = (hvals & SCANPM_WANTVALS) != 0; // c:2398
+            // hkeys / hvals already carry SCANPM_WANTKEYS /
+            // SCANPM_WANTVALS bits from c:2393 / c:2398; consumers
+            // test the bits directly. No separate (hkeys & SCANPM_WANTKEYS) != 0 /
+            // (hvals & SCANPM_WANTVALS) != 0 mirror state to maintain.
         }
         // Unparenthesised flags — single `for (;;)` (subst.c:2550-2632).
         // Order matters for `${#~x}` vs `${~#x}`, `${=^x}`, etc.
@@ -3830,7 +3834,7 @@ pub fn paramsubst(
         // assoc_arrays, route through the function_names / alias_names
         // sets. Direct port of zsh's per-magic-table getfn dispatch.
         let mut value: String; // c:2247
-        if flag_keys && flag_values {
+        if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2247 (kv)
             value = assoc_get(&var_name) // c:2247
                 .map(|m| {
@@ -3844,7 +3848,7 @@ pub fn paramsubst(
                     out.join(" ") // c:2247
                 }) // c:2247
                 .unwrap_or_default(); // c:2247
-        } else if flag_keys {
+        } else if (hkeys & SCANPM_WANTKEYS) != 0 {
             // c:2247
             value = assoc_get(&var_name) // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
@@ -3894,7 +3898,7 @@ pub fn paramsubst(
                     } // c:2247
                 }) // c:2247
                 .unwrap_or_default();
-        } else if flag_values {
+        } else if (hvals & SCANPM_WANTVALS) != 0 {
             // c:2256
             value = assoc_get(&var_name) // c:2256
                 .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
@@ -5797,7 +5801,7 @@ pub fn paramsubst(
             } else if let Some(arr) = arrays_get(&var_name) {
                 arr.clone() // c:3960 (real array splat)
             } else if let Some(map) = assoc_get(&var_name) {
-                if flag_keys && flag_values {
+                if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
                     // c:3955 (kv splat — interleaved)
                     let mut out: Vec<String> = Vec::with_capacity(map.len() * 2); // c:3955
                     for (k, v) in map {
@@ -5806,10 +5810,10 @@ pub fn paramsubst(
                         out.push(v.clone()); // c:3955
                     } // c:3955
                     out // c:3955
-                } else if flag_keys {
+                } else if (hkeys & SCANPM_WANTKEYS) != 0 {
                     // c:3955 (k-flag splat)
                     map.keys().cloned().collect()
-                } else if flag_values {
+                } else if (hvals & SCANPM_WANTVALS) != 0 {
                     // c:3957 (v-flag splat)
                     map.values().cloned().collect()
                 } else {
