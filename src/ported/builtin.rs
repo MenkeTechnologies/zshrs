@@ -40,7 +40,7 @@ use crate::ported::exec::{getfpfunc, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_ST
 use crate::ported::hashnameddir::{emptynameddirtable, nameddirtab, printnameddirnode};
 use crate::ported::hashtable::{
     aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
-    reswdtab_lock, shfunctab_lock, sufaliastab_lock,
+    printaliasnode, reswdtab_lock, shfunctab_lock, sufaliastab_lock,
 };
 use crate::ported::hist::{readhistfile, savehistfile};
 use crate::ported::jobs::{bin_fg, removetrapnode};
@@ -5675,40 +5675,12 @@ pub fn bin_alias(
         printflags |= PRINT_NAMEONLY; // c:4490
     }
 
-    // Helper closure that prints one Alias respecting printflags.
-    // Mirrors `printaliasnode(HashNode, int printflags)` from
-    // Src/hashtable.c:1256-1336 (the simple-print subset that
-    // bin_alias actually emits — PRINT_LIST, PRINT_NAMEONLY, and
-    // the default `name=value`).
-    let print_alias = |a: &alias, pflags: i32| {
-        // c:1262-1265 — PRINT_NAMEONLY emits the name and a newline.
-        if (pflags & PRINT_NAMEONLY) != 0 {
-            println!("{}", a.node.nam);
-            return;
-        }
-        // c:1311-1330 — PRINT_LIST prefix: `alias ` then `-s `/`-g `
-        // for ALIAS_SUFFIX/ALIAS_GLOBAL, then `-- ` for names that
-        // start with `-` or `+`. The previous Rust port emitted bare
-        // `alias name=value` without any of these flags, so `alias
-        // -L` for a global alias was indistinguishable from a
-        // regular one and the output wasn't re-executable.
-        if (pflags & PRINT_LIST) != 0 {
-            print!("alias ");
-            if (a.node.flags & ALIAS_SUFFIX as i32) != 0 {
-                // c:1322
-                print!("-s ");
-            } else if (a.node.flags & ALIAS_GLOBAL as i32) != 0 {
-                // c:1324
-                print!("-g ");
-            }
-            if a.node.nam.starts_with('-') || a.node.nam.starts_with('+') {
-                // c:1330
-                print!("-- ");
-            }
-        }
-        // c:1334-1336 — `quotedzputs(nam); putchar('='); quotedzputs(text); putchar('\n');`
-        println!("{}={}", a.node.nam, a.text);
-    };
+    // C bin_alias dispatches printing via `ht->printnode` (set to
+    // `printaliasnode` at hashtable.c:1208) — `scanhashtable`,
+    // `scanmatchtable`, and the single-name branch all call
+    // `ht->printnode(&a->node, printflags)`. The Rust port routes
+    // through the canonical `printaliasnode` (hashtable.rs:1477) for
+    // the same dispatch. No local closure.
 
     // c:4495-4500 — no args: list all (filtered by flags).
     if argv.is_empty() {
@@ -5725,7 +5697,7 @@ pub fn bin_alias(
                 if (a.node.flags & flags1 as i32) == flags1 as i32
                     && (a.node.flags & flags2 as i32) == 0
                 {
-                    print_alias(a, printflags);
+                    print!("{}", printaliasnode(a, printflags as u32));
                 }
             }
         }
@@ -5758,7 +5730,7 @@ pub fn bin_alias(
                             && (a.node.flags & flags2 as i32) == 0
                             && pattry(&prog, &a.node.nam)
                         {
-                            print_alias(a, printflags);
+                            print!("{}", printaliasnode(a, printflags as u32));
                         }
                     }
                 }
@@ -5820,7 +5792,7 @@ pub fn bin_alias(
                     || (OPT_ISSET(ops, b'g') && (fl & ALIAS_GLOBAL as u32) != 0);
                 if show {
                     let a = createaliasnode(&nm, &txt, fl);
-                    print_alias(&a, printflags);
+                    print!("{}", printaliasnode(&a, printflags as u32));
                 }
             }
             None => {

@@ -30,7 +30,7 @@ use crate::compat::zgetcwd;
 use crate::hist::hist_ring;
 use crate::jobs::getsigidx;
 use crate::signals::{settrap, unsettrap};
-use crate::utils::{xsymlink, ztrcmp};
+use crate::utils::{quotedzputs, xsymlink, ztrcmp};
 use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, HIST_DUP, HIST_TMPSTORE, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED, ZSIG_FUNC};
 
 
@@ -1479,56 +1479,78 @@ pub fn printaliasnode(hn: &crate::ported::zsh_h::alias, printflags: u32) -> Stri
     let af = hn.node.flags;
     let is_suffix = (af & ALIAS_SUFFIX as i32) != 0;
     let is_global = (af & ALIAS_GLOBAL as i32) != 0;
+    // c:1260-1263 — PRINT_NAMEONLY: `zputs(nam); putchar('\n');`
     if printflags & print_flags::NAMEONLY != 0 {
-        return nam.clone();
+        return format!("{}\n", nam);
     }
+    // c:1266-1273 — PRINT_WHENCE_WORD: `printf("%s: <kind> alias\n", nam);`
     if printflags & print_flags::WHENCE_WORD != 0 {
         let kind = if is_suffix {
-            "suffix alias"
+            "suffix alias" // c:1268
         } else if is_global {
-            "global alias"
+            "global alias" // c:1270
         } else {
-            "alias"
+            "alias" // c:1272
         };
-        return format!("{}: {}", nam, kind);
+        return format!("{}: {}\n", nam, kind);
     }
+    // c:1276-1279 — PRINT_WHENCE_SIMPLE: `zputs(text); putchar('\n');`
     if printflags & print_flags::WHENCE_SIMPLE != 0 {
-        return hn.text.clone();
+        return format!("{}\n", hn.text);
     }
+    // c:1282-1293 — PRINT_WHENCE_CSH: nicezputs(nam) ":" [suffix|globally]
+    // "aliased to " nicezputs(text) '\n'.
     if printflags & print_flags::WHENCE_CSH != 0 {
         let qual = if is_suffix {
-            "suffix "
+            "suffix " // c:1286
         } else if is_global {
-            "globally "
+            "globally " // c:1288
         } else {
             ""
         };
-        return format!("{}: {}aliased to {}", nam, qual, hn.text);
+        return format!("{}: {}aliased to {}\n", nam, qual, hn.text);
     }
+    // c:1295-1307 — PRINT_WHENCE_VERBOSE: nicezputs(nam) " is a"
+    // [" suffix"|" global"|"n"] " alias for " nicezputs(text) '\n'.
     if printflags & print_flags::WHENCE_VERBOSE != 0 {
         let qual = if is_suffix {
-            "hn suffix"
+            " suffix" // c:1299
         } else if is_global {
-            "hn global"
+            " global" // c:1301
         } else {
-            "an"
+            "n" // c:1303
         };
-        return format!("{} is {} alias for {}", nam, qual, hn.text);
+        return format!("{} is a{} alias for {}\n", nam, qual, hn.text);
     }
     if printflags & print_flags::LIST != 0 {
+        // c:1320 — `printf("alias ");`
         let mut out = String::from("alias ");
+        // c:1321-1324 — `-s `/`-g ` prefix.
         if is_suffix {
-            out.push_str("-s ");
+            out.push_str("-s "); // c:1322
         } else if is_global {
-            out.push_str("-g ");
+            out.push_str("-g "); // c:1324
         }
+        // c:1328-1329 — `-- ` for names starting with `-`/`+`.
         if nam.starts_with('-') || nam.starts_with('+') {
-            out.push_str("-- ");
+            out.push_str("-- "); // c:1329
         }
-        out.push_str(&format!("{}={}", nam, hn.text));
+        // c:1332-1336 — `quotedzputs(nam); putchar('='); quotedzputs(text); putchar('\n');`
+        out.push_str(&quotedzputs(nam)); // c:1332
+        out.push('='); // c:1333
+        out.push_str(&quotedzputs(&hn.text)); // c:1334
+        out.push('\n'); // c:1336
         return out;
     }
-    format!("{}={}", nam, hn.text)
+    // Default branch (no print-flag bits set) — same body as LIST minus
+    // the `alias [-sg] [--]` prefix. C `printaliasnode` at hashtable.c:
+    // 1332-1336 emits `quotedzputs(nam) '=' quotedzputs(text) '\n'`.
+    let mut out = String::new();
+    out.push_str(&quotedzputs(nam)); // c:1332
+    out.push('='); // c:1333
+    out.push_str(&quotedzputs(&hn.text)); // c:1334
+    out.push('\n'); // c:1336
+    out
 }
 
 /// Port of `createhisttable()` from `Src/hashtable.c:1345`.
@@ -2143,16 +2165,16 @@ pub fn format_alias(alias: &crate::ported::zsh_h::alias, print_flags: u32) -> St
 
         result.push_str(&format!(
             "{}={}\n",
-            crate::ported::utils::quotedzputs(name),
-            crate::ported::utils::quotedzputs(text)
+            quotedzputs(name),
+            quotedzputs(text)
         ));
         return result;
     }
 
     format!(
         "{}={}\n",
-        crate::ported::utils::quotedzputs(name),
-        crate::ported::utils::quotedzputs(text)
+        quotedzputs(name),
+        quotedzputs(text)
     )
 }
 
