@@ -16,6 +16,12 @@
 //! (uses libc's `regex_t` / `regmatch_t` directly). Rust port
 //! matches: zero types.
 
+use crate::ported::zsh_h::{features, module};
+use std::sync::{Mutex, OnceLock};
+use crate::options::{opt_state_get, opt_state_set, optlookup};
+use crate::ported::params::{setiparam, setsparam};
+use crate::ported::utils::zwarnnam;
+use crate::zsh_h::isset;
 /// `ZREGEX_EXTENDED` from `Src/Modules/regex.c:36`.
 /// `#define ZREGEX_EXTENDED 0`. The id passed to
 /// `zcond_regex_match` for the only currently-supported flavour.
@@ -32,7 +38,7 @@ pub const ZREGEX_EXTENDED: i32 = 0; // c:36
 /// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
 pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {
     // c:40
-    crate::ported::utils::zwarnnam(prefix, err_msg); // c:40
+    zwarnnam(prefix, err_msg); // c:40
 }
 
 /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
@@ -67,7 +73,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // c:74-76 — flag computation. POSIX REG_EXTENDED is implicit
     // in Rust's regex crate (RE2 syntax is extended-by-default);
     // CASEMATCH off → REG_ICASE → wrap with `(?i)`.
-    let casematch = crate::ported::zsh_h::isset(crate::ported::options::optlookup("casematch"));
+    let casematch = isset(optlookup("casematch"));
     let pat_for_compile = if !casematch {
         // c:75
         format!("(?i){}", rhre) // c:76 REG_ICASE
@@ -93,8 +99,8 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
 
     return_value = 1; // c:96
     let nsub = re.captures_len() - 1; // re_nsub: # of paren groups
-    let bashre = crate::ported::zsh_h::isset(crate::ported::options::optlookup("bashrematch"));
-    let ksharr = crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"));
+    let bashre = isset(optlookup("bashrematch"));
+    let ksharr = isset(optlookup("ksharrays"));
 
     // c:97-103 — start/nelem branch on BASHREMATCH.
     let (start, nelem) = if bashre {
@@ -118,14 +124,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     if bashre {
         // c:115
         // c:116 — `assignaparam("BASH_REMATCH", arr, 0);`
-        crate::ported::params::setsparam("BASH_REMATCH", &arr.join(":"));
+        setsparam("BASH_REMATCH", &arr.join(":"));
         return return_value;
     }
 
     // c:119-121 — assignsparam("MATCH", full-match-text).
     let m0 = captures.get(0).expect("regex matched but no group 0");
     let full = m0.as_str().to_string(); // c:120 metafy
-    crate::ported::params::setsparam("MATCH", &full); // c:121 assignsparam
+    setsparam("MATCH", &full); // c:121 assignsparam
 
     // c:124-135 — char-offset MBEGIN. C walks the pre-match bytes
     // counting MB_CHARLEN-stepped characters; Rust collapses to
@@ -136,13 +142,13 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     let mbegin_chars = lhstr[..so].chars().count() as i64; // c:128-133
     let kshoff: i64 = if ksharr { 0 } else { 1 }; // c:134 !isset(KSHARRAYS)
     let mbegin = mbegin_chars + kshoff; // c:134
-    crate::ported::params::setiparam("MBEGIN", mbegin); // c:134 assigniparam
+    setiparam("MBEGIN", mbegin); // c:134 assigniparam
 
     // c:138-145 — MEND.
     let match_chars = lhstr[so..eo].chars().count() as i64;
     let mend_total = mbegin_chars + match_chars;
     let mend = mend_total + kshoff - 1; // c:145
-    crate::ported::params::setiparam("MEND", mend); // c:145 assigniparam
+    setiparam("MEND", mend); // c:145 assigniparam
 
     // c:147-180 — populate $match[], $mbegin[], $mend[] subgroup
     // arrays.
@@ -170,9 +176,9 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
             }
         }
         // c:182-184 — `setaparam("match"/"mbegin"/"mend", ...);`
-        crate::ported::params::setsparam("match", &arr.join(":"));
-        crate::ported::params::setsparam("mbegin", &mbegin_arr.join(":"));
-        crate::ported::params::setsparam("mend", &mend_arr.join(":"));
+        setsparam("match", &arr.join(":"));
+        setsparam("mbegin", &mbegin_arr.join(":"));
+        setsparam("mend", &mend_arr.join(":"));
     }
 
     return_value // c:200
@@ -182,7 +188,6 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
 // static struct features module_features                            c:217 (regex.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 // `cotab` — port of `static struct conddef cotab[]` (regex.c).
 
@@ -230,9 +235,9 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-use std::sync::{Mutex, OnceLock};
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -243,7 +248,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["c:regex-match".to_string()]
 }
 
@@ -253,7 +258,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -266,7 +271,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -296,9 +301,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 0,
             cd_list: None,
@@ -314,7 +319,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::options::{opt_state_get, opt_state_set};
+    use crate::regex_module::{zcond_regex_match, ZREGEX_EXTENDED};
 
     /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
     #[test]
@@ -374,10 +380,10 @@ mod tests {
         // Match the C startup contract: set casematch=true at the top,
         // restore at the end. Same idiom params.rs tests use for
         // `exec` (8212/8547/9392).
-        let saved = crate::ported::options::opt_state_get("casematch").unwrap_or(false);
-        crate::ported::options::opt_state_set("casematch", true);
+        let saved = opt_state_get("casematch").unwrap_or(false);
+        opt_state_set("casematch", true);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
-        crate::ported::options::opt_state_set("casematch", saved);
+        opt_state_set("casematch", saved);
         assert_eq!(
             r, 0,
             "casematch=true → case-sensitive → HELLO vs hello must NOT match"
@@ -392,10 +398,10 @@ mod tests {
     #[test]
     fn casematch_unset_is_case_insensitive() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::options::opt_state_get("casematch").unwrap_or(false);
-        crate::ported::options::opt_state_set("casematch", false);
+        let saved = opt_state_get("casematch").unwrap_or(false);
+        opt_state_set("casematch", false);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
-        crate::ported::options::opt_state_set("casematch", saved);
+        opt_state_set("casematch", saved);
         assert_eq!(
             r, 1,
             "casematch=false → case-insensitive → HELLO matches hello"

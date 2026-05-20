@@ -1480,7 +1480,6 @@ pub fn set_comp_sep() -> i32 {
 // Brace counters live in zle_tricky.c:114 — re-exported there. Local
 // re-exports here so call sites stay short:
 #[doc(hidden)]
-pub use crate::ported::zle::zle_tricky::{NBRBEG as _NBRBEG, NBREND as _NBREND};
 
 // =====================================================================
 // set_list_array — `Src/Zle/compcore.c:1947`.

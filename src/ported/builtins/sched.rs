@@ -854,11 +854,10 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
 
     use crate::ported::zsh_h::{options, MAX_OPS};
 
-    static TEST_SERIAL: StdMutex<()> = StdMutex::new(());
+    static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn empty_ops() -> options {
         options {
