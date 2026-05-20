@@ -67,7 +67,14 @@ use crate::ported::vm_helper::{
     self,  BUILTIN_NAMES,
     format_int_in_base,
 };
-use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
+use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam, errflag};
+// Names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever'). Names already imported elsewhere
+// (BINF_PREFIX, EMULATE_CSH, ERRFLAG_ERROR, ZEXIT_*, PM_TYPE) are
+// not re-imported.
+use crate::ported::zsh_h::{MONITOR, ZEXIT_SIGNAL, ZEXIT_DEFERRED};
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Mutex;
 use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
@@ -1414,7 +1421,6 @@ pub fn cd_able_vars(s: &str) -> Option<String> {                             // 
 /// then attempt chdir. Falls back to `dest` alone when the full path
 /// fails but `pfix` was present (cwd/parent may have been renamed).
 pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {   // c:1116
-    use std::sync::atomic::Ordering;
     let pwd = getsparam("PWD").unwrap_or_default();
 
     // c:1122-1158 — build buf from pfix/dest/pwd combinations.
@@ -1474,7 +1480,6 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {   // 
 /// side effects (chpwd hooks, dirstack size cap).
 /// WARNING: param names don't match C — Rust=(_func, _dir, _quiet) vs C=(func, dir, quiet)
 pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {                       // c:1187
-    use crate::ported::zsh_h::isset;
     // c:1193-1194 — if (func == BIN_PUSHD) rolllist(dirstack, dir);
     {
         let mut ds = crate::ported::modules::parameter::DIRSTACK.lock().unwrap();
@@ -5540,7 +5545,6 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
 ///   running (when CHECKRUNNINGJOBS is set) or STAT_STOPPED, emit
 ///   "you have running/stopped jobs" + set `stopmsg = 1`.
 pub fn checkjobs() {                                                         // c:5899
-    use std::sync::Mutex;
     let checkrunning = crate::ported::zsh_h::isset(optlookup("checkrunningjobs"));
     // c:5901 — read the canonical jobs.rs THISJOB/MAXJOB globals.
     // The previous builtin.rs duplicate AtomicI32s for both never
@@ -5594,7 +5598,6 @@ pub fn checkjobs() {                                                         // 
 /// C body (single statement):
 ///     `exit((shell_exiting || exit_pending) ? exit_val : lastval);`
 pub fn realexit() -> ! {                                                     // c:5953
-    use std::sync::atomic::Ordering::Relaxed;
     std::process::exit(if SHELL_EXITING.load(Relaxed) != 0 || EXIT_PENDING.load(Relaxed) != 0 { EXIT_VAL.load(Relaxed) } else { LASTVAL.load(Relaxed) });
 }
 
@@ -5602,7 +5605,6 @@ pub fn realexit() -> ! {                                                     // 
 /// C body (single statement):
 ///     `_exit((shell_exiting || exit_pending) ? exit_val : lastval);`
 pub fn _realexit() -> ! {                                                    // c:5962
-    use std::sync::atomic::Ordering::Relaxed;
     unsafe { libc::_exit(if SHELL_EXITING.load(Relaxed) != 0 || EXIT_PENDING.load(Relaxed) != 0 { EXIT_VAL.load(Relaxed) } else { LASTVAL.load(Relaxed) }) }
 }
 
@@ -5611,7 +5613,6 @@ pub fn _realexit() -> ! {                                                    // 
 ///   value, fire EXIT trap unless already exiting, then realexit.
 #[allow(unused_variables)]
 pub fn zexit(val: i32, from_where: i32) {                                   // c:5977
-    use crate::ported::zsh_h::{MONITOR, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED};
     // c:5989 — `exit_val = val;`
     EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5989
     // c:5990 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
@@ -7366,7 +7367,6 @@ mod tests {
     #[test]
     fn bin_emulate_dispatches_on_first_char_per_c537() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_KSH, EMULATE_SH};
         let empty = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
@@ -7723,8 +7723,6 @@ mod tests {
     fn bin_let_clears_errflag_on_math_error() {
         let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved = errflag.load(Ordering::Relaxed);
         errflag.store(0, Ordering::Relaxed);
 
@@ -7773,8 +7771,6 @@ mod tests {
     fn bin_let_walks_all_argv_last_wins() {
         let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         errflag.store(0, Ordering::Relaxed);
 
         let ops = crate::ported::zsh_h::options {
