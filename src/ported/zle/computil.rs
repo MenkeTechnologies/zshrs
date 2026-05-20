@@ -16,10 +16,24 @@
 //! - bin_comptags      → compsys::state::comptags()
 //! - bin_comptry       → compsys::state::comptry()
 
-use crate::ported::utils::zwarnnam;
-use crate::ported::zle::complete::COMPQSTACK;
-use crate::ported::zle::complete::INCOMPFUNC;
-use crate::ported::zsh_h::OPT_ISSET;
+use std::os::unix::fs::MetadataExt;
+use std::sync::atomic::Ordering;
+
+use crate::ported::glob::{remnulargs, tokenize};
+use crate::ported::lex::untokenize;
+use crate::ported::params::{setaparam, setsparam};
+use crate::ported::pattern::{haswilds, patcompile, pattry};
+use crate::ported::utils::{quotestring, strpfx, zwarnnam, ztrlen};
+use crate::ported::zle::comp_h::{Cmatcher, CMF_LEFT, CMF_RIGHT};
+use crate::ported::zle::compcore::{comppatmatch, rembslash};
+use crate::ported::zle::compmatch::pattern_match;
+use crate::ported::zle::complete::{
+    ignore_prefix, ignore_suffix, parse_cmatcher, COMPCURRENT, COMPPREFIX, COMPQSTACK, COMPSUFFIX,
+    COMPWORDS, INCOMPFUNC,
+};
+use crate::ported::zle::compresult::ztat;
+use crate::ported::zsh_h::{OPT_ISSET, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH};
+use crate::ported::ztype_h::{iblank, idigit, inblank};
 
 // =====================================================================
 // CRT_* — `_describe` row-type discriminator from `computil.c:79-83`.
@@ -1160,7 +1174,6 @@ pub fn cd_arrdup(a: &[String]) -> Vec<String> {
 /// Returns 1 when no runs remain, 0 otherwise.
 pub fn cd_get(params: &[String]) -> i32 {
     // c:614
-    use crate::ported::params::{setaparam, setsparam};
 
     // c:618 — pop the head run.
     let run_opt = {
@@ -2076,7 +2089,6 @@ pub fn set_cadef_opts(def: &mut cadef) {
 /// `_arguments` spec entry.
 pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
     // c:1196
-    use crate::ported::ztype_h::{iblank, idigit, inblank};
 
     if args.is_empty() {
         return None; // c:1262 `!*args`
@@ -3271,8 +3283,6 @@ pub fn ca_get_arg(d: &cadef, mut n: i32) -> Option<Box<caarg>> {
 ///   - excludeall path (just a set/group name) → kills the whole set
 pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
     // c:1832
-    use crate::ported::zle::complete::COMPCURRENT;
-    use crate::ported::ztype_h::idigit;
 
     if (xor.is_empty() && opts == 0)                                         // c:1834
         || cur > COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed)
@@ -3610,11 +3620,6 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {
 ///   represented as a `Vec<Box<caopt>>` queue.
 pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 {
     // c:2004
-    use crate::ported::glob::remnulargs;
-    use crate::ported::lex::untokenize;
-    use crate::ported::pattern::{patcompile, pattry};
-    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
-    use std::sync::atomic::Ordering;
 
     let compcur = COMPCURRENT.load(Ordering::Relaxed);
 
@@ -5145,7 +5150,6 @@ mod cao_caa_tests {
 /// each value spec into a cvval chain.
 pub fn parse_cvdef(nam: &str, args: &[String]) -> Option<Box<cvdef>> {
     // c:2986
-    use crate::ported::ztype_h::inblank;
 
     let orig_args = args;
     let mut idx = 0usize;
@@ -5679,10 +5683,6 @@ pub fn cv_next(
 /// accumulating recognized values into `cv_laststate.vals`.
 pub fn cv_parse_word(d: &mut cvdef) {
     // c:3336
-    use crate::ported::zle::complete::{
-        ignore_prefix, ignore_suffix, COMPCURRENT, COMPPREFIX, COMPSUFFIX, COMPWORDS,
-    };
-    use std::sync::atomic::Ordering;
 
     // c:3343 — free old vals.
     if cv_alloced.load(Ordering::Relaxed) != 0 {
@@ -7022,7 +7022,6 @@ pub fn cfp_matcher_range(
     //   plain bytes: literal char
     // Returns Some((idx, mtp)) on hit.
     fn patmatchrange_local(s: Option<&[u8]>, c: u32) -> Option<(u32, i32)> {
-        use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
         let bytes = s?;
         let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
         let pp_lower_marker = (0x80u8).wrapping_add(PP_LOWER as u8);
@@ -7215,10 +7214,6 @@ pub fn cfp_matcher_range(
 ///     or unparseable
 pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
     // c:4525
-    use crate::ported::utils::ztrlen;
-    use crate::ported::zle::comp_h::{Cmatcher, CMF_LEFT, CMF_RIGHT};
-    use crate::ported::zle::complete::parse_cmatcher;
-    use crate::ported::zle::compmatch::pattern_match;
 
     // c:4527 — parse_cmatcher returns None on error (the C pcm_err path).
     let m_chain = parse_cmatcher("", matcher);
@@ -7339,12 +7334,6 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
 /// Modifies `pats` in place; returns the (possibly modified) list.
 pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {
     // c:4621
-    use crate::ported::glob::{remnulargs, tokenize};
-    use crate::ported::pattern::haswilds;
-    use crate::ported::zle::compcore::comppatmatch;
-    use crate::ported::zle::compcore::rembslash;
-    use crate::ported::zle::complete::{COMPPREFIX, COMPSUFFIX};
-    use crate::ported::ztype_h::idigit;
 
     let compprefix = COMPPREFIX
         .get()
@@ -7655,10 +7644,6 @@ pub fn cf_pats(
 /// Quoted with QT_BACKSLASH for safe re-insertion into the line.
 pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &str) {
     // c:4860
-    use crate::ported::utils::quotestring;
-    use crate::ported::zle::compresult::ztat;
-    use crate::ported::zsh_h::QT_BACKSLASH;
-    use std::os::unix::fs::MetadataExt;
 
     let pl = path.len();
     let tpar = style.contains("parent"); // c:4866
@@ -7739,7 +7724,6 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
 /// When `pre` itself contains a `/`, names matching that head are
 /// returned as the consensus list.
 pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Option<Vec<String>> {
-    use crate::ported::utils::strpfx;
 
     if let Some(slash) = pre.find('/') {
         // c:4903
@@ -8927,7 +8911,6 @@ mod tests {
     #[test]
     fn ca_inactive_opts_flag_deactivates_options() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let saved_compcur = crate::ported::zle::complete::COMPCURRENT.load(Ordering::Relaxed);
@@ -8965,7 +8948,6 @@ mod tests {
     #[test]
     fn bin_comptags_init_and_context() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::utils::inittyptab();
         let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
@@ -9034,7 +9016,6 @@ mod tests {
     #[test]
     fn setup_clears_all_caches() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Pre-fill.
         if let Ok(mut cache) = cadef_cache.lock() {
