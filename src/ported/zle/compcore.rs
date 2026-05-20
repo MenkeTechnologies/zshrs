@@ -1828,6 +1828,8 @@ pub fn add_match_data(                                                       // 
     flags: i32,
     exact: i32,
 ) -> Cmatch {
+    // c:2663 — DPUTS(!line, "BUG: add_match_data() without cline")
+    crate::DPUTS!(line.is_none(), "BUG: add_match_data() without cline");    // c:2663
     // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
     let _ai_ref = if alt != 0 { &fainfo } else { &ainfo };                   // c:2657
     // c:2666-2671 — cline_matched(line); pline; sline.
