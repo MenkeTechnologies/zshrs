@@ -18,7 +18,13 @@
 //! - Display: showmsg, printbind, handlefeep
 //! - Position save/restore: zle_save_positions, zle_restore_positions
 
+use std::sync::atomic::Ordering;
+
+use super::zle_h::{CH_NEXT, CH_PREV};
 use super::zle_main::{ZleChar, ZleString};
+use crate::ported::builtin::RETFLAG;
+use crate::ported::utils::errflag;
+use crate::ported::zsh_h::ERRFLAG_INT;
 
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
@@ -655,9 +661,6 @@ pub fn findline() -> (usize, usize) {
 /// Returns 1 for affirmative ('y'/'\t'), 0 for negative ('n'/ctrl/EOF).
 pub fn getzlequery() -> i32 {
     // c:1197
-    use crate::ported::utils::errflag;
-    use crate::ported::zsh_h::ERRFLAG_INT;
-    use std::sync::atomic::Ordering;
     // c:1201-1210 — FIONREAD typeahead check → negative response if buffered.
     //               Without a live tty fd here, skip the typeahead probe.
     // c:1213 — c = getfullchar(0);
@@ -749,7 +752,6 @@ pub fn printbind(seq: &[u8]) -> String {
 /// already plain ASCII.
 pub fn showmsg(msg: &str) {
     // c:1303
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 2 };
     let _ = crate::ported::utils::write_loop(out, msg.as_bytes());
@@ -920,7 +922,6 @@ pub fn setlastline() {
 /// 1 when nothing left to undo.
 pub fn undo(args: &[String]) -> i32 {
     // c:1601
-    use crate::ported::zle::zle_h::CH_PREV;
     let last_change: i64 = if !args.is_empty() {
         // c:1605
         args[0].parse().unwrap_or(-1)
@@ -974,7 +975,6 @@ pub fn undo(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, ch) vs C=(ch)
 pub fn unapplychange(ch: i32) -> i32 {
     // c:1634
-    use crate::ported::zle::zle_h::CH_PREV;
     let idx = ch as usize;
     if idx >= UNDO_STACK.lock().unwrap().len() {
         return 0;
@@ -1015,7 +1015,6 @@ pub fn unapplychange(ch: i32) -> i32 {
 /// on success, 1 when nothing to redo.
 pub fn redo() -> i32 {
     // c:1661
-    use crate::ported::zle::zle_h::CH_NEXT;
     loop {
         if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
             return 1;
@@ -1046,7 +1045,6 @@ pub fn redo() -> i32 {
 /// Returns 1 if there are more changes to apply (CH_NEXT), else 0.
 pub fn applychange(ch: i32) -> i32 {
     // c:1678
-    use crate::ported::zle::zle_h::CH_NEXT;
     let idx = ch as usize;
     if idx >= UNDO_STACK.lock().unwrap().len() {
         return 0;
@@ -1148,7 +1146,6 @@ pub fn splitundo() -> i32 {
 /// insert-mode group). Resets `vistartchange = u64::MAX` (C's -1).
 pub fn mergeundo() {
     // c:1733
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
     if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
         return;
@@ -1173,10 +1170,6 @@ pub fn mergeundo() {
 /// `^C` during the hook still cancels the outer command).
 pub fn zlecallhook(name: &str, arg: Option<&str>) {
     // c:1755
-    use crate::ported::builtin::RETFLAG;
-    use crate::ported::utils::errflag;
-    use crate::ported::zsh_h::ERRFLAG_INT;
-    use std::sync::atomic::Ordering;
 
     // c:1757 — `Thingy thingy = rthingy_nocreate(name); if (!thingy) return;`
     if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {
@@ -1970,7 +1963,6 @@ mod findbol_findeol_tests {
     fn setline_with_zsl_toend_moves_cursor_to_end() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        use crate::ported::zle::zle_h::ZSL_TOEND;
         zle_with("xxxxxxxxxx", 5); // pre-set cursor at 5
         setline("hi", ZSL_TOEND); // ZSL_TOEND=2
         let line: String = ZLELINE.lock().unwrap().iter().collect();
@@ -2031,7 +2023,6 @@ mod findbol_findeol_tests {
     fn setline_with_zsl_copy_alone_does_not_change_cursor_logic() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        use crate::ported::zle::zle_h::ZSL_COPY;
         zle_with("abcdefghij", 5);
         setline("xyz", ZSL_COPY); // ZSL_COPY=1, no TOEND
                                   // Cursor was 5, new line is 3 chars → clamp to 3.
@@ -2048,7 +2039,6 @@ mod findbol_findeol_tests {
     #[test]
     fn zsl_constants_match_c_source_values() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
         assert_eq!(ZSL_COPY, 1, "Src/Zle/zle.h:406 — ZSL_COPY = 1");
         assert_eq!(ZSL_TOEND, 2, "Src/Zle/zle.h:407 — ZSL_TOEND = 2");
         // Bit-disjoint so setline can OR them.

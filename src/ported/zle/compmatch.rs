@@ -24,6 +24,7 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
+use crate::ported::zle::comp_h::{Cmlist, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_RIGHT};
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 #[allow(unused_imports)]
@@ -193,7 +194,6 @@ pub fn cmatchers_same(
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
 pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {
     // c:101
-    use crate::ported::zle::comp_h::{Cmlist, CMF_RIGHT};
     let cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
     let old = cell.lock().ok().and_then(|mut g| g.take()); // c:104 Cmlist old = bmatchers
                                                            // c:105-113 — qualify each m; prepend matches in C order (reversed
@@ -422,7 +422,6 @@ pub fn cp_cline(
 /// Total visual length of one Cline plus its prefix/suffix sub-lists.
 pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {
     // c:219
-    use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
     // c:221 — `len = (CLF_LINE ? llen : wlen)`.
     let mut len: i32 = if (l.flags & CLF_LINE) != 0 {
         l.llen
@@ -518,7 +517,6 @@ use std::sync::OnceLock;
 /// suffix from `p`.
 pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {
     // c:254
-    use crate::ported::zle::comp_h::CLF_MATCHED;
     let mut cur = p.as_deref_mut();
     while let Some(node) = cur {
         // c:256 while (p)
@@ -2632,7 +2630,6 @@ pub struct cmdata {
 /// exhausted, 0 otherwise.
 pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
     // c:2152
-    use crate::ported::zle::comp_h::CLF_LINE;
 
     if md.len != 0 {
         return 0;
@@ -2684,7 +2681,6 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
 /// on a different match path.
 pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
     // c:2188
-    use crate::ported::zle::comp_h::CLF_LINE;
     let mut r = md.pcl.as_deref().cloned()?; // c:2189 r = md->pcl
 
     if md.line != 0 {
@@ -4045,7 +4041,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
-        use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
         let lp = Cpattern {
             tp: CPAT_EQUIV,
             str: Some(b"ab".to_vec()),
@@ -4405,8 +4400,6 @@ mod tests {
     #[test]
     fn pattern_match_equivalence_upper_to_lower() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::CPAT_EQUIV;
-        use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // lp.str = [0x80 + PP_LOWER] — one PP_LOWER class marker.
         let lp = Cpattern {
@@ -4442,7 +4435,6 @@ mod tests {
     #[test]
     fn bld_line_cpat_any_emits_word_char() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::CPAT_ANY;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = Cmatcher {
             line: Some(Box::new(Cpattern {
@@ -4543,7 +4535,6 @@ mod tests {
     #[test]
     fn update_bmatchers_with_empty_mstack_trims_all_entries() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::{Cmatcher, Cmlist};
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Seed bmatchers with one entry.
         let matcher = Cmatcher {
@@ -4588,7 +4579,6 @@ mod tests {
     #[test]
     fn cmatchers_same_pointer_identity_short_circuits() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::Cmatcher;
         let m = Cmatcher {
             refc: 1,
             next: None,
@@ -4612,7 +4602,6 @@ mod tests {
     #[test]
     fn cmatchers_same_different_flags_compare_unequal() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::Cmatcher;
         let a = Cmatcher {
             refc: 1,
             next: None,
@@ -4648,7 +4637,6 @@ mod tests {
     #[test]
     fn cmatchers_same_different_lengths_compare_unequal() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zle::comp_h::Cmatcher;
         let a = Cmatcher {
             refc: 1,
             next: None,

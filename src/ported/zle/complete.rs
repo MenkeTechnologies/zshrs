@@ -33,8 +33,14 @@ use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zle::comp_h::Cmatcher;
 use crate::ported::zle::comp_h::CAF_MATSORT;
-use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
-use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_SCALAR, PM_TYPE};
+use crate::ported::zle::comp_h::{
+    Cpattern, CMF_HIDE, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_CCLASS, CPAT_CHAR,
+    CPAT_EQUIV, CPAT_NCLASS,
+};
+use crate::ported::zle::{compcore, compresult};
+use crate::ported::zsh_h::{
+    PM_ARRAY, PM_HASHED, PM_LOCAL, PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE,
+};
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicI32, AtomicI64};
 use std::sync::Mutex;
@@ -305,7 +311,6 @@ pub static COMPWORDS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceL
 /// which are real-bodied ports.
 /// WARNING: param names don't match C — Rust=() vs C=(name, s)
 pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<crate::ported::zle::comp_h::Cmatcher>> {
-    use crate::ported::zle::comp_h::{Cmatcher, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT};
 
     if s.is_empty() {
         // c:249
@@ -1481,7 +1486,6 @@ pub fn bin_compset(
 #[allow(unused_variables)]
 pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut crate::ported::zsh_h::param>) {
     // c:1297
-    use crate::ported::zsh_h::{PM_LOCAL, PM_REMOVABLE, PM_SPECIAL};
     for entry in cp {
         // c:1299
         let flags = entry.r#type | PM_SPECIAL as i32 | PM_REMOVABLE as i32 | PM_LOCAL as i32;
@@ -1513,7 +1517,6 @@ pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut crate::ported::zsh_h::p
 /// compkparams) for the per-key entries inside the hash.
 pub fn makecompparams() {
     // c:1333
-    use crate::ported::zsh_h::{PM_HASHED, PM_LOCAL, PM_REMOVABLE, PM_SINGLE, PM_SPECIAL};
     let mut comprpms: Vec<*mut crate::ported::zsh_h::param> = Vec::new();
     addcompparams(COMPRPARAMS, &mut comprpms); // c:1338
 
@@ -1701,7 +1704,6 @@ static ORDEROPTS: &[OrderOpt] = &[
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {
     // c:1429
-    use crate::ported::zle::{comp_h::CMF_HIDE, compcore, compresult};
     // c:1431 — `unambig_data(NULL, NULL, NULL); return scache`.
     if let Some(s) = compcore::ainfo
         .get_or_init(|| std::sync::Mutex::new(None))
@@ -1996,7 +1998,6 @@ const COMPKPARAMS: &[compparam] = &[
 #[allow(unused_variables)]
 pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {
     // c:1447
-    use crate::ported::zle::{comp_h::CMF_HIDE, compcore, compresult};
     if let Some(s) = compcore::ainfo
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
@@ -2334,7 +2335,6 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {
 #[allow(unused_variables)]
 pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
     // c:1720
-    use std::sync::atomic::Ordering;
     crate::ported::zle::compcore::hasperm.store(0, Ordering::Relaxed); // c:1722
     let clear = |g: &'static std::sync::OnceLock<Mutex<String>>| {
         if let Ok(mut s) = g.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -2623,7 +2623,6 @@ mod tests {
         let r = parse_cmatcher("", "r:abc|xy=def");
         assert!(r.is_some(), "r: rule should produce a Cmatcher");
         let cm = r.unwrap();
-        use crate::ported::zle::comp_h::CMF_RIGHT;
         assert_eq!(cm.flags, CMF_RIGHT);
         assert_eq!(cm.lalen, 3); // left = "abc"
         assert_eq!(cm.ralen, 2); // right = "xy"
@@ -2640,7 +2639,6 @@ mod tests {
         let r = parse_cmatcher("", "l:ab|cd=ef");
         assert!(r.is_some(), "l: rule should produce a Cmatcher");
         let cm = r.unwrap();
-        use crate::ported::zle::comp_h::CMF_LEFT;
         assert_eq!(cm.flags, CMF_LEFT);
         assert!(cm.left.is_some());
         assert_eq!(cm.lalen, 2);
@@ -2701,7 +2699,6 @@ mod tests {
         assert_eq!(len, 3);
         assert_eq!(rest, ""); // consumed everything (no end-char, no whitespace)
                               // Walk chain and verify 3 CPAT_CHAR nodes.
-        use crate::ported::zle::comp_h::CPAT_CHAR;
         let mut count = 0;
         let mut cur = chain.as_deref();
         while let Some(n) = cur {
@@ -2720,7 +2717,6 @@ mod tests {
         let (chain, _, len, err) = parse_pattern("", "?", '\0');
         assert!(!err);
         assert_eq!(len, 1);
-        use crate::ported::zle::comp_h::CPAT_ANY;
         assert_eq!(chain.as_ref().unwrap().tp, CPAT_ANY);
     }
 
@@ -2745,7 +2741,6 @@ mod tests {
         let (chain, _, len, err) = parse_pattern("", r"\*", '\0');
         assert!(!err);
         assert_eq!(len, 1);
-        use crate::ported::zle::comp_h::CPAT_CHAR;
         let n = chain.as_ref().unwrap();
         assert_eq!(n.tp, CPAT_CHAR);
         assert_eq!(n.chr, '*' as u32);
@@ -2785,7 +2780,6 @@ mod tests {
         assert_eq!(len, 3);
         assert_eq!(rest, "=q");
         // chain head is the class node.
-        use crate::ported::zle::comp_h::CPAT_CCLASS;
         assert_eq!(chain.as_ref().unwrap().tp, CPAT_CCLASS);
     }
 

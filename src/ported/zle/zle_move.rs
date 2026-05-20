@@ -5,6 +5,9 @@
 //! Move cursor right, checking for combining characters                    // c:118
 //! Move cursor left, checking for combining characters                     // c:129
 
+use std::sync::atomic::Ordering;
+
+use crate::ported::zle::zle_h::{MOD_CHAR, MOD_LINE};
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 #[allow(unused_imports)]
@@ -266,8 +269,6 @@ pub fn beginningoflinehist() -> i32 {
 /// Port of `endoflinehist(char **args)` from Src/Zle/zle_move.c:403.
 pub fn endoflinehist() -> i32 {
     // c:403
-    use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL, ZMOD};
-    use std::sync::atomic::Ordering;
 
     // c:405 — int n = zmult;
     let mut n = ZMOD.lock().unwrap().mult;
@@ -505,7 +506,6 @@ pub fn exchangepointandmark() -> i32 {
 /// Port of `visualmode(UNUSED(char **args))` from Src/Zle/zle_move.c:516.
 pub fn visualmode() -> i32 {
     // c:516
-    use crate::ported::zle::zle_h::MOD_CHAR;
     // c:518-523 — `if (virangeflag) { prefixflag = 1; flags &= ~LINE;
     //                                  flags |= CHAR; return 0 }`.
     //              No virangeflag tracker yet; skip.
@@ -533,7 +533,6 @@ pub fn visualmode() -> i32 {
 /// Port of `visuallinemode(UNUSED(char **args))` from Src/Zle/zle_move.c:540.
 pub fn visuallinemode() -> i32 {
     // c:540
-    use crate::ported::zle::zle_h::MOD_LINE;
     // c:542-547 — `if (virangeflag) { prefixflag = 1; flags &= ~CHAR;
     //                                  flags |= LINE; return 0 }`.
     match REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
@@ -843,8 +842,6 @@ pub fn vibeginningofline() -> i32 {
 /// Port of `vifindnextchar(char **args)` from Src/Zle/zle_move.c:739.
 pub fn vifindnextchar() -> i32 {
     // c:739
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
-    use std::sync::atomic::Ordering;
     // C body (c:740-746): `if ((vfindchar = vigetkey()) != ZLEEOF) {
     //                    vfinddir=1; tailadd=0; return vifindchar(0,args); }
     //                    return 1`.
@@ -861,8 +858,6 @@ pub fn vifindnextchar() -> i32 {
 /// Port of `vifindprevchar(char **args)` from Src/Zle/zle_move.c:751.
 pub fn vifindprevchar() -> i32 {
     // c:751
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
-    use std::sync::atomic::Ordering;
     // C body (c:752-758): same as vifindnextchar but vfinddir=-1.
     let c = crate::ported::zle::zle_vi::vigetkey();
     if c < 0 {
@@ -877,8 +872,6 @@ pub fn vifindprevchar() -> i32 {
 /// Port of `vifindnextcharskip(char **args)` from Src/Zle/zle_move.c:763.
 pub fn vifindnextcharskip() -> i32 {
     // c:763
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
-    use std::sync::atomic::Ordering;
     // C body (c:764-770): vfinddir=1, tailadd=-1 (land just before).
     let c = crate::ported::zle::zle_vi::vigetkey();
     if c < 0 {
@@ -893,8 +886,6 @@ pub fn vifindnextcharskip() -> i32 {
 /// Port of `vifindprevcharskip(char **args)` from Src/Zle/zle_move.c:775.
 pub fn vifindprevcharskip() -> i32 {
     // c:775
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
-    use std::sync::atomic::Ordering;
     // C body (c:776-782): vfinddir=-1, tailadd=1 (land just after).
     let c = crate::ported::zle::zle_vi::vigetkey();
     if c < 0 {
@@ -910,8 +901,6 @@ pub fn vifindprevcharskip() -> i32 {
 /// WARNING: param names don't match C — Rust=(zle, repeat) vs C=(repeat, args)
 pub fn vifindchar(repeat: i32) -> i32 {
     // c:787
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
-    use std::sync::atomic::Ordering;
     let vfind = VFINDCHAR.load(Ordering::Relaxed);
     let vdir = VFINDDIR.load(Ordering::Relaxed);
     let tail = TAILADD.load(Ordering::Relaxed);
@@ -999,8 +988,6 @@ pub fn virepeatfind() -> i32 {
 /// Port of `virevrepeatfind(char **args)` from Src/Zle/zle_move.c:842.
 pub fn virevrepeatfind() -> i32 {
     // c:842
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDDIR};
-    use std::sync::atomic::Ordering;
     // c:846-851 — `if (zmult < 0) { zmult = -zmult; ret = vifindchar(1);
     //                              zmult = -zmult; return ret }`.
     if ZMOD.lock().unwrap().mult < 0 {
