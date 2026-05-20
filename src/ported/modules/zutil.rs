@@ -9,8 +9,7 @@
 
 use crate::ported::params::{assignaparam, getaparam, setaparam, setsparam, unsetparam};
 use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::OPT_ISSET;
-use crate::ported::zsh_h::{hashnode, options, param, Param, Patprog, ERRFLAG_INT, PM_ARRAY};
+use crate::ported::zsh_h::{OPT_ISSET, hashnode, options, param, Param, Patprog, ERRFLAG_INT, PM_ARRAY};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;

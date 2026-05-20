@@ -6,60 +6,49 @@
 //! associative arrays, parameter attributes, namerefs, scoping,
 //! tied parameters, and all special parameter get/set functions.
 
-use crate::func_body_fmt::FuncBodyFmt;
-#[allow(unused_imports)]
-use crate::ported::utils::zerr;
-use crate::ported::zsh_h::Marker;
-use crate::ported::zsh_h::SCANPM_WANTINDEX;
-use crate::ported::zsh_h::VALFLAG_SUBST;
-use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, savehistsiz};
-use crate::ported::utils::set_locallevel;
-use crate::ported::zsh_h::{gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar};
-use crate::ported::zsh_h::{hashnode, isset as isset_opt, HashTable, Param};
-use crate::ported::zsh_h::{SCANPM_ISVAR_AT, SCANPM_NONAMEREF};
-use fusevm::Value;
-use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use fusevm::Value;
+use indexmap::IndexMap;
+
+use crate::config_h::DEFAULT_TMPPREFIX;
+use crate::func_body_fmt::FuncBodyFmt;
+use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, savehistsiz};
+#[allow(unused_imports)]
+use crate::ported::utils::{set_locallevel, zerr};
+use crate::ported::zsh_h::{
+    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, isset as isset_opt,
+    HashTable, Marker, Param, SCANPM_ISVAR_AT, SCANPM_NONAMEREF, SCANPM_WANTINDEX, VALFLAG_SUBST,
+};
 
 #[allow(unused_imports)]
-use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
-// Names lifted out of inside-fn `use` statements (PORT.md
-// 'no imports inside FNs ever'). ASSPM_AUGMENT/PM_UNIQUE/ERRFLAG_ERROR/
-// TERM_UNKNOWN excluded — already imported elsewhere in this file.
-#[allow(unused_imports)]
-use crate::ported::math::{MN_FLOAT as MN_FLT, MN_INTEGER as MN_INT};
-// Bulk-import the most-used cross-module names so the bodies below
-// stay close to the C source visually instead of being drowned in
-// fully-qualified `crate::ported::*::` paths. (`param` is re-exported
-// further down at line ~136 via `pub use`.)
+use crate::ported::math::{mnumber, MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT};
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set};
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
 #[allow(unused_imports)]
-use crate::ported::utils::errflag;
-#[allow(unused_imports)]
-use crate::ported::utils::{argzero, posixzero, set_argzero, set_posixzero};
-#[allow(unused_imports)]
-use crate::ported::utils::{inittyptab, unmeta, ztrdup_metafy, zwarn};
-#[allow(unused_imports)]
-use crate::ported::zsh_h::value;
-#[allow(unused_imports)]
-use crate::ported::zsh_h::TERM_BAD;
+use crate::ported::utils::{
+    argzero, errflag, inittyptab, posixzero, set_argzero, set_posixzero, unmeta, ztrdup_metafy,
+    zwarn,
+};
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
-    isset, unset, ALLEXPORT, ASSPM_AUGMENT, ASSPM_ENV_IMPORT, ASSPM_WARN, AUTONAMEDIRS, EXECOPT,
-    KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT,
-    PM_HASHED, PM_HASHELEM, PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE,
-    PM_READONLY, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL,
-    PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE, PRINT_KV_PAIR,
-    PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPESET,
-    SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_KEYMATCH, SCANPM_MATCHKEY, SCANPM_MATCHMANY,
-    SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, VALFLAG_EMPTY, VALFLAG_INV,
-    WARNCREATEGLOBAL, WARNNESTEDVAR,
+    hashtable, isset, paramdef, unset, value, ALLEXPORT, ASSPM_AUGMENT, ASSPM_ENV_IMPORT,
+    ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR,
+    EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
+    PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
+    PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
+    PM_READONLY_SPECIAL, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
+    PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE,
+    PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY,
+    PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_KEYMATCH, SCANPM_MATCHKEY,
+    SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY,
+    VALFLAG_INV, WARNCREATEGLOBAL, WARNNESTEDVAR,
 };
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
@@ -4620,10 +4609,6 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // that does nothing.
 // ===========================================================
 
-use crate::config_h::DEFAULT_TMPPREFIX;
-use crate::zsh_h::{hashtable, paramdef, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
 // -----------------------------------------------------------
 // Module statics — one per C global referenced by the special-
 // param callbacks below. All initialised lazily on first read.
