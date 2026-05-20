@@ -4036,6 +4036,8 @@ fn patmatchrange(
 
 #[cfg(test)]
 mod tests {
+    use crate::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV};
+    use crate::zsh_h::{PP_LOWER, PP_UPPER};
     use super::*;
 
     #[test]
@@ -4055,11 +4057,6 @@ mod tests {
     }
 
     // ---------- Real-port tests ------------------------------------------
-
-    use crate::ported::zle::comp_h::{
-        Cline, Cmatcher, Cpattern, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_LEFT, CMF_RIGHT,
-        CPAT_CCLASS, CPAT_CHAR, CPAT_NCLASS,
-    };
 
     fn cpat_char(ch: u32) -> Cpattern {
         Cpattern {

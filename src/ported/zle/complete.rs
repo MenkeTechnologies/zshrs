@@ -2483,6 +2483,7 @@ fn lock_vec(g: &'static std::sync::OnceLock<Mutex<Vec<String>>>) -> &'static Mut
 mod tests {
     use super::*;
     use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS};
+    use crate::zle::comp_h::CPAT_ANY;
 
     #[test]
     fn classes_basic_cclass() {

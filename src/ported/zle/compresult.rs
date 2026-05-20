@@ -1798,6 +1798,7 @@ pub static INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 
 #[cfg(test)]
 mod tests {
+    use crate::zle::comp_h::{Cline, CLF_LINE};
     use super::*;
 
     #[test]
