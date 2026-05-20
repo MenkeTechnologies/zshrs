@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::lex;
+use crate::{lex, DPUTS};
 use crate::parse;
 use crate::ported::linklist::LinkList;
 use crate::ported::mem::{queue_signals, unqueue_signals};
@@ -38,7 +38,7 @@ pub fn dec_tindent() {
     tindent.with(|t| {
         let mut v = t.borrow_mut();
         // c:72 — DPUTS(tindent == 0, "attempting to decrement tindent below zero")
-        crate::DPUTS!(*v == 0, "attempting to decrement tindent below zero"); // c:72
+        DPUTS!(*v == 0, "attempting to decrement tindent below zero"); // c:72
         if *v > 0 {
             *v -= 1;
         }
