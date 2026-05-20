@@ -342,17 +342,29 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // 
 /// like `zle/termcap` initialize on demand), so this is a no-op
 /// counter for symbol-table parity.
 pub fn zsetupterm() {                                                        // c:390
-    static TERM_COUNT: std::sync::atomic::AtomicI32 =                        // c:409
+    static TERM_COUNT: std::sync::atomic::AtomicI32 =                        // c:402
         std::sync::atomic::AtomicI32::new(0);
-    TERM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);           // c:409
+    let tc = TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    // c:395-396 — DPUTS(term_count < 0 || (term_count > 0 && !cur_term),
+    //                   "inconsistent term_count and/or cur_term");
+    // The Rust port has no `cur_term` analogue (terminfo state lives
+    // in zle/termcap module), so the second condition reduces to
+    // `term_count > 0 && true` if we treat cur_term as the count
+    // itself. Simplified to the bare `term_count < 0` invariant.
+    crate::DPUTS!(tc < 0, "inconsistent term_count and/or cur_term");        // c:395-396
+    TERM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);           // c:402
 }
 
 /// Port of `void zdeleteterm(void)` from Src/utils.c:409.
 pub fn zdeleteterm() {                                                       // c:409
     static TERM_COUNT: std::sync::atomic::AtomicI32 =
         std::sync::atomic::AtomicI32::new(0);
-    if TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed) > 0 {
-        TERM_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);       // c:424
+    let tc = TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    // c:412-413 — DPUTS(term_count < 1 || !cur_term,
+    //                   "inconsistent term_count and/or cur_term");
+    crate::DPUTS!(tc < 1, "inconsistent term_count and/or cur_term");        // c:412-413
+    if tc > 0 {
+        TERM_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);       // c:414
     }
 }
 
@@ -3461,6 +3473,11 @@ pub fn zbeep() {                                                             // 
 /// Free array (no-op in Rust, provided for API compat)
 /// Port of `freearray(char **s)` from `Src/utils.c:4120`.
 pub fn freearray(s: Vec<String>) {
+    // c:4124 — DPUTS(!s, "freearray() with zero argument")
+    // Rust takes Vec<String> by value (never null), so the C !s
+    // check maps to no condition that can fire in Rust. Document
+    // the gap.
+    let _ = &s;                                                               // c:4124 (no-op; Vec is never NULL in Rust)
     // Rust Drop handles this
 }
 
