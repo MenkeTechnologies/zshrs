@@ -452,13 +452,13 @@ pub fn zcurses_colorget(nam: &str, colorpair: &str) -> Option<i16> {
     if f == -2 || b == -2 {
         // c:370
         if f == -2 {
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam, // c:372
                 &format!("foreground color `{}' not known", cp_str),
             );
         }
         if b == -2 {
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam, // c:374
                 &format!("background color `{}' not known", bg_str),
             );
@@ -1657,7 +1657,7 @@ static zc_errno_cell: OnceLock<Mutex<i32>> = OnceLock::new();
 /// from Src/Modules/curses.c:75. Snapshotted by gettyinfo at first
 /// init (c:443), restored by settyinfo on re-entry (c:438).
 #[allow(non_upper_case_globals)]
-static curses_tty_state: std::sync::Mutex<Option<libc::termios>> = std::sync::Mutex::new(None); // c:75
+static curses_tty_state: Mutex<Option<libc::termios>> = Mutex::new(None); // c:75
 
 /// `ZCF_MOUSE_ACTIVE` flag (curses.c:116).
 pub const ZCF_MOUSE_ACTIVE: u32 = 1 << 0;

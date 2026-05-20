@@ -54,7 +54,7 @@ pub fn getlogtime(u: &libc::utmpx, inout: i32) -> i64 {
     if let Ok(file) = std::fs::File::open(wtmp_path) {
         use std::io::{Read, Seek, SeekFrom};
         let mut f = file;
-        let rec_size = std::mem::size_of::<libc::utmpx>() as i64;
+        let rec_size = size_of::<libc::utmpx>() as i64;
         if let Ok(end) = f.seek(SeekFrom::End(0)) {
             let mut pos = end as i64 - rec_size;
             while pos >= 0 {
@@ -540,7 +540,7 @@ pub fn dowatch() {
     let mtime = std::fs::metadata(utmp_path)
         .and_then(|m| m.modified())
         .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64);
     let last = LASTUTMPCHECK.with(|t| t.get());
     match mtime {
