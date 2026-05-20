@@ -17,10 +17,11 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
-use crate::ported::zsh_h::{module, options};
+use crate::ported::zsh_h::{features, module, options, MAX_OPS};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
-
+use crate::ported::init::init_io;
+use crate::ported::params::setsparam;
 // =====================================================================
 // bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))  c:43
 // =====================================================================
@@ -160,9 +161,9 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
          * (acquire_pgrp() is called from init_io()) */
         // c:93-94
         mypgrp.store(0, Ordering::Relaxed); // c:95 mypgrp = 0;
-        crate::ported::init::init_io(None); // c:96 init_io(NULL);
+        init_io(None); // c:96 init_io(NULL);
         let tty_name = ttystrname.lock().unwrap().clone();
-        crate::ported::params::setsparam("TTY", &tty_name); // c:97 setsparam("TTY", ztrdup(ttystrname));
+        setsparam("TTY", &tty_name); // c:97 setsparam("TTY", ztrdup(ttystrname));
     } else {
         // c:99
         unsafe { libc::close(ttyfd) }; // c:100
@@ -278,7 +279,7 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 // =====================================================================
 
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -289,7 +290,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:clone".to_string()]
 }
 
@@ -299,7 +300,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -312,7 +313,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -342,9 +343,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,
@@ -361,7 +362,6 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
         options {
