@@ -16,20 +16,22 @@
 //! Provides job control, process management, and signal handling for jobs.
 
 use std::env;
+use std::os::unix::process::ExitStatusExt;
 use std::process::Child;
+use std::sync::atomic::Ordering;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
 use crate::ported::params::{getsparam, setsparam, unsetparam};
-use crate::ported::signals::{signal_block, signal_setmask, unqueue_signals};
-use crate::ported::signals_h::{signal_default, signal_ignore};
+use crate::ported::signals::{killjb, signal_block, signal_setmask, unqueue_signals};
+use crate::ported::signals_h::{signal_default, signal_ignore, sigs_name, sigs_number};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
-    MONITOR, OPT_ISSET, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
+    isset, options, MONITOR, OPT_ISSET, POSIXBUILTINS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB,
+    STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
 };
-use std::os::unix::process::ExitStatusExt;
-use std::sync::atomic::Ordering;
 
 /// Job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
@@ -303,8 +305,6 @@ impl Job {
 // Declared in same order as jobs.c lines 57-131
 // ---------------------------------------------------------------------------
 
-use crate::zsh_h::{isset, POSIXBUILTINS};
-use std::sync::{Mutex, OnceLock};
 
 /// Port of `hasprocs(int job)` from `Src/jobs.c:243`.
 ///
@@ -2399,7 +2399,7 @@ pub fn addbgstatus(pid: i32, status_val: i32) {
 pub fn bin_fg(
     name: &str,
     argv: &[String], // c:2421
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     let _ofunc = func; // c:2424
@@ -2578,7 +2578,7 @@ pub fn bin_fg(
                 .map(|j| j.gleader)
                 .unwrap_or(0);
             if gleader > 0 {
-                let _ = crate::ported::signals::killjb(gleader, libc::SIGCONT);
+                let _ = killjb(gleader, libc::SIGCONT);
             }
             unqueue_signals();
             return 0;
@@ -2617,7 +2617,7 @@ pub fn bin_fg(
             .unwrap_or(0);
         if func == BIN_FG || func == BIN_BG {
             if gleader > 0 {
-                if crate::ported::signals::killjb(gleader, libc::SIGCONT) == -1 {
+                if killjb(gleader, libc::SIGCONT) == -1 {
                     zwarnnam(
                         name,
                         &format!("{}: kill failed: {}", arg, std::io::Error::last_os_error()),
@@ -2665,7 +2665,7 @@ pub fn bin_fg(
 pub fn bin_kill(
     nam: &str,
     argv: &[String], // c:2772
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     let mut sig: i32 = libc::SIGTERM; // c:2774
@@ -2719,7 +2719,7 @@ pub fn bin_kill(
                     if let Ok(n) = token.parse::<i32>() {
                         // c:2821 numeric
                         let s = (n & !0o200) as i32; // c:2855
-                        if let Some(name) = crate::ported::signals_h::sigs_name(s) {
+                        if let Some(name) = sigs_name(s) {
                             // c:2856-2858
                             println!("{}", name);
                         } else {
@@ -2729,7 +2729,7 @@ pub fn bin_kill(
                         // c:2823 — symbolic; uppercase, strip SIG, look up.
                         let upper = token.to_ascii_uppercase();
                         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-                        if let Some(n) = crate::ported::signals_h::sigs_number(bare) {
+                        if let Some(n) = sigs_number(bare) {
                             // c:2828
                             println!("{}", n); // c:2842
                         } else {
@@ -2743,10 +2743,10 @@ pub fn bin_kill(
             // c:2869-2876 — bare `-l`: print every signal name.
             print!(
                 "{}",
-                crate::ported::signals_h::sigs_name(1).unwrap_or("HUP")
+                sigs_name(1).unwrap_or("HUP")
             );
             for s in 2..=crate::ported::signals_h::SIGCOUNT {
-                if let Some(n) = crate::ported::signals_h::sigs_name(s) {
+                if let Some(n) = sigs_name(s) {
                     print!(" {}", n);
                 }
             }
@@ -2760,7 +2760,7 @@ pub fn bin_kill(
             let cols = 4usize;
             let mut col = 0usize;
             for s in 1..=crate::ported::signals_h::SIGCOUNT {
-                if let Some(n) = crate::ported::signals_h::sigs_name(s) {
+                if let Some(n) = sigs_name(s) {
                     print!("{:>2} {:<10}", s, n);
                     col += 1;
                     if col % cols == 0 {
@@ -2812,7 +2812,7 @@ pub fn bin_kill(
             let name = argv[idx].as_str();
             let upper = name.to_ascii_uppercase();
             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-            match crate::ported::signals_h::sigs_number(bare) {
+            match sigs_number(bare) {
                 Some(n) => sig = n,
                 None => {
                     zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2944
@@ -2848,7 +2848,7 @@ pub fn bin_kill(
         // c:2960 — symbolic `-NAME` (no `s` prefix needed).
         let upper = body.to_ascii_uppercase();
         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-        match crate::ported::signals_h::sigs_number(bare) {
+        match sigs_number(bare) {
             Some(n) => {
                 sig = n;
                 got_sig = true;
@@ -2910,7 +2910,7 @@ pub fn bin_kill(
                 .get(p as usize)
                 .map(|j| j.gleader)
                 .unwrap_or(0);
-            if crate::ported::signals::killjb(gleader, sig) == -1 {
+            if killjb(gleader, sig) == -1 {
                 // c:2993
                 zwarnnam(
                     "kill",
@@ -2940,7 +2940,7 @@ pub fn bin_kill(
                 && sig != libc::SIGTTIN
                 && sig != libc::SIGSTOP
             {
-                let _ = crate::ported::signals::killjb(gleader, libc::SIGCONT); // c:3009
+                let _ = killjb(gleader, libc::SIGCONT); // c:3009
             }
         } else {
             match arg.parse::<i32>() {
@@ -3196,7 +3196,7 @@ pub fn removetrapnode(sig: i32) {
 pub fn bin_suspend(
     name: &str,
     _argv: &[String], // c:3170
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:3173 — `if (islogin && !OPT_ISSET(ops,'f'))`. C reads the

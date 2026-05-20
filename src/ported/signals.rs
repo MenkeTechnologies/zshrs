@@ -16,23 +16,33 @@
 //! - Job control signals
 
 pub use crate::signals_h::{signal_default, signal_ignore};
-use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
-use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
-use crate::ported::options::optlookup;
-use crate::ported::params::locallevel as LOCALLEVEL;
-use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
-use crate::ported::utils::{errflag, ERRFLAG_ERROR, RESETNEEDED};
-use crate::zsh_h::{isset, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE, POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAPSASYNC, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED};
-use nix::sys::signal::{sigprocmask, SigmaskHow};
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal};
-use nix::unistd::getpid;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use crate::context::{zcontext_restore, zcontext_save};
-use crate::init::zleentry;
-use crate::jobs::gettrapnode;
-use crate::mem::{zsfree, ztrdup};
+
+use nix::sys::signal::{
+    sigprocmask, SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal, SigmaskHow,
+};
+use nix::unistd::getpid;
+
+use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
+use crate::ported::context::{zcontext_restore, zcontext_save};
+use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
+use crate::ported::init::zleentry;
+use crate::ported::jobs::gettrapnode;
+use crate::ported::mem::{zsfree, ztrdup};
+use crate::ported::options::optlookup;
+use crate::ported::params::locallevel as LOCALLEVEL;
+use crate::ported::signals_h::{
+    SIGNUM, TRAPCOUNT as TRAPCOUNT_H, VSIGCOUNT,
+};
+use crate::ported::utils::{errflag, locallevel as locallevel_fn, ERRFLAG_ERROR, RESETNEEDED};
+use crate::ported::zsh_h::{
+    isset, Eprog, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE,
+    POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAPSASYNC, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED,
+    ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
+};
+use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
 // getsigidx / getsigname live in `jobs.rs` per C source split:
 // `getsigidx` at `Src/jobs.c:3047`, `getsigname` at `Src/jobs.c:3087`.
 // Re-export from the canonical home so callers using
@@ -590,7 +600,7 @@ pub struct savetrap {
     pub flags: i32,                                // c:614
     pub local: i32,                                // c:615 locallevel at save
     pub posix: i32,                                // c:616 exit_trap_posix snapshot
-    pub list: Option<crate::ported::zsh_h::Eprog>, // c:617 trap eval-list Eprog
+    pub list: Option<Eprog>, // c:617 trap eval-list Eprog
 }
 
 /// Direct port of `void dosavetrap(int sig, int level)` from
@@ -648,7 +658,7 @@ pub fn dosavetrap(sig: i32, level: i32) {
 /// either `ZSIG_IGNORED` (empty list + non-ZSIG_FUNC) or
 /// `ZSIG_TRAPPED`, then ORs in `flags` and the
 /// `locallevel << ZSIG_SHIFT` scope tag.
-pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> i32 {
+pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     // c:693
     if sig == -1 {
         // c:693
@@ -718,8 +728,8 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         // SIGRTMIN+1 signal — the signal would still fire and the
         // default action would kick in instead of being suppressed.
         #[cfg(target_os = "linux")]
-        if sig >= crate::ported::signals_h::VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
-            signal_ignore(crate::ported::signals_h::SIGNUM(sig)); // c:722
+        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+            signal_ignore(SIGNUM(sig)); // c:722
         }
     } else {
         nsigtrapped.fetch_add(1, Ordering::Relaxed); // c:725
@@ -738,8 +748,8 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         // store the trap but NEVER install the libc handler, so the
         // signal would fire with default action (terminate the shell).
         #[cfg(target_os = "linux")]
-        if sig >= crate::ported::signals_h::VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
-            install_handler(crate::ported::signals_h::SIGNUM(sig)); // c:735
+        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+            install_handler(SIGNUM(sig)); // c:735
         }
     }
     // c:738 — `sigtrapped[sig] |= flags`.
@@ -749,7 +759,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         }
     }
     // c:743-752 — locallevel tag (SIGEXIT in POSIX mode is sticky).
-    let locallevel = crate::ported::utils::locallevel() as i32;
+    let locallevel = locallevel_fn() as i32;
     if sig == SIGEXIT {
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
@@ -800,7 +810,7 @@ pub fn removetrap(sig: i32) {
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         return;
     }
-    let locallevel = crate::ported::utils::locallevel() as i32;
+    let locallevel = locallevel_fn() as i32;
     // c:769-774 — `if (!dontsavetrap && (sig == SIGEXIT ? !isset(POSIXTRAPS)
     // : isset(LOCALTRAPS)) && locallevel && (!trapped || locallevel >
     // (sigtrapped[sig] >> ZSIG_SHIFT))) dosavetrap(sig, locallevel);`.
@@ -873,8 +883,8 @@ pub fn removetrap(sig: i32) {
     // (no-longer-trapped) shell handler.
     #[cfg(target_os = "linux")]
     {
-        if sig >= crate::ported::signals_h::VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
-            signal_default(crate::ported::signals_h::SIGNUM(sig)); // c:818
+        if sig >= VSIGCOUNT && sig < crate::ported::signals_h::TRAPCOUNT {
+            signal_default(SIGNUM(sig)); // c:818
         }
     }
 }
@@ -972,7 +982,7 @@ pub fn starttrapscope() {
 /// other restores complete.
 pub fn endtrapscope() {
     // c:880
-    let locallevel = crate::ported::utils::locallevel();
+    let locallevel = locallevel_fn();
 
     // c:891-908 — pull the SIGEXIT trap aside so we can run it last.
     let exit_flags = sigtrapped
@@ -1768,7 +1778,7 @@ pub static sigtrapped: std::sync::LazyLock<Mutex<Vec<i32>>> = // c:39
 /// Per-signal Eprog body. Port of `mod_export Eprog *siglists`
 /// from `Src/signals.c:53`. NULL for ZSIG_FUNC entries (function
 /// body resolves through `gettrapnode` at dispatch time).
-pub static siglists: std::sync::LazyLock<Mutex<Vec<Option<crate::ported::zsh_h::Eprog>>>> =
+pub static siglists: std::sync::LazyLock<Mutex<Vec<Option<Eprog>>>> =
     // c:53
     std::sync::LazyLock::new(|| Mutex::new((0..TRAPCOUNT as usize).map(|_| None).collect()));
 
