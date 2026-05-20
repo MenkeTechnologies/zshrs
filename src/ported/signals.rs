@@ -1875,6 +1875,8 @@ pub fn is_interact() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::options::dosetopt;
+    use crate::zsh_h::{HUP, MONITOR, TRAPSASYNC};
     use super::*;
 
     #[test]
@@ -2235,7 +2237,7 @@ mod tests {
     #[test]
     fn killrunjobs_short_circuits_when_hup_unset() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::zsh_h::isset(HUP);
+        let saved = isset(HUP);
         // Force HUP off; killrunjobs must return immediately.
         dosetopt(HUP, 0, 0);
         // If the body iterated, it would try to read JOBTAB. With
