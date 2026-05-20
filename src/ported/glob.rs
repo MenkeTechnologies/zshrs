@@ -25,7 +25,6 @@ use crate::ported::zsh_h::{
     REDIR_MERGEIN, REDIR_MERGEOUT, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH,
     SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
 };
-use std::cmp::Ordering as CmpOrdering;
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
@@ -754,7 +753,7 @@ pub fn gmatchcmp(
     b: &gmatch,
     specs: &[i32],
     numeric_sort: bool,
-) -> CmpOrdering {
+) -> std::cmp::Ordering {
     for &tp in specs {
         // c:943
         let key = tp & !GS_DESC; // c:944 s->tp & ~GS_DESC
@@ -825,9 +824,9 @@ pub fn gmatchcmp(
                 },
             )
         } else {
-            CmpOrdering::Equal // GS_NONE / unknown
+            std::cmp::Ordering::Equal // GS_NONE / unknown
         };
-        if cmp != CmpOrdering::Equal {
+        if cmp != std::cmp::Ordering::Equal {
             return if (tp & GS_DESC) != 0 {
                 cmp.reverse()
             } else {
@@ -835,7 +834,7 @@ pub fn gmatchcmp(
             };
         }
     }
-    CmpOrdering::Equal
+    std::cmp::Ordering::Equal
 }
 
 // `Redirect` struct + `RedirectType` enum + `xpandredir` fn
@@ -5060,9 +5059,9 @@ mod tests {
     fn test_zstrcmp_numeric() {
         let _g = crate::test_util::global_state_lock();
         let n = crate::zsh_h::SORTIT_NUMERICALLY as u32;
-        assert_eq!(zstrcmp("file1", "file2", n), CmpOrdering::Less);
-        assert_eq!(zstrcmp("file10", "file2", n), CmpOrdering::Greater);
-        assert_eq!(zstrcmp("file10", "file10", n), CmpOrdering::Equal);
+        assert_eq!(zstrcmp("file1", "file2", n), std::cmp::Ordering::Less);
+        assert_eq!(zstrcmp("file10", "file2", n), std::cmp::Ordering::Greater);
+        assert_eq!(zstrcmp("file10", "file10", n), std::cmp::Ordering::Equal);
     }
 
     /// Race-fix verification: snapshot pins bareglobqual for the

@@ -42,7 +42,7 @@ use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::utils::{zerrnam, zwarnnam};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
 use std::io::Read;
 
 // =====================================================================
@@ -1822,9 +1822,9 @@ pub const KEY_F0: i32 = 0o410;
 /// Port of `static struct features module_features` from
 /// `Src/Modules/curses.c:1638`. C builds it as a stack literal;
 /// Rust port keeps the OnceLock<Mutex> shape so callers consume
-/// the same `*const module, &Mutex<features_t>` handle other
+/// the same `*const module, &Mutex<crate::ported::zsh_h::features>` handle other
 /// modules use.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // WARNING: NOT IN CURSES.C — Rust-only OnceLock get-or-init for
 // each module static. C dereferences globals directly.
@@ -2041,7 +2041,7 @@ fn keypad_name(code: i32) -> Option<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec!["b:zcurses".to_string()]
 }
 
@@ -2051,7 +2051,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<features_t>,
+    _f: &Mutex<crate::ported::zsh_h::features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -2064,7 +2064,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -2182,9 +2182,9 @@ fn order_lock() -> &'static Mutex<Vec<String>> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
+fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
+        Mutex::new(crate::ported::zsh_h::features {
             bn_list: None, // c:1639 bintab
             bn_size: 1,    // c:1639 sizeof(bintab)/sizeof(*bintab)
             cd_list: None, // c:1640

@@ -590,7 +590,6 @@ pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None) // c:279
 }
 
-use crate::ported::zsh_h::features as features_t;
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
 #[allow(unused_variables)]
@@ -602,14 +601,14 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local descriptor stub mirroring the C bintab + partab.
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec![
         "b:nameref".to_string(),
         "p:.sh.edchar".to_string(),
@@ -630,7 +629,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<features_t>,
+    _f: &Mutex<crate::ported::zsh_h::features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -648,7 +647,7 @@ const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -721,9 +720,9 @@ const _: AtomicI64 = AtomicI64::new(0);
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
-fn module_features() -> &'static Mutex<features_t> {
+fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
+        Mutex::new(crate::ported::zsh_h::features {
             bn_list: None,
             bn_size: 1, // bintab: nameref (ksh93.c)
             cd_list: None,

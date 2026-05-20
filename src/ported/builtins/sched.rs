@@ -675,7 +675,6 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
 // static struct features module_features                             c:386
 // =====================================================================
 
-use crate::ported::zsh_h::features as features_t;
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/sched.c:443`.
 #[allow(unused_variables)]
@@ -705,7 +704,7 @@ static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
 // `module_features` — port of `static struct features module_features`
 // from sched.c:386. Bucket-2 shared global; OnceLock-init since
 // `features` contains fn-pointer fields not const-initializable.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Init-on-first-use accessors. C dereferences the statics directly — Rust
 // requires the OnceLock get-or-init dance. Inlined at call sites would
@@ -731,14 +730,14 @@ fn checksched_thunk() {
 // =====================================================================
 
 // `featuresarray` lives in `Src/module.c:3279`.
-fn featuresarray(_m: *const crate::ported::zsh_h::module, _f: &Mutex<features_t>) -> Vec<String> {
+fn featuresarray(_m: *const crate::ported::zsh_h::module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec!["b:sched".to_string(), "p:zsh_scheduled_events".to_string()]
 }
 
 // `handlefeatures` lives in `Src/module.c:3388`.
 fn handlefeatures(
     m: *const crate::ported::zsh_h::module,
-    f: &Mutex<features_t>,
+    f: &Mutex<crate::ported::zsh_h::features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -750,7 +749,7 @@ fn handlefeatures(
 }
 
 // `getfeatureenables` lives in `Src/module.c:3314`.
-fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<features_t>) -> Vec<i32> {
+fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<crate::ported::zsh_h::features>) -> Vec<i32> {
     let g = f.lock().unwrap();
     let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
     vec![0; total as usize]
@@ -759,7 +758,7 @@ fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<features
 // `setfeatureenables` lives in `Src/module.c:3350`.
 fn setfeatureenables(
     _m: *const crate::ported::zsh_h::module,
-    _f: &Mutex<features_t>,
+    _f: &Mutex<crate::ported::zsh_h::features>,
     _e: Option<&Vec<i32>>,
 ) -> i32 {
     0
@@ -836,9 +835,9 @@ fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn module_features() -> &'static Mutex<features_t> {
+fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
+        Mutex::new(crate::ported::zsh_h::features {
             bn_list: None, // c:387 bintab
             bn_size: 1,    // sizeof(bintab)/sizeof(*bintab) — sched
             cd_list: None, // c:388
