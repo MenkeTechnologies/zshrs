@@ -2523,7 +2523,12 @@ pub fn paramsubst(
         let mut eval = false; // c:2268 (e)
         let mut flag_unquote = false; // c:2261 (Q)
         let mut quoteerr = false; // c:2264 (X)
-        let mut flag_visible = false; // c:2232 (V)
+        // c:1746 — `int mods = 0;` single int with bit 0 = (D) flag,
+        // bit 1 = (V) flag. The previous Rust port decomposed this
+        // into flag_d_dir + flag_visible bools — Rule D bag-of-globals.
+        // Tested in C via `mods & 1` (c:4155, c:4163) and `mods & 2`
+        // (c:4157, c:4165).
+        let mut mods: i32 = 0;                                                // c:1746
         let mut flag_char_count = false; // c:2275 (c)
         let mut flag_word_count = false; // c:2278 (w)
         let mut flag_word_count_w = false; // c:2281 (W)
@@ -2534,7 +2539,9 @@ pub fn paramsubst(
                                         // ${var//pat/repl}-style match disposition: return matched
                                         // text vs rest, return position vs string, etc.
         let mut sub_flags_bits: i32 = 0; // c:2169
-        let mut flag_d_dir = false; // c:2229 (D)
+        // (D) bit moved into `mods` above (c:1746). Declared up-front
+        // so flag-loop arms can `mods |= 1` (c:2230) and
+        // `mods |= 2` (c:2233) without re-declaring.
         let mut flag_p_escapes = false; // c:2382 (p)
                                         // (g:SUBFLAGS:) — getkeys sub-flag bits per c:2409.
                                         // `flag_g_seen` tracks whether the flag appeared at all
@@ -2836,12 +2843,12 @@ pub fn paramsubst(
                     'X' => {
                         quoteerr = true;
                     } // c:2264 (X)
-                    'D' => {
-                        flag_d_dir = true;
-                    } // c:2229 (D)
-                    'V' => {
-                        flag_visible = true;
-                    } // c:2232 (V)
+                    'D' => {                                                  // c:2229
+                        mods |= 1;                                            // c:2230
+                    }                                                         // c:2231
+                    'V' => {                                                  // c:2232
+                        mods |= 2;                                            // c:2233
+                    }                                                         // c:2234
                     'b' => {
                         flag_b_pattern = true;
                     } // c:2255 (b)
@@ -5257,9 +5264,8 @@ pub fn paramsubst(
         // Without ZLE's nameddir hash, this reduces to plain $HOME.
         // (D) per-element dir-magic. Direct port of subst.c:2229
         // mods bit 1 → modify()'s tilde-contraction iterating aval.
-        if flag_d_dir {
-            // c:2229
-            let home_opt = crate::ported::params::getsparam("HOME");
+        if (mods & 1) != 0 {                                                 // c:4155 if (mods & 1)
+            let home_opt = crate::ported::params::getsparam("HOME");         // c:4155
             // Pull named-dirs (~name) hash into a [(name, path)]
             // sorted by path-length-descending so the LONGEST match
             // wins (zsh canonical: most-specific tilde-contraction).
@@ -5461,9 +5467,8 @@ pub fn paramsubst(
             }
             out
         };
-        if flag_visible {
-            // c:2232
-            if let Some(parts) = split_parts.clone() {
+        if (mods & 2) != 0 {                                                 // c:4157 if (mods & 2)
+            if let Some(parts) = split_parts.clone() {                       // c:4157
                 let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
@@ -5609,12 +5614,11 @@ pub fn paramsubst(
         // with `~name` for each named directory; (V) renders
         // non-printable bytes as `^X` / `\n` / `\t` / `\M-X`. Both
         // apply per-element when array-shaped.
-        if flag_d_dir || flag_visible {
-            // c:4155
-            let render_d = |s: &str| -> String {
-                if !flag_d_dir {
-                    return s.to_string();
-                }
+        if mods != 0 {                                                       // c:4155 if (mods != 0)
+            let render_d = |s: &str| -> String {                             // c:4155
+                if (mods & 1) == 0 {                                          // c:4155 if (mods & 1)
+                    return s.to_string();                                     // c:4156
+                }                                                             // c:4156
                 // Replace $HOME with `~`; replace each named-dir
                 // path with `~name`. Direct port of substnamedir.
                 let mut out = s.to_string();
@@ -5641,10 +5645,10 @@ pub fn paramsubst(
                 }
                 out
             };
-            let render_v = |s: &str| -> String {
-                if !flag_visible {
-                    return s.to_string();
-                }
+            let render_v = |s: &str| -> String {                             // c:4157
+                if (mods & 2) == 0 {                                          // c:4157 if (mods & 2)
+                    return s.to_string();                                     // c:4158
+                }                                                             // c:4158
                 // Direct port of nicechar / nicedupstring per
                 // Src/utils.c:462 — render non-printables as
                 // `\n`, `\t`, `^X`, `\M-X`, `^?` etc.
