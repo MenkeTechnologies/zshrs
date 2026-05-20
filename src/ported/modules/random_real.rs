@@ -398,7 +398,6 @@ mod tests {
     #[test]
     fn random_real_produces_distinct_outputs() {
         let _g = crate::test_util::global_state_lock();
-        use std::collections::HashSet;
         let mut seen: HashSet<u64> = HashSet::new();
         for _ in 0..100 {
             seen.insert(random_real().to_bits());

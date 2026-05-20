@@ -830,7 +830,6 @@ mod tests {
     #[test]
     fn matchgetfn_with_param_no_array_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{hashnode, param};
         let mut pm = param {
             node: hashnode {
                 next: None,

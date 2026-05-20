@@ -37,7 +37,7 @@ use crate::ported::utils::{
     addprepromptfn, addtimedfn, delprepromptfn, deltimedfn, unmeta, zjoin, zstrtol, ztrftime,
     zwarnnam,
 };
-use crate::ported::zsh_h::options;
+use crate::ported::zsh_h::{options, VERBOSE};
 use crate::ported::ztype_h::idigit;
 
 // =====================================================================
@@ -792,10 +792,8 @@ pub static zleactive: AtomicI32 = AtomicI32::new(0);
 /// the body runs the verbose-echo + heap bracket faithfully and
 /// then delegates to the shell-executor singleton for actual eval.
 /// WARNING: param names match C — Rust=(s, dont_change_job, exiting, context) vs C=(s, dont_change_job, exiting, context)
-#[allow(dead_code)]
 fn execstring(s: &str, dont_change_job: i32, exiting: i32, context: &str) {
     // c:1228
-    use crate::ported::zsh_h::VERBOSE;
     crate::ported::mem::pushheap(); // c:1232
     if crate::ported::zsh_h::isset(VERBOSE as i32) {
         // c:1233

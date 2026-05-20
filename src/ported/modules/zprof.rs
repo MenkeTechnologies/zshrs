@@ -987,7 +987,6 @@ mod tests {
         NCALLS.store(1, Ordering::SeqCst);
         NARCS.store(1, Ordering::SeqCst);
 
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),

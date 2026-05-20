@@ -56,7 +56,6 @@ mod tests {
     #[test]
     fn paramtypestr_reports_scalar_for_scalar() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
         let pm = param {
             node: hashnode {
                 next: None,
