@@ -67,6 +67,8 @@ pub fn zcontext_save() {                                                     // 
 /// Port of `void zcontext_restore_partial(int parts)` from Src/context.c:89.
 pub fn zcontext_restore_partial(parts: i32) {                                // c:89
     let mut head = cstack.lock().unwrap();
+    // c:93 — DPUTS(!cstack, "BUG: zcontext_restore() without zcontext_save()")
+    crate::DPUTS!(head.is_none(), "BUG: zcontext_restore() without zcontext_save()"); // c:93
     let mut cs = match head.take() {                                         // c:91
         Some(cs) => cs,
         None => {
