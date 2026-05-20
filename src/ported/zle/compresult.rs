@@ -33,6 +33,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::ported::init::SHTTY;
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop, zputs};
+use crate::ported::zle::compcore::listdat as listdat_static;
 use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
     Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
@@ -731,7 +732,7 @@ pub fn calclist(showall: i32) -> i32 {
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
-        let ld = crate::ported::zle::compcore::listdat
+        let ld = listdat_static
             .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
         let g = ld.lock().unwrap();
         if LASTINVCOUNT.with(|c| c.get()) == invcount
@@ -1199,7 +1200,7 @@ pub fn calclist(showall: i32) -> i32 {
     }
 
     // c:1910-1918 — commit listdat.
-    let ld = crate::ported::zle::compcore::listdat
+    let ld = listdat_static
         .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
     let mut g = ld.lock().unwrap();
     g.valid = 1;
@@ -1245,7 +1246,7 @@ pub fn asklist() -> i32 {
     CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);
 
     // c:1937-1940 — snapshot listdat counts + minfo state.
-    let listdat = crate::ported::zle::compcore::listdat
+    let listdat = listdat_static
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
         .lock()
         .ok()
@@ -1360,7 +1361,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         }
     };
 
-    let listdat = crate::ported::zle::compcore::listdat
+    let listdat = listdat_static
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
         .lock()
         .ok()
@@ -1661,7 +1662,7 @@ pub fn ilistmatches() -> i32 {
     // c:2284
     let _ = calclist(0); // c:2286
                          // c:2288 — bail when listdat.nlines == 0 (no matches to display).
-    let nlines = crate::ported::zle::compcore::listdat
+    let nlines = listdat_static
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
         .lock()
         .map(|g| g.nlines)
@@ -1759,7 +1760,7 @@ pub fn invalidate_list() -> i32 {
     SHOWINGLIST.store(0, Ordering::SeqCst);
     fromcomp.store(0, Ordering::SeqCst);
     // c:2346 — `listdat.valid = 0`.
-    if let Ok(mut ld) = crate::ported::zle::compcore::listdat
+    if let Ok(mut ld) = listdat_static
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
         .lock()
     {

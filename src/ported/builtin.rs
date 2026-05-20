@@ -4872,7 +4872,7 @@ pub fn bin_whence(
                         }
                         // c:4056-4060 — shell functions scan
                         // (scanmatchshfunc → shfunctab walk + printnode).
-                        let names: Vec<String> = crate::ported::builtin::shfunctab_table()
+                        let names: Vec<String> = shfunctab_table()
                             .lock()
                             .map(|t| t.keys().cloned().collect())
                             .unwrap_or_default();
@@ -5048,7 +5048,7 @@ pub fn bin_whence(
                 } // c:4150
             }
             // c:4153-4158 — shell function check.
-            if let Ok(t) = crate::ported::builtin::shfunctab_table().lock() {
+            if let Ok(t) = shfunctab_table().lock() {
                 if t.contains_key(arg) {
                     // c:4153
                     if (printflags & PRINT_WHENCE_FUNCDEF as i32) != 0 {

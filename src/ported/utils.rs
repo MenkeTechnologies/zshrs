@@ -22,8 +22,9 @@ use libc::{
 
 use crate::init::zleentry;
 use crate::params::getsparam_u;
-use crate::ported::builtin::SFCONTEXT;
-use crate::ported::hashnameddir::nameddirtab;
+use crate::ported::builtin::{SFCONTEXT, STOPMSG};
+use crate::ported::compat::u9_iswprint;
+use crate::ported::hashnameddir::{nameddirtab, removenameddirnode};
 use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::chrealpath;
 use crate::ported::modules::clone::{coprocin, coprocout};
@@ -34,8 +35,8 @@ use crate::ported::init::SHTTY as SHTTY_FD;
 use crate::ported::lex::lineno;
 use crate::ported::options::{dosetopt, opt_state_set};
 use crate::ported::params::{
-    assignsparam, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn, isident,
-    locallevel as LOCALLEVEL, setaparam, setiparam, wordcharsgetfn, wordcharssetfn,
+    assignsparam, convbase as convbase_param, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn,
+    isident, locallevel as LOCALLEVEL, setaparam, setiparam, wordcharsgetfn, wordcharssetfn,
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
@@ -551,7 +552,7 @@ pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {
     // c:616 — `if (!WC_ISPRINT(c) && (c < 0x80 || !isset(PRINTEIGHTBIT)))`.
     // The non-printable + (low-ASCII or PRINTEIGHTBIT-off) branch.
     let print_eightbit = isset(PRINTEIGHTBIT);
-    let is_printable = crate::ported::compat::u9_iswprint(c);
+    let is_printable = u9_iswprint(c);
     if !is_printable && (cv < 0x80 || !print_eightbit) {
         if cv == 0x7f {
             // c:617
@@ -583,7 +584,7 @@ pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {
         return c.to_string();
     }
     // c:644-678 — high-bit char: try UTF-8 encode first.
-    if crate::ported::compat::u9_iswprint(c) {
+    if u9_iswprint(c) {
         // c:681 widthp wcw >= 0
         // Printable wide char: emit raw UTF-8.
         return c.to_string();
@@ -1304,7 +1305,7 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {
     if dir.is_empty() || !dir.starts_with('/') || dir.len() >= libc::PATH_MAX as usize
     // c:1211 strlen(t) >= PATH_MAX
     {
-        let _ = crate::ported::hashnameddir::removenameddirnode(name); // c:1214
+        let _ = removenameddirnode(name); // c:1214
         return;
     }
     let mut trimmed = dir.trim_end_matches('/').to_string(); // c:1224-1226
@@ -3809,7 +3810,7 @@ pub fn subst_string_by_func(
 ) -> Option<Vec<String>> // c:4017
 {
     let osc = SFCONTEXT.load(Ordering::Relaxed); // c:4019
-    let osm = crate::ported::builtin::STOPMSG.load(Ordering::Relaxed);
+    let osm = STOPMSG.load(Ordering::Relaxed);
     let old_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
     let mut args: Vec<String> = Vec::with_capacity(3); // c:4020-4026
     args.push(func_name.to_string()); // c:4023
@@ -3835,7 +3836,7 @@ pub fn subst_string_by_func(
     };
 
     SFCONTEXT.store(osc, Ordering::Relaxed); // c:4035
-    crate::ported::builtin::STOPMSG.store(osm, Ordering::Relaxed); // c:4036
+    STOPMSG.store(osm, Ordering::Relaxed); // c:4036
     INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed); // c:4037
     ret // c:4038
 }
@@ -6858,7 +6859,7 @@ fn ispecial(c: char) -> bool {
 }
 
 /// Convert integer to string with specified base — re-export of
-/// the canonical port at `crate::ported::params::convbase`.
+/// the canonical port at `convbase_param`.
 ///
 /// The previous Rust port at this file was a SECOND, divergent
 /// implementation of `convbase`:
@@ -6876,7 +6877,7 @@ fn ispecial(c: char) -> bool {
 /// no divergent duplicate stays alive.
 pub fn convbase(val: i64, base: u32) -> String {
     // c:5634 (Src/params.c)
-    crate::ported::params::convbase(val, base)
+    convbase_param(val, base)
 }
 
 // `checkglobqual` DELETED — fake bracket-depth scanner cited
@@ -9847,7 +9848,7 @@ mod tests {
         }
         // Ensure the entry doesn't exist beforehand.
         let name = "ZSHRS_TEST_PATHMAX_DIR";
-        let _ = crate::ported::hashnameddir::removenameddirnode(name);
+        let _ = removenameddirnode(name);
         // Construct an oversized path.
         let mut over: String = "/".to_string();
         over.push_str(&"a".repeat(libc::PATH_MAX as usize));
