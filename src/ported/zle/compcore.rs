@@ -24,8 +24,12 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::ported::params::{paramtab, paramtab_hashed_storage};
+use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::ported::zsh_h::{
-    Bnull, Inbrace, Outbrace, Stringg, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE,
+    isset, Bnull, Inbrace, Outbrace, Stringg, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
+    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES,
+    SORTIT_NUMERICALLY,
 };
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
@@ -444,9 +448,6 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
 /// Returns 1 to suppress the next-stage match build, 0 to continue.
 pub fn before_complete(lst: &mut i32) -> i32 {
     // c:461
-    use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
-    use crate::ported::zle::zle_tricky::{LASTAMBIG, SHOWAGAIN, VALIDLIST};
 
     // c:463 — `oldmenucmp = menucmp;`
     OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -1503,9 +1504,6 @@ pub fn set_comp_sep() -> i32 {
 // re-exports here so call sites stay short:
 #[doc(hidden)]
 pub use crate::ported::zle::zle_tricky::{NBRBEG as _NBRBEG, NBREND as _NBREND};
-use crate::zsh_h::{
-    isset, BASHAUTOLIST, NUMERICGLOBSORT, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY,
-};
 
 // =====================================================================
 // set_list_array — `Src/Zle/compcore.c:1947`.
@@ -1617,8 +1615,6 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
 /// thread-local maintained by params.rs for assoc-arrays.
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // c:2022
-    use crate::ported::params::{paramtab, paramtab_hashed_storage};
-    use crate::ported::zsh_h::{PM_HASHED, PM_TYPE};
 
     crate::ported::signals::queue_signals(); // c:2028
 

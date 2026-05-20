@@ -23,7 +23,9 @@ use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
 use crate::ported::signals::{signal_block, signal_setmask};
 use crate::ported::signals_h::{signal_default, signal_ignore};
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{
+    MONITOR, OPT_ISSET, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
+};
 use std::os::unix::process::ExitStatusExt;
 use std::sync::atomic::Ordering;
 
@@ -536,7 +538,6 @@ pub fn get_usage() -> timeinfo {
 /// (the previous Rust port had this bug).
 pub fn update_process(pn: &mut Process, status: i32) {
     // c:362
-    use crate::ported::zsh_h::timeinfo;
     let prev = CHILD_USAGE_PREV.with(|c| c.borrow().clone()); // c:366-367
     let now = get_usage(); // c:374 get_usage()
     CHILD_USAGE_PREV.with(|c| *c.borrow_mut() = now.clone());
@@ -1462,7 +1463,6 @@ pub fn freejob(jn: &mut Job, deleting: bool) {
 /// wired (mypgrp, jobtab[] reference); doc-pinned for follow-up.
 pub fn deletejob(jn: &mut Job, disowning: bool) {
     // c:1512
-    use crate::ported::zsh_h::{STAT_ATTACH, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB};
     // c:1514 — `deletefilelist(jn->filelist, disowning);`. When
     // disowning, files are NOT deleted from disk; the filelist entries
     // are simply dropped.
@@ -1656,7 +1656,6 @@ pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {
 // replaced — no public reset method is needed.
 pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {
     // c:1780
-    use crate::ported::zsh_h::STAT_INUSE;
     let _ = table; // legacy executor-side handle, unused now
     let posix_jobs = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXJOBS); // c:1786
                                                                                    // c:1786-1787 — `if (isset(POSIXJOBS)) oldmaxjob = 0;`.
@@ -1812,7 +1811,6 @@ pub fn setjobpwd() {
 /// Port of `void spawnjob(void)` from `Src/jobs.c:1894`.
 pub fn spawnjob() {
     // c:1894
-    use crate::ported::zsh_h::{isset, MONITOR};
     let thisjob_idx = *THISJOB
         .get_or_init(|| Mutex::new(-1))
         .lock()
@@ -4704,7 +4702,6 @@ mod tests {
     #[test]
     fn should_report_time_stat_timed_overrides_zleactive() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let prev = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed);
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
@@ -4722,7 +4719,6 @@ mod tests {
     #[test]
     fn should_report_time_zleactive_suppresses() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
         let prev = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed);
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);

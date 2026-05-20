@@ -140,9 +140,16 @@ pub static patnpar: AtomicI32 = AtomicI32::new(0); // c:271
 // `src/ported/zsh_h.rs:2287-2291` per Rule C. Re-export so pattern's
 // matcher arms can read them without the longer path.
 pub use crate::ported::zsh_h::{GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE};
+use crate::ported::params::{paramtab, paramtab_hashed_storage};
+use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::zsh_h::{
-    patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK,
-    ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
+    isset, patprog, Marker as MARKER_CH, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
+    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
+    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HASH as ZPC_HASH_C,
+    ZPC_HAT, ZPC_HAT as ZPC_HAT_C, ZPC_INANG, ZPC_INANG as ZPC_INANG_C, ZPC_INBRACK, ZPC_INPAR,
+    ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
+    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
+    ZPC_TILDE as ZPC_TILDE_C,
 };
 
 // =====================================================================
@@ -253,12 +260,6 @@ fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {
 /// skipped pending the disable-table port.
 pub fn patcompcharsset() {
     // c:464
-    use crate::ported::zsh_h::{
-        Marker as MARKER_CH, EXTENDEDGLOB, KSHGLOB, SHGLOB, ZPC_HASH as ZPC_HASH_C,
-        ZPC_HAT as ZPC_HAT_C, ZPC_INANG as ZPC_INANG_C, ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT,
-        ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR,
-        ZPC_TILDE as ZPC_TILDE_C,
-    };
     let mut sp = zpc_special.lock().unwrap();
     *sp = [0u8; ZPC_COUNT as usize];
     // c:469 — `memcpy(zpc_special, zpc_chars, ZPC_COUNT)`. The default
@@ -350,7 +351,6 @@ pub fn patcompcharsset() {
 /// case-folding.
 pub fn patcompstart() {
     // c:517
-    use crate::ported::zsh_h::{isset, CASEGLOB, CASEPATHS, MULTIBYTE};
     // c:519 — `patcompcharsset()` FIRST.
     patcompcharsset();
     patout.lock().unwrap().clear();
@@ -2773,7 +2773,6 @@ mod tests {
     #[test]
     fn patcompile_concurrent_safe() {
         let _g = crate::test_util::global_state_lock();
-        use std::thread;
         let handles: Vec<_> = (0..8)
             .map(|i| {
                 thread::spawn(move || {
@@ -3215,7 +3214,6 @@ mod tests {
     #[test]
     fn patcompstart_sets_patglobflags_per_option_state() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::{opt_state_get, opt_state_set};
         let saved_caseglob = opt_state_get("caseglob").unwrap_or(false);
         let saved_casepaths = opt_state_get("casepaths").unwrap_or(false);
         let saved_multibyte = opt_state_get("multibyte").unwrap_or(false);
@@ -3291,11 +3289,6 @@ mod tests {
     #[test]
     fn patcompcharsset_respects_extendedglob_kshglob_shglob_options() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::{opt_state_get, opt_state_set};
-        use crate::ported::zsh_h::{
-            Marker as MARKER_CH, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INPAR, ZPC_KSH_AT, ZPC_KSH_BANG,
-            ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE,
-        };
         let marker_byte = MARKER_CH as u32 as u8;
 
         // Save state.
