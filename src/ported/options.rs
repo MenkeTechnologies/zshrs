@@ -19,10 +19,10 @@ use crate::ported::zsh_h as zh;
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
 // bits ARE the emulation bits. Direct mirror of the C macros.
-const OPT_CSH: u8 = crate::ported::zsh_h::EMULATE_CSH as u8;                 // c:55
-const OPT_KSH: u8 = crate::ported::zsh_h::EMULATE_KSH as u8;                 // c:56
-const OPT_SH:  u8 = crate::ported::zsh_h::EMULATE_SH  as u8;                 // c:57
-const OPT_ZSH: u8 = crate::ported::zsh_h::EMULATE_ZSH as u8;                 // c:58
+const OPT_CSH: u8 = EMULATE_CSH as u8;                 // c:55
+const OPT_KSH: u8 = EMULATE_KSH as u8;                 // c:56
+const OPT_SH:  u8 = EMULATE_SH  as u8;                 // c:57
+const OPT_ZSH: u8 = EMULATE_ZSH as u8;                 // c:58
 const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH;                    // c:60
 const OPT_BOURNE: u8 = OPT_KSH | OPT_SH;                                     // c:61
 const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH;                           // c:62
@@ -31,11 +31,11 @@ const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH;                                   // 
 
 /// Option flags
 // option is relevant to emulation                                          // c:66
-const OPT_EMULATE: u16 = crate::ported::zsh_h::EMULATE_UNUSED as u16;        // c:67
+const OPT_EMULATE: u16 = EMULATE_UNUSED as u16;        // c:67
 // option should never be set by emulate()                                  // c:68
-const OPT_SPECIAL: u16 = (crate::ported::zsh_h::EMULATE_UNUSED << 1) as u16; // c:69
+const OPT_SPECIAL: u16 = (EMULATE_UNUSED << 1) as u16; // c:69
 // option is an alias to an other option                                    // c:70
-const OPT_ALIAS: u16 = (crate::ported::zsh_h::EMULATE_UNUSED << 2) as u16;   // c:71
+const OPT_ALIAS: u16 = (EMULATE_UNUSED << 2) as u16;   // c:71
 
 /// Every recognised shell option.
 /// Port of the `OPT_*` enum from Src/zsh.h — the C source uses
@@ -294,7 +294,7 @@ pub fn emulate(mode: &str, fully: bool) {                                    // 
 // BEGIN moved-from-exec-rs (statics)
 use std::collections::HashSet;
 use std::sync::LazyLock;
-use crate::zsh_h::{isset, EMULATE_ZSH};
+use crate::zsh_h::{isset, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH};
 
 /// `setopt OPT` builtin per-arg dispatch.
 /// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop

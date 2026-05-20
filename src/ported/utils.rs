@@ -43,7 +43,7 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 // (Rule E — C uses SHTTY as both the global and the parameter name).
 use crate::ported::init::SHTTY as SHTTY_FD;
 use crate::ported::zsh_h::FDT_UNUSED;
-use crate::zsh_h::{SHINSTDIN, ZLE_CMD_TRASH};
+use crate::ported::zsh_h::{CSHJUNKIEQUOTES, SHINSTDIN, ZLE_CMD_TRASH};
 
 /// Set a wide-char array from a multibyte source string.
 /// Port of `set_widearray(char *mb_array, Widechar_array wca)` from `Src/utils.c:69`.
@@ -5330,7 +5330,7 @@ pub fn dquotedztrdup(s: &str) -> String {                                    // 
     let mut out = String::with_capacity(s.len() * 4 + 2);
     let bytes = s.as_bytes();
     // c:6655 — `if (isset(CSHJUNKIEQUOTES))`.
-    if isset(crate::ported::zsh_h::CSHJUNKIEQUOTES) {
+    if isset(CSHJUNKIEQUOTES) {
         let mut inquote = false;
         let mut i = 0;
         while i < bytes.len() {
