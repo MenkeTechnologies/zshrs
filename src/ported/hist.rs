@@ -7,37 +7,32 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use crate::ported::zsh_h::histent;
-use crate::zsh_h::{hist_stack, isset, BANGHIST, ERRFLAG_INT, HFILE_FAST, HFILE_USE_OPTIONS, HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INTERACTIVE, SHAREHISTORY, SHINSTDIN};
-pub use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::Component::*;
+use std::sync::atomic::Ordering::SeqCst;
 
-// Bulk-import the most-used cross-module names so the bodies below
-// stay close to the C source visually instead of being drowned in
-// fully-qualified `crate::ported::*::` paths.
+use crate::ported::glob::remnulargs;
+use crate::ported::hashtable::addhistnode;
 // NOTE: `inbufflags` and `inbufct` are NOT imported because the
 // hist.rs body uses `let inbufflags = ...` shadowing — Rust treats
 // imported names as constant-patterns in `let` LHS, breaking that
 // idiom. They stay as `crate::ported::input::inbufflags` until
 // the shadowing pattern is refactored.
-use crate::ported::input::{ingetc, inungetc};
-use crate::ported::zle::compcore::ZLEMETACS;
-use crate::ported::zsh_h::hashnode;
-use crate::ported::lex::LEX_ISFIRSTCH;
-// Names lifted out of inside-fn `use` statements (PORT.md
-// 'no imports inside FNs ever').
+use crate::ported::input::{ingetc, inputsetline, inungetc};
+use crate::ported::lex::{parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP};
 use crate::ported::options::dosetopt;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
+use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
-    Pound, CSHJUNKIEHISTORY, HISTEXPIREDUPSFIRST, HISTVERIFY, INP_ALIAS, INP_HIST,
+    hashnode, histent, hist_stack, isset, Pound, BANGHIST, CSHJUNKIEHISTORY, ERRFLAG_INT,
+    HFILE_FAST, HFILE_USE_OPTIONS, HISTEXPIREDUPSFIRST, HISTIGNOREALLDUPS, HISTIGNOREDUPS,
+    HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, HISTVERIFY, INCAPPENDHISTORY,
+    INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY, SHINSTDIN,
 };
 use crate::ported::ztype_h::itok;
-use std::sync::atomic::Ordering::SeqCst;
-use crate::glob::remnulargs;
-use crate::lex::{parse_subst_string, untokenize, ztokens};
+pub use crate::ported::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -1174,7 +1169,7 @@ pub fn herrflush() {
     crate::ported::input::inpopalias();
 
     // c:481-482 — `if (lexstop) return;`
-    if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+    if LEX_LEXSTOP.with(|f| f.get()) {
         return;
     }
 
@@ -1203,7 +1198,7 @@ pub fn herrflush() {
         let c = ingetc() // c:495 ingetc()
             .map(|ch| ch as i32)
             .unwrap_or(-1);
-        if !crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+        if !LEX_LEXSTOP.with(|f| f.get()) {
             // c:496 if (!lexstop)
             ihwaddc(c); // c:497 hwaddc(c)
             iaddtoline(c); // c:498 addtoline(c)
@@ -2145,8 +2140,8 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             if (newflags & HIST_TMPSTORE) == 0 {
                 // c:1625
                 // addhistnode(histtab, he->node.nam, he) — hashtable wiring c:1626
-                // routes through crate::ported::hashtable::addhistnode.
-                crate::ported::hashtable::addhistnode(&text, n as i32);
+                // routes through addhistnode.
+                addhistnode(&text, n as i32);
             }
         }
     }
@@ -5092,7 +5087,7 @@ mod subst_modifier_tests {
         // Push "42abc" into the input stream; digitcount() should
         // parse 42 and inungetc() the 'a'. Use inputsetline to
         // seed the input buffer.
-        crate::ported::input::inputsetline("42abc", 0);
+        inputsetline("42abc", 0);
         let n = digitcount();
         assert_eq!(n, 42, "c:581 — decimal digit accumulation");
 
@@ -5101,7 +5096,7 @@ mod subst_modifier_tests {
         assert_eq!(nxt, 'a', "c:587 — non-digit terminator was inungetc'd");
 
         // No digits at all → returns 0, inungetc's the first char.
-        crate::ported::input::inputsetline("xyz", 0);
+        inputsetline("xyz", 0);
         let n = digitcount();
         assert_eq!(n, 0, "c:586 — non-digit first char returns 0");
         let nxt = ingetc().unwrap_or('\0');
