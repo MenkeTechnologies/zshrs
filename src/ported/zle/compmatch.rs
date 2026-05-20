@@ -24,7 +24,9 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
-use crate::ported::zle::comp_h::{Cmlist, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_RIGHT};
+use crate::ported::zle::comp_h::{Cline, Cmatcher, Cmlist, Cpattern, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_RIGHT};
+use crate::ported::zle::compcore::mstack;
+use crate::ported::zle::zle_h::brinfo;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 #[allow(unused_imports)]
@@ -83,8 +85,8 @@ use crate::ported::zle::zle_word::*;
 
 pub fn cpatterns_same(
     // c:44
-    mut a: Option<&crate::ported::zle::comp_h::Cpattern>,
-    mut b: Option<&crate::ported::zle::comp_h::Cpattern>,
+    mut a: Option<&Cpattern>,
+    mut b: Option<&Cpattern>,
 ) -> bool {
     // c:42
     use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
@@ -148,8 +150,8 @@ pub fn cpatterns_same(
 /// WARNING: param names don't match C — Rust=(b) vs C=(a, b)
 pub fn cmatchers_same(
     // c:84
-    a: &crate::ported::zle::comp_h::Cmatcher,
-    b: &crate::ported::zle::comp_h::Cmatcher,
+    a: &Cmatcher,
+    b: &Cmatcher,
 ) -> bool {
     // c:82
     use crate::ported::zle::comp_h::{CMF_LEFT, CMF_RIGHT};
@@ -192,7 +194,7 @@ pub fn cmatchers_same(
 /// matcher that qualifies for brace-matching to the file-scope
 /// `bmatchers` Cmlist. Original chain head is appended after the new
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
-pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {
+pub fn add_bmatchers(m: Option<&Cmatcher>) {
     // c:101
     let cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
     let old = cell.lock().ok().and_then(|mut g| g.take()); // c:104 Cmlist old = bmatchers
@@ -228,7 +230,7 @@ pub fn update_bmatchers() {
     // c:121
     let bm_cell =
         crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
-    let ms_cell = crate::ported::zle::compcore::mstack.get_or_init(|| std::sync::Mutex::new(None));
+    let ms_cell = mstack.get_or_init(|| std::sync::Mutex::new(None));
     let mut p = bm_cell.lock().ok().and_then(|mut g| g.take()); // c:124 Cmlist p = bmatchers
     let ms_head = ms_cell
         .lock()
@@ -281,7 +283,7 @@ pub fn get_cline(
     o: Option<String>,
     ol: i32,
     fl: i32,
-) -> Box<crate::ported::zle::comp_h::Cline> {
+) -> Box<Cline> {
     use crate::ported::zle::comp_h::Cline;
     Box::new(Cline {
         next: None, // c:156
@@ -318,7 +320,7 @@ pub fn get_cline(
 /// ```
 /// Free a Cline list. C pushes onto a `freecl` free-list to recycle;
 /// Rust just drops via Box.
-pub fn free_cline(l: Option<Box<crate::ported::zle::comp_h::Cline>>) {
+pub fn free_cline(l: Option<Box<Cline>>) {
     // c:172
     // c:172-183 — walk; free each prefix/suffix recursively. In Rust
     // dropping the Box of the list head triggers Drop on `next`/
@@ -355,18 +357,18 @@ pub fn free_cline(l: Option<Box<crate::ported::zle::comp_h::Cline>>) {
 /// WARNING: param names don't match C — Rust=(deep) vs C=(l, deep)
 pub fn cp_cline(
     // c:190
-    l: Option<&crate::ported::zle::comp_h::Cline>,
+    l: Option<&Cline>,
     deep: i32,
-) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+) -> Option<Box<Cline>> {
     // c:189
-    let mut r: Option<Box<crate::ported::zle::comp_h::Cline>> = None; // c:192 r = NULL
-    let mut tail: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut r;
+    let mut r: Option<Box<Cline>> = None; // c:192 r = NULL
+    let mut tail: *mut Option<Box<Cline>> = &mut r;
     let mut cur = l;
     while let Some(node) = cur {
         // c:194 while (l)
         // c:198 — `t = (Cline) zhalloc(sizeof(*t))`.
         // c:199 — `memcpy(t, l, sizeof(*t))`.
-        let mut t: Box<crate::ported::zle::comp_h::Cline> = Box::new(node.clone());
+        let mut t: Box<Cline> = Box::new(node.clone());
         // Reset `next` so the memcpy-equivalent doesn't link to the
         // source's next (the loop sets it via the tail pointer).
         t.next = None;
@@ -420,7 +422,7 @@ pub fn cp_cline(
 /// }
 /// ```
 /// Total visual length of one Cline plus its prefix/suffix sub-lists.
-pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {
+pub fn cline_sublen(l: &Cline) -> i32 {
     // c:219
     // c:221 — `len = (CLF_LINE ? llen : wlen)`.
     let mut len: i32 = if (l.flags & CLF_LINE) != 0 {
@@ -477,7 +479,7 @@ pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {
 /// ```
 /// Walk a Cline list setting `min` (and optionally `max`) from
 /// `cline_sublen`.
-pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, both: i32) {
+pub fn cline_setlens(l: &mut Option<Box<Cline>>, both: i32) {
     // c:240
     let mut cur = l.as_deref_mut();
     while let Some(node) = cur {
@@ -515,7 +517,7 @@ use std::sync::OnceLock;
 /// ```
 /// Set `CLF_MATCHED` on every Cline reachable through next/prefix/
 /// suffix from `p`.
-pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {
+pub fn cline_matched(p: &mut Option<Box<Cline>>) {
     // c:254
     let mut cur = p.as_deref_mut();
     while let Some(node) = cur {
@@ -546,10 +548,10 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {
 /// WARNING: param names don't match C — Rust=() vs C=(p)
 pub fn revert_cline(
     // c:270
-    mut p: Option<Box<crate::ported::zle::comp_h::Cline>>,
-) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+    mut p: Option<Box<Cline>>,
+) -> Option<Box<Cline>> {
     // c:269
-    let mut r: Option<Box<crate::ported::zle::comp_h::Cline>> = None; // c:272 r = NULL
+    let mut r: Option<Box<Cline>> = None; // c:272 r = NULL
     while let Some(mut node) = p {
         // c:274 while (p)
         let n = node.next.take(); // c:275 n = p->next
@@ -625,7 +627,7 @@ pub fn abort_match() {
 /// `l` when `m & CMF_LINE`) of length `wl` into the file-scope
 /// `MATCHBUF` accumulator; `sfx` prepends instead of appends.
 pub fn add_match_str(
-    m: Option<&crate::ported::zle::comp_h::Cmatcher>, // c:327
+    m: Option<&Cmatcher>, // c:327
     l: &str,
     w: &str,
     mut wl: i32,
@@ -676,7 +678,7 @@ pub fn add_match_str(
 /// matcher's anchor rules and consuming any pending `MATCHSUBS`
 /// nodes into the new tail.
 pub fn add_match_part(
-    m: Option<&crate::ported::zle::comp_h::Cmatcher>, // c:373
+    m: Option<&Cmatcher>, // c:373
     l: Option<&str>,
     _ll: i32,
     w: &str,
@@ -837,7 +839,7 @@ pub fn add_match_part(
 /// into the file-scope `MATCHSUBS` / `MATCHLASTSUB` linked list.
 /// Called from match_str during a CMF_RIGHT anchor match.
 pub fn add_match_sub(
-    m: Option<&crate::ported::zle::comp_h::Cmatcher>, // c:446
+    m: Option<&Cmatcher>, // c:446
     l: Option<&str>,
     ll: i32,
     w: Option<&str>,
@@ -912,7 +914,7 @@ pub fn match_str(
     // c:500
     l_in: &str,
     w_in: &str,
-    _bpp: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
+    _bpp: Option<&mut Option<Box<brinfo>>>,
     bc: i32,
     rwlp: Option<&mut i32>,
     sfx: i32,
@@ -945,12 +947,12 @@ pub fn match_str(
     let mut l_pos: i32 = if sfx != 0 { ll } else { 0 };
     let mut w_pos: i32 = if sfx != 0 { lw } else { 0 };
     let mut ow_pos: i32 = w_pos;
-    let mut lm: Option<Box<crate::ported::zle::comp_h::Cmatcher>> = None;
+    let mut lm: Option<Box<Cmatcher>> = None;
     let mut he = 0i32;
 
     // Snapshot the mstack chain into a Vec for stable iteration.
-    let mstack_snapshot: Vec<Box<crate::ported::zle::comp_h::Cmatcher>> = {
-        let g = crate::ported::zle::compcore::mstack
+    let mstack_snapshot: Vec<Box<Cmatcher>> = {
+        let g = mstack
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
             .ok();
@@ -958,7 +960,7 @@ pub fn match_str(
         if let Some(g) = g {
             let mut cur = g.as_deref();
             while let Some(ms) = cur {
-                let mut mp_cur: Option<&crate::ported::zle::comp_h::Cmatcher> = Some(&*ms.matcher);
+                let mut mp_cur: Option<&Cmatcher> = Some(&*ms.matcher);
                 while let Some(mp) = mp_cur {
                     out.push(Box::new(mp.clone()));
                     mp_cur = mp.next.as_deref();
@@ -1002,7 +1004,7 @@ pub fn match_str(
 
         // c:591 retry: walk the snapshotted matcher chain looking for
         // a non-* matcher we can apply at the current cursor.
-        let mut matched: Option<Box<crate::ported::zle::comp_h::Cmatcher>> = None;
+        let mut matched: Option<Box<Cmatcher>> = None;
         for mp in mstack_snapshot.iter() {
             if let Some(ref lm_box) = lm {
                 if std::ptr::addr_eq(lm_box.as_ref() as *const _, mp.as_ref() as *const _) {
@@ -1028,8 +1030,8 @@ pub fn match_str(
                 // c:701-715 — set ap/aop/moff/loff/aoff/both per CMF_LEFT
                 // × sfx. Four combinations.
                 let (ap, aop, moff, both, loff, aoff): (
-                    Option<&crate::ported::zle::comp_h::Cpattern>,
-                    Option<&crate::ported::zle::comp_h::Cpattern>,
+                    Option<&Cpattern>,
+                    Option<&Cpattern>,
                     i32,
                     i32,
                     i32,
@@ -1665,11 +1667,11 @@ pub fn comp_match(
     sfx: &str,
     w: &str,
     cp: Option<&crate::ported::pattern::Patprog>,
-    clp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    clp: Option<&mut Option<Box<Cline>>>,
     qu: i32,
-    _bpl: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
+    _bpl: Option<&mut Option<Box<brinfo>>>,
     bcp: i32,
-    _bsl: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
+    _bsl: Option<&mut Option<Box<brinfo>>>,
     bcs: i32,
     exact: &mut i32,
 ) -> Option<String> {
@@ -1810,7 +1812,7 @@ pub fn comp_match(
 /// on miss. `mtp` is non-zero only for the EQUIV path.
 /// WARNING: param names don't match C — Rust=(p, mtp) vs C=(p, c, mtp)
 pub fn pattern_match1(
-    p: &crate::ported::zle::comp_h::Cpattern, // c:1269
+    p: &Cpattern, // c:1269
     c: u32,
     mtp: &mut i32,
 ) -> u32 {
@@ -1863,7 +1865,7 @@ pub fn pattern_match1(
 /// Returns `CHR_INVALID` (u32::MAX) on miss; the matched line
 /// char on success.
 pub fn pattern_match_equivalence(
-    lp: &crate::ported::zle::comp_h::Cpattern, // c:1316
+    lp: &Cpattern, // c:1316
     wind: u32,
     wmtp: i32,
     wchr: u32,
@@ -1961,10 +1963,10 @@ pub fn pattern_match_equivalence(
 /// line-string from a partial match. Writes the deduced line chars
 /// into `new_line` and returns 1 on full match, 0 otherwise.
 pub fn pattern_match_restrict(
-    p: Option<&crate::ported::zle::comp_h::Cpattern>, // c:1383
-    wp: Option<&crate::ported::zle::comp_h::Cpattern>,
+    p: Option<&Cpattern>, // c:1383
+    wp: Option<&Cpattern>,
     wsc: &[u32],
-    prestrict: Option<&crate::ported::zle::comp_h::Cpattern>,
+    prestrict: Option<&Cpattern>,
     new_line: &mut Vec<char>,
 ) -> i32 {
     use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CHAR, CPAT_EQUIV};
@@ -2092,9 +2094,9 @@ pub fn pattern_match_restrict(
 /// position matches and that paired pattern-class indices line up.
 /// WARNING: param names don't match C — Rust=(p, wp, ws) vs C=(p, s, wp, ws)
 pub fn pattern_match(
-    p: Option<&crate::ported::zle::comp_h::Cpattern>, // c:1548
+    p: Option<&Cpattern>, // c:1548
     s: &str,
-    wp: Option<&crate::ported::zle::comp_h::Cpattern>,
+    wp: Option<&Cpattern>,
     ws: &str,
 ) -> i32 {
     use crate::ported::zle::comp_h::CPAT_ANY;
@@ -2168,9 +2170,9 @@ pub fn bld_parts(
     str: &str,
     len: i32,
     mut plen: i32, // c:1638
-    lp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
-    lprem: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
-) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+    lp: Option<&mut Option<Box<Cline>>>,
+    lprem: Option<&mut Option<Box<Cline>>>,
+) -> Option<Box<Cline>> {
     use crate::ported::zle::comp_h::{Cline, CLF_NEW};
 
     let bytes = str.as_bytes();
@@ -2362,7 +2364,7 @@ pub fn bld_parts(
 /// emitting the validated char directly. Behaviourally identical for
 /// the single-matcher / CPAT_CHAR-only cases that cover daily use.
 pub fn bld_line(
-    mp: &crate::ported::zle::comp_h::Cmatcher, // c:1736
+    mp: &Cmatcher, // c:1736
     line: &mut Vec<char>,
     mword: &str,
     word: &str,
@@ -2554,8 +2556,8 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
 ///     (sets `CLF_JOIN` and rewrites `o->word`/`wlen`)
 ///   - `0` otherwise.
 pub fn cmp_anchors(
-    o: &mut crate::ported::zle::comp_h::Cline, // c:2107
-    n: &crate::ported::zle::comp_h::Cline,
+    o: &mut Cline, // c:2107
+    n: &Cline,
     join: i32,
 ) -> i32 {
     use crate::ported::zle::comp_h::{CLF_JOIN, CLF_LINE};
@@ -2614,8 +2616,8 @@ pub fn cmp_anchors(
 #[allow(non_camel_case_types)]
 pub struct cmdata {
     // c:2142
-    pub cl: Option<Box<crate::ported::zle::comp_h::Cline>>, // c:2143
-    pub pcl: Option<Box<crate::ported::zle::comp_h::Cline>>, // c:2143
+    pub cl: Option<Box<Cline>>, // c:2143
+    pub pcl: Option<Box<Cline>>, // c:2143
     pub str: String,                                        // c:2152
     pub astr: String,                                       // c:2152
     pub len: i32,                                           // c:2152
@@ -2679,7 +2681,7 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {
 /// `Src/Zle/compmatch.c:2188`. Puts the not-yet-matched portion
 /// of `md` back into the previous cline node so it can be revisited
 /// on a different match path.
-pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<Cline>> {
     // c:2188
     let mut r = md.pcl.as_deref().cloned()?; // c:2189 r = md->pcl
 
@@ -2724,7 +2726,7 @@ pub fn join_sub(
     mlen: &mut i32, // c:2212
     sfx: i32,
     join: i32,
-) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+) -> Option<Box<Cline>> {
     use crate::ported::zle::comp_h::CLF_JOIN;
 
     // c:2214 — `if (!check_cmdata(md, sfx))`. Refill md from next
@@ -2982,16 +2984,16 @@ pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {
 /// the helpers' return signals already feed the merge state the
 /// caller (`join_clines`) inspects.
 pub fn join_psfx(
-    ot: &mut crate::ported::zle::comp_h::Cline, // c:2444
-    nt: &mut crate::ported::zle::comp_h::Cline,
-    orest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
-    nrest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    ot: &mut Cline, // c:2444
+    nt: &mut Cline,
+    orest: Option<&mut Option<Box<Cline>>>,
+    nrest: Option<&mut Option<Box<Cline>>>,
     sfx: i32,
 ) {
     use crate::ported::zle::comp_h::{CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MISS};
 
     // c:2451-2455 — pick prefix/suffix chains.
-    let mut remaining: Option<Box<crate::ported::zle::comp_h::Cline>> = if sfx != 0 {
+    let mut remaining: Option<Box<Cline>> = if sfx != 0 {
         ot.suffix.take()
     } else {
         ot.prefix.take()
@@ -3053,8 +3055,8 @@ pub fn join_psfx(
 
     // Build the rewritten o-chain into result_head; result_tail_ptr tracks
     // the tail position so we can append in O(1).
-    let mut result_head: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
-    let mut result_tail_ptr: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut result_head;
+    let mut result_head: Option<Box<Cline>> = None;
+    let mut result_tail_ptr: *mut Option<Box<Cline>> = &mut result_head;
     let mut have_prev = false; // mirrors C's `p` non-null check
 
     let ot_slen = ot.slen;
@@ -3312,15 +3314,15 @@ pub fn join_psfx(
 /// the prefix field still holds the full sub-list.
 /// WARNING: param names don't match C — Rust=(o) vs C=(o, n)
 pub fn join_mid(
-    o: &mut crate::ported::zle::comp_h::Cline, // c:2608
-    n: &mut crate::ported::zle::comp_h::Cline,
+    o: &mut Cline, // c:2608
+    n: &mut Cline,
 ) {
     use crate::ported::zle::comp_h::CLF_JOIN;
 
     if (o.flags & CLF_JOIN) != 0 {
         // c:2611
         // c:2616 — `join_psfx(o, n, NULL, &nr, 0)`.
-        let mut nr: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut nr: Option<Box<Cline>> = None;
         join_psfx(o, n, None, Some(&mut nr), 0);
         // c:2618 — `n->suffix = revert_cline(nr)`.
         n.suffix = nr
@@ -3342,8 +3344,8 @@ pub fn join_mid(
         // c:2622
         o.flags |= CLF_JOIN; // c:2627
 
-        let mut or_: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
-        let mut nr: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut or_: Option<Box<Cline>> = None;
+        let mut nr: Option<Box<Cline>> = None;
         join_psfx(o, n, Some(&mut or_), Some(&mut nr), 0); // c:2631
 
         if let Some(ref mut or_node) = or_ {
@@ -3390,9 +3392,9 @@ pub fn join_mid(
 /// prefix copies (via cp_cline) until either side merges or the
 /// chain exhausts.
 pub fn sub_join(
-    a: &mut crate::ported::zle::comp_h::Cline, // c:2649
-    b: Option<Box<crate::ported::zle::comp_h::Cline>>,
-    e: &mut crate::ported::zle::comp_h::Cline,
+    a: &mut Cline, // c:2649
+    b: Option<Box<Cline>>,
+    e: &mut Cline,
     anew: i32,
 ) -> i32 {
     use crate::ported::zle::comp_h::CLF_SUF;
@@ -3409,7 +3411,7 @@ pub fn sub_join(
     // c:2655-2667 — walk b..e, splicing prefix sub-chains and the b
     // nodes themselves into a flat chain `chain`. We use a Vec since
     // we re-index it during the walk loop below.
-    let mut chain: Vec<Box<crate::ported::zle::comp_h::Cline>> = Vec::new();
+    let mut chain: Vec<Box<Cline>> = Vec::new();
     let mut cur = b;
     while let Some(mut b_node) = cur {
         cur = b_node.next.take();
@@ -3441,7 +3443,7 @@ pub fn sub_join(
     }
 
     // c:2669 — `ca = a->prefix`.
-    let ca: Option<Box<crate::ported::zle::comp_h::Cline>> = a.prefix.clone();
+    let ca: Option<Box<Cline>> = a.prefix.clone();
 
     // c:2671 — `while (n)`. Walk the chain index by index, calling
     // join_psfx with a fresh deep-clone of chain[i..] in e.prefix and
@@ -3450,8 +3452,8 @@ pub fn sub_join(
     while i < chain.len() {
         // c:2672 — `e->prefix = cp_cline(n, 1)`. Inline a deep clone of
         // chain[i..] as a fresh Cline chain.
-        let mut head: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
-        let mut tail: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head;
+        let mut head: Option<Box<Cline>> = None;
+        let mut tail: *mut Option<Box<Cline>> = &mut head;
         for src in &chain[i..] {
             let mut clone = Box::new((**src).clone());
             clone.next = None;
@@ -3515,9 +3517,9 @@ pub fn sub_join(
 /// nodes can be spliced out or replaced without losing the head.
 pub fn join_clines(
     // c:2706
-    o: Option<Box<crate::ported::zle::comp_h::Cline>>,
-    n: Option<Box<crate::ported::zle::comp_h::Cline>>,
-) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+    o: Option<Box<Cline>>,
+    n: Option<Box<Cline>>,
+) -> Option<Box<Cline>> {
     use crate::ported::zle::comp_h::{
         CLF_JOIN, CLF_MATCHED, CLF_MID, CLF_MISS, CLF_NEW, CLF_SKIP, CLF_SUF,
     };
@@ -3530,8 +3532,8 @@ pub fn join_clines(
     let Some(_) = o else {
         return n_chain;
     };
-    let mut oo: Option<Box<crate::ported::zle::comp_h::Cline>> = o;
-    let mut nn: Option<Box<crate::ported::zle::comp_h::Cline>> = n_chain;
+    let mut oo: Option<Box<Cline>> = o;
+    let mut nn: Option<Box<Cline>> = n_chain;
 
     // The C uses raw mutable pointers (Cline = `struct cline *`) and
     // restitches the chain in place. In Rust we replicate that with
@@ -3541,9 +3543,9 @@ pub fn join_clines(
     // Helper: walk a chain via .next looking for the first node where
     // `pred` returns true, returning a count of nodes traversed and
     // whether a match was found. Reads only; doesn't mutate.
-    fn find_node_in_chain<F>(head: &crate::ported::zle::comp_h::Cline, mut pred: F) -> Option<usize>
+    fn find_node_in_chain<F>(head: &Cline, mut pred: F) -> Option<usize>
     where
-        F: FnMut(&crate::ported::zle::comp_h::Cline) -> bool,
+        F: FnMut(&Cline) -> bool,
     {
         let mut cur = head.next.as_deref();
         let mut idx = 1usize;
@@ -3562,8 +3564,8 @@ pub fn join_clines(
     // splice point. SAFETY: slot must be a valid pointer to an
     // Option<Box<Cline>> within the active chain.
     unsafe fn splice_take_at(
-        slot: *mut Option<Box<crate::ported::zle::comp_h::Cline>>,
-    ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
+        slot: *mut Option<Box<Cline>>,
+    ) -> Option<Box<Cline>> {
         unsafe { (*slot).take() }
     }
 
@@ -3571,9 +3573,9 @@ pub fn join_clines(
     // to the slot at position `n`. SAFETY: chain must have at least n
     // .next links.
     unsafe fn slot_at_offset(
-        head: *mut Option<Box<crate::ported::zle::comp_h::Cline>>,
+        head: *mut Option<Box<Cline>>,
         n: usize,
-    ) -> *mut Option<Box<crate::ported::zle::comp_h::Cline>> {
+    ) -> *mut Option<Box<Cline>> {
         unsafe {
             let mut s = head;
             for _ in 0..n {
@@ -3584,7 +3586,7 @@ pub fn join_clines(
     }
 
     unsafe {
-        type Ptr = *mut Option<Box<crate::ported::zle::comp_h::Cline>>;
+        type Ptr = *mut Option<Box<Cline>>;
         let mut oo_slot: Ptr = &mut oo;
         let mut nn_slot: Ptr = &mut nn;
         // po_slot points to the slot whose .next is the CURRENT o node;
@@ -3610,9 +3612,9 @@ pub fn join_clines(
             if o_new && !n_new {
                 // c:2726 — find first non-NEW node in o whose anchor
                 // matches n.
-                let n_immut: *const crate::ported::zle::comp_h::Cline =
+                let n_immut: *const Cline =
                     (*nn_slot).as_deref().unwrap();
-                let o_head: *mut crate::ported::zle::comp_h::Cline =
+                let o_head: *mut Cline =
                     (*oo_slot).as_deref_mut().unwrap();
                 let found = find_node_in_chain(&*o_head, |t| {
                     (t.flags & CLF_NEW) == 0 && {
@@ -3652,9 +3654,9 @@ pub fn join_clines(
 
             // c:2752-2774 — !o_new && n_new mirror case.
             if !o_new && n_new {
-                let o_immut: *const crate::ported::zle::comp_h::Cline =
+                let o_immut: *const Cline =
                     (*oo_slot).as_deref().unwrap();
-                let n_head: &crate::ported::zle::comp_h::Cline = (*nn_slot).as_deref().unwrap();
+                let n_head: &Cline = (*nn_slot).as_deref().unwrap();
                 let found = find_node_in_chain(n_head, |t| {
                     (t.flags & CLF_NEW) == 0 && {
                         let mut o_copy = (*o_immut).clone();
@@ -3687,9 +3689,9 @@ pub fn join_clines(
             let mask = CLF_SUF | CLF_MID;
             if (o_flags & mask) != (n_flags & mask) {
                 // c:2781 — find a node in n whose mask matches o's.
-                let o_immut: *const crate::ported::zle::comp_h::Cline =
+                let o_immut: *const Cline =
                     (*oo_slot).as_deref().unwrap();
-                let n_head_im: &crate::ported::zle::comp_h::Cline = (*nn_slot).as_deref().unwrap();
+                let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
                 let o_mask = (*o_immut).flags & mask;
                 let found_n = find_node_in_chain(n_head_im, |t| {
                     (t.flags & mask) == o_mask && {
@@ -3704,9 +3706,9 @@ pub fn join_clines(
                     continue;
                 }
                 // c:2792 — find a node in o whose mask matches n's.
-                let n_immut_2: *const crate::ported::zle::comp_h::Cline =
+                let n_immut_2: *const Cline =
                     (*nn_slot).as_deref().unwrap();
-                let o_head_im: &crate::ported::zle::comp_h::Cline = (*oo_slot).as_deref().unwrap();
+                let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
                 let n_mask = (*n_immut_2).flags & mask;
                 let found_o = find_node_in_chain(o_head_im, |t| {
                     (t.flags & mask) == n_mask && {
@@ -3747,8 +3749,8 @@ pub fn join_clines(
             if needs_skip_scan {
                 // c:2825-2833 — scan n for a CLF_SKIP node, then in o
                 // for a matching CLF_SKIP anchor.
-                let n_head_im: &crate::ported::zle::comp_h::Cline = (*nn_slot).as_deref().unwrap();
-                let o_head_im: &crate::ported::zle::comp_h::Cline = (*oo_slot).as_deref().unwrap();
+                let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
+                let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
                 let mut tn_steps: Option<usize> = None;
                 let mut to_steps: Option<usize> = None;
                 let mut tn_cur = n_head_im.next.as_deref();
@@ -3797,9 +3799,9 @@ pub fn join_clines(
                     continue;
                 }
                 // c:2853-2873 — scan o for CLF_SKIP matching n's anchor.
-                let n_head_im: &crate::ported::zle::comp_h::Cline = (*nn_slot).as_deref().unwrap();
-                let n_ptr: *const crate::ported::zle::comp_h::Cline = n_head_im;
-                let o_head_im: &crate::ported::zle::comp_h::Cline = (*oo_slot).as_deref().unwrap();
+                let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
+                let n_ptr: *const Cline = n_head_im;
+                let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
                 let to_idx_o = find_node_in_chain(o_head_im, |t| {
                     (t.flags & CLF_SKIP) != 0 && {
                         let mut t_copy = t.clone();
@@ -3817,10 +3819,10 @@ pub fn join_clines(
                     continue;
                 }
                 // c:2902-2926 — scan both for a CLF_NEW-matched anchor.
-                let n_head_im2: &crate::ported::zle::comp_h::Cline = (*nn_slot).as_deref().unwrap();
-                let o_head_im2: &crate::ported::zle::comp_h::Cline = (*oo_slot).as_deref().unwrap();
+                let n_head_im2: &Cline = (*nn_slot).as_deref().unwrap();
+                let o_head_im2: &Cline = (*oo_slot).as_deref().unwrap();
                 let o_new_bit = o_head_im2.flags & CLF_NEW;
-                let o_ptr2: *const crate::ported::zle::comp_h::Cline = o_head_im2;
+                let o_ptr2: *const Cline = o_head_im2;
                 let tn_idx_n = {
                     let mut found: Option<usize> = None;
                     let mut cur = Some(n_head_im2);
@@ -3890,7 +3892,7 @@ pub fn join_clines(
                 } // c:2949
                 let is_mid = (o_ref.flags & CLF_MID) != 0;
                 let is_suf = (o_ref.flags & CLF_SUF) != 0;
-                let n_mut_ptr: *mut crate::ported::zle::comp_h::Cline =
+                let n_mut_ptr: *mut Cline =
                     (*nn_slot).as_mut().unwrap().as_mut();
                 if is_mid {
                     // c:2951
@@ -3929,17 +3931,17 @@ pub static MATCHBUF: OnceLock<Mutex<String>> = OnceLock::new(); // c:287
 
 /// Port of `Cline matchparts, matchlastpart` from
 /// `Src/Zle/compmatch.c:292`. Top-level cline list being built.
-pub static MATCHPARTS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> =
+pub static MATCHPARTS: OnceLock<Mutex<Option<Box<Cline>>>> =
     OnceLock::new(); // c:292
 
 /// Port of `Cline matchsubs, matchlastsub` from
 /// `Src/Zle/compmatch.c:294`. Inner cline list (prefix/suffix sub-list).
-pub static MATCHSUBS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> =
+pub static MATCHSUBS: OnceLock<Mutex<Option<Box<Cline>>>> =
     OnceLock::new(); // c:294
 
 /// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
 pub static MATCHLASTPART: std::sync::OnceLock<
-    std::sync::Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    std::sync::Mutex<Option<Box<Cline>>>,
 > = std::sync::OnceLock::new(); // c:292
 
 /// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
@@ -3947,7 +3949,7 @@ pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 = std::sync::atomic::Atom
 
 /// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
 pub static MATCHLASTSUB: std::sync::OnceLock<
-    Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    Mutex<Option<Box<Cline>>>,
 > = std::sync::OnceLock::new(); // c:294
 
 /// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
@@ -4039,7 +4041,7 @@ mod tests {
     #[test]
     fn test_pattern_match_equivalence_case_cross() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
         let lp = Cpattern {
             tp: CPAT_EQUIV,
@@ -4077,7 +4079,7 @@ mod tests {
     #[test]
     fn cpatterns_same_chr_match() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('a' as u32);
         // c:64-66 — both CPAT_CHAR + same chr → equal.
@@ -4087,7 +4089,7 @@ mod tests {
     #[test]
     fn cpatterns_same_chr_mismatch() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('b' as u32);
         // c:65 — different chr → not equal.
@@ -4097,7 +4099,7 @@ mod tests {
     #[test]
     fn cpatterns_same_tp_mismatch() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = Cpattern {
             tp: CPAT_NCLASS,
@@ -4111,7 +4113,7 @@ mod tests {
     #[test]
     fn cpatterns_same_class_match() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = cpat_class("a-z");
         let b = cpat_class("a-z");
         // c:60 — same str → equal.
@@ -4121,7 +4123,7 @@ mod tests {
     #[test]
     fn cpatterns_same_length_mismatch() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = cpat_char('a' as u32);
         // a chained to a second pattern; b has only one.
         let mut a_chain = a.clone();
@@ -4134,7 +4136,7 @@ mod tests {
     #[test]
     fn cpatterns_same_both_empty() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:46 — both NULL → loop never enters, return !b == true.
         assert!(cpatterns_same(None, None));
     }
@@ -4142,7 +4144,7 @@ mod tests {
     #[test]
     fn cmatchers_same_pointer_eq() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let m = Cmatcher::default();
         // c:86 — `a == b` short-circuit.
         assert!(cmatchers_same(&m, &m));
@@ -4151,7 +4153,7 @@ mod tests {
     #[test]
     fn cmatchers_same_flags_diff() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let a = Cmatcher {
             flags: 0,
             ..Default::default()
@@ -4167,7 +4169,7 @@ mod tests {
     #[test]
     fn cmatchers_same_anchor_lengths() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // CMF_LEFT path: anchor length difference matters.
         let a = Cmatcher {
             flags: CMF_LEFT,
@@ -4199,7 +4201,7 @@ mod tests {
     #[test]
     fn cline_sublen_simple() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let l = Cline {
             flags: CLF_LINE,
             llen: 5,
@@ -4213,7 +4215,7 @@ mod tests {
     #[test]
     fn cline_sublen_with_olen() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let l = Cline {
             flags: 0,
             llen: 0,
@@ -4228,7 +4230,7 @@ mod tests {
     #[test]
     fn cline_sublen_with_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let pre = Cline {
             flags: CLF_LINE,
             llen: 4,
@@ -4248,7 +4250,7 @@ mod tests {
     #[test]
     fn cline_sublen_clf_suf() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let suf = Cline {
             flags: CLF_LINE,
             llen: 3,
@@ -4270,7 +4272,7 @@ mod tests {
     #[test]
     fn cline_setlens_propagates() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             flags: CLF_LINE,
             llen: 5,
@@ -4294,7 +4296,7 @@ mod tests {
     #[test]
     fn cline_matched_sets_flag_recursively() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             prefix: Some(Box::new(Cline::default())),
             suffix: Some(Box::new(Cline::default())),
@@ -4316,7 +4318,7 @@ mod tests {
     #[test]
     fn revert_cline_reverses_chain() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let head = Some(Box::new(Cline {
             llen: 1,
             next: Some(Box::new(Cline {
@@ -4343,7 +4345,7 @@ mod tests {
     #[test]
     fn cp_cline_shallow() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let src = Cline {
             llen: 7,
             wlen: 9,
@@ -4364,7 +4366,7 @@ mod tests {
     #[test]
     fn start_match_clears_globals() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // Pre-populate to ensure start_match resets.
         MATCHBUF
             .get_or_init(|| Mutex::new(String::new()))
@@ -4382,7 +4384,7 @@ mod tests {
     #[test]
     fn abort_match_drops_lists() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         *MATCHPARTS.get_or_init(|| Mutex::new(None)).lock().unwrap() =
             Some(Box::new(Cline::default()));
         *MATCHSUBS.get_or_init(|| Mutex::new(None)).lock().unwrap() =
@@ -4400,7 +4402,7 @@ mod tests {
     #[test]
     fn pattern_match_equivalence_upper_to_lower() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // lp.str = [0x80 + PP_LOWER] — one PP_LOWER class marker.
         let lp = Cpattern {
             tp: CPAT_EQUIV,
@@ -4419,7 +4421,7 @@ mod tests {
     #[test]
     fn bld_line_cpat_char_emits_literal() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let m = Cmatcher {
             line: Some(Box::new(cpat_char('x' as u32))),
             ..Default::default()
@@ -4435,7 +4437,7 @@ mod tests {
     #[test]
     fn bld_line_cpat_any_emits_word_char() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let m = Cmatcher {
             line: Some(Box::new(Cpattern {
                 tp: CPAT_ANY,
@@ -4456,7 +4458,7 @@ mod tests {
     #[test]
     fn match_str_exact_char_skip_full_match() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let r = match_str("abc", "abc", None, 0, None, 0, 0, 0);
         assert_eq!(r, 3, "full literal match returns iw=3");
     }
@@ -4467,8 +4469,8 @@ mod tests {
     #[test]
     fn match_parts_truncates_and_matches() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        if let Ok(mut g) = crate::ported::zle::compcore::mstack
+        let _g = zle_test_setup();
+        if let Ok(mut g) = mstack
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
         {
@@ -4483,14 +4485,14 @@ mod tests {
     #[test]
     fn comp_match_exact_prefix_match() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        if let Ok(mut g) = crate::ported::zle::compcore::mstack
+        let _g = zle_test_setup();
+        if let Ok(mut g) = mstack
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
         {
             *g = None;
         }
-        let mut clp: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut clp: Option<Box<Cline>> = None;
         let mut exact = 99i32;
         let r = comp_match(
             "hello",
@@ -4514,9 +4516,9 @@ mod tests {
     #[test]
     fn match_str_diverging_returns_neg_one_with_empty_mstack() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // Clear mstack to guarantee the empty-stack code path.
-        if let Ok(mut g) = crate::ported::zle::compcore::mstack
+        if let Ok(mut g) = mstack
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
         {
@@ -4535,7 +4537,7 @@ mod tests {
     #[test]
     fn update_bmatchers_with_empty_mstack_trims_all_entries() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // Seed bmatchers with one entry.
         let matcher = Cmatcher {
             refc: 1,
@@ -4559,7 +4561,7 @@ mod tests {
         }));
         // Clear mstack so the entry must be trimmed.
         let ms_cell =
-            crate::ported::zle::compcore::mstack.get_or_init(|| std::sync::Mutex::new(None));
+            mstack.get_or_init(|| std::sync::Mutex::new(None));
         *ms_cell.lock().unwrap() = None;
 
         update_bmatchers();
