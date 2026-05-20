@@ -32,7 +32,7 @@ use crate::ported::init::zleentry;
 use crate::ported::jobs::gettrapnode;
 use crate::ported::mem::{zsfree, ztrdup};
 use crate::ported::options::optlookup;
-use crate::ported::params::{getiparam, locallevel as LOCALLEVEL, ttyidlegetfn};
+use crate::ported::params::{getiparam, ttyidlegetfn};
 use crate::ported::signals_h::{
     SIGNUM, TRAPCOUNT as TRAPCOUNT_H, VSIGCOUNT,
 };
@@ -1391,7 +1391,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     let saved_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
     BREAKS.store(0, Ordering::SeqCst); // c:1129 breaks = 0
     RETFLAG.store(0, Ordering::SeqCst); // c:1129 retflag = 0
-    traplocallevel.store(LOCALLEVEL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
+    traplocallevel.store(crate::ported::params::locallevel.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
 
     // c:1131 — `runhookdef(BEFORETRAPHOOK, NULL);`
     // module.rs runhookdef is on the ModuleHandlers struct; no public

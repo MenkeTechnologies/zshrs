@@ -22,7 +22,6 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::atomic::Ordering as O;
 
 use crate::ported::init::SHTTY;
 use crate::ported::mem::popheap;
@@ -838,7 +837,7 @@ pub fn compprintfmt(
                     let s = n.to_string();
                     if dopr == 1 {
                         use std::sync::atomic::Ordering as O;
-                        let fd = SHTTY.load(O::Relaxed);
+                        let fd = SHTTY.load(Ordering::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
                         let _ = write_loop(out_fd, s.as_bytes());
                     }
@@ -860,7 +859,7 @@ pub fn compprintfmt(
                     };
                     if dopr == 1 {
                         use std::sync::atomic::Ordering as O;
-                        let fd = SHTTY.load(O::Relaxed);
+                        let fd = SHTTY.load(Ordering::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
                         let _ = write_loop(out_fd, s.as_bytes());
                     }
@@ -876,7 +875,7 @@ pub fn compprintfmt(
             // c:literal char
             if dopr == 1 {
                 use std::sync::atomic::Ordering as O;
-                let fd = SHTTY.load(O::Relaxed);
+                let fd = SHTTY.load(Ordering::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let mut buf = [0u8; 4];
                 let bs = c.encode_utf8(&mut buf).as_bytes();
@@ -1531,7 +1530,7 @@ pub fn clprintm(
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
                 use std::sync::atomic::Ordering as O;
-                let fd = SHTTY.load(O::Relaxed);
+                let fd = SHTTY.load(Ordering::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let _ = write_loop(out_fd, pad_str.as_bytes());
                 // c:1749 — zcoff() reset
@@ -1636,7 +1635,7 @@ pub fn clprintm(
         // Emit raw — full clnicezputs (escape-aware writer) deferred;
         // the cell still receives the visible text.
         use std::sync::atomic::Ordering as O;
-        let fd = SHTTY.load(O::Relaxed);
+        let fd = SHTTY.load(Ordering::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out_fd, display.as_bytes());
 
@@ -1808,7 +1807,7 @@ pub fn singledraw() -> i32 {
         tcmultout("TCUP", mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
-    let fd = SHTTY.load(O::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = write_loop(out_fd, b"\r");
 

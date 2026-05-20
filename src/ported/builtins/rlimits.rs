@@ -1411,12 +1411,11 @@ fn ensure_limits_initialized() {
 // fn-pointer fields).
 // =====================================================================
 
-use crate::ported::zsh_h::features as features_t;
 
 // Backing store for `module_features` — built on first call to a
 // loader hook. Bucket-2 shared global per the same rationale as
 // LIMITS/RESINFO above.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 #[cfg(not(unix))]
 fn ensure_limits_initialized() {}
@@ -1549,7 +1548,7 @@ fn setlimits(_nam: &str) -> i32 {
 // Returns a NUL-terminated array of feature descriptors like "b:limit".
 // Stub builds the descriptor list inline since the existing
 // `crate::ported::module::featuresarray` takes wrong-typed args.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
     vec![
         "b:limit".to_string(),
         "b:ulimit".to_string(),
@@ -1561,7 +1560,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
 //   int handlefeatures(Module m, Features f, int **enables);
 // On NULL `*enables`, fills it with the current per-feature enable bits
 // via `getfeatureenables`. On non-NULL, calls `setfeatureenables`.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+fn handlefeatures(m: *const module, f: &Mutex<crate::ported::zsh_h::features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(getfeatureenables(m, f));
     } else if let Some(e) = enables.as_ref() {
@@ -1573,7 +1572,7 @@ fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<
 // `getfeatureenables` lives in `Src/module.c:3314`. Stub returns
 // the bn_size + cd_size + mf_size + pd_size + n_abstract zero-vector
 // since no feature is enabled in the static-link path.
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+fn getfeatureenables(_m: *const module, f: &Mutex<crate::ported::zsh_h::features>) -> Vec<i32> {
     let g = f.lock().unwrap();
     let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
     vec![0; total as usize]
@@ -1583,7 +1582,7 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
 // registered feature via `*_addbuiltin/_addparamdef/etc` reverse calls.
 // Stub: no-op since static-link path doesn't register through the
 // runtime module loader.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&Vec<i32>>) -> i32 {
     0
 }
 
@@ -1618,9 +1617,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn module_features() -> &'static Mutex<features_t> {
+fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
+        Mutex::new(crate::ported::zsh_h::features {
             bn_list: None, // c:874 bintab
             bn_size: 3,    // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
             cd_list: None, // c:875

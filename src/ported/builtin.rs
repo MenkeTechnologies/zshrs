@@ -43,7 +43,6 @@ use crate::ported::hashtable::{
     reswdtab_lock, shfunctab_lock, sufaliastab_lock, Alias,
 };
 use crate::ported::hist::{readhistfile, savehistfile};
-use crate::ported::init::sourcelevel as sourcelevel_init;
 use crate::ported::jobs::{bin_fg, removetrapnode};
 use crate::ported::math::{matheval, mathevali, mnumber, MN_INTEGER};
 use crate::ported::mem::{queue_signals, unqueue_signals};
