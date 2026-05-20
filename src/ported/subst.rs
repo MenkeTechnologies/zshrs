@@ -7841,6 +7841,7 @@ fn exec_assignaparam(name: &str, parts: Vec<String>) {
                          // shell — `(P)`, `(L)`, `(Q)`, `(U)`, etc. Forcing them to snake_case
                          // would obscure which zsh feature the test pins.
 mod tests {
+    use crate::zsh_h::{Hat, Tilde};
     // utils.c:6915
     use super::*;
     // utils.c:6915

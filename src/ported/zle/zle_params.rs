@@ -1376,7 +1376,7 @@ mod batch_getters_tests {
 
 #[cfg(test)]
 mod keybuf_tests {
-    use crate::zle::zle_keymap::{freekeynode, KeyBinding};
+    use crate::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
     use crate::zle::zle_main::zle_test_setup;
 
     #[test]

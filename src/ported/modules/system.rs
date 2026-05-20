@@ -1501,6 +1501,7 @@ mod tests {
     use std::fs::File;
     use std::io::Write as _;
     use tempfile::TempDir;
+    use crate::zsh_h::{options, MAX_OPS};
 
     /// Verifies `getposint` parses non-negative ints and rejects
     /// negatives + trailing garbage per c:51.
@@ -1608,7 +1609,7 @@ mod tests {
         assert!(names.contains(&"procsubstpid"));
     }
 
-    fn empty_ops() -> crate::ported::zsh_h::options {
+    fn empty_ops() -> options {
         options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -1617,7 +1618,7 @@ mod tests {
         }
     }
     /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
-    fn ops_with(args: &[(u8, &str)]) -> crate::ported::zsh_h::options {
+    fn ops_with(args: &[(u8, &str)]) -> options {
         // ind[c] encodes "set" in low 2 bits (1 = -X, 2 = +X) plus the
         // 1-based args[] slot shifted up by 2 (per zsh.h:1412 OPT_ARG
         // macro `args[(ind[c]>>2) - 1]`). idx=0 → ind=4 (slot 1, set

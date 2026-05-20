@@ -1015,6 +1015,7 @@ mod term_pat_tag_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::zle::zle_h::CURF_DEFAULT;
     use super::*;
 
     #[test]
