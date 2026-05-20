@@ -86,8 +86,12 @@ pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i3
 /// from Src/hist.c:296.
 pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:296
     if toplevel != 0 {                                                       // c:296
-        // Back to top level: don't need special ZLE value                   // c:299
-        // DPUTS(hs->hline != zle_chline, "BUG: Ouch, wrong chline for ZLE") // c:300
+        // c:299 — Back to top level: don't need special ZLE value
+        // c:300 — DPUTS(hs->hline != zle_chline, "BUG: Ouch, wrong chline for ZLE")
+        crate::DPUTS!(                                                        // c:300
+            hs.hline != *zle_chline.lock().unwrap(),                         // c:300
+            "BUG: Ouch, wrong chline for ZLE"                                // c:300
+        );
         *zle_chline.lock().unwrap() = None;                                  // c:301
     }
     histactive.store(hs.histactive as u32, Ordering::SeqCst);                // c:303
@@ -1145,6 +1149,11 @@ pub fn strinbeg(dohist: i32) {                                                //
 /// histsubchar shortcuts that key on `isfirstch`.
 pub fn strinend() {                                                           // c:1049
     hend(None);                                                               // c:1051
+    // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
+    crate::DPUTS!(                                                            // c:1052
+        strin.load(Ordering::SeqCst) == 0,                                   // c:1052 !strin
+        "BUG: strinend() called without strinbeg()"                          // c:1052
+    );
     strin.fetch_sub(1, Ordering::SeqCst);                                     // c:1053
     crate::ported::lex::LEX_ISFIRSTCH.with(|f| f.set(true));                  // c:1054 isfirstch = 1
     histdone.store(0, Ordering::SeqCst);                                      // c:1055 histdone = 0
@@ -1962,7 +1971,17 @@ pub fn histbackword() {                                                       //
 /// Port of `int hwget(char **startptr)` from Src/hist.c.
 pub fn hwget() -> Option<(i32, String)> {
     let pos = chwordpos.load(Ordering::SeqCst);
-    if pos == 0 || pos % 2 != 0 { return None; }
+    // c:1729 — DPUTS(1, "BUG: hwget() called with no words"); arm fires
+    // when chwordpos == 0 (the C `if (!chwordpos)` branch at c:1728).
+    if pos == 0 {
+        crate::DPUTS!(true, "BUG: hwget() called with no words");           // c:1729
+        return None;
+    }
+    // c:1734 — DPUTS(1, "BUG: hwget() called in middle of word")
+    if pos % 2 != 0 {
+        crate::DPUTS!(true, "BUG: hwget() called in middle of word");       // c:1734
+        return None;
+    }
     let words = chwords.lock().unwrap();
     let start_idx = (pos - 2) as usize;
     let end_idx = (pos - 1) as usize;
@@ -2279,6 +2298,10 @@ pub fn chabspath(input: &str) -> Option<String> {
 /// resolves, then re-appending the remaining tail (matches the C
 /// fallback at c:2027-2030).
 pub fn chrealpath(path: &str) -> Option<String> {                            // c:1971
+    // c:1983 — DPUTS1(mode != 'A' && mode != 'P', "chrealpath: mode='%c' is invalid", mode)
+    // Skipped: the Rust signature omits the `mode` param (Rule B
+    // signature gap pending). Wire when the full chrealpath signature
+    // lands: pub fn chrealpath(path, mode: u8, use_heap: bool).
     // c:1985-1986 — if (!**junkptr) return 1; (empty input is success)
     if path.is_empty() {
         return Some(String::new());
@@ -2875,7 +2898,13 @@ pub fn ihungetc(c: i32) {                                                    // 
             crate::ported::hist::exlast.fetch_add(1, SeqCst);                // c:1007 exlast++
         }
         if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {                 // c:1009
-            // c:1010-1013 — DPUTS asserts; hptr-- + qbang derive.
+            // c:1010 — DPUTS(hptr <= chline, "BUG: hungetc attempted at buffer start")
+            crate::DPUTS!(hp <= 0, "BUG: hungetc attempted at buffer start"); // c:1010
+            // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
+            crate::DPUTS!(                                                    // c:1012
+                hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8),      // c:1012
+                "BUG: wrong character in hungetc() "                         // c:1012
+            );
             let new_hp = hp.saturating_sub(1);
             crate::ported::hist::hptr.store(new_hp, SeqCst);                 // c:1011 hptr--
             let bangchar_v = crate::ported::hist::bangchar.load(SeqCst) as u8;
