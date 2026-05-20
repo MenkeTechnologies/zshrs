@@ -19,11 +19,13 @@ use crate::ported::vm_helper::{self};
 use crate::ported::zsh_h::Bnullkeep;
 use crate::ported::zsh_h::Pound;
 use crate::ported::zsh_h::{
-    isset, BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, LISTTYPES,
-    MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
+    isset, BAREGLOBQUAL, Bnull, BRACECCL, CASEGLOB, Dnull, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT,
+    Inang, LISTTYPES, MARKDIRS, META, NULLGLOB, Nularg, NUMERICGLOBSORT, Outang, Snull, SUB_GLOBAL,
+    SUB_LIST, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
 };
 use crate::ported::zsh_h::{SUB_END, SUB_LONG, SUB_START};
-use std::cmp::Ordering;
+use std::cmp::Ordering as CmpOrdering;
+use std::sync::atomic::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -751,7 +753,7 @@ pub fn gmatchcmp(
     b: &gmatch,
     specs: &[i32],
     numeric_sort: bool,
-) -> Ordering {
+) -> CmpOrdering {
     for &tp in specs {
         // c:943
         let key = tp & !GS_DESC; // c:944 s->tp & ~GS_DESC
@@ -822,9 +824,9 @@ pub fn gmatchcmp(
                 },
             )
         } else {
-            Ordering::Equal // GS_NONE / unknown
+            CmpOrdering::Equal // GS_NONE / unknown
         };
-        if cmp != Ordering::Equal {
+        if cmp != CmpOrdering::Equal {
             return if (tp & GS_DESC) != 0 {
                 cmp.reverse()
             } else {
@@ -832,7 +834,7 @@ pub fn gmatchcmp(
             };
         }
     }
-    Ordering::Equal
+    CmpOrdering::Equal
 }
 
 // `Redirect` struct + `RedirectType` enum + `xpandredir` fn
@@ -1324,7 +1326,6 @@ pub fn getmatcharr(
 /// and returns the igetmatch status.
 pub fn getmatchlist(sp: &mut String, p: &str) -> i32 {
     // c:2749
-    use crate::ported::zsh_h::{SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_SUBSTR}; // c:2761
     igetmatch(
         sp,
         p,
@@ -1676,9 +1677,6 @@ pub fn shtokenize(s: &mut String) {
 /// `<` / `(` / `|` / `)`).
 pub fn zshtokenize(s: &mut String, flags: i32) {
     // c:3575
-    use crate::ported::zsh_h::{
-        Bnull, Bnullkeep, Inang, Outang, META, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
-    };
     let ztokens: Vec<char> = ZTOKENS.chars().collect();
     let mut chars: Vec<char> = s.chars().collect();
     let mut bslash = false; // c:3578
@@ -1791,7 +1789,6 @@ pub fn zshtokenize(s: &mut String, flags: i32) {
 ///   - Didn't emit Nularg sentinel for empty post-strip strings.
 pub fn remnulargs(s: &mut String) {
     // c:3649
-    use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
     if s.is_empty() {
         // c:3654
         return;
@@ -2052,7 +2049,6 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
 /// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
 pub fn qualsheval(filename: &str, expr: &str) -> bool {
     // c:3907
-    use std::sync::atomic::Ordering;
     // c:3912 — save errflag + lastval.
     let saved_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:3912
     let saved_lastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3912
@@ -4958,7 +4954,6 @@ mod tests {
     #[test]
     fn test_glob_hidden() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::opt_state_set;
         let dir = setup_test_dir();
         let pattern = format!("{}/*", dir.path().display());
 
@@ -4982,7 +4977,6 @@ mod tests {
     #[test]
     fn test_glob_emit_path_strips_read_dir_dot_slash() {
         let _g = crate::test_util::global_state_lock();
-        use std::path::Path;
         assert_eq!(glob_emit_path(Path::new("./sub")), "sub");
         assert_eq!(glob_emit_path(Path::new("sub/deeper")), "sub/deeper");
         assert_eq!(glob_emit_path(Path::new("././x")), "x");
@@ -5066,11 +5060,10 @@ mod tests {
     #[test]
     fn test_zstrcmp_numeric() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::sort::zstrcmp;
         let n = crate::zsh_h::SORTIT_NUMERICALLY as u32;
-        assert_eq!(zstrcmp("file1", "file2", n), Ordering::Less);
-        assert_eq!(zstrcmp("file10", "file2", n), Ordering::Greater);
-        assert_eq!(zstrcmp("file10", "file10", n), Ordering::Equal);
+        assert_eq!(zstrcmp("file1", "file2", n), CmpOrdering::Less);
+        assert_eq!(zstrcmp("file10", "file2", n), CmpOrdering::Greater);
+        assert_eq!(zstrcmp("file10", "file10", n), CmpOrdering::Equal);
     }
 
     /// Race-fix verification: snapshot pins bareglobqual for the
@@ -5081,8 +5074,6 @@ mod tests {
     #[test]
     fn glob_opts_snapshot_isolates_concurrent_setopt() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
-        use crate::ported::zsh_h::BAREGLOBQUAL;
 
         // Preserve the existing live state so the test is hermetic.
         let saved = opt_state_get("bareglobqual");
@@ -5114,8 +5105,6 @@ mod tests {
     #[test]
     fn glob_opts_snapshot_clears_on_drop() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
-        use crate::ported::zsh_h::NULLGLOB;
 
         let saved = opt_state_get("nullglob");
         opt_state_set("nullglob", true);
@@ -5141,8 +5130,6 @@ mod tests {
     #[test]
     fn glob_opts_snapshot_nested_is_noop() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
-        use crate::ported::zsh_h::EXTENDEDGLOB;
 
         let saved = opt_state_get("extendedglob");
         opt_state_set("extendedglob", true);
@@ -5174,7 +5161,6 @@ mod tests {
     #[test]
     fn xpandredir_single_literal_filename_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
             typ: REDIR_WRITE,
             flags: 0,
@@ -5203,7 +5189,6 @@ mod tests {
     #[test]
     fn xpandredir_dash_merge_collapses_to_close() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{redir, REDIR_CLOSE, REDIR_MERGEOUT};
         let mut fn_ = redir {
             typ: REDIR_MERGEOUT,
             flags: 0,
@@ -5227,7 +5212,6 @@ mod tests {
     #[test]
     fn xpandredir_with_no_name_returns_zero_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
             typ: REDIR_WRITE,
             flags: 0,
@@ -5483,7 +5467,6 @@ mod tests {
     #[test]
     fn remnulargs_matches_c_inull_handling() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
 
         // Plain ASCII unchanged (no inulls).
         let mut s = "hello".to_string();
@@ -5567,9 +5550,6 @@ mod tests {
     #[test]
     fn qualsheval_restores_errflag_and_lastval() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::builtin::LASTVAL;
-        use crate::ported::utils::errflag;
-        use std::sync::atomic::Ordering;
         // Seed errflag and lastval with distinctive values.
         errflag.store(0, Ordering::Relaxed);
         LASTVAL.store(42, Ordering::Relaxed);
@@ -5609,8 +5589,6 @@ mod tests {
     #[test]
     fn xpandredir_errflag_check_uses_logical_zero() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::utils::errflag;
-        use std::sync::atomic::Ordering;
         // Mirror the in-port logic with the canonical zero-check.
         let saved = errflag.load(Ordering::Relaxed);
         // c:2164 — errflag==0 path: branch should fire.

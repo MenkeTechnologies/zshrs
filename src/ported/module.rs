@@ -15,7 +15,11 @@
 
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::mathfunc;
-use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{
+    BINF_AUTOALL, CONDF_AUTOALL, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S,
+    MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT,
+    PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE,
+};
 use crate::zsh_h::module;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -187,7 +191,6 @@ pub fn register_module(table: &mut modulestab, name: &str) -> bool {
 /// C in-place mutation that `addbuiltins` then propagates).
 pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {
     // c:524
-    use crate::ported::zsh_h::BINF_ADDED;
     let tab = crate::ported::builtin::createbuiltintable();
     if let Some(existing) = tab.get(&b.node.nam) {
         // c:526 getnode2
@@ -205,7 +208,6 @@ pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {
 /// 1 if any clashed. zwarnnam emitted on each clash matches C.
 pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32 {
     // c:544
-    use crate::ported::zsh_h::BINF_ADDED;
     let mut ret = 0; // c:548
     for b in binl.iter_mut() {
         // c:550 for(n = 0; n < size; n++)
@@ -639,7 +641,6 @@ pub fn runhookdef(
 /// unset the existing entry and return 0.
 pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {
     // c:1026
-    use crate::ported::zsh_h::PM_AUTOLOAD;
     // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
     let pm_clone = {
         let tab = crate::ported::params::paramtab()
@@ -730,10 +731,6 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {
 /// ```
 pub fn addparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {
     // c:1061
-    use crate::ported::zsh_h::{
-        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_SCALAR, PM_TIED,
-        PM_TYPE,
-    };
 
     // c:1065 — `if (checkaddparam(d->name, 0)) return 1;`
     if checkaddparam(&d.name, 0) != 0 {
@@ -867,7 +864,6 @@ pub fn addparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {
 /// ```
 pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {
     // c:1128
-    use crate::ported::zsh_h::{PM_READONLY, PM_REMOVABLE};
 
     // c:1131 — `Param pm = (Param) paramtab->getnode(paramtab, d->name);`
     let mut pm: crate::ported::zsh_h::Param = {
@@ -1043,9 +1039,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name) vs C=(name, enablesarr, silent)
     pub fn load_module(&mut self, name: &str) -> bool {
         // c:2206
-        use crate::ported::zsh_h::{
-            MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD,
-        };
         // c:2213 — modname_ok(name)
         if modname_ok(name) == 0 {
             // c:2213
@@ -1112,7 +1105,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name) vs C=(m)
     pub fn unload_module(&mut self, name: &str) -> bool {
         // c:2817
-        use crate::ported::zsh_h::{MOD_ALIAS, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_UNLOAD};
         // c:2824 — resolve alias chain (skipped: no per-module alias
         // tracking in the static registry).
         let _ = MOD_ALIAS;
@@ -1196,8 +1188,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, bnam, flags)
     pub fn add_autobin(&mut self, name: &str, module: &str, flags: i32) -> i32 {
         // c:426
-        use crate::ported::module::{FEAT_AUTOALL, FEAT_IGNORE};
-        use crate::ported::zsh_h::BINF_AUTOALL;
         // c:431 — bn = zshcalloc(sizeof(*bn))
         let mut node_flags: i32 = 0; // c:431-432 fresh Builtin
         if (flags & FEAT_AUTOALL as i32) != 0 {
@@ -1250,7 +1240,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(module, bnam, flags)
     pub fn del_autobin(&mut self, name: &str, flags: i32) -> i32 {
         // c:464
-        use crate::ported::module::FEAT_IGNORE;
         // c:466 — `builtintab->getnode2(builtintab, bnam)`.
         let bn = crate::ported::builtin::createbuiltintable().get(name);
         if bn.is_none() {
@@ -1290,7 +1279,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(module, names, e) vs C=(nam, binl, size, e)
     pub fn setbuiltins(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 {
         // c:501
-        use crate::ported::zsh_h::BINF_ADDED;
         let mut ret: i32 = 0; // c:503
         for (n, name) in names.iter().enumerate() {
             // c:505
@@ -1358,8 +1346,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, cnam, flags)
     pub fn add_autocond(&mut self, name: &str, module: &str, flags: i32) -> i32 {
         // c:792
-        use crate::ported::module::{FEAT_AUTOALL, FEAT_IGNORE, FEAT_INFIX};
-        use crate::ported::zsh_h::{CONDF_AUTOALL, CONDF_INFIX};
         // c:796 — c = zalloc(sizeof(*c))
         let mut cflags: i32 = if (flags & FEAT_INFIX) != 0 {
             // c:799
@@ -1406,7 +1392,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, cnam, flags)
     pub fn del_autocond(&mut self, name: &str, flags: i32) -> i32 {
         // c:819
-        use crate::ported::module::FEAT_IGNORE;
         // c:821 — `getconddef((flags & FEAT_INFIX) ? 1 : 0, cnam, 0);`.
         // The Rust ledger holds only the autoload entry; the live
         // CONDF_ADDED registry isn't separately materialised, so any
@@ -1490,7 +1475,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, pnam, flags)
     pub fn add_autoparam(&mut self, name: &str, module: &str, flags: i32) -> i32 {
         // c:1202
-        use crate::ported::module::FEAT_AUTOALL;
         let _ret: i32;
         // c:1207 noerrs = 2; queue_signals(); checkaddparam clash check
         crate::ported::signals::queue_signals(); // c:1209
@@ -1536,8 +1520,6 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, pnam, flags)
     pub fn del_autoparam(&mut self, name: &str, flags: i32) -> i32 {
         // c:1240
-        use crate::ported::module::FEAT_IGNORE;
-        use crate::ported::zsh_h::PM_AUTOLOAD;
         // c:1242 — `gethashnode2(paramtab, pnam)`. Rust paramtab lookup.
         let pm_flags = crate::ported::params::paramtab()
             .read()
@@ -3532,7 +3514,6 @@ pub static CONDTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> = // c:cond.
 /// module; Rust drop subsumes that.
 pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {
     // c:724
-    use crate::ported::zsh_h::CONDF_INFIX;
     let mut tab = CONDTAB.lock().unwrap();
     // c:728 — `for (p = condtab, q = NULL; p && p != c; ...)`. C uses
     // pointer identity; the Rust analog is name+infix-flag equality
@@ -3556,7 +3537,6 @@ pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {
 /// 1 on clash (existing entry already added).
 pub fn addconddef(c: crate::ported::zsh_h::conddef) -> i32 {
     // c:703
-    use crate::ported::zsh_h::{CONDF_ADDED, CONDF_INFIX};
     let infix = c.flags & CONDF_INFIX;
     let clash_idx = {
         let tab = CONDTAB.lock().unwrap();
@@ -3590,7 +3570,6 @@ pub static WRAPPERS: Lazy<Mutex<Vec<crate::ported::zsh_h::funcwrap>>> = // c:567
 /// Replaces autoloadable entries via `removemathfunc`.
 pub fn addmathfunc(f: crate::ported::zsh_h::mathfunc) -> i32 {
     // c:1313
-    use crate::ported::zsh_h::{MFF_ADDED, MFF_USERFUNC};
     if (f.flags & MFF_ADDED) != 0 {
         return 1;
     } // c:1318
@@ -4627,7 +4606,6 @@ mod modname_tests {
     #[test]
     fn del_autobin_unknown_name_returns_2_or_zero_per_feat_ignore() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // unknown name + no FEAT_IGNORE → 2
         assert_eq!(t.del_autobin("definitely_not_a_builtin", 0), 2);
@@ -4641,7 +4619,6 @@ mod modname_tests {
     #[test]
     fn del_autobin_registered_builtin_returns_3_or_zero_per_feat_ignore() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // "echo" is a static-linked builtin → can't unload → 3
         assert_eq!(t.del_autobin("echo", 0), 3);
@@ -4655,7 +4632,6 @@ mod modname_tests {
     #[test]
     fn del_autobin_autoload_only_entry_removed() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // Seed an autoload entry not in the static builtintab.
         t.autoload_builtins
@@ -4675,7 +4651,6 @@ mod modname_tests {
     #[test]
     fn del_autocond_autoload_entry_removed_or_not_found() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // Not present → 2 / 0 per FEAT_IGNORE.
         assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 2);
@@ -4693,7 +4668,6 @@ mod modname_tests {
     #[test]
     fn del_autoparam_unknown_name_returns_2() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", 0), 2);
         assert_eq!(
