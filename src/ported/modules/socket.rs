@@ -84,7 +84,7 @@ pub fn bin_zsocket(
             libc::bind(
                 sfd,
                 &soun as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                size_of::<libc::sockaddr_un>() as libc::socklen_t,
             )
         };
         if r != 0 {
@@ -116,16 +116,16 @@ pub fn bin_zsocket(
             } // c:115
             return 1; // c:116
         }
-        crate::ported::utils::addmodulefd(sfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:119 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(sfd, FDT_EXTERNAL); // c:119 FDT_EXTERNAL
         if targetfd != 0 {
             // c:121
-            sfd = crate::ported::utils::redup(sfd, targetfd); // c:122
+            sfd = redup(sfd, targetfd); // c:122
         } else {
             sfd = crate::ported::utils::movefd(sfd); // c:126 movefd
         }
         if sfd == -1 {
             // c:128
-            crate::ported::utils::zerrnam(
+            zerrnam(
                 nam,
                 &format!(
                     "cannot duplicate fd {}: {}",
@@ -135,8 +135,8 @@ pub fn bin_zsocket(
             ); // c:129
             return 1; // c:130
         }
-        crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL); // c:134
-        crate::ported::params::setiparam("REPLY", sfd as i64); // c:136 setiparam_no_convert
+        fdtable_set(sfd, FDT_EXTERNAL); // c:134
+        setiparam("REPLY", sfd as i64); // c:136 setiparam_no_convert
         if verbose != 0 {
             // c:138
             println!("{} listener is on fd {}", localfn, sfd); // c:139
@@ -177,7 +177,7 @@ pub fn bin_zsocket(
                 return 1; // c:170
             }
         }
-        let mut len: libc::socklen_t = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t; // c:194
+        let mut len: libc::socklen_t = size_of::<libc::sockaddr_un>() as libc::socklen_t; // c:194
         let rfd: i32;
         loop {
             // c:195
@@ -211,13 +211,13 @@ pub fn bin_zsocket(
             ); // c:200
             return 1; // c:201
         }
-        crate::ported::utils::addmodulefd(rfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:204 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(rfd, FDT_EXTERNAL); // c:204 FDT_EXTERNAL
         if targetfd != 0 {
             // c:206
-            sfd = crate::ported::utils::redup(rfd, targetfd); // c:207
+            sfd = redup(rfd, targetfd); // c:207
             if sfd < 0 {
                 // c:208
-                crate::ported::utils::zerrnam(
+                zerrnam(
                     nam,
                     &format!(
                         "could not duplicate socket fd to {}: {}",
@@ -230,11 +230,11 @@ pub fn bin_zsocket(
                 } // c:210
                 return 1; // c:211
             }
-            crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL); // c:213
+            fdtable_set(sfd, FDT_EXTERNAL); // c:213
         } else {
             sfd = rfd; // c:217
         }
-        crate::ported::params::setiparam("REPLY", sfd as i64); // c:220 setiparam_no_convert
+        setiparam("REPLY", sfd as i64); // c:220 setiparam_no_convert
         if verbose != 0 {
             // c:222
             let path = soun
@@ -277,7 +277,7 @@ pub fn bin_zsocket(
             libc::connect(
                 sfd,
                 &soun as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                size_of::<libc::sockaddr_un>() as libc::socklen_t,
             )
         };
         if err != 0 {
@@ -291,12 +291,12 @@ pub fn bin_zsocket(
             } // c:245
             return 1; // c:246
         }
-        crate::ported::utils::addmodulefd(sfd, crate::ported::zsh_h::FDT_EXTERNAL); // c:251 FDT_EXTERNAL
+        crate::ported::utils::addmodulefd(sfd, FDT_EXTERNAL); // c:251 FDT_EXTERNAL
         if targetfd != 0 {
             // c:253
-            if crate::ported::utils::redup(sfd, targetfd) < 0 {
+            if redup(sfd, targetfd) < 0 {
                 // c:254
-                crate::ported::utils::zerrnam(
+                zerrnam(
                     nam,
                     &format!(
                         "could not duplicate socket fd to {}: {}",
@@ -310,9 +310,9 @@ pub fn bin_zsocket(
                 return 1; // c:257
             }
             sfd = targetfd; // c:259
-            crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL); // c:260
+            fdtable_set(sfd, FDT_EXTERNAL); // c:260
         }
-        crate::ported::params::setiparam("REPLY", sfd as i64); // c:263 setiparam_no_convert
+        setiparam("REPLY", sfd as i64); // c:263 setiparam_no_convert
         if verbose != 0 {
             // c:265
             let path = &args[0];
@@ -385,6 +385,8 @@ pub fn finish_(m: *const module) -> i32 {
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
+use crate::ported::params::setiparam;
+use crate::ported::utils::{fdtable_set, redup, zerrnam};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 

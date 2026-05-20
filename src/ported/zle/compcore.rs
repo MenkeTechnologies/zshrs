@@ -112,7 +112,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     }
 
     // c:300-307 — compqstack reset.
-    let instring = crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed); // c:307
+    let instring = INSTRING.load(Ordering::Relaxed); // c:307
                                                                                      // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
                                                                                      // Inlined `char_from_qt(x)` as `(x as u8) as char`.
     let head_q: char = if instring == crate::ported::zsh_h::QT_NONE {
@@ -131,7 +131,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         // c:310
         if wouldinstab_v != 0 {
             -1
-        } else if lst != crate::ported::zle::zle_h::COMP_LIST_COMPLETE {
+        } else if lst != COMP_LIST_COMPLETE {
             1
         } else {
             0
@@ -369,7 +369,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             };
             if SHOWINGLIST.load(Ordering::Relaxed) == 0
                 && uselist.load(Ordering::Relaxed) != 0
-                && crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) != 0
+                && LISTSHOWN.load(Ordering::Relaxed) != 0
                 && (USEMENU.load(Ordering::Relaxed) == 2
                     || oldlist.load(Ordering::Relaxed) != 0)
             {
@@ -400,7 +400,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         // c:425
         invalidatelist(); // c:426
-        crate::ported::zle::zle_tricky::LASTAMBIG.store(
+        LASTAMBIG.store(
             // c:427
             opt_isset("BASHAUTOLIST"),
             Ordering::Relaxed,
@@ -432,7 +432,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         && useline.load(Ordering::Relaxed) >= 0
         && useline.load(Ordering::Relaxed) != 2
         && (oldlist.load(Ordering::Relaxed) == 0
-            || crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) == 0)
+            || LISTSHOWN.load(Ordering::Relaxed) == 0)
     {
         onlyexpl.store(3, Ordering::Relaxed); // c:441
         SHOWINGLIST.store(-2, Ordering::Relaxed);
@@ -590,7 +590,7 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
     if ret >= 2 {
         // c:522
         // c:523 — `fixsuffix()`.
-        crate::ported::zle::zle_misc::fixsuffix();
+        fixsuffix();
         // c:524 — `zlemetacs = 0`.
         ZLEMETACS.store(0, Ordering::Relaxed);
         // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
@@ -776,7 +776,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
             *g = None; // c:973
         }
         if VALIDLIST.load(Ordering::Relaxed) == 0 {
-            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
+            LASTAMBIG.store(0, Ordering::Relaxed);
             // c:976
         }
         if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
@@ -791,7 +791,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         oldlist.store(0, Ordering::Relaxed); // c:986
         oldins.store(0, Ordering::Relaxed); // c:986
         begcmgroup(Some("default"), 0); // c:987
-        crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed); // c:988
+        MENUCMP.store(0, Ordering::Relaxed); // c:988
         menuacc.store(0, Ordering::Relaxed); // c:988
         newmatches.store(0, Ordering::Relaxed); // c:988
         onlyexpl.store(0, Ordering::Relaxed); // c:988
@@ -927,9 +927,9 @@ pub fn multiquote(s: &str, ign: i32) -> String {
             let qt = match q as i32 {
                 // c:1074
                 x if x == QT_BACKSLASH => QT_BACKSLASH,
-                x if x == QT_SINGLE => crate::ported::zsh_h::QT_SINGLE,
-                x if x == QT_DOUBLE => crate::ported::zsh_h::QT_DOUBLE,
-                x if x == QT_DOLLARS => crate::ported::zsh_h::QT_DOLLARS,
+                x if x == QT_SINGLE => QT_SINGLE,
+                x if x == QT_DOUBLE => QT_DOUBLE,
+                x if x == QT_DOLLARS => QT_DOLLARS,
                 _ => QT_BACKSLASH,
             };
             cur = crate::ported::utils::quotestring(&cur, qt);
@@ -1586,7 +1586,7 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {
         // assoc-array values, then scalar wrapped in a 1-element array.
         crate::ported::signals::queue_signals();
         let result = {
-            let tab = match crate::ported::params::paramtab().read() {
+            let tab = match paramtab().read() {
                 Ok(t) => t,
                 Err(_) => {
                     unqueue_signals();
@@ -1825,9 +1825,9 @@ pub fn addmatches(
                 inbackt_set(0);
                 autoq_set("");
             } // c:2153-2161
-            '\'' => instring_set(crate::ported::zsh_h::QT_SINGLE), // c:2165
-            '"' => instring_set(crate::ported::zsh_h::QT_DOUBLE),  // c:2168
-            '$' => instring_set(crate::ported::zsh_h::QT_DOLLARS), // c:2171
+            '\'' => instring_set(QT_SINGLE), // c:2165
+            '"' => instring_set(QT_DOUBLE),  // c:2168
+            '$' => instring_set(QT_DOLLARS), // c:2171
             _ => {}
         }
     } else {
@@ -1848,7 +1848,7 @@ pub fn addmatches(
     // queried by match_str during candidate evaluation).
     if let Some(ref m) = dat.match_ {
         // c:2210
-        if let Ok(mut mst) = mstack.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+        if let Ok(mut mst) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             // C: mst.next = mstack; mst.matcher = dat->match; mstack = &mst.
             let new_link = Box::new(Cmlist {
                 next: mst.take(),
@@ -1861,7 +1861,7 @@ pub fn addmatches(
         crate::ported::zle::compmatch::add_bmatchers(Some(m));
         // c:2217 — addlinknode(matchers, dat->match).
         if let Ok(mut g) = matchers
-            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
         {
             g.push(m.clone());
@@ -1905,7 +1905,7 @@ pub fn addmatches(
     };
 
     // c:2253-2300 — CAF_MATCH lipre/lisuf/lpre/lsuf assembly.
-    let compiprefix_s = crate::ported::zle::complete::COMPIPREFIX
+    let compiprefix_s = COMPIPREFIX
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
@@ -1915,12 +1915,12 @@ pub fn addmatches(
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let compprefix_s = crate::ported::zle::complete::COMPPREFIX
+    let compprefix_s = COMPPREFIX
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let compsuffix_s = crate::ported::zle::complete::COMPSUFFIX
+    let compsuffix_s = COMPSUFFIX
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
@@ -2411,7 +2411,7 @@ pub fn add_match_data(
     }; // c:2933
 
     // c:2934 — prpre only when CMF_FILE.
-    cm.prpre = if (flags & crate::ported::zle::comp_h::CMF_FILE) != 0 && !prpre.is_empty() {
+    cm.prpre = if (flags & CMF_FILE) != 0 && !prpre.is_empty() {
         Some(prpre.into())
     } else {
         None
@@ -2467,11 +2467,11 @@ pub fn add_match_data(
         .and_then(|m| m.lock().ok().map(|g| g.clone()))
         .unwrap_or_default();
     let extra_flags = (if complist_s.contains("packed") {
-        crate::ported::zle::comp_h::CMF_PACKED
+        CMF_PACKED
     } else {
         0
     }) | (if complist_s.contains("rows") {
-        crate::ported::zle::comp_h::CMF_ROWS
+        CMF_ROWS
     } else {
         0
     });
@@ -2546,7 +2546,7 @@ pub fn add_match_data(
         .unwrap_or_default();
     cm.autoq = if !autoq_v.is_empty() {
         Some(autoq_v)
-    } else if crate::ported::zle::zle_tricky::INBACKT.load(Ordering::Relaxed) != 0 {
+    } else if INBACKT.load(Ordering::Relaxed) != 0 {
         Some("`".into())
     } else {
         None
@@ -3148,8 +3148,8 @@ pub fn permmatches(last: i32) -> i32 {
         PERMMATCHES_FI.store(1, Ordering::Relaxed); // c:3447
     }
 
-    let nbeg = crate::ported::zle::zle_tricky::NBRBEG.load(Ordering::Relaxed);
-    let nend = crate::ported::zle::zle_tricky::NBREND.load(Ordering::Relaxed);
+    let nbeg = NBRBEG.load(Ordering::Relaxed);
+    let nend = NBREND.load(Ordering::Relaxed);
 
     let mut gn: i32 = 1; // c:3429 gn = 1
     let mut mn: i32 = 1; // c:3429 mn = 1
@@ -3833,7 +3833,7 @@ fn env_iparam(name: &str) -> i32 {
 }
 fn lastprebr_set(s: &str) {
     // zle_tricky.c lastprebr
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
+    if let Ok(mut g) = LASTPREBR
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
     {
@@ -3842,7 +3842,7 @@ fn lastprebr_set(s: &str) {
 }
 fn lastpostbr_set(s: &str) {
     // zle_tricky.c lastpostbr
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPOSTBR
+    if let Ok(mut g) = LASTPOSTBR
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
     {
@@ -4030,7 +4030,7 @@ fn lexrestore(_token: usize) {
 
 fn compquote_first() -> Option<char> {
     // zle_tricky.c compquote
-    crate::ported::zle::zle_tricky::COMPQUOTE
+    COMPQUOTE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .ok()
@@ -4038,15 +4038,15 @@ fn compquote_first() -> Option<char> {
 }
 fn instring_set(v: i32) {
     // zle_tricky.c:419
-    crate::ported::zle::zle_tricky::INSTRING.store(v, Ordering::Relaxed);
+    INSTRING.store(v, Ordering::Relaxed);
 }
 fn inbackt_set(v: i32) {
     // zle_tricky.c:419
-    crate::ported::zle::zle_tricky::INBACKT.store(v, Ordering::Relaxed);
+    INBACKT.store(v, Ordering::Relaxed);
 }
 fn autoq_set(s: &str) {
     // zle_tricky.c autoq
-    if let Ok(mut g) = crate::ported::zle::zle_tricky::AUTOQ
+    if let Ok(mut g) = AUTOQ
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
     {
@@ -4351,11 +4351,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:467 — `showagain = 0;` always (after the validlist gate).
         let _g = zle_test_setup();
-        crate::ported::zle::zle_tricky::SHOWAGAIN.store(5, Ordering::Relaxed);
+        SHOWAGAIN.store(5, Ordering::Relaxed);
         let mut lst = 0;
         let _ = before_complete(&mut lst);
         assert_eq!(
-            crate::ported::zle::zle_tricky::SHOWAGAIN.load(Ordering::Relaxed),
+            SHOWAGAIN.load(Ordering::Relaxed),
             0,
             "SHOWAGAIN must be cleared by before_complete"
         );
@@ -4507,7 +4507,7 @@ mod tests {
         let _g = zle_test_setup();
         // c:1259-1311: `$FOO` with cursor inside the name → return b.
         OFFS.store(2, Ordering::Relaxed);
-        let s = format!("{}FOO", crate::ported::zsh_h::Stringg);
+        let s = format!("{}FOO", Stringg);
         let r = check_param(&s, false, true);
         assert!(r.is_some(), "expected Some(b) inside $FOO");
     }
@@ -4537,7 +4537,7 @@ mod tests {
     }
 
     /// Test-only serializer for tests that mutate file-scope globals.
-    static GLOBAL_MUT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static GLOBAL_MUT_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn compcontext_for_routes_ispar_first() {
@@ -4748,7 +4748,7 @@ mod tests {
         LASTCHAR.store(b'c' as i32, Ordering::Relaxed);
         // Force the wide-char re-derive path (lastchar_wide_valid=0 →
         // selfinsert refills it from LASTCHAR per zle_misc.c:119-122).
-        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, Ordering::Relaxed);
+        LASTCHAR_WIDE_VALID.store(0, Ordering::Relaxed);
         let rv = selfinsert();
         assert_eq!(rv, 0);
         let buf: String = crate::ported::zle::zle_main::ZLELINE

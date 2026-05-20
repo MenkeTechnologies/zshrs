@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn cgf_flags_correct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CGF_NOSORT, 1);
         assert_eq!(CGF_LINES, 2);
         assert_eq!(CGF_HASDL, 4);
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn cmf_match_flags_distinct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let all = CMF_FILE
             | CMF_REMOVE
             | CMF_ISPAR
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn cmf_matcher_flags_correct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CMF_LINE, 1);
         assert_eq!(CMF_LEFT, 2);
         assert_eq!(CMF_RIGHT, 4);
@@ -754,7 +754,7 @@ mod tests {
     #[test]
     fn cpat_enum_values_correct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CPAT_CCLASS, 0);
         assert_eq!(CPAT_NCLASS, 1);
         assert_eq!(CPAT_EQUIV, 2);
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn cp_realparams_mask_covers_10_bits() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CP_REALPARAMS, 10);
         assert_eq!(CP_ALLREALS, 0x3ff);
         assert_eq!(CP_ALLREALS.count_ones(), 10);
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn cp_keyparams_mask_covers_26_bits() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CP_KEYPARAMS, 26);
         assert_eq!(CP_ALLKEYS, 0x3ffffff);
         assert_eq!(CP_ALLKEYS.count_ones(), 26);
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn caf_flags_correct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CAF_QUOTE, 1);
         assert_eq!(CAF_NOSORT, 2);
         assert_eq!(CAF_REVSORT, 1024);
@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn hook_offsets_sequential() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(INSERTMATCHHOOK_OFFSET, 0);
         assert_eq!(MENUSTARTHOOK_OFFSET, 1);
         assert_eq!(COMPCTLMAKEHOOK_OFFSET, 2);
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn cm_space_is_2() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(CM_SPACE, 2);
     }
 
@@ -829,7 +829,7 @@ mod tests {
     #[test]
     fn structs_default_construct() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _ = Cexpl::default();
         let _ = Cmgroup::default();
         let _ = Cmatch::default();

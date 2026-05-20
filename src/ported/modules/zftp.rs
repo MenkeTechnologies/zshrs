@@ -187,7 +187,7 @@ pub extern "C" fn zfhandler(sig: i32) {
     // c:366
     if sig == libc::SIGALRM {
         // c:368
-        ZFDRRRRING.store(1, std::sync::atomic::Ordering::Relaxed); // c:369
+        ZFDRRRRING.store(1, Ordering::Relaxed); // c:369
                                                                    // c:370-374 — errno = ETIMEDOUT (or EIO).
         unsafe {
             *errno_ptr() = libc::ETIMEDOUT;
@@ -204,10 +204,10 @@ pub extern "C" fn zfhandler(sig: i32) {
 #[allow(non_snake_case)]
 pub fn zfalarm(tmout: i32) {
     // c:384
-    ZFDRRRRING.store(0, std::sync::atomic::Ordering::Relaxed); // c:384
+    ZFDRRRRING.store(0, Ordering::Relaxed); // c:384
                                                                // c:387-392 — fire alarm even when tmout is 0 so a pending non-zero
                                                                // main-shell alarm doesn't bleed into the FTP code path.
-    if ZFALARMED.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    if ZFALARMED.load(Ordering::Relaxed) != 0 {
         // c:393
         unsafe {
             libc::alarm(tmout as u32);
@@ -220,7 +220,7 @@ pub fn zfalarm(tmout: i32) {
     }
     // c:398 — oalremain = alarm(tmout);
     let oalremain = unsafe { libc::alarm(tmout as u32) };
-    OALREMAIN.store(oalremain, std::sync::atomic::Ordering::Relaxed);
+    OALREMAIN.store(oalremain, Ordering::Relaxed);
     if oalremain != 0 {
         // c:399
         // c:400 — oaltime = zmonotime(NULL);
@@ -228,9 +228,9 @@ pub fn zfalarm(tmout: i32) {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        OALTIME.store(now, std::sync::atomic::Ordering::Relaxed);
+        OALTIME.store(now, Ordering::Relaxed);
     }
-    ZFALARMED.store(1, std::sync::atomic::Ordering::Relaxed); // c:405
+    ZFALARMED.store(1, Ordering::Relaxed); // c:405
 }
 
 /// Port of `zfpipe()` from `Src/Modules/zftp.c:412`.
@@ -251,11 +251,11 @@ pub fn zfpipe() {
 #[allow(non_snake_case)]
 pub fn zfunalarm() {
     // c:422
-    let oalremain = OALREMAIN.load(std::sync::atomic::Ordering::Relaxed); // c:422
+    let oalremain = OALREMAIN.load(Ordering::Relaxed); // c:422
     if oalremain != 0 {
         // c:423
         // c:432-433 — `time_t tdiff = zmonotime(NULL) - oaltime;`
-        let oaltime = OALTIME.load(std::sync::atomic::Ordering::Relaxed); // c:432
+        let oaltime = OALTIME.load(Ordering::Relaxed); // c:432
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -379,14 +379,14 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
     let mut pcur: usize = 0; // pointer index into ln
     let mut cmdbuf: [u8; 3] = [0; 3];
 
-    ZCFINISH.store(0, std::sync::atomic::Ordering::Relaxed); // c:577 zcfinish = 0
+    ZCFINISH.store(0, Ordering::Relaxed); // c:577 zcfinish = 0
     let lnsize = lnsize - 1; // c:579 leave room for null
     if !ln.is_empty() {
         ln[0] = 0; // c:581 ln[0] = '\0'
     }
 
     // c:583-587 — setjmp guard via ZFDRRRRING flag.
-    if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
         // c:583
         unsafe {
             libc::alarm(0);
@@ -417,14 +417,14 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
         ch = match stream.read(&mut byte) {
             Ok(0) => -1, // EOF
             Ok(_) => byte[0] as i32,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue, // c:602 EINTR retry
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue, // c:602 EINTR retry
             Err(_) => -1,
         };
 
         match ch {
             -1 => {
                 // c:601 EOF
-                ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed); // c:606
+                ZCFINISH.store(2, Ordering::Relaxed); // c:606
             }
             0x0d => {
                 // c:609 '\r'
@@ -436,10 +436,10 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
                 };
                 if ch == -1 {
                     // c:612 EOF
-                    ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed); // c:613
+                    ZCFINISH.store(2, Ordering::Relaxed); // c:613
                 } else if ch == 0x0a {
                     // c:616 '\n'
-                    ZCFINISH.store(1, std::sync::atomic::Ordering::Relaxed); // c:617
+                    ZCFINISH.store(1, Ordering::Relaxed); // c:617
                 } else if ch == 0x00 {
                     // c:620 '\0'
                     ch = 0x0d; // c:621
@@ -449,7 +449,7 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
             }
             0x0a => {
                 // c:628 '\n' (unexpected)
-                ZCFINISH.store(1, std::sync::atomic::Ordering::Relaxed); // c:630
+                ZCFINISH.store(1, Ordering::Relaxed); // c:630
             }
             255 => {
                 // c:633 IAC
@@ -495,7 +495,7 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
                     }
                     -1 => {
                         // c:660 EOF
-                        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed);
+                        ZCFINISH.store(2, Ordering::Relaxed);
                         // c:662
                     }
                     _ => {} // c:665 default
@@ -505,7 +505,7 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
         }
 
         // c:671-672 — if (zcfinish) break;
-        if ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        if ZCFINISH.load(Ordering::Relaxed) != 0 {
             break;
         }
         // c:673-676 — if (added < lnsize) { *pcur++ = ch; added++; }
@@ -524,7 +524,7 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
         ln[pcur] = 0; // c:702 *pcur = '\0'
     }
     // c:702 — return (zcfinish & 2);
-    ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) & 2
+    ZCFINISH.load(Ordering::Relaxed) & 2
 }
 
 /// Port of `zfgetmsg()` from `Src/Modules/zftp.c:702`.
@@ -577,15 +577,15 @@ pub fn zfgetmsg() -> i32 {
 
     // c:716 — if (zfdrrrring || !idigit(ptr[0..3])) — timeout or not FTP.
     let is_digit = |b: u8| b.is_ascii_digit();
-    let timeout_or_bad = ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0
+    let timeout_or_bad = ZFDRRRRING.load(Ordering::Relaxed) != 0
         || line.len() < 3
         || !is_digit(line[0])
         || !is_digit(line[1])
         || !is_digit(line[2]);
     if timeout_or_bad {
         // c:716
-        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed); // c:718
-        if ZFCLOSING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        ZCFINISH.store(2, Ordering::Relaxed); // c:718
+        if ZFCLOSING.load(Ordering::Relaxed) == 0 {
             // c:719
             zfclose(0); // c:720
         }
@@ -609,7 +609,7 @@ pub fn zfgetmsg() -> i32 {
         cs[3] = 0;
     }
     let code: i32 = code_str.parse().unwrap_or(0);
-    lastcode.store(code, std::sync::atomic::Ordering::Relaxed);
+    lastcode.store(code, Ordering::Relaxed);
     ptr_off += 3;
     // c:730 — zfsetparam("ZFTP_CODE", lastcodestr, ZFPM_READONLY);
     zfsetparam("ZFTP_CODE", &code_str, ZFPM_READONLY);
@@ -635,11 +635,11 @@ pub fn zfgetmsg() -> i32 {
     }
 
     // c:749-775 — multi-line continuation loop.
-    while ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) != 2 && !stopit {
+    while ZCFINISH.load(Ordering::Relaxed) != 2 && !stopit {
         line.fill(0); // reset
         ptr_off = 0;
         zfgetline(&mut line, 256, tmout); // c:750
-        if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
             // c:752
             line[0] = 0; // c:753
             break; // c:754
@@ -678,7 +678,7 @@ pub fn zfgetmsg() -> i32 {
 
     // c:777-778 — fflush(stderr);
     if printing != 0 {
-        let _ = std::io::stderr().flush();
+        let _ = io::stderr().flush();
     }
 
     // c:781 — lastmsg = ztrdup(ptr);  (the trailing portion of last line)
@@ -698,11 +698,11 @@ pub fn zfgetmsg() -> i32 {
     zfsetparam("ZFTP_REPLY", whole_line, ZFPM_READONLY);
 
     // c:791-797 — EOF or 421: close + warn.
-    let zcfin = ZCFINISH.load(std::sync::atomic::Ordering::Relaxed);
-    let cur_code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
-    if (zcfin == 2 || cur_code == 421) && ZFCLOSING.load(std::sync::atomic::Ordering::Relaxed) == 0
+    let zcfin = ZCFINISH.load(Ordering::Relaxed);
+    let cur_code = lastcode.load(Ordering::Relaxed);
+    if (zcfin == 2 || cur_code == 421) && ZFCLOSING.load(Ordering::Relaxed) == 0
     {
-        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed); // c:792
+        ZCFINISH.store(2, Ordering::Relaxed); // c:792
         zfclose(0); // c:793
         zwarnnam(
             "zftp", // c:795
@@ -787,7 +787,7 @@ pub fn zfsendcmd(cmd: &str) -> i32 {
             "zftp send",
             &format!(
                 "failure sending control message: {}",
-                std::io::Error::last_os_error()
+                io::Error::last_os_error()
             ),
         );
         return 6; // c:848
@@ -853,7 +853,7 @@ pub fn zfopendata(name: &str) -> (i32, bool) {
             };
             // c:954 — connect from data socket to remote (ip:port).
             let addr = format!("{}:{}", ip, port);
-            let stream = match std::net::TcpStream::connect(&addr) {
+            let stream = match TcpStream::connect(&addr) {
                 // c:958
                 Ok(s) => s,
                 Err(_) => {
@@ -1018,7 +1018,7 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
         // c:1118
         // c:1124-1128 — accept the connection from the server.
         let mut sa: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-        let mut sl: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as _;
+        let mut sl: libc::socklen_t = size_of::<libc::sockaddr_storage>() as _;
         let listen_fd = zftp_state()
             .lock()
             .ok()
@@ -1029,7 +1029,7 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
             // c:1129
             zwarnnam(
                 name,
-                &format!("unable to accept data: {}", std::io::Error::last_os_error()),
+                &format!("unable to accept data: {}", io::Error::last_os_error()),
             );
             zfclosedata(); // c:1131
             return 1;
@@ -1066,7 +1066,7 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
             libc::SOL_SOCKET,
             libc::SO_LINGER,
             &li as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::linger>() as libc::socklen_t,
+            size_of::<libc::linger>() as libc::socklen_t,
         );
     }
     // c:1167-1170 — IP_TOS = IPTOS_THROUGHPUT.
@@ -1077,7 +1077,7 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
             libc::IPPROTO_IP,
             libc::IP_TOS,
             &tos as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            size_of::<libc::c_int>() as libc::socklen_t,
         );
     }
     // c:1174 — fcntl(dfd, F_SETFD, FD_CLOEXEC).
@@ -1126,7 +1126,7 @@ pub fn zfstats(
             // c:1218
             return 1; // c:1219
         }
-        let code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
+        let code = lastcode.load(Ordering::Relaxed);
         if code < 300 {
             // c:1220
             // c:1221 — sz = zstrtol(lastmsg, 0, 10);
@@ -1150,7 +1150,7 @@ pub fn zfstats(
             // c:1235
             return 1; // c:1236
         }
-        let code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
+        let code = lastcode.load(Ordering::Relaxed);
         if code < 300 {
             // c:1237
             // c:1238 — mt = ztrdup(lastmsg);
@@ -1254,7 +1254,7 @@ pub fn zfread(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 {
 
     // c:1314-1318 — setjmp guard; Rust port uses ZFDRRRRING as polled
     // signal-trip indicator instead of longjmp.
-    if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
         // c:1314 setjmp
         unsafe {
             libc::alarm(0);
@@ -1333,7 +1333,7 @@ pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 
             // c:1367 do
             n = zfread(fd, &mut hdr_buf, 3, tmout); // c:1368
             if !(n < 0
-                && std::io::Error::last_os_error().raw_os_error()      // c:1369 EINTR retry
+                && io::Error::last_os_error().raw_os_error()      // c:1369 EINTR retry
                  == Some(libc::EINTR))
             {
                 break;
@@ -1379,7 +1379,7 @@ pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 
             } else if n < 0
                 && (errflag.load(Ordering::Relaxed) != 0
                     || ZFDRRRRING.load(Ordering::Relaxed) != 0
-                    || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
+                    || io::Error::last_os_error().raw_os_error() != Some(libc::EINTR))
             {
                 // c:1393
                 return n; // c:1394
@@ -1595,7 +1595,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                 } // c:1546
                 if newn < 0 {
                     // c:1548
-                    let errno = std::io::Error::last_os_error().raw_os_error();
+                    let errno = io::Error::last_os_error().raw_os_error();
                     let drrr = ZFDRRRRING.load(Ordering::Relaxed) != 0;
                     let efl = errflag.load(Ordering::Relaxed) != 0;
                     if errno != Some(libc::EINTR) || efl || drrr {
@@ -1605,7 +1605,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                             ret = if recv != 0 { 2 } else { 1 };
                             zwarnnam(
                                 name, // c:1582
-                                &format!("write failed: {}", std::io::Error::last_os_error()),
+                                &format!("write failed: {}", io::Error::last_os_error()),
                             );
                         } else {
                             ret = if recv != 0 { 3 } else { 1 };
@@ -1619,7 +1619,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
             }
         } else if n < 0 {
             // c:1592
-            let errno = std::io::Error::last_os_error().raw_os_error();
+            let errno = io::Error::last_os_error().raw_os_error();
             let drrr = ZFDRRRRING.load(Ordering::Relaxed) != 0;
             let efl = errflag.load(Ordering::Relaxed) != 0;
             if errno != Some(libc::EINTR) || efl || drrr {
@@ -1629,7 +1629,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                     ret = if recv != 0 { 1 } else { 2 };
                     zwarnnam(
                         name, // c:1597
-                        &format!("read failed: {}", std::io::Error::last_os_error()),
+                        &format!("read failed: {}", io::Error::last_os_error()),
                     );
                 } else {
                     ret = if recv != 0 { 1 } else { 3 };
@@ -1908,14 +1908,14 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
     ); // c:1824
 
     // c:1838 — tcp_socket + tcp_connect: connect_timeout loops addrs.
-    let mut last_err: Option<std::io::Error> = None;
+    let mut last_err: Option<io::Error> = None;
     let mut connected: Option<(TcpStream, std::net::SocketAddr)> = None;
     for addr in addrs.iter() {
         // c:1860 for addrp
         if errflag.load(Ordering::Relaxed) != 0 {
             break;
         }
-        match TcpStream::connect_timeout(addr, std::time::Duration::from_secs(tmout.max(1) as u64))
+        match TcpStream::connect_timeout(addr, Duration::from_secs(tmout.max(1) as u64))
         {
             Ok(s) => {
                 connected = Some((s, *addr));
@@ -1970,7 +1970,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
             libc::SOL_SOCKET,
             libc::SO_OOBINLINE,
             &one as *const _ as *const _,
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            size_of::<libc::c_int>() as libc::socklen_t,
         );
     }
     // c:1917-1919 — IP_TOS / IPTOS_LOWDELAY for control.
@@ -1982,7 +1982,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
             libc::IPPROTO_IP,
             libc::IP_TOS,
             &lowdelay as *const _ as *const _,
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            size_of::<libc::c_int>() as libc::socklen_t,
         );
     }
 
@@ -2081,13 +2081,13 @@ pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {
         }
         // c:2035-2037 — fflush(stdin) + write prompt to stderr.
         eprint!("{}", prompt); // c:2036
-        let _ = std::io::stderr().flush(); // c:2037
+        let _ = io::stderr().flush(); // c:2037
     } else {
         saved_termios = None;
     }
 
     // c:2040-2043 — fgets(instr, 256, stdin); strip trailing \n.
-    let stdin = std::io::stdin();
+    let stdin = io::stdin();
     let mut handle = stdin.lock();
     match handle.read_line(&mut instr) {
         // c:2040
@@ -2108,7 +2108,7 @@ pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {
     if resettty != 0 {
         // c:2047
         println!(); // c:2049 '\n' didn't echo
-        let _ = std::io::stdout().flush(); // c:2050
+        let _ = io::stdout().flush(); // c:2050
         if let Some(ti) = saved_termios {
             // c:2051
             unsafe {
@@ -2141,7 +2141,7 @@ pub fn zftp_params(name: &str, args: &[&str], flags: i32) -> i32 {
             // c:2082 else
             return 1; // c:2083
         }
-        let mut out = std::io::stdout().lock();
+        let mut out = io::stdout().lock();
         for (i, p) in sess.userparams.iter().enumerate() {
             // c:2073 for aptr,i
             if i == 2 {
@@ -2386,7 +2386,7 @@ pub fn zftp_login(name: &str, args: &[&str], flags: i32) -> i32 {
         .ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.syst_probed))
         .unwrap_or(false);
-    let dumb = (zfprefs.load(std::sync::atomic::Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2207
+    let dumb = (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2207
     if !dumb && !already_probed && zfsendcmd("SYST\r\n") == 2 {
         // c:2208
         let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
@@ -2450,7 +2450,7 @@ pub fn zftp_test(name: &str, args: &[&str], flags: i32) -> i32 {
         revents: 0,
     };
     let ret = unsafe { libc::poll(&mut pfd, 1, 0) }; // c:2272
-    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    let errno = io::Error::last_os_error().raw_os_error().unwrap_or(0);
     if ret < 0 && errno != libc::EINTR && errno != libc::EAGAIN {
         // c:2273
         zfclose(0); // c:2274
@@ -2491,7 +2491,7 @@ pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {
     if ret != 0 {
         return 1;
     } // c:2332-2322
-    let _ = std::io::stdout().flush(); // c:2332
+    let _ = io::stdout().flush(); // c:2332
     zfsenddata(name, 1, 0, 0) // c:2332
 }
 
@@ -2536,7 +2536,7 @@ pub fn zftp_cd(name: &str, args: &[&str], flags: i32) -> i32 {
 pub fn zfgetcwd() -> i32 {
     // c:2358 — short-circuit when ZFPF_DUMB is set (don't fiddle with
     // variables in dumb mode).
-    if (zfprefs.load(std::sync::atomic::Ordering::Relaxed) & ZFPF_DUMB) != 0 {
+    if (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0 {
         // c:2364
         return 1; // c:2365
     }
@@ -2545,7 +2545,7 @@ pub fn zfgetcwd() -> i32 {
         zfunsetparam("ZFTP_PWD"); // c:2367
         return 1; // c:2368
     }
-    if lastcode.load(std::sync::atomic::Ordering::Relaxed) >= 200 {
+    if lastcode.load(Ordering::Relaxed) >= 200 {
         0
     } else {
         1
@@ -2589,7 +2589,7 @@ pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {
             .unwrap_or(ZFST_IMAG as i32);
         let is_ascii = (ttype & ZFST_ASCI) != 0;
         println!("{}", if is_ascii { 'A' } else { 'I' }); // c:2436-2437
-        let _ = std::io::stdout().flush(); // c:2438
+        let _ = io::stdout().flush(); // c:2438
         return 0; // c:2439
     } else {
         str = args[0];
@@ -2634,7 +2634,7 @@ pub fn zftp_mode(name: &str, args: &[&str], flags: i32) -> i32 {
             .unwrap_or(ZFST_STRE as i32);
         let is_stream = tmode == ZFST_STRE;
         println!("{}", if is_stream { 'S' } else { 'B' }); // c:2470-2471
-        let _ = std::io::stdout().flush(); // c:2472
+        let _ = io::stdout().flush(); // c:2472
         return 0; // c:2473
     }
     str = args[0];
@@ -2704,7 +2704,7 @@ pub fn zftp_local(name: &str, args: &[&str], flags: i32) -> i32 {
         } // c:2520-2521
         i += 1; // c:2522
     }
-    let _ = std::io::stdout().flush(); // c:2544
+    let _ = io::stdout().flush(); // c:2544
     ret // c:2544
 }
 
@@ -2734,7 +2734,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
     zfsettype(ttype);
 
     if recv {
-        let _ = std::io::stdout().flush();
+        let _ = io::stdout().flush();
     } // c:2561-2562
 
     // c:2563 — for (; *args; args++) — with REST advancing args twice.
@@ -2758,7 +2758,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
             // the server already proved it doesn't send the size; that
             // cache isn't ported per-session, so the gate collapses
             // to !DUMB ON RECV (matches behavior on first transfer).
-            let dumb = (zfprefs.load(std::sync::atomic::Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2576
+            let dumb = (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2576
             if !dumb && (recv || (flags & ZFTP_REST) == 0) {
                 // c:2576-2578
                 let _ = zfstats(
@@ -2804,7 +2804,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
             if let Some(_shfunc) = crate::ported::utils::getshfunc("zftp_progress") {
                 // c:2607
                 let osc =
-                    SFCONTEXT.load(std::sync::atomic::Ordering::Relaxed); // c:2610
+                    SFCONTEXT.load(Ordering::Relaxed); // c:2610
                 zfsetparam(
                     "ZFTP_TRANSFER", // c:2611-2612
                     if recv { "GF" } else { "PF" },
@@ -2812,12 +2812,12 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                 );
                 SFCONTEXT.store(
                     crate::ported::zsh_h::SFC_HOOK,
-                    std::sync::atomic::Ordering::Relaxed,
+                    Ordering::Relaxed,
                 ); // c:2613
                    // c:2614 — doshfunc dispatch happens inside fusevm; static
                    // caller probes via getshfunc + reads LASTVAL.
-                let _ = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
-                SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);
+                let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+                SFCONTEXT.store(osc, Ordering::Relaxed);
                 // c:2615
             } else {
                 zfsetparam(
@@ -2832,7 +2832,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
             i += 1;
         }
         // c:2621-2622 — break on errflag.
-        if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        if errflag.load(Ordering::Relaxed) != 0 {
             break;
         }
         let _ = getsize;
@@ -4266,7 +4266,7 @@ pub fn boot_(m: *const module) -> i32 {
     zfsetparam("ZFTP_PREFS", "PS", ZFPM_IFUNSET); // c:3219
     zfprefs.store(
         ZFPF_SNDP | ZFPF_PASV, // c:3219
-        std::sync::atomic::Ordering::Relaxed,
+        Ordering::Relaxed,
     );
     let _default = newsession("default"); // c:3219
                                           // c:3219 — addhookfunc("exit", zftpexithook). Hook-table substrate
@@ -4319,12 +4319,12 @@ pub fn finish_(m: *const module) -> i32 {
 /// `lastmsg` — file-scope global from `Src/Modules/zftp.c:227`:
 /// `static char *lastmsg, lastcodestr[4];`. Holds the most recent
 /// FTP server reply message text (post-3-digit-code body).
-pub static lastmsg: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+pub static lastmsg: Mutex<String> = Mutex::new(String::new());
 
 /// `lastcodestr` — file-scope global from `Src/Modules/zftp.c:227`.
 /// 3-digit FTP reply code as ASCII (`"000".."599"`), zero-terminated
 /// to 4 bytes in C; mirrored as a 4-byte Mutex array for parity.
-pub static lastcodestr: std::sync::Mutex<[u8; 4]> = std::sync::Mutex::new([b'0', b'0', b'0', 0]);
+pub static lastcodestr: Mutex<[u8; 4]> = Mutex::new([b'0', b'0', b'0', 0]);
 
 // `FtpResponse` struct removed — was Rust-only invention. C source
 // returns plain `int` from every reply-handling fn and reads the
@@ -4499,8 +4499,8 @@ pub struct zftp_globals {
 /// `static Zftp_session zfsessions[]` and friends in zftp.c. Holds
 /// all sessions and the currently-active one. Free fns above route
 /// through this so subcommand dispatch matches C behaviour.
-static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<zftp_globals>> =
-    std::sync::OnceLock::new();
+static ZFTP_STATE_INNER: OnceLock<Mutex<zftp_globals>> =
+    OnceLock::new();
 
 /// WARNING: NOT IN ZFTP.C — platform-gated `errno` pointer; C reads errno directly after syscalls
 /// (equivalent C logic at Src/Modules/zftp.c:25).
@@ -4671,8 +4671,8 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32
 /// keeps per-session state in scattered file-statics (`zfsess`,
 /// `zfsessions`, `zfcommand`, ...); this fn returns the single
 /// `Mutex<zftp_globals>` aggregating those into one shared store.
-pub fn zftp_state() -> &'static std::sync::Mutex<zftp_globals> {
-    ZFTP_STATE_INNER.get_or_init(|| std::sync::Mutex::new(zftp_globals::new()))
+pub fn zftp_state() -> &'static Mutex<zftp_globals> {
+    ZFTP_STATE_INNER.get_or_init(|| Mutex::new(zftp_globals::new()))
 }
 
 // WARNING: NOT IN ZFTP.C — Rust-only module-framework shim.
