@@ -567,7 +567,7 @@ pub fn freewidget(w: Arc<Widget>) {
 pub fn addzlefunction(
     // c:281
     name: &str,
-    ifunc: super::zle_h::ZleIntFunc,
+    ifunc: ZleIntFunc,
     flags: i32,
 ) -> Option<Arc<Widget>> {
     // c:279
@@ -746,7 +746,7 @@ pub fn bin_zle_refresh() -> i32 {
         return 1; // c:424
     }
     // c:450 — `zrefresh()`. Flag the next tick.
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     0 // c:454
 }
 
@@ -966,7 +966,7 @@ pub fn bin_zle_new(args: &[String]) -> i32 {
     } else {
         args[0].clone()
     };
-    let w = std::sync::Arc::new(Widget {
+    let w = Arc::new(Widget {
         flags: 0i32, // c:588
         first: None,
         u: WidgetFunc::UserFunc(fname), // c:590 fnnam
@@ -1026,7 +1026,7 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {
         return 1;
     }
     // c:616-625 — alloc new completion widget and bind to args[0].
-    let w = std::sync::Arc::new(Widget {
+    let w = Arc::new(Widget {
         flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
         first: None,
         // c:619-621 — fn from cw + comp.wid/func from args[1]/args[2].
@@ -1174,7 +1174,7 @@ pub fn bin_zle_invalidate() -> i32 {
     // c:830
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         // c:837 — `trashzle()` via the reset-flag bridge.
-        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
         0 // c:850
     } else {
         1 // c:852
@@ -1209,7 +1209,7 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {
         return 1;
     } // c:866
 
-    if let Ok(mut tab) = crate::ported::zle::zle_main::WATCH_FDS.lock() {
+    if let Ok(mut tab) = WATCH_FDS.lock() {
         match args.len() {
             1 => {
                 // c:935 — `zle -F -d fd` remove.
@@ -1218,7 +1218,7 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {
             _ => {
                 // c:921 — install / replace.
                 tab.retain(|w| w.fd != fd);
-                tab.push(crate::ported::zle::zle_h::watch_fd {
+                tab.push(watch_fd {
                     func: args[1].clone(),
                     fd,
                     widget: 0,
@@ -1251,7 +1251,7 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {
     // C body c:965-1004 — only the `tc` transform exists in C; the
     // global `tcout_func_name` (zle_refresh.c:246) holds the user
     // function name. The Rust port mirrors the same single slot.
-    if let Ok(mut name) = crate::ported::zle::zle_refresh::TCOUT_FUNC_NAME.lock() {
+    if let Ok(mut name) = TCOUT_FUNC_NAME.lock() {
         match args.len() {
             0 | 1 => {
                 // No-arg listing path or `-r` reset — clear the slot.
@@ -1347,9 +1347,9 @@ pub fn getwidgettarget(name: &str) -> Option<String> {
     let t = tab.get(name)?;
     let w = t.widget.as_ref()?;
     match &w.u {
-        super::zle_h::WidgetImpl::Internal(_) => Some(name.to_string()),
-        super::zle_h::WidgetImpl::UserFunc(s) => Some(s.clone()),
-        super::zle_h::WidgetImpl::Comp { func, .. } => Some(func.clone()),
+        WidgetImpl::Internal(_) => Some(name.to_string()),
+        WidgetImpl::UserFunc(s) => Some(s.clone()),
+        WidgetImpl::Comp { func, .. } => Some(func.clone()),
     }
 }
 
@@ -1395,7 +1395,7 @@ mod tests {
     #[test]
     fn rthingy_creates_then_refs() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1403,13 +1403,13 @@ mod tests {
         let tab = thingytab().lock().unwrap();
         let t = tab.get("foo").expect("rthingy must create");
         assert_eq!(t.rc, 1);
-        assert!((t.flags & DISABLED) != 0);
+        assert_ne!((t.flags & DISABLED), 0);
     }
 
     #[test]
     fn refthingy_unrefthingy_roundtrip() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1427,7 +1427,7 @@ mod tests {
     #[test]
     fn rthingy_nocreate_returns_false_for_missing() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1438,7 +1438,7 @@ mod tests {
     #[test]
     fn rthingy_nocreate_refs_existing() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1453,7 +1453,7 @@ mod tests {
     #[test]
     fn createthingytab_is_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1478,7 +1478,7 @@ mod tests {
     #[test]
     fn emptythingytab_skips_disabled_rthingy_entries() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1501,7 +1501,7 @@ mod tests {
     #[test]
     fn freethingynode_on_missing_name_is_safe() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
         freethingynode("never-existed");
@@ -1513,7 +1513,7 @@ mod tests {
     #[test]
     fn unrefthingy_at_rc_one_frees_entry() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1532,7 +1532,7 @@ mod tests {
     #[test]
     fn unrefthingy_on_missing_is_safe() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
         unrefthingy("never-bound");
@@ -1545,13 +1545,10 @@ mod tests {
     #[test]
     fn makethingynode_starts_at_rc_zero_with_disabled_flag() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let n = makethingynode();
         assert_eq!(n.rc, 0, "fresh node must have rc=0");
-        assert!(
-            (n.flags & DISABLED) != 0,
-            "fresh node must have DISABLED flag set"
-        );
+        assert_ne!((n.flags & DISABLED), 0, "fresh node must have DISABLED flag set");
     }
 
     /// c:158 — `rthingy` on the same name twice bumps the refcount,
@@ -1559,7 +1556,7 @@ mod tests {
     #[test]
     fn rthingy_same_name_twice_only_increments_refcount() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1579,7 +1576,7 @@ mod tests {
     #[test]
     fn many_rthingy_unref_cycles_leave_no_residue() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 

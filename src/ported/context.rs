@@ -238,7 +238,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_cstack();
         zcontext_restore_partial(0);
-        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        zcontext_restore_partial(ZCONTEXT_HIST);
         assert!(cstack.lock().unwrap().is_none());
     }
 

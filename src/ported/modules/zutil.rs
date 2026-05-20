@@ -7,9 +7,10 @@
 //!
 //! Provides zstyle, zformat, zparseopts builtins.
 
+use crate::ported::params::{assignaparam, getaparam, setaparam, setsparam, unsetparam};
 use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::OPT_ISSET;
-use crate::ported::zsh_h::{hashnode, param, Param, ERRFLAG_INT, PM_ARRAY};
+use crate::ported::zsh_h::{hashnode, options, param, Param, Patprog, ERRFLAG_INT, PM_ARRAY};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;
@@ -26,9 +27,9 @@ pub fn savematch(m: &mut MatchData) {
                                                // three because the fabricated `getaparam(Option<&mut value>)` sig
                                                // couldn't take a name string. Now that `getaparam(&str)` matches
                                                // C, real reads from paramtab work end-to-end.
-    m.r#match = crate::ported::params::getaparam("match"); // c:45-46
-    m.mbegin = crate::ported::params::getaparam("mbegin"); // c:47-48
-    m.mend = crate::ported::params::getaparam("mend"); // c:49-50
+    m.r#match = getaparam("match"); // c:45-46
+    m.mbegin = getaparam("mbegin"); // c:47-48
+    m.mend = getaparam("mend"); // c:49-50
     crate::ported::signals_h::unqueue_signals(); // c:51
 }
 
@@ -57,21 +58,21 @@ pub fn restorematch(m: &MatchData) {
     // c:55
     // c:57-60 — `$match`.
     if let Some(v) = m.r#match.as_ref() {
-        crate::ported::params::assignaparam("match", v.clone(), 0);
+        assignaparam("match", v.clone(), 0);
     } else {
-        crate::ported::params::unsetparam("match");
+        unsetparam("match");
     }
     // c:61-64 — `$mbegin`.
     if let Some(v) = m.mbegin.as_ref() {
-        crate::ported::params::assignaparam("mbegin", v.clone(), 0);
+        assignaparam("mbegin", v.clone(), 0);
     } else {
-        crate::ported::params::unsetparam("mbegin");
+        unsetparam("mbegin");
     }
     // c:65-68 — `$mend`.
     if let Some(v) = m.mend.as_ref() {
-        crate::ported::params::assignaparam("mend", v.clone(), 0);
+        assignaparam("mend", v.clone(), 0);
     } else {
-        crate::ported::params::unsetparam("mend");
+        unsetparam("mend");
     }
 }
 
@@ -97,7 +98,7 @@ pub fn freematch(m: &mut MatchData) {
 pub struct stypat {
     pub next: Option<Box<stypat>>,                   // c:98 Stypat next
     pub pat: String,                                 // c:99 char *pat
-    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:100 Patprog prog (compiled)
+    pub prog: Option<Patprog>, // c:100 Patprog prog (compiled)
     pub weight: u64,                                 // c:101 zulong weight
     pub eval: Option<crate::ported::zsh_h::Eprog>,   // c:102 Eprog eval
     pub vals: Vec<String>,                           // c:103 char **vals
@@ -236,7 +237,7 @@ impl style_table {
                        // before setstypat is called. The style_table::set API takes
                        // pattern as &str and compiles at lookup-time via patmatch,
                        // so we record None here and rely on get() to match.
-        let prog: Option<crate::ported::zsh_h::Patprog> = None;
+        let prog: Option<Patprog> = None;
         // c:341 — p->eval = eprog; signals "this is an -e style".
         // Eprog body parsing requires parse_string (unported), so we
         // record Some(Box<eprog>::default()) as a non-NULL sentinel
@@ -675,7 +676,7 @@ pub fn newzstyletable(size: i32, name: &str) -> Option<HashNode> {
 pub fn setstypat(
     style_name: &str,
     pat: &str, // c:295
-    _prog: Option<crate::ported::zsh_h::Patprog>,
+    _prog: Option<Patprog>,
     vals: Vec<String>,
     eval: i32,
 ) -> i32 {
@@ -722,7 +723,7 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {
     // c:415 — int ef = errflag;
     let ef = errflag.load(Ordering::Relaxed);
     // c:418 — unsetparam("reply");
-    crate::ported::params::unsetparam("reply");
+    unsetparam("reply");
     // c:419 — execode(p->eval, 1, 0, "style");
     //         Eprog runner lives in the fusevm bridge; with no
     //         executable backing the user's `(...)` style value here
@@ -738,7 +739,7 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {
     // c:427-433 — `if ((ret = getaparam("reply"))) ret = arrdup(ret);
     //              else if ((str = getsparam("reply"))) ret = [str];`
     crate::ported::signals::queue_signals();
-    let ret = if let Some(arr) = crate::ported::params::getaparam("reply") {
+    let ret = if let Some(arr) = getaparam("reply") {
         arr
     } else if let Some(s) = crate::ported::params::getsparam("reply") {
         vec![s]
@@ -747,7 +748,7 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {
     };
     crate::ported::signals::unqueue_signals();
     // c:435 — unsetparam("reply");
-    crate::ported::params::unsetparam("reply");
+    unsetparam("reply");
     ret
 }
 
@@ -810,7 +811,7 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
 pub fn bin_zstyle(
     nam: &str,
     args: &[String], // c:487
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:495-540 — flag dispatch backed by the global zstyletab.
@@ -938,10 +939,10 @@ pub fn bin_zstyle(
             if !vals.is_empty() {
                 let sep = args.get(3).map(|s| s.as_str()).unwrap_or(" "); // c:649
                 let ret = vals.join(sep);
-                crate::ported::params::setsparam(pname, &ret);
+                setsparam(pname, &ret);
                 return 0; // c:650
             }
-            crate::ported::params::setsparam(pname, ""); // c:652
+            setsparam(pname, ""); // c:652
             return 1; // c:653
         }
         // -b CONTEXT STYLE NAME: coerce single bool-ish val to "yes"/"no".
@@ -956,7 +957,7 @@ pub fn bin_zstyle(
                 && matches!(vals[0].as_str(),
                             "yes" | "true" | "on" | "1");
             let (ret, code) = if truthy { ("yes", 0) } else { ("no", 1) };
-            crate::ported::params::setsparam(pname, ret); // c:677
+            setsparam(pname, ret); // c:677
             return code; // c:672/675
         }
         // -a CONTEXT STYLE NAME: setaparam(NAME, vals).
@@ -968,7 +969,7 @@ pub fn bin_zstyle(
             }
             let pname = &args[2];
             let found = !vals.is_empty();
-            crate::ported::params::setaparam(
+            setaparam(
                 pname, // c:696
                 if found { vals } else { Vec::new() },
             );
@@ -984,7 +985,7 @@ pub fn bin_zstyle(
                 return 1;
             }
             let val = vals.join(" ");
-            crate::ported::params::setsparam(pname, &val);
+            setsparam(pname, &val);
             return 0;
         }
         // -g: handled below (different arg layout).
@@ -1035,7 +1036,7 @@ pub fn bin_zstyle(
             }
         }
         drop(t);
-        crate::ported::params::setaparam(pname, out); // c:792
+        setaparam(pname, out); // c:792
         return 0;
     }
 
@@ -1063,20 +1064,20 @@ pub fn bin_zstyle(
 pub fn bin_zformat(
     nam: &str,
     args: &[String], // c:955
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     let mut presence = 0i32; // c:958
     if args.is_empty() {
         // c:960
-        crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", ""));
+        zwarnnam(nam, &format!("invalid argument: {}", ""));
         return 1;
     }
     let opt_arg = &args[0];
     let bytes = opt_arg.as_bytes();
     if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {
         // c:960-963
-        crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", opt_arg));
+        zwarnnam(nam, &format!("invalid argument: {}", opt_arg));
         return 1; // c:962
     }
     let opt = bytes[1]; // c:961
@@ -1092,7 +1093,7 @@ pub fn bin_zformat(
               // c:973-994 — -f / -F branch.
             if args.len() < 2 {
                 // c:973 args[0]/args[1]
-                crate::ported::utils::zwarnnam(nam, "missing arguments to -f/-F");
+                zwarnnam(nam, "missing arguments to -f/-F");
                 return 1;
             }
             let mut specs: HashMap<char, String> = HashMap::new(); // c:973
@@ -1105,13 +1106,13 @@ pub fn bin_zformat(
                     || ab[0].is_ascii_digit()
                     || ab.len() < 2 || ab[1] != b':'
                 {
-                    crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", ap)); // c:984
+                    zwarnnam(nam, &format!("invalid argument: {}", ap)); // c:984
                     return 1; // c:985
                 }
                 specs.insert(ab[0] as char, ap[2..].to_string()); // c:987
             }
             let out = zformat_substring(&args[1], &specs, presence != 0); // c:990
-            crate::ported::params::setsparam(&args[0], &out); // c:993 setsparam
+            setsparam(&args[0], &out); // c:993 setsparam
             return 0; // c:994
         }
         b'a' => {
@@ -1119,7 +1120,7 @@ pub fn bin_zformat(
             // c:998-1083 — -a column-format branch.
             if args.len() < 2 {
                 // c:998
-                crate::ported::utils::zwarnnam(nam, "missing arguments to -a");
+                zwarnnam(nam, "missing arguments to -a");
                 return 1;
             }
             let mut pre = 0usize; // c:1000
@@ -1228,7 +1229,7 @@ pub fn bin_zformat(
         }
         _ => {}
     }
-    crate::ported::utils::zwarnnam(
+    zwarnnam(
         nam, // c:1085
         &format!("invalid option: -{}", opt as char),
     );
@@ -1683,7 +1684,7 @@ pub fn rmatch(
 pub fn bin_zregexparse(
     nam: &str,
     args: &[String], // c:1486
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     if args.len() < 3 {
@@ -2002,7 +2003,7 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
 pub fn bin_zparseopts(
     nam: &str,
     args: &[String], // c:1738
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     #[derive(Clone)]
@@ -2425,7 +2426,7 @@ pub fn bin_zparseopts(
     }
     for (name, vals) in arr_outputs {
         if !keep || !vals.is_empty() {
-            crate::ported::params::setaparam(&name, vals);
+            setaparam(&name, vals);
         }
     }
 
@@ -2460,7 +2461,7 @@ pub fn bin_zparseopts(
                 *pp = new_params;
             }
         } else {
-            crate::ported::params::setaparam(&params_src, new_params);
+            setaparam(&params_src, new_params);
         }
     } else {
         let _ = params;
@@ -2581,7 +2582,7 @@ pub struct zstyle_entry {
 pub struct RParseState {
     pub cutoff: i32,                                                  // c:1094
     pub pattern: Option<String>,                                      // c:1095
-    pub patprog: Option<crate::ported::zsh_h::Patprog>, // c:1096 compiled on first match
+    pub patprog: Option<Patprog>, // c:1096 compiled on first match
     pub guard: Option<String>,                          // c:1097
     pub action: Option<String>,                         // c:1098
     pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1099
@@ -3401,9 +3402,9 @@ mod tests {
     fn restorematch_unsets_params_when_snapshot_is_none() {
         let _g = crate::test_util::global_state_lock();
         // Pre-seed `$match` so we can observe the unset.
-        crate::ported::params::assignaparam("match", vec!["seed".to_string()], 0);
+        assignaparam("match", vec!["seed".to_string()], 0);
         assert!(
-            crate::ported::params::getaparam("match").is_some(),
+            getaparam("match").is_some(),
             "test setup: $match seeded"
         );
 
@@ -3416,7 +3417,7 @@ mod tests {
         };
         restorematch(&snap);
         assert!(
-            crate::ported::params::getaparam("match").is_none(),
+            getaparam("match").is_none(),
             "c:60 — None snapshot must unsetparam(\"match\")"
         );
     }

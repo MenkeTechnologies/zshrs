@@ -80,27 +80,27 @@ pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i3
         *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone()); // c:252
                                                                             // ensure line stored is NULL-terminated — implicit in String        // c:253-255
     }
-    hs.histactive = histactive.load(Ordering::SeqCst) as i32; // c:257
-    hs.histdone = histdone.load(Ordering::SeqCst); // c:258
-    hs.stophist = stophist.load(Ordering::SeqCst); // c:259
+    hs.histactive = histactive.load(SeqCst) as i32; // c:257
+    hs.histdone = histdone.load(SeqCst); // c:258
+    hs.stophist = stophist.load(SeqCst); // c:259
     hs.hline = Some(chline.lock().unwrap().clone()); // c:260
-    hs.hptr = Some(hptr.load(Ordering::SeqCst).to_string()); // c:261
+    hs.hptr = Some(hptr.load(SeqCst).to_string()); // c:261
     hs.chwords = chwords.lock().unwrap().clone(); // c:262
-    hs.chwordlen = chwordlen.load(Ordering::SeqCst); // c:263
-    hs.chwordpos = chwordpos.load(Ordering::SeqCst); // c:264
+    hs.chwordlen = chwordlen.load(SeqCst); // c:263
+    hs.chwordpos = chwordpos.load(SeqCst); // c:264
                                                      // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
                                                      // are runtime-mutable function-pointer globals in C; the Rust port
                                                      // dispatches statically via crate::ported::input.
-    hs.hlinesz = hlinesz.load(Ordering::SeqCst); // c:272
-    hs.defev = defev.load(Ordering::SeqCst); // c:273
-    hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst); // c:274
+    hs.hlinesz = hlinesz.load(SeqCst); // c:272
+    hs.defev = defev.load(SeqCst); // c:273
+    hs.hist_keep_comment = hist_keep_comment.load(SeqCst); // c:274
                                                                      // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
     hs.csp = 0;
 
-    stophist.store(0, Ordering::SeqCst); // c:296
+    stophist.store(0, SeqCst); // c:296
     chline.lock().unwrap().clear(); // c:296
-    hptr.store(0, Ordering::SeqCst); // c:296
-    histactive.store(0, Ordering::SeqCst); // c:296
+    hptr.store(0, SeqCst); // c:296
+    histactive.store(0, SeqCst); // c:296
                                            // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
@@ -119,36 +119,36 @@ pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32
         );
         *zle_chline.lock().unwrap() = None; // c:301
     }
-    histactive.store(hs.histactive as u32, Ordering::SeqCst); // c:303
-    histdone.store(hs.histdone, Ordering::SeqCst); // c:304
-    stophist.store(hs.stophist, Ordering::SeqCst); // c:305
+    histactive.store(hs.histactive as u32, SeqCst); // c:303
+    histdone.store(hs.histdone, SeqCst); // c:304
+    stophist.store(hs.stophist, SeqCst); // c:305
     *chline.lock().unwrap() = hs.hline.clone().unwrap_or_default(); // c:306
     hptr.store(
         hs.hptr.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0), // c:307
-        Ordering::SeqCst,
+        SeqCst,
     );
     *chwords.lock().unwrap() = hs.chwords.clone(); // c:308
-    chwordlen.store(hs.chwordlen, Ordering::SeqCst); // c:309
-    chwordpos.store(hs.chwordpos, Ordering::SeqCst); // c:310
+    chwordlen.store(hs.chwordlen, SeqCst); // c:309
+    chwordpos.store(hs.chwordpos, SeqCst); // c:310
                                                      // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
-    hlinesz.store(hs.hlinesz, Ordering::SeqCst); // c:318
-    defev.store(hs.defev, Ordering::SeqCst); // c:339
-    hist_keep_comment.store(hs.hist_keep_comment, Ordering::SeqCst); // c:339
+    hlinesz.store(hs.hlinesz, SeqCst); // c:318
+    defev.store(hs.defev, SeqCst); // c:339
+    hist_keep_comment.store(hs.hist_keep_comment, SeqCst); // c:339
                                                                      // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
 }
 
 /// Port of `void hist_in_word(int yesno)` from Src/hist.c.
 pub fn hist_in_word(yesno: i32) {
     if yesno != 0 {
-        histactive.fetch_or(HA_INWORD, Ordering::SeqCst);
+        histactive.fetch_or(HA_INWORD, SeqCst);
     } else {
-        histactive.fetch_and(!HA_INWORD, Ordering::SeqCst);
+        histactive.fetch_and(!HA_INWORD, SeqCst);
     }
 }
 
 /// Port of `int hist_is_in_word(void)` from Src/hist.c.
 pub fn hist_is_in_word() -> i32 {
-    if (histactive.load(Ordering::SeqCst) & HA_INWORD) != 0 {
+    if (histactive.load(SeqCst) & HA_INWORD) != 0 {
         1
     } else {
         0
@@ -175,7 +175,7 @@ pub fn ihwaddc(c: i32) {
     // c:357
     // c:360-361 — guard: history line must exist, no error/lex stop,
     // and we're not strictly inside alias-expansion-only input.
-    if errflag.load(Ordering::SeqCst) != 0 || lexstop.load(Ordering::SeqCst) {
+    if errflag.load(SeqCst) != 0 || lexstop.load(SeqCst) {
         return;
     }
     let inbufflags = crate::ported::input::inbufflags.with(|f| f.get());
@@ -199,13 +199,13 @@ pub fn ihwaddc(c: i32) {
     // word being replaced. Mirror C exactly: write each byte at
     // the hptr position (growing only when hptr == chline.len()),
     // then advance hptr.
-    let bc = bangchar.load(Ordering::SeqCst);
+    let bc = bangchar.load(SeqCst);
     let qbang_active =
-        c == bc && stophist.load(Ordering::SeqCst) < 2 && qbang.load(Ordering::SeqCst);
+        c == bc && stophist.load(SeqCst) < 2 && qbang.load(SeqCst);
     {
         let mut buf = chline.lock().expect("chline poisoned");
         let bytes = unsafe { buf.as_mut_vec() };
-        let mut pos = hptr.load(Ordering::SeqCst);
+        let mut pos = hptr.load(SeqCst);
         // Mirror the recursive `hwaddc('\\');` at c:366 — also writes
         // at hptr + advances.
         if qbang_active {
@@ -231,19 +231,19 @@ pub fn ihwaddc(c: i32) {
             bytes.push(c as u8);
         }
         pos += 1;
-        hptr.store(pos, Ordering::SeqCst);
+        hptr.store(pos, SeqCst);
     }
     // c:370-374 — resize tracking. Rust `String` grows on `push`
     // automatically, but `hlinesz` mirrors C's allocation count
     // for any caller that reads it (e.g. `hwend()`). C condition
     // is `hptr - chline >= hlinesz`; mirror with the canonical
     // `hptr` global (matches the c:1658 / c:1693 fixes).
-    let cur_off = hptr.load(Ordering::SeqCst) as i32; // c:381 hptr - chline
-    let sz = hlinesz.load(Ordering::SeqCst);
+    let cur_off = hptr.load(SeqCst) as i32; // c:381 hptr - chline
+    let sz = hlinesz.load(SeqCst);
     if cur_off >= sz {
         // c:381
         let new_sz = sz + 64;
-        hlinesz.store(new_sz, Ordering::SeqCst); // c:384
+        hlinesz.store(new_sz, SeqCst); // c:384
     }
 }
 
@@ -283,13 +283,13 @@ pub fn ihwaddc(c: i32) {
 pub fn iaddtoline(c: i32) {
     // c:397
     // c:399 — `if (!expanding || lexstop) return;`.
-    if expanding.load(Ordering::SeqCst) == 0 || lexstop.load(Ordering::SeqCst) {
+    if expanding.load(SeqCst) == 0 || lexstop.load(SeqCst) {
         return;
     }
     // c:401-404 — bang-escape under qbang.
-    let bc = bangchar.load(Ordering::SeqCst);
-    if qbang.load(Ordering::SeqCst) && c == bc && stophist.load(Ordering::SeqCst) < 2 {
-        exlast.fetch_sub(1, Ordering::SeqCst); // c:402
+    let bc = bangchar.load(SeqCst);
+    if qbang.load(SeqCst) && c == bc && stophist.load(SeqCst) < 2 {
+        exlast.fetch_sub(1, SeqCst); // c:402
         chline.lock().unwrap().push('\\'); // c:403 zleentry ADD '\\'
     }
     // c:405-411 — `if (excs > zlemetacs) { excs += 1 + inbufct -
@@ -304,25 +304,25 @@ pub fn iaddtoline(c: i32) {
     // The previous Rust port omitted the entire block — typing
     // `!str` mid-line would leave the ZLE cursor at the wrong
     // position after expansion.
-    let zlemetacs_v = ZLEMETACS.load(Ordering::SeqCst);
-    let excs_v = excs.load(Ordering::SeqCst);
+    let zlemetacs_v = ZLEMETACS.load(SeqCst);
+    let excs_v = excs.load(SeqCst);
     if excs_v > zlemetacs_v {
         // c:405
         let inbufct_now = crate::ported::input::inbufct.with(|c| c.get());
-        let exlast_v = exlast.load(Ordering::SeqCst);
+        let exlast_v = exlast.load(SeqCst);
         let mut new_excs = excs_v + 1 + inbufct_now - exlast_v; // c:406
         if new_excs < zlemetacs_v {
             // c:407
             new_excs = zlemetacs_v; // c:410
         }
-        excs.store(new_excs, Ordering::SeqCst);
+        excs.store(new_excs, SeqCst);
     }
     // c:413 — `exlast = inbufct;`
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
-    exlast.store(inbufct_v, Ordering::SeqCst); // c:413
+    exlast.store(inbufct_v, SeqCst); // c:413
                                                // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
     let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
-        let idx = (c as u8).wrapping_sub(crate::ported::zsh_h::Pound as u8) as usize;
+        let idx = (c as u8).wrapping_sub(Pound as u8) as usize;
         // ztokens is the literal-char back-mapping for ITOK bytes.
         // Defensively guard against an out-of-range token byte
         // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
@@ -350,9 +350,9 @@ pub fn iaddtoline(c: i32) {
 /// ```
 pub fn safeinungetc(c: i32) {
     // c:467
-    if lexstop.load(Ordering::SeqCst) {
+    if lexstop.load(SeqCst) {
         // c:469
-        lexstop.store(false, Ordering::SeqCst); // c:470
+        lexstop.store(false, SeqCst); // c:470
     } else {
         // c:471
         if let Some(ch) = char::from_u32(c as u32) {
@@ -393,40 +393,40 @@ pub fn ihgetc() -> i32 {
     let mut c: i32 = ingetc() // c:420 int c = ingetc();
         .map(|ch| ch as i32)
         .unwrap_or(-1);
-    if exit_pending.load(Ordering::SeqCst) {
+    if exit_pending.load(SeqCst) {
         // c:422
-        lexstop.store(true, Ordering::SeqCst); // c:424
+        lexstop.store(true, SeqCst); // c:424
         errflag.fetch_or(
             // c:425 errflag |= ERRFLAG_ERROR
             ERRFLAG_ERROR,
-            Ordering::SeqCst,
+            SeqCst,
         );
         return b' ' as i32; // c:426
     }
-    qbang.store(false, Ordering::SeqCst); // c:428 qbang = 0
+    qbang.store(false, SeqCst); // c:428 qbang = 0
     let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
-    if stophist.load(Ordering::SeqCst) == 0                                  // c:429 !stophist
+    if stophist.load(SeqCst) == 0                                  // c:429 !stophist
         && (inbufflags_v & INP_ALIAS) == 0
     // c:429 !(inbufflags & INP_ALIAS)
     {
         c = histsubchar(c); // c:431 c = histsubchar(c)
         if c < 0 {
             // c:432
-            lexstop.store(true, Ordering::SeqCst); // c:434
+            lexstop.store(true, SeqCst); // c:434
             errflag.fetch_or(
                 // c:435
                 ERRFLAG_ERROR,
-                Ordering::SeqCst,
+                SeqCst,
             );
             return b' ' as i32; // c:436
         }
     }
     let inbufflags_v = crate::ported::input::inbufflags.with(|f| f.get());
-    let bc = bangchar.load(Ordering::SeqCst);
-    if (inbufflags_v & INP_HIST) != 0 && stophist.load(Ordering::SeqCst) == 0 {
+    let bc = bangchar.load(SeqCst);
+    if (inbufflags_v & INP_HIST) != 0 && stophist.load(SeqCst) == 0 {
         // c:439
         // c:447 qbang = 0
-        qbang.store(false, Ordering::SeqCst);
+        qbang.store(false, SeqCst);
         if c == b'\\' as i32 {
             // c:448 c == '\\'
             let g = ingetc() // c:448 c = ingetc()
@@ -434,7 +434,7 @@ pub fn ihgetc() -> i32 {
                 .unwrap_or(-1);
             if g == bc {
                 // c:448 qbang = (c == bangchar)
-                qbang.store(true, Ordering::SeqCst);
+                qbang.store(true, SeqCst);
                 c = g;
             } else {
                 // c:449 safeinungetc(c), c = '\\';
@@ -442,13 +442,13 @@ pub fn ihgetc() -> i32 {
                 c = b'\\' as i32;
             }
         }
-    } else if stophist.load(Ordering::SeqCst) != 0                           // c:450 stophist
+    } else if stophist.load(SeqCst) != 0                           // c:450 stophist
         || (inbufflags_v & INP_ALIAS) != 0
     // c:450 (inbufflags & INP_ALIAS)
     {
         // c:458 qbang = c == bangchar && (stophist < 2)
-        let v = c == bc && stophist.load(Ordering::SeqCst) < 2;
-        qbang.store(v, Ordering::SeqCst);
+        let v = c == bc && stophist.load(SeqCst) < 2;
+        qbang.store(v, SeqCst);
     }
     ihwaddc(c); // c:459 hwaddc(c)
     iaddtoline(c); // c:460 addtoline(c)
@@ -522,7 +522,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
     let lexraw_mark: i32 = 0; // c:603,615
 
     // c:618 — `^foo^bar` shortcut: only valid on first column of input.
-    let hat = hatchar.load(Ordering::SeqCst);
+    let hat = hatchar.load(SeqCst);
     if LEX_ISFIRSTCH.with(|f| f.get()) && c == hat {
         // c:618
         let mut gbal: i32 = 0; // c:619
@@ -532,7 +532,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         if let Some(ch) = char::from_u32(hat as u32) {
             inungetc(ch); // c:623
         }
-        let ehist = match gethist(defev.load(Ordering::SeqCst)) {
+        let ehist = match gethist(defev.load(SeqCst)) {
             // c:624
             Some(h) => h,
             None => return -1, // c:626
@@ -566,7 +566,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
             // c:636
             LEX_ISFIRSTCH.with(|f| f.set(false)); // c:637
         }
-        let bc = bangchar.load(Ordering::SeqCst);
+        let bc = bangchar.load(SeqCst);
         if c == b'\\' as i32 {
             // c:638
             let g = ingetc() // c:639 ingetc()
@@ -577,7 +577,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 safeinungetc(g); // c:642
             } else {
                 // c:643
-                qbang.store(true, Ordering::SeqCst); // c:644
+                qbang.store(true, SeqCst); // c:644
                 return bc; // c:645 return bangchar
             }
         }
@@ -586,7 +586,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
             return c; // c:649
         }
         // c:650 — `*hptr = '\0'` truncates chline at the current position.
-        let pos = hptr.load(Ordering::SeqCst); // c:650
+        let pos = hptr.load(SeqCst); // c:650
         {
             let mut cl = chline.lock().unwrap();
             if pos < cl.len() {
@@ -606,7 +606,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         }
         if c == b'"' as i32 {
             // c:655 c == '\"'
-            stophist.store(1, Ordering::SeqCst); // c:656
+            stophist.store(1, SeqCst); // c:656
             return ingetc() // c:657 return ingetc()
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
@@ -616,7 +616,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         if (cflag == 0 && is_blank)
             || c == b'=' as i32
             || c == b'(' as i32
-            || lexstop.load(Ordering::SeqCst)
+            || lexstop.load(SeqCst)
         // c:659
         {
             safeinungetc(c); // c:660
@@ -635,7 +635,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 c = ingetc() // c:671 ingetc()
                     .map(|ch| ch as i32)
                     .unwrap_or(-1);
-                if c == b'?' as i32 || c == b'\n' as i32 || lexstop.load(Ordering::SeqCst) {
+                if c == b'?' as i32 || c == b'\n' as i32 || lexstop.load(SeqCst) {
                     // c:672
                     break; // c:673
                 } else {
@@ -647,7 +647,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     }
                 }
             }
-            if c != b'\n' as i32 && !lexstop.load(Ordering::SeqCst) {
+            if c != b'\n' as i32 && !lexstop.load(SeqCst) {
                 // c:683
                 c = ingetc() // c:684
                     .map(|ch| ch as i32)
@@ -666,8 +666,8 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 None => (-1, -1),
             };
             ev = ev_val;
-            mev.store(ev, Ordering::SeqCst); // c:686 mev = ev
-            marg.store(marg_val, Ordering::SeqCst); // c:686 marg out-arg
+            mev.store(ev, SeqCst); // c:686 mev = ev
+            marg.store(marg_val, SeqCst); // c:686 marg out-arg
             evset = 0; // c:687
             if ev == -1 {
                 // c:688
@@ -691,7 +691,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     || c == b'\'' as i32
                     || c == b'"' as i32
                     || c == b'`' as i32
-                    || lexstop.load(Ordering::SeqCst); // c:698-700
+                    || lexstop.load(SeqCst); // c:698-700
                 if is_term {
                     break;
                 }
@@ -740,10 +740,10 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     // c:729
                     if isset(CSHJUNKIEHISTORY) {
                         // c:730
-                        ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
+                        ev = addhistnum(curhist.load(SeqCst), -1, HIST_FOREIGN as i32);
                     } else {
                         // c:732
-                        ev = defev.load(Ordering::SeqCst); // c:733
+                        ev = defev.load(SeqCst); // c:733
                     }
                     if c == b':' as i32 && evset == -1 {
                         // c:734
@@ -753,12 +753,12 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     }
                 } else {
                     // c:738
-                    if marg.load(Ordering::SeqCst) != -1 {
+                    if marg.load(SeqCst) != -1 {
                         // c:739
-                        ev = mev.load(Ordering::SeqCst); // c:740
+                        ev = mev.load(SeqCst); // c:740
                     } else {
                         // c:741
-                        ev = defev.load(Ordering::SeqCst); // c:742
+                        ev = defev.load(SeqCst); // c:742
                     }
                     evset = 0; // c:743
                 }
@@ -768,7 +768,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     ev = if t0 < 0 {
                         // c:746
                         addhistnum(
-                            curhist.load(Ordering::SeqCst),
+                            curhist.load(SeqCst),
                             t0 as i32,
                             HIST_FOREIGN as i32,
                         )
@@ -778,11 +778,11 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     evset = 1; // c:747
                 } else if buf.as_bytes()[0] == bc as u8 {
                     // c:748 *buf == bangchar
-                    ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32); // c:749
+                    ev = addhistnum(curhist.load(SeqCst), -1, HIST_FOREIGN as i32); // c:749
                     evset = 1; // c:750
                 } else if buf.as_bytes()[0] == b'#' {
                     // c:751
-                    ev = curhist.load(Ordering::SeqCst); // c:752
+                    ev = curhist.load(SeqCst); // c:752
                     evset = 1; // c:753
                 } else {
                     // c:754
@@ -802,11 +802,11 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 }
             } else if buf.as_bytes()[0] == bc as u8 {
                 // c:748 *buf == bangchar
-                ev = addhistnum(curhist.load(Ordering::SeqCst), -1, HIST_FOREIGN as i32);
+                ev = addhistnum(curhist.load(SeqCst), -1, HIST_FOREIGN as i32);
                 evset = 1;
             } else if buf.as_bytes()[0] == b'#' {
                 // c:751
-                ev = curhist.load(Ordering::SeqCst);
+                ev = curhist.load(SeqCst);
                 evset = 1;
             } else {
                 // c:754
@@ -826,7 +826,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         }
 
         // c:765 — fetch the resolved history entry.
-        defev.store(ev, Ordering::SeqCst); // c:765 defev = ev
+        defev.store(ev, SeqCst); // c:765 defev = ev
         let mut ehist = match gethist(ev) {
             // c:765
             Some(h) => h,
@@ -844,14 +844,14 @@ pub fn histsubchar(c_in: i32) -> i32 {
             c = ingetc() // c:774
                 .map(|ch| ch as i32)
                 .unwrap_or(-1);
-            if c == b'%' as i32 && marg.load(Ordering::SeqCst) != -1 {
+            if c == b'%' as i32 && marg.load(SeqCst) != -1 {
                 // c:775
                 if evset == 0 {
                     // c:776
-                    ehist = match gethist(mev.load(Ordering::SeqCst)) {
+                    ehist = match gethist(mev.load(SeqCst)) {
                         // c:777
                         Some(h) => {
-                            defev.store(mev.load(Ordering::SeqCst), Ordering::SeqCst);
+                            defev.store(mev.load(SeqCst), SeqCst);
                             h
                         }
                         None => {
@@ -880,7 +880,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
             if let Some(ch) = char::from_u32(c as u32) {
                 inungetc(ch); // c:793
             }
-            let r = getargspec(argc, marg.load(Ordering::SeqCst), evset); // c:794
+            let r = getargspec(argc, marg.load(SeqCst), evset); // c:794
             larg = r;
             farg = r;
             if larg == -2 {
@@ -902,7 +902,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
             } else if c == b'-' as i32 {
                 // c:805
                 cflag = 0; // c:806
-                larg = getargspec(argc, marg.load(Ordering::SeqCst), evset); // c:807
+                larg = getargspec(argc, marg.load(SeqCst), evset); // c:807
                 if larg == -2 {
                     // c:808
                     unqueue_signals(); // c:809
@@ -968,7 +968,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
             match c as u8 {
                 b'p' => {
                     // c:845
-                    histdone.store(HISTFLAG_DONE | HISTFLAG_NOEXEC, Ordering::SeqCst);
+                    histdone.store(HISTFLAG_DONE | HISTFLAG_NOEXEC, SeqCst);
                     // c:846
                 }
                 b'a' => {
@@ -1027,7 +1027,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 }
                 b's' | b'S' => {
                     // c:898-899
-                    hsubpatopt.store((c == b'S' as i32) as i32, Ordering::SeqCst); // c:900
+                    hsubpatopt.store((c == b'S' as i32) as i32, SeqCst); // c:900
                     if getsubsargs(&sline, &mut gbal, &mut cflag) != 0 {
                         // c:901
                         return -1; // c:902
@@ -1075,11 +1075,11 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     // c:918-924 — `noerrs` flag stack is no-op in Rust port;
                     // see params.rs:1310. Tokenize-strip via parse_subst_string,
                     // then remnulargs + untokenize.
-                    let oef = errflag.load(Ordering::SeqCst);
+                    let oef = errflag.load(SeqCst);
                     let _ = crate::ported::lex::parse_subst_string(&sline); // c:921
                     errflag.store(
-                        oef | (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT),
-                        Ordering::SeqCst,
+                        oef | (errflag.load(SeqCst) & crate::ported::zsh_h::ERRFLAG_INT),
+                        SeqCst,
                     ); // c:923
                     let mut s = sline.clone();
                     crate::ported::glob::remnulargs(&mut s); // c:924
@@ -1146,12 +1146,12 @@ pub fn histsubchar(c_in: i32) -> i32 {
     let _ = lexraw_mark; // c:963
 
     // c:970-976 — push the expanded value onto the input stack as INP_HIST.
-    lexstop.store(false, Ordering::SeqCst); // c:970
-    crate::ported::input::inpush(&sline, crate::ported::zsh_h::INP_HIST, None); // c:976
-    histdone.fetch_or(HISTFLAG_DONE, Ordering::SeqCst); // c:977
+    lexstop.store(false, SeqCst); // c:970
+    crate::ported::input::inpush(&sline, INP_HIST, None); // c:976
+    histdone.fetch_or(HISTFLAG_DONE, SeqCst); // c:977
     if isset(HISTVERIFY) {
         // c:978
-        histdone.fetch_or(HISTFLAG_NOEXEC | HISTFLAG_RECALL, Ordering::SeqCst); // c:979
+        histdone.fetch_or(HISTFLAG_NOEXEC | HISTFLAG_RECALL, SeqCst); // c:979
     }
 
     // c:982 — return ingetc() so caller sees the first char of expansion.
@@ -1196,7 +1196,7 @@ pub fn herrflush() {
         if inbufct <= 0 {
             break;
         }
-        let strin_v = strin.load(Ordering::SeqCst);
+        let strin_v = strin.load(SeqCst);
         let lex_add_raw = crate::ported::lex::LEX_LEX_ADD_RAW.get();
         if !(strin_v == 0 || lex_add_raw != 0) {
             // c:494 (!strin || lex_add_raw)
@@ -1309,7 +1309,7 @@ pub fn digitcount() -> i32 {
 /// driven parses could misbehave with state from a prior parse.
 pub fn strinbeg(dohist: i32) {
     // c:1033
-    strin.fetch_add(1, Ordering::SeqCst); // c:1035
+    strin.fetch_add(1, SeqCst); // c:1035
     hbegin(dohist); // c:1036
     crate::ported::lex::lexinit(); // c:1037
     crate::ported::parse::init_parse_status(); // c:1042
@@ -1338,9 +1338,9 @@ pub fn strinend() {
         strin.load(Ordering::SeqCst) == 0, // c:1052 !strin
         "BUG: strinend() called without strinbeg()"  // c:1052
     );
-    strin.fetch_sub(1, Ordering::SeqCst); // c:1053
+    strin.fetch_sub(1, SeqCst); // c:1053
     LEX_ISFIRSTCH.with(|f| f.set(true)); // c:1054 isfirstch = 1
-    histdone.store(0, Ordering::SeqCst); // c:1055 histdone = 0
+    histdone.store(0, SeqCst); // c:1055 histdone = 0
 }
 
 /// Port of `static void nohw(UNUSED(int c))` from Src/hist.c:1062.
@@ -1381,9 +1381,9 @@ pub fn ihwbegin(offset: i32) {
     // any lexer rewind (e.g. backquote, comment-resume) shifts hptr
     // earlier and the chline.len() reading would record the WRONG
     // word start, producing off-by-many history word offsets.
-    let hptr_val = hptr.load(Ordering::SeqCst); // c:1658
-    let stop = stophist.load(Ordering::SeqCst);
-    let active = histactive.load(Ordering::SeqCst);
+    let hptr_val = hptr.load(SeqCst); // c:1658
+    let stop = stophist.load(SeqCst);
+    let active = histactive.load(SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
     // c:1659 — `(inbufflags & (INP_ALIAS|INP_HIST)) == INP_ALIAS`
     // means "alias-only input (no history layered above)".
@@ -1392,10 +1392,10 @@ pub fn ihwbegin(offset: i32) {
     {
         return;
     }
-    let pos = chwordpos.load(Ordering::SeqCst);
+    let pos = chwordpos.load(SeqCst);
     if pos % 2 != 0 {
         // c:1662 chwordpos%2
-        chwordpos.fetch_sub(1, Ordering::SeqCst); // c:1663
+        chwordpos.fetch_sub(1, SeqCst); // c:1663
     }
     // c:1664-1665 — DPUTS1(pos < 0, "History word position < 0 in %s",
     //                      dupstrpfx(chline, hptr-chline))
@@ -1413,18 +1413,18 @@ pub fn ihwbegin(offset: i32) {
     // c:1666 — `if (pos < 0) pos = 0;`. The .max(0) clamp.
     let start = word_pos.max(0) as i16; // c:1658
     let mut words = chwords.lock().unwrap();
-    let idx = chwordpos.load(Ordering::SeqCst) as usize;
+    let idx = chwordpos.load(SeqCst) as usize;
     if words.len() <= idx {
         words.resize(idx + 1, 0);
     }
     words[idx] = start; // c:1668
-    chwordpos.fetch_add(1, Ordering::SeqCst); // c:1668 chwordpos++
+    chwordpos.fetch_add(1, SeqCst); // c:1668 chwordpos++
 }
 
 /// Port of `static void linkcurline(void)` from Src/hist.c:1079.
 pub fn linkcurline() {
     // c:1079
-    let new_hist = curhist.fetch_add(1, Ordering::SeqCst) + 1; // c:1093 ++curhist
+    let new_hist = curhist.fetch_add(1, SeqCst) + 1; // c:1093 ++curhist
     let mut cur = curline.lock().unwrap();
     *cur = Some(make_histent(new_hist, String::new())); // c:1093 curline.histnum
                                                         // Splicing into the ring (c:1081-1088) is encoded by the Vec::insert
@@ -1436,7 +1436,7 @@ pub fn linkcurline() {
 pub fn unlinkcurline() {
     // c:1093
     *curline.lock().unwrap() = None; // c:1093-1102
-    curhist.fetch_sub(1, Ordering::SeqCst); // c:1103
+    curhist.fetch_sub(1, SeqCst); // c:1103
 }
 
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
@@ -1450,31 +1450,31 @@ pub fn hbegin(dohist: i32) {
         !ERRFLAG_ERROR,
         Ordering::Relaxed,
     );
-    histdone.store(0, Ordering::SeqCst); // c:1116
+    histdone.store(0, SeqCst); // c:1116
                                          // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
     let interact = isset(INTERACTIVE);
     let shinstdin = isset(SHINSTDIN);
     if dohist == 0 {
         // c:1117
-        stophist.store(2, Ordering::SeqCst); // c:1118
+        stophist.store(2, SeqCst); // c:1118
     } else if dohist != 2 {
         // c:1119
         stophist.store(
             if !interact || !shinstdin { 2 } else { 0 }, // c:1120
-            Ordering::SeqCst,
+            SeqCst,
         );
     } else {
         // c:1121
-        stophist.store(0, Ordering::SeqCst); // c:1122
+        stophist.store(0, SeqCst); // c:1122
     }
 
-    if stophist.load(Ordering::SeqCst) == 2 {
+    if stophist.load(SeqCst) == 2 {
         // c:1134
         chline.lock().unwrap().clear(); // c:1135 chline = NULL
-        hptr.store(0, Ordering::SeqCst); // c:1135 hptr = NULL
-        hlinesz.store(0, Ordering::SeqCst); // c:1136
+        hptr.store(0, SeqCst); // c:1135 hptr = NULL
+        hlinesz.store(0, SeqCst); // c:1136
         chwords.lock().unwrap().clear(); // c:1137
-        chwordlen.store(0, Ordering::SeqCst); // c:1138
+        chwordlen.store(0, SeqCst); // c:1138
                                               // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline are       c:1139-1145
                                               // function-pointer slots in C; Rust dispatches statically.
     } else {
@@ -1482,26 +1482,26 @@ pub fn hbegin(dohist: i32) {
         let mut buf = chline.lock().unwrap(); // c:1147
         buf.clear();
         buf.reserve(64);
-        hlinesz.store(64, Ordering::SeqCst); // c:1147
+        hlinesz.store(64, SeqCst); // c:1147
         drop(buf);
         let mut w = chwords.lock().unwrap(); // c:1148
         w.clear();
         w.reserve(64);
-        chwordlen.store(64, Ordering::SeqCst);
+        chwordlen.store(64, SeqCst);
         drop(w);
         // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline c:1149-1155 — see c:1139.
         if !isset(BANGHIST) {
             // c:1156
-            stophist.store(4, Ordering::SeqCst); // c:1157
+            stophist.store(4, SeqCst); // c:1157
         }
     }
-    chwordpos.store(0, Ordering::SeqCst); // c:1159
+    chwordpos.store(0, SeqCst); // c:1159
 
     {
         // c:1161
         let mut ring = hist_ring.lock().unwrap();
         if let Some(top) = ring.first_mut() {
-            if top.ftim == 0 && strin.load(Ordering::SeqCst) == 0 {
+            if top.ftim == 0 && strin.load(SeqCst) == 0 {
                 top.ftim = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
@@ -1510,9 +1510,9 @@ pub fn hbegin(dohist: i32) {
         }
     }
     if (dohist == 2 || (interact && shinstdin))                              // c:1163
-        && strin.load(Ordering::SeqCst) == 0
+        && strin.load(SeqCst) == 0
     {
-        histactive.store(HA_ACTIVE, Ordering::SeqCst); // c:1164
+        histactive.store(HA_ACTIVE, SeqCst); // c:1164
                                                        // c:1165 — `attachtty(mypgrp);` reclaims the controlling
                                                        // terminal for the shell's pgrp at the start of a fresh
                                                        // history-recording line. The previous Rust port left this
@@ -1522,29 +1522,29 @@ pub fn hbegin(dohist: i32) {
                                                        // call so the shell actually grabs the tty during
                                                        // interactive history sessions, matching C behavior.
         let mypgrp = *crate::ported::jobs::MYPGRP
-            .get_or_init(|| std::sync::Mutex::new(0))
+            .get_or_init(|| Mutex::new(0))
             .lock()
             .expect("mypgrp poisoned");
         crate::ported::utils::attachtty(mypgrp); // c:1165
         linkcurline(); // c:1166
         defev.store(
             addhistnum(
-                curhist.load(Ordering::SeqCst), // c:1167
+                curhist.load(SeqCst), // c:1167
                 -1,
                 HIST_FOREIGN as i32,
             ),
-            Ordering::SeqCst,
+            SeqCst,
         );
     } else {
-        histactive.store(HA_ACTIVE | HA_NOINC, Ordering::SeqCst); // c:1169
+        histactive.store(HA_ACTIVE | HA_NOINC, SeqCst); // c:1169
     }
 
     if isset(INCAPPENDHISTORYTIME) // c:1189
         && !isset(SHAREHISTORY)
         && !isset(INCAPPENDHISTORY)
-        && (histactive.load(Ordering::SeqCst) & HA_NOINC) == 0
-        && strin.load(Ordering::SeqCst) == 0
-        && histsave_stack_pos.load(Ordering::SeqCst) == 0
+        && (histactive.load(SeqCst) & HA_NOINC) == 0
+        && strin.load(SeqCst) == 0
+        && histsave_stack_pos.load(SeqCst) == 0
     {
         let hf = resolve_histfile(); // c:1192
         savehistfile(
@@ -1628,7 +1628,7 @@ pub fn histremovedups() {
     ring.retain(|h| (h.node.flags as u32 & HIST_DUP) == 0); // c:1259-1260
     let new_ct = ring.len() as i64;
     drop(ring);
-    histlinect.store(new_ct, Ordering::SeqCst);
+    histlinect.store(new_ct, SeqCst);
 }
 
 /// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
@@ -1663,7 +1663,7 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {
                 // c:1278
                 firsthist() - 1
             } else {
-                curhist.load(Ordering::SeqCst) + 1
+                curhist.load(SeqCst) + 1
             }
         }
         Some(h) => h, // c:1279
@@ -1798,11 +1798,11 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {
     NEXT_IDX.with(|c| c.set(idx));
 
     // c:1355-1370 — HISTEXPIREDUPSFIRST: skip non-dups until we find one.
-    let exp_dups_first = crate::ported::zsh_h::isset(HISTEXPIREDUPSFIRST);
+    let exp_dups_first = isset(HISTEXPIREDUPSFIRST);
     if exp_dups_first && (ring[cur_idx].node.flags as u32 & HIST_DUP) == 0 {
         if keep_going == 0 {
             // c:1357-1358 — `if (!keep_going) max_unique_ct = savehistsiz;`
-            MAX_UNIQUE_CT.with(|c| c.set(savehistsiz.load(Ordering::SeqCst) as i64));
+            MAX_UNIQUE_CT.with(|c| c.set(savehistsiz.load(SeqCst) as i64));
         }
         loop {
             let cur = MAX_UNIQUE_CT.with(|c| {
@@ -1852,16 +1852,16 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {
 /// Port of `Histent prepnexthistent(void)` from Src/hist.c.
 pub fn prepnexthistent() -> i64 {
     // c:1387
-    let cap = histsiz.load(Ordering::SeqCst);
-    if histlinect.load(Ordering::SeqCst) >= cap {
+    let cap = histsiz.load(SeqCst);
+    if histlinect.load(SeqCst) >= cap {
         if let Some(oldest) = ring_oldest() {
             // Drop oldest from ring
             let mut ring = hist_ring.lock().unwrap();
             ring.retain(|h| h.histnum != oldest);
-            histlinect.fetch_sub(1, Ordering::SeqCst);
+            histlinect.fetch_sub(1, SeqCst);
         }
     }
-    let n = curhist.fetch_add(1, Ordering::SeqCst) + 1;
+    let n = curhist.fetch_add(1, SeqCst) + 1;
     n
 }
 
@@ -1928,17 +1928,17 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
 /// Port of `int hend(Eprog prog)` from Src/hist.c:1474.
 pub fn hend(prog: Option<&[u8]>) -> i32 {
     // c:1474
-    let stack_pos = histsave_stack_pos.load(Ordering::SeqCst); // c:1474
+    let stack_pos = histsave_stack_pos.load(SeqCst); // c:1474
     let mut save: i32 = 1; // c:1484
     let mut hookret: i32 = 0;
 
     // DPUTS(stophist != 2 && !(inbufflags & INP_ALIAS) && !chline,       c:1487
     //       "BUG: chline is NULL in hend()");
     crate::ported::signals::queue_signals(); // c:1489
-    if (histdone.load(Ordering::SeqCst) & HISTFLAG_SETTY) != 0 { // c:1490
+    if (histdone.load(SeqCst) & HISTFLAG_SETTY) != 0 { // c:1490
          // settyinfo(&shttyinfo) — TTY-state singleton not ported.          // c:1491
     }
-    let active = histactive.load(Ordering::SeqCst);
+    let active = histactive.load(SeqCst);
     if (active & HA_NOINC) == 0 {
         // c:1492
         unlinkcurline(); // c:1493
@@ -1947,16 +1947,16 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         // c:1494
         chline.lock().unwrap().clear(); // c:1495 zfree(chline)
         chwords.lock().unwrap().clear(); // c:1496 zfree(chwords)
-        hptr.store(0, Ordering::SeqCst); // c:1497
-        histactive.store(0, Ordering::SeqCst); // c:1499
+        hptr.store(0, SeqCst); // c:1497
+        histactive.store(0, SeqCst); // c:1499
         unqueue_signals(); // c:1500
         return 1; // c:1501
     }
     let cur_ignore_all = if isset(HISTIGNOREALLDUPS) { 1 } else { 0 }; // c:1503
-    let prev_ignore_all = hist_ignore_all_dups.load(Ordering::SeqCst);
+    let prev_ignore_all = hist_ignore_all_dups.load(SeqCst);
     if prev_ignore_all != cur_ignore_all                                     // c:1503
         && {
-            hist_ignore_all_dups.store(cur_ignore_all, Ordering::SeqCst);    // c:1504
+            hist_ignore_all_dups.store(cur_ignore_all, SeqCst);    // c:1504
             cur_ignore_all != 0
         }
     {
@@ -1994,9 +1994,9 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         );
         // curline.histnum = curhist + 1                                     // c:1531
     }
-    let flag = histdone.load(Ordering::SeqCst); // c:1533
-    histdone.store(0, Ordering::SeqCst); // c:1534
-    let hptr_pos = hptr.load(Ordering::SeqCst);
+    let flag = histdone.load(SeqCst); // c:1533
+    histdone.store(0, SeqCst); // c:1534
+    let hptr_pos = hptr.load(SeqCst);
     let mut text = chline_text;
     if hptr_pos < 1 {
         // c:1535 hptr < chline + 1
@@ -2007,15 +2007,15 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             if text.len() > 1 {
                 // c:1539 chline[1]
                 text.pop(); // c:1540 *--hptr = '\0'
-                if hptr.load(Ordering::SeqCst) > 0 {
-                    hptr.fetch_sub(1, Ordering::SeqCst);
+                if hptr.load(SeqCst) > 0 {
+                    hptr.fetch_sub(1, SeqCst);
                 }
             } else {
                 save = 0; // c:1542
             }
         }
-        if chwordpos.load(Ordering::SeqCst) <= 2                             // c:1544
-            && hist_keep_comment.load(Ordering::SeqCst) == 0
+        if chwordpos.load(SeqCst) <= 2                             // c:1544
+            && hist_keep_comment.load(SeqCst) == 0
         {
             save = 0; // c:1545
         } else if should_ignore_line(prog) != 0 {
@@ -2056,20 +2056,20 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         if idx < ring.len() && (ring[idx].node.flags as u32 & HIST_TMPSTORE) != 0 {
             if idx == 0 {
                 // c:1573 he == hist_ring
-                curhist.fetch_sub(1, Ordering::SeqCst); // c:1574
+                curhist.fetch_sub(1, SeqCst); // c:1574
             }
             ring.remove(idx); // c:1575 freehistnode
-            histlinect.fetch_sub(1, Ordering::SeqCst);
+            histlinect.fetch_sub(1, SeqCst);
         }
     }
     if save != 0 {
         // c:1578
         // chwordpos parity guard — if odd, hwend() to close.            // c:1583-1587
-        if chwordpos.load(Ordering::SeqCst) % 2 != 0 {
+        if chwordpos.load(SeqCst) % 2 != 0 {
             ihwend();
         }
         // Strip trailing \n which we already nulled out.                    // c:1589-1595
-        let cwp = chwordpos.load(Ordering::SeqCst);
+        let cwp = chwordpos.load(SeqCst);
         if cwp > 1 {
             let words = chwords.lock().unwrap();
             let last = words.get((cwp - 2) as usize).copied().unwrap_or(0);
@@ -2077,7 +2077,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             if (last as usize) >= text.len() {
                 // c:1590
                 drop(words);
-                chwordpos.fetch_sub(2, Ordering::SeqCst);
+                chwordpos.fetch_sub(2, SeqCst);
             } else {
                 drop(words);
             }
@@ -2113,7 +2113,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let cwp = chwordpos.load(Ordering::SeqCst);
+        let cwp = chwordpos.load(SeqCst);
         let chwords_snapshot: Vec<i16> = chwords.lock().unwrap().clone();
         let nwords = (cwp / 2) as i32;
         if let Some(0) = he_idx {
@@ -2143,7 +2143,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             }
             let mut ring = hist_ring.lock().unwrap();
             ring.insert(0, he);
-            histlinect.fetch_add(1, Ordering::SeqCst);
+            histlinect.fetch_add(1, SeqCst);
             if (newflags & HIST_TMPSTORE) == 0 {
                 // c:1625
                 // addhistnode(histtab, he->node.nam, he) — hashtable wiring c:1626
@@ -2154,8 +2154,8 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     }
     chline.lock().unwrap().clear(); // c:1628 zfree(chline)
     chwords.lock().unwrap().clear(); // c:1629 zfree(chwords)
-    hptr.store(0, Ordering::SeqCst); // c:1630
-    histactive.store(0, Ordering::SeqCst); // c:1632
+    hptr.store(0, SeqCst); // c:1630
+    histactive.store(0, SeqCst); // c:1632
 
     let share = isset(SHAREHISTORY);
     let do_inc = if share {
@@ -2163,7 +2163,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     } else {
         isset(INCAPPENDHISTORY)                                              // c:1637
             || (isset(INCAPPENDHISTORYTIME)                                  // c:1637
-                && histsave_stack_pos.load(Ordering::SeqCst) != 0) // c:1638
+                && histsave_stack_pos.load(SeqCst) != 0) // c:1638
     };
     if do_inc {
         savehistfile(
@@ -2175,11 +2175,11 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     }
     unlockhistfile(hf.as_deref().unwrap_or("")); // c:1640
 
-    while histsave_stack_pos.load(Ordering::SeqCst) > stack_pos {
+    while histsave_stack_pos.load(SeqCst) > stack_pos {
         // c:1645
         pophiststack(); // c:1646
     }
-    hist_keep_comment.store(0, Ordering::SeqCst); // c:1647
+    hist_keep_comment.store(0, SeqCst); // c:1647
     unqueue_signals(); // c:1648
     if (flag & HISTFLAG_NOEXEC) != 0 || errflag.load(Ordering::Relaxed) != 0 {
         0 // c:1649
@@ -2191,11 +2191,11 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
 /// Port of `void ihwabort(void)` from Src/hist.c.
 pub fn ihwabort() {
     // c:1675
-    let pos = chwordpos.load(Ordering::SeqCst);
+    let pos = chwordpos.load(SeqCst);
     if pos % 2 != 0 {
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
+        chwordpos.fetch_sub(1, SeqCst);
     }
-    hist_keep_comment.store(1, Ordering::SeqCst);
+    hist_keep_comment.store(1, SeqCst);
 }
 
 /// Port of `void ihwend(void)` from `Src/hist.c:1686`.
@@ -2210,8 +2210,8 @@ pub fn ihwabort() {
 /// table when an alias expansion ended.
 pub fn ihwend() {
     // c:1686
-    let stop = stophist.load(Ordering::SeqCst);
-    let active = histactive.load(Ordering::SeqCst);
+    let stop = stophist.load(SeqCst);
+    let active = histactive.load(SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
     if stop == 2 || (active & HA_INWORD) != 0 || (inflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS
     // c:1688
@@ -2220,7 +2220,7 @@ pub fn ihwend() {
     }
     // c:1691 — `if (chwordpos%2 && chline)`. Even chwordpos means
     // we're between words (no in-flight word to close).
-    let pos = chwordpos.load(Ordering::SeqCst);
+    let pos = chwordpos.load(SeqCst);
     if pos % 2 == 0 {
         return;
     }
@@ -2230,7 +2230,7 @@ pub fn ihwend() {
     // hptr is at end of the buffer. Any lexer rewind would mis-
     // close the word boundary. Read the canonical `hptr` global
     // matching the `ihwbegin` fix at c:1658.
-    let cur = hptr.load(Ordering::SeqCst) as i16; // c:1693
+    let cur = hptr.load(SeqCst) as i16; // c:1693
     let mut words = chwords.lock().unwrap();
     let start_idx = (pos - 1) as usize;
     if cur > words[start_idx] {
@@ -2240,10 +2240,10 @@ pub fn ihwend() {
             words.resize(end_idx + 1, 0);
         }
         words[end_idx] = cur; // c:1694
-        chwordpos.fetch_add(1, Ordering::SeqCst);
+        chwordpos.fetch_add(1, SeqCst);
     } else {
         // c:1700 — `chwordpos--;` "scrub that last word, doesn't exist".
-        chwordpos.fetch_sub(1, Ordering::SeqCst);
+        chwordpos.fetch_sub(1, SeqCst);
     }
 }
 
@@ -2269,7 +2269,7 @@ pub fn ihwend() {
 /// previous word when we're at a word-boundary.
 pub fn histbackword() {
     // c:1711
-    let pos = chwordpos.load(Ordering::SeqCst);
+    let pos = chwordpos.load(SeqCst);
     // c:1714 — `if (!(chwordpos%2) && chwordpos)`. Both conditions
     // — even (word boundary) AND non-zero.
     if pos % 2 == 0 && pos != 0 {
@@ -2284,14 +2284,14 @@ pub fn histbackword() {
             // semantic where chline + negative-offset is UB and
             // would have been clamped by the parser earlier).
             let off = (words[idx] as i32).max(0) as usize;
-            hptr.store(off, Ordering::SeqCst); // c:1715
+            hptr.store(off, SeqCst); // c:1715
         }
     }
 }
 
 /// Port of `int hwget(char **startptr)` from Src/hist.c.
 pub fn hwget() -> Option<(i32, String)> {
-    let pos = chwordpos.load(Ordering::SeqCst);
+    let pos = chwordpos.load(SeqCst);
     // c:1729 — DPUTS(1, "BUG: hwget() called with no words"); arm fires
     // when chwordpos == 0 (the C `if (!chwordpos)` branch at c:1728).
     if pos == 0 {
@@ -2359,13 +2359,13 @@ pub fn hwrep(rep: &str) {
     // c:1756 — `hptr = start; chwordpos -= 2;`. Rewind to the start
     // of the word we're rewriting; the open word slot is conceptually
     // re-opened by the chwordpos decrement.
-    hptr.store(start_off.max(0) as usize, Ordering::SeqCst); // c:1756
-    chwordpos.fetch_sub(2, Ordering::SeqCst); // c:1757
+    hptr.store(start_off.max(0) as usize, SeqCst); // c:1756
+    chwordpos.fetch_sub(2, SeqCst); // c:1757
                                               // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
     ihwbegin(0);
     // c:1759 — `qbang = 1;` mark word as bang-bearing so subsequent
     // ihwaddc bang-escapes correctly.
-    qbang.store(true, Ordering::SeqCst); // c:1759
+    qbang.store(true, SeqCst); // c:1759
                                          // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
     for b in rep.bytes() {
         ihwaddc(b as i32);
@@ -2400,7 +2400,7 @@ pub fn hwrep(rep: &str) {
 /// No Rust callers used the old (entry) signature.
 pub fn hgetline() -> Option<String> {
     // c:1769
-    let hp = hptr.load(Ordering::SeqCst);
+    let hp = hptr.load(SeqCst);
     let line = chline.lock().unwrap();
     // c:1777 — `if (!chline || hptr == chline) return NULL;`
     if line.is_empty() || hp == 0 {
@@ -2417,8 +2417,8 @@ pub fn hgetline() -> Option<String> {
     // c:1780 — `ret = dupstring(chline);` (already a copy via
     // Rust .to_string()).
     // c:1783-1784 — reset line: hptr = 0, chwordpos = 0.
-    hptr.store(0, Ordering::SeqCst);
-    chwordpos.store(0, Ordering::SeqCst);
+    hptr.store(0, SeqCst);
+    chwordpos.store(0, SeqCst);
     Some(truncated) // c:1786
 }
 
@@ -2574,7 +2574,7 @@ pub fn hconsearch(needle: &str) -> Option<(i64, i32)> {
 
 /// Port of `int hcomsearch(char *str)` from Src/hist.c.
 pub fn hcomsearch(prefix: &str) -> Option<i64> {
-    let mut cur = curhist.load(Ordering::SeqCst);
+    let mut cur = curhist.load(SeqCst);
     while let Some(prev) = up_histent(cur) {
         cur = prev;
         if let Some(entry) = ring_get(cur) {
@@ -3059,12 +3059,12 @@ fn convamps(out: &str, in_pattern: &str) -> String {
 /// `curline` sees the latest chline/chwords snapshot.
 pub fn checkcurline(he: &histent) {
     // c:2421
-    let curhist_val = curhist.load(Ordering::SeqCst); // c:2424
-    let active = histactive.load(Ordering::SeqCst); // c:2424
+    let curhist_val = curhist.load(SeqCst); // c:2424
+    let active = histactive.load(SeqCst); // c:2424
     if he.histnum == curhist_val && (active & HA_ACTIVE) != 0 {
         // c:2424
         let chline_val = chline.lock().expect("chline poisoned").clone(); // c:2425
-        let chwordpos_val = chwordpos.load(Ordering::SeqCst); // c:2426
+        let chwordpos_val = chwordpos.load(SeqCst); // c:2426
         let chwords_val = chwords.lock().expect("chwords poisoned").clone(); // c:2427
         let mut cl = curline.lock().expect("curline poisoned");
         // Build a fresh histent snapshot mirroring the C field
@@ -3315,8 +3315,8 @@ pub fn ihungetc(c: i32) {
     while !lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
         && errflag.load(SeqCst) == 0
     {
-        let hp = crate::ported::hist::hptr.load(SeqCst);
-        let line = crate::ported::hist::chline.lock().unwrap().clone();
+        let hp = hptr.load(SeqCst);
+        let line = chline.lock().unwrap().clone();
         let line_b = line.as_bytes();
         let stop = stophist.load(SeqCst);
         let inflags = crate::ported::input::inbufflags.with(|f| f.get());
@@ -3333,11 +3333,11 @@ pub fn ihungetc(c: i32) {
             histactive.fetch_and(!HA_UNGET, SeqCst);
             // c:1001
         }
-        if crate::ported::hist::expanding.load(SeqCst) != 0 {
+        if expanding.load(SeqCst) != 0 {
             // c:1004 if (expanding)
             ZLEMETACS.fetch_sub(1, SeqCst); // c:1005 zlemetacs--
             crate::ported::zle::compcore::ZLEMETALL.fetch_sub(1, SeqCst); // c:1006 zlemetall--
-            crate::ported::hist::exlast.fetch_add(1, SeqCst); // c:1007 exlast++
+            exlast.fetch_add(1, SeqCst); // c:1007 exlast++
         }
         if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {
             // c:1009
@@ -3350,8 +3350,8 @@ pub fn ihungetc(c: i32) {
                 "BUG: wrong character in hungetc() "                    // c:1012
             );
             let new_hp = hp.saturating_sub(1);
-            crate::ported::hist::hptr.store(new_hp, SeqCst); // c:1011 hptr--
-            let bangchar_v = crate::ported::hist::bangchar.load(SeqCst) as u8;
+            hptr.store(new_hp, SeqCst); // c:1011 hptr--
+            let bangchar_v = bangchar.load(SeqCst) as u8;
             let qb = c as u8 == bangchar_v && stop < 2                       // c:1014-1015
                 && new_hp > 0 && line_b.get(new_hp - 1).copied() == Some(b'\\');
             qbang.store(qb, SeqCst);
@@ -3474,20 +3474,20 @@ pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
 /// Port of `void inithist(void)` from Src/hist.c:2613.
 pub fn inithist() {
     // c:2613
-    histsiz.store(1000, Ordering::SeqCst);
-    savehistsiz.store(1000, Ordering::SeqCst);
-    curhist.store(0, Ordering::SeqCst);
-    histlinect.store(0, Ordering::SeqCst);
+    histsiz.store(1000, SeqCst);
+    savehistsiz.store(1000, SeqCst);
+    curhist.store(0, SeqCst);
+    histlinect.store(0, SeqCst);
 }
 
 /// Port of `void resizehistents(void)` from Src/hist.c.
 pub fn resizehistents() {
-    let cap = histsiz.load(Ordering::SeqCst);
-    while histlinect.load(Ordering::SeqCst) > cap {
+    let cap = histsiz.load(SeqCst);
+    while histlinect.load(SeqCst) > cap {
         if let Some(oldest) = ring_oldest() {
             let mut ring = hist_ring.lock().unwrap();
             ring.retain(|h| h.histnum != oldest);
-            histlinect.fetch_sub(1, Ordering::SeqCst);
+            histlinect.fetch_sub(1, SeqCst);
         } else {
             break;
         }
@@ -3546,13 +3546,13 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
                 current = Some((stim, ftim, text.clone()));
                 continue;
             }
-            let n = curhist.fetch_add(1, Ordering::SeqCst) + 1;
+            let n = curhist.fetch_add(1, SeqCst) + 1;
             let mut entry = make_histent(n, text.clone());
             entry.stim = stim;
             entry.ftim = ftim;
             entry.node.flags |= HIST_OLD as i32;
             hist_ring.lock().unwrap().insert(0, entry);
-            histlinect.fetch_add(1, Ordering::SeqCst);
+            histlinect.fetch_add(1, SeqCst);
             current = None;
         }
         if let Some(rest) = raw_line.strip_prefix(": ") {
@@ -3573,13 +3573,13 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
         current = Some((now, now, raw_line.to_string()));
     }
     if let Some((stim, ftim, text)) = current {
-        let n = curhist.fetch_add(1, Ordering::SeqCst) + 1;
+        let n = curhist.fetch_add(1, SeqCst) + 1;
         let mut entry = make_histent(n, text);
         entry.stim = stim;
         entry.ftim = ftim;
         entry.node.flags |= HIST_OLD as i32;
         hist_ring.lock().unwrap().insert(0, entry);
-        histlinect.fetch_add(1, Ordering::SeqCst);
+        histlinect.fetch_add(1, SeqCst);
     }
     unlockhistfile(&path);
     resizehistents();
@@ -3630,12 +3630,12 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
     //      history saving is explicitly disabled. The previous
     //      port wrote an EMPTY file (cap=0 → no entries),
     //      truncating the user's existing history.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+    if !isset(INTERACTIVE)
     // c:2932 !interact
     {
         return;
     }
-    let cap = savehistsiz.load(Ordering::SeqCst); // c:2932 savehistsiz
+    let cap = savehistsiz.load(SeqCst); // c:2932 savehistsiz
     if cap <= 0 {
         // c:2932 savehistsiz <= 0
         return;
@@ -3702,7 +3702,7 @@ pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {
             None => return 1, // c:3189
         },
     };
-    if lockhistct.fetch_add(1, Ordering::SeqCst) > 0 {
+    if lockhistct.fetch_add(1, SeqCst) > 0 {
         return 0;
     }
     let max_tries = if keep_trying != 0 { 30 } else { 1 };
@@ -3714,7 +3714,7 @@ pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
-    lockhistct.fetch_sub(1, Ordering::SeqCst);
+    lockhistct.fetch_sub(1, SeqCst);
     if keep_trying != 0 {
         2
     } else {
@@ -3724,9 +3724,9 @@ pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {
 
 /// Port of `void unlockhistfile(char *fn)` from Src/hist.c.
 pub fn unlockhistfile(path: &str) {
-    let prev = lockhistct.fetch_sub(1, Ordering::SeqCst);
+    let prev = lockhistct.fetch_sub(1, SeqCst);
     if prev <= 0 {
-        lockhistct.store(0, Ordering::SeqCst);
+        lockhistct.store(0, SeqCst);
         return;
     }
     if prev == 1 {
@@ -3738,7 +3738,7 @@ pub fn unlockhistfile(path: &str) {
 /// Port of `int histfileIsLocked(void)` from Src/hist.c.
 #[allow(non_snake_case)]
 pub fn histfileIsLocked() -> i32 {
-    if lockhistct.load(Ordering::SeqCst) > 0 {
+    if lockhistct.load(SeqCst) > 0 {
         1
     } else {
         0
@@ -3996,19 +3996,19 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {
         },
         histfile: hf.map(|s| s.to_string()), // c:3872 h->histfile = histfile
         hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3874 h->hist_ring = hist_ring
-        curhist: curhist.load(Ordering::SeqCst),                    // c:3875 h->curhist = curhist
-        histlinect: histlinect.load(Ordering::SeqCst),              // c:3876
-        histsiz: histsiz.load(Ordering::SeqCst),                    // c:3877
-        savehistsiz: savehistsiz.load(Ordering::SeqCst),            // c:3878
+        curhist: curhist.load(SeqCst),                    // c:3875 h->curhist = curhist
+        histlinect: histlinect.load(SeqCst),              // c:3876
+        histsiz: histsiz.load(SeqCst),                    // c:3877
+        savehistsiz: savehistsiz.load(SeqCst),            // c:3878
         locallevel: level,                                          // c:3879
     };
     histsave_stack.lock().unwrap().push(snap); // c:3901
-    histsave_stack_size.fetch_add(1, Ordering::SeqCst);
-    histsave_stack_pos.fetch_add(1, Ordering::SeqCst);
-    histsiz.store(hs, Ordering::SeqCst); // c:3901
-    savehistsiz.store(shs, Ordering::SeqCst); // c:3901
-    curhist.store(0, Ordering::SeqCst); // c:3901 curhist = histlinect = 0
-    histlinect.store(0, Ordering::SeqCst);
+    histsave_stack_size.fetch_add(1, SeqCst);
+    histsave_stack_pos.fetch_add(1, SeqCst);
+    histsiz.store(hs, SeqCst); // c:3901
+    savehistsiz.store(shs, SeqCst); // c:3901
+    curhist.store(0, SeqCst); // c:3901 curhist = histlinect = 0
+    histlinect.store(0, SeqCst);
     let _ = hf;
 }
 
@@ -4070,15 +4070,15 @@ pub fn pophiststack() -> i32 {
         }
     }
     *hist_ring.lock().unwrap() = snap.hist_ring; // c:3925
-    curhist.store(snap.curhist, Ordering::SeqCst); // c:3926
-    histlinect.store(snap.histlinect, Ordering::SeqCst); // c:3929
-    histsiz.store(snap.histsiz, Ordering::SeqCst); // c:3930
-    savehistsiz.store(snap.savehistsiz, Ordering::SeqCst); // c:3931
-    histsave_stack_size.fetch_sub(1, Ordering::SeqCst);
-    histsave_stack_pos.fetch_sub(1, Ordering::SeqCst);
+    curhist.store(snap.curhist, SeqCst); // c:3926
+    histlinect.store(snap.histlinect, SeqCst); // c:3929
+    histsiz.store(snap.histsiz, SeqCst); // c:3930
+    savehistsiz.store(snap.savehistsiz, SeqCst); // c:3931
+    histsave_stack_size.fetch_sub(1, SeqCst);
+    histsave_stack_pos.fetch_sub(1, SeqCst);
     // c:3934 — `return histsave_stack_pos + 1;` (new pos after
     // decrement, plus 1 for the just-popped depth).
-    histsave_stack_pos.load(Ordering::SeqCst) + 1
+    histsave_stack_pos.load(SeqCst) + 1
 }
 
 /// Port of `int saveandpophiststack(int pop_through, int writeflags)`
@@ -4601,7 +4601,7 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                 // SQ around each whitespace char (so `hello world`
                 // becomes `'hello' 'world'`). Already ported as a
                 // standalone helper in zle_hist.
-                result = crate::hist::quotebreak(&result);
+                result = quotebreak(&result);
             }
             'Q' => {
                 // Same shell-bslashquote-remove as the other :Q path
@@ -4936,9 +4936,9 @@ mod subst_modifier_tests {
     /// Tests that touch the shared chline/hptr/chwords globals
     /// must serialize through this Mutex — cargo's parallel test
     /// runner races on these atomics otherwise.
-    fn hist_test_lock() -> &'static std::sync::Mutex<()> {
-        static L: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        L.get_or_init(|| std::sync::Mutex::new(()))
+    fn hist_test_lock() -> &'static Mutex<()> {
+        static L: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
     }
 
     #[test]
@@ -5309,7 +5309,7 @@ mod subst_modifier_tests {
         std::fs::write(&path, b"PRESERVED").expect("seed write");
         // Force INTERACTIVE off; savehistfile must NOT touch the
         // file regardless of fn_path.
-        let saved = crate::ported::zsh_h::isset(INTERACTIVE);
+        let saved = isset(INTERACTIVE);
         dosetopt(INTERACTIVE, 0, 0);
         savehistfile(Some(path_str), 0);
         let after = std::fs::read(&path).expect("read after");
@@ -5331,38 +5331,38 @@ mod subst_modifier_tests {
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = std::mem::take(&mut *chline.lock().unwrap());
-        let saved_hptr = hptr.swap(0, Ordering::SeqCst);
-        let saved_chwordpos = chwordpos.swap(0, Ordering::SeqCst);
+        let saved_hptr = hptr.swap(0, SeqCst);
+        let saved_chwordpos = chwordpos.swap(0, SeqCst);
 
         // Empty chline → None (c:1777).
         assert_eq!(hgetline(), None, "c:1777 — empty chline returns None");
 
         // chline = "abcdef", hptr = 0 → None (c:1777 hp == 0).
         *chline.lock().unwrap() = "abcdef".to_string();
-        hptr.store(0, Ordering::SeqCst);
+        hptr.store(0, SeqCst);
         assert_eq!(hgetline(), None, "c:1777 — hptr == 0 returns None");
 
         // chline = "abcdef", hptr = 3 → Some("abc"), reset hptr/pos.
         *chline.lock().unwrap() = "abcdef".to_string();
-        hptr.store(3, Ordering::SeqCst);
-        chwordpos.store(2, Ordering::SeqCst);
+        hptr.store(3, SeqCst);
+        chwordpos.store(2, SeqCst);
         let result = hgetline();
         assert_eq!(
             result,
             Some("abc".to_string()),
             "c:1779 — truncate chline at hptr=3 returns 'abc'"
         );
-        assert_eq!(hptr.load(Ordering::SeqCst), 0, "c:1783 — hptr reset to 0");
+        assert_eq!(hptr.load(SeqCst), 0, "c:1783 — hptr reset to 0");
         assert_eq!(
-            chwordpos.load(Ordering::SeqCst),
+            chwordpos.load(SeqCst),
             0,
             "c:1784 — chwordpos reset to 0"
         );
 
         // Restore state.
         *chline.lock().unwrap() = saved_chline;
-        hptr.store(saved_hptr, Ordering::SeqCst);
-        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
+        hptr.store(saved_hptr, SeqCst);
+        chwordpos.store(saved_chwordpos, SeqCst);
     }
 
     /// Pin: `histbackword` per `Src/hist.c:1711-1715` rewinds `hptr`
@@ -5376,8 +5376,8 @@ mod subst_modifier_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Capture and reset state.
-        let saved_pos = chwordpos.swap(0, Ordering::SeqCst);
-        let saved_hptr = hptr.swap(0, Ordering::SeqCst);
+        let saved_pos = chwordpos.swap(0, SeqCst);
+        let saved_hptr = hptr.swap(0, SeqCst);
         let saved_words = {
             let mut w = chwords.lock().unwrap();
             std::mem::take(&mut *w)
@@ -5390,38 +5390,38 @@ mod subst_modifier_tests {
         }
         // chwordpos at 4 = even = word boundary. histbackword
         // should set hptr = chwords[chwordpos-1] = chwords[3] = 7.
-        chwordpos.store(4, Ordering::SeqCst);
-        hptr.store(999, Ordering::SeqCst);
+        chwordpos.store(4, SeqCst);
+        hptr.store(999, SeqCst);
         histbackword();
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             7,
             "c:1715 — even chwordpos must rewind hptr to chwords[pos-1]"
         );
 
         // chwordpos at 0 (no words recorded) — no-op.
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(123, Ordering::SeqCst);
+        chwordpos.store(0, SeqCst);
+        hptr.store(123, SeqCst);
         histbackword();
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             123,
             "c:1714 — chwordpos == 0 means no-op (hptr untouched)"
         );
 
         // chwordpos at 3 (odd, mid-word) — no-op.
-        chwordpos.store(3, Ordering::SeqCst);
-        hptr.store(456, Ordering::SeqCst);
+        chwordpos.store(3, SeqCst);
+        hptr.store(456, SeqCst);
         histbackword();
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             456,
             "c:1714 — odd chwordpos means mid-word, no-op"
         );
 
         // Restore state.
-        chwordpos.store(saved_pos, Ordering::SeqCst);
-        hptr.store(saved_hptr, Ordering::SeqCst);
+        chwordpos.store(saved_pos, SeqCst);
+        hptr.store(saved_hptr, SeqCst);
         *chwords.lock().unwrap() = saved_words;
     }
 
@@ -5437,25 +5437,25 @@ mod subst_modifier_tests {
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
-        let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_errflag = errflag.load(Ordering::SeqCst);
-        let saved_lexstop = lexstop.load(Ordering::SeqCst);
+        let saved_hptr = hptr.load(SeqCst);
+        let saved_errflag = errflag.load(SeqCst);
+        let saved_lexstop = lexstop.load(SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
-        let saved_qbang = qbang.load(Ordering::SeqCst);
-        let saved_stophist = stophist.load(Ordering::SeqCst);
-        let saved_hlinesz = hlinesz.load(Ordering::SeqCst);
+        let saved_qbang = qbang.load(SeqCst);
+        let saved_stophist = stophist.load(SeqCst);
+        let saved_hlinesz = hlinesz.load(SeqCst);
 
         // Set up chline="echo oldword extra", rewind hptr to 5
         // (start of "oldword"). Push "NEW" → chline must become
         // "echo NEWword extra" with hptr advanced to 8.
         *chline.lock().unwrap() = "echo oldword extra".to_string();
-        hptr.store(5, Ordering::SeqCst);
-        errflag.store(0, Ordering::SeqCst);
-        lexstop.store(false, Ordering::SeqCst);
+        hptr.store(5, SeqCst);
+        errflag.store(0, SeqCst);
+        lexstop.store(false, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(0));
-        qbang.store(false, Ordering::SeqCst);
-        stophist.store(0, Ordering::SeqCst);
-        hlinesz.store(64, Ordering::SeqCst);
+        qbang.store(false, SeqCst);
+        stophist.store(0, SeqCst);
+        hlinesz.store(64, SeqCst);
 
         ihwaddc(b'N' as i32);
         ihwaddc(b'E' as i32);
@@ -5468,20 +5468,20 @@ mod subst_modifier_tests {
             "c:368 — *hptr++ = c writes AT cursor (NOT appends to end)"
         );
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             8,
             "c:368 — hptr advances over the three overwrites"
         );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
-        hptr.store(saved_hptr, Ordering::SeqCst);
-        errflag.store(saved_errflag, Ordering::SeqCst);
-        lexstop.store(saved_lexstop, Ordering::SeqCst);
+        hptr.store(saved_hptr, SeqCst);
+        errflag.store(saved_errflag, SeqCst);
+        lexstop.store(saved_lexstop, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
-        qbang.store(saved_qbang, Ordering::SeqCst);
-        stophist.store(saved_stophist, Ordering::SeqCst);
-        hlinesz.store(saved_hlinesz, Ordering::SeqCst);
+        qbang.store(saved_qbang, SeqCst);
+        stophist.store(saved_stophist, SeqCst);
+        hlinesz.store(saved_hlinesz, SeqCst);
     }
 
     /// Pin `ihwaddc` to its canonical C body at `Src/hist.c:355-389`.
@@ -5496,25 +5496,25 @@ mod subst_modifier_tests {
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
-        let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_errflag = errflag.load(Ordering::SeqCst);
-        let saved_lexstop = lexstop.load(Ordering::SeqCst);
+        let saved_hptr = hptr.load(SeqCst);
+        let saved_errflag = errflag.load(SeqCst);
+        let saved_lexstop = lexstop.load(SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
-        let saved_qbang = qbang.load(Ordering::SeqCst);
-        let saved_bangchar = bangchar.load(Ordering::SeqCst);
-        let saved_stophist = stophist.load(Ordering::SeqCst);
-        let saved_hlinesz = hlinesz.load(Ordering::SeqCst);
+        let saved_qbang = qbang.load(SeqCst);
+        let saved_bangchar = bangchar.load(SeqCst);
+        let saved_stophist = stophist.load(SeqCst);
+        let saved_hlinesz = hlinesz.load(SeqCst);
 
         // Set up: history active, no errors, no alias-only.
         *chline.lock().unwrap() = "AB".to_string(); // chline must be non-empty
-        hptr.store(2, Ordering::SeqCst);
-        errflag.store(0, Ordering::SeqCst);
-        lexstop.store(false, Ordering::SeqCst);
+        hptr.store(2, SeqCst);
+        errflag.store(0, SeqCst);
+        lexstop.store(false, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(0));
-        qbang.store(false, Ordering::SeqCst);
-        stophist.store(0, Ordering::SeqCst);
-        bangchar.store(b'!' as i32, Ordering::SeqCst);
-        hlinesz.store(64, Ordering::SeqCst);
+        qbang.store(false, SeqCst);
+        stophist.store(0, SeqCst);
+        bangchar.store(b'!' as i32, SeqCst);
+        hlinesz.store(64, SeqCst);
 
         // Push 'x' → chline grows AND hptr advances.
         ihwaddc(b'x' as i32);
@@ -5524,7 +5524,7 @@ mod subst_modifier_tests {
             "c:368 — chline grows"
         );
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             3,
             "c:368 — hptr advances by 1 (CRITICAL — previous port left this stale)"
         );
@@ -5532,14 +5532,14 @@ mod subst_modifier_tests {
         // Push 'y' → second advance.
         ihwaddc(b'y' as i32);
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             4,
             "c:368 — hptr advances on each push"
         );
 
         // Bang-escape with qbang: qbang=true, c=bangchar → '\\' AND c
         // get pushed, hptr advances by 2.
-        qbang.store(true, Ordering::SeqCst);
+        qbang.store(true, SeqCst);
         ihwaddc(b'!' as i32);
         assert_eq!(
             chline.lock().unwrap().as_str(),
@@ -5547,31 +5547,31 @@ mod subst_modifier_tests {
             "c:366 — qbang escape pushes '\\\\' before bangchar"
         );
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             6,
             "c:366+c:368 — both pushes advance hptr (was off-by-one previously)"
         );
 
         // errflag set → no-op.
-        errflag.store(1, Ordering::SeqCst);
-        let hptr_before = hptr.load(Ordering::SeqCst);
+        errflag.store(1, SeqCst);
+        let hptr_before = hptr.load(SeqCst);
         ihwaddc(b'z' as i32);
         assert_eq!(
-            hptr.load(Ordering::SeqCst),
+            hptr.load(SeqCst),
             hptr_before,
             "c:359 — errflag short-circuits, hptr unchanged"
         );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
-        hptr.store(saved_hptr, Ordering::SeqCst);
-        errflag.store(saved_errflag, Ordering::SeqCst);
-        lexstop.store(saved_lexstop, Ordering::SeqCst);
+        hptr.store(saved_hptr, SeqCst);
+        errflag.store(saved_errflag, SeqCst);
+        lexstop.store(saved_lexstop, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
-        qbang.store(saved_qbang, Ordering::SeqCst);
-        bangchar.store(saved_bangchar, Ordering::SeqCst);
-        stophist.store(saved_stophist, Ordering::SeqCst);
-        hlinesz.store(saved_hlinesz, Ordering::SeqCst);
+        qbang.store(saved_qbang, SeqCst);
+        bangchar.store(saved_bangchar, SeqCst);
+        stophist.store(saved_stophist, SeqCst);
+        hlinesz.store(saved_hlinesz, SeqCst);
     }
 
     /// Pin `ihwend` to its canonical C body at `Src/hist.c:1686-1705`.
@@ -5587,10 +5587,10 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_chwords = chwords.lock().unwrap().clone();
-        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
-        let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_stop = stophist.load(Ordering::SeqCst);
-        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_chwordpos = chwordpos.load(SeqCst);
+        let saved_hptr = hptr.load(SeqCst);
+        let saved_stop = stophist.load(SeqCst);
+        let saved_active = histactive.load(SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
 
         // Set up: chline is "ABCDEFGHIJ" (10 bytes), hptr at 7
@@ -5599,10 +5599,10 @@ mod subst_modifier_tests {
         // not chline.len() = 10.
         *chline.lock().unwrap() = "ABCDEFGHIJ".to_string();
         *chwords.lock().unwrap() = vec![2, 0];
-        chwordpos.store(1, Ordering::SeqCst);
-        hptr.store(7, Ordering::SeqCst);
-        stophist.store(0, Ordering::SeqCst);
-        histactive.store(0, Ordering::SeqCst);
+        chwordpos.store(1, SeqCst);
+        hptr.store(7, SeqCst);
+        stophist.store(0, SeqCst);
+        histactive.store(0, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(0));
 
         ihwend();
@@ -5613,29 +5613,29 @@ mod subst_modifier_tests {
             "c:1694 — chwords[chwordpos] = hptr - chline = 7 (NOT chline.len()=10)"
         );
         assert_eq!(
-            chwordpos.load(Ordering::SeqCst),
+            chwordpos.load(SeqCst),
             2,
             "c:1694 — chwordpos++ on successful close"
         );
 
         // c:1700 scrub branch — hptr<=chwords[start] → chwordpos--.
         *chwords.lock().unwrap() = vec![5, 0];
-        chwordpos.store(1, Ordering::SeqCst);
-        hptr.store(3, Ordering::SeqCst); // hptr(3) <= chwords[0]=5
+        chwordpos.store(1, SeqCst);
+        hptr.store(3, SeqCst); // hptr(3) <= chwords[0]=5
         ihwend();
         assert_eq!(
-            chwordpos.load(Ordering::SeqCst),
+            chwordpos.load(SeqCst),
             0,
             "c:1700 — chwordpos-- when hptr <= chwords[chwordpos-1]"
         );
 
         // Even chwordpos short-circuits (between-words, no in-flight).
-        chwordpos.store(2, Ordering::SeqCst);
-        hptr.store(9, Ordering::SeqCst);
+        chwordpos.store(2, SeqCst);
+        hptr.store(9, SeqCst);
         *chwords.lock().unwrap() = vec![0, 4, 5, 8];
         ihwend();
         assert_eq!(
-            chwordpos.load(Ordering::SeqCst),
+            chwordpos.load(SeqCst),
             2,
             "c:1691 — even chwordpos short-circuits"
         );
@@ -5643,10 +5643,10 @@ mod subst_modifier_tests {
         // Restore.
         *chline.lock().unwrap() = saved_chline;
         *chwords.lock().unwrap() = saved_chwords;
-        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
-        hptr.store(saved_hptr, Ordering::SeqCst);
-        stophist.store(saved_stop, Ordering::SeqCst);
-        histactive.store(saved_active, Ordering::SeqCst);
+        chwordpos.store(saved_chwordpos, SeqCst);
+        hptr.store(saved_hptr, SeqCst);
+        stophist.store(saved_stop, SeqCst);
+        histactive.store(saved_active, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
     }
 
@@ -5666,7 +5666,7 @@ mod subst_modifier_tests {
                 .map(|h| (h.node.nam.clone(), h.histnum, h.node.flags))
                 .collect::<Vec<_>>()
         };
-        let saved_histlinect = histlinect.load(Ordering::SeqCst);
+        let saved_histlinect = histlinect.load(SeqCst);
 
         // HIST_DUP must equal C value 0x08 (Src/zsh.h:2255).
         assert_eq!(
@@ -5701,7 +5701,7 @@ mod subst_modifier_tests {
                 });
             }
         }
-        histlinect.store(3, Ordering::SeqCst);
+        histlinect.store(3, SeqCst);
 
         histremovedups();
 
@@ -5717,7 +5717,7 @@ mod subst_modifier_tests {
             assert!(!ring.iter().any(|h| h.node.nam == "entry2"));
         }
         assert_eq!(
-            histlinect.load(Ordering::SeqCst),
+            histlinect.load(SeqCst),
             2,
             "histlinect updated after removal"
         );
@@ -5744,7 +5744,7 @@ mod subst_modifier_tests {
                 });
             }
         }
-        histlinect.store(saved_histlinect, Ordering::SeqCst);
+        histlinect.store(saved_histlinect, SeqCst);
     }
 
     /// Pin `iaddtoline` to its canonical C body at
@@ -5758,29 +5758,29 @@ mod subst_modifier_tests {
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
-        let saved_excs = excs.load(Ordering::SeqCst);
-        let saved_zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
-        let saved_expanding = expanding.load(Ordering::SeqCst);
-        let saved_lexstop = lexstop.load(Ordering::SeqCst);
-        let saved_qbang = qbang.load(Ordering::SeqCst);
-        let saved_exlast = exlast.load(Ordering::SeqCst);
+        let saved_excs = excs.load(SeqCst);
+        let saved_zlemetacs = ZLEMETACS.load(SeqCst);
+        let saved_expanding = expanding.load(SeqCst);
+        let saved_lexstop = lexstop.load(SeqCst);
+        let saved_qbang = qbang.load(SeqCst);
+        let saved_exlast = exlast.load(SeqCst);
 
         // Set up: expanding=1, lexstop=false, qbang=0 (no bang
         // escape path), excs > zlemetacs so the adjustment fires.
         *chline.lock().unwrap() = String::new();
-        expanding.store(1, Ordering::SeqCst);
-        lexstop.store(false, Ordering::SeqCst);
-        qbang.store(false, Ordering::SeqCst);
-        excs.store(10, Ordering::SeqCst); // > zlemetacs
-        ZLEMETACS.store(5, Ordering::SeqCst);
+        expanding.store(1, SeqCst);
+        lexstop.store(false, SeqCst);
+        qbang.store(false, SeqCst);
+        excs.store(10, SeqCst); // > zlemetacs
+        ZLEMETACS.store(5, SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(3));
-        exlast.store(2, Ordering::SeqCst);
+        exlast.store(2, SeqCst);
 
         // c:405-407 — excs(10) > zlemetacs(5), so
         // new_excs = 10 + 1 + 3 - 2 = 12; 12 > 5 → no clamp.
         iaddtoline(b'x' as i32);
         assert_eq!(
-            excs.load(Ordering::SeqCst),
+            excs.load(SeqCst),
             12,
             "c:406 — excs += 1 + inbufct - exlast (10+1+3-2=12)"
         );
@@ -5788,42 +5788,42 @@ mod subst_modifier_tests {
         // c:407-410 — clamp branch: post-add excs < zlemetacs.
         // Set excs=6, zlemetacs=20, inbufct=1, exlast=10.
         // new_excs = 6 + 1 + 1 - 10 = -2; -2 < 20 → clamp to 20.
-        excs.store(6, Ordering::SeqCst);
+        excs.store(6, SeqCst);
         // But guard: excs(6) > zlemetacs(20) is FALSE, so block
         // wouldn't fire. Need excs > zlemetacs for entry: use
         // excs=25, zlemetacs=20, inbufct=1, exlast=10 →
         // new_excs = 25+1+1-10 = 17; 17 < 20 → clamp to 20.
-        excs.store(25, Ordering::SeqCst);
-        ZLEMETACS.store(20, Ordering::SeqCst);
+        excs.store(25, SeqCst);
+        ZLEMETACS.store(20, SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(1));
-        exlast.store(10, Ordering::SeqCst);
+        exlast.store(10, SeqCst);
         iaddtoline(b'y' as i32);
         assert_eq!(
-            excs.load(Ordering::SeqCst),
+            excs.load(SeqCst),
             20,
             "c:407-410 — clamp to zlemetacs(20) when post-add excs<zlemetacs"
         );
 
         // No adjustment when excs <= zlemetacs.
-        excs.store(3, Ordering::SeqCst);
-        ZLEMETACS.store(10, Ordering::SeqCst);
+        excs.store(3, SeqCst);
+        ZLEMETACS.store(10, SeqCst);
         crate::ported::input::inbufct.with(|c| c.set(1));
-        exlast.store(0, Ordering::SeqCst);
+        exlast.store(0, SeqCst);
         iaddtoline(b'z' as i32);
         assert_eq!(
-            excs.load(Ordering::SeqCst),
+            excs.load(SeqCst),
             3,
             "c:405 — excs<=zlemetacs leaves excs unchanged"
         );
 
         // Restore.
         *chline.lock().unwrap() = saved_chline;
-        excs.store(saved_excs, Ordering::SeqCst);
-        ZLEMETACS.store(saved_zlemetacs, Ordering::SeqCst);
-        expanding.store(saved_expanding, Ordering::SeqCst);
-        lexstop.store(saved_lexstop, Ordering::SeqCst);
-        qbang.store(saved_qbang, Ordering::SeqCst);
-        exlast.store(saved_exlast, Ordering::SeqCst);
+        excs.store(saved_excs, SeqCst);
+        ZLEMETACS.store(saved_zlemetacs, SeqCst);
+        expanding.store(saved_expanding, SeqCst);
+        lexstop.store(saved_lexstop, SeqCst);
+        qbang.store(saved_qbang, SeqCst);
+        exlast.store(saved_exlast, SeqCst);
     }
 
     /// Pin `ihwbegin` to its canonical C body at `Src/hist.c:1656-1670`.
@@ -5840,10 +5840,10 @@ mod subst_modifier_tests {
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
         let saved_chwords = chwords.lock().unwrap().clone();
-        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
-        let saved_hptr = hptr.load(Ordering::SeqCst);
-        let saved_stop = stophist.load(Ordering::SeqCst);
-        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_chwordpos = chwordpos.load(SeqCst);
+        let saved_hptr = hptr.load(SeqCst);
+        let saved_stop = stophist.load(SeqCst);
+        let saved_active = histactive.load(SeqCst);
         let saved_inflags = crate::ported::input::inbufflags.with(|f| f.get());
 
         // Set up: chline is "ABCDEFGHIJ" (10 bytes), but hptr was
@@ -5852,10 +5852,10 @@ mod subst_modifier_tests {
         // Rust port would record pos=10 (chline.len()).
         *chline.lock().unwrap() = "ABCDEFGHIJ".to_string();
         chwords.lock().unwrap().clear();
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(4, Ordering::SeqCst);
-        stophist.store(0, Ordering::SeqCst);
-        histactive.store(0, Ordering::SeqCst); // !HA_INWORD
+        chwordpos.store(0, SeqCst);
+        hptr.store(4, SeqCst);
+        stophist.store(0, SeqCst);
+        histactive.store(0, SeqCst); // !HA_INWORD
         crate::ported::input::inbufflags.with(|f| f.set(0)); // not alias-only
 
         ihwbegin(0);
@@ -5869,28 +5869,28 @@ mod subst_modifier_tests {
 
         // Negative offset clamps to 0 (c:1666).
         chwords.lock().unwrap().clear();
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(3, Ordering::SeqCst);
+        chwordpos.store(0, SeqCst);
+        hptr.store(3, SeqCst);
         ihwbegin(-10); // pos = 3-10 = -7 → clamp to 0
         let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
         assert_eq!(recorded, 0, "c:1666 — pos<0 clamps to 0");
 
         // Stop guard (c:1659) — `stophist == 2` short-circuits.
         chwords.lock().unwrap().clear();
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(5, Ordering::SeqCst);
-        stophist.store(2, Ordering::SeqCst);
+        chwordpos.store(0, SeqCst);
+        hptr.store(5, SeqCst);
+        stophist.store(2, SeqCst);
         ihwbegin(0);
         assert!(
             chwords.lock().unwrap().is_empty(),
             "c:1659 — stophist==2 short-circuits, no record"
         );
-        stophist.store(0, Ordering::SeqCst);
+        stophist.store(0, SeqCst);
 
         // Alias-only guard (c:1659).
         chwords.lock().unwrap().clear();
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(5, Ordering::SeqCst);
+        chwordpos.store(0, SeqCst);
+        hptr.store(5, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS));
         ihwbegin(0);
         assert!(
@@ -5900,8 +5900,8 @@ mod subst_modifier_tests {
 
         // INP_ALIAS|INP_HIST does NOT short-circuit (mixed input).
         chwords.lock().unwrap().clear();
-        chwordpos.store(0, Ordering::SeqCst);
-        hptr.store(7, Ordering::SeqCst);
+        chwordpos.store(0, SeqCst);
+        hptr.store(7, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(INP_ALIAS | INP_HIST));
         ihwbegin(0);
         let recorded = chwords.lock().unwrap().first().copied().unwrap_or(-1);
@@ -5910,10 +5910,10 @@ mod subst_modifier_tests {
         // Restore.
         *chline.lock().unwrap() = saved_chline;
         *chwords.lock().unwrap() = saved_chwords;
-        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
-        hptr.store(saved_hptr, Ordering::SeqCst);
-        stophist.store(saved_stop, Ordering::SeqCst);
-        histactive.store(saved_active, Ordering::SeqCst);
+        chwordpos.store(saved_chwordpos, SeqCst);
+        hptr.store(saved_hptr, SeqCst);
+        stophist.store(saved_stop, SeqCst);
+        histactive.store(saved_active, SeqCst);
         crate::ported::input::inbufflags.with(|f| f.set(saved_inflags));
     }
 
@@ -6063,7 +6063,7 @@ mod subst_modifier_tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let saved_curhist = curhist.load(Ordering::SeqCst);
+        let saved_curhist = curhist.load(SeqCst);
 
         // Build a single-entry ring with "echo hello world" — 3 words.
         // words = [start1,end1, start2,end2, start3,end3]
@@ -6087,7 +6087,7 @@ mod subst_modifier_tests {
                 histnum: 7,
             });
         }
-        curhist.store(8, Ordering::SeqCst); // up_histent will walk back to 7
+        curhist.store(8, SeqCst); // up_histent will walk back to 7
 
         // "hello" found at pos 5 → word index 1 (0-based).
         let got = hconsearch("hello");
@@ -6165,7 +6165,7 @@ mod subst_modifier_tests {
                 });
             }
         }
-        curhist.store(saved_curhist, Ordering::SeqCst);
+        curhist.store(saved_curhist, SeqCst);
     }
 
     /// Pin `checkcurline` to the canonical C body at
@@ -6177,18 +6177,18 @@ mod subst_modifier_tests {
     fn checkcurline_flushes_to_curline_only_when_active_and_matching() {
         let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let saved_curhist = curhist.load(Ordering::SeqCst);
-        let saved_active = histactive.load(Ordering::SeqCst);
+        let saved_curhist = curhist.load(SeqCst);
+        let saved_active = histactive.load(SeqCst);
         let saved_chline = chline.lock().unwrap().clone();
-        let saved_chwordpos = chwordpos.load(Ordering::SeqCst);
+        let saved_chwordpos = chwordpos.load(SeqCst);
         let saved_chwords = chwords.lock().unwrap().clone();
         let saved_curline = curline.lock().unwrap().take();
 
         // Set up in-flight build state.
-        curhist.store(42, Ordering::SeqCst);
-        histactive.store(HA_ACTIVE, Ordering::SeqCst);
+        curhist.store(42, SeqCst);
+        histactive.store(HA_ACTIVE, SeqCst);
         *chline.lock().unwrap() = "echo hello".to_string();
-        chwordpos.store(4, Ordering::SeqCst); // 2 words
+        chwordpos.store(4, SeqCst); // 2 words
         *chwords.lock().unwrap() = vec![0, 4, 5, 10];
         *curline.lock().unwrap() = None;
 
@@ -6230,7 +6230,7 @@ mod subst_modifier_tests {
         }
 
         // Case 2: matching histnum but NOT active → no flush.
-        histactive.store(0, Ordering::SeqCst); // c:2424 HA_ACTIVE off
+        histactive.store(0, SeqCst); // c:2424 HA_ACTIVE off
         *curline.lock().unwrap() = None;
         checkcurline(&he);
         assert!(
@@ -6239,7 +6239,7 @@ mod subst_modifier_tests {
         );
 
         // Case 3: active but mismatched histnum → no flush.
-        histactive.store(HA_ACTIVE, Ordering::SeqCst);
+        histactive.store(HA_ACTIVE, SeqCst);
         let he2 = histent {
             histnum: 99,
             ..histent {
@@ -6265,10 +6265,10 @@ mod subst_modifier_tests {
         );
 
         // Restore.
-        curhist.store(saved_curhist, Ordering::SeqCst);
-        histactive.store(saved_active, Ordering::SeqCst);
+        curhist.store(saved_curhist, SeqCst);
+        histactive.store(saved_active, SeqCst);
         *chline.lock().unwrap() = saved_chline;
-        chwordpos.store(saved_chwordpos, Ordering::SeqCst);
+        chwordpos.store(saved_chwordpos, SeqCst);
         *chwords.lock().unwrap() = saved_chwords;
         *curline.lock().unwrap() = saved_curline;
     }

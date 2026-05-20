@@ -81,7 +81,7 @@ pub fn zleaddtoline(ch: i32) {
     ZLELINE.lock().unwrap().push(ch as u8 as char);
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
 }
 
@@ -142,8 +142,8 @@ pub fn zlegetline(
     //                     return ztrdup(zlemetaline) } else
     //                     return zlelineasstring(...)`. Snapshot of the
     //                     current line + cursor.
-    *ll = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
-    *cs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    *ll = ZLELL.load(Ordering::SeqCst);
+    *cs = ZLECS.load(Ordering::SeqCst);
     ZLELINE.lock().unwrap().clone()
 }
 
@@ -182,9 +182,9 @@ pub fn zle_save_positions() {
     // c:619
     let pos = ZlePosition {
         // c:619 newpos = zalloc
-        mk: MARK.load(std::sync::atomic::Ordering::SeqCst), // c:627
-        cs: ZLECS.load(std::sync::atomic::Ordering::SeqCst), // c:634 (no zlemetaline branch)
-        ll: ZLELL.load(std::sync::atomic::Ordering::SeqCst), // c:635
+        mk: MARK.load(Ordering::SeqCst), // c:627
+        cs: ZLECS.load(Ordering::SeqCst), // c:634 (no zlemetaline branch)
+        ll: ZLELL.load(Ordering::SeqCst), // c:635
     };
     if let Ok(mut s) = ZLE_POSITIONS.lock() {
         // c:677 push
@@ -199,14 +199,14 @@ pub fn zle_restore_positions() {
     if let Ok(mut s) = ZLE_POSITIONS.lock() {
         if let Some(oldpos) = s.pop() {
             // c:679-684
-            MARK.store(oldpos.mk, std::sync::atomic::Ordering::SeqCst); // c:686
+            MARK.store(oldpos.mk, Ordering::SeqCst); // c:686
             ZLECS.store(
                 oldpos
                     .cs
-                    .min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-                std::sync::atomic::Ordering::SeqCst,
+                    .min(ZLELL.load(Ordering::SeqCst)),
+                Ordering::SeqCst,
             ); // c:693
-            ZLELL.store(oldpos.ll, std::sync::atomic::Ordering::SeqCst); // c:694
+            ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
         }
     }
 }
@@ -236,11 +236,11 @@ pub fn spaceinline(ct: i32) {
         ZLELINE
             .lock()
             .unwrap()
-            .insert(ZLECS.load(std::sync::atomic::Ordering::SeqCst), '\0');
+            .insert(ZLECS.load(Ordering::SeqCst), '\0');
     }
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
 }
 
@@ -269,7 +269,7 @@ pub fn shiftchars(to: i32, cnt: i32) {
         // c:915 `zleline[zlell = to]` — caller passed `to` past end-of-line.
         // C still sets zlell=to (which would corrupt the buffer); Rust
         // clamps to `len` so we don't grow zlell past the actual storage.
-        ZLELL.store(len, std::sync::atomic::Ordering::SeqCst);
+        ZLELL.store(len, Ordering::SeqCst);
         return;
     }
     if to + cnt >= len {
@@ -278,7 +278,7 @@ pub fn shiftchars(to: i32, cnt: i32) {
     } else {
         line.drain(to..to + cnt); // c:912-914 memmove
     }
-    ZLELL.store(line.len(), std::sync::atomic::Ordering::SeqCst); // c:915
+    ZLELL.store(line.len(), Ordering::SeqCst); // c:915
 }
 
 /// Port of `cut(int i, int ct, int flags)` from Src/Zle/zle_utils.c:935.
@@ -318,7 +318,7 @@ pub fn cuttext(
         }
     } else {
         KILLRING.lock().unwrap().push_front(chars); // c:996
-        let max = KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst);
+        let max = KILLRINGMAX.load(Ordering::SeqCst);
         if KILLRING.lock().unwrap().len() > max {
             KILLRING.lock().unwrap().pop_back();
         }
@@ -336,27 +336,27 @@ pub fn cuttext(
 pub fn backkill(ct: i32, flags: i32) {
     // c:1045
     let ct = ct as usize;
-    if ct == 0 || ZLECS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    if ct == 0 || ZLECS.load(Ordering::SeqCst) == 0 {
         return;
     }
     let _ = flags; // CUT_RAW path: no DECCS multibyte adjustment.
-    let take_n = ct.min(ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-    let start = ZLECS.load(std::sync::atomic::Ordering::SeqCst) - take_n;
+    let take_n = ct.min(ZLECS.load(Ordering::SeqCst));
+    let start = ZLECS.load(Ordering::SeqCst) - take_n;
     let cut_chars: Vec<char> = ZLELINE
         .lock()
         .unwrap()
-        .drain(start..ZLECS.load(std::sync::atomic::Ordering::SeqCst))
+        .drain(start..ZLECS.load(Ordering::SeqCst))
         .collect(); // c:1057 cut + shiftchars
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
-    ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
+    ZLECS.store(start, Ordering::SeqCst);
     KILLRING.lock().unwrap().push_front(cut_chars);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(Ordering::SeqCst) {
         KILLRING.lock().unwrap().pop_back();
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst); // c:1059 CCRIGHT
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1059 CCRIGHT
 }
 
 /// Port of `forekill(int ct, int flags)` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
@@ -372,27 +372,27 @@ pub fn forekill(ct: i32, flags: i32) {
     // c:1064
     let ct = ct as usize;
     if ct == 0
-        || ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-            >= ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+        || ZLECS.load(Ordering::SeqCst)
+            >= ZLELL.load(Ordering::SeqCst)
     {
         return;
     }
     let _ = flags; // CUT_RAW path: no INCCS multibyte adjustment.
     let take_n = ct.min(
-        ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-            - ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+        ZLELL.load(Ordering::SeqCst)
+            - ZLECS.load(Ordering::SeqCst),
     );
-    let i = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let i = ZLECS.load(Ordering::SeqCst);
     let cut_chars: Vec<char> = ZLELINE.lock().unwrap().drain(i..i + take_n).collect(); // c:1077 cut + shiftchars
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     KILLRING.lock().unwrap().push_front(cut_chars);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(Ordering::SeqCst) {
         KILLRING.lock().unwrap().pop_back();
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst); // c:1079 CCRIGHT
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1079 CCRIGHT
 }
 
 /// Port of `backdel(int ct, int flags)` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
@@ -408,21 +408,21 @@ pub fn forekill(ct: i32, flags: i32) {
 pub fn backdel(ct: i32, _flags: i32) {
     // c:1084
     let ct = ct as usize;
-    if ct == 0 || ZLECS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    if ct == 0 || ZLECS.load(Ordering::SeqCst) == 0 {
         return;
     }
-    let take_n = ct.min(ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-    let start = ZLECS.load(std::sync::atomic::Ordering::SeqCst) - take_n;
+    let take_n = ct.min(ZLECS.load(Ordering::SeqCst));
+    let start = ZLECS.load(Ordering::SeqCst) - take_n;
     ZLELINE
         .lock()
         .unwrap()
-        .drain(start..ZLECS.load(std::sync::atomic::Ordering::SeqCst)); // c:1090 shiftchars
+        .drain(start..ZLECS.load(Ordering::SeqCst)); // c:1090 shiftchars
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
-    ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst); // c:1091 CCRIGHT
+    ZLECS.store(start, Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1091 CCRIGHT
 }
 
 /// Port of `foredel(int ct, int flags)` from `Src/Zle/zle_utils.c:1105`. Removes `ct`
@@ -437,22 +437,22 @@ pub fn foredel(ct: i32, _flags: i32) {
     // c:1105
     let ct = ct as usize;
     if ct == 0
-        || ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-            >= ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+        || ZLECS.load(Ordering::SeqCst)
+            >= ZLELL.load(Ordering::SeqCst)
     {
         return;
     }
     let take_n = ct.min(
-        ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-            - ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+        ZLELL.load(Ordering::SeqCst)
+            - ZLECS.load(Ordering::SeqCst),
     );
-    let i = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let i = ZLECS.load(Ordering::SeqCst);
     ZLELINE.lock().unwrap().drain(i..i + take_n); // c:1111 shiftchars
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst); // c:1112 CCRIGHT
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1112 CCRIGHT
 }
 
 /// Port of `setline(char *s, int flags)` from Src/Zle/zle_utils.c:1129.
@@ -486,19 +486,19 @@ pub fn setline(
     line.extend(s.chars());
     let new_len = line.len();
     drop(line);
-    ZLELL.store(new_len, std::sync::atomic::Ordering::SeqCst);
+    ZLELL.store(new_len, Ordering::SeqCst);
     if (flags & ZSL_TOEND) != 0 {
         // c:1146
         // c:1146 — `zlecs = zlell` (and DECCS+invicmdmode skipped: the
         // DECCS substrate is the multibyte combining-char decrementer
         // and Rust's Vec<char> doesn't carry combining chars in storage).
-        ZLECS.store(new_len, std::sync::atomic::Ordering::SeqCst);
-    } else if (ZLECS.load(std::sync::atomic::Ordering::SeqCst)) > new_len {
+        ZLECS.store(new_len, Ordering::SeqCst);
+    } else if (ZLECS.load(Ordering::SeqCst)) > new_len {
         // c:1148-1149
         // c:1149 — `zlecs = zlell;` clamp.
-        ZLECS.store(new_len, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.store(new_len, Ordering::SeqCst);
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst); // c:1150 CCRIGHT
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1150 CCRIGHT
 }
 
 /// Port of `findbol()` from `Src/Zle/zle_utils.c:1158`.
@@ -517,7 +517,7 @@ pub fn setline(
 /// Returns the byte offset.
 pub fn findbol() -> usize {
     // c:1158
-    let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:1158 int x = zlecs
+    let mut x = ZLECS.load(Ordering::SeqCst); // c:1158 int x = zlecs
     while x > 0 && ZLELINE.lock().unwrap().get(x - 1) != Some(&'\n') {
         // c:1162
         x -= 1; // c:1163 x--
@@ -540,8 +540,8 @@ pub fn findbol() -> usize {
 /// buffer). Returns the byte offset.
 pub fn findeol() -> usize {
     // c:1169
-    let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:1169 int x = zlecs
-    while x != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+    let mut x = ZLECS.load(Ordering::SeqCst); // c:1169 int x = zlecs
+    while x != ZLELL.load(Ordering::SeqCst)
         && ZLELINE.lock().unwrap().get(x) != Some(&'\n')
     {
         // c:1173
@@ -664,7 +664,7 @@ pub fn getzlequery() -> i32 {
     // c:1201-1210 — FIONREAD typeahead check → negative response if buffered.
     //               Without a live tty fd here, skip the typeahead probe.
     // c:1213 — c = getfullchar(0);
-    let c = crate::ported::zle::zle_main::getfullchar(false);
+    let c = getfullchar(false);
     // c:1218 — errflag &= ~ERRFLAG_INT;
     errflag.fetch_and(!ERRFLAG_INT, Ordering::Relaxed);
     // c:1219-1224 — '\t' → 'y'; ctrl/EOF → 'n'; else tolower.
@@ -825,43 +825,43 @@ pub fn handleundo() {
 /// describing the diff. Port of `mkundoent` (zle_utils.c:1532).
 pub fn mkundoent() {
     // c:1532
-    if LASTLL.load(std::sync::atomic::Ordering::SeqCst)
-        == ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-        && LASTLINE.lock().unwrap()[..LASTLL.load(std::sync::atomic::Ordering::SeqCst)]
-            == ZLELINE.lock().unwrap()[..ZLELL.load(std::sync::atomic::Ordering::SeqCst)]
+    if LASTLL.load(Ordering::SeqCst)
+        == ZLELL.load(Ordering::SeqCst)
+        && LASTLINE.lock().unwrap()[..LASTLL.load(Ordering::SeqCst)]
+            == ZLELINE.lock().unwrap()[..ZLELL.load(Ordering::SeqCst)]
     {
         LASTCS.store(
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
-            std::sync::atomic::Ordering::SeqCst,
+            ZLECS.load(Ordering::SeqCst),
+            Ordering::SeqCst,
         );
         return;
     }
     let sh = LASTLL
-        .load(std::sync::atomic::Ordering::SeqCst)
-        .min(ZLELL.load(std::sync::atomic::Ordering::SeqCst));
+        .load(Ordering::SeqCst)
+        .min(ZLELL.load(Ordering::SeqCst));
     let mut pre = 0usize;
     while pre < sh && ZLELINE.lock().unwrap()[pre] == LASTLINE.lock().unwrap()[pre] {
         pre += 1;
     }
     let mut suf = 0usize;
     while suf < sh - pre
-        && ZLELINE.lock().unwrap()[ZLELL.load(std::sync::atomic::Ordering::SeqCst) - 1 - suf]
-            == LASTLINE.lock().unwrap()[LASTLL.load(std::sync::atomic::Ordering::SeqCst) - 1 - suf]
+        && ZLELINE.lock().unwrap()[ZLELL.load(Ordering::SeqCst) - 1 - suf]
+            == LASTLINE.lock().unwrap()[LASTLL.load(Ordering::SeqCst) - 1 - suf]
     {
         suf += 1;
     }
-    let del: ZleString = if suf + pre == LASTLL.load(std::sync::atomic::Ordering::SeqCst) {
+    let del: ZleString = if suf + pre == LASTLL.load(Ordering::SeqCst) {
         Vec::new()
     } else {
-        LASTLINE.lock().unwrap()[pre..LASTLL.load(std::sync::atomic::Ordering::SeqCst) - suf]
+        LASTLINE.lock().unwrap()[pre..LASTLL.load(Ordering::SeqCst) - suf]
             .to_vec()
     };
-    let ins: ZleString = if suf + pre == ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+    let ins: ZleString = if suf + pre == ZLELL.load(Ordering::SeqCst) {
         Vec::new()
     } else {
-        ZLELINE.lock().unwrap()[pre..ZLELL.load(std::sync::atomic::Ordering::SeqCst) - suf].to_vec()
+        ZLELINE.lock().unwrap()[pre..ZLELL.load(Ordering::SeqCst) - suf].to_vec()
     };
-    UNDO_CHANGENO.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    UNDO_CHANGENO.fetch_add(1, Ordering::SeqCst);
     // Canonical `change.del`/`ins` are `ZLE_STRING_T = String`
     // (zle_h.rs:66, port of `ZLE_STRING_T` typedef). Local
     // `ZleString = Vec<char>` (zle_main.rs:59); convert at the
@@ -880,19 +880,19 @@ pub fn mkundoent() {
         dell,
         ins: ins_str,
         insl,
-        old_cs: LASTCS.load(std::sync::atomic::Ordering::SeqCst) as i32,
-        new_cs: ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32,
-        changeno: UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst) as i64,
+        old_cs: LASTCS.load(Ordering::SeqCst) as i32,
+        new_cs: ZLECS.load(Ordering::SeqCst) as i32,
+        changeno: UNDO_CHANGENO.load(Ordering::SeqCst) as i64,
     };
     // Drop any forward redo history past the cursor before pushing.
     UNDO_STACK
         .lock()
         .unwrap()
-        .truncate(CURCHANGE.load(std::sync::atomic::Ordering::SeqCst));
+        .truncate(CURCHANGE.load(Ordering::SeqCst));
     UNDO_STACK.lock().unwrap().push(ch);
     CURCHANGE.store(
         UNDO_STACK.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
 }
 
@@ -905,12 +905,12 @@ pub fn setlastline() {
     ll.extend_from_slice(&snapshot);
     drop(ll);
     LASTLL.store(
-        ZLELL.load(std::sync::atomic::Ordering::SeqCst),
-        std::sync::atomic::Ordering::SeqCst,
+        ZLELL.load(Ordering::SeqCst),
+        Ordering::SeqCst,
     );
     LASTCS.store(
-        ZLECS.load(std::sync::atomic::Ordering::SeqCst),
-        std::sync::atomic::Ordering::SeqCst,
+        ZLECS.load(Ordering::SeqCst),
+        Ordering::SeqCst,
     );
 }
 
@@ -932,15 +932,15 @@ pub fn undo(args: &[String]) -> i32 {
     loop {
         // c:1614 — `prev = curchange->prev`; in Rust we step the
         // index down.
-        if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        if CURCHANGE.load(Ordering::SeqCst) == 0 {
             return 1;
         } // c:1615
-        let prev_idx = CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) - 1;
+        let prev_idx = CURCHANGE.load(Ordering::SeqCst) - 1;
         let prev_chno = UNDO_STACK.lock().unwrap()[prev_idx].changeno as i64;
         if prev_chno <= last_change {
             break;
         } // c:1618
-        if (prev_chno as u64) <= UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst)
+        if (prev_chno as u64) <= UNDO_LIMITNO.load(Ordering::SeqCst)
             && args.is_empty()
         {
             // c:1619
@@ -950,10 +950,10 @@ pub fn undo(args: &[String]) -> i32 {
             // c:1621
             if last_change >= 0 {
                 unapplychange(prev_idx as i32); // c:1623
-                CURCHANGE.store(prev_idx, std::sync::atomic::Ordering::SeqCst); // c:1624
+                CURCHANGE.store(prev_idx, Ordering::SeqCst); // c:1624
             }
         } else {
-            CURCHANGE.store(prev_idx, std::sync::atomic::Ordering::SeqCst); // c:1627
+            CURCHANGE.store(prev_idx, Ordering::SeqCst); // c:1627
         }
         let has_prev = UNDO_STACK
             .lock()
@@ -996,10 +996,10 @@ pub fn unapplychange(ch: i32) -> i32 {
             ZLELINE.lock().unwrap().push(c);
         }
     }
-    ZLECS.store(change.old_cs as usize, std::sync::atomic::Ordering::SeqCst); // c:1649
+    ZLECS.store(change.old_cs as usize, Ordering::SeqCst); // c:1649
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     // c:1651 — return 1 if CH_PREV, else 0.
     if change.flags & CH_PREV != 0 {
@@ -1016,14 +1016,14 @@ pub fn unapplychange(ch: i32) -> i32 {
 pub fn redo() -> i32 {
     // c:1661
     loop {
-        if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
+        if CURCHANGE.load(Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
             return 1;
         } // c:1664
-        let cur_idx = CURCHANGE.load(std::sync::atomic::Ordering::SeqCst);
+        let cur_idx = CURCHANGE.load(Ordering::SeqCst);
         if applychange(cur_idx as i32) == 0 {
             break;
         } // c:1668
-        CURCHANGE.store(cur_idx + 1, std::sync::atomic::Ordering::SeqCst);
+        CURCHANGE.store(cur_idx + 1, Ordering::SeqCst);
         let has_next = UNDO_STACK
             .lock()
             .unwrap()
@@ -1034,7 +1034,7 @@ pub fn redo() -> i32 {
             break;
         } // c:1670
     }
-    CURCHANGE.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:1672 advance past applied
+    CURCHANGE.fetch_add(1, Ordering::SeqCst); // c:1672 advance past applied
     0 // c:1674
 }
 
@@ -1067,10 +1067,10 @@ pub fn applychange(ch: i32) -> i32 {
             ZLELINE.lock().unwrap().push(c);
         }
     }
-    ZLECS.store(change.new_cs as usize, std::sync::atomic::Ordering::SeqCst); // c:1718
+    ZLECS.store(change.new_cs as usize, Ordering::SeqCst); // c:1718
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     // c:1721 — return 1 if CH_NEXT, else 0.
     if change.flags & CH_NEXT != 0 {
@@ -1096,16 +1096,16 @@ pub fn viundochange(
     args: &[String],
 ) -> i32 {
     handleundo(); // c:1707
-    if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) < UNDO_STACK.lock().unwrap().len() {
+    if CURCHANGE.load(Ordering::SeqCst) < UNDO_STACK.lock().unwrap().len() {
         // c:1708 curchange->next
         // Re-apply all forward changes (collapses an undo chain back
         // to current state).
-        while CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) < UNDO_STACK.lock().unwrap().len()
+        while CURCHANGE.load(Ordering::SeqCst) < UNDO_STACK.lock().unwrap().len()
         {
             // c:1710
-            let idx = CURCHANGE.load(std::sync::atomic::Ordering::SeqCst);
+            let idx = CURCHANGE.load(Ordering::SeqCst);
             applychange(idx as i32); // c:1711
-            CURCHANGE.store(idx + 1, std::sync::atomic::Ordering::SeqCst); // c:1712
+            CURCHANGE.store(idx + 1, Ordering::SeqCst); // c:1712
         }
         0 // c:1715
     } else {
@@ -1127,12 +1127,12 @@ pub fn splitundo() -> i32 {
     // c:1721
     // C uses signed `vistartchange`; Rust uses u64 with u64::MAX as
     // the "-1 / inactive" sentinel.
-    if VISTARTCHANGE.load(std::sync::atomic::Ordering::SeqCst) != u64::MAX {
+    if VISTARTCHANGE.load(Ordering::SeqCst) != u64::MAX {
         // c:1723 >= 0
         mergeundo(); // c:1725
         VISTARTCHANGE.store(
-            UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst),
-            std::sync::atomic::Ordering::SeqCst,
+            UNDO_CHANGENO.load(Ordering::SeqCst),
+            Ordering::SeqCst,
         ); // c:1726
     }
     handleundo(); // c:1728
@@ -1147,19 +1147,19 @@ pub fn splitundo() -> i32 {
 pub fn mergeundo() {
     // c:1733
     // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
-    if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    if CURCHANGE.load(Ordering::SeqCst) == 0 {
         return;
     }
-    let mut current = CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) - 1; // c:1735 prev
+    let mut current = CURCHANGE.load(Ordering::SeqCst) - 1; // c:1735 prev
     while current > 0
         && UNDO_STACK.lock().unwrap()[current].changeno
-            > VISTARTCHANGE.load(std::sync::atomic::Ordering::SeqCst) as i64 + 1
+            > VISTARTCHANGE.load(Ordering::SeqCst) as i64 + 1
     {
         UNDO_STACK.lock().unwrap()[current].flags |= CH_PREV; // c:1740
         UNDO_STACK.lock().unwrap()[current - 1].flags |= CH_NEXT; // c:1741
         current -= 1;
     }
-    VISTARTCHANGE.store(u64::MAX, std::sync::atomic::Ordering::SeqCst); // c:1744 = -1
+    VISTARTCHANGE.store(u64::MAX, Ordering::SeqCst); // c:1744 = -1
 }
 
 /// Direct port of `void zlecallhook(char *name, char *arg)` from
@@ -1185,7 +1185,7 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {
         Some(a) => vec![a.to_string()],
         None => Vec::new(),
     };
-    let _ = crate::ported::zle::zle_main::execzlefunc(name, &args); // c:1768
+    let _ = execzlefunc(name, &args); // c:1768
 
     // c:1771 — `unrefthingy(thingy);`
     crate::ported::zle::zle_thingy::unrefthingy(name);
@@ -1207,19 +1207,19 @@ pub fn get_undo_current_change() -> i64 {
     // Rust uses UTF-8 natively — the metaline transcoding is a no-op
     // at the storage layer, so the remetafy bookkeeping collapses.
     // c:1802 — mkundoent();           — flush pending edits to undo ring
-    crate::zle::zle_utils::mkundoent();
+    mkundoent();
     // c:1803 — setlastline();
-    crate::zle::zle_utils::setlastline();
+    setlastline();
     // c:1805-1806 — if (remetafy) metafy_line();    (collapsed per above)
     // c:1808 — return undo_changeno;
-    UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst) as i64
+    UNDO_CHANGENO.load(Ordering::SeqCst) as i64
 }
 
 /// Port of `get_undo_limit_change(UNUSED(Param pm))` from Src/Zle/zle_utils.c:1812.
 pub fn get_undo_limit_change() -> i64 {
     // c:1812
     // c:1815 — return undo_limitno;
-    UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst) as i64
+    UNDO_LIMITNO.load(Ordering::SeqCst) as i64
 }
 
 /// Port of `set_undo_limit_change(UNUSED(Param pm), zlong value)` from Src/Zle/zle_utils.c:1819.
@@ -1232,9 +1232,9 @@ pub fn set_undo_limit_change(value: i64) -> i32 {
     //               entry's changeno. With our linear UNDO_STACK that
     //               distinction collapses to clamping to the largest
     //               committed changeno <= value.
-    let cap = UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst) as i64;
+    let cap = UNDO_CHANGENO.load(Ordering::SeqCst) as i64;
     let clamped = value.max(0).min(cap);
-    UNDO_LIMITNO.store(clamped as u64, std::sync::atomic::Ordering::SeqCst);
+    UNDO_LIMITNO.store(clamped as u64, Ordering::SeqCst);
     0
 }
 
@@ -1243,11 +1243,11 @@ pub fn insert_str(s: &str) {
         ZLELINE
             .lock()
             .unwrap()
-            .insert(ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
-        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .insert(ZLECS.load(Ordering::SeqCst), c);
+        ZLECS.fetch_add(1, Ordering::SeqCst);
+        ZLELL.fetch_add(1, Ordering::SeqCst);
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Insert chars at cursor position
@@ -1256,47 +1256,47 @@ pub fn insert_chars(chars: &[ZleChar]) {
         ZLELINE
             .lock()
             .unwrap()
-            .insert(ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
-        ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .insert(ZLECS.load(Ordering::SeqCst), c);
+        ZLECS.fetch_add(1, Ordering::SeqCst);
+        ZLELL.fetch_add(1, Ordering::SeqCst);
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Delete n characters at cursor position
 pub fn delete_chars(n: usize) {
     let n = n.min(
-        ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-            - ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+        ZLELL.load(Ordering::SeqCst)
+            - ZLECS.load(Ordering::SeqCst),
     );
     for _ in 0..n {
-        if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-            < ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+        if ZLECS.load(Ordering::SeqCst)
+            < ZLELL.load(Ordering::SeqCst)
         {
             ZLELINE
                 .lock()
                 .unwrap()
-                .remove(ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-            ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                .remove(ZLECS.load(Ordering::SeqCst));
+            ZLELL.fetch_sub(1, Ordering::SeqCst);
         }
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Delete n characters before cursor
 pub fn backspace_chars(n: usize) {
-    let n = n.min(ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let n = n.min(ZLECS.load(Ordering::SeqCst));
     for _ in 0..n {
-        if ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-            ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        if ZLECS.load(Ordering::SeqCst) > 0 {
+            ZLECS.fetch_sub(1, Ordering::SeqCst);
             ZLELINE
                 .lock()
                 .unwrap()
-                .remove(ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-            ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                .remove(ZLECS.load(Ordering::SeqCst));
+            ZLELL.fetch_sub(1, Ordering::SeqCst);
         }
     }
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Get the line as a string
@@ -1314,39 +1314,39 @@ pub fn set_line_keep_cursor(s: &str) {
     *ZLELINE.lock().unwrap() = s.chars().collect();
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS.store(
         ZLECS
-            .load(std::sync::atomic::Ordering::SeqCst)
-            .min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+            .load(Ordering::SeqCst)
+            .min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Clear the line
 pub fn clear_line() {
     ZLELINE.lock().unwrap().clear();
-    ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
-    ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-    MARK.store(0, std::sync::atomic::Ordering::SeqCst);
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLELL.store(0, Ordering::SeqCst);
+    ZLECS.store(0, Ordering::SeqCst);
+    MARK.store(0, Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Get region between point and mark
 pub fn get_region() -> Vec<ZleChar> {
-    let (start, end) = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-        < MARK.load(std::sync::atomic::Ordering::SeqCst)
+    let (start, end) = if ZLECS.load(Ordering::SeqCst)
+        < MARK.load(Ordering::SeqCst)
     {
         (
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
-            MARK.load(std::sync::atomic::Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
+            MARK.load(Ordering::SeqCst),
         )
     } else {
         (
-            MARK.load(std::sync::atomic::Ordering::SeqCst),
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            MARK.load(Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
         )
     };
     ZLELINE.lock().unwrap()[start..end].to_vec()
@@ -1355,17 +1355,17 @@ pub fn get_region() -> Vec<ZleChar> {
 /// Cut to named buffer
 pub fn cut_to_buffer(buf: usize, append: bool) {
     if buf < vibuf().lock().unwrap().len() {
-        let (start, end) = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-            < MARK.load(std::sync::atomic::Ordering::SeqCst)
+        let (start, end) = if ZLECS.load(Ordering::SeqCst)
+            < MARK.load(Ordering::SeqCst)
         {
             (
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst),
-                MARK.load(std::sync::atomic::Ordering::SeqCst),
+                ZLECS.load(Ordering::SeqCst),
+                MARK.load(Ordering::SeqCst),
             )
         } else {
             (
-                MARK.load(std::sync::atomic::Ordering::SeqCst),
-                ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+                MARK.load(Ordering::SeqCst),
+                ZLECS.load(Ordering::SeqCst),
             )
         };
 
@@ -1390,10 +1390,10 @@ pub fn paste_from_buffer(buf: usize, after: bool) {
         let text = vibuf().lock().unwrap()[buf].clone();
         if !text.is_empty() {
             if after
-                && ZLECS.load(std::sync::atomic::Ordering::SeqCst)
-                    < ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+                && ZLECS.load(Ordering::SeqCst)
+                    < ZLELL.load(Ordering::SeqCst)
             {
-                ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ZLECS.fetch_add(1, Ordering::SeqCst);
             }
             insert_chars(&text);
         }
@@ -1567,13 +1567,13 @@ pub fn set_line(s: &str) {
     *ZLELINE.lock().unwrap() = s.chars().collect();
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS.store(
-        ZLELL.load(std::sync::atomic::Ordering::SeqCst),
-        std::sync::atomic::Ordering::SeqCst,
+        ZLELL.load(Ordering::SeqCst),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Queue a hook for the host to dispatch.
@@ -1624,7 +1624,7 @@ pub fn unapply_change(idx: usize) -> bool {
         del_vec = ch.del.chars().collect::<Vec<char>>();
     }
     let _ = ins_len;
-    ZLECS.store(off, std::sync::atomic::Ordering::SeqCst);
+    ZLECS.store(off, Ordering::SeqCst);
     if insl > 0 {
         // Remove the inserted text.
         ZLELINE.lock().unwrap().drain(off..off + insl);
@@ -1637,13 +1637,13 @@ pub fn unapply_change(idx: usize) -> bool {
     }
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS.store(
-        old_cs.min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+        old_cs.min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     true
 }
 
@@ -1662,7 +1662,7 @@ pub fn apply_change(idx: usize) -> bool {
         new_cs = ch.new_cs as usize;
         ins_vec = ch.ins.chars().collect::<Vec<char>>();
     }
-    ZLECS.store(off, std::sync::atomic::Ordering::SeqCst);
+    ZLECS.store(off, Ordering::SeqCst);
     if dell > 0 {
         ZLELINE.lock().unwrap().drain(off..off + dell);
     }
@@ -1673,13 +1673,13 @@ pub fn apply_change(idx: usize) -> bool {
     }
     ZLELL.store(
         ZLELINE.lock().unwrap().len(),
-        std::sync::atomic::Ordering::SeqCst,
+        Ordering::SeqCst,
     );
     ZLECS.store(
-        new_cs.min(ZLELL.load(std::sync::atomic::Ordering::SeqCst)),
-        std::sync::atomic::Ordering::SeqCst,
+        new_cs.min(ZLELL.load(Ordering::SeqCst)),
+        Ordering::SeqCst,
     );
-    ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     true
 }
 
@@ -1689,17 +1689,17 @@ pub fn undo_widget() -> i32 {
     // c:1601
     // Capture any in-flight edits into a Change before stepping back.
     mkundoent();
-    if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    if CURCHANGE.load(Ordering::SeqCst) == 0 {
         return 1;
     }
-    let prev_idx = CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) - 1;
+    let prev_idx = CURCHANGE.load(Ordering::SeqCst) - 1;
     if UNDO_STACK.lock().unwrap()[prev_idx].changeno
-        <= UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst) as i64
+        <= UNDO_LIMITNO.load(Ordering::SeqCst) as i64
     {
         return 1;
     }
     if unapply_change(prev_idx) {
-        CURCHANGE.store(prev_idx, std::sync::atomic::Ordering::SeqCst);
+        CURCHANGE.store(prev_idx, Ordering::SeqCst);
     }
     setlastline();
     0
@@ -1710,11 +1710,11 @@ pub fn undo_widget() -> i32 {
 pub fn redo_widget() -> i32 {
     // c:1661
     mkundoent();
-    if CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
+    if CURCHANGE.load(Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
         return 1;
     }
-    if apply_change(CURCHANGE.load(std::sync::atomic::Ordering::SeqCst)) {
-        CURCHANGE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if apply_change(CURCHANGE.load(Ordering::SeqCst)) {
+        CURCHANGE.fetch_add(1, Ordering::SeqCst);
     }
     setlastline();
     0
@@ -1731,9 +1731,9 @@ mod findbol_findeol_tests {
         *ZLELINE.lock().unwrap() = line.chars().collect();
         ZLELL.store(
             ZLELINE.lock().unwrap().len(),
-            std::sync::atomic::Ordering::SeqCst,
+            Ordering::SeqCst,
         );
-        ZLECS.store(cs, std::sync::atomic::Ordering::SeqCst);
+        ZLECS.store(cs, Ordering::SeqCst);
     }
 
     #[test]
@@ -1817,7 +1817,7 @@ mod findbol_findeol_tests {
         shiftchars(2, 2);
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "abef");
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 4);
     }
 
     /// `Src/Zle/zle_utils.c:911-915` — boundary case: `to + cnt ==
@@ -1835,7 +1835,7 @@ mod findbol_findeol_tests {
             line, "abc",
             "c:915 — to+cnt==zlell → zlell=to (truncate to offset 3)"
         );
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 3);
     }
 
     /// `Src/Zle/zle_utils.c:911-915` — out-of-range case: `to + cnt >
@@ -1857,7 +1857,7 @@ mod findbol_findeol_tests {
             line, "abc",
             "c:915 — to+cnt>zlell → zlell=to (the previous port silently no-op'd here)"
         );
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 3);
     }
 
     /// `Src/Zle/zle_utils.c:911-915` — degenerate case: `to >= zlell`.
@@ -1876,7 +1876,7 @@ mod findbol_findeol_tests {
         // Buffer storage unchanged
         assert_eq!(line, "abc");
         // zlell clamped to actual storage length
-        let zlell = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        let zlell = ZLELL.load(Ordering::SeqCst);
         assert!(
             zlell <= 3,
             "c:915 — Rust clamps zlell to storage len ({zlell})"
@@ -1894,7 +1894,7 @@ mod findbol_findeol_tests {
         shiftchars(3, 0);
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "abcdef", "cnt=0 → no chars removed");
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 6);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 6);
     }
 
     /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(ct)` opens `ct`
@@ -1907,7 +1907,7 @@ mod findbol_findeol_tests {
         zle_with("abc", 1);
         spaceinline(2);
         // Buffer length grew by 2; zlell follows.
-        let zlell = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        let zlell = ZLELL.load(Ordering::SeqCst);
         assert_eq!(zlell, 5, "c:842 — zlell += ct (was 3, ct=2 → 5)");
         assert_eq!(ZLELINE.lock().unwrap().len(), 5);
         // The first 'a' and tail 'bc' are still present; the gap is in the middle.
@@ -1927,13 +1927,13 @@ mod findbol_findeol_tests {
         zle_with("xyz", 1);
         spaceinline(0);
         assert_eq!(
-            ZLELL.load(std::sync::atomic::Ordering::SeqCst),
+            ZLELL.load(Ordering::SeqCst),
             3,
             "ct=0 → zlell unchanged"
         );
         spaceinline(-5);
         assert_eq!(
-            ZLELL.load(std::sync::atomic::Ordering::SeqCst),
+            ZLELL.load(Ordering::SeqCst),
             3,
             "ct<0 → zlell unchanged"
         );
@@ -1968,9 +1968,9 @@ mod findbol_findeol_tests {
         setline("hi", ZSL_TOEND); // ZSL_TOEND=2
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "hi");
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 2);
         assert_eq!(
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
             2,
             "c:1146 — ZSL_TOEND → cursor at zlell"
         );
@@ -1988,9 +1988,9 @@ mod findbol_findeol_tests {
         setline("abc", 0); // no flags
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "abc");
-        assert_eq!(ZLELL.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 3);
         assert_eq!(
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
             3,
             "c:1148-1149 — cursor past new zlell must clamp to zlell"
         );
@@ -2010,7 +2010,7 @@ mod findbol_findeol_tests {
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "ABCDEFGH");
         assert_eq!(
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
             2,
             "c:1148-1149 — in-range cursor stays put when ZSL_TOEND unset"
         );
@@ -2028,7 +2028,7 @@ mod findbol_findeol_tests {
         setline("xyz", ZSL_COPY); // ZSL_COPY=1, no TOEND
                                   // Cursor was 5, new line is 3 chars → clamp to 3.
         assert_eq!(
-            ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            ZLECS.load(Ordering::SeqCst),
             3,
             "c:1148-1149 — ZSL_COPY alone doesn't trigger TOEND; clamp still applies"
         );

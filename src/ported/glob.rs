@@ -12,8 +12,11 @@
 
 use crate::ported::options::opt_state_get;
 use crate::ported::sort::zstrcmp;
+use crate::ported::builtin::LASTVAL;
+use crate::ported::signals::unqueue_signals;
+use crate::ported::string::dyncat;
 use crate::ported::utils::zerr;
-use crate::ported::utils::{init_dirsav, lchdir, restoredir};
+use crate::ported::utils::{errflag, init_dirsav, lchdir, restoredir};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self};
 use crate::ported::zsh_h::Bnullkeep;
@@ -242,7 +245,7 @@ pub fn addpath(s: &mut String, l: &str) {
 /// Stat full path (from glob.c statfullpath lines 282-347)
 /// `stat`/`lstat` a (pathbuf, name) tuple.
 /// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
-pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> {
+pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
     // c:283
     let full = if st.is_empty() {
         if s.is_empty() {
@@ -255,9 +258,9 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> {
     };
 
     if l {
-        std::fs::metadata(&full).ok()
+        fs::metadata(&full).ok()
     } else {
-        std::fs::symlink_metadata(&full).ok()
+        fs::symlink_metadata(&full).ok()
     }
 }
 // END moved-from-exec-rs (free fns)
@@ -318,8 +321,8 @@ pub fn insert(s: &str, checked: i32) {
         // path so the stub is correct for the current call sites.
         (0, 0, 0)
     };
-    let mut buf: Option<std::fs::Metadata> = None; // c:348 struct stat buf
-    let mut buf2: Option<std::fs::Metadata> = None; // c:348 struct stat buf2
+    let mut buf: Option<Metadata> = None; // c:348 struct stat buf
+    let mut buf2: Option<Metadata> = None; // c:348 struct stat buf2
 
     let mut checked_v = checked; // c:346
 
@@ -328,7 +331,7 @@ pub fn insert(s: &str, checked: i32) {
         let st = statfullpath(s, "", true); // c:358
         match st {
             None => {
-                crate::ported::signals::unqueue_signals(); // c:359
+                unqueue_signals(); // c:359
                 return; // c:360
             }
             Some(m) => {
@@ -381,11 +384,11 @@ pub fn insert(s: &str, checked: i32) {
         if statted == 0 {
             if statfullpath(s, "", true).is_none() {
                 // c:385
-                crate::ported::signals::unqueue_signals(); // c:386
+                unqueue_signals(); // c:386
                 return; // c:387
             }
         }
-        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:389
+        news = dyncat(&pathbuf_local, &news); // c:389
         statted = 1; // c:391
                      // c:392-418 — for (qn = qo; qn && qn->func;) ...
                      // The qualifier-fn pointer chain (`qn->func`) isn't exposed
@@ -396,13 +399,13 @@ pub fn insert(s: &str, checked: i32) {
         // c:419
         if statfullpath(s, "", true).is_none() {
             // c:420
-            crate::ported::signals::unqueue_signals(); // c:421
+            unqueue_signals(); // c:421
             return; // c:422
         }
-        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:424
+        news = dyncat(&pathbuf_local, &news); // c:424
     } else {
         // c:425
-        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:426
+        news = dyncat(&pathbuf_local, &news); // c:426
     }
 
     // c:428 — `while (!inserts || (news = dupstring(*inserts++)))`
@@ -473,7 +476,7 @@ pub fn insert(s: &str, checked: i32) {
         let mut entry = gmatch {
             // c:446
             name: cur_news.clone(),
-            path: std::path::PathBuf::from(&cur_news),
+            path: PathBuf::from(&cur_news),
             size: 0,
             atime: 0,
             mtime: 0,
@@ -529,7 +532,7 @@ pub fn insert(s: &str, checked: i32) {
     }
 
     let _ = (inserts_idx, buf, buf2); // suppress warnings
-    crate::ported::signals::unqueue_signals(); // c:490
+    unqueue_signals(); // c:490
 }
 
 /// Top-level glob walker dispatching by pattern component.
@@ -814,7 +817,7 @@ pub fn gmatchcmp(
             let idx = ((key as u32) >> 16) as usize;
             let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
             let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-            crate::ported::sort::zstrcmp(
+            zstrcmp(
                 asx,
                 bsx,
                 if numeric_sort {
@@ -886,7 +889,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
         let tt = crate::ported::utils::itype_end(s, false);
         if tt == 0 {
             // c:1093
-            crate::ported::utils::zerr("missing identifier after `+'"); // c:1095
+            zerr("missing identifier after `+'"); // c:1095
             return None; // c:1096
         }
         // c:1109 — `sdata = dupstring(s + plus);` (plus=0 here).
@@ -901,7 +904,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
             Some((_del, content, rest)) => {
                 // c:1100-1104 — `if (!*tt) { zerr("missing end of string"); return NULL; }`
                 if rest.is_empty() && content.is_empty() {
-                    crate::ported::utils::zerr("missing end of string"); // c:1102
+                    zerr("missing end of string"); // c:1102
                     return None; // c:1103
                 }
                 // c:1109-1115 — `sdata = dupstring(s + plus); ... *sp = tt + plus;`.
@@ -910,7 +913,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
                 Some((content, advance))
             }
             None => {
-                crate::ported::utils::zerr("missing end of string"); // c:1102
+                zerr("missing end of string"); // c:1102
                 None
             }
         }
@@ -1382,7 +1385,7 @@ pub fn xpandredir(
     // value (0 / ERRFLAG_ERROR=1 / ERRFLAG_INT=2). Result: the
     // globlist call ran even when errflag was set, papering over
     // the abort path that C uses to bail early on prior errors.
-    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) == 0
+    if errflag.load(SeqCst) == 0
         && isset(MULTIOS)
     {
         // c:2164
@@ -1390,7 +1393,7 @@ pub fn xpandredir(
         crate::ported::subst::globlist(&mut fake, 0); // c:2166
         IN_EXPANDREDIR.store(0, SeqCst); // c:2167
     }
-    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+    if errflag.load(SeqCst) != 0 {
         return 0;
     } // c:2169
     let names: Vec<String> = fake.iter().cloned().collect();
@@ -1417,7 +1420,7 @@ pub fn xpandredir(
                     fn_.fd2 = crate::ported::utils::zstrtol(&s, 10).0 as i32; // c:2184 zstrtol(.., 10)
                 } else if fn_.typ == REDIR_MERGEIN {
                     // c:2185
-                    crate::ported::utils::zerr("file number expected"); // c:2186
+                    zerr("file number expected"); // c:2186
                 } else {
                     fn_.typ = REDIR_ERRWRITE; // c:2188
                 }
@@ -1425,7 +1428,7 @@ pub fn xpandredir(
         }
     } else if fn_.typ == REDIR_MERGEIN {
         // c:2192
-        crate::ported::utils::zerr("file number expected"); // c:2193
+        zerr("file number expected"); // c:2193
     } else {
         if fn_.typ == REDIR_MERGEOUT {
             fn_.typ = REDIR_ERRWRITE;
@@ -1662,10 +1665,10 @@ pub fn tokenize(s: &mut String) {
 /// to `zshtokenize`.
 pub fn shtokenize(s: &mut String) {
     // c:3563
-    let mut flags = crate::ported::zsh_h::ZSHTOK_SUBST; // c:3567
-    if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHGLOB) {
+    let mut flags = ZSHTOK_SUBST; // c:3567
+    if isset(crate::ported::zsh_h::SHGLOB) {
         // c:3568
-        flags |= crate::ported::zsh_h::ZSHTOK_SHGLOB; // c:3569
+        flags |= ZSHTOK_SHGLOB; // c:3569
     }
     zshtokenize(s, flags); // c:3570
 }
@@ -1850,7 +1853,7 @@ pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 {
 #[allow(unused_variables)]
 pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 {
     // c:3697
-    let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
+    let g = G_RANGE.load(Ordering::Relaxed);
     let nl = buf.st_nlink as i64; // c:3708
     if g < 0 {
         (nl < ct) as i32
@@ -2050,8 +2053,8 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
 pub fn qualsheval(filename: &str, expr: &str) -> bool {
     // c:3907
     // c:3912 — save errflag + lastval.
-    let saved_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:3912
-    let saved_lastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3912
+    let saved_errflag = errflag.load(Ordering::Relaxed); // c:3912
+    let saved_lastval = LASTVAL.load(Ordering::Relaxed); // c:3912
                                                                                  // c:3915 — `unsetparam("reply");`
     crate::ported::params::unsetparam("reply"); // c:3915
                                                 // c:3916 — `setsparam("REPLY", ztrdup(name));`. Set in the
@@ -2060,20 +2063,20 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
                                                          // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
                                                          // current ShellExecutor for in-shell evaluation. Falls back to
                                                          // a fresh executor if no ExecutorContext is active.
-    let mut __exec = crate::vm_helper::ShellExecutor::new();
+    let mut __exec = vm_helper::ShellExecutor::new();
     let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
     let rc = __exec.execute_script(expr).unwrap_or(1); // c:3919
-    let ret = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
+    let ret = LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
     let _ = rc;
     // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore
     // pre-call errflag plus any interrupt bit set during eval.
-    let post_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
-    crate::ported::utils::errflag.store(
+    let post_errflag = errflag.load(Ordering::Relaxed);
+    errflag.store(
         saved_errflag | (post_errflag & crate::ported::zsh_h::ERRFLAG_INT),
         Ordering::Relaxed,
     ); // c:3924
        // c:3925 — `lastval = lv;`. Restore pre-call lastval.
-    crate::ported::builtin::LASTVAL.store(saved_lastval, Ordering::Relaxed); // c:3925
+    LASTVAL.store(saved_lastval, Ordering::Relaxed); // c:3925
                                                                              // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
     ret == 0
 }
@@ -2088,7 +2091,7 @@ pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i3
         return 0;
     }
     // c:3953-3964 — opendir + readdir loop, skip "." and ".." entries.
-    match std::fs::read_dir(name) {
+    match fs::read_dir(name) {
         Ok(entries) => entries.filter_map(|e| e.ok()).any(|e| {
             let n = e.file_name();
             let s = n.to_string_lossy();
@@ -2272,13 +2275,13 @@ pub enum qualifier {
 // comparator. The real C `gmatchcmp(Gmatch, Gmatch)` at glob.c:936
 // is now ported as `gmatchcmp(&GlobMatch, &GlobMatch, &[i32], bool)`
 // below. The string-compare case the old name claimed routes
-// through canonical `crate::ported::sort::zstrcmp` (sort.c:191).
+// through canonical `zstrcmp` (sort.c:191).
 
 // `GlobOptions` struct deleted — Rust-only Bag-of-options with no
 // C counterpart. C reads each option directly from the global
 // `opts[]` array via `isset(NULL_GLOB)` / `isset(EXTENDED_GLOB)`
 // / etc. (Src/options.c). The Rust port uses the canonical
-// `crate::ported::options::opt_state_get(name) -> Option<bool>`
+// `opt_state_get(name) -> Option<bool>`
 // which reads from the same global store. Inlined at each
 // callsite as `opt_state_get("name").unwrap_or(default)`.
 
@@ -2390,7 +2393,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
     // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
     // concatenate matches.
-    let brace_ccl = glob_isset(crate::ported::zsh_h::BRACECCL);
+    let brace_ccl = glob_isset(BRACECCL);
     if hasbraces(pattern, brace_ccl) {
         let mut all = Vec::new();
         for variant in xpandbraces(pattern, brace_ccl) {
@@ -2442,13 +2445,13 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // — output marker emission consults the per-glob `gf_markdirs`
     // / `gf_listtypes` flags which the qualifier parser at
     // glob.c:1557-1566 sets.
-    let mark_dirs = glob_isset(crate::ported::zsh_h::MARKDIRS)
+    let mark_dirs = glob_isset(MARKDIRS)
         || state
             .qualifiers
             .as_ref()
             .map(|q| q.mark_dirs)
             .unwrap_or(false);
-    let list_types = glob_isset(crate::ported::zsh_h::LISTTYPES)
+    let list_types = glob_isset(LISTTYPES)
         || state
             .qualifiers
             .as_ref()
@@ -2480,7 +2483,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .collect();
 
     // Handle no matches
-    if results.is_empty() && !glob_isset(crate::ported::zsh_h::NULLGLOB) {
+    if results.is_empty() && !glob_isset(NULLGLOB) {
         results.push(pattern.to_string());
     }
 
@@ -2685,7 +2688,7 @@ fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     let qual_str = &pattern[start + 1..pattern.len() - 1];
     let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
         (true, after)
-    } else if glob_isset(crate::ported::zsh_h::BAREGLOBQUAL) {
+    } else if glob_isset(BAREGLOBQUAL) {
         (false, qual_str)
     } else {
         return (pattern.to_string(), None);
@@ -3097,7 +3100,7 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
                 // strict gate off so bare `**` recurses without `/`.
                 let has_slash = chars.peek() == Some(&'/');
                 let recursive =
-                    has_slash || follow || glob_isset(crate::ported::zsh_h::GLOBSTARSHORT);
+                    has_slash || follow || glob_isset(GLOBSTARSHORT);
                 if has_slash {
                     chars.next();
                 }
@@ -3663,11 +3666,11 @@ mod gs_tt_tests {
     fn gs_normal_covers_all_size_keys() {
         let _g = crate::test_util::global_state_lock();
         // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
-        assert!(GS_NORMAL & GS_SIZE != 0);
-        assert!(GS_NORMAL & GS_ATIME != 0);
-        assert!(GS_NORMAL & GS_MTIME != 0);
-        assert!(GS_NORMAL & GS_CTIME != 0);
-        assert!(GS_NORMAL & GS_LINKS != 0);
+        assert_ne!(GS_NORMAL & GS_SIZE, 0);
+        assert_ne!(GS_NORMAL & GS_ATIME, 0);
+        assert_ne!(GS_NORMAL & GS_MTIME, 0);
+        assert_ne!(GS_NORMAL & GS_CTIME, 0);
+        assert_ne!(GS_NORMAL & GS_LINKS, 0);
     }
 
     #[test]
@@ -4148,15 +4151,15 @@ fn apply_modifier_subst(input: &str, mods_after_s: &str, global: bool) -> (Strin
 /// collapse `.` and `..` components without touching the filesystem.
 fn modifier_abs(s: &str) -> String {
     let base = if s.starts_with('/') {
-        std::path::PathBuf::from(s)
+        PathBuf::from(s)
     } else {
         std::env::current_dir().unwrap_or_default().join(s)
     };
-    let mut out = std::path::PathBuf::new();
+    let mut out = PathBuf::new();
     for c in base.components() {
         match c {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
+            Component::CurDir => {}
+            Component::ParentDir => {
                 out.pop();
             }
             other => out.push(other),
@@ -4171,11 +4174,11 @@ fn modifier_abs(s: &str) -> String {
 /// when the path doesn't exist on disk.
 fn modifier_realpath(s: &str) -> String {
     let base = if s.starts_with('/') {
-        std::path::PathBuf::from(s)
+        PathBuf::from(s)
     } else {
         std::env::current_dir().unwrap_or_default().join(s)
     };
-    match std::fs::canonicalize(&base) {
+    match fs::canonicalize(&base) {
         Ok(p) => p.to_string_lossy().to_string(),
         Err(_) => modifier_abs(s),
     }
@@ -4199,8 +4202,8 @@ fn modifier_command(s: &str) -> String {
         if dir.is_empty() {
             continue;
         }
-        let candidate = std::path::Path::new(dir).join(s);
-        if let Ok(meta) = std::fs::metadata(&candidate) {
+        let candidate = Path::new(dir).join(s);
+        if let Ok(meta) = fs::metadata(&candidate) {
             if meta.is_file() {
                 #[cfg(unix)]
                 {
@@ -4453,12 +4456,12 @@ pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
 /// Strip redundant `.` / `CurDir` segments from relative match paths for
 /// output. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
 /// `read_dir("foo")` yields `foo/bar` — zsh prints the latter shape for both.
-fn glob_emit_path(path: &std::path::Path) -> String {
+fn glob_emit_path(path: &Path) -> String {
     match path.components().next() {
         Some(Component::Prefix(_) | Component::RootDir) => path.to_string_lossy().to_string(),
         None => ".".to_string(),
         _ => {
-            let mut out = std::path::PathBuf::new();
+            let mut out = PathBuf::new();
             for c in path.components() {
                 match c {
                     Component::CurDir => {}
@@ -4484,7 +4487,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// (nullglob / extendedglob / dotglob / caseglob / globstarshort /
 /// bareglobqual / braceccl / markdirs / numericglobsort / …)
 /// directly from the canonical global option store via
-/// `crate::ported::options::opt_state_get` — same path C uses via
+/// `opt_state_get` — same path C uses via
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
 pub fn glob(pattern: &str) -> Vec<String> {
     // c:1214
@@ -4502,14 +4505,14 @@ pub fn glob(pattern: &str) -> Vec<String> {
 /// Port of the `S_ISDIR(stat.st_mode)` test scattered through
 /// Src/glob.c.
 pub fn is_directory(path: &str) -> bool {
-    std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+    fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
 }
 
 /// Check if path is a symlink
 /// Check whether a glob match is a symlink.
 /// Port of the `S_ISLNK(lstat.st_mode)` test in Src/glob.c.
 pub fn is_symlink(path: &str) -> bool {
-    std::fs::symlink_metadata(path)
+    fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
 }
@@ -4520,7 +4523,7 @@ pub fn is_symlink(path: &str) -> bool {
 /// `findcmd()` (Src/exec.c) when adapted for glob targets.
 pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
     // c:4624
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = fs::read_dir(dir) else {
         return usize::MAX;
     };
 
@@ -4765,11 +4768,11 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
             let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
             if has_meta {
                 out.extend(glob_path(&alt));
-            } else if std::path::Path::new(&alt).exists() {
+            } else if Path::new(&alt).exists() {
                 out.push(alt);
             }
         }
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         out.retain(|p| seen.insert(p.clone()));
         out.sort();
         if !out.is_empty() {
@@ -4792,7 +4795,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
                 prefix.trim_end_matches('/').to_string()
             };
             let mut out = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&dir) {
+            if let Ok(entries) = fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.starts_with('.') && no_glob_dots {
@@ -5237,7 +5240,7 @@ mod tests {
     #[test]
     fn in_expandredir_flag_is_zero_at_rest() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(IN_EXPANDREDIR.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(IN_EXPANDREDIR.load(Ordering::SeqCst), 0);
     }
 
     /// c:4306 — `haswilds` honours backslash-escapes: `\*` is a literal
