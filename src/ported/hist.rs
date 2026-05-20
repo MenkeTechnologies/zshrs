@@ -33,6 +33,15 @@ use crate::ported::input::{ingetc, inungetc};
 use crate::ported::utils::{zerr, errflag, ERRFLAG_ERROR};
 use crate::ported::signals::unqueue_signals;
 use crate::ported::lex::LEX_ISFIRSTCH;
+// Names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever').
+use crate::ported::options::dosetopt;
+use crate::ported::zsh_h::{
+    CSHJUNKIEHISTORY, HISTVERIFY, HISTEXPIREDUPSFIRST,
+    INP_ALIAS, INP_HIST, Pound,
+};
+use crate::ported::ztype_h::itok;
+use std::sync::atomic::Ordering::SeqCst;
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -154,7 +163,6 @@ pub fn hist_is_in_word() -> i32 {
 /// }
 /// ```
 pub fn ihwaddc(c: i32) {                                                     // c:357
-    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     // c:360-361 — guard: history line must exist, no error/lex stop,
     // and we're not strictly inside alias-expansion-only input.
     if errflag.load(Ordering::SeqCst) != 0 || lexstop.load(Ordering::SeqCst) {
@@ -248,7 +256,6 @@ pub fn ihwaddc(c: i32) {                                                     // 
 /// for future ZLE wireup but otherwise no-op since chline is
 /// the backing store for both code paths in zshrs.
 pub fn iaddtoline(c: i32) {                                                  // c:397
-    use crate::ported::ztype_h::itok;
     // c:399 — `if (!expanding || lexstop) return;`.
     if expanding.load(Ordering::SeqCst) == 0
         || lexstop.load(Ordering::SeqCst)
@@ -356,7 +363,6 @@ pub fn safeinungetc(c: i32) {                                                // 
 /// }
 /// ```
 pub fn ihgetc() -> i32 {                                                     // c:418
-    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     let mut c: i32 = ingetc()                          // c:420 int c = ingetc();
         .map(|ch| ch as i32)
         .unwrap_or(-1);
@@ -463,7 +469,6 @@ pub static mev: AtomicI64 = AtomicI64::new(-1);                              // 
 /// }
 /// ```
 pub fn histsubchar(c_in: i32) -> i32 {                                       // c:595
-    use crate::ported::zsh_h::{CSHJUNKIEHISTORY, HISTVERIFY};
     let mut c: i32 = c_in;
     let mut farg: i32;                                                       // c:597
     let mut evset: i32 = -1;                                                 // c:597
@@ -1198,7 +1203,6 @@ pub fn nohwe() { /* do nothing */ }                                          // 
 /// history-word table because aliases are pre-expansion and
 /// shouldn't show up as user-typed words in `!:N` etc.
 pub fn ihwbegin(offset: i32) {                                               // c:1656
-    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     // c:1658 — `int pos = hptr - chline + offset;`. The C `hptr` is
     // the current write position into the chline buffer; `pos` is
     // the byte offset from buffer start + caller-supplied offset.
@@ -1532,8 +1536,6 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // 
 /// `keep_going` advances the per-call cursor instead of resetting
 /// it — used by save loops that expire multiple entries in succession.
 pub fn putoldhistentryontop(keep_going: i32) -> i32 {                        // c:1347
-    use crate::ported::zsh_h::{HISTEXPIREDUPSFIRST, HIST_DUP};
-    use std::sync::atomic::Ordering;
 
     thread_local! {
         // c:1349 — `static Histent next = NULL;` (per-evaluator cursor).
@@ -1914,7 +1916,6 @@ pub fn ihwabort() {                                                          // 
 /// alias expansion got closed too — corrupting the chwords
 /// table when an alias expansion ended.
 pub fn ihwend() {                                                            // c:1686
-    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
     let stop = stophist.load(Ordering::SeqCst);
     let active = histactive.load(Ordering::SeqCst);
     let inflags = crate::ported::input::inbufflags.with(|f| f.get());
@@ -2586,7 +2587,6 @@ pub fn casemodify(s: &str, how: i32) -> String {                              //
 /// silently miss the anchor-start in the Rust port — falling
 /// through to substring-match semantics.
 pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String { // c:2336
-    use crate::ported::zsh_h::Pound;                                          // c:2349
     if in_pattern.is_empty() { return s.to_string(); }
     let mut anchor_start = false;
     let mut anchor_end = false;
@@ -2856,7 +2856,6 @@ pub fn quotebreak(s: &str) -> String {                                       // 
 /// `ingetc()` until `stop`/newline/lexstop, honoring `\\`-escape, and
 /// emit a `delimiter expected` error if newline is hit first.
 pub fn hdynread(stop: i32) -> Option<String> {                               // c:2562
-    use std::sync::atomic::Ordering::SeqCst;
     let stop_c = stop as u8 as char;                                         // c:2562 int stop
     let mut buf = String::with_capacity(256);                                // c:2564 bsiz=256
     let mut c: Option<char>;                                                 // c:2564 int c
@@ -2896,8 +2895,6 @@ pub fn hdynread(stop: i32) -> Option<String> {                               // 
 /// `qbang` keeps firing (which can re-trigger via the `c='\\'` step
 /// at the bottom).
 pub fn ihungetc(c: i32) {                                                    // c:989
-    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
-    use std::sync::atomic::Ordering::SeqCst;
     let mut c = c as u8 as char;                                             // c:991 int c
     let mut doit = 1;                                                        // c:991 doit = 1
     while !crate::ported::hist::lexstop.load(SeqCst)                         // c:993 while (!lexstop && !errflag)
@@ -3622,7 +3619,6 @@ pub fn pophiststack() -> i32 {                                                //
 /// WARNING: param names don't match C — Rust=(pop_through, writeflags)
 /// matches C=(pop_through, writeflags) shape; callers updated.
 pub fn saveandpophiststack(mut pop_through: i32, writeflags: i32) -> i32 {    // c:3947
-    use std::sync::atomic::Ordering::SeqCst;
     let stack_pos = histsave_stack_pos.load(SeqCst);
     // c:3949-3953 — non-positive pop_through means "pop relative
     // to current pos": fold to an absolute index.
@@ -4717,8 +4713,6 @@ mod subst_modifier_tests {
     #[test]
     fn savehistfile_short_circuits_on_non_interactive() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::options::dosetopt;
-        use crate::ported::zsh_h::INTERACTIVE;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("hist_test");
         let path_str = path.to_str().unwrap();
@@ -4744,7 +4738,6 @@ mod subst_modifier_tests {
     fn hgetline_truncates_chline_and_resets_globals() {
         let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         // Save state.
         let saved_chline = std::mem::take(&mut *chline.lock().unwrap());
         let saved_hptr = hptr.swap(0, Ordering::SeqCst);
@@ -4788,7 +4781,6 @@ mod subst_modifier_tests {
     fn histbackword_rewinds_hptr_on_even_boundary() {
         let _g = crate::test_util::global_state_lock();
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         // Capture and reset state.
         let saved_pos = chwordpos.swap(0, Ordering::SeqCst);
         let saved_hptr = hptr.swap(0, Ordering::SeqCst);
@@ -5178,7 +5170,6 @@ mod subst_modifier_tests {
     #[test]
     fn ihwbegin_records_hptr_not_chline_len() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
         let _g = hist_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Save state.
         let saved_chline = chline.lock().unwrap().clone();
@@ -5586,7 +5577,6 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_lower_lowercases_uppercase_only() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::CASMOD_LOWER;
         assert_eq!(casemodify("HELLO", CASMOD_LOWER), "hello",
             "c:2226-2228 — uppercase → lowercase");
         // Already lowercase: no change.
@@ -5602,7 +5592,6 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_upper_uppercases_lowercase_only() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::CASMOD_UPPER;
         assert_eq!(casemodify("hello", CASMOD_UPPER), "HELLO",
             "c:2233-2236 — lowercase → uppercase");
         assert_eq!(casemodify("HELLO", CASMOD_UPPER), "HELLO");
@@ -5614,7 +5603,6 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_caps_title_cases_at_word_boundaries() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::CASMOD_CAPS;
         // c:2245-2250 — first letter and post-space letter uppercase;
         // mid-word letters lowercase (c:2251-2253).
         assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World");
@@ -5638,7 +5626,6 @@ mod subst_modifier_tests {
     #[test]
     fn casemodify_caps_skips_combining_chars() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::CASMOD_CAPS;
         // a + combining acute (U+0301) + b — under CAPS, the
         // combiner must NOT reset nextupper. Expected output:
         // `A` + combining acute + `b` (b stays lowercase because
@@ -5656,7 +5643,6 @@ mod subst_modifier_tests {
     #[test]
     fn subst_anchor_head_recognises_pound_token() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::Pound;
         // c:2349 — ASCII '#' anchor at head: matches only prefix.
         assert_eq!(subst("foobar", "#foo", "baz", false), "bazbar",
             "c:2349 ASCII '#' anchor — match at head");
