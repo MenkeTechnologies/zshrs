@@ -461,6 +461,32 @@ pub fn nicechar(c: char) -> String {                                         // 
     nicechar_sel(c, false)                                                   // c:523
 }
 
+/// Port of `is_nicechar(int c)` from `Src/utils.c:531-539`.
+/// ```c
+/// c &= 0xff;
+/// if (ZISPRINT(c)) return 0;
+/// if (c & 0x80)    return !isset(PRINTEIGHTBIT);
+/// return (c == 0x7f || c == '\n' || c == '\t' || c < 0x20);
+/// ```
+/// "Nice" means "needs escape-formatting when printed" — so
+/// returns true for control chars + (under PRINTEIGHTBIT off)
+/// high-bit bytes. The previous Rust port treated all `!c.is_ascii()`
+/// as nice unconditionally — divergent for users running with
+/// `setopt printeightbit` (very common for non-ASCII filenames).
+pub fn is_nicechar(c: char) -> bool {
+    let cu = (c as u32) & 0xff;
+    // c:534 — `if (ZISPRINT(c)) return 0;` — printable ASCII is not nice.
+    if crate::ported::ztype_h::ZISPRINT(cu as u8) {
+        return false;
+    }
+    // c:536 — high-bit byte path.
+    if (cu & 0x80) != 0 {
+        return !crate::ported::zsh_h::isset(crate::ported::zsh_h::PRINTEIGHTBIT);
+    }
+    // c:538 — ASCII control chars (DEL/\n/\t/<0x20).
+    cu == 0x7f || cu == b'\n' as u32 || cu == b'\t' as u32 || cu < 0x20
+}
+
 /// Initialize multibyte state (from utils.c mb_charinit) - no-op in Rust
 /// Port of `mb_charinit` from `Src/utils.c:553`.
 pub fn mb_charinit() {
@@ -2657,20 +2683,91 @@ pub fn zsleep_random(max_us: i64, end_time: i64) -> i32 {                    // 
     }
 }
 
-/// Check before removing directory tree (from utils.c checkrmall)
-/// Port of `checkrmall(char *s)` from `Src/utils.c:2867`.
-/// Rust idiom replacement: delegates to `getquery` (which itself
-/// covers the C prompt+read loop). The C body's two-arm response
-/// table collapses to a single y/Y compare here.
-pub fn checkrmall(s: &str) -> bool {
-    if let Some(c) = getquery(
-        &format!("zsh: sure you want to delete all of {}? [yn] ", s),
-        "yn",
-    ) {
-        c == 'y' || c == 'Y'
-    } else {
-        false
+/// Port of `int checkrmall(char *s)` from `Src/utils.c:2867`.
+///
+/// C body (c:2867-2919): count files in directory `s` (capped at 100,
+/// honoring GLOBDOTS), emit one of 4 prompts based on count, optionally
+/// sleep 10s under RMSTARWAIT, then `getquery("ny", 1)` for confirm.
+///
+/// Previous Rust port was a FAKE — single generic prompt, no file
+/// count, no shout/errflag checks, no RMSTARWAIT, wrong valid-chars
+/// order ("yn" instead of "ny" so 'n' isn't the default-first-arm).
+/// Lost 9 of the 10 C semantic branches.
+pub fn checkrmall(s: &str) -> bool {                                         // c:2867
+    use std::io::Write;
+    // c:2871-2872 — `if (!shout) return 1;` — no controlling tty for
+    // prompt output, default to yes. Rust analogue: if stderr isn't
+    // a tty, skip the prompt and approve.
+    let shout_is_tty = unsafe { libc::isatty(2) != 0 };                      // c:2871
+    if !shout_is_tty {                                                        // c:2871
+        return true;                                                          // c:2872
     }
+    // c:2873-2878 — `if (*s != '/')` build absolute via pwd prefix.
+    let s_owned: String;                                                      // c:2873
+    let s_abs: &str = if !s.starts_with('/') {                               // c:2873
+        let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default(); // c:2874 pwd[1]
+        s_owned = if pwd.len() > 1 {                                          // c:2874 if (pwd[1])
+            crate::ported::string::tricat(&pwd, "/", s)                       // c:2875 zhtricat
+        } else {                                                              // c:2876
+            crate::ported::string::dyncat("/", s)                             // c:2877
+        };
+        s_owned.as_str()
+    } else {
+        s
+    };
+    let max_count: i32 = 100;                                                 // c:2879
+    let mut count: i32 = 0;                                                   // c:2870 count = 0
+    // c:2880-2892 — opendir + readdir loop, count entries (skip
+    // dotfiles when !GLOBDOTS), cap at max_count.
+    let ignoredots = !crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBDOTS); // c:2881
+    for fname in zreaddir(s_abs, 1) {                                         // c:2880 opendir/zreaddir
+        if ignoredots && fname.starts_with('.') {                            // c:2885
+            continue;                                                         // c:2886
+        }
+        count += 1;                                                           // c:2887
+        if count > max_count {                                                // c:2888
+            break;                                                            // c:2889
+        }
+    }
+    // c:2893-2904 — four-arm prompt based on file count.
+    let stderr_h = std::io::stderr();
+    let mut stderr_w = stderr_h.lock();
+    if count > max_count {                                                    // c:2893
+        let _ = write!(stderr_w, "zsh: sure you want to delete more than {} files in ", max_count); // c:2894
+    } else if count == 1 {                                                    // c:2896
+        let _ = write!(stderr_w, "zsh: sure you want to delete the only file in "); // c:2897
+    } else if count > 0 {                                                     // c:2898
+        let _ = write!(stderr_w, "zsh: sure you want to delete all {} files in ", count); // c:2899
+    } else {                                                                  // c:2901
+        // c:2902 — `We don't know how many files the glob will expand to`
+        let _ = write!(stderr_w, "zsh: sure you want to delete all the files in "); // c:2903
+    }
+    // c:2905 — `nicezputs(s, shout)` — escape non-printables in path.
+    let _ = write!(stderr_w, "{}", nicezputs(s_abs));                         // c:2905
+    // c:2906-2912 — RMSTARWAIT: print "? (waiting ten seconds)",
+    // flush, beep, sleep 10, then newline.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::RMSTARWAIT) {       // c:2906
+        let _ = write!(stderr_w, "? (waiting ten seconds)");                  // c:2907
+        let _ = stderr_w.flush();                                             // c:2908
+        drop(stderr_w);                                                       // release lock around zbeep + sleep
+        zbeep();                                                              // c:2909
+        std::thread::sleep(std::time::Duration::from_secs(10));               // c:2910
+        let _ = writeln!(std::io::stderr());                                  // c:2911 fputc('\n', shout)
+    } else {
+        drop(stderr_w);
+    }
+    // c:2913-2914 — `if (errflag) return 0;`
+    if errflag.load(Ordering::Relaxed) != 0 {                                 // c:2913
+        return false;                                                         // c:2914
+    }
+    // c:2915-2917 — emit "[yn]? ", flush, beep.
+    let prompt = " [yn]? ";                                                   // c:2915
+    let _ = std::io::stderr().flush();                                        // c:2916
+    zbeep();                                                                  // c:2917
+    // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
+    // char is 'n' (no) — getquery's first valid char is the default
+    // returned when the user just hits Enter.
+    getquery(prompt, "ny") == Some('y')                                       // c:2918
 }
 
 /// Port of `ssize_t read_loop(int fd, char *buf, size_t len)` from
@@ -6425,50 +6522,23 @@ pub fn gethostname() -> String {
 // matches C's `int zchdir(char *dir)` signature (returns i32, not
 // bool). Zero callers used the utils.rs bool variant.
 
-/// Rust wrapper around libc `realpath(3)` — no zsh C counterpart
-/// (zsh uses libc directly via the `realpath` symbol). Provided
-/// here for the same callsite shape as C's `realpath(path, NULL)`
-/// idiom that some zsh paths use (e.g. `:A` modifier fallback).
-///
-/// WARNING: Rust-only helper, not a port of any zsh C function.
-/// Wraps `std::fs::canonicalize` (which is itself a `realpath(3)`
-/// equivalent on Unix). See [`xsymlinks`] for the path-canonicalize
-/// equivalent of zsh's actual `:a`/`:A` modifier impl.
-pub fn realpath(path: &str) -> Option<String> {
-    std::fs::canonicalize(path)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-}
-
-/// Create directory
-pub fn mkdir(path: &str) -> bool {
-    std::fs::create_dir(path).is_ok()
-}
-
-/// Create symlink
-pub fn symlink(src: &str, dst: &str) -> bool {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(src, dst).is_ok()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (src, dst);
-        false
-    }
-}
-
-/// Read symlink target
-pub fn readlink(path: &str) -> Option<String> {
-    std::fs::read_link(path)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-}
-
-/// Get environment variable
-pub fn getenv(name: &str) -> Option<String> {
-    std::env::var(name).ok()
-}
+// `realpath` / `mkdir` / `symlink` / `readlink` / `getenv` DELETED —
+// five Rust-only convenience wrappers around std::fs / std::env /
+// std::os::unix::fs with ZERO callers across the tree. Each was a
+// thin std-lib re-export with no zsh C counterpart:
+//   - realpath  → std::fs::canonicalize (libc realpath(3) — not in
+//                 utils.c; the zsh source uses chrealpath at hist.c:1971)
+//   - mkdir     → std::fs::create_dir (libc mkdir(2) — zsh's analogue
+//                 is Modules/files.c::bin_mkdir, not a utils.c helper)
+//   - symlink   → std::os::unix::fs::symlink (libc symlink(2))
+//   - readlink  → std::fs::read_link (libc readlink(2))
+//   - getenv    → std::env::var (libc getenv(3) — zsh's analogue is
+//                 zgetenv in compat.c)
+// PORT.md Rule 0/A: names must exist in upstream zsh C source as a
+// `<name>(` function. None of these qualify; with zero callers they
+// were dead code by definition. Callers needing the same semantics
+// route through the canonical port (chrealpath / bin_mkdir / etc.)
+// or std::fs directly.
 
 /// Per-prompt callback registry.
 /// Port of the static `prepromptfns` LinkList in Src/utils.c:1319.
