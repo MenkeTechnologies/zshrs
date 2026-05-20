@@ -15,7 +15,7 @@ use crate::ported::zsh_h::{
     redir, wordcode, estate, Eprog, EC_NODUP, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
     COND_STREQ, COND_STRDEQ, COND_STRNEQ, IS_READFD, JOBTEXTSIZE, META, REDIRF_FROM_HEREDOC,
     REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW,
-    REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
+    REDIR_CLOSE, REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
     REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE,
     WC_ARITH, WC_ASSIGN, WC_AUTOFN, WC_CASE, WC_CASE_AND, WC_CASE_OR, WC_COND, WC_COUNT, WC_CURSH, WC_END,
     WC_FOR, WC_FUNCDEF, WC_IF, WC_IF_ELIF, WC_LIST, WC_PIPE, WC_PIPE_END, WC_PIPE_MID, WC_REPEAT,
@@ -37,6 +37,8 @@ pub fn is_cond_binary_op(str: &str) -> i32 {
 pub fn dec_tindent() {
     tindent.with(|t| {
         let mut v = t.borrow_mut();
+        // c:72 — DPUTS(tindent == 0, "attempting to decrement tindent below zero")
+        crate::DPUTS!(*v == 0, "attempting to decrement tindent below zero"); // c:72
         if *v > 0 {
             *v -= 1;
         }
@@ -1184,6 +1186,8 @@ pub fn gettext2(state: &mut estate) {
                 stack = 1;
             }
             _ => {
+                // c:1010 — DPUTS(1, "unknown word code in gettext2()")
+                crate::DPUTS!(true, "unknown word code in gettext2()");      // c:1010
                 return;
             }
         }
@@ -1256,7 +1260,17 @@ pub fn getredirs(redirs: &LinkList<redir>) {
                 }
                 tpush(b' ' as i32);
             }
-            _ => {}
+            // c:1106-1110 — REDIR_CLOSE arm. DPUTS asserts it's a BUG
+            // for the textual writer to ever see this; if reached, emit
+            // the canonical `N>&-` text anyway.
+            t if t == REDIR_CLOSE => {                                        // c:1106
+                crate::DPUTS!(true, "BUG: CLOSE in getredirs()");            // c:1107
+                taddchr(b'0' as i32 + f.fd1);                                 // c:1108
+                taddstr(">&- ");                                              // c:1109
+            }
+            _ => {                                                            // c:1111 default
+                crate::DPUTS!(true, "BUG: unknown redirection in getredirs()"); // c:1112
+            }
         }
     }
     tbuf.with(|tb| {
