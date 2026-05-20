@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 
 // =============================================================================
 // Lexer-domain types — `enum lextok` (lextok), reserved-word table. These
@@ -28,14 +29,15 @@ use std::collections::VecDeque;
 // OutangProc → OutangProc) so the lex.rs body keeps the original C-style
 // short names without colliding with `STRING_LEX` (the lextok=34 constant).
 use crate::ported::prompt::{cmdpop, cmdpush};
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
-    isset, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace,
-    Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar,
-    Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde, ALIASESOPT,
-    CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR, CS_CMDSUBST, CS_CURSH,
-    CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE, HISTALLOWCLOBBER,
-    IGNOREBRACES, IGNORECLOSEBRACES, INTERACTIVECOMMENTS, KSHGLOB, META, POSIXALIASES, RCQUOTES,
-    SHGLOB, SHINSTDIN, SHORTLOOPS, SHORTREPEAT,
+    isset, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, ERRFLAG_INT, Hat, Inang, ZCONTEXT_LEX, ZCONTEXT_PARSE,
+    Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack,
+    Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+    ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
+    CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE,
+    HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES, INTERACTIVECOMMENTS, KSHGLOB, META,
+    POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS, SHORTREPEAT,
 };
 
 use crate::zsh_h::lex_stack;
@@ -423,7 +425,6 @@ pub const LX2_META: u8 = 21;
 /// `#`/`^` → Star/Quest/Inbrace/Inbrack/Stringg/Tilde/Pound/Hat).
 pub fn initlextabs() {
     // c:410
-    use crate::ported::zsh_h::{Hat, Inbrace, Inbrack, Pound, Quest, Star, Stringg, Tilde, META};
     let a1 = LEXACT1.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
     let a2 = LEXACT2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
     let t2 = LEXTOK2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
@@ -735,7 +736,6 @@ pub use super::zsh_h::{
 // helpers wrapping the flat operations C inlines at lex.c:451+ (`add`,
 // etc.) — they're carried here as helpers rather than re-inlining
 // ~50 lines of ptr/len/siz arithmetic across 24 call sites.
-use crate::ported::zsh_h::lexbufstate;
 
 // WARNING: NOT IN LEX.C — Rust-only convenience over C's flat lexbuf
 // operations at lex.c:451+ (`add`, plus inline `*lexbuf.ptr = '\0'`
@@ -2706,9 +2706,6 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// need to know the exact stop position, but nothing in zshrs's
 /// expansion layer uses that yet.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
-    use crate::ported::utils::errflag;
-    use crate::ported::zsh_h::{Nularg, ERRFLAG_INT};
-    use std::sync::atomic::Ordering;
     // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`. C nulstring
     // is `{Nularg, 0}` (0xa1, NUL) — defined in Src/subst.c:36. A
     // single-Nularg input is the empty-arg sentinel and returns
@@ -2780,7 +2777,6 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 /// — if the cursor (`zlemetacs`) falls inside that range — writes
 /// `wb`/`we` and clears `lexflags`.
 pub fn gotword() {
-    use std::sync::atomic::Ordering;
     let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
     let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
     let addedx = crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst);
@@ -3218,7 +3214,6 @@ pub fn zshlex_raw_back_to_mark(mark: i64) {
 /// depth directly without re-entering the parser. Same
 /// invariant: stops at the matching `)`.
 fn skipcomm() -> Result<(), ()> {
-    use crate::ported::zsh_h::{ZCONTEXT_LEX, ZCONTEXT_PARSE};
     // c:2094-2225 — `skipcomm`. Captures the verbatim text of a
     // `$(...)` / `<(...)` / `>(...)` body into the parent token via
     // C's lex_add_raw / lexbuf_raw mechanism (lex.c:2098-2149):
@@ -4696,7 +4691,6 @@ mod tests {
     #[test]
     fn parse_subst_string_handles_nulstring_sentinel() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         // Clear errflag so other tests don't poison the assertion.
         crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         // c:1802 — empty input is a no-op success.
@@ -4720,9 +4714,6 @@ mod tests {
     #[test]
     fn parse_subst_string_restores_errflag_after_parse() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::utils::errflag;
-        use crate::ported::zsh_h::ERRFLAG_ERROR;
-        use std::sync::atomic::Ordering;
         // Pre-call: errflag clear. Post-call on simple input: still clear.
         errflag.store(0, Ordering::Relaxed);
         let _ = parse_subst_string("foo");
