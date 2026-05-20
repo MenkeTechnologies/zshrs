@@ -28,6 +28,21 @@
 // `do_single` / `do_allmatches`. zshrs's port routes those
 // through the executor's completion state directly.
 
+use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::Relaxed;
+
+use crate::ported::zle::comp_h::{
+    Aminfo, Cldata, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED, CGF_ROWS, CMF_ALL, CMF_DISPLINE,
+    CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_ROWS,
+};
+use crate::ported::zle::compcore::{
+    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc, nmatches as nmatches_g,
+    oldins, oldlist, MINFO,
+};
+use crate::ported::zle::complete::COMPLISTMAX;
+use crate::ported::zle::computil::CM_SPACE;
+use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+use crate::ported::zsh_h::{isset, USEZLE};
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 #[allow(unused_imports)]
@@ -251,7 +266,6 @@ pub fn hasbrpsfx(s: &str) -> bool {
 /// WARNING: param names don't match C — Rust=(matches) vs C=()
 pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:744
-    use std::sync::atomic::Ordering;
     // c:748 — `menucmp = menuacc = 0`.
     crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
     // c:763 — `lastambig = 1`.
@@ -369,9 +383,6 @@ pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
 /// WARNING: param names don't match C — Rust=(matches, current, forward) vs C=(lst)
 pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) {
     // c:1253
-    use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
-    use std::sync::atomic::Ordering;
     // c:1258 — `if (lst == COMP_LIST_COMPLETE) { showinglist = -2; return; }`.
     // We don't have a `lst` param at this signature; the listing-mode
     // call site (compresult.c via do_menucmp(lst==LIST_COMPLETE)) uses
@@ -512,11 +523,6 @@ pub fn comp_mod(mut v: i32, m: i32) -> i32 {
 /// pick through `do_single`.
 pub fn do_ambig_menu() -> i32 {
     // c:1381
-    use crate::ported::zle::compcore::{
-        amatches, iforcemenu, insmnum, lastpermmnum, menuacc, oldins, oldlist, MINFO,
-    };
-    use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
-    use std::sync::atomic::Ordering;
 
     // c:1386 — `if (iforcemenu == -1) do_ambiguous();`
     if iforcemenu.load(Ordering::Relaxed) == -1 {
@@ -662,7 +668,6 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {
 ///                    (strstr(v,"messages")?2:0)) : 0;`
 pub fn comp_list(v: Option<&str>) {
     // c:1468
-    use std::sync::atomic::Ordering;
     let mut g = crate::ported::zle::complete::COMPLIST // c:1470 zsfree+assign
         .get_or_init(|| std::sync::Mutex::new(String::new()))
         .lock()
@@ -699,7 +704,6 @@ pub fn comp_list(v: Option<&str>) {
 /// dropped (only CMF_HIDE filters).
 pub fn skipnolist(p: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {
     // c:1481
-    use crate::ported::zle::comp_h::{CMF_DISPLINE, CMF_HIDE, CMF_MULT, CMF_NOLIST};
     // c:1483 — `mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT)) | CMF_HIDE`.
     let mask = if showall != 0 {
         0
@@ -728,8 +732,6 @@ pub fn skipnolist(p: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usi
 /// updated, 0 when the cached snapshot is still valid.
 pub fn calclist(showall: i32) -> i32 {
     // c:1495
-    use crate::ported::zle::comp_h::*;
-    use std::sync::atomic::Ordering::Relaxed;
 
     let invcount = INVCOUNT.load(Relaxed);
     let onlyexpl_v = crate::ported::zle::compcore::onlyexpl.load(Relaxed);
@@ -1238,12 +1240,6 @@ pub fn calclist(showall: i32) -> i32 {
 ///     `minfo.asked = 1 or 2`. Else return based on previous asked.
 pub fn asklist() -> i32 {
     // c:1925
-    use crate::ported::zle::compcore::MINFO;
-    use crate::ported::zle::complete::COMPLISTMAX;
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
-    use crate::ported::zle::zle_refresh::{CLEARFLAG, LASTLISTLEN};
-    use crate::ported::zsh_h::{isset, USEZLE};
-    use std::sync::atomic::Ordering;
 
     // c:1928 — `trashzle(); showinglist = listshown = 0; lastlistlen = 0`.
     crate::ported::zle::zle_main::trashzle(); // c:1928
@@ -1362,8 +1358,6 @@ thread_local! {
 /// WARNING: param names don't match C — Rust=(over, showall) vs C=(over, printm, showall)
 pub fn printlist(over: i32, showall: i32) -> i32 {
     // c:1978
-    use crate::ported::zle::comp_h::{CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
-    use std::sync::atomic::Ordering;
     // c:1985 — `printlist` writes the entire match listing to
     //          `shout`. Resolve once and reuse for every emission so
     //          a single SHTTY load covers the whole render.
@@ -1519,8 +1513,6 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
 /// WARNING: param names don't match C — Rust=() vs C=(all)
 pub fn bld_all_str() -> String {
     // c:2187
-    use crate::ported::zle::comp_h::{CMF_ALL, CMF_HIDE};
-    use std::sync::atomic::Ordering;
 
     let groups = crate::ported::zle::compcore::amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
@@ -1677,8 +1669,6 @@ pub fn iprintm(
 /// otherwise calls `printlist(0, iprintm, 0)`.
 pub fn ilistmatches() -> i32 {
     // c:2284
-    use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
-    use std::sync::atomic::Ordering;
     let _ = calclist(0); // c:2286
                          // c:2288 — bail when listdat.nlines == 0 (no matches to display).
     let nlines = crate::ported::zle::compcore::listdat
@@ -1705,9 +1695,6 @@ pub fn ilistmatches() -> i32 {
 /// user hooks can override the default `ilistmatches` rendering.
 pub fn list_matches() -> i32 {
     // c:2304
-    use crate::ported::zle::compcore::{amatches, nmatches as nmatches_g};
-    use crate::ported::zle::zle_tricky::VALIDLIST;
-    use std::sync::atomic::Ordering;
     if VALIDLIST.load(Ordering::SeqCst) == 0 {
         // c:2311
         crate::ported::zle::zle_utils::showmsg("BUG: listmatches called with bogus list");
@@ -1753,12 +1740,6 @@ pub fn list_matches() -> i32 {
 /// + `amatches`.
 pub fn invalidate_list() -> i32 {
     // c:2334
-    use crate::ported::zle::compcore::{
-        amatches, fromcomp, lastmatches, menuacc, nmatches as nmatches_g,
-    };
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
-    use crate::ported::zle::zle_tricky::{LASTAMBIG, MENUCMP, VALIDLIST};
-    use std::sync::atomic::Ordering;
 
     INVCOUNT.fetch_add(1, Ordering::SeqCst); // c:2336
     if VALIDLIST.load(Ordering::SeqCst) != 0 {
@@ -1795,7 +1776,6 @@ pub fn invalidate_list() -> i32 {
         ld.valid = 0;
     }
     // c:2347-2348 — `if (listshown < 0) listshown = 0`.
-    use crate::ported::zle::zle_refresh::LISTSHOWN;
     if LISTSHOWN.load(Ordering::SeqCst) < 0 {
         LISTSHOWN.store(0, Ordering::SeqCst);
     }
@@ -1840,7 +1820,6 @@ mod tests {
     fn cline_str_emits_word_anchor() {
         let _g = crate::test_util::global_state_lock();
         // c:282 — non-CLF_LINE node emits `word`.
-        use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut n = Cline::default();
         n.word = Some("hello".to_string());
@@ -1852,7 +1831,6 @@ mod tests {
     fn cline_str_emits_line_anchor_when_clf_line_set() {
         let _g = crate::test_util::global_state_lock();
         // c:282 — CLF_LINE node emits `line` instead of `word`.
-        use crate::ported::zle::comp_h::{Cline, CLF_LINE};
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut n = Cline::default();
         n.flags = CLF_LINE;
@@ -1866,7 +1844,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:214 — olen!=0 && !CLF_SUF && !prefix → emit `orig` (not
         //          the prefix-walk + word path).
-        use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut n = Cline::default();
         n.orig = Some("original".to_string());
@@ -1881,7 +1858,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:219-235 — prefix sub-list walked when olen==0 or
         //              CLF_SUF set.
-        use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut p2 = Cline::default();
         p2.word = Some("ond".to_string());
@@ -1898,7 +1874,6 @@ mod tests {
     fn cline_str_walks_next_chain() {
         let _g = crate::test_util::global_state_lock();
         // c:165 — top-level walk via `l = l->next`.
-        use crate::ported::zle::comp_h::Cline;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut n2 = Cline::default();
         n2.word = Some("B".to_string());
@@ -1992,8 +1967,6 @@ mod tests {
     fn comp_list_sets_onlyexpl() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zle::compcore::onlyexpl;
-        use std::sync::atomic::Ordering;
         // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
         comp_list(Some("expl"));
         assert_eq!(onlyexpl.load(Ordering::SeqCst), 1);
@@ -2011,7 +1984,6 @@ mod tests {
     fn skipnolist_skips_hide_and_nolist() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zle::comp_h::{Cmatch, CMF_HIDE, CMF_NOLIST};
         let mut a = Cmatch::default();
         a.flags = CMF_NOLIST;
         let mut b = Cmatch::default();
@@ -2026,7 +1998,6 @@ mod tests {
     fn skipnolist_showall_keeps_nolist() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zle::comp_h::{Cmatch, CMF_NOLIST};
         let mut a = Cmatch::default();
         a.flags = CMF_NOLIST;
         let v = vec![a];
@@ -2038,7 +2009,6 @@ mod tests {
     fn skipnolist_skips_disp_displine() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zle::comp_h::{Cmatch, CMF_DISPLINE};
         let mut a = Cmatch::default();
         a.disp = Some("display".into());
         a.flags = CMF_DISPLINE;
