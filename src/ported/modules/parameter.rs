@@ -47,7 +47,10 @@ pub fn paramtypestr(pm: &crate::ported::zsh_h::param) -> String {            // 
         PM_INTEGER => "integer".to_string(),                                 // c:56
         PM_EFLOAT | PM_FFLOAT => "float".to_string(),                        // c:57-58
         PM_HASHED => "association".to_string(),                              // c:59
-        _ => String::new(),                                                  // c:61 DPUTS — bug branch
+        _ => {                                                                // c:60 default
+            crate::DPUTS!(true, "BUG: type not handled in parameter");      // c:61
+            String::new()                                                    // c:62
+        }
     };
 
     if pm.level != 0       { val.push_str("-local"); }                       // c:63-64
