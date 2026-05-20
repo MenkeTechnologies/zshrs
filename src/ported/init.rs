@@ -2,7 +2,12 @@
 //!
 //! Port of Src/init.c
 
-use crate::zsh_h::ZEXIT_NORMAL;
+use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
+use crate::ported::lex::ENDINPUT;
+use crate::zsh_h::{
+    islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
+    HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
+};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 // =========================================================================
@@ -883,10 +888,6 @@ pub fn init_signals() {
 /// GLOBALRCS, PRIVILEGED, INTERACTIVE.
 pub fn run_init_scripts() {
     // c:1445
-    use crate::ported::zsh_h::islogin;
-    use crate::ported::zsh_h::{
-        isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, INTERACTIVE, PRIVILEGED, RCS,
-    };
 
     // c:1447 — noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;
     //          (noerrexit global not surfaced; the C bits are
@@ -1250,8 +1251,6 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
 /// ```
 pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
     // c:113
-    use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
-    use crate::ported::zsh_h::{isset, ENDINPUT, INTERACTIVE, LEXERR, SHINSTDIN, SINGLECOMMAND};
 
     // c:exec.c: `int subsh` — not yet ported. Local stub: never in
     // a subshell from within the REPL loop (zshrs spawns subshells
