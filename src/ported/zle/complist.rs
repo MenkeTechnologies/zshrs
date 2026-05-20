@@ -24,7 +24,12 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering as O;
 
+use crate::ported::init::SHTTY;
+use crate::ported::params::getsparam;
+use crate::ported::utils::{errflag, write_loop};
 use crate::ported::zle::comp_h::{CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
+use crate::ported::zle::compcore::ZLEMETACS;
+use crate::ported::zle::zle_refresh::{tcout, NLNCT};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
@@ -280,8 +285,8 @@ pub fn getcols(_unused: &str) -> i32 {
     crate::ported::signals::queue_signals(); // c:512
 
     // c:513-514 — `if (!(s = getsparam_u("ZLS_COLORS")) && !(s = getsparam_u("ZLS_COLOURS")))`
-    let s_opt = crate::ported::params::getsparam("ZLS_COLORS")
-        .or_else(|| crate::ported::params::getsparam("ZLS_COLOURS"));
+    let s_opt = getsparam("ZLS_COLORS")
+        .or_else(|| getsparam("ZLS_COLOURS"));
 
     if s_opt.is_none() {
         // c:513
@@ -414,10 +419,10 @@ pub fn zlrputs(cap: &str) -> i32 {
     if cap.is_empty() {
         return 0;
     }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
     let s = format!("\x1b[{}m", cap);
-    let _ = crate::ported::utils::write_loop(out, s.as_bytes());
+    let _ = write_loop(out, s.as_bytes());
     0
 }
 
@@ -459,15 +464,15 @@ pub fn cleareol() {
     if MLBEG.load(Ordering::Relaxed) < 0 {
         return;
     }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
     // c:611-612 — `if (*last_cap) zcoff();` — emit SGR reset.
     if !LAST_CAP.lock().map(|s| s.is_empty()).unwrap_or(true) {
-        let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+        let _ = write_loop(out, b"\x1b[0m");
         LAST_CAP.lock().ok().map(|mut s| s.clear());
     }
     // c:613 — `tcout(TCCLEAREOL);` — CSI K.
-    let _ = crate::ported::utils::write_loop(out, b"\x1b[K");
+    let _ = write_loop(out, b"\x1b[K");
 }
 
 /// Port of `initiscol()` from Src/Zle/complist.c:618.
@@ -537,7 +542,7 @@ pub fn initiscol() -> i32 {
 ///    SGR-reset + the new color, pushes onto curiscols[].
 pub fn doiscol(pos: i32) -> i32 {
     // c:635
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
 
     // c:639-645 — pop finished regions.
@@ -555,7 +560,7 @@ pub fn doiscol(pos: i32) -> i32 {
         let curiscol = CURISCOL.load(Ordering::Relaxed);
         if curiscol > 0 {
             // c:642 — `zcputs(NULL, COL_NO);` — SGR reset.
-            let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+            let _ = write_loop(out, b"\x1b[0m");
             // c:643 — `zlrputs(curiscols[--curiscol]);`
             let new_idx = curiscol - 1;
             CURISCOL.store(new_idx, Ordering::Relaxed);
@@ -624,7 +629,7 @@ pub fn doiscol(pos: i32) -> i32 {
                 }
             }
             // c:659-660 — `zcputs(NULL, COL_NO); zlrputs(*patcols);`
-            let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+            let _ = write_loop(out, b"\x1b[0m");
             let _ = zlrputs(&cap_now);
             // c:661 — `curiscols[++curiscol] = *patcols;`
             let new_idx = CURISCOL.fetch_add(1, Ordering::Relaxed) + 1;
@@ -688,9 +693,9 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {
     if out.is_empty() {
         return 0;
     }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, &out);
+    let _ = write_loop(out_fd, &out);
     0
 }
 
@@ -747,9 +752,9 @@ pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
     //          emit both as a single write (CSI K + LF).
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, b"\x1b[K\n");
+    let _ = write_loop(out_fd, b"\x1b[K\n");
     // c:1058-1063 — scroll-prompt branch needs `mscroll`/`mrestlines`/
     //                `asklistscroll` substrate; skipped until those land.
     0
@@ -848,9 +853,9 @@ pub fn compprintfmt(
                     let s = n.to_string();
                     if dopr == 1 {
                         use std::sync::atomic::Ordering as O;
-                        let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+                        let fd = SHTTY.load(O::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
-                        let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());
+                        let _ = write_loop(out_fd, s.as_bytes());
                     }
                     l += s.len() as i32;
                     cc += s.len() as i32;
@@ -870,9 +875,9 @@ pub fn compprintfmt(
                     };
                     if dopr == 1 {
                         use std::sync::atomic::Ordering as O;
-                        let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+                        let fd = SHTTY.load(O::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
-                        let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());
+                        let _ = write_loop(out_fd, s.as_bytes());
                     }
                     l += s.len() as i32;
                     cc += s.len() as i32;
@@ -886,11 +891,11 @@ pub fn compprintfmt(
             // c:literal char
             if dopr == 1 {
                 use std::sync::atomic::Ordering as O;
-                let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+                let fd = SHTTY.load(O::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let mut buf = [0u8; 4];
                 let bs = c.encode_utf8(&mut buf).as_bytes();
-                let _ = crate::ported::utils::write_loop(out_fd, bs);
+                let _ = write_loop(out_fd, bs);
             }
             l += 1;
             cc += 1;
@@ -940,9 +945,9 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {
     if out.is_empty() {
         return 0;
     }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, &out); // c:1356 putc loop
+    let _ = write_loop(out_fd, &out); // c:1356 putc loop
     0
 }
 
@@ -968,7 +973,7 @@ pub fn compprintlist(showall: i32) -> i32 {
     let mnew = MNEW.load(Ordering::SeqCst);
     let mhasstat = MHASSTAT.load(Ordering::SeqCst);
     let zterm_lines = crate::ported::utils::adjustlines() as i32;
-    let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
+    let nlnct = NLNCT.load(Ordering::SeqCst);
     let invcount = crate::ported::zle::compresult::INVCOUNT.load(Ordering::SeqCst);
 
     MFIRSTL.store(-1, Ordering::SeqCst); // c:1381
@@ -1012,11 +1017,11 @@ pub fn compprintlist(showall: i32) -> i32 {
         cl = -1; // c:1397
         if tcd_avail {
             // c:1398
-            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); // c:1399
+            tcout("TCCLEAREOD"); // c:1399
         }
     } else if mlbeg >= 0 && !tceol_avail && tcd_avail {
         // c:1400
-        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD"); // c:1401
+        tcout("TCCLEAREOD"); // c:1401
     }
 
     // c:1403-1679 — walk amatches groups.
@@ -1035,7 +1040,7 @@ pub fn compprintlist(showall: i32) -> i32 {
 
     'outer: for g in &groups {
         // c:1404
-        if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+        if errflag.load(Ordering::SeqCst) != 0 {
             // c:1404 !errflag
             break;
         }
@@ -1052,7 +1057,7 @@ pub fn compprintlist(showall: i32) -> i32 {
             // c:1412
             for e in &g.expls {
                 // c:1418
-                if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+                if errflag.load(Ordering::SeqCst) != 0 {
                     break 'outer;
                 }
                 let valid = (e.count != 0 || e.always != 0)                  // c:1419
@@ -1074,7 +1079,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 cl = -1; // c:1428
                                 if tcd_avail {
                                     // c:1429
-                                    crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                    tcout("TCCLEAREOD");
                                 }
                             }
                         }
@@ -1112,7 +1117,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                         if cl <= 1 {
                             cl = -1;
                             if tcd_avail {
-                                crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                tcout("TCCLEAREOD");
                             }
                         }
                     }
@@ -1139,7 +1144,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                     if cl <= 1 {
                         cl = -1;
                         if tcd_avail {
-                            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                            tcout("TCCLEAREOD");
                         }
                     }
                 }
@@ -1201,7 +1206,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 if cl <= 1 {
                                     cl = -1;
                                     if tcd_avail {
-                                        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                        tcout("TCCLEAREOD");
                                     }
                                 }
                             }
@@ -1231,7 +1236,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                             if cl <= 1 {
                                 cl = -1;
                                 if tcd_avail {
-                                    crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                    tcout("TCCLEAREOD");
                                 }
                             }
                         }
@@ -1254,7 +1259,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                     if cl <= 1 {
                         cl = -1;
                         if tcd_avail {
-                            crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                            tcout("TCCLEAREOD");
                         }
                     }
                 }
@@ -1273,7 +1278,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                 }
             }
             let mut n = g.dcount;
-            while n > 0 && nl_cnt > 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) == 0 {
+            while n > 0 && nl_cnt > 0 && errflag.load(Ordering::SeqCst) == 0 {
                 if last_type == 0 && ml >= mlbeg {
                     // c:1612
                     last_type = 3;
@@ -1285,7 +1290,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                 let mut i = g.cols; // c:1622
                 mc = 0;
                 let mut q_idx = p_idx;
-                while n > 0 && i > 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) == 0 {
+                while n > 0 && i > 0 && errflag.load(Ordering::SeqCst) == 0 {
                     i -= 1;
                     let wid = if !g.widths.is_empty() {
                         // c:1626
@@ -1326,7 +1331,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 if cl < 1 {
                                     cl = -1;
                                     if tcd_avail {
-                                        crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                        tcout("TCCLEAREOD");
                                     }
                                 }
                             }
@@ -1389,7 +1394,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                         if cl <= 1 {
                             cl = -1;
                             if tcd_avail {
-                                crate::ported::zle::zle_refresh::tcout("TCCLEAREOD");
+                                tcout("TCCLEAREOD");
                             }
                         }
                     }
@@ -1541,9 +1546,9 @@ pub fn clprintm(
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
                 use std::sync::atomic::Ordering as O;
-                let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+                let fd = SHTTY.load(O::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
-                let _ = crate::ported::utils::write_loop(out_fd, pad_str.as_bytes());
+                let _ = write_loop(out_fd, pad_str.as_bytes());
                 // c:1749 — zcoff() reset
             }
             MLPRINTED.store(0, Ordering::SeqCst); // c:1751
@@ -1646,9 +1651,9 @@ pub fn clprintm(
         // Emit raw — full clnicezputs (escape-aware writer) deferred;
         // the cell still receives the visible text.
         use std::sync::atomic::Ordering as O;
-        let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+        let fd = SHTTY.load(O::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = crate::ported::utils::write_loop(out_fd, display.as_bytes());
+        let _ = write_loop(out_fd, display.as_bytes());
 
         let len_str = display.chars().count() as i32;
         let lines = if len_str > 0 {
@@ -1666,7 +1671,7 @@ pub fn clprintm(
         let mut emitted_marker = 0i32;
         if cgf_files && modec != 0 {
             // c:1882
-            let _ = crate::ported::utils::write_loop(out_fd, &[modec]); // c:1887
+            let _ = write_loop(out_fd, &[modec]); // c:1887
             emitted_marker = 1; // c:1888 len++
         }
 
@@ -1676,7 +1681,7 @@ pub fn clprintm(
         if pad > 0 {
             // c:1890
             let pad_str = " ".repeat(pad);
-            let _ = crate::ported::utils::write_loop(out_fd, pad_str.as_bytes());
+            let _ = write_loop(out_fd, pad_str.as_bytes());
             // c:1896
         }
     }
@@ -1818,9 +1823,9 @@ pub fn singledraw() -> i32 {
         crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
-    let fd = crate::ported::init::SHTTY.load(O::Relaxed);
+    let fd = SHTTY.load(O::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, b"\r");
+    let _ = write_loop(out_fd, b"\r");
 
     // c:1964-1965 — relative down-move to second cell.
     if md2 != md1 {
@@ -1851,7 +1856,7 @@ pub fn singledraw() -> i32 {
         // c:1972
         crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1973
     }
-    let _ = crate::ported::utils::write_loop(out_fd, b"\r"); // c:1974
+    let _ = write_loop(out_fd, b"\r"); // c:1974
 
     let _ = (mcc1, mcc2);
     0 // c:1986
@@ -1918,13 +1923,13 @@ pub fn complistmatches() -> i32 {
     // c:2007-2012 — early-exit: list too tall or errflag set.
     let zterm_lines = crate::ported::utils::adjustlines() as i32;
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
-    let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
+    let nlnct = NLNCT.load(Ordering::SeqCst);
     let mselect = MSELECT.load(Ordering::SeqCst);
     let minfo_asked = crate::ported::zle::compcore::MINFO
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.asked))
         .unwrap_or(0);
-    let errflag_v = crate::ported::utils::errflag.load(Ordering::SeqCst);
+    let errflag_v = errflag.load(Ordering::SeqCst);
 
     if (minfo_asked == 2 && mselect < 0)                                     // c:2007
         || nlnct >= zterm_lines
@@ -1980,7 +1985,7 @@ pub fn complistmatches() -> i32 {
 
     // c:2048-2076 — LISTPROMPT / asklist branch. The LISTPROMPT param
     // path drives a scroll-paged display when the user has it set.
-    let listprompt = crate::ported::params::getsparam("LISTPROMPT");
+    let listprompt = getsparam("LISTPROMPT");
     if mselect >= 0 || MLBEG.load(Ordering::SeqCst) >= 0 || listprompt.is_some() {
         // c:2053 — trashzle()
         crate::ported::zle::zle_main::trashzle();
@@ -2231,7 +2236,7 @@ pub fn setmstatus(
 
     let mut ret: Option<String> = None; // c:2206
 
-    let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
     let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
     let lastend = crate::ported::zle::compcore::LASTEND.load(Ordering::SeqCst);
     let wb = crate::ported::zle::compcore::WB.load(Ordering::SeqCst);
@@ -2270,7 +2275,7 @@ pub fn setmstatus(
         }
 
         // c:2228-2232 — replace line with sline.
-        crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst); // c:2228
+        ZLEMETACS.store(0, Ordering::SeqCst); // c:2228
         crate::ported::zle::zle_utils::foredel(zlemetall, 0); // c:2229 CUT_RAW
         crate::ported::zle::zle_utils::spaceinline(sll); // c:2230
         if let Some(zml_mutex) = crate::ported::zle::compcore::ZLEMETALINE.get() {
@@ -2283,7 +2288,7 @@ pub fn setmstatus(
                 }
             }
         }
-        crate::ported::zle::compcore::ZLEMETACS.store(scs, Ordering::SeqCst); // c:2232
+        ZLEMETACS.store(scs, Ordering::SeqCst); // c:2232
     } else {
         // c:2233
         // c:2234-2235 — p = complastprefix; s = complastsuffix
@@ -2532,7 +2537,7 @@ pub fn domenuselect() -> i32 {
     let _lbeg: i32 = 0; // c:2393
     let mut step: i32 = 1; // c:2393
     let _wrap: i32 = 0; // c:2393
-    let _pl = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst); // c:2393
+    let _pl = NLNCT.load(Ordering::SeqCst); // c:2393
     let _broken: i32 = 0; // c:2393
     let _first: i32 = 1; // c:2393
     let mut _nolist: i32 = 0; // c:2394
@@ -2571,18 +2576,18 @@ pub fn domenuselect() -> i32 {
     };
 
     // c:2434-2440 — MENUSCROLL: step size for half-page jumps.
-    if let Some(s) = crate::ported::params::getsparam("MENUSCROLL") {
+    if let Some(s) = getsparam("MENUSCROLL") {
         // c:2434
         let parsed: i32 = s.trim().parse().unwrap_or(0);
         if parsed == 0 {
             // c:2435
             let zterm_lines = crate::ported::utils::adjustlines() as i32;
-            let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
+            let nlnct = NLNCT.load(Ordering::SeqCst);
             step = (zterm_lines - nlnct) >> 1; // c:2436
         } else if parsed < 0 {
             // c:2437
             let zterm_lines = crate::ported::utils::adjustlines() as i32;
-            let nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Ordering::SeqCst);
+            let nlnct = NLNCT.load(Ordering::SeqCst);
             step = parsed + zterm_lines - nlnct;
             if step < 0 {
                 step = 1;
@@ -2593,7 +2598,7 @@ pub fn domenuselect() -> i32 {
     }
 
     // c:2441-2462 — MENUMODE: interactive / search-fwd / search-back.
-    if let Some(s) = crate::ported::params::getsparam("MENUMODE") {
+    if let Some(s) = getsparam("MENUMODE") {
         // c:2441
         if s == "interactive" {
             // c:2442
@@ -2605,7 +2610,7 @@ pub fn domenuselect() -> i32 {
                 .and_then(|m| m.lock().ok().map(|g| g.clone()))
                 .unwrap_or_default();
             let l = origline.len() as i32;
-            crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst);
+            ZLEMETACS.store(0, Ordering::SeqCst);
             crate::ported::zle::zle_utils::foredel(
                 // c:2455
                 crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
@@ -2621,7 +2626,7 @@ pub fn domenuselect() -> i32 {
                     }
                 }
             }
-            crate::ported::zle::compcore::ZLEMETACS.store(
+            ZLEMETACS.store(
                 // c:2458
                 crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::SeqCst),
                 Ordering::SeqCst,
@@ -2974,7 +2979,7 @@ mod tests {
     #[test]
     fn test_compprintfmt() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:1072 — compprintfmt now matches C: returns the visible
         // width (cc) consumed when rendering the format. Calling with
         // dopr=0 (don't print) and a literal fmt returns its char count.
@@ -2988,7 +2993,7 @@ mod tests {
     #[test]
     fn col_indices_match_c() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:167-191 — exact integer indices used by mcolors.files[i].
         assert_eq!(COL_NO, 0);
         assert_eq!(COL_DI, 2);
@@ -3001,7 +3006,7 @@ mod tests {
     #[test]
     fn num_cols_matches_c() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:193 — must match the colnames[] / defcols[] array length.
         assert_eq!(NUM_COLS, 25);
         assert_eq!(COLNAMES.len(), 25);
@@ -3011,7 +3016,7 @@ mod tests {
     #[test]
     fn colnames_match_c() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:197-201 — two-letter LS_COLORS keys.
         assert_eq!(COLNAMES[COL_NO], "no");
         assert_eq!(COLNAMES[COL_DI], "di");
@@ -3023,7 +3028,7 @@ mod tests {
     #[test]
     fn defcols_match_c() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:205-209 — default ANSI codes.
         assert_eq!(DEFCOLS[COL_NO], Some("0"));
         assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
@@ -3037,7 +3042,7 @@ mod tests {
     #[test]
     fn filecol_allocates_with_defaults() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
         let fc = filecol("0;32");
         assert_eq!(fc.col, "0;32");
@@ -3048,7 +3053,7 @@ mod tests {
     #[test]
     fn filecol_empty_string() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // The "no LS_COLORS set" path at c:515-516 calls filecol("")
         // for every slot.
         let fc = filecol("");
@@ -3181,7 +3186,7 @@ mod tests {
     #[test]
     fn compprintnl_does_not_panic_outside_zle() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let _ = compprintnl(0);
     }
 }
