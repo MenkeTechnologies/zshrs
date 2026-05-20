@@ -20,8 +20,7 @@
 use crate::ported::utils::{metafy, unmeta, zwarn};
 use std::fs::OpenOptions;
 use std::io;
-use std::io::Read;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;

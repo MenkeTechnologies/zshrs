@@ -8,10 +8,9 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module};
 use std::io::Read;
-use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::{Mutex, OnceLock};
 
 /// Direct port of `recursivecmd(char *nam, int opt_noerr, int opt_recurse, int opt_safe, char **args, RecurseFunc dirpre_func, RecurseFunc dirpost_func, RecurseFunc leaf_func, void *magic)` from `Src/Modules/files.c:378`.
@@ -1159,7 +1158,6 @@ pub const BIN_CHOWN: i32 = 0; // c:719
 // module entries — `Src/Modules/files.c:828-876`.
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 pub const BIN_CHGRP: i32 = 1; // c:719
 
 // =====================================================================

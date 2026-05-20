@@ -14,16 +14,17 @@ use std::collections::HashMap;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use once_cell::sync::Lazy;
+use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::utils::{unmeta, zwarnnam};
 
 /// Port of `PM_UPTODATE` from `Src/Modules/db_gdbm.c:38`.
 /// `#define PM_UPTODATE PM_DONTIMPORT_SUID` — re-uses a Param flag bit
 /// that's safe in this module's context. Set by `gdbmgetfn` after a
 /// successful database fetch so subsequent reads can short-circuit.
-pub const PM_UPTODATE: u32 = crate::ported::zsh_h::PM_DONTIMPORT_SUID; // c:38
+pub const PM_UPTODATE: u32 = PM_DONTIMPORT_SUID; // c:38
 
 /// `ztie` builtin entry point — bind a parameter to a GDBM file.
 /// Port of `bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))` from Src/Modules/db_gdbm.c:109 — the C
@@ -42,27 +43,27 @@ pub const PM_UPTODATE: u32 = crate::ported::zsh_h::PM_DONTIMPORT_SUID; // c:38
 pub fn bin_ztie(
     nam: &str,
     args: &[String],
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:109
     // c:109-115 — locals
     let pmname: &str;
     let mut read_write: i32 = 0; // c:114 GDBM_SYNC
-    let _pmflags: u32 = crate::ported::zsh_h::PM_REMOVABLE | crate::ported::zsh_h::PM_SINGLE; // c:114
+    let _pmflags: u32 = PM_REMOVABLE | PM_SINGLE; // c:114
 
     // c:117 — `if (!OPT_ISSET(ops, 'd'))`
-    if !crate::ported::zsh_h::OPT_ISSET(ops, b'd') {
-        crate::ported::utils::zwarnnam(nam, &format!("you must pass `-d {}'", BACKTYPE));
+    if !OPT_ISSET(ops, b'd') {
+        zwarnnam(nam, &format!("you must pass `-d {}'", BACKTYPE));
         return 1; // c:119
-    }
+    } else {}
     // c:121 — `if (!OPT_ISSET(ops, 'f'))`
-    if !crate::ported::zsh_h::OPT_ISSET(ops, b'f') {
-        crate::ported::utils::zwarnnam(nam, "you must pass `-f' with a filename");
+    if !OPT_ISSET(ops, b'f') {
+        zwarnnam(nam, "you must pass `-f' with a filename");
         return 1; // c:123
     }
     // c:125-130 — `if (OPT_ISSET(ops, 'r'))` readonly
-    let readonly = crate::ported::zsh_h::OPT_ISSET(ops, b'r');
+    let readonly = OPT_ISSET(ops, b'r');
     if readonly {
         read_write |= 1; // GDBM_READER
     } else {
@@ -71,19 +72,19 @@ pub fn bin_ztie(
     let _ = read_write;
 
     // c:134 — `if (strcmp(OPT_ARG(ops, 'd'), backtype) != 0)`
-    let db_type = crate::ported::zsh_h::OPT_ARG(ops, b'd').unwrap_or("");
+    let db_type = OPT_ARG(ops, b'd').unwrap_or("");
     if db_type != BACKTYPE {
-        crate::ported::utils::zwarnnam(nam, &format!("unsupported backend type `{}'", db_type));
+        zwarnnam(nam, &format!("unsupported backend type `{}'", db_type));
         return 1; // c:136
     }
 
     // c:139 — `resource_name = OPT_ARG(ops, 'f');`
-    let resource_name = crate::ported::zsh_h::OPT_ARG(ops, b'f').unwrap_or("");
+    let resource_name = OPT_ARG(ops, b'f').unwrap_or("");
     // c:140 — `pmname = *args;`
     pmname = match args.first() {
         Some(s) => s.as_str(),
         None => {
-            crate::ported::utils::zwarnnam(nam, "parameter name required");
+            zwarnnam(nam, "parameter name required");
             return 1;
         }
     };
@@ -96,7 +97,7 @@ pub fn bin_ztie(
         match std::env::current_dir() {
             Ok(d) => d.join(resource_name),
             Err(_) => {
-                crate::ported::utils::zwarnnam(nam, "current dir lookup failed");
+                zwarnnam(nam, "current dir lookup failed");
                 return 1;
             }
         }
@@ -109,7 +110,7 @@ pub fn bin_ztie(
             Err(_) => return 1,
         };
         if params.contains_key(pmname) {
-            crate::ported::utils::zwarnnam(nam, &format!("parameter {} is already tied", pmname));
+            zwarnnam(nam, &format!("parameter {} is already tied", pmname));
             return 1;
         }
     }
@@ -118,7 +119,7 @@ pub fn bin_ztie(
     let db = match gdbm_database::open(&path, readonly) {
         Ok(d) => d,
         Err(e) => {
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 &format!("error opening database file {} ({})", resource_name, e),
             );
@@ -157,7 +158,7 @@ pub fn bin_ztie(
 pub fn bin_zuntie(
     nam: &str,
     args: &[String],
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:201
@@ -173,7 +174,7 @@ pub fn bin_zuntie(
         };
         if !in_table {
             // c:209
-            crate::ported::utils::zwarnnam(nam, &format!("cannot untie {}", pmname)); // c:210
+            zwarnnam(nam, &format!("cannot untie {}", pmname)); // c:210
             ret = 1; // c:211
             continue; // c:212
         }
@@ -181,8 +182,8 @@ pub fn bin_zuntie(
         // since TIED_PARAMS only ever holds gdbm-backed entries.
 
         // c:220 — `queue_signals();`
-        crate::ported::signals_h::queue_signals();
-        if crate::ported::zsh_h::OPT_ISSET(ops, b'u') { // c:221
+        queue_signals();
+        if OPT_ISSET(ops, b'u') { // c:221
              // c:222 — `pm->node.flags &= ~PM_READONLY;`
              // Static-link path: tied_gdbm_param doesn't carry a flags
              // field separately; readonly is on gdbm_database.readonly.
@@ -199,7 +200,7 @@ pub fn bin_zuntie(
         // c:568 — `remove_tied_name(pm->node.nam);` (called from gdbmuntie())
         remove_tied_name(pmname);
         // c:228 — `unqueue_signals();`
-        crate::ported::signals_h::unqueue_signals();
+        unqueue_signals();
     }
     ret // c:236
 }
@@ -216,7 +217,7 @@ pub fn bin_zuntie(
 pub fn bin_zgdbmpath(
     nam: &str,
     args: &[String],
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     // c:236
@@ -226,7 +227,7 @@ pub fn bin_zgdbmpath(
         None => {
             // c:243-245 — "parameter name (whose path is to be written
             //              to $REPLY) is required"
-            crate::ported::utils::zwarnnam(
+            zwarnnam(
                 nam,
                 "parameter name (whose path is to be written to $REPLY) is required",
             );
@@ -240,7 +241,7 @@ pub fn bin_zgdbmpath(
             Some(tied) => tied.db.path().to_string_lossy().to_string(),
             None => {
                 // c:249-251 — "no such parameter"
-                crate::ported::utils::zwarnnam(nam, &format!("no such parameter: {}", pmname));
+                zwarnnam(nam, &format!("no such parameter: {}", pmname));
                 return 1;
             }
         },
@@ -984,7 +985,7 @@ pub fn finish_(m: *const module) -> i32 {
 pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {
     // c:44
     // c:783 — `result = ztrdup(to_copy); unmetafy(result, new_len);`
-    let s = crate::ported::utils::unmeta(to_copy);
+    let s = unmeta(to_copy);
     let len = s.len();
     (s, len)
 }
@@ -1052,7 +1053,6 @@ const GDBM_READER: c_int = 0;
 // static struct features module_features                            c:601 (db_gdbm.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 const GDBM_WRITER: c_int = 1;
 const GDBM_WRCREAT: c_int = 2;
 const GDBM_NEWDB: c_int = 3;
@@ -1286,8 +1286,8 @@ mod tests {
         assert_eq!(hash.get("foo"), Some(&"bar".to_string()));
     }
 
-    fn empty_ops() -> crate::ported::zsh_h::options {
-        crate::ported::zsh_h::options {
+    fn empty_ops() -> options {
+        options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
             argscount: 0,
@@ -1300,7 +1300,7 @@ mod tests {
     #[test]
     fn pm_uptodate_aliases_pm_dontimport_suid() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(PM_UPTODATE, crate::ported::zsh_h::PM_DONTIMPORT_SUID);
+        assert_eq!(PM_UPTODATE, PM_DONTIMPORT_SUID);
     }
 
     /// Module entry points return 0 per C (db_gdbm.c:613-651).

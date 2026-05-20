@@ -32,7 +32,10 @@
 //! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{param, OPT_ISSET, PM_DECLARED, PM_HIDE, PM_REMOVABLE, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET};
+use crate::ported::zsh_h::{
+    OPT_ISSET, PM_DECLARED, PM_HIDE, PM_REMOVABLE, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET, module,
+    param,
+};
 use std::sync::atomic::Ordering;
 
 /// Port of `struct gsu_closure` from `Src/Modules/param_private.c:34`.
@@ -1021,7 +1024,6 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
 // static struct features module_features                            c:660 (param_private.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/param_private.c:702`.
 /// C body: `return handlefeatures(m, &module_features, enables);`

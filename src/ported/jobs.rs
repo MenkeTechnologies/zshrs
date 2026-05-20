@@ -180,15 +180,14 @@ pub fn findproc(jobtab: &[job], pid: i32, aux: bool) -> Option<(usize, usize, bo
 // `TimeInfo` / `ChildTimes` deleted — both folded into canonical
 // `timeinfo` at `zsh_h.rs:2153` (direct port of `struct timeinfo`
 // from `Src/zsh.h:1099`).
-pub use crate::ported::zsh_h::timeinfo;
+pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING, timeinfo};
 
 // Canonical `process` / `job` live in `zsh_h.rs:1166,1180` — direct
 // ports of `struct process` / `struct job` from `Src/zsh.h:1117,1058`.
 // jobs.rs uses them via `process` / `job` aliases to keep call sites
 // readable (Rust convention favors CamelCase at use-sites; the
 // underlying type is the lowercase C-faithful canonical).
-use crate::ported::zsh_h::job;
-use crate::ported::zsh_h::process;
+use crate::ported::zsh_h::{job, process};
 
 impl process {
     /// Build a fresh entry. Matches C's `update_process()` init shape
@@ -3439,7 +3438,6 @@ pub fn release_pgrp() {
 // Same consolidation pattern as the prior HISTFLAG_* / SUB_START /
 // TERM_UNKNOWN fixes — duplicate const declarations are a known
 // drift hazard.
-pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING};
 
 // the process group of the shell at startup                                 // c:54
 /// Port of `origpgrp` from `Src/jobs.c:58`.

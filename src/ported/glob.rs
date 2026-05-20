@@ -29,8 +29,7 @@ use std::sync::atomic::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::Component;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A glob match with metadata for sorting

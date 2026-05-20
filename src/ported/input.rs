@@ -17,8 +17,7 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::Write;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write, self};
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
