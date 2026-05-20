@@ -30,7 +30,7 @@ use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
 use crate::ported::jobs::bin_fg;
 use crate::ported::module::MATHFUNCS;
 use crate::ported::options::{dosetopt, emulation};
-use crate::ported::params::{paramtab, setaparam, setiparam, unsetparam};
+use crate::ported::params::{locallevel as locallevel_param, paramtab, setaparam, setiparam, unsetparam};
 use crate::ported::utils::fprintdir;
 use crate::ported::math::mathevali;
 use crate::ported::math::{matheval, mnumber, MN_INTEGER};
@@ -549,10 +549,10 @@ pub fn execbuiltin(
     argc -= argv as i32; // c:424
 
     // c:426-429 — errflag check.
-    let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+    let ef = errflag.load(std::sync::atomic::Ordering::Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
         // c:426
-        crate::ported::utils::errflag
+        errflag
             .fetch_and(!ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed); // c:427
         return 1; // c:428
     }
@@ -2756,7 +2756,7 @@ pub fn typeset_single(
     if let Some(pm_r) = &pm_ref {
         let pm_flags = pm_r.node.flags as u32;
         let locallevel_v =
-            crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+            locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
         if (pm_flags & PM_NAMEREF) != 0
             && ((off | on) as u32 & PM_NAMEREF) == 0
             && (pm_r.level == locallevel_v || (on as u32 & PM_LOCAL) == 0)
@@ -2807,7 +2807,7 @@ pub fn typeset_single(
 
     // c:2078-2091 — don't reuse if local-level changed and PM_LOCAL set.
     let pm_level = pm_ref.as_ref().map(|p| p.level).unwrap_or(0);
-    let locallevel_v = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let locallevel_v = locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
     if usepm != 0 && locallevel_v != pm_level && (on as u32 & PM_LOCAL) != 0 {
         // c:2078
         if (pm_flags & PM_SPECIAL) != 0                // c:2087
@@ -6072,7 +6072,7 @@ pub fn bin_shift(
             }) as i32; // c:5601
             idx = 1;
             // c:5602-5605 — `if (errflag) return 1;`.
-            if ret != 0 || crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            if ret != 0 || errflag.load(Ordering::Relaxed) != 0 {
                 unqueue_signals(); // c:5604
                 return 1;
             }
@@ -6703,7 +6703,7 @@ pub fn zexit(val: i32, from_where: i32) {
     // c:6014 — `shell_exiting = -1;`
     SHELL_EXITING.store(-1, Ordering::Relaxed); // c:6014
                                                 // c:6019 — `errflag = 0;`
-    crate::ported::utils::errflag.store(0, Ordering::Relaxed); // c:6019
+    errflag.store(0, Ordering::Relaxed); // c:6019
                                                                // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021
@@ -8935,7 +8935,7 @@ pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 pub use crate::ported::init::sourcelevel as SOURCELEVEL;
 // `LOCALLEVEL` was previously a SEPARATE AtomicI32 here, but C
 // zsh has only ONE `int locallevel;` global (Src/params.c:54).
-// The canonical Rust port is `crate::ported::params::locallevel`
+// The canonical Rust port is `locallevel_param`
 // (lowercase, matches C name). Re-export that single storage so
 // every reader and writer addresses the same atomic — without
 // this, `LOCALLEVEL.store(0)` in zle/computil.rs would zero one

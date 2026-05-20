@@ -3538,6 +3538,7 @@ fn module_features() -> &'static Mutex<features_t> {
 mod scan_callback_tests {
     use super::*;
     use std::sync::atomic::{AtomicI32, Ordering};
+    use crate::zsh_h::param;
 
     // Module-scoped collector statics. Tests are serialised by name +
     // each test resets before/after so cross-test bleed is impossible.

@@ -2621,6 +2621,7 @@ pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool 
 
 #[cfg(test)]
 mod tests {
+    use crate::options::{opt_state_get, opt_state_set};
     use super::*;
 
     // Pattern compile shares file-static globals (patout, patparse,
