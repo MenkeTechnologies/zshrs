@@ -17,6 +17,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::ported::utils::adduserdir;
 use crate::ported::zsh_h::{nameddir, ND_USERNAME, PRINT_LIST, PRINT_NAMEONLY};
 use crate::utils::{errflag, quotedzputs};
 
@@ -94,7 +95,7 @@ pub fn fillnameddirtable() {
                 .to_string_lossy()
                 .into_owned();
             // c:107 — `adduserdir(pw->pw_name, pw->pw_dir, ND_USERNAME, 1);`
-            crate::ported::utils::adduserdir(&name, &dir, ND_USERNAME, true);
+            adduserdir(&name, &dir, ND_USERNAME, true);
         }
         libc::endpwent(); // c:109
     }

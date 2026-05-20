@@ -14,10 +14,12 @@
 //! libtermcap into the build. Function signatures + observable
 //! outputs match C 1:1.
 
-use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
-use crate::ported::utils::zwarnnam;
+use crate::ported::params::{getsparam, TERMFLAGS, TERM_UNKNOWN};
+use crate::ported::utils::{zsetupterm, zwarnnam};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
+use crate::ported::options::optlookup;
+use crate::ported::zsh_h::{features, isset, module};
 
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
@@ -83,7 +85,7 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 {
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:89
         let interactive =
-            crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+            isset(optlookup("interactive"));
         if interactive || !ensure_termcap_loaded() {
             // c:89-90
             return 1; // c:90
@@ -321,7 +323,7 @@ pub fn boot_(m: *const module) -> i32 {
     // C body c:347-350 — `#ifdef HAVE_TGETENT zsetupterm(); #endif
     //                     return 0`. Initializes the termcap database
     //                     for echotc/$termcap to use.
-    let _ = crate::ported::utils::zsetupterm(); // c:365
+    let _ = zsetupterm(); // c:365
     0
 }
 
@@ -335,8 +337,6 @@ pub fn cleanup_(m: *const module) -> i32 {
 // =====================================================================
 // static struct features module_features                            c:314 (termcap.c)
 // =====================================================================
-
-use crate::ported::zsh_h::module;
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/termcap.c:365`.
 #[allow(unused_variables)]
@@ -406,7 +406,7 @@ fn ensure_termcap_loaded() -> bool {
             // shell has updated TERM via paramtab without exporting yet.
             // Route through getsparam — same env-vs-paramtab family as
             // the recent newuser HOME / bin_strftime TZ fixes.
-            let term = crate::ported::params::getsparam("TERM").unwrap_or_else(|| "dumb".into());
+            let term = getsparam("TERM").unwrap_or_else(|| "dumb".into());
             let term_c = match std::ffi::CString::new(term) {
                 Ok(c) => c,
                 Err(_) => return false,
@@ -429,7 +429,7 @@ fn ensure_termcap_loaded() -> bool {
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -440,7 +440,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:echotc".to_string(), "p:termcap".to_string()]
 }
 
@@ -450,7 +450,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -463,7 +463,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -493,9 +493,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,

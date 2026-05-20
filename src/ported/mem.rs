@@ -7,6 +7,9 @@
 //! can be used for temporary allocations that all get freed at once.
 
 use std::cell::RefCell;
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::zsh_h::OPT_ISSET;
+
 
 // ===========================================================
 // Direct ports of arena/heap routines from Src/mem.c. Rust
@@ -642,8 +645,6 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 // the same state must go through signals_h so the counter is shared
 // across the whole tree (the prior parallel copies here split the
 // queueing state, which was wrong).
-pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
-use crate::ported::zsh_h::OPT_ISSET;
 
 /// Split string by separator.
 /// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's

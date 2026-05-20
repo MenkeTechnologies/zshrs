@@ -19,9 +19,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use crate::ported::params::{setiparam, setsparam};
-use crate::ported::zle::compcore::{
-    ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZMULT as ZMULT_C,
-};
 use crate::ported::zle::zle_h::{WidgetImpl, MOD_MULT, MOD_NEG, MOD_TMULT};
 use crate::ported::zle::zle_hist::{ISEARCH_ACTIVE, ISEARCH_ENDPOS, ISEARCH_STARTPOS};
 use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
@@ -38,6 +35,8 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zle::compcore::ZMULT;
+
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
 /// `BUFFER` getfn entry in `zleparams[]`).
@@ -63,12 +62,12 @@ use crate::ported::zle::{
 pub fn makezleparams(_ro: i32) {
     // c:194
 
-    let line = ZLELINE_C
+    let line = crate::ported::zle::compcore::ZLELINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let cs = ZLECS_C.load(Ordering::Relaxed) as usize;
+    let cs = crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as usize;
     let (lbuf, rbuf) = if cs <= line.len() {
         (line[..cs].to_string(), line[cs..].to_string())
     } else {
@@ -80,11 +79,11 @@ pub fn makezleparams(_ro: i32) {
     let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
     let _ = setiparam(
         "CURSOR",
-        ZLECS_C.load(Ordering::Relaxed) as i64,
+        crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[3]
     let _ = setiparam(
         "NUMERIC",
-        ZMULT_C.load(Ordering::Relaxed) as i64,
+        ZMULT.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[7]
        // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;

@@ -32,10 +32,13 @@ use crate::ported::zsh_h::{
     PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, Param,
     SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE, STAT_NOPRINT,
     STAT_STOPPED, ScanFunc, hashnode, hashtable, module, nameddir, opt_name, param,
-    param as ParamStruct, value,
+    value,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use crate::zsh_h::{shfunc, HASHED};
+use std::sync::{Mutex, OnceLock};
+
 
 // Bag-of-globals `ParamType`/`ParamFlags` enum + `*Table` structs
 // deleted (PORT_PLAN.md Phase 2 anti-pattern #1): C has no
@@ -46,7 +49,7 @@ use std::path::PathBuf;
 /// Port of `paramtypestr(Param pm)` from Src/Modules/parameter.c:43.
 /// C: `static char *paramtypestr(Param pm)` — render a parameter's
 /// type and modifier flags as the `typeset -p` flag string.
-pub fn paramtypestr(pm: &ParamStruct) -> String {
+pub fn paramtypestr(pm: &param) -> String {
     // c:43
 
     let f: u32 = pm.node.flags as u32; // c:46
@@ -154,7 +157,7 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
             .unwrap_or_default()
     };
     let found = !value.is_empty();
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:103 hcalloc
         node: hashnode {
             next: None,
@@ -282,7 +285,7 @@ pub fn scanpmparameters(
     };
     for (name, _orig_flags, val) in entries {
         // c:135-145
-        let pm = ParamStruct {
+        let pm = param {
             node: hashnode {
                 // c:128 memset(&pm, 0)
                 next: None,
@@ -436,7 +439,7 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
     } else {
         (String::new(), false) // c:238
     };
-    let mut pm = Box::new(ParamStruct {
+    let mut pm = Box::new(param {
         // c:223 hcalloc
         node: hashnode {
             next: None,
@@ -735,7 +738,7 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> 
     } else {
         (String::new(), false) // c:439
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:393
         node: hashnode {
             next: None,
@@ -864,7 +867,7 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<
     } else {
         (String::new(), false) // c:586
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:541
         node: hashnode {
             next: None,
@@ -978,7 +981,7 @@ pub fn scanpmdisfunction_source(
 /// list of function names currently on the call stack.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn funcstackgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn funcstackgetfn(pm: *mut param) -> Vec<String> {
     // c:627
     // c:627-643 — count frames, allocate, walk linking *p = f->name.
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
@@ -1011,7 +1014,7 @@ pub fn funcstackgetfn(pm: *mut ParamStruct) -> Vec<String> {
 /// ```
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn functracegetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn functracegetfn(pm: *mut param) -> Vec<String> {
     // c:648
     let f_stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default(); // c:650
                                                                            // c:654 — `for (f = funcstack, num = 0; f; f = f->prev, num++)`
@@ -1043,7 +1046,7 @@ pub fn functracegetfn(pm: *mut ParamStruct) -> Vec<String> {
 /// ```
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn funcsourcetracegetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn funcsourcetracegetfn(pm: *mut param) -> Vec<String> {
     // c:679
     let f_stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default(); // c:681
     let num = f_stack.len(); // c:685
@@ -1063,7 +1066,7 @@ pub fn funcsourcetracegetfn(pm: *mut ParamStruct) -> Vec<String> {
 /// parent frame's source-file line.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn funcfiletracegetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn funcfiletracegetfn(pm: *mut param) -> Vec<String> {
     // c:711
     // c:717 — for (f = funcstack, num = 0; f; f = f->prev, num++);
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
@@ -1128,7 +1131,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> {
     } else {
         (String::new(), false) // c:793
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:780 hcalloc
         node: hashnode {
             next: None,
@@ -1273,7 +1276,7 @@ fn getreswords(dis: i32) -> Vec<String> {
 ///   `return getreswords(0);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn reswordsgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn reswordsgetfn(pm: *mut param) -> Vec<String> {
     // c:878
     getreswords(0) // c:878
 }
@@ -1283,7 +1286,7 @@ pub fn reswordsgetfn(pm: *mut ParamStruct) -> Vec<String> {
 ///   `return getreswords(DISABLED);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn disreswordsgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn disreswordsgetfn(pm: *mut param) -> Vec<String> {
     // c:885
     getreswords(DISABLED) // c:885
 }
@@ -1313,7 +1316,7 @@ fn getpatchars(dis: i32) -> Vec<String> {
 ///   `return getpatchars(0);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn patcharsgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn patcharsgetfn(pm: *mut param) -> Vec<String> {
     // c:911
     getpatchars(0) // c:911
 }
@@ -1323,7 +1326,7 @@ pub fn patcharsgetfn(pm: *mut ParamStruct) -> Vec<String> {
 ///   `return getpatchars(1);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn dispatcharsgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn dispatcharsgetfn(pm: *mut param) -> Vec<String> {
     // c:917
     getpatchars(1) // c:917
 }
@@ -1448,7 +1451,7 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
     } else {
         (String::new(), false) // c:1009
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:992 hcalloc
         node: hashnode {
             next: None,
@@ -1539,7 +1542,7 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
         Some(s) => (s, 0),                                       // c:1066 set str
         None => (String::new(), (PM_UNSET | PM_SPECIAL) as i32), // c:1068-1069
     };
-    Some(Box::new(ParamStruct {
+    Some(Box::new(param {
         node: hashnode {
             next: None,
             nam: name.to_string(),
@@ -1651,7 +1654,7 @@ pub fn scanpmmodules(
 /// the dirstack with the provided array (when not in cleanup).
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn dirssetfn(pm: *mut ParamStruct, x: Vec<String>) {
+pub fn dirssetfn(pm: *mut param, x: Vec<String>) {
     // c:1131
     let incleanup = INCLEANUP.load(std::sync::atomic::Ordering::Relaxed); // c:1131
     if incleanup == 0 {
@@ -1678,7 +1681,7 @@ pub fn dirssetfn(pm: *mut ParamStruct, x: Vec<String>) {
 ///   `return hlinklist2array(dirstack, 1);`
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn dirsgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn dirsgetfn(pm: *mut param) -> Vec<String> {
     // c:1147
     // c:1131 — hlinklist2array(dirstack, 1) returns the dirstack as
     // a heap-allocated array. Static-link path reads from the global
@@ -1700,7 +1703,7 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {
         Some(v) => (v, true),
         None => (String::new(), false), // c:1204
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:1162 hcalloc
         node: hashnode {
             next: None,
@@ -1764,7 +1767,7 @@ pub fn scanpmhistory(
         || (flags as u32 & SCANPM_WANTKEYS) == 0;
     for (histnum, cmd) in entries {
         // c:1199-1207
-        let pm = ParamStruct {
+        let pm = param {
             node: hashnode {
                 // c:1194 memset(&pm, 0)
                 next: None,
@@ -1798,7 +1801,7 @@ pub fn scanpmhistory(
 /// from the current line back to the start of history.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn histwgetfn(pm: *mut ParamStruct) -> Vec<String> {
+pub fn histwgetfn(pm: *mut param) -> Vec<String> {
     // c:1217
     // c:1217-1248 — walk hist_ring newest-to-oldest, slicing words by
     // the histent.words[iw*2..iw*2+2] byte offsets. zshrs's hist_ring
@@ -1932,7 +1935,7 @@ pub fn scanpmjobtexts(
                 } else {
                     String::new()
                 }; // c:1330 pmjobtext
-                let pm = ParamStruct {
+                let pm = param {
                     node: hashnode {
                         next: None,
                         nam: format!("{}", job), // c:1327
@@ -2104,7 +2107,7 @@ pub fn scanpmjobstates(
                 } else {
                     String::new()
                 }; // c:1437 pmjobstate
-                let pm = ParamStruct {
+                let pm = param {
                     node: hashnode {
                         next: None,
                         nam: format!("{}", job), // c:1434 sprintf(buf, "%d", job)
@@ -2224,7 +2227,7 @@ pub fn scanpmjobdirs(
                 } else {
                     String::new()
                 }; // c:1511 pmjobdir
-                let pm = ParamStruct {
+                let pm = param {
                     node: hashnode {
                         next: None,
                         nam: format!("{}", job), // c:1508
@@ -2408,7 +2411,7 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {
     } else {
         (String::new(), false)
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         node: hashnode {
             next: None,
             nam: name.to_string(),
@@ -2491,7 +2494,7 @@ pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {
     } else {
         (String::new(), false) // c:1662
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:1653 hcalloc
         node: hashnode {
             next: None,
@@ -2835,7 +2838,7 @@ pub fn setpmdissaliases(pm: Param, ht: *mut HashTable) {
 /// resolve the right handler.
 #[allow(non_snake_case)]
 pub fn assignaliasdefs(
-    pm: *mut ParamStruct, // c:1867
+    pm: *mut param, // c:1867
     flags: i32,
 ) {
     if !pm.is_null() {
@@ -2906,7 +2909,7 @@ pub fn getalias(
     } else {
         (String::new(), false) // c:1916
     };
-    let mut pm = Box::new(ParamStruct {
+    let mut pm = Box::new(param {
         // c:1906 hcalloc
         node: hashnode {
             next: None,
@@ -3142,7 +3145,7 @@ pub fn getpmusergroups(ht: *mut HashTable, name: &str) -> Option<Param> {
     } else {
         (String::new(), false) // c:2134
     };
-    let pm = Box::new(ParamStruct {
+    let pm = Box::new(param {
         // c:2108 hcalloc
         node: hashnode {
             next: None,
@@ -3375,7 +3378,7 @@ pub static FUNCSTACK: Mutex<Vec<crate::ported::zsh_h::funcstack>> =
 /// PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL Param with empty
 /// `u.str`.
 fn make_empty_special_pm(name: &str) -> Param {
-    Box::new(ParamStruct {
+    Box::new(param {
         node: hashnode {
             next: None,
             nam: name.to_string(),
@@ -3401,8 +3404,6 @@ fn make_empty_special_pm(name: &str) -> Param {
     })
 }
 
-use crate::zsh_h::{shfunc, HASHED};
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

@@ -8,6 +8,9 @@
 //! static helper `handle_digits`, plus the 6 module loaders.
 
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::module;
+use std::sync::{Mutex, OnceLock};
+
 
 /// Port of static helper `handle_digits()` from
 /// `Src/Modules/zselect.c:40`. Validates that `argptr` is a
@@ -304,7 +307,6 @@ pub fn setup_(m: *const module) -> i32 {
 // static struct features module_features                            c:275
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zselect.c:295`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -362,7 +364,6 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

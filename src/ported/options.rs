@@ -8,13 +8,24 @@
 //! - Option aliases (bash/ksh compatibility)
 //! - setopt/unsetopt builtins
 
+use std::collections::HashSet;
+use std::sync::atomic::AtomicI32;
+use std::sync::LazyLock;
+
+use crate::ported::init::SHTTY;
+use crate::ported::jobs::{acquire_pgrp, ORIGPGRP};
+use crate::ported::params::keyboardhacksetfn;
+use crate::ported::pattern::{patcompile, patmatch};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
-    APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE, EMULATE_FULLY, GLOBDOTS, HASHCMDS,
-    HISTNOFUNCTIONS, IGNOREBRACES, MAILWARNING, MONITOR, MULTIBYTE, OPT_SIZE, PROMPTSUBST,
-    SHINSTDIN, SINGLECOMMAND, SUNKEYBOARDHACK, VIMODE,
+    interact, isset, opt_name, options, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
+    EMULATE_CSH, EMULATE_FULLY, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT,
+    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, MAILWARNING, META, MONITOR,
+    MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
+    SUNKEYBOARDHACK, USEZLE, VIMODE,
 };
-use std::sync::atomic::AtomicI32;
+use crate::utils::inittyptab;
+
 
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
@@ -310,9 +321,6 @@ pub fn emulate(mode: &str, fully: bool) {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs (statics)
-use crate::zsh_h::{isset, opt_name, options, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT, INTERACTIVE, USEZLE};
-use std::collections::HashSet;
-use std::sync::LazyLock;
 
 /// `setopt OPT` builtin per-arg dispatch.
 /// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
@@ -391,7 +399,7 @@ pub fn bin_setopt(
             let mut c = body_bytes[k];
             // c:600-601 — `if(**args == Meta) *++*args ^= 32;` —
             // unmeta the next byte before reading.
-            if c == crate::ported::zsh_h::META as u8 {
+            if c == META as u8 {
                 // c:600
                 k += 1;
                 if k < body_bytes.len() {
@@ -507,9 +515,9 @@ pub fn bin_setopt(
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
-            let prog = crate::ported::pattern::patcompile(
+            let prog = patcompile(
                 &normalized,
-                crate::ported::zsh_h::PAT_HEAPDUP,
+                PAT_HEAPDUP,
                 None,
             );
             if prog.is_none() {
@@ -524,13 +532,13 @@ pub fn bin_setopt(
             let v = (isun == 0) as i32;
             for opt_name in ZSH_OPTIONS_SET.iter() {
                 // c:676
-                if crate::ported::pattern::patmatch(&normalized, opt_name) {
+                if patmatch(&normalized, opt_name) {
                     let _ = setoption(opt_name, v); // c:572 setoption
                 }
             }
         }
     }
-    crate::ported::utils::inittyptab(); // c:678
+    inittyptab(); // c:678
     retval // c:679
 }
 
@@ -686,7 +694,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
         // c:743 — interactive + EXECOPT off is forbidden.
-        if idx == EXECOPT && value == 0 && crate::ported::zsh_h::interact() {
+        if idx == EXECOPT && value == 0 && interact() {
             return -1;
         }
         // c:746-749 — INTERACTIVE / SHINSTDIN / SINGLECOMMAND lock.
@@ -709,7 +717,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // We don't yet track SHTTY/shout here; approximate by requiring
         // `interact()` to be true. A non-interactive `setopt usezle`
         // is rejected (matches the most common C failure case).
-        if idx == USEZLE && value != 0 && !crate::ported::zsh_h::interact() {
+        if idx == USEZLE && value != 0 && !interact() {
             return -1;
         }
         // c:851-861 — `setopt MONITOR` (force=0, value=1) must:
@@ -731,7 +739,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
                 }
             }
             // c:854 — `if (SHTTY == -1) return -1;`
-            let shtty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::SeqCst);
+            let shtty = SHTTY.load(std::sync::atomic::Ordering::SeqCst);
             if shtty == -1 {
                 // c:854
                 return -1;
@@ -740,13 +748,13 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
             //               acquire_pgrp(); }`. Capture the parent's
             // pgrp once so SIGTSTP-restore (bin_suspend) can later
             // killpg back to it.
-            let origpgrp = crate::ported::jobs::ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0));
+            let origpgrp = ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0));
             let mut og = origpgrp.lock().expect("origpgrp poisoned");
             if *og == 0 {
                 // c:855
                 *og = unsafe { libc::getpgrp() }; // c:856 GETPGRP()
                 drop(og);
-                let _ = crate::ported::jobs::acquire_pgrp(); // c:857
+                let _ = acquire_pgrp(); // c:857
             }
         }
     }
@@ -763,7 +771,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
             // the canonical name via opt_name (matches the
             // storage key used by isset/opt_state_get/_set).
             let other = idx ^ EMACSMODE ^ VIMODE;
-            let other_name = crate::ported::zsh_h::opt_name(other);
+            let other_name = opt_name(other);
             if !other_name.is_empty() {
                 opt_state_set(other_name, false);
             }
@@ -776,7 +784,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         if idx == SUNKEYBOARDHACK {
             // c:871
             // c:873 — `keyboardhackchar = (value ? '`' : '\0');`
-            crate::ported::params::keyboardhacksetfn(if value != 0 {
+            keyboardhacksetfn(if value != 0 {
                 "`".to_string()
             } else {
                 String::new()
@@ -1306,8 +1314,6 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
 /// (the first slot in the option-index enum). C: `OPT_INVALID, ALIASESOPT, ...`.
 /// Re-exported here so call sites that already import from
 /// `options` don't need to change to `zsh_h`.
-pub use crate::ported::zsh_h::OPT_INVALID;
-use crate::utils::inittyptab;
 
 /// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
 /// The target emulation bitmap, written by `installemulation` and

@@ -14,10 +14,12 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::zsh_h::{OPT_ISSET, module};
+use crate::ported::zsh_h::{OPT_ISSET, module, eprog, funcwrap, features, options, MAX_OPS};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
-
+use crate::ported::compat::zgettime_monotonic_if_available;
+use crate::ported::mem::ztrdup;
+use crate::ported::modules::parameter::FUNCSTACK;
 // ---------------------------------------------------------------------------
 // Structs (port of c:36-64).
 // ---------------------------------------------------------------------------
@@ -191,7 +193,7 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {
 pub fn bin_zprof(
     _nam: &str,
     _args: &[String], // c:139
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:140 — `if (OPT_ISSET(ops,'c'))`
@@ -418,7 +420,7 @@ pub fn name_for_anonymous_function(name: &str) -> String {
     // c:219 — char lineno[DIGBUFSIZE];
     // c:220 — char *parts[7];
     // c:222 — convbase(lineno, funcstack[0].flineno, 10);
-    let stack = crate::ported::modules::parameter::FUNCSTACK
+    let stack = FUNCSTACK
         .lock()
         .expect("FUNCSTACK poisoned");
     let flineno = stack.first().map(|f| f.flineno).unwrap_or(0); // c:222
@@ -507,8 +509,8 @@ pub fn name_for_anonymous_function(name: &str) -> String {
 /// ```
 #[allow(non_snake_case)]
 pub fn zprof_wrapper(
-    prog: *const crate::ported::zsh_h::eprog, // c:236
-    w: *const crate::ported::zsh_h::funcwrap,
+    prog: *const eprog, // c:236
+    w: *const funcwrap,
     name: &str,
 ) -> i32 {
     let mut active: i32 = 0; // c:238
@@ -539,7 +541,7 @@ pub fn zprof_wrapper(
             // c:255-261 — `f = zalloc(...); f->name = ztrdup(...); f->next = calls; calls = f; ncalls++;`
             let new_pfunc = Pfunc {
                 // c:255
-                name: crate::ported::mem::ztrdup(&name_for_lookups), // c:256
+                name: ztrdup(&name_for_lookups), // c:256
                 calls: 0,                                            // c:257
                 time: 0.0,                                           // c:258 self/time = 0
                 self_time: 0.0,                                      // c:258
@@ -589,7 +591,7 @@ pub fn zprof_wrapper(
             tv_sec: 0,
             tv_nsec: 0,
         }; // c:280
-        crate::ported::compat::zgettime_monotonic_if_available(&mut ts); // c:281
+        zgettime_monotonic_if_available(&mut ts); // c:281
         sf.beg = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0; // c:282-283
         prev = sf.beg; // c:282
                        // Update the stack-top copy we just pushed.
@@ -613,7 +615,7 @@ pub fn zprof_wrapper(
                 tv_sec: 0,
                 tv_nsec: 0,
             }; // c:288
-            crate::ported::compat::zgettime_monotonic_if_available(&mut ts); // c:289
+            zgettime_monotonic_if_available(&mut ts); // c:289
             let now = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0; // c:291-292
 
             // c:293 — `f->self += now - sf.beg;`
@@ -784,7 +786,7 @@ pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new()); // c:70
 pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false); // c:74
 
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -795,7 +797,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:zprof".to_string()]
 }
 
@@ -805,7 +807,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -818,7 +820,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -848,9 +850,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,
@@ -866,7 +868,6 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
 
     /// Serialise tests that mutate the module-static globals so the
@@ -1017,7 +1018,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Push a frame onto FUNCSTACK so the fn reads it.
         {
-            let mut stack = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
+            let mut stack = FUNCSTACK.lock().unwrap();
             stack.clear();
             stack.push(crate::ported::zsh_h::funcstack {
                 filename: Some("/tmp/foo.zsh".to_string()),
@@ -1027,7 +1028,7 @@ mod tests {
         }
         let s = name_for_anonymous_function("anon");
         // Cleanup so subsequent tests aren't polluted.
-        crate::ported::modules::parameter::FUNCSTACK
+        FUNCSTACK
             .lock()
             .unwrap()
             .clear();
@@ -1046,7 +1047,7 @@ mod tests {
     fn name_for_anonymous_function_empty_funcstack_defaults() {
         let _g = crate::test_util::global_state_lock();
         // Ensure stack is empty.
-        crate::ported::modules::parameter::FUNCSTACK
+        FUNCSTACK
             .lock()
             .unwrap()
             .clear();

@@ -16,6 +16,8 @@
 
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{features, module, options, MAX_OPS};
+use std::sync::{Mutex, OnceLock};
+
 
 // =====================================================================
 // libcap FFI — declared in `<sys/capability.h>` (libcap), not libc.
@@ -315,7 +317,6 @@ pub fn finish_(m: *const module) -> i32 {
 // Tests
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 

@@ -16,6 +16,10 @@
 //! Order in this file mirrors C source order verbatim.
 
 use std::fmt::Write;
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::features;
+use crate::zsh_h::module;
+
 
 /// Port of `GROUPVAR` from `Src/Modules/hlgroup.c:33`.
 /// `#define GROUPVAR ".zle.hlgroups"`. Name of the user-defined
@@ -327,9 +331,6 @@ pub fn finish_(m: *const module) -> i32 {
     0 // c:218
 }
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::features;
-use crate::zsh_h::module;
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 

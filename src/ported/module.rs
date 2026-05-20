@@ -27,6 +27,8 @@ use crate::zsh_h::module;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
+pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
+
 
 /// Free module node (from module.c freemodulenode)
 /// Free a module table entry.
@@ -3873,7 +3875,6 @@ pub struct modulestab {
 // The drift caught earlier in this series was the HIST_* values
 // where hist.rs declared `1<<N` bit positions but zsh_h.rs had the
 // canonical C values — different bits. Avoid the same hazard here.
-pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their

@@ -10,6 +10,11 @@ use std::os::fd::IntoRawFd;
 use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::Ordering;
 
+use std::sync::{Mutex, OnceLock};
+use crate::ported::utils::zwarn;
+use crate::random_real::random_real;
+use crate::zsh_h::{features, module};
+
 /// Fill a buffer with cryptographically random bytes.
 /// Port of `getrandom_buffer(void *buf, size_t len)` from Src/Modules/random.c:62 — the
 /// C source dispatches to `getentropy(3)` on BSD, `getrandom(2)` on
@@ -232,12 +237,12 @@ pub fn setup_(m: *const module) -> i32 {
             if !md.file_type().is_char_device() {
                 // c:256
                 // c:257 — `zwarn("Error getting kernel random pool: %m");`
-                crate::ported::utils::zwarn("Error getting kernel random pool: not a char device");
+                zwarn("Error getting kernel random pool: not a char device");
                 return 1;
             }
         }
         Err(e) => {
-            crate::ported::utils::zwarn(&format!("Error getting kernel random pool: {}", e));
+            zwarn(&format!("Error getting kernel random pool: {}", e));
             return 1;
         }
     }
@@ -272,7 +277,7 @@ pub fn boot_(m: *const module) -> i32 {
         }
         Err(e) => {
             // c:300 — `zwarn("Could not access kernel random pool: %m");`
-            crate::ported::utils::zwarn(&format!("Could not access kernel random pool: {}", e));
+            zwarn(&format!("Could not access kernel random pool: {}", e));
             1 // c:319
         }
     }
@@ -285,13 +290,11 @@ pub fn boot_(m: *const module) -> i32 {
 /// removed because it biases ~3% of the interval; the C author
 /// (Taylor R. Campbell) explicitly warns against it in the random_real.c
 /// header comment.
-pub use crate::ported::modules::random_real::random_real;
 
 /// Generate a random integer in `[min, max]`.
 // =====================================================================
 // static struct features module_features                            c:255 (random.c)
 // =====================================================================
-use crate::ported::zsh_h::module;
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/random.c:312`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -383,9 +386,7 @@ pub fn bounded(max: u32) -> u32 {
     (m >> 32) as u32
 }
 
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -396,7 +397,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "f:zrand_float".to_string(),
         "f:zrand_int".to_string(),
@@ -410,7 +411,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -423,7 +424,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -453,9 +454,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 0,
             cd_list: None,

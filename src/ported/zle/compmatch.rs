@@ -39,6 +39,8 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use std::sync::{Mutex, OnceLock};
+
 /// Port of `cpatterns_same(Cpattern a, Cpattern b)` from `Src/Zle/compmatch.c:42`.
 /// ```c
 /// static int
@@ -485,7 +487,6 @@ pub fn cline_setlens(l: &mut Option<Box<Cline>>, both: i32) {
 // — `Src/Zle/compmatch.c:283-317`.
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
 
 /// Port of `cline_matched(Cline p)` from `Src/Zle/compmatch.c:254`.
 /// ```c

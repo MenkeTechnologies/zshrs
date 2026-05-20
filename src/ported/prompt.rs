@@ -8,9 +8,16 @@
 use std::cell::RefCell;
 use std::env;
 use std::sync::atomic::Ordering;
-
 use crate::ported::params::{paramtab, setaparam};
 use crate::ported::utils::strpfx;
+use crate::ported::zsh_h::{
+    zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
+    TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+    TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
+    TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
+};
+
+
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
 /// then copies into `buf_vars` for each expansion walk.
@@ -223,12 +230,6 @@ pub struct buf_vars {
 //   bits 40-63: TXT_ATTR_BG_COL_MASK (same for BG)
 // `zattr` is the canonical C typedef from Src/zsh.h:2689
 // (`typedef uint64_t zattr;`). Imported directly below.
-use crate::ported::zsh_h::{
-    zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
-    TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-    TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
-    TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
-};
 
 // ---------------------------------------------------------------------------
 // Remaining missing functions from prompt.c

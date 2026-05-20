@@ -13,9 +13,13 @@
 use chrono::{Local, TimeZone};
 use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
-
 #[cfg(unix)]
 use std::ffi::CStr;
+use crate::ported::builtin::BUILTIN;
+use crate::ported::zsh_h::{builtin, module};
+use std::sync::{Mutex, OnceLock};
+
+
 
 /// `WATCH_STRUCT_UTMP` typedef alias matching `Src/Modules/watch.c:71-79`:
 /// resolves to `libc::utmpx` on platforms with `<utmpx.h>` support
@@ -730,8 +734,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 // static struct features module_features                            c:700 (watch.c)
 // =====================================================================
 
-use crate::ported::builtin::BUILTIN;
-use crate::ported::zsh_h::{builtin, module};
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
 #[allow(unused_variables)]
@@ -1118,7 +1120,6 @@ fn watch3ary_inline(inout: i32, u: &libc::utmpx, rest: &str, prnt: i32) -> (Stri
     (rendered, consumed)
 }
 
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

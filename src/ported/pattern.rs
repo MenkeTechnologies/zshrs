@@ -48,6 +48,23 @@
 
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
+pub use crate::ported::zsh_h::{
+    GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY, PAT_FILE, PAT_FILET,
+    PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART,
+    PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
+};
+use crate::ported::params::{paramtab, paramtab_hashed_storage};
+use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
+use crate::zsh_h::{Marker, 
+    isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
+    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
+    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
+    ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
+    ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
+    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
+    
+};
+
 
 // =====================================================================
 // 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
@@ -127,11 +144,6 @@ pub const P_PURESTR: i32 = 0x04; // c:218 Can be matched with a strcmp.
 // pattern.c, so the canonical home is zsh_h.rs; we just alias.
 // =====================================================================
 
-pub use crate::ported::zsh_h::{
-    GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY, PAT_FILE, PAT_FILET,
-    PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART,
-    PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
-};
 
 // C: `static int patnpar;` — number of active parens (1-indexed at
 // compile time; the *struct* patnpar is the actual count).
@@ -140,17 +152,6 @@ pub static patnpar: AtomicI32 = AtomicI32::new(0); // c:271
 // GF_* glob-flag bits live in `zsh.h:1763-1773`, ported to
 // `src/ported/zsh_h.rs:2287-2291` per Rule C. Re-export so pattern's
 // matcher arms can read them without the longer path.
-use crate::ported::params::{paramtab, paramtab_hashed_storage};
-use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-use crate::zsh_h::{
-    isset, patprog, Marker as MARKER_CH, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
-    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
-    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HASH as ZPC_HASH_C,
-    ZPC_HAT, ZPC_HAT as ZPC_HAT_C, ZPC_INANG, ZPC_INANG as ZPC_INANG_C, ZPC_INBRACK, ZPC_INPAR,
-    ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
-    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
-    ZPC_TILDE as ZPC_TILDE_C,
-};
 
 // =====================================================================
 // 7. File-static globals — direct mirror of pattern.c file-scope
@@ -288,7 +289,7 @@ pub fn patcompcharsset() {
     sp[ZPC_KSH_BANG2 as usize] = b'!';
     sp[ZPC_KSH_AT as usize] = b'@';
 
-    let marker_byte = MARKER_CH as u32 as u8;
+    let marker_byte = Marker as u32 as u8;
 
     // c:471-478 — `for (...; i < ZPC_COUNT; ...) if (*disp) *spp = Marker;`
     // Apply user disables from `disable -p` BEFORE the option-driven
@@ -308,9 +309,9 @@ pub fn patcompcharsset() {
 
     // c:480-483 — `if (!isset(EXTENDEDGLOB))` mask Tilde/Hat/Hash.
     if !isset(EXTENDEDGLOB) {
-        sp[ZPC_TILDE_C as usize] = marker_byte;
-        sp[ZPC_HAT_C as usize] = marker_byte;
-        sp[ZPC_HASH_C as usize] = marker_byte;
+        sp[ZPC_TILDE as usize] = marker_byte;
+        sp[ZPC_HAT as usize] = marker_byte;
+        sp[ZPC_HASH as usize] = marker_byte;
     }
 
     // c:485-491 — `if (!isset(KSHGLOB))` mask the six KSH_* slots.
@@ -326,8 +327,8 @@ pub fn patcompcharsset() {
     // c:499-505 — `if (isset(SHGLOB))` mask Inpar/Inang (case/numeric
     // ranges not valid under sh-emulation).
     if isset(SHGLOB) {
-        sp[ZPC_INPAR_C as usize] = marker_byte;
-        sp[ZPC_INANG_C as usize] = marker_byte;
+        sp[ZPC_INPAR as usize] = marker_byte;
+        sp[ZPC_INANG as usize] = marker_byte;
     }
 }
 
@@ -1916,10 +1917,6 @@ pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
 /// The previous Rust port had this as `pub const Marker: u8 = 0x80`
 /// which is WRONG — `\200` (0x80) is NOT the canonical Marker byte.
 /// C's Marker is 0xa2 per `Src/zsh.h:224`. No in-tree callers used
-/// this local const directly (all routed through zsh_h::Marker),
-/// but the wrong value was nevertheless a future trap for anyone
-/// using the pattern.rs `Marker` symbol.
-pub const Marker: u8 = crate::ported::zsh_h::Marker as u8;
 
 const POSIX_CLASS_NAMES: &[&str] = &[
     "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
@@ -3271,11 +3268,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:224 — canonical Marker is 0xa2.
         assert_eq!(
-            Marker, 0xa2_u8,
+            Marker as u8, 0xa2_u8,
             "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)"
         );
         assert_eq!(
-            Marker,
+            Marker as u8,
             crate::ported::zsh_h::Marker as u8,
             "pattern.rs::Marker must alias zsh_h::Marker"
         );
@@ -3291,7 +3288,7 @@ mod tests {
     #[test]
     fn patcompcharsset_respects_extendedglob_kshglob_shglob_options() {
         let _g = crate::test_util::global_state_lock();
-        let marker_byte = MARKER_CH as u32 as u8;
+        let marker_byte = Marker as u32 as u8;
 
         // Save state.
         let saved_extended = opt_state_get("extendedglob").unwrap_or(false);

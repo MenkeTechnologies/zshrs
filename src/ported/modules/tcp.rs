@@ -16,10 +16,13 @@
 //! Phase 2 bucket-1: file-statics → thread_local).
 
 use crate::ported::modules::tcp_h::{tcp_session, tcp_sockaddr, ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP};
-use crate::ported::utils::{zerrnam, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module};
+use crate::ported::utils::{addmodulefd, errflag, movefd, redup, zerrnam, zwarn, zwarnnam};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, FDT_MODULE, options, features};
 use std::net::ToSocketAddrs;
 use std::os::unix::io::RawFd;
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::params::setiparam;
 
 impl Default for tcp_sockaddr {
     /// WARNING: NOT IN TCP.C — method on Rust-only `tcp_sockaddr` wrapper.
@@ -172,7 +175,7 @@ pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessi
         s.fd = fd;
     }); // c:245 sess->fd = ...
     if fd >= 0 {
-        crate::ported::utils::addmodulefd(fd, crate::ported::zsh_h::FDT_MODULE);
+        addmodulefd(fd, FDT_MODULE);
         // c:245 FDT_MODULE
     }
     Some(idx) // c:245 return sess
@@ -259,7 +262,7 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {
             // c:301
             err = unsafe { libc::close(fd) }; // c:303
             if err != 0 {
-                crate::ported::utils::zwarn(&format!(
+                zwarn(&format!(
                     "connection close failed: {}",
                     std::io::Error::last_os_error()
                 ));
@@ -314,7 +317,7 @@ pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 {
 pub fn bin_ztcp(
     nam: &str,
     args: &[String], // c:342
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:342
@@ -474,14 +477,14 @@ pub fn bin_ztcp(
         }
         if targetfd != 0 {
             // c:452
-            let nfd = crate::ported::utils::redup(fd, targetfd); // c:453
+            let nfd = redup(fd, targetfd); // c:453
             sess_with(sidx, |s| {
                 s.fd = nfd;
             });
         } else {
             // c:457 — `sess->fd = movefd(sess->fd);` move so no one
             // accidentally reads from it.
-            let nfd = crate::ported::utils::movefd(fd); // c:457
+            let nfd = movefd(fd); // c:457
             sess_with(sidx, |s| {
                 s.fd = nfd;
             });
@@ -500,7 +503,7 @@ pub fn bin_ztcp(
             tcp_close(sess); // c:463
             return 1; // c:464
         }
-        crate::ported::params::setiparam("REPLY", nfd as i64); // c:467 setiparam_no_convert
+        setiparam("REPLY", nfd as i64); // c:467 setiparam_no_convert
         if verbose != 0 {
             // c:469
             println!(
@@ -580,11 +583,11 @@ pub fn bin_ztcp(
             };
             if r >= 0
                 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
-                || crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
+                || errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
             {
                 rfd = r;
                 break;
-            }
+            } else {}
         }
         sess_with(sidx, |s| {
             s.peer.in_ = peer;
@@ -601,10 +604,10 @@ pub fn bin_ztcp(
             tcp_close(sess); // c:550
             return 1; // c:551
         }
-        crate::ported::utils::addmodulefd(rfd, crate::ported::zsh_h::FDT_MODULE); // c:555 FDT_MODULE
+        addmodulefd(rfd, FDT_MODULE); // c:555 FDT_MODULE
         if targetfd != 0 {
             // c:557
-            let nfd = crate::ported::utils::redup(rfd, targetfd); // c:558
+            let nfd = redup(rfd, targetfd); // c:558
             sess_with(sidx, |s| {
                 s.fd = nfd;
             });
@@ -626,7 +629,7 @@ pub fn bin_ztcp(
             }); // c:566
         }
         let nfd = sess_get(sidx, |s| s.fd);
-        crate::ported::params::setiparam("REPLY", nfd as i64); // c:569 setiparam_no_convert
+        setiparam("REPLY", nfd as i64); // c:569 setiparam_no_convert
         if verbose != 0 {
             // c:571
             println!("{} is on fd {}", u16::from_be(peer.sin_port), nfd); // c:572
@@ -769,7 +772,7 @@ pub fn bin_ztcp(
                 err = tcp_connect(sess, addr, destport); // c:669
                 if err == 0
                     || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
-                    || crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
+                    || errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
                 {
                     break;
                 }
@@ -793,7 +796,7 @@ pub fn bin_ztcp(
             // c:680
             if targetfd != 0 {
                 // c:681
-                let nfd = crate::ported::utils::redup(fd, targetfd); // c:682
+                let nfd = redup(fd, targetfd); // c:682
                 sess_with(sidx, |s| {
                     s.fd = nfd;
                 });
@@ -812,7 +815,7 @@ pub fn bin_ztcp(
                 }
             }
             let nfd = sess_get(sidx, |s| s.fd);
-            crate::ported::params::setiparam("REPLY", nfd as i64); // c:691 setiparam_no_convert
+            setiparam("REPLY", nfd as i64); // c:691 setiparam_no_convert
             if verbose != 0 {
                 // c:693
                 println!(
@@ -951,9 +954,7 @@ fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
 // ("acdflLtv") and invokes the C-faithful free-fn port.
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -964,7 +965,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:ztcp".to_string()]
 }
 
@@ -974,7 +975,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -987,7 +988,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -1017,9 +1018,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1,
             cd_list: None,

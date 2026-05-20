@@ -34,14 +34,43 @@ use crate::ported::utils::{errflag, zerr, zwarnnam, ERRFLAG_ERROR};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
-// Names lifted out of inside-fn `use` statements (PORT.md
-// 'no imports inside FNs ever').
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+pub use crate::heredoc_ast::HereDoc;
+use crate::ported::lex::{
+    incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin,
+    lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond,
+    set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_lineno, set_noaliases,
+    set_nocorrect, tok, tokfd, toklineno, tokstr, zshlex,
+};
+use crate::prompt::{cmdpop, cmdpush};
+pub use crate::zsh_ast::{
+    CaseArm, CaseTerm, CaseTerminator, CompoundCommand, ForList, HereDocInfo, ListFlags, ListOp,
+    Redirect, RedirectOp, ShellCommand, ShellWord, SimpleCommand, SublistFlags, SublistOp,
+    VarModifier, ZshAssign, ZshAssignValue, ZshCase, ZshCommand, ZshCond, ZshFor, ZshFuncDef,
+    ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
+    ZshTry, ZshWhile,
+};
+use crate::zsh_h::{
+    wc_bdata, CS_ALWAYS, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF,
+    CS_ELSE, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT,
+    CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH,
+    WCB_END, WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
+    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY,
+    WC_ASSIGN_INC, WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR,
+    WC_CASE_TESTAND, WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_ELIF, WC_IF_ELSE, WC_IF_HEAD,
+    WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST,
+    WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR,
+    WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, WC_WHILE_UNTIL,
+    WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
+};
+
+// Names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever').
 
 // Direct port of `Src/parse.c:287-289` grow-policy constants.
 const EC_INIT_SIZE: i32 = 256;
@@ -217,34 +246,6 @@ pub fn ecadjusthere(p: usize, d: i32) {
 // P9d rewrite (par_* emitting wordcode + vm_helper reading wordcode)
 // retires them entirely — until then, callers reach them via this
 // re-export.
-pub use crate::heredoc_ast::HereDoc;
-use crate::ported::lex::{
-    incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin,
-    lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond,
-    set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_lineno, set_noaliases,
-    set_nocorrect, tok, tokfd, toklineno, tokstr, zshlex,
-};
-use crate::prompt::{cmdpop, cmdpush};
-pub use crate::zsh_ast::{
-    CaseArm, CaseTerm, CaseTerminator, CompoundCommand, ForList, HereDocInfo, ListFlags, ListOp,
-    Redirect, RedirectOp, ShellCommand, ShellWord, SimpleCommand, SublistFlags, SublistOp,
-    VarModifier, ZshAssign, ZshAssignValue, ZshCase, ZshCommand, ZshCond, ZshFor, ZshFuncDef,
-    ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
-    ZshTry, ZshWhile,
-};
-use crate::zsh_h::{
-    wc_bdata, CS_ALWAYS, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF,
-    CS_ELSE, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT,
-    CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH,
-    WCB_END, WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
-    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY,
-    WC_ASSIGN_INC, WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR,
-    WC_CASE_TESTAND, WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_ELIF, WC_IF_ELSE, WC_IF_HEAD,
-    WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST,
-    WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR,
-    WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, WC_WHILE_UNTIL,
-    WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
-};
 
 /// Direct port of `ecispace(int p, int n)` at `Src/parse.c:372`. Insert `n`
 /// empty wordcode slots at position `p`, shifting later entries
