@@ -57,6 +57,15 @@ use crate::ported::zsh_h::value;
 use crate::ported::utils::{ztrdup_metafy, zwarn, unmeta, inittyptab};
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set};
+// Names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever'). ASSPM_AUGMENT/PM_UNIQUE/ERRFLAG_ERROR/
+// TERM_UNKNOWN excluded — already imported elsewhere in this file.
+#[allow(unused_imports)]
+use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
+#[allow(unused_imports)]
+use crate::ported::zsh_h::TERM_BAD;
+#[allow(unused_imports)]
+use crate::ported::math::{MN_INTEGER as MN_INT, MN_FLOAT as MN_FLT};
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
 /// (under `#ifdef USE_LOCALE`). Set to 1 by `scanendscope` when a
@@ -6317,7 +6326,6 @@ pub fn keyboardhacksetfn(x: String) {                                         //
 /// which reads from three separate `unsigned char` globals.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn histcharsgetfn() -> String {
-    use std::sync::atomic::Ordering;
     let b = crate::ported::hist::bangchar.load(Ordering::SeqCst) as u8;
     let h = crate::ported::hist::hatchar.load(Ordering::SeqCst) as u8;
     let p = crate::ported::hist::hashchar.load(Ordering::SeqCst) as u8;
@@ -6346,7 +6354,6 @@ pub fn histcharsgetfn() -> String {
 ///
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn histcharssetfn(x: Option<String>) {                                    // c:5081
-    use std::sync::atomic::Ordering;
     let new_chars: [u8; 3] = match x {
         None => {
             // c:5100-5103 — defaults `!^#` when x is NULL.
@@ -7073,7 +7080,6 @@ pub fn startparamscope(_table: &mut crate::ported::zsh_h::HashTable) {
 /// exceeds the new `locallevel`. Operates on the global `paramtab`
 /// just like C — no parameter, no fake injection wrapper.
 pub fn endparamscope() {
-    use crate::ported::zsh_h::{PM_NAMEREF, PM_UNSET, PM_UPPER};
     queue_signals();
     // c:5861 — `LinkList refs = locallevel < scoperefs_num ? scoperefs[locallevel] : NULL;`
     //          Snapshot the refs at the OLD locallevel BEFORE decrementing.
@@ -8368,7 +8374,6 @@ mod gsu_tests {
     #[test]
     fn savehistsizesetfn_syncs_to_hist_module() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let original_params = savehistsizegetfn();
         let original_hist = crate::ported::hist::savehistsiz.load(Ordering::SeqCst);
         // Set via the setfn — both storages must reflect the value.
@@ -8409,8 +8414,6 @@ mod gsu_tests {
     #[test]
     fn setnumvalue_stores_int_value_into_scalar_pm() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{param, hashnode, value, PM_SCALAR};
-        use crate::ported::math::{mnumber, MN_INTEGER};
         // c:2860 — setnumvalue bails when unset(EXECOPT). The unit-test
         // env doesn't run through createoptiontable so we set "exec"
         // explicitly to simulate normal runtime.
@@ -8564,7 +8567,6 @@ mod gsu_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = super::HISTCHARS_TEST_LOCK_SHARED
             .lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
         histcharssetfn(Some("Q".to_string()));
         assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'Q' as i32);
@@ -8711,7 +8713,6 @@ mod tests {
     /// but its TYPE can't flip to array.
     #[test]
     fn assignaparam_rejects_nameref_type_change() {
-        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR};
         let _g = crate::test_util::global_state_lock();
         opt_state_set("exec", true);
         unsetparam("aa_nr");
@@ -8748,7 +8749,6 @@ mod tests {
     /// surfaces only when the caller reads `${a[1]}`.
     #[test]
     fn assignaparam_augment_prepends_old_scalar() {
-        use crate::ported::zsh_h::ASSPM_AUGMENT;
         let _g = crate::test_util::global_state_lock();
         opt_state_set("exec", true);
         unsetparam("aa_aug");
@@ -8776,7 +8776,6 @@ mod tests {
     /// unbounded with repeated directory entries.
     #[test]
     fn assignaparam_unique_flag_dedupes_values() {
-        use crate::ported::zsh_h::PM_UNIQUE;
         let _g = crate::test_util::global_state_lock();
         opt_state_set("exec", true);
         unsetparam("aa_uniq");
@@ -8877,7 +8876,6 @@ mod tests {
     /// End-to-end of the setscope_base writer + endparamscope reader.
     #[test]
     fn endparamscope_resets_scoperefs_and_nameref_base() {
-        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR};
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
 
@@ -8928,7 +8926,6 @@ mod tests {
     /// after the first function return.
     #[test]
     fn endparamscope_preserves_pm_upper_nameref_base() {
-        use crate::ported::zsh_h::{PM_NAMEREF, PM_SCALAR, PM_UPPER};
         let _g = crate::test_util::global_state_lock();
         SCOPEREFS.with(|s| s.borrow_mut().clear());
 
@@ -9130,7 +9127,6 @@ mod tests {
         opt_state_set("exec", true);
         // C-faithful: setarrvalue takes a Value pointing at a Param
         // with u_arr set. Construct one inline.
-        use crate::ported::zsh_h::{hashnode, param, PM_ARRAY};
         let pm = Box::new(param {
             node: hashnode { next: None, nam: "test".to_string(), flags: PM_ARRAY as i32 },
             u_data: 0,
@@ -9545,7 +9541,6 @@ mod tests {
     fn histcharssetfn_syncs_all_three_histchar_globals() {
         let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         // Default state.
         crate::ported::params::histcharssetfn(None);
         assert_eq!(crate::ported::hist::bangchar.load(Ordering::SeqCst), b'!' as i32);
@@ -9652,7 +9647,6 @@ mod tests {
     fn histcharssetfn_rejects_non_ascii_chars() {
         let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         // Reset to defaults.
         crate::ported::params::histcharssetfn(None);
         let bang_before = crate::ported::hist::bangchar.load(Ordering::SeqCst);
@@ -9683,7 +9677,6 @@ mod tests {
     fn histsizesetfn_floors_at_one_and_mirrors_to_hist_module() {
         let _g = crate::test_util::global_state_lock();
         let _g = HISTSIZ_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use std::sync::atomic::Ordering;
         let saved_param = histsizegetfn();
         let saved_hist = crate::ported::hist::histsiz.load(Ordering::SeqCst);
 
@@ -9752,8 +9745,6 @@ mod tests {
     fn argzerogetfn_respects_posixargzero_option() {
         let _g = crate::test_util::global_state_lock();
         let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use crate::ported::options::{opt_state_get, opt_state_set};
-        use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
 
         // Save state.
         let saved_argzero    = argzero();
@@ -9792,7 +9783,6 @@ mod tests {
     fn set_argzero_mirrors_to_posixzero_only_on_first_call() {
         let _g = crate::test_util::global_state_lock();
         let _g = ARGZERO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        use crate::ported::utils::{set_argzero, set_posixzero, argzero, posixzero};
 
         let saved_argzero   = argzero();
         let saved_posixzero = posixzero();
@@ -10001,7 +9991,6 @@ mod tests {
     #[test]
     fn setarrvalue_bails_under_no_exec() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{param, hashnode, value, PM_ARRAY};
 
         let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
@@ -10049,8 +10038,6 @@ mod tests {
     #[test]
     fn setnumvalue_bails_under_no_exec() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{param, hashnode, value, PM_INTEGER};
-        use crate::ported::math::{mnumber, MN_INTEGER};
 
         let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
@@ -10131,7 +10118,6 @@ mod tests {
     #[test]
     fn term_unknown_bit_value_matches_c() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{TERM_BAD, TERM_UNKNOWN};
         assert_eq!(TERM_UNKNOWN, 0x02,
             "Src/zsh.h:1986 — TERM_UNKNOWN must be 0x02, got {:#x}", TERM_UNKNOWN);
         assert_eq!(TERM_BAD, 0x01,
@@ -10149,7 +10135,6 @@ mod tests {
     #[test]
     fn getstrvalue_pm_integer_honors_pm_base() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{value, param, hashnode, PM_INTEGER};
 
         let saved_cbases_top = opt_state_get("cbases")
             .unwrap_or(false);
@@ -10217,7 +10202,6 @@ mod tests {
     #[test]
     fn unsetparam_skips_nameref_and_readonly() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{PM_NAMEREF, PM_READONLY, PM_SCALAR};
 
         let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
@@ -10287,7 +10271,6 @@ mod tests {
     #[test]
     fn assigniparam_takes_flags_arg_and_returns_param() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_INTEGER;
 
         let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
@@ -10335,8 +10318,6 @@ mod tests {
     #[test]
     fn setnparam_accepts_both_integer_and_float() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::math::{mnumber, MN_INTEGER as MN_INT, MN_FLOAT as MN_FLT};
-        use crate::ported::zsh_h::{PM_INTEGER, PM_FFLOAT};
 
         let saved_exec = opt_state_get("exec")
             .unwrap_or(false);
@@ -10391,7 +10372,6 @@ mod tests {
     #[test]
     fn setiparam_creates_pm_integer_param() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::PM_INTEGER;
         let name = "zshrs_test_setiparam_x";
 
         // C: `assignnparam` bails when `unset(EXECOPT)` (Src/params.c:3679).
