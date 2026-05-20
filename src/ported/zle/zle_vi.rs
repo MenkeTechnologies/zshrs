@@ -3,6 +3,7 @@
 //! Direct port from zsh/Src/Zle/zle_vi.c
 
 use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::SeqCst;
 
 use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIAPP, MOD_VIBUF};
 use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
@@ -54,7 +55,6 @@ use crate::ported::zle::zle_word::*;
 /// startvitext at the current position.
 pub fn vichange() -> i32 {
     // c:438
-    use std::sync::atomic::Ordering;
     startvichange(1); // c:440
     let c2 = getvirange(0); // c:441
     if c2 != -1 {
@@ -152,7 +152,6 @@ pub fn vigetkey() -> i32 {
 /// against the ZLE file-scope statics directly.
 pub fn getvirange(wf: i32) -> i32 {
     // c:172
-    use std::sync::atomic::Ordering;
     // c:186-187 — set the virangeflag / wordflag globals so the
     // movement-cmd dispatch (read by zle_word / zle_move) knows to
     // place cursor at the END of the range rather than where the
@@ -243,7 +242,6 @@ pub fn viinsertbol() -> i32 {
 /// arm (c:392-398) drops the trailing newline.
 pub fn videlete() -> i32 {
     // c:384
-    use std::sync::atomic::Ordering;
     startvichange(1); // c:388
     let c2 = getvirange(0); // c:389
     if c2 == -1 {
@@ -270,8 +268,6 @@ pub fn videlete() -> i32 {
 /// Port of `videletechar(char **args)` from Src/Zle/zle_vi.c:405.
 pub fn videletechar() -> i32 {
     // c:405
-    use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL, ZMOD};
-    use std::sync::atomic::Ordering;
 
     // c:410 — startvichange(-1);
     startvichange(-1);
@@ -406,7 +402,6 @@ pub fn vichangewholeline() -> i32 {
 /// ```
 pub fn viyank(_args: &[String]) -> i32 {
     // c:zle_vi.c:546
-    use std::sync::atomic::Ordering::SeqCst;
     let mut ret = 1;
     startvichange(1); // c:550
     let c2 = getvirange(0); // c:551
@@ -724,7 +719,6 @@ pub fn viunindent() -> i32 {
 /// kills up to `findbol()`'s worth of characters.
 pub fn vibackwarddeletechar() -> i32 {
     // c:888
-    use std::sync::atomic::Ordering;
     let curkm = crate::ported::zle::zle_keymap::curkeymapname()
         .as_str()
         .to_string();
@@ -772,7 +766,6 @@ pub fn vibackwarddeletechar() -> i32 {
 /// beginning of the line.)
 pub fn vikillline() -> i32 {
     // c:923
-    use std::sync::atomic::Ordering;
     let zlecs = ZLECS.load(Ordering::SeqCst) as i32;
     let viinsbegin = crate::ported::zle::zle_main::VIINSBEGIN.load(Ordering::SeqCst) as i32;
     if viinsbegin > zlecs {
@@ -854,7 +847,6 @@ pub fn viswapcase() -> i32 {
 /// ```
 pub fn vicapslockpanic() -> i32 {
     // c:1002
-    use std::sync::atomic::Ordering;
     // c:1004 — clearlist = 1.
     crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
     // c:1005 — zbeep().
@@ -884,7 +876,6 @@ pub fn visetbuffer() -> i32 {
     // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
-    use crate::ported::zle::zle_h::{MOD_VIAPP, MOD_VIBUF};
     let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)
         & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
@@ -933,8 +924,6 @@ pub fn vikilleol() -> i32 {
 /// Single-line toggle of the leading `#` comment marker.
 pub fn vipoundinsert() -> i32 {
     // c:1073
-    use crate::ported::zle::zle_main::{VIINSBEGIN, ZLECS, ZLELINE, ZLELL, ZLE_RESET_NEEDED};
-    use std::sync::atomic::Ordering;
 
     // c:1075 — int oldcs = zlecs;
     let mut oldcs = ZLECS.load(Ordering::SeqCst);
@@ -1001,7 +990,6 @@ pub fn vidigitorbeginningofline() -> i32 {
     // C body: `if (zmod.flags & MOD_TMULT) return digitargument();
     //          else { removesuffix(); invalidatelist();
     //                 return vibeginningofline(); }`.
-    use crate::ported::zle::zle_h::MOD_TMULT;
     if ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
         return crate::ported::zle::zle_misc::digitargument();
     }
@@ -1029,11 +1017,6 @@ pub static VICHGFLAG: std::sync::atomic::AtomicI32 = // c:65
 /// Port of `int viinrepeat;` from `Src/Zle/zle_vi.c:73`. Set during
 /// `.` replay so the recorder doesn't re-record.
 pub static VIINREPEAT: std::sync::atomic::AtomicI32 = // c:73
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int viinsbegin;` from `Src/Zle/zle_vi.c:78`. Buffer
-/// position where vi insert mode was last entered.
-pub static VIINSBEGIN: std::sync::atomic::AtomicI32 = // c:78
     std::sync::atomic::AtomicI32::new(0);
 
 /// Read the active numeric multiplier.
