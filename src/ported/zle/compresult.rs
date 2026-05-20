@@ -35,13 +35,15 @@ use crate::ported::init::SHTTY;
 use crate::ported::utils::write_loop;
 use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zle::comp_h::{
-    Aminfo, Cldata, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED, CGF_ROWS, CMF_ALL,
-    CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_ROWS,
+    Aminfo, Chdata, Cldata, Cmatch, Cmgroup, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED,
+    CGF_ROWS, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED,
+    CMF_ROWS,
 };
 use crate::ported::zle::compcore::{
     amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc,
-    nmatches as nmatches_g, oldins, oldlist, MINFO,
+    nmatches as nmatches_g, oldins, oldlist, onlyexpl, MINFO,
 };
+use crate::ported::zle::zle_refresh::tcoutclear;
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
@@ -585,7 +587,7 @@ pub fn do_ambig_menu() -> i32 {
         .ok()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let mut chosen_group: Option<crate::ported::zle::comp_h::Cmgroup> = None;
+    let mut chosen_group: Option<Cmgroup> = None;
     for g in &groups {
         if g.mcount > idx {
             chosen_group = Some(g.clone());
@@ -682,7 +684,7 @@ pub fn comp_list(v: Option<&str>) {
     let val = v.map_or(0, |s| {
         (s.contains("expl") as i32) | (s.contains("messages") as i32) << 1
     }); // c:1473
-    crate::ported::zle::compcore::onlyexpl.store(val, Ordering::SeqCst); // c:1473
+    onlyexpl.store(val, Ordering::SeqCst); // c:1473
 }
 
 /// Port of `skipnolist(Cmatch *p, int showall)` from `Src/Zle/compresult.c:1480`.
@@ -705,7 +707,7 @@ pub fn comp_list(v: Option<&str>) {
 ///
 /// `showall` mirrors C: when non-zero, the NOLIST/MULT mask is
 /// dropped (only CMF_HIDE filters).
-pub fn skipnolist(p: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {
+pub fn skipnolist(p: &[Cmatch], showall: i32) -> usize {
     // c:1481
     // c:1483 — `mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT)) | CMF_HIDE`.
     let mask = if showall != 0 {
@@ -737,7 +739,7 @@ pub fn calclist(showall: i32) -> i32 {
     // c:1495
 
     let invcount = INVCOUNT.load(Relaxed);
-    let onlyexpl_v = crate::ported::zle::compcore::onlyexpl.load(Relaxed);
+    let onlyexpl_v = onlyexpl.load(Relaxed);
     let menuacc_v = crate::ported::zle::compcore::menuacc.load(Relaxed);
     let zterm_columns = crate::ported::utils::adjustcolumns() as i32; // c:zterm_columns
     let zterm_lines = crate::ported::utils::adjustlines() as i32; // c:zterm_lines
@@ -1386,7 +1388,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
     if cl < 2 {
         // c:1986
         cl = -1;
-        crate::ported::zle::zle_refresh::tcoutclear(true); // c:1988 tcout(TCCLEAREOD)
+        tcoutclear(true); // c:1988 tcout(TCCLEAREOD)
     }
 
     let groups = amatches
@@ -1417,7 +1419,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 if cl >= 0 && cl <= 1 {
                     // c:2010
                     cl = -1;
-                    crate::ported::zle::zle_refresh::tcoutclear(true);
+                    tcoutclear(true);
                 }
             }
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
@@ -1594,8 +1596,8 @@ pub fn bld_all_str() -> String {
 /// the global `shout` stream + tracked `len` locally.
 #[allow(unused_variables)]
 pub fn iprintm(
-    g: Option<&crate::ported::zle::comp_h::Cmgroup>,
-    mp: Option<&crate::ported::zle::comp_h::Cmatch>,
+    g: Option<&Cmgroup>,
+    mp: Option<&Cmatch>,
     mc: i32,
     ml: i32,
     lastc: i32,
@@ -1710,7 +1712,7 @@ pub fn list_matches() -> i32 {
         .ok()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let mut dat = crate::ported::zle::comp_h::Chdata::default();
+    let mut dat = Chdata::default();
     dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
     dat.num = nmatches_g.load(Ordering::Relaxed); // c:2319
                                                   // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
@@ -1721,7 +1723,7 @@ pub fn list_matches() -> i32 {
     let h = crate::ported::module::gethookdef("complist-matches");
     let handled = if !h.is_null() {
         let dat_ptr =
-            (&mut dat) as *mut crate::ported::zle::comp_h::Chdata as *mut std::ffi::c_void;
+            (&mut dat) as *mut Chdata as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h, dat_ptr) != 0
     } else {
         false
