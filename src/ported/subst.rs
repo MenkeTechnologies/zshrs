@@ -2589,10 +2589,13 @@ pub fn paramsubst(
         let mut flag_pct_prompt: u32 = 0; // c:2405 (% prompt count)
         let mut multi_width: u32 = 0; // c:2376 (m count)
         let mut flnum: u32 = 0; // c:1786 (I:N:)
-        let mut flag_z_tokenize = false; // c:2439 (z)
-        let mut flag_z_keep_comments = false; // c:2450 (Zc)
-        let mut flag_z_strip_comments = false; // c:2456 (ZC)
-        let mut flag_z_newline_ws = false; // c:2461 (Zn)
+        // c:1754 — `int shsplit = 0;` LEXFLAGS_* bitmask:
+        //   (z)  → LEXFLAGS_ACTIVE         c:2439-2440
+        //   (Zc) → LEXFLAGS_COMMENTS_KEEP  c:2450-2452
+        //   (ZC) → LEXFLAGS_COMMENTS_STRIP c:2455-2457
+        //   (Zn) → LEXFLAGS_NEWLINE        c:2460-2462
+        // Previous Rust port decomposed into 4 bools — Rule D.
+        let mut shsplit: i32 = 0;                                             // c:1754
         let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM); // c:1663
         let mut hkeys: u32 = 0; // c:1828
         let mut hvals: u32 = 0; // c:1835
@@ -2894,44 +2897,34 @@ pub fn paramsubst(
                     'W' => {                                                  // c:2281
                         whichlen = 3;                                         // c:2282
                     }                                                         // c:2283
-                    'z' => {
-                        flag_z_tokenize = true;
-                    } // c:2439 (z)
-                    'Z' => {
-                        // c:2443 (Z:flags:)
+                    'z' => {                                                  // c:2439
+                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE;     // c:2440
+                    }                                                         // c:2441
+                    'Z' => {                                                  // c:2443
                         // (Z:cCn:) — shell-tokenize with sub-flags:
-                        //   c: keep comments
-                        //   C: strip comments
-                        //   n: treat newlines as whitespace
-                        // Direct port of subst.c:2443 — skip the
-                        // delimited :flags: arg span; the Rust
-                        // tokenizer (consumer) reads sub-flags at
-                        // dispatch.
-                        flag_z_tokenize = true; // c:2443
-                        idx += 1; // c:2444 (s++)
-                        if idx < body_chars.len() {
-                            // c:2444
-                            let del = body_chars[idx]; // c:2444
-                            idx += 1; // c:2444
-                            while idx < body_chars.len()    // c:2444
+                        //   c: keep comments (LEXFLAGS_COMMENTS_KEEP)
+                        //   C: strip comments (LEXFLAGS_COMMENTS_STRIP)
+                        //   n: treat newlines as whitespace (LEXFLAGS_NEWLINE)
+                        // Direct port of subst.c:2443-2473 — bare (Z) sets
+                        // ACTIVE; sub-letters OR additional bits.
+                        shsplit = crate::ported::zsh_h::LEXFLAGS_ACTIVE;     // c:2443 (implicit from Z arm)
+                        idx += 1;                                             // c:2444 ++s
+                        if idx < body_chars.len() {                          // c:2445 if (*t)
+                            let del = body_chars[idx];                       // c:2446 sav = *t
+                            idx += 1;                                         // c:2448 while (*++s)
+                            while idx < body_chars.len()                     // c:2448
                                 && body_chars[idx] != del
-                            // c:2444
-                            {
-                                // c:2444
-                                let ch = body_chars[idx]; // c:2450
-                                if ch == 'c' {
-                                    flag_z_keep_comments = true;
-                                }
-                                // c:2450
-                                else if ch == 'C' {
-                                    flag_z_strip_comments = true;
-                                }
-                                // c:2456
-                                else if ch == 'n' {
-                                    flag_z_newline_ws = true;
-                                } // c:2461
-                                idx += 1; // c:2444
-                            } // c:2444
+                            {                                                 // c:2448
+                                let ch = body_chars[idx];                    // c:2449 switch (*s)
+                                if ch == 'c' {                                // c:2450
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP; // c:2452
+                                } else if ch == 'C' {                         // c:2455
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP; // c:2457
+                                } else if ch == 'n' {                         // c:2460
+                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_NEWLINE; // c:2462
+                                }                                             // c:2463
+                                idx += 1;                                     // c:2448
+                            }                                                 // c:2469
                             if idx < body_chars.len() {
                                 idx += 1;
                             } // c:2444
@@ -5165,7 +5158,7 @@ pub fn paramsubst(
         // reentry is deferred — this covers the common idioms
         // \${(z)cmdline} (split a command into words) and
         // \${(Zn)multiline} (newlines act like spaces).
-        if flag_z_tokenize {
+        if (shsplit & crate::ported::zsh_h::LEXFLAGS_ACTIVE) != 0 {
             // c:2439
             let mut words: Vec<String> = Vec::new(); // c:2439
             let mut cur = String::new(); // c:2439
@@ -5189,10 +5182,10 @@ pub fn paramsubst(
                     if ch == '\n' {
                         // c:2451
                         in_comment = false; // c:2451
-                        if flag_z_keep_comments {
+                        if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
                             cur.push(ch);
                         } // c:2451
-                    } else if flag_z_keep_comments {
+                    } else if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
                         // c:2451
                         cur.push(ch); // c:2451
                     } // c:2451
@@ -5238,19 +5231,19 @@ pub fn paramsubst(
                         cur.push(ch);
                         in_dq = true;
                     } // c:2439
-                    '#' if cur.is_empty() && !flag_z_strip_comments => {
+                    '#' if cur.is_empty() && !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 => {
                         // c:2451
                         // Start of comment word — keep or skip.
-                        in_comment = !flag_z_keep_comments; // c:2451
-                        if flag_z_keep_comments {
+                        in_comment = !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
+                        if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
                             cur.push(ch);
                         } // c:2451
                     } // c:2451
-                    '#' if cur.is_empty() && flag_z_strip_comments => {
+                    '#' if cur.is_empty() && (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_STRIP) != 0 => {
                         // c:2456
                         in_comment = true; // c:2456
                     } // c:2456
-                    '\n' if flag_z_newline_ws => {
+                    '\n' if (shsplit & crate::ported::zsh_h::LEXFLAGS_NEWLINE) != 0 => {
                         // c:2461 (n: nl as ws)
                         push_word(&mut cur, &mut words); // c:2461
                     } // c:2461
