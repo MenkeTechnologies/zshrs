@@ -5990,6 +5990,7 @@ pub static WINCHANGED: std::sync::atomic::AtomicI32 =
 ///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
 pub const GETKEY_OCTAL_ESC: u32 = 1 << 0;                                    // c:zsh.h:3143
 pub const GETKEY_EMACS: u32 = 1 << 1;                                        // c:zsh.h:3150
+pub const GETKEY_CTRL: u32 = 1 << 2;                                         // c:zsh.h:3152
 pub const GETKEY_BACKSLASH_C: u32 = 1 << 3;                                  // c:zsh.h:3154
 
 /// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
