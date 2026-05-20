@@ -17,9 +17,10 @@
 //! - accept-line-and-down-history, accept-and-infer-next-history
 //! - insert-last-word, push-line, push-line-or-edit
 
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use super::zle_main::ZleString;
+use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
 
 // =====================================================================
 // Isearch globals — `Src/Zle/zle_hist.c:1078`.
@@ -239,7 +240,6 @@ pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) 
 /// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
 pub fn uphistory() -> i32 {
     // c:233
-    use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
     // c:235 — `int nodups = isset(HISTIGNOREDUPS);`
     let nodups = isset(HISTIGNOREDUPS);
     let zmult = ZMOD.lock().unwrap().mult.max(1);
@@ -607,7 +607,6 @@ pub fn acceptlineanddownhistory() -> i32 {
 /// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
 pub fn downhistory() -> i32 {
     // c:434
-    use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
     // c:436 — `int nodups = isset(HISTIGNOREDUPS);`
     let nodups = isset(HISTIGNOREDUPS);
     let zmult = ZMOD.lock().unwrap().mult.max(1);
@@ -682,7 +681,6 @@ pub fn beginningofbufferorhistory() -> i32 {
 /// older history to visit) and `HISTBEEP` is on.
 pub fn beginningofhistory() -> i32 {
     // c:584
-    use crate::ported::zsh_h::HISTBEEP;
     // c:586 — `zle_goto_hist(firsthist(), 0, 0)`. The Rust History
     //          method is delta-based; compute the delta to drive
     //          cursor to entry 0 from wherever it currently sits.
@@ -1127,7 +1125,6 @@ pub const FIRST_SEARCH_CHAR: usize = NORM_PROMPT_POS + 14; // c:1075
 /// WARNING: param names don't match C — Rust=(zle, dir) vs C=(args, dir, pattern)
 pub fn doisearch(dir: i32) -> i32 {
     // c:1082
-    use std::sync::atomic::Ordering;
     // C body c:1090-1730 — full incremental-search loop reads keys
     //                      via getkeycmd, mutates sbuf, repaints
     //                      status via tracing. Without that loop the

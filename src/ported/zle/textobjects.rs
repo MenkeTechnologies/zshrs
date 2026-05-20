@@ -722,7 +722,6 @@ mod tests {
     #[test]
     fn selectargument_empty_buffer_leaves_mark_and_zlecs_unchanged() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::MARK.store(42, Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, Ordering::SeqCst);
@@ -747,7 +746,6 @@ mod tests {
     #[test]
     fn selectargument_zero_mult_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, Ordering::SeqCst);
@@ -765,7 +763,6 @@ mod tests {
     #[test]
     fn selectargument_negative_mult_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, Ordering::SeqCst);
@@ -832,7 +829,6 @@ mod tests {
     #[test]
     fn selectargument_whitespace_only_buffer_does_not_panic() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "   ".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, Ordering::SeqCst);

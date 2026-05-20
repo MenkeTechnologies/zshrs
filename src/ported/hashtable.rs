@@ -18,13 +18,15 @@
 #![allow(non_camel_case_types)]
 
 use crate::ported::zsh_h::{
-    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF,
-    INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND,
+    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC,
+    HIST_DUP, HIST_TMPSTORE, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME,
+    TYPESET, UNTIL, WHILE, ZEND,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -1759,7 +1761,6 @@ pub fn freehistnode(nodeptr: &str) {
 /// WARNING: param names don't match C — Rust=(idx, unlink) vs C=(he, unlink)
 pub fn freehistdata(idx: usize, unlink: i32) {
     // c:1458
-    use crate::ported::zsh_h::{HIST_DUP, HIST_TMPSTORE};
     let mut ring = crate::ported::hist::hist_ring.lock().unwrap();
     let he = match ring.get(idx) {
         Some(h) => h,
@@ -1797,7 +1798,6 @@ pub fn freehistdata(idx: usize, unlink: i32) {
 /// HashMap-value (i32). Add/remove via the (name, value) pair.
 pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {
     // c:1537
-    use std::sync::atomic::Ordering;
     let mut cache = dircache_lock().lock().expect("dircache poisoned");
 
     if value.is_none() {
@@ -2327,7 +2327,6 @@ mod tests {
     #[test]
     fn hnamcmp_uses_ztrcmp_meta_aware_compare() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         // Plain ASCII: same as str::cmp.
         assert_eq!(hnamcmp("apple", "banana"), Ordering::Less);
         assert_eq!(hnamcmp("banana", "apple"), Ordering::Greater);
@@ -2432,7 +2431,6 @@ mod tests {
     #[test]
     fn histstrcmp_inblank_is_narrow_space_tab_only() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         // c:1411-1413 — runs of inblank collapse to a single boundary.
         assert_eq!(
             histstrcmp("hello\tworld", "hello world", false),
@@ -2475,7 +2473,6 @@ mod tests {
     #[test]
     fn histstrcmp_strips_leading_and_trailing_inblank() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         assert_eq!(
             histstrcmp("  cmd", "\tcmd", false),
             Ordering::Equal,
