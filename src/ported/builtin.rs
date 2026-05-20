@@ -22,8 +22,16 @@
 //! the comment cites the file; when it lives in `vm_helper`'s
 //! `Executor` impl, that's noted too.
 
-use crate::ported::hashtable::dircache_set;
+use crate::ported::compat::zgetcwd;
+use crate::ported::exec::TRAP_STATE;
+use crate::ported::hashnameddir::{nameddirtab, printnameddirnode};
+use crate::ported::hashtable::{cmdnamtab_lock, dircache_set, hnamcmp, reswdtab_lock};
 use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
+use crate::ported::jobs::bin_fg;
+use crate::ported::module::MATHFUNCS;
+use crate::ported::options::{dosetopt, emulation};
+use crate::ported::params::{paramtab, setaparam, setiparam, unsetparam};
+use crate::ported::utils::fprintdir;
 use crate::ported::math::mathevali;
 use crate::ported::math::{matheval, mnumber, MN_INTEGER};
 use crate::ported::mem::{queue_signals, unqueue_signals};
@@ -215,7 +223,7 @@ pub fn init_builtins() {
         // c:214
         // c:215-217 — `hn = reswdtab->getnode2(reswdtab,"repeat");
         //              if (hn) reswdtab->disablenode(hn, 0);`
-        if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().write() {
+        if let Ok(mut tab) = reswdtab_lock().write() {
             tab.disable("repeat");
         }
     }
@@ -578,13 +586,13 @@ pub fn execbuiltin(
         for s in fullargv {
             // c:444
             eprint!(" "); // c:445 fputc(' ', xtrerr)
-            eprint!("{}", crate::ported::utils::quotedzputs(s)); // c:446
+            eprint!("{}", quotedzputs(s)); // c:446
         }
         // c:448-491 — `if (assigns) { for (node = firstnode(assigns); ...) }`.
         for asg in &assigns {
             // c:450 firstnode/incnode
             eprint!(" "); // c:452 fputc(' ', xtrerr)
-            eprint!("{}", crate::ported::utils::quotedzputs(&asg.name)); // c:453
+            eprint!("{}", quotedzputs(&asg.name)); // c:453
             if (asg.flags & ASG_ARRAY) != 0 {
                 // c:454
                 eprint!("=("); // c:455
@@ -618,7 +626,7 @@ pub fn execbuiltin(
                             eprint!("["); // c:466
                             if let Some(k) = list.getdata(kidx) {
                                 // c:467 getdata
-                                eprint!("{}", crate::ported::utils::quotedzputs(k));
+                                eprint!("{}", quotedzputs(k));
                                 // c:467
                             }
                             // c:469 — `fprintf(stderr, "]=");`
@@ -626,7 +634,7 @@ pub fn execbuiltin(
                                            // c:470-471 — `quotedzputs(getdata(valnode));`
                             if let Some(v) = list.getdata(vidx) {
                                 // c:470
-                                eprint!("{}", crate::ported::utils::quotedzputs(v));
+                                eprint!("{}", quotedzputs(v));
                                 // c:470
                             }
                             // c:472 — `keynode = nextnode(valnode);`
@@ -642,7 +650,7 @@ pub fn execbuiltin(
                             eprint!(" "); // c:479 fputc(' ', xtrerr)
                             if let Some(elem) = list.getdata(idx) {
                                 // c:480 getdata
-                                eprint!("{}", crate::ported::utils::quotedzputs(elem));
+                                eprint!("{}", quotedzputs(elem));
                                 // c:480
                             }
                             arrnode = list.nextnode(idx); // c:478 incnode
@@ -653,7 +661,7 @@ pub fn execbuiltin(
             } else if let Some(ref scalar) = asg.scalar {
                 // c:486
                 eprint!("="); // c:487 fputc('=', xtrerr)
-                eprint!("{}", crate::ported::utils::quotedzputs(scalar)); // c:488
+                eprint!("{}", quotedzputs(scalar)); // c:488
             }
         }
         // c:492-493 — `fputc('\n', xtrerr); fflush(xtrerr);`
@@ -725,11 +733,11 @@ pub fn bin_enable(
     // Helper closures over the chosen table.
     let toggle_one = |tab: &Tab, nm: &str, on: bool| -> bool {
         match tab {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock()
+            Tab::Alias => aliastab_lock()
                 .write()
                 .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                 .unwrap_or(false),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock()
+            Tab::SufAlias => sufaliastab_lock()
                 .write()
                 .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                 .unwrap_or(false),
@@ -737,14 +745,14 @@ pub fn bin_enable(
             // reswdtab entry; reswords resolve through getreswdnode in
             // the lexer so toggling here is enough to mask/unmask.
             Tab::Reswd => {
-                let exists = crate::ported::hashtable::reswdtab_lock()
+                let exists = reswdtab_lock()
                     .read()
                     .map(|t| t.get_including_disabled(nm).is_some())
                     .unwrap_or(false);
                 if !exists {
                     return false;
                 }
-                crate::ported::hashtable::reswdtab_lock()
+                reswdtab_lock()
                     .write()
                     .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                     .unwrap_or(false)
@@ -790,15 +798,15 @@ pub fn bin_enable(
     };
     let collect_names = |tab: &Tab| -> Vec<String> {
         match tab {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock()
+            Tab::Alias => aliastab_lock()
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock()
+            Tab::SufAlias => sufaliastab_lock()
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
-            Tab::Reswd => crate::ported::hashtable::reswdtab_lock()
+            Tab::Reswd => reswdtab_lock()
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
@@ -923,8 +931,8 @@ pub fn bin_set(
         // c:610-611 — `dosetopt(VERBOSE, 0, 0, opts); dosetopt(XTRACE, 0, 0, opts);`
         let v = optlookup("verbose");
         let x = optlookup("xtrace");
-        crate::ported::options::dosetopt(v, 0, 0); // c:610
-        crate::ported::options::dosetopt(x, 0, 0); // c:611
+        dosetopt(v, 0, 0); // c:610
+        dosetopt(x, 0, 0); // c:611
         if argv.len() == 1 {
             return 0;
         } // c:612-613
@@ -981,7 +989,7 @@ pub fn bin_set(
                 if optno == 0 {
                     // c:642
                     zerr(&format!("no such option: {}", optname)); // c:642
-                } else if crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0)
+                } else if dosetopt(optno, if action { 1 } else { 0 }, 0)
                     != 0
                 // c:644
                 {
@@ -1025,7 +1033,7 @@ pub fn bin_set(
                 if optno == 0 {
                     // c:663
                     zerr(&format!("bad option: -{}", c)); // c:663
-                } else if crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0)
+                } else if dosetopt(optno, if action { 1 } else { 0 }, 0)
                     != 0
                 // c:664
                 {
@@ -1058,7 +1066,7 @@ pub fn bin_set(
             //
             // Same family of bug as the prior bin_unset -m fix.
             let mut entries: Vec<(String, String)> = {
-                let tab = crate::ported::params::paramtab().read().unwrap();
+                let tab = paramtab().read().unwrap();
                 tab.iter()
                     .filter(|(_, pm)| {
                         // c:scanhashtable filter: skip PM_UNSET. C also
@@ -1073,13 +1081,13 @@ pub fn bin_set(
             };
             // c:680 sorted=1 → meta-aware sort via hnamcmp (already fixed
             // to use ztrcmp earlier in the series).
-            entries.sort_by(|a, b| crate::ported::hashtable::hnamcmp(&a.0, &b.0));
+            entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
             for (k, v) in entries {
                 if hadplus {
                     // c:681 PRINT_NAMEONLY
                     println!("{}", k);
                 } else {
-                    println!("{}={}", k, crate::ported::utils::quotedzputs(&v));
+                    println!("{}={}", k, quotedzputs(&v));
                 }
             }
         }
@@ -1096,7 +1104,7 @@ pub fn bin_set(
             // scanhashtable call.
             let mut arr_entries: Vec<(String, Vec<String>)> = {
                 use {PM_ARRAY, PM_TYPE};
-                let tab = crate::ported::params::paramtab().read().unwrap();
+                let tab = paramtab().read().unwrap();
                 tab.iter()
                     .filter(|(_, pm)| {
                         PM_TYPE(pm.node.flags as u32) == PM_ARRAY
@@ -1105,7 +1113,7 @@ pub fn bin_set(
                     .map(|(k, pm)| (k.clone(), pm.u_arr.clone().unwrap_or_default()))
                     .collect()
             };
-            arr_entries.sort_by(|a, b| crate::ported::hashtable::hnamcmp(&a.0, &b.0)); // c:685 sorted=1
+            arr_entries.sort_by(|a, b| hnamcmp(&a.0, &b.0)); // c:685 sorted=1
             for (k, arr) in arr_entries {
                 if hadplus {
                     // c:686 PRINT_NAMEONLY
@@ -1113,7 +1121,7 @@ pub fn bin_set(
                 } else {
                     let quoted: Vec<String> = arr
                         .iter()
-                        .map(|v| crate::ported::utils::quotedzputs(v))
+                        .map(|v| quotedzputs(v))
                         .collect();
                     println!("{}=({})", k, quoted.join(" "));
                 }
@@ -1151,7 +1159,7 @@ pub fn bin_set(
             //              Read paramtab.u_arr directly; was using `:`-
             //              split env value as a fake array.
             let existing: Vec<String> = {
-                let tab = crate::ported::params::paramtab().read().unwrap();
+                let tab = paramtab().read().unwrap();
                 tab.get(&aname)
                     .and_then(|pm| pm.u_arr.clone())
                     .unwrap_or_default()
@@ -1164,7 +1172,7 @@ pub fn bin_set(
         // c:709 — `setaparam(arrayname, x);`. Use setaparam (array
         //          setter) so the value lands as a proper PM_ARRAY,
         //          not a colon-joined scalar.
-        crate::ported::params::setaparam(&aname, new_arr);
+        setaparam(&aname, new_arr);
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
         // PPARAMS is the single source of truth; fusevm reads via
@@ -1197,7 +1205,7 @@ pub fn bin_pwd(
     // c:731
     {
         // c:732 — `printf("%s\n", zgetcwd());`
-        println!("{}", crate::ported::compat::zgetcwd()); // c:732
+        println!("{}", zgetcwd()); // c:732
     } else {
         // c:734 — `zputs(pwd, stdout); putchar('\n');`. C reads the
         // shell-internal `pwd` global (Src/params.c:108). The
@@ -1211,7 +1219,7 @@ pub fn bin_pwd(
         // print the wrong thing under the env-var path (env was
         // already unset, so the read fell through to zgetcwd
         // bypassing the just-set paramtab PWD).
-        let pwd = getsparam("PWD").unwrap_or_else(|| crate::ported::compat::zgetcwd());
+        let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
         println!("{}", pwd); // c:734
     }
     0 // c:737
@@ -1252,12 +1260,12 @@ pub fn bin_dirs(
         // user-defined nameddirtab entry (`hash -d proj=/big/path`).
         // Route through `utils::fprintdir` which calls `finddir`,
         // matching C's named-dir abbreviation.
-        let pwd = getsparam("PWD").unwrap_or_else(|| crate::ported::compat::zgetcwd());
+        let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
         if OPT_ISSET(ops, b'l') {
             // c:771
             print!("{}", pwd); // c:772
         } else {
-            print!("{}", crate::ported::utils::fprintdir(&pwd)); // c:774
+            print!("{}", fprintdir(&pwd)); // c:774
         }
         // c:775-781 — walk dirstack list.
         if let Ok(stack) = DIRSTACK.lock() {
@@ -1273,7 +1281,7 @@ pub fn bin_dirs(
                     // c:777
                     print!("{}", entry); // c:778
                 } else {
-                    print!("{}", crate::ported::utils::fprintdir(entry)); // c:780
+                    print!("{}", fprintdir(entry)); // c:780
                 }
             }
         }
@@ -1372,8 +1380,8 @@ pub fn bin_cd(
     //          global (the in-shell logical cwd, kept in sync with
     //          $PWD). Read from paramtab; fall back to getcwd if
     //          unset.
-    let pwd = getsparam("PWD").unwrap_or_else(|| crate::ported::compat::zgetcwd());
-    if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+    let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
+    if let Ok(mut d) = DIRSTACK.lock() {
         d.insert(0, pwd); // c:849
     }
 
@@ -1382,7 +1390,7 @@ pub fn bin_cd(
     if dest.is_none() {
         // c:850
         // c:851 — `zsfree(getlinknode(dirstack));` — pop the placeholder.
-        if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+        if let Ok(mut d) = DIRSTACK.lock() {
             if !d.is_empty() {
                 d.remove(0);
             } // c:851
@@ -1400,7 +1408,7 @@ pub fn bin_cd(
     let old = getsparam("PWD");
     if std::env::set_current_dir(&dest_path).is_err() {
         // chdir failed — pop placeholder and bail.
-        if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+        if let Ok(mut d) = DIRSTACK.lock() {
             if !d.is_empty() {
                 d.remove(0);
             }
@@ -1519,7 +1527,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         // c:914-924 — two-arg substitution: cd OLDPATTERN NEWPATTERN.
         //              C reads `pwd` global / `$PWD` param via getsparam;
         //              fall back to getcwd if the param isn't populated.
-        let pwd = getsparam("PWD").unwrap_or_else(|| crate::ported::compat::zgetcwd());
+        let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
         let pat = &argv[0];
         let new_pat = &argv[1];
         match pwd.find(pat.as_str()) {
@@ -1709,7 +1717,7 @@ pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {
     // c:1187
     // c:1193-1194 — if (func == BIN_PUSHD) rolllist(dirstack, dir);
     {
-        let mut ds = crate::ported::modules::parameter::DIRSTACK.lock().unwrap();
+        let mut ds = DIRSTACK.lock().unwrap();
         if func == BIN_PUSHD && !ds.is_empty() && dir < ds.len() {
             let entry = ds.remove(dir);
             ds.insert(0, entry); // rotate selected to top
@@ -1782,12 +1790,12 @@ pub fn printdirstack() {
                 .and_then(|p| p.to_str().map(String::from))
         })
         .unwrap_or_default();
-    print!("{}", crate::ported::utils::fprintdir(&pwd)); // c:1281
+    print!("{}", fprintdir(&pwd)); // c:1281
                                                          // c:1282-1286 — `for (node = firstnode(dirstack); ...)`
     if let Ok(d) = DIRSTACK.lock() {
         for entry in d.iter() {
             // c:1282
-            print!(" {}", crate::ported::utils::fprintdir(entry)); // c:1284
+            print!(" {}", fprintdir(entry)); // c:1284
         }
     }
     println!(); // c:1287
@@ -3209,7 +3217,7 @@ pub fn bin_typeset(
         // -p +g` showed ALL env vars regardless of which typeset
         // flags the user requested.
         let mut entries: Vec<(String, String)> = {
-            let tab = crate::ported::params::paramtab().read().unwrap();
+            let tab = paramtab().read().unwrap();
             tab.iter()
                 .filter(|(_, pm)| {
                     let f = pm.node.flags as u32;
@@ -3226,12 +3234,12 @@ pub fn bin_typeset(
                 })
                 .collect()
         };
-        entries.sort_by(|a, b| crate::ported::hashtable::hnamcmp(&a.0, &b.0));
+        entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
         for (k, v) in entries {
             if (printflags & PRINT_NAMEONLY) != 0 {
                 println!("{}", k);
             } else {
-                println!("{}={}", k, crate::ported::utils::quotedzputs(&v));
+                println!("{}={}", k, quotedzputs(&v));
             }
         }
         unqueue_signals();
@@ -3300,7 +3308,7 @@ pub fn bin_typeset(
         // name loop continues to the next arg (errflag silences
         // subsequent zerr calls so we won't double-emit). Mirror that
         // here with `continue`.
-        let pname_in_tab = crate::ported::params::paramtab()
+        let pname_in_tab = paramtab()
             .read()
             .map(|t| t.get(arg_name).is_some())
             .unwrap_or(false);
@@ -3438,7 +3446,7 @@ pub fn bin_typeset(
                     & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
                     as i32;
                 if to_set != 0 {
-                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
                             pm.node.flags = (pm.node.flags & !type_mask) | to_set;
                         }
@@ -3504,7 +3512,7 @@ pub fn eval_autoload(
         // c:3177 — `fargv[0] = quotestring(name, QT_SINGLE_OPTIONAL); fargv[1] = "\"$@\"";`
         let fargv = vec![
             // c:3177-3179
-            crate::ported::utils::quotedzputs(name),
+            quotedzputs(name),
             "\"$@\"".to_string(),
         ];
         // c:3180 — `shf->funcdef = mkautofn(shf);`
@@ -3656,7 +3664,7 @@ pub fn listusermathfunc(p: &mathfunc) {
         print!(" "); // c:3273
         print!(
             "{}",
-            crate::ported::utils::quotedzputs(p.module.as_deref().unwrap_or(""))
+            quotedzputs(p.module.as_deref().unwrap_or(""))
         ); // c:3274
         showargs -= 1; // c:3275
     }
@@ -4019,7 +4027,7 @@ pub fn bin_functions(
             // c:3478
             // c:3479-3484 — list user math fns.
             queue_signals(); // c:3480
-            if let Ok(table) = crate::ported::module::MATHFUNCS.lock() {
+            if let Ok(table) = MATHFUNCS.lock() {
                 // c:3481
                 for p in table.iter() {
                     // c:3481
@@ -4042,14 +4050,14 @@ pub fn bin_functions(
                     if OPT_PLUS(ops, b'M') {
                         // c:3497
                         // Delete matching user fns.
-                        if let Ok(mut table) = crate::ported::module::MATHFUNCS.lock() {
+                        if let Ok(mut table) = MATHFUNCS.lock() {
                             table.retain(|p| {
                                 !((p.flags & MFF_USERFUNC) != 0 && pattry(&pprog, &p.name))
                             });
                         }
                     } else {
                         // c:3502 — listusermathfunc for matches.
-                        if let Ok(table) = crate::ported::module::MATHFUNCS.lock() {
+                        if let Ok(table) = MATHFUNCS.lock() {
                             for p in table.iter() {
                                 if (p.flags & MFF_USERFUNC) != 0 && pattry(&pprog, &p.name) {
                                     listusermathfunc(p);
@@ -4074,7 +4082,7 @@ pub fn bin_functions(
             // c:3517-3533 — `+M name…` delete by exact name.
             for arg in argv.iter() {
                 queue_signals(); // c:3519
-                if let Ok(mut table) = crate::ported::module::MATHFUNCS.lock() {
+                if let Ok(mut table) = MATHFUNCS.lock() {
                     let idx = table.iter().position(|p| p.name == *arg); // c:3520-3521
                     if let Some(i) = idx {
                         if (table[i].flags & MFF_USERFUNC) == 0 {
@@ -4190,7 +4198,7 @@ pub fn bin_functions(
                 funcid: 0,
             };
             queue_signals(); // c:3600
-            if let Ok(mut table) = crate::ported::module::MATHFUNCS.lock() {
+            if let Ok(mut table) = MATHFUNCS.lock() {
                 // c:3601-3606 — remove existing user entry with same name.
                 if let Some(i) = table.iter().position(|p| p.name == new_fn.name) {
                     table.remove(i); // c:3603
@@ -4574,13 +4582,13 @@ pub fn bin_unset(
                 // Same family of bug as the env::var vs paramtab fixes
                 // earlier in the series.
                 let names: Vec<String> = {
-                    let tab = crate::ported::params::paramtab().read().unwrap();
+                    let tab = paramtab().read().unwrap();
                     tab.keys().cloned().collect()
                 };
                 for nm in &names {
                     if pattry(&prog, nm) {
                         // c:3842
-                        crate::ported::params::unsetparam(nm); // c:3847 (with guards)
+                        unsetparam(nm); // c:3847 (with guards)
                         match_count += 1; // c:3848
                     }
                 }
@@ -4667,7 +4675,7 @@ pub fn bin_unset(
                     exec.unset_array(&nm_owned);
                     exec.unset_assoc(&nm_owned);
                 });
-                let _ = crate::ported::params::paramtab()
+                let _ = paramtab()
                     .write()
                     .ok()
                     .as_deref_mut()
@@ -4802,10 +4810,10 @@ pub fn bin_whence(
         // c:4028-4030 — `cmdnamtab->filltable(cmdnamtab);` + matchednodes
         // setup when -a is set. Static-link path: PATH walk on demand
         // through findcmd; matchednodes accumulator is
-        // crate::ported::builtin::MATCHEDNODES.
+        // MATCHEDNODES.
         if all {
             // c:4029
-            if let Ok(mut m) = crate::ported::builtin::MATCHEDNODES.lock() {
+            if let Ok(mut m) = MATCHEDNODES.lock() {
                 m.clear();
             }
         }
@@ -4829,7 +4837,7 @@ pub fn bin_whence(
                     if !OPT_ISSET(ops, b'p') {
                         // c:4042
                         // c:4044-4047 — aliases scan.
-                        if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
+                        if let Ok(t) = aliastab_lock().read() {
                             for (n, _a) in t.iter() {
                                 if pattry(&prog, n) {
                                     println!("{}", n);
@@ -4915,7 +4923,7 @@ pub fn bin_whence(
                                         if pattry(&prog, name) {
                                             if all {
                                                 if let Ok(mut m) =
-                                                    crate::ported::builtin::MATCHEDNODES.lock()
+                                                    MATCHEDNODES.lock()
                                                 {
                                                     m.push(name.to_string());
                                                 }
@@ -4951,7 +4959,7 @@ pub fn bin_whence(
     // -a true` consulted an empty MATCHEDNODES and skipped every
     // print.
     let argv_vec: Vec<String> = if OPT_ISSET(ops, b'm') {
-        crate::ported::builtin::MATCHEDNODES
+        MATCHEDNODES
             .lock()
             .map(|m| m.clone())
             .unwrap_or_default()
@@ -4967,7 +4975,7 @@ pub fn bin_whence(
         // c:4124-4130 — `-p` path-only path.
         if !OPT_ISSET(ops, b'p') {
             // c:4128-4134 — alias check.
-            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
+            if let Ok(t) = aliastab_lock().read() {
                 if let Some(a) = t.get(arg) {
                     // c:4128
                     if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
@@ -4993,7 +5001,7 @@ pub fn bin_whence(
                 // c:4137
                 if idx > 0 && idx + 1 < arg.len() {
                     let suf = &arg[idx + 1..];
-                    if let Ok(t) = crate::ported::hashtable::sufaliastab_lock().read() {
+                    if let Ok(t) = sufaliastab_lock().read() {
                         if let Some(a) = t.get(suf) {
                             // c:4140
                             println!("{}={}", a.node.nam, a.text); // c:4141
@@ -5109,7 +5117,7 @@ pub fn bin_whence(
             // `__zshrs_hash_NAME` keys; cmdnamtab is bucket-2-
             // consolidated now.
             let hashed_path: Option<String> = {
-                match crate::ported::hashtable::cmdnamtab_lock().read() {
+                match cmdnamtab_lock().read() {
                     Ok(tab) => tab.get(arg).and_then(|cn| {
                         if (cn.node.flags & HASHED as i32) != 0 {
                             cn.cmd.clone() // c:4168 cn->u.cmd
@@ -5148,7 +5156,7 @@ pub fn bin_whence(
                             println!("{}: command", arg);
                         } else if v && !csh {
                             print!("{} is ", arg);
-                            println!("{}", crate::ported::utils::quotedzputs(&full));
+                            println!("{}", quotedzputs(&full));
                         } else {
                             println!("{}", full);
                         }
@@ -5183,7 +5191,7 @@ pub fn bin_whence(
             } else if v && !csh {
                 // c:4154
                 print!("{} is ", arg); // c:4156
-                println!("{}", crate::ported::utils::quotedzputs(&path)); // c:4157
+                println!("{}", quotedzputs(&path)); // c:4157
             } else {
                 println!("{}", path); // c:4159
             }
@@ -5199,7 +5207,7 @@ pub fn bin_whence(
             } else if v && !csh {
                 // c:4187
                 print!("{} is ", arg); // c:4188
-                println!("{}", crate::ported::utils::quotedzputs(&cnam)); // c:4189
+                println!("{}", quotedzputs(&cnam)); // c:4189
             } else {
                 println!("{}", cnam); // c:4191
             }
@@ -5300,10 +5308,10 @@ pub fn bin_hash(
                          // with no args (the typical user-visible form) silently printed
                          // nothing on cmdnamtab.
         if dir_mode {
-            if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+            if let Ok(t) = nameddirtab().lock() {
                 for (_n, nd) in t.iter() {
                     // c:4270
-                    crate::ported::hashnameddir::printnameddirnode(nd, printflags);
+                    printnameddirnode(nd, printflags);
                 }
             }
         } else {
@@ -5311,7 +5319,7 @@ pub fn bin_hash(
             // arr is empty in the printnode call site because per-node
             // hashed entries carry their own resolved path.
             let path_arr: Vec<String> = Vec::new();
-            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
+            if let Ok(t) = cmdnamtab_lock().read() {
                 for (_n, cn) in t.iter() {
                     // c:4270
                     print!(
@@ -5342,11 +5350,11 @@ pub fn bin_hash(
             );
             if let Some(prog) = pprog {
                 if dir_mode {
-                    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                    if let Ok(t) = nameddirtab().lock() {
                         for (n, nd) in t.iter() {
                             if pattry(&prog, n) {
                                 // c:4286
-                                crate::ported::hashnameddir::printnameddirnode(nd, printflags);
+                                printnameddirnode(nd, printflags);
                             }
                         }
                     }
@@ -5393,10 +5401,10 @@ pub fn bin_hash(
             if OPT_ISSET(ops, b'v') {
                 // c:4321
                 if dir_mode {
-                    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                    if let Ok(t) = nameddirtab().lock() {
                         if let Some(nd) = t.get(n) {
                             // c:4322
-                            crate::ported::hashnameddir::printnameddirnode(nd, 0);
+                            printnameddirnode(nd, 0);
                         }
                     }
                 }
@@ -5404,7 +5412,7 @@ pub fn bin_hash(
         } else {
             // c:4323-4334 — display existing entry / look up.
             if dir_mode {
-                let snapshot = crate::ported::hashnameddir::nameddirtab()
+                let snapshot = nameddirtab()
                     .lock()
                     .ok()
                     .and_then(|t| t.get(n).cloned());
@@ -5412,7 +5420,7 @@ pub fn bin_hash(
                     Some(nd) => {
                         if OPT_ISSET(ops, b'v') {
                             // c:4337
-                            crate::ported::hashnameddir::printnameddirnode(&nd, 0);
+                            printnameddirnode(&nd, 0);
                         }
                     }
                     None => {
@@ -5512,12 +5520,12 @@ pub fn bin_unhash(
     // Helper: clear entire table.
     let clear_all = |t: &Tab| match t {
         Tab::Alias => {
-            let _ = crate::ported::hashtable::aliastab_lock()
+            let _ = aliastab_lock()
                 .write()
                 .map(|mut g| g.clear());
         }
         Tab::SufAlias => {
-            let _ = crate::ported::hashtable::sufaliastab_lock()
+            let _ = sufaliastab_lock()
                 .write()
                 .map(|mut g| g.clear());
         }
@@ -5533,11 +5541,11 @@ pub fn bin_unhash(
     };
     let remove_one = |t: &Tab, nm: &str| -> bool {
         match t {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock()
+            Tab::Alias => aliastab_lock()
                 .write()
                 .map(|mut g| g.remove(nm).is_some())
                 .unwrap_or(false),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock()
+            Tab::SufAlias => sufaliastab_lock()
                 .write()
                 .map(|mut g| g.remove(nm).is_some())
                 .unwrap_or(false),
@@ -5552,7 +5560,7 @@ pub fn bin_unhash(
             // void-return `freecmdnamnode` call, so `unhash badname`
             // silently succeeded instead of emitting the canonical
             // "no such hash table element" error.
-            Tab::CmdNam => crate::ported::hashtable::cmdnamtab_lock()
+            Tab::CmdNam => cmdnamtab_lock()
                 .write()
                 .map(|mut g| g.remove(nm).is_some())
                 .unwrap_or(false),
@@ -5585,15 +5593,15 @@ pub fn bin_unhash(
                 // Tab::CmdNam returning an empty Vec, so `unhash -m PAT`
                 // (default cmd-hash table) silently matched zero entries.
                 let names: Vec<String> = match &tab {
-                    Tab::Alias => crate::ported::hashtable::aliastab_lock()
+                    Tab::Alias => aliastab_lock()
                         .read()
                         .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                         .unwrap_or_default(),
-                    Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock()
+                    Tab::SufAlias => sufaliastab_lock()
                         .read()
                         .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                         .unwrap_or_default(),
-                    Tab::NamedDir => crate::ported::hashnameddir::nameddirtab()
+                    Tab::NamedDir => nameddirtab()
                         .lock()
                         .map(|t| t.keys().cloned().collect())
                         .unwrap_or_default(),
@@ -5602,7 +5610,7 @@ pub fn bin_unhash(
                         .map(|t| t.keys().cloned().collect())
                         .unwrap_or_default(),
                     // c:4408 — cmdnamtab walk via `cmdnamtab_lock().iter()`.
-                    Tab::CmdNam => crate::ported::hashtable::cmdnamtab_lock()
+                    Tab::CmdNam => cmdnamtab_lock()
                         .read()
                         .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                         .unwrap_or_default(),
@@ -6047,7 +6055,7 @@ pub fn bin_shift(
         //          paramtab for a PM_ARRAY entry, not OS env.
         let is_array = {
             use {PM_ARRAY, PM_TYPE};
-            let tab = crate::ported::params::paramtab().read().unwrap();
+            let tab = paramtab().read().unwrap();
             tab.get(first)
                 .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
                 .unwrap_or(false)
@@ -6089,7 +6097,7 @@ pub fn bin_shift(
             //          as `:`-separated env values which is wrong (env
             //          can never carry array structure).
             let s: Vec<String> = {
-                let tab = crate::ported::params::paramtab().read().unwrap();
+                let tab = paramtab().read().unwrap();
                 match tab.get(arr_name).and_then(|pm| pm.u_arr.clone()) {
                     Some(arr) => arr,
                     None => continue,
@@ -6114,7 +6122,7 @@ pub fn bin_shift(
             //          fake: `env::set_var` + colon-joined fake-array
             //          which neither carries array structure nor
             //          reaches subsequent `${arr_name[@]}` expansions.
-            crate::ported::params::setaparam(arr_name, s2);
+            setaparam(arr_name, s2);
         }
     } else {
         // c:5636-5654 — shift positional parameters ($1..$N).
@@ -6271,7 +6279,7 @@ pub fn bin_getopts(
         ZOPTIND.store(zoptind, Ordering::Relaxed);
         OPTCIND.store(optcind, Ordering::Relaxed);
         // Sync OPTIND env var so callers can read.
-        crate::ported::params::setiparam("OPTIND", zoptind as i64);
+        setiparam("OPTIND", zoptind as i64);
         return 0;
     }
 
@@ -6304,7 +6312,7 @@ pub fn bin_getopts(
                 }
                 ZOPTIND.store(zoptind, Ordering::Relaxed);
                 OPTCIND.store(optcind, Ordering::Relaxed);
-                crate::ported::params::setiparam("OPTIND", zoptind as i64);
+                setiparam("OPTIND", zoptind as i64);
                 return 0;
             }
             let p_arg = args[zoptind as usize].clone();
@@ -6327,7 +6335,7 @@ pub fn bin_getopts(
     setsparam(&var, &optbuf);
     ZOPTIND.store(zoptind, Ordering::Relaxed);
     OPTCIND.store(optcind, Ordering::Relaxed);
-    crate::ported::params::setiparam("OPTIND", zoptind as i64);
+    setiparam("OPTIND", zoptind as i64);
     0 // c:5790
 }
 
@@ -6413,14 +6421,14 @@ pub fn bin_break(
                                                        // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
                                                        // POSIX semantics keep $? from before the trap fired.
                 let posixtraps = isset(optlookup("posixtraps"));
-                let cur_state = crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
+                let cur_state = TRAP_STATE.load(Ordering::Relaxed);
                 let cur_return = crate::ported::exec::TRAP_RETURN.load(Ordering::Relaxed);
                 if cur_state == TRAP_STATE_PRIMED      // c:5845
                     && cur_return == -2                                      // c:5845
                     && !(posixtraps && implicit)
                 // c:5851
                 {
-                    crate::ported::exec::TRAP_STATE.store(
+                    TRAP_STATE.store(
                         // c:5852
                         TRAP_STATE_FORCE_RETURN,
                         Ordering::Relaxed,
@@ -6473,10 +6481,10 @@ pub fn bin_break(
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {
                     // c:5884
-                    let trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {
                         // c:5885
-                        crate::ported::exec::TRAP_STATE.store(
+                        TRAP_STATE.store(
                             // c:5886
                             TRAP_STATE_FORCE_RETURN,
                             Ordering::Relaxed,
@@ -6525,10 +6533,10 @@ pub fn bin_break(
                 }
                 if STOPMSG.load(Ordering::Relaxed) == 0 {
                     // c:5884 still no stopmsg → defer
-                    let trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = TRAP_STATE.load(Ordering::Relaxed);
                     if trap_state != 0 {
                         // c:5885
-                        crate::ported::exec::TRAP_STATE.store(
+                        TRAP_STATE.store(
                             // c:5886
                             TRAP_STATE_FORCE_RETURN,
                             Ordering::Relaxed,
@@ -6940,7 +6948,7 @@ pub fn bin_emulate(
         }
         // c:6255-6271 — `switch(SHELL_EMULATION())` → name dispatch.
         let bits =
-            crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed) as i32;
+            emulation.load(std::sync::atomic::Ordering::Relaxed) as i32;
         let shname = if (bits & EMULATE_CSH) != 0 {
             "csh"
         }
@@ -6988,7 +6996,7 @@ pub fn bin_emulate(
             _ => EMULATE_ZSH,          // c:550
         };
         // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
-        crate::ported::options::emulation.store(bits, std::sync::atomic::Ordering::Relaxed);
+        emulation.store(bits, std::sync::atomic::Ordering::Relaxed);
 
         // Build the cmdopts view that c:6286-6292 manipulates.
         let mut cmdopts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
@@ -7200,7 +7208,7 @@ pub fn bin_read(
     // x="a", y="b", z="c d".
     if want_array {
         let parts: Vec<String> = buf.split_whitespace().map(String::from).collect();
-        crate::ported::params::setaparam(&reply, parts); // c:setaparam
+        setaparam(&reply, parts); // c:setaparam
     } else if argi < args.len() {
         // Multi-var: `read x y [z]`. First var = reply (already
         // consumed); rest are args[argi..]. Split with at most
@@ -7418,7 +7426,7 @@ pub fn bin_test(
     // `[[ -z $var ]]` / `[[ $a = $b ]]` etc. Walk paramtab to mirror
     // C; fall back to env for entries the paramtab hasn't imported.
     {
-        let tab = crate::ported::params::paramtab().read().unwrap();
+        let tab = paramtab().read().unwrap();
         for (k, pm) in tab.iter() {
             // Skip PM_UNSET — these are name-declared-but-no-value.
             if (pm.node.flags as u32 & PM_UNSET) != 0 {
@@ -7525,7 +7533,7 @@ pub fn bin_trap(
             // c:7359
             // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
             print!("trap -- "); // c:7372
-            print!("{}", crate::ported::utils::quotedzputs(body)); // c:7373
+            print!("{}", quotedzputs(body)); // c:7373
             println!(" {}", sig); // c:7374
         }
         unqueue_signals(); // c:7378
@@ -7933,7 +7941,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "bg",
             0,
-            Some(crate::ported::jobs::bin_fg as HandlerFunc),
+            Some(bin_fg as HandlerFunc),
             0,
             -1,
             BIN_BG,
@@ -8014,7 +8022,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "disown",
             0,
-            Some(crate::ported::jobs::bin_fg as HandlerFunc),
+            Some(bin_fg as HandlerFunc),
             0,
             -1,
             BIN_DISOWN,
@@ -8171,7 +8179,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "jobs",
             0,
-            Some(crate::ported::jobs::bin_fg as HandlerFunc),
+            Some(bin_fg as HandlerFunc),
             0,
             -1,
             BIN_JOBS,
@@ -8462,7 +8470,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "wait",
             0,
-            Some(crate::ported::jobs::bin_fg as HandlerFunc),
+            Some(bin_fg as HandlerFunc),
             0,
             -1,
             BIN_WAIT,
@@ -8660,7 +8668,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "fg",
             0,
-            Some(crate::ported::jobs::bin_fg as HandlerFunc),
+            Some(bin_fg as HandlerFunc),
             0,
             -1,
             BIN_FG,
@@ -9385,7 +9393,7 @@ mod tests {
         // Empty $PATH to guarantee the walk would miss.
         setsparam("PATH", "");
         let resolved = findcmd("/bin/sh", 0, 0);
-        crate::ported::params::unsetparam("PATH");
+        unsetparam("PATH");
         assert_eq!(
             resolved.as_deref(),
             Some("/bin/sh"),
@@ -9414,7 +9422,7 @@ mod tests {
         setsparam("PATH", "/nonexistent/zshrs-test-poison");
         // `sh` exists in /bin on every POSIX system.
         let resolved = findcmd("sh", 0, 1);
-        crate::ported::params::unsetparam("PATH");
+        unsetparam("PATH");
         assert!(
             resolved.is_some(),
             "c:903-908 — default_path must search DEFAULT_PATH regardless of $PATH"
@@ -9472,7 +9480,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let saved = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
+        let saved = emulation.load(std::sync::atomic::Ordering::Relaxed);
 
         // Each (name, expected_bits) — name covers the canonical
         // shell names AND their `r`-prefix / first-char variants.
@@ -9484,16 +9492,16 @@ mod tests {
             ("rksh", EMULATE_KSH), // c:539-540
             ("bash", EMULATE_SH),  // c:548 'b'
         ] {
-            crate::ported::options::emulation.store(0, std::sync::atomic::Ordering::Relaxed);
+            emulation.store(0, std::sync::atomic::Ordering::Relaxed);
             bin_emulate("emulate", &[name.into()], &empty, 0);
-            let bits = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
+            let bits = emulation.load(std::sync::atomic::Ordering::Relaxed);
             assert_eq!(
                 bits, expected,
                 "emulate {} must set bits {:#x}, got {:#x}",
                 name, expected, bits
             );
         }
-        crate::ported::options::emulation.store(saved, std::sync::atomic::Ordering::Relaxed);
+        emulation.store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// c:7399 — `trap - SIGUSR1` (valid signal) MUST return 0, even
