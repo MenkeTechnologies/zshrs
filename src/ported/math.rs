@@ -18,6 +18,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use crate::ported::options::opt_state_set;
+use crate::ported::params::{convbase, getsparam, unsetparam};
 use crate::ported::zsh_h::Nularg;
 
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
@@ -232,7 +234,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             type_: MN_INTEGER,
         };
     }
-    if let Some(raw) = crate::ported::params::getsparam(base_name) {
+    if let Some(raw) = getsparam(base_name) {
         if let Ok(n) = raw.parse::<i64>() {
             return mnumber {
                 l: n,
@@ -2660,7 +2662,6 @@ pub fn mathevali(s: &str) -> Result<i64, String> {
 /// arg; flagged for follow-up.)
 pub(crate) fn mathevalarg(expr: &str) -> i64 {
     // c:1514
-    use crate::ported::zsh_h::Nularg;
     // c:1517 — `int xmtok = mtok;` save.
     let xmtok = M_MTOK.with(|c| c.get()); // c:1517
                                           // c:1528-1529 — `if (*s == Nularg) s++;`. Skip the parser sentinel.
@@ -3491,13 +3492,13 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // WARNING: NOT IN MATH.C — `convbase` lives in `Src/params.c:5632`
 // (called from math.c:1089). This file holds a duplicate that
 // predates the params.rs port; canonical home is
-// `crate::ported::params::convbase`. This entry is drift pending
-// cleanup; do not add new callers — use `crate::ported::params::convbase`.
+// `convbase`. This entry is drift pending
+// cleanup; do not add new callers — use `convbase`.
 /// Format an integer in the given base (2-36) using zsh's
 // `convbase` lives in params.rs (matching C: defined in params.c:5632
 // as a 1-line delegation to `convbase_ptr` at params.c:5586). The
 // math.rs entry that used to duplicate it is removed; callers should
-// import `crate::ported::params::convbase` directly.
+// import `convbase` directly.
 
 #[cfg(test)]
 mod tests {
@@ -3511,20 +3512,20 @@ mod tests {
         // setnparam early-returns under `unset(EXECOPT)`. Enable it
         // (default in interactive shells; tests run with all opts
         // unset by default).
-        crate::ported::options::opt_state_set("exec", true);
+        opt_state_set("exec", true);
         // Sanity: a direct setiparam call should also work.
-        crate::ported::params::unsetparam("mvar1_baseline");
+        unsetparam("mvar1_baseline");
         crate::ported::params::setiparam("mvar1_baseline", 42);
-        let baseline = crate::ported::params::getsparam("mvar1_baseline");
+        let baseline = getsparam("mvar1_baseline");
         assert_eq!(
             baseline.as_deref(),
             Some("42"),
             "baseline setiparam path; got {:?}",
             baseline
         );
-        crate::ported::params::unsetparam("mvar1_baseline");
+        unsetparam("mvar1_baseline");
 
-        crate::ported::params::unsetparam("mvar1");
+        unsetparam("mvar1");
         let v = mnumber {
             l: 42,
             d: 0.0,
@@ -3532,15 +3533,15 @@ mod tests {
         };
         let returned = setmathvar("mvar1", v);
         assert_eq!(returned.l, 42);
-        let stored = crate::ported::params::getsparam("mvar1");
+        let stored = getsparam("mvar1");
         assert_eq!(
             stored.as_deref(),
             Some("42"),
             "setmathvar should write through; got {:?}",
             stored
         );
-        crate::ported::params::unsetparam("mvar1");
-        crate::ported::options::opt_state_set("exec", false);
+        unsetparam("mvar1");
+        opt_state_set("exec", false);
     }
 
     /// `setmathvar` with empty name emits zerr and returns 0.
@@ -3564,9 +3565,9 @@ mod tests {
     #[test]
     fn setmathvar_getmathparam_roundtrip() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
-        crate::ported::params::unsetparam("rt_int");
-        crate::ported::params::unsetparam("rt_float");
+        opt_state_set("exec", true);
+        unsetparam("rt_int");
+        unsetparam("rt_float");
 
         // Integer roundtrip
         let n_in = mnumber {
@@ -3596,9 +3597,9 @@ mod tests {
             f_out.d
         );
 
-        crate::ported::params::unsetparam("rt_int");
-        crate::ported::params::unsetparam("rt_float");
-        crate::ported::options::opt_state_set("exec", false);
+        unsetparam("rt_int");
+        unsetparam("rt_float");
+        opt_state_set("exec", false);
     }
 
     /// `setmathvar` with subscript splits at `[` and writes to the
@@ -3606,20 +3607,20 @@ mod tests {
     #[test]
     fn setmathvar_subscript_writes_to_base_name() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
-        crate::ported::params::unsetparam("mvar2");
+        opt_state_set("exec", true);
+        unsetparam("mvar2");
         let v = mnumber {
             l: 7,
             d: 0.0,
             type_: MN_INTEGER,
         };
         setmathvar("mvar2[5]", v);
-        let stored = crate::ported::params::getsparam("mvar2");
+        let stored = getsparam("mvar2");
         // The base "mvar2" got the value; subscript element handling
         // is upstream so we just confirm the param was created.
         assert!(stored.is_some());
-        crate::ported::params::unsetparam("mvar2");
-        crate::ported::options::opt_state_set("exec", false);
+        unsetparam("mvar2");
+        opt_state_set("exec", false);
     }
 
     /// `setmathvar` MUST short-circuit when `noeval` is set (c:1002-1003).
@@ -3635,8 +3636,8 @@ mod tests {
     #[test]
     fn setmathvar_noeval_skips_paramtab_write() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
-        crate::ported::params::unsetparam("ne_var");
+        opt_state_set("exec", true);
+        unsetparam("ne_var");
 
         // Set the math-local noeval counter.
         M_NOEVAL.with(|n| n.set(1));
@@ -3653,13 +3654,13 @@ mod tests {
         );
         // The paramtab MUST NOT have a new entry.
         assert!(
-            crate::ported::params::getsparam("ne_var").is_none(),
+            getsparam("ne_var").is_none(),
             "c:1002-1003 — noeval suppresses the paramtab write"
         );
 
         // Restore noeval so subsequent tests aren't affected.
         M_NOEVAL.with(|n| n.set(0));
-        crate::ported::options::opt_state_set("exec", false);
+        opt_state_set("exec", false);
     }
 
     /// `setmathvar` returns a value RE-TYPED to match the destination
@@ -3671,8 +3672,8 @@ mod tests {
     #[test]
     fn setmathvar_float_into_integer_coerces_return_type() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::options::opt_state_set("exec", true);
-        crate::ported::params::unsetparam("intvar");
+        opt_state_set("exec", true);
+        unsetparam("intvar");
         // Pre-create as PM_INTEGER so the type is fixed.
         crate::ported::params::setiparam("intvar", 0);
 
@@ -3692,8 +3693,8 @@ mod tests {
             "c:1018 — float→int truncates (3.7 → 3, not rounded)"
         );
 
-        crate::ported::params::unsetparam("intvar");
-        crate::ported::options::opt_state_set("exec", false);
+        unsetparam("intvar");
+        opt_state_set("exec", false);
     }
 
     /// Pin `mathevalarg` empty-string error path per c:1530-1532.

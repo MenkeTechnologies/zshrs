@@ -8,12 +8,17 @@
 use std::cell::RefCell;
 use std::env;
 use std::sync::atomic::Ordering;
+
+use crate::ported::params::{paramtab, setaparam};
+use crate::ported::utils::strpfx;
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
 /// then copies into `buf_vars` for each expansion walk.
 pub(crate) mod prompt_tls {
     use std::cell::RefCell;
     use std::env;
+
+    use crate::ported::params::{getsparam, paramtab};
 
     thread_local! {
         pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
@@ -52,8 +57,6 @@ pub(crate) mod prompt_tls {
     ///   - term width → `adjustcolumns()` (utils.c)
     ///   - scriptname → utils.rs::scriptname()
     pub(crate) fn sync_from_globals() {
-        use crate::ported::params::getsparam;
-
         let pwd = getsparam("PWD")
             .filter(|p| !p.is_empty())
             .or_else(|| env::var("PWD").ok().filter(|p| !p.is_empty()))
@@ -118,7 +121,7 @@ pub(crate) mod prompt_tls {
         });
         // c:params.c PSVAR special — array read from paramtab.
         PSVAR.with(|c| {
-            *c.borrow_mut() = crate::ported::params::paramtab()
+            *c.borrow_mut() = paramtab()
                 .read()
                 .ok()
                 .and_then(|t| t.get("psvar").and_then(|p| p.u_arr.clone()))
@@ -221,23 +224,10 @@ pub struct buf_vars {
 // `zattr` is the canonical C typedef from Src/zsh.h:2689
 // (`typedef uint64_t zattr;`). Imported directly below.
 use crate::ported::zsh_h::{
-    zattr,
-    TXTBGCOLOUR,
-    TXTBOLDFACE,
-    TXTFGCOLOUR,
-    TXTSTANDOUT,
-    TXTUNDERLINE, // c:zsh.h:2694
-    TXT_ATTR_BG_24BIT,
-    TXT_ATTR_BG_COL_MASK,
-    TXT_ATTR_BG_COL_SHIFT,
-    TXT_ATTR_BG_MASK,
-    TXT_ATTR_FG_24BIT,
-    TXT_ATTR_FG_COL_MASK,
-    TXT_ATTR_FG_COL_SHIFT,
-    TXT_ATTR_FG_MASK,
-};
-use crate::zsh_h::{
-    Inpar, Nularg, Outpar, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXT_ERROR,
+    zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
+    TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+    TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
+    TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -2509,7 +2499,7 @@ pub struct colour_sequences {
 }
 
 // COL_SEQ_FG / COL_SEQ_BG live in zsh.h:2749-2750 — ported to
-// `crate::ported::zsh_h::COL_SEQ_FG` and `::COL_SEQ_BG`. Header-defined
+// `COL_SEQ_FG` and `::COL_SEQ_BG`. Header-defined
 // constants belong in the header port per PORT.md Rule C.
 
 /// Port of `static struct colour_sequences fg_bg_sequences[2]` from
@@ -2595,7 +2585,7 @@ pub fn allocate_colour_buffer() {
     // directly and pull arrgetfn off the param.
     let atrs: Option<Vec<String>> = {
         // c:2375
-        let tab = crate::ported::params::paramtab().read().ok();
+        let tab = paramtab().read().ok();
         tab.and_then(|t| {
             t.get("zle_highlight")
                 .map(|p| crate::ported::params::arrgetfn(p))
@@ -2607,60 +2597,60 @@ pub fn allocate_colour_buffer() {
         let mut seqs = fg_bg_sequences.lock().unwrap();
         for atr in &atrs {
             // c:2377
-            if crate::ported::utils::strpfx("fg_start_code:", atr) {
+            if strpfx("fg_start_code:", atr) {
                 // c:2378
                 if let Some(c) = set_colour_code(&atr[14..]) {
                     // c:2379
-                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].start = c;
+                    seqs[COL_SEQ_FG as usize].start = c;
                 }
-            } else if crate::ported::utils::strpfx("fg_default_code:", atr) {
+            } else if strpfx("fg_default_code:", atr) {
                 // c:2380
                 if let Some(c) = set_colour_code(&atr[16..]) {
                     // c:2381
-                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].def = c;
+                    seqs[COL_SEQ_FG as usize].def = c;
                 }
-            } else if crate::ported::utils::strpfx("fg_end_code:", atr) {
+            } else if strpfx("fg_end_code:", atr) {
                 // c:2382
                 if let Some(c) = set_colour_code(&atr[12..]) {
                     // c:2383
-                    seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].end = c;
+                    seqs[COL_SEQ_FG as usize].end = c;
                 }
-            } else if crate::ported::utils::strpfx("bg_start_code:", atr) {
+            } else if strpfx("bg_start_code:", atr) {
                 // c:2384
                 if let Some(c) = set_colour_code(&atr[14..]) {
                     // c:2385
-                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].start = c;
+                    seqs[COL_SEQ_BG as usize].start = c;
                 }
-            } else if crate::ported::utils::strpfx("bg_default_code:", atr) {
+            } else if strpfx("bg_default_code:", atr) {
                 // c:2386
                 if let Some(c) = set_colour_code(&atr[16..]) {
                     // c:2387
-                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].def = c;
+                    seqs[COL_SEQ_BG as usize].def = c;
                 }
-            } else if crate::ported::utils::strpfx("bg_end_code:", atr) {
+            } else if strpfx("bg_end_code:", atr) {
                 // c:2388
                 if let Some(c) = set_colour_code(&atr[12..]) {
                     // c:2389
-                    seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].end = c;
+                    seqs[COL_SEQ_BG as usize].end = c;
                 }
             }
         }
     }
 
     let seqs = fg_bg_sequences.lock().unwrap();
-    let mut lenfg: usize = seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].def.len(); // c:2394
+    let mut lenfg: usize = seqs[COL_SEQ_FG as usize].def.len(); // c:2394
     if lenfg < 1 {
         lenfg = 1;
     } // c:2396-2397
-    lenfg += seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].start.len()
-        + seqs[crate::ported::zsh_h::COL_SEQ_FG as usize].end.len(); // c:2398-2399
+    lenfg += seqs[COL_SEQ_FG as usize].start.len()
+        + seqs[COL_SEQ_FG as usize].end.len(); // c:2398-2399
 
-    let mut lenbg: usize = seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].def.len(); // c:2401
+    let mut lenbg: usize = seqs[COL_SEQ_BG as usize].def.len(); // c:2401
     if lenbg < 1 {
         lenbg = 1;
     } // c:2403-2404
-    lenbg += seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].start.len()
-        + seqs[crate::ported::zsh_h::COL_SEQ_BG as usize].end.len(); // c:2405-2406
+    lenbg += seqs[COL_SEQ_BG as usize].start.len()
+        + seqs[COL_SEQ_BG as usize].end.len(); // c:2405-2406
     drop(seqs);
 
     let len = if lenfg > lenbg { lenfg } else { lenbg }; // c:2408
@@ -3072,14 +3062,14 @@ mod tests {
         let saved = crate::ported::params::getaparam(".term.extensions");
 
         // Empty / unset → false (c:1944).
-        let _ = crate::ported::params::setaparam(".term.extensions", vec![]);
+        let _ = setaparam(".term.extensions", vec![]);
         assert!(
             !truecolor_terminal(),
             "empty .term.extensions must report off"
         );
 
         // truecolor present → true (c:1940-1942 with result=1).
-        let _ = crate::ported::params::setaparam(".term.extensions", vec!["truecolor".to_string()]);
+        let _ = setaparam(".term.extensions", vec!["truecolor".to_string()]);
         assert!(
             truecolor_terminal(),
             ".term.extensions=(truecolor) must report on"
@@ -3087,14 +3077,14 @@ mod tests {
 
         // -truecolor → explicitly disabled (c:1940 with result=0).
         let _ =
-            crate::ported::params::setaparam(".term.extensions", vec!["-truecolor".to_string()]);
+            setaparam(".term.extensions", vec!["-truecolor".to_string()]);
         assert!(
             !truecolor_terminal(),
             ".term.extensions=(-truecolor) must report off"
         );
 
         // Restore.
-        let _ = crate::ported::params::setaparam(".term.extensions", saved.unwrap_or_default());
+        let _ = setaparam(".term.extensions", saved.unwrap_or_default());
     }
 
     /// c:134 — when `home` is a prefix of `path` AND tilde=true,
