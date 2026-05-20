@@ -200,7 +200,11 @@ pub(crate) fn checksched() -> i32 {                                         // c
             /*
              * We've already deleted the function from the list.
              */                                                      // c:138-140
-            // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (1)");
+            // c:141-142 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (1)")
+            crate::DPUTS!(                                                // c:141
+                !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:141 timedfns && firstnode(timedfns)
+                "BUG: already timed fn (1)"                              // c:142
+            );
             schedaddtimed();                                          // c:143
         }
     }
@@ -273,7 +277,11 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
                 scheddeltimed();
                 let still_have = schedcmds_lock().lock().unwrap().is_some();
                 if still_have {                                         // c:181 if (schedcmds)
-                    // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (2)");
+                    // c:182 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (2)")
+                    crate::DPUTS!(                                       // c:182
+                        !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:182
+                        "BUG: already timed fn (2)"                      // c:182
+                    );
                     schedaddtimed();                                    // c:183
                 }
             } else {
@@ -460,7 +468,11 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
             sch_new.next = head2.take();                                  // c:317 sch->next = schedcmds;
             *head2 = Some(sch_new);                                       // c:318 schedcmds = sch;
             drop(head2);
-            // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (3)");
+            // c:319 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (3)")
+            crate::DPUTS!(                                                // c:319
+                !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:319
+                "BUG: already timed fn (3)"                              // c:319
+            );
             schedaddtimed();                                              // c:320
         } else {
             // for (sch2 = schedcmds;
@@ -477,7 +489,11 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
         sch_new.next = None;                                              // c:330 sch->next = NULL;
         *head = Some(sch_new);                                            // c:331 schedcmds = sch;
         drop(head);
-        // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (4)");
+        // c:332 — DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (4)")
+        crate::DPUTS!(                                                    // c:332
+            !crate::ported::utils::TIMED_FNS.lock().unwrap().is_empty(), // c:332
+            "BUG: already timed fn (4)"                                  // c:332
+        );
         schedaddtimed();                                                  // c:333
     }
     0                                                                     // c:335
