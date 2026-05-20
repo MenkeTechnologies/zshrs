@@ -44,6 +44,25 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::init::SHTTY as SHTTY_FD;
 use crate::ported::zsh_h::FDT_UNUSED;
 use crate::ported::zsh_h::{CSHJUNKIEQUOTES, SHINSTDIN, ZLE_CMD_TRASH};
+// Additional names lifted out of inside-fn `use` statements (PORT.md
+// 'no imports inside FNs ever'). Aliased ZT_* names disambiguate
+// ztype_h constants from same-named locals/module-names.
+use crate::ported::options::dosetopt;
+use crate::ported::params::isident;
+use crate::ported::string::dupstrpfx;
+use crate::ported::zsh_h::{
+    DEFAULT_IFS, LAST_NORMAL_TOK, Marker, Nularg, Pound, Snull, META,
+    FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_EXTERNAL, FDT_MODULE,
+    PATCHARS, SPECCHARS,
+};
+use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
+use crate::ported::ztype_h::{
+    ISEP as ZT_ISEP, IWSEP as ZT_IWSEP, ISPECIAL as ZT_ISPECIAL,
+    IPATTERN as ZT_IPATTERN, IWORD as ZT_IWORD,
+    ZTF_INTERACT, imeta, iwsep,
+};
+use std::fs;
+use std::os::unix::io::AsRawFd;
 
 /// Set a wide-char array from a multibyte source string.
 /// Port of `set_widearray(char *mb_array, Widechar_array wca)` from `Src/utils.c:69`.
@@ -275,7 +294,6 @@ pub fn zwarnnam(cmd: &str, msg: &str) {                                      // 
 /// Rust signature drift: takes `&str` instead of va_args; callers
 /// pre-format via Rust's `format!` (same pattern as `zerrmsg`).
 pub fn dputs(msg: &str) {                                                    // c:253
-    use std::io::Write;
     // c:263 — `getsparam_u("ZSH_DEBUG_LOG")`. The `_u` variant
     // unmetafies the result (utils.rs's getsparam_u port at
     // params.rs:3831 wraps getsparam + unmeta).
@@ -1047,7 +1065,6 @@ pub fn fprintdir(s: &str) -> String {                                        // 
 /// split BEFORE pre-joining, then apply quotestring to the residue
 /// per c:1059.
 pub fn substnamedir(s: &str) -> String {                                     // c:1053
-    use crate::ported::zsh_h::QT_BACKSLASH;
     // C `finddir` at c:1127 checks $HOME first (longest implicit
     // named dir), then scans nameddirtab. Duplicate that ordering
     // here without the pre-format, so we can apply quotestring on
@@ -1765,7 +1782,6 @@ pub fn adjustcolumns() -> usize {                                           // c
 /// ```
 /// WARNING: param names don't match C — Rust=(from) vs C=(from)
 pub fn adjustwinsize(from: i32) -> (usize, usize) {                          // c:1889
-    use std::sync::atomic::Ordering;
 
     // c:1891 — `static int getwinsz = 1;`
     let getwinsz = ADJUSTWINSIZE_GETWINSZ.load(Ordering::SeqCst);
@@ -1948,7 +1964,6 @@ pub fn movefd(fd: i32) -> i32 {
 /// Without these updates, redup'd fds had stale `FDT_UNUSED` ownership
 /// and `closeallelse(FDT_EXTERNAL)` etc. couldn't classify them.
 pub fn redup(x: i32, y: i32) -> i32 {                                        // c:2021
-    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL};
     let mut ret = y;                                                         // c:2023
     #[cfg(unix)]
     {
@@ -2031,7 +2046,6 @@ pub fn addmodulefd(fd: i32, fdt: i32) {                                      // 
 ///      — the OPPOSITE of close-on-exec. The Rust port was adding
 ///      CLOEXEC for the very case where the fd should be inheritable.
 pub fn addlockfd(fd: i32, cloexec: bool) {                                   // c:2112
-    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
     if cloexec {                                                             // c:2114
         // c:2115-2117 — track flock count, set FDT_FLOCK.
         if fdtable_get(fd) != FDT_FLOCK {
@@ -2102,7 +2116,6 @@ pub fn zclose(fd: i32) -> i32 {                                              // 
 /// canonical FDT_FLOCK / FDT_FLOCK_EXEC slots, the check can fire
 /// faithfully.
 pub fn zcloselockfd(fd: i32) -> i32 {                                    // c:2156
-    use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
     let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
     // c:2158 — `if (fd > max_zsh_fd) return -1;`.
     if fd > max_fd {
@@ -2697,7 +2710,6 @@ pub fn zsleep_random(max_us: i64, end_time: i64) -> i32 {                    // 
 /// order ("yn" instead of "ny" so 'n' isn't the default-first-arm).
 /// Lost 9 of the 10 C semantic branches.
 pub fn checkrmall(s: &str) -> bool {                                         // c:2867
-    use std::io::Write;
     // c:2871-2872 — `if (!shout) return 1;` — no controlling tty for
     // prompt output, default to yes. Rust analogue: if stderr isn't
     // a tty, skip the prompt and approve.
@@ -7081,7 +7093,6 @@ mod tests {
     #[cfg(unix)]
     fn test_mode_to_octal_canonical_bits() {
         let _g = crate::test_util::global_state_lock();
-        use libc::{S_IRUSR, S_IWUSR, S_IXUSR};
         // rwx for owner = 0o700.
         let mode = (S_IRUSR | S_IWUSR | S_IXUSR) as u32;
         assert_eq!(mode_to_octal(mode), 0o700);
@@ -7105,7 +7116,6 @@ mod tests {
     #[cfg(unix)]
     fn test_mode_to_octal_setuid_setgid_sticky() {
         let _g = crate::test_util::global_state_lock();
-        use libc::{S_ISGID, S_ISUID, S_ISVTX};
         assert_eq!(mode_to_octal(S_ISUID as u32), 0o4000);
         assert_eq!(mode_to_octal(S_ISGID as u32), 0o2000);
         assert_eq!(mode_to_octal(S_ISVTX as u32), 0o1000);
@@ -7118,7 +7128,6 @@ mod tests {
     #[cfg(unix)]
     fn test_mailstat_plain_file_returns_native_stat() {
         let _g = crate::test_util::global_state_lock();
-        use std::os::unix::fs::MetadataExt;
         // Plain file path → *st fields mirror native stat,
         // not the maildir aggregation.
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -7161,7 +7170,6 @@ mod tests {
         // 5 bytes of ASCII = 5 chars, identical. Canonical
         // port lives at `string.rs:161`; pin from utils.rs's test
         // module via the qualified path.
-        use crate::ported::string::dupstrpfx;                                 // c:161
         assert_eq!(dupstrpfx("hello", 3), "hel");                             // c:161
         assert_eq!(dupstrpfx("hi", 10), "hi");                                // c:161
         assert_eq!(dupstrpfx("anything", 0), "");                             // c:161
@@ -7275,7 +7283,6 @@ mod tests {
         // `ztype_h::imeta(u8)`; init the typtab first since the
         // canonical port reads through it.
         crate::ported::utils::inittyptab();                                   // c:4148
-        use crate::ported::ztype_h::imeta;                                    // c:60
         assert!(imeta(0x00),  "c:4195 — NUL is IMETA");                       // c:4195
         assert!(imeta(Meta),  "c:4196 — Meta (0x83) is IMETA");               // c:4196
         assert!(imeta(0xa2),  "c:4197 — Marker (0xa2) is IMETA");             // c:4197
@@ -7302,7 +7309,6 @@ mod tests {
         // The previous port omitted '\n' which broke wordcount on
         // multi-line input. Routes through canonical
         // `ztype_h::iwsep` (`Src/ztype.h:61`).
-        use crate::ported::ztype_h::iwsep;                                    // c:61
         assert!(iwsep(b'\n'));                                                // c:61
         assert!(iwsep(b'\t'));                                                // c:61
         assert!(iwsep(b' '));                                                 // c:61
@@ -7314,8 +7320,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Create a temp maildir layout with 2 messages in new/ and 1
         // in cur/, verify the aggregate.
-        use std::fs;
-        use std::io::Write;
         let tmp = std::env::temp_dir().join(format!(
             "zshrs_mailstat_test_{}",
             std::process::id()
@@ -7359,7 +7363,6 @@ mod tests {
     fn test_isident() {
         let _g = crate::test_util::global_state_lock();                       // c:1288
         // Canonical port lives at `params.rs:2056` (`Src/params.c:1288`).
-        use crate::ported::params::isident;                                   // c:1288
         assert!(isident("foo"));                                              // c:1288
         assert!(isident("_bar"));                                             // c:1288
         assert!(isident("baz123"));                                           // c:1288
@@ -7405,7 +7408,6 @@ mod tests {
     #[test]
     fn quotestring_backslash_only_specchars_no_bang_in_default() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::QT_BACKSLASH;
         // `!` is NOT in canonical SPECCHARS — should NOT be backslashed
         // in default non-interactive mode (matches C).
         assert_eq!(
@@ -7610,7 +7612,6 @@ mod tests {
     #[test]
     fn setblock_fd_skips_regular_files_per_c_2599() {
         let _g = crate::test_util::global_state_lock();
-        use std::os::unix::io::AsRawFd;
         // Open a regular tempfile.
         let dir = tempfile::TempDir::new().unwrap();
         let f = std::fs::File::create(dir.path().join("regular")).unwrap();
@@ -8436,7 +8437,6 @@ mod tests {
         // The previous utils.rs fake rejected all-digit names too,
         // which was non-faithful — the canonical `params::isident`
         // at `params.rs:2056` matches the C semantics.
-        use crate::ported::params::isident;                                   // c:1288
         assert!(!isident("1foo"));                                            // c:1318
         assert!(isident("99"),                                                // c:1318
             "c:1315-1319 — all-digit names are valid positional params");
@@ -8448,7 +8448,6 @@ mod tests {
     #[test]
     fn isident_accepts_underscore_and_alpha_leading() {
         let _g = crate::test_util::global_state_lock();                       // c:1288
-        use crate::ported::params::isident;                                   // c:1288
         assert!(isident("foo"));                                              // c:1288
         assert!(isident("_foo"));                                             // c:1288
         assert!(isident("Foo_BAR_42"));                                       // c:1288
@@ -8467,7 +8466,6 @@ mod tests {
         // is incorrect — C accepts trailing `.` (it's an INAMESPC
         // member). Whitespace, `-`, and `$` are NOT INAMESPC chars
         // and remain rejected.
-        use crate::ported::params::isident;                                   // c:1288
         assert!(!isident("foo bar"));                                         // c:1322
         assert!(!isident("foo-bar"));                                         // c:1322
         assert!(!isident("a$b"));                                             // c:1322
@@ -8945,7 +8943,6 @@ mod tests {
     #[test]
     fn addmodulefd_respects_fdt_parameter() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_MODULE};
         // Open a real fd to use.
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
@@ -8965,7 +8962,6 @@ mod tests {
     #[test]
     fn addmodulefd_ignores_negative_fd() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::FDT_MODULE;
         // Should not panic, no side effect.
         crate::ported::utils::addmodulefd(-1, FDT_MODULE);
         // Nothing to assert on side-effect-free path; just verify no panic.
@@ -9015,7 +9011,6 @@ mod tests {
     #[test]
     fn fdtable_set_bumps_max_zsh_fd() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::FDT_FLOCK;
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
         crate::ported::utils::fdtable_set(fd, FDT_FLOCK);
@@ -9037,7 +9032,6 @@ mod tests {
     #[test]
     fn addlockfd_selects_flock_category_per_cloexec_flag() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{FDT_FLOCK, FDT_FLOCK_EXEC};
         let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY) };
         if fd < 0 { return; }
         // cloexec=true → FDT_FLOCK (lock dies on exec).
@@ -9182,7 +9176,6 @@ mod tests {
     #[test]
     fn check_fd_table_grows_fdtable_and_bumps_max_zsh_fd() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         // Snapshot prior state so we don't poison other tests.
         let saved_max = MAX_ZSH_FD.load(Ordering::Relaxed);
         // Pick a target fd well above the typical 0/1/2.
@@ -9208,7 +9201,6 @@ mod tests {
     #[test]
     fn check_fd_table_small_fd_is_noop() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         // Ensure max_zsh_fd is non-trivial.
         let _ = check_fd_table(100);
         let max_before = MAX_ZSH_FD.load(Ordering::Relaxed);
@@ -9278,8 +9270,6 @@ mod tests {
     #[test]
     fn zwcwidth_returns_1_when_multibyte_unset() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::MULTIBYTE;
-        use crate::ported::options::dosetopt;
         let saved = crate::ported::zsh_h::isset(MULTIBYTE);
         // c:738 — unset(MULTIBYTE) path returns 1 for everything.
         dosetopt(MULTIBYTE, 0, 1);
