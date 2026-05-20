@@ -2488,7 +2488,17 @@ pub fn paramsubst(
         let mut quotemod: i32 = 0;                                            // c:1739
         let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE;              // c:1739
         // quoteerr declared at c:1739 too — already at line 2525.
-        let mut flag_at = false; // c:2167 (@)
+        // c:1817 — `int nojoin = (pf_flags & PREFORK_SHWORDSPLIT) ?
+        // !(ifs && *ifs) && !qt : 0;`. Tri-state: 0 = default,
+        // 1 = WORDSPLIT-induced (IFS empty + !qt), 2 = forced by (@)
+        // flag (c:2164-2165). Previous Rust port used a bool (nojoin == 2) —
+        // Rule D bag-of-globals; lost the initial-value computation.
+        let mut nojoin: i32 = if (pf_flags & PREFORK_SHWORDSPLIT) != 0 {     // c:1817
+            let ifs = vars_get("IFS").unwrap_or_default();                   // c:1817 ifs check
+            if ifs.is_empty() && !qt { 1 } else { 0 }                        // c:1817 !(ifs && *ifs) && !qt
+        } else {                                                              // c:1817
+            0                                                                 // c:1817
+        };                                                                    // c:1817
                                  // Temp state.arrays slot holding a nested-expansion array
                                  // result (see line ~1755). Set when `${(@)${(@)…}…}` with
                                  // outer `(@)` triggers multsub on the inner; cleared at end
@@ -2648,9 +2658,9 @@ pub fn paramsubst(
                     'A' => {
                         arrasg += 1;
                     } // c:2161 (A array-assign; AA associative-assign)
-                    '@' => {
-                        flag_at = true;
-                    } // c:2167
+                    '@' => {                                                  // c:2164
+                        nojoin = 2;  // c:2165 nojoin = 2 means force
+                    }                                                         // c:2166
                     'P' => {
                         aspar = true;
                     } // c:2295
@@ -3241,7 +3251,7 @@ pub fn paramsubst(
                                                                        // splat path (line 3636 state.arrays.contains_key) sees it.
                                                                        // Direct port of subst.c's prefork SPLIT path that the (@)
                                                                        // flag triggers around line 2167.
-            let expanded = if flag_at {
+            let expanded = if (nojoin == 2) {
                 // c:2167+544
                 let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SPLIT);
                 if isarr && !arr_parts.is_empty() {
@@ -3889,7 +3899,7 @@ pub fn paramsubst(
             value = assoc_get(&var_name) // c:2256
                 .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
                 .unwrap_or_default();
-        } else if flag_at {
+        } else if (nojoin == 2) {
             // c:2167
             // (@) array splat — preserve element shape via space-join.
             // For full splat into multiple result_nodes, the
@@ -3902,7 +3912,7 @@ pub fn paramsubst(
             value = raw_value.clone();
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
-        if !plan9 && flag_at {
+        if !plan9 && (nojoin == 2) {
             if let Some(ref a) = arrays_get(&var_name) {
                 if a.first().map_or(true, |s| s.is_empty()) {
                     value = String::new();
@@ -5756,14 +5766,14 @@ pub fn paramsubst(
             && rest.is_empty()
             && split_parts.is_some();
         let auto_splat = force_splat_from_eq                 // c:2566
-            || (!flag_at                                     // c:3950
+            || (!(nojoin == 2)                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
             && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some())); // c:3950 ((s::) made an array)
-        if flag_at || auto_splat {
+        if (nojoin == 2) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
                 // (s::) split → splat the post-split parts
