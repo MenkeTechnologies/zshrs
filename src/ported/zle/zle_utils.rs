@@ -20,7 +20,7 @@
 
 use std::sync::atomic::Ordering;
 
-use super::zle_h::{CH_NEXT, CH_PREV};
+use super::zle_h::{CH_NEXT, CH_PREV, MOD_VIBUF, ZSL_COPY, ZSL_TOEND};
 use super::zle_main::{ZleChar, ZleString};
 use crate::ported::builtin::RETFLAG;
 use crate::ported::utils::errflag;
@@ -287,7 +287,6 @@ pub fn cuttext(
     txt: &[char], // c:946
     dir: i32,
 ) {
-    use crate::ported::zle::zle_h::MOD_VIBUF;
     // C body c:948-1043 — pushes `txt` into vibuf[zmod.vibuf] when
     //                     MOD_VIBUF is set, else front of killring.
     //                     CUT_APPEND/CUT_REPLACE flag handling skipped
@@ -466,7 +465,6 @@ pub fn setline(
     //      of C's "ZSL_TOEND set → end-of-line".
     //   3. Missing the `else if (zlecs > zlell) zlecs = zlell;` clamp
     //      — cursor outside the new line stayed at the stale position.
-    use crate::ported::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
     let _ = ZSL_COPY; // c:1135 (no-op in Rust: &str is already independent)
     let mut line = ZLELINE.lock().unwrap();
     line.clear();
@@ -586,7 +584,6 @@ mod tests_hooks {
 mod tests_bindkey_format {
     use super::bindztrdup;
     use super::printbind;
-    use crate::zle::zle_main::zle_test_setup;
 
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
@@ -1709,9 +1706,7 @@ pub fn redo_widget() -> i32 {
 
 #[cfg(test)]
 mod findbol_findeol_tests {
-    use crate::zle::zle_h::{ZSL_COPY, ZSL_TOEND};
     use super::*;
-    use crate::zle::zle_main::zle_test_setup;
 
     fn zle_with(line: &str, cs: usize) {
         zle_reset();

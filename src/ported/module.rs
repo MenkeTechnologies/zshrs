@@ -3401,7 +3401,6 @@ pub fn setconddefs(
     c: &mut [conddef],
     e: Option<&[i32]>,
 ) -> i32 {
-    use crate::ported::zsh_h::CONDF_ADDED;
     let mut ret = 0; // c:758
     for (i, entry) in c.iter_mut().enumerate() {
         // c:760 while (size--)
@@ -3457,7 +3456,6 @@ pub fn setmathfuncs(
     f: &mut [mathfunc],
     e: Option<&[i32]>,
 ) -> i32 {
-    use crate::ported::zsh_h::MFF_ADDED;
     let mut ret = 0; // c:1378
     for (i, entry) in f.iter_mut().enumerate() {
         // c:1380 while (size--)
@@ -3697,7 +3695,6 @@ pub fn featuresarray(
     pd: &[paramdef], // c:3292 f->pd_list
     n_abstract: i32,                       // c:3288 f->n_abstract
 ) -> Vec<String> {
-    use crate::ported::zsh_h::CONDF_INFIX;
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3288
         + n_abstract.max(0) as usize;
     let mut features: Vec<String> = Vec::with_capacity(features_size + 1); // c:3293
@@ -3746,7 +3743,6 @@ pub fn getfeatureenables(
     pd: &[paramdef], // c:3327
     n_abstract: i32,                       // c:3323
 ) -> Vec<i32> {
-    use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, MFF_ADDED};
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3323
         + n_abstract.max(0) as usize;
     let mut enables: Vec<i32> = Vec::with_capacity(features_size); // c:3328
