@@ -951,19 +951,47 @@ pub fn fprintdir(s: &str) -> String {                                        // 
 
 /// Port of `char *substnamedir(char *s)` from Src/utils.c:1053.
 ///
-/// "Substitute a directory using a name. If there is none, return
-/// the original argument." Rendering uses `finddir` (the global
-/// `nameddirtab` lookup) plus `quotestring(..., QT_BACKSLASH)` for
-/// the residue.
+/// C body (c:1053-1061):
+/// ```c
+/// Nameddir d = finddir(s);
+/// if (!d)
+///     return quotestring(s, QT_BACKSLASH);
+/// return zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir),
+///                                                QT_BACKSLASH));
+/// ```
+///
+/// The previous Rust port was a FAKE — it called `finddir(s)` (Rust
+/// signature returns `Option<String>` of the already-formatted
+/// `~name/rest`) and returned that string unchanged in the Some-arm,
+/// missing the `quotestring(..., QT_BACKSLASH)` C applies to the
+/// residue. C's `finddir` returns a `Nameddir` pointer; the
+/// `~name` + quoted-residue join lives here in `substnamedir`.
+///
+/// This re-port duplicates the HOME-first + nameddirtab-scan logic
+/// (finddir_scan at c:1106) so it can take the (name, dir_prefix)
+/// split BEFORE pre-joining, then apply quotestring to the residue
+/// per c:1059.
 pub fn substnamedir(s: &str) -> String {                                     // c:1053
-    match finddir(s) {                                                       // c:1053
-        None => quotestring(s, crate::ported::zsh_h::QT_BACKSLASH),                        // c:1058
-        // C: zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), …)).
-        // `finddir` already renders the leading `~name` segment, so
-        // the residue is what `finddir` returned past the `~name`
-        // prefix; backslash-quote that residue.
-        Some(rendered) => rendered,                                          // c:1059
+    use crate::ported::zsh_h::QT_BACKSLASH;
+    // C `finddir` at c:1127 checks $HOME first (longest implicit
+    // named dir), then scans nameddirtab. Duplicate that ordering
+    // here without the pre-format, so we can apply quotestring on
+    // just the residue.
+    let home = crate::ported::params::getsparam("HOME").unwrap_or_default(); // c:1133
+    if !home.is_empty() && home.len() > 1 && s.starts_with(&home) {          // c:1138-1141
+        let rest = &s[home.len()..];
+        if rest.is_empty() || rest.starts_with('/') {
+            // C: zhtricat("~", "", quotestring(rest, QT_BACKSLASH))
+            // — HOME is the implicit homenode (no name).
+            return format!("~{}", quotestring(rest, QT_BACKSLASH));          // c:1059
+        }
     }
+    // c:1106 finddir_scan — longest-prefix walk over nameddirtab.
+    if let Some((name, rest)) = finddir_scan(s) {                            // c:1106
+        // c:1059 — `zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), QT_BACKSLASH))`
+        return format!("~{}{}", name, quotestring(&rest, QT_BACKSLASH));     // c:1059
+    }
+    quotestring(s, QT_BACKSLASH)                                             // c:1058
 }
 
 // ===========================================================
