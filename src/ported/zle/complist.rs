@@ -21,6 +21,10 @@
 //! - initiscol        → compsys::zpwr_colors::init_colors()
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering as O;
+
+use crate::ported::zle::comp_h::{CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
@@ -266,7 +270,6 @@ pub fn getcoldef(s: &str) -> Option<String> {
 /// ```
 pub fn getcols(_unused: &str) -> i32 {
     // c:505
-    use std::sync::atomic::Ordering;
 
     MAX_CAPLEN.store(0, Ordering::SeqCst); // c:510
     LR_CAPLEN.store(0, Ordering::SeqCst); // c:510
@@ -408,7 +411,6 @@ pub fn getcols(_unused: &str) -> i32 {
 /// `last_cap` isn't yet ported, so we only emit the SGR escape.
 pub fn zlrputs(cap: &str) -> i32 {
     // c:564
-    use std::sync::atomic::Ordering;
     if cap.is_empty() {
         return 0;
     }
@@ -454,7 +456,6 @@ pub fn zcoff() { // c:597
 /// the EOL-clear doesn't carry the color into untouched columns.
 pub fn cleareol() {
     // c:608
-    use std::sync::atomic::Ordering;
     if MLBEG.load(Ordering::Relaxed) < 0 {
         return;
     }
@@ -477,7 +478,6 @@ pub fn cleareol() {
 /// position cursors + region-tracking arrays.
 pub fn initiscol() -> i32 {
     // c:618
-    use std::sync::atomic::Ordering;
     // c:622 — `zlrputs(patcols[0]);` — emit first color cap.
     let first_cap = PATCOLS
         .lock()
@@ -537,7 +537,6 @@ pub fn initiscol() -> i32 {
 ///    SGR-reset + the new color, pushes onto curiscols[].
 pub fn doiscol(pos: i32) -> i32 {
     // c:635
-    use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
 
@@ -664,7 +663,6 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {
 #[allow(unused_variables)]
 pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {
     // c:715
-    use std::sync::atomic::Ordering;
     let _ = do_colors;
     // c:717-735 — meta-decode loop matches the C `niceztrlen`/
     //              `nicezputs` pair. We do the same demeta-+-itok-skip
@@ -747,7 +745,6 @@ pub fn asklistscroll(total: usize, shown: usize) -> String {
 #[allow(unused_variables)]
 pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
-    use std::sync::atomic::Ordering;
     // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
     //          emit both as a single write (CSI K + LF).
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
@@ -922,7 +919,6 @@ pub static MLISTP: std::sync::LazyLock<std::sync::Mutex<String>> =
 #[allow(unused_variables)]
 pub fn compzputs(s: &str, ml: i32) -> i32 {
     // c:1338
-    use std::sync::atomic::Ordering;
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -957,10 +953,6 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {
 /// position against `mlbeg`/`mlend` for resumable scrolling.
 pub fn compprintlist(showall: i32) -> i32 {
     // c:1367
-    use crate::ported::zle::comp_h::{
-        CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST,
-    };
-    use std::sync::atomic::Ordering;
 
     let mut pnl = 0i32; // c:1378
     let mut cl: i32;
@@ -1755,7 +1747,6 @@ pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {
 /// ```
 pub fn singledraw() -> i32 {
     // c:1934
-    use std::sync::atomic::Ordering;
 
     let mline = MLINE.load(Ordering::SeqCst);
     let mcol = MCOL.load(Ordering::SeqCst);
@@ -1827,7 +1818,6 @@ pub fn singledraw() -> i32 {
         crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
-    use std::sync::atomic::Ordering as O;
     let fd = crate::ported::init::SHTTY.load(O::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = crate::ported::utils::write_loop(out_fd, b"\r");
@@ -1911,7 +1901,6 @@ pub fn singledraw() -> i32 {
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn complistmatches() -> i32 {
     // c:1990
-    use std::sync::atomic::Ordering;
 
     // c:1995 — `Cmgroup oamatches = amatches;` — saved for restore
     // before any return path; the Rust amatches lives in compcore.
@@ -2411,7 +2400,6 @@ pub fn msearchpop() -> i32 {
 /// the canonical Rust Result-like discriminant.
 pub fn msearch() -> i32 {
     // c:2302
-    use std::sync::atomic::Ordering;
 
     let mut x = MCOL.load(Ordering::SeqCst);
     let mut y = MLINE.load(Ordering::SeqCst);
@@ -2532,7 +2520,6 @@ pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn domenuselect() -> i32 {
     // c:2383
-    use std::sync::atomic::Ordering;
 
     // c:2385-2396 — local declarations.
     let mut _i: i32 = 0; // c:2392
