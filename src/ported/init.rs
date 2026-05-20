@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
-
+use crate::zsh_h::ZEXIT_NORMAL;
 // =========================================================================
 // File-scope globals from init.c
 // =========================================================================
@@ -1128,7 +1128,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // 
                 crate::ported::builtin::STOPMSG.store(1, Ordering::SeqCst);  // c:169 stopmsg = 1
                 crate::ported::builtin::zexit(                               // c:170 zexit(exit_val, ZEXIT_NORMAL)
                     crate::ported::builtin::EXIT_VAL.load(Ordering::SeqCst),
-                    crate::ported::builtin::ZEXIT_NORMAL,
+                    ZEXIT_NORMAL,
                 );
             }
             if tok_v == LEXERR
