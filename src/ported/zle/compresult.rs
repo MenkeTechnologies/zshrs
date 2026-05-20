@@ -31,13 +31,14 @@
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 
+use crate::ported::utils::write_loop;
 use crate::ported::zle::comp_h::{
-    Aminfo, Cldata, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED, CGF_ROWS, CMF_ALL, CMF_DISPLINE,
-    CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_ROWS,
+    Aminfo, Cldata, Menuinfo, CGF_FILES, CGF_HASDL, CGF_LINES, CGF_PACKED, CGF_ROWS, CMF_ALL,
+    CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_ROWS,
 };
 use crate::ported::zle::compcore::{
-    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc, nmatches as nmatches_g,
-    oldins, oldlist, MINFO,
+    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, menuacc,
+    nmatches as nmatches_g, oldins, oldlist, MINFO,
 };
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
@@ -443,7 +444,7 @@ pub fn accept_last(
             .map(|s| s.clone())
             .unwrap_or_default();
         if let Ok(mut m) = MINFO
-            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
         {
             m.prebr = Some(prebr.clone()); // c:1301
@@ -536,7 +537,7 @@ pub fn do_ambig_menu() -> i32 {
         MENUCMP.store(1, Ordering::Relaxed); // c:1390
         menuacc.store(0, Ordering::Relaxed); // c:1391
         if let Ok(mut m) = MINFO
-            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
         {
             m.cur = None; // c:1392
@@ -559,7 +560,7 @@ pub fn do_ambig_menu() -> i32 {
         } else {
             if let Ok(mut m) = MINFO
                 .get_or_init(|| {
-                    std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                    std::sync::Mutex::new(Menuinfo::default())
                 })
                 .lock()
             {
@@ -594,7 +595,7 @@ pub fn do_ambig_menu() -> i32 {
     let Some(g) = chosen_group else {
         // c:1440-1444
         if let Ok(mut m) = MINFO
-            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
         {
             m.cur = None;
@@ -616,7 +617,7 @@ pub fn do_ambig_menu() -> i32 {
             // rule (set_minfo_cur was a Rust-only wrapper).
             if let Ok(mut g) = crate::ported::zle::compcore::MINFO
                 .get_or_init(|| {
-                    std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                    std::sync::Mutex::new(Menuinfo::default())
                 })
                 .lock()
             {
@@ -625,7 +626,7 @@ pub fn do_ambig_menu() -> i32 {
         }
     }
     if let Ok(mut mst) = MINFO
-        .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+        .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
         .lock()
     {
         mst.cur = mc.map(Box::new); // c:1456
@@ -1293,7 +1294,7 @@ pub fn asklist() -> i32 {
         };
         let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
-        let _ = crate::ported::utils::write_loop(out, prompt.as_bytes());
+        let _ = write_loop(out, prompt.as_bytes());
 
         // c:1955 — `getzlequery()`.
         let said_yes = crate::ported::zle::zle_utils::getzlequery() != 0;
@@ -1301,7 +1302,7 @@ pub fn asklist() -> i32 {
         if !said_yes {
             // c:1956
             // c:1957-1964 — clean up the question line.
-            let _ = crate::ported::utils::write_loop(out, b"\n");
+            let _ = write_loop(out, b"\n");
             // c:1965 — `minfo.asked = 2`.
             if let Ok(mut m) = MINFO
                 .get_or_init(|| std::sync::Mutex::new(Default::default()))
@@ -1312,7 +1313,7 @@ pub fn asklist() -> i32 {
             return 1; // c:1966
         }
         // c:1968-1974 — clean up after a yes.
-        let _ = crate::ported::utils::write_loop(out, b"\n");
+        let _ = write_loop(out, b"\n");
         // c:1975 — `minfo.asked = 1`.
         if let Ok(mut m) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Default::default()))
@@ -1408,7 +1409,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
 
             if pnl != 0 {
                 // c:2007
-                let _ = crate::ported::utils::write_loop(out_fd, b"\n"); // c:2008
+                let _ = write_loop(out_fd, b"\n"); // c:2008
                 ml += 1;
                 cl -= 1;
                 if cl >= 0 && cl <= 1 {
@@ -1437,7 +1438,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             // c:2032
             if pnl != 0 {
                 // c:2033
-                let _ = crate::ported::utils::write_loop(out_fd, b"\n");
+                let _ = write_loop(out_fd, b"\n");
                 pnl = 0;
                 ml += 1;
                 if cl >= 0 && cl <= 1 {
@@ -1452,7 +1453,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                     if i != last_idx {
                         // c:2050
                         // C wraps via " \b" or "\n"; we emit \n for safety.
-                        let _ = crate::ported::utils::write_loop(out_fd, b"\n");
+                        let _ = write_loop(out_fd, b"\n");
                     }
                 }
             } else {
@@ -1460,7 +1461,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // Column layout — emit each entry.
                 for entry in &g.ylist {
                     let _ = crate::ported::utils::zputs(entry);
-                    let _ = crate::ported::utils::write_loop(out_fd, b"\n");
+                    let _ = write_loop(out_fd, b"\n");
                     ml += 1;
                 }
             }
@@ -1468,7 +1469,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             // c:2079-2185 — main column-rendered match list.
             if pnl != 0 {
                 // c:2080
-                let _ = crate::ported::utils::write_loop(out_fd, b"\n");
+                let _ = write_loop(out_fd, b"\n");
                 pnl = 0;
                 ml += 1;
             }
@@ -1482,7 +1483,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // c:2095-2098 — DISPLINE = full-row.
                 let _ = iprintm(Some(g), Some(m), 0, 0, 1, 0);
                 if (m.flags & CMF_DISPLINE) == 0 {
-                    let _ = crate::ported::utils::write_loop(out_fd, b"\n");
+                    let _ = write_loop(out_fd, b"\n");
                 }
                 ml += 1;
             }
@@ -1630,23 +1631,23 @@ pub fn iprintm(
         if (m.flags & CMF_DISPLINE) != 0 {
             // c:2254
             // c:2255 — `printfmt(d, 0, 1, 0)` then `putc('\n', shout)`.
-            let _ = crate::ported::utils::write_loop(out, d.as_bytes());
-            let _ = crate::ported::utils::write_loop(out, b"\n");
+            let _ = write_loop(out, d.as_bytes());
+            let _ = write_loop(out, b"\n");
             return 0; // c:2257
         }
-        let _ = crate::ported::utils::write_loop(out, d.as_bytes()); // c:2260 niceformat
+        let _ = write_loop(out, d.as_bytes()); // c:2260 niceformat
         len = d.chars().count() as i32;
     } else {
         // c:2263
         let s = m.str.as_deref().unwrap_or("");
-        let _ = crate::ported::utils::write_loop(out, s.as_bytes()); // c:2266
+        let _ = write_loop(out, s.as_bytes()); // c:2266
         len = s.chars().count() as i32;
         // c:2270-2273 — append modec for file-completion groups.
         if let Some(grp) = g {
             if (grp.flags & CGF_FILES) != 0 && m.modec != '\0' {
                 let mut buf = [0u8; 4];
                 let mb = m.modec.encode_utf8(&mut buf);
-                let _ = crate::ported::utils::write_loop(out, mb.as_bytes());
+                let _ = write_loop(out, mb.as_bytes());
                 len += 1;
             }
         }
@@ -1657,7 +1658,7 @@ pub fn iprintm(
         let pad = width - len;
         if pad > 0 {
             let spaces = vec![b' '; pad as usize];
-            let _ = crate::ported::utils::write_loop(out, &spaces);
+            let _ = write_loop(out, &spaces);
         }
     }
     len // c:2282
@@ -1802,7 +1803,7 @@ mod tests {
     #[test]
     fn test_unambig_data() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(unambig_data(&["foobar".into(), "foobaz".into()]), "fooba");
         assert_eq!(unambig_data(&["abc".into()]), "abc");
         assert_eq!(unambig_data(&[]), "");
@@ -1812,7 +1813,7 @@ mod tests {
     fn cline_str_none_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         // c:165 — null Cline → empty string.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(cline_str(None), "");
     }
 
@@ -1820,7 +1821,7 @@ mod tests {
     fn cline_str_emits_word_anchor() {
         let _g = crate::test_util::global_state_lock();
         // c:282 — non-CLF_LINE node emits `word`.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut n = Cline::default();
         n.word = Some("hello".to_string());
         n.wlen = 5;
@@ -1831,7 +1832,7 @@ mod tests {
     fn cline_str_emits_line_anchor_when_clf_line_set() {
         let _g = crate::test_util::global_state_lock();
         // c:282 — CLF_LINE node emits `line` instead of `word`.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut n = Cline::default();
         n.flags = CLF_LINE;
         n.line = Some("LINE".to_string());
@@ -1844,7 +1845,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:214 — olen!=0 && !CLF_SUF && !prefix → emit `orig` (not
         //          the prefix-walk + word path).
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut n = Cline::default();
         n.orig = Some("original".to_string());
         n.olen = 8;
@@ -1858,7 +1859,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:219-235 — prefix sub-list walked when olen==0 or
         //              CLF_SUF set.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut p2 = Cline::default();
         p2.word = Some("ond".to_string());
         let mut p1 = Cline::default();
@@ -1874,7 +1875,7 @@ mod tests {
     fn cline_str_walks_next_chain() {
         let _g = crate::test_util::global_state_lock();
         // c:165 — top-level walk via `l = l->next`.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut n2 = Cline::default();
         n2.word = Some("B".to_string());
         let mut n1 = Cline::default();
@@ -1886,7 +1887,7 @@ mod tests {
     #[test]
     fn test_instmatch() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let (result, cursor) = instmatch("git co", 6, 4, 6, "commit");
         assert_eq!(result, "git commit");
         assert_eq!(cursor, 10);
@@ -1895,7 +1896,7 @@ mod tests {
     #[test]
     fn test_do_single() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let (result, cursor) = do_single("git co", 6, 4, 6, "commit", true);
         assert_eq!(result, "git commit ");
         assert_eq!(cursor, 11);
@@ -1904,7 +1905,7 @@ mod tests {
     #[test]
     fn test_do_menucmp() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let matches = vec!["commit".into(), "checkout".into(), "cherry-pick".into()];
         let (next, word) = do_menucmp(&matches, 0, true);
         assert_eq!(next, 1);
@@ -1918,7 +1919,7 @@ mod tests {
     #[test]
     fn test_valid_match() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert!(valid_match("foobar", "foo", ""));
         assert!(valid_match("foobar", "foo", "bar"));
         assert!(!valid_match("foobar", "baz", ""));
@@ -1927,7 +1928,7 @@ mod tests {
     #[test]
     fn test_build_pos_string() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(build_pos_string(0, 10), "1/10");
         assert_eq!(build_pos_string(9, 10), "10/10");
     }
@@ -1935,7 +1936,7 @@ mod tests {
     #[test]
     fn test_list_lines() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(list_lines(&vec!["a".into(); 10], 3), 4);
         assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
     }
@@ -1943,7 +1944,7 @@ mod tests {
     #[test]
     fn comp_mod_positive() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:1366-1369 — positive: decrement then % m.
         assert_eq!(comp_mod(1, 5), 0); // (1-1) % 5 = 0
         assert_eq!(comp_mod(3, 5), 2); // (3-1) % 5 = 2
@@ -1954,7 +1955,7 @@ mod tests {
     #[test]
     fn comp_mod_zero_branches_negative() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:1366 — `if (v >= 0) v--;` so 0 → -1 → falls into else.
         // c:1370-1373 — wrap by adding m until non-negative.
         assert_eq!(comp_mod(0, 5), 4); // 0→-1→+5=4
@@ -1966,7 +1967,7 @@ mod tests {
     #[test]
     fn comp_list_sets_onlyexpl() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
         comp_list(Some("expl"));
         assert_eq!(onlyexpl.load(Ordering::SeqCst), 1);
@@ -1983,7 +1984,7 @@ mod tests {
     #[test]
     fn skipnolist_skips_hide_and_nolist() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut a = Cmatch::default();
         a.flags = CMF_NOLIST;
         let mut b = Cmatch::default();
@@ -1997,7 +1998,7 @@ mod tests {
     #[test]
     fn skipnolist_showall_keeps_nolist() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut a = Cmatch::default();
         a.flags = CMF_NOLIST;
         let v = vec![a];
@@ -2008,7 +2009,7 @@ mod tests {
     #[test]
     fn skipnolist_skips_disp_displine() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut a = Cmatch::default();
         a.disp = Some("display".into());
         a.flags = CMF_DISPLINE;
