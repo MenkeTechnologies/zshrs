@@ -584,6 +584,7 @@ mod tests_hooks {
 mod tests_bindkey_format {
     use super::bindztrdup;
     use super::printbind;
+    use crate::ported::zle::zle_main::zle_test_setup;
 
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
