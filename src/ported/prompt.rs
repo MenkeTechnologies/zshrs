@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::env;
+use std::sync::atomic::Ordering;
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
 /// then copies into `buf_vars` for each expansion walk.
@@ -235,7 +236,9 @@ use crate::ported::zsh_h::{
     TXT_ATTR_FG_COL_SHIFT,
     TXT_ATTR_FG_MASK,
 };
-use crate::zsh_h::{Inpar, Nularg, Outpar};
+use crate::zsh_h::{
+    Inpar, Nularg, Outpar, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXT_ERROR,
+};
 
 // ---------------------------------------------------------------------------
 // Remaining missing functions from prompt.c
@@ -471,8 +474,6 @@ pub fn stradd(buf: &mut String, s: &str) {
 /// WARNING: param names don't match C — Rust=(cap, flags) vs C=(cap, flags)
 pub fn tsetcap(cap: i32, flags: i32) -> String {
     // c:1083
-    use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW};
-    use std::sync::atomic::Ordering;
 
     let mut out = String::new();
 
@@ -2311,10 +2312,6 @@ impl buf_vars {
 /// argument path (when `teststrp == None`).
 pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour: i32) -> zattr {
     // c:1957
-    use crate::ported::zsh_h::{
-        TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT,
-        TXT_ERROR,
-    };
     // c:1962-1970 — pick fg vs bg constant set.
     let (shft, on) = if is_fg {
         (TXT_ATTR_FG_COL_SHIFT, TXTFGCOLOUR) // c:1963-1965
@@ -2488,7 +2485,6 @@ pub fn set_default_colour_sequences() -> (String, String) {
 /// Port of `set_colour_code(char *str, char **var)` from Src/prompt.c:2353.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(str, var)
 pub fn set_colour_code(spec: &str) -> Option<String> {
-    use crate::ported::zsh_h::{TXTFGCOLOUR, TXT_ATTR_FG_COL_SHIFT, TXT_ERROR};
     let mut cur = 0usize;
     let attr = match_colour(Some(&mut cur), spec, true, 0);
     if attr == TXT_ERROR {
@@ -2587,7 +2583,6 @@ pub static colseq_buf_allocs: std::sync::atomic::AtomicI32 = std::sync::atomic::
 /// ```
 pub fn allocate_colour_buffer() {
     // c:2367
-    use std::sync::atomic::Ordering;
 
     // c:2372 — `if (colseq_buf_allocs++) return;`
     if colseq_buf_allocs.fetch_add(1, Ordering::SeqCst) != 0 {
@@ -2677,7 +2672,6 @@ pub fn allocate_colour_buffer() {
 /// Port of `free_colour_buffer()` from Src/prompt.c:2417.
 pub fn free_colour_buffer() {
     // c:2417
-    use std::sync::atomic::Ordering;
     // C body c:2420-2426: `if (--colseq_buf_allocs) return;
     //                      zfree(colseq_buf, ...); colseq_buf = NULL;`
     if colseq_buf_allocs.fetch_sub(1, Ordering::SeqCst) - 1 != 0 {
@@ -3299,7 +3293,6 @@ mod tests {
     #[test]
     fn countprompt_recognises_canonical_inpar_outpar_nularg_bytes() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{Inpar, Nularg, Outpar};
         let mut w = 0i32;
         let mut h = 0i32;
         // `abc%{...%}def` shape: `abc` (3 cols), Inpar+escape+Outpar
