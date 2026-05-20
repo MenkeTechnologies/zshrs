@@ -19,8 +19,10 @@ use std::env;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
+use crate::ported::builtins::sched::zleactive;
 use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
-use crate::ported::signals::{signal_block, signal_setmask};
+use crate::ported::params::{getsparam, setsparam, unsetparam};
+use crate::ported::signals::{signal_block, signal_setmask, unqueue_signals};
 use crate::ported::signals_h::{signal_default, signal_ignore};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
@@ -574,8 +576,8 @@ pub fn update_process(pn: &mut Process, status: i32) {
 // just-reaped child. Per-thread (bucket 1) because each worker
 // thread reaps its own children independently.
 thread_local! {
-    static CHILD_USAGE_PREV: std::cell::RefCell<crate::ported::zsh_h::timeinfo>
-        = const { std::cell::RefCell::new(crate::ported::zsh_h::timeinfo {
+    static CHILD_USAGE_PREV: std::cell::RefCell<timeinfo>
+        = const { std::cell::RefCell::new(timeinfo {
             ut: 0, st: 0, maxrss: 0, majflt: 0, minflt: 0, nswap: 0,
             ixrss: 0, idrss: 0, isrss: 0, inblock: 0, oublock: 0,
             nvcsw: 0, nivcsw: 0, msgsnd: 0, msgrcv: 0, nsignals: 0,
@@ -889,7 +891,7 @@ pub fn printhhmmss(secs: f64) -> String {
 pub fn printtime(
     // c:768
     elapsed_secs: f64,
-    ti: &crate::ported::zsh_h::timeinfo,
+    ti: &timeinfo,
     format: &str,
     job_name: &str,
 ) -> String {
@@ -1010,7 +1012,7 @@ pub fn dumptime(job: &Job) -> Option<String> {
     // parameter, so we read it here and pass through.
     const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
     let format =
-        crate::ported::params::getsparam("TIMEFMT").unwrap_or_else(|| DEFAULT_TIMEFMT.to_string());
+        getsparam("TIMEFMT").unwrap_or_else(|| DEFAULT_TIMEFMT.to_string());
 
     // c:1027-1029 — for each proc, printtime(dtime_ts(&bgtime, &endtime), &ti, text).
     let lines: Vec<String> = job
@@ -1053,7 +1055,7 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
     // c:1039
     // Read both thresholds from paramtab — matches C's
     // `getvalue(REPORTTIME)` and `getvalue(REPORTMEMORY)` reads.
-    let reportmemory: i64 = crate::ported::params::getsparam("REPORTMEMORY")
+    let reportmemory: i64 = getsparam("REPORTMEMORY")
         .and_then(|s| s.parse().ok())
         .unwrap_or(-1);
 
@@ -1074,7 +1076,7 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
     };
     // c:1074 — `if (zleactive) return 0;`. ZLE is line-editing the
     // prompt; never spew a timing line into the editor.
-    if crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
+    if zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
     // c:1074
     {
         return false;
@@ -1256,7 +1258,7 @@ pub fn printjob(
 
     // c:1220-1221 — `if (should_report_time(jn)) dumptime(jn);`
     //               Also fires for c:1354-1355 (synchronous-wait variant).
-    let reporttime: f64 = crate::ported::params::getsparam("REPORTTIME")
+    let reporttime: f64 = getsparam("REPORTTIME")
         .and_then(|s| s.parse().ok())
         .unwrap_or(-1.0);
     if should_report_time(job, reporttime) {
@@ -1657,7 +1659,7 @@ pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {
 pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {
     // c:1780
     let _ = table; // legacy executor-side handle, unused now
-    let posix_jobs = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXJOBS); // c:1786
+    let posix_jobs = isset(crate::ported::zsh_h::POSIXJOBS); // c:1786
                                                                                    // c:1786-1787 — `if (isset(POSIXJOBS)) oldmaxjob = 0;`.
     if posix_jobs {
         if let Some(om) = OLDMAXJOB.get() {
@@ -1794,7 +1796,7 @@ pub fn setjobpwd() {
     // `Src/params.c:108`. Rust reads it via the paramtab-backed
     // `getsparam("PWD")` which is the canonical accessor mirrored
     // throughout the codebase (prompt.rs, subst.rs, builtin.rs).
-    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default(); // c:1888 pwd
+    let pwd = getsparam("PWD").unwrap_or_default(); // c:1888 pwd
     let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
     let mut tab = tab.lock().expect("jobtab poisoned");
     // c:1886 — `for (i = 1; i <= maxjob; i++)`. Skip index 0 (the
@@ -2465,7 +2467,7 @@ pub fn bin_fg(
         } // c:2456
     } else {
         // c:2458 — `lng = !!isset(LONGLISTJOBS);`
-        lng = if crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS) {
+        lng = if isset(crate::ported::zsh_h::LONGLISTJOBS) {
             1
         } else {
             0
@@ -2474,7 +2476,7 @@ pub fn bin_fg(
     let _ = lng;
 
     // c:2461-2465 — fg/bg need job control.
-    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(crate::ported::zsh_h::MONITOR);
     if (func == BIN_FG || func == BIN_BG) && !jobbing {
         // c:2461
         zwarnnam(name, "no job control in this shell."); // c:2463
@@ -2557,7 +2559,7 @@ pub fn bin_fg(
                     );
                 }
             }
-            crate::ported::signals::unqueue_signals(); // c:2522
+            unqueue_signals(); // c:2522
             return 0; // c:2523
         }
         if func == BIN_FG || func == BIN_BG {
@@ -2565,7 +2567,7 @@ pub fn bin_fg(
             let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
             if curjob < 0 {
                 zwarnnam(name, "no current job"); // c:2495
-                crate::ported::signals::unqueue_signals();
+                unqueue_signals();
                 return 1; // c:2497
             }
             // Continue current job by sending SIGCONT to its pgrp.
@@ -2578,10 +2580,10 @@ pub fn bin_fg(
             if gleader > 0 {
                 let _ = crate::ported::signals::killjb(gleader, libc::SIGCONT);
             }
-            crate::ported::signals::unqueue_signals();
+            unqueue_signals();
             return 0;
         }
-        crate::ported::signals::unqueue_signals();
+        unqueue_signals();
         return 0;
     }
 
@@ -2649,7 +2651,7 @@ pub fn bin_fg(
             }
         }
     }
-    crate::ported::signals::unqueue_signals(); // c:2729
+    unqueue_signals(); // c:2729
     returnval // c:2734 retval
 }
 
@@ -3201,7 +3203,7 @@ pub fn bin_suspend(
     //          `islogin` global, set when zsh's `argv[0]` started with
     //          `-`. Probe `$0` via paramtab (was reading the OS env,
     //          which never carries a literal `$0`).
-    let islogin = crate::ported::params::getsparam("0")
+    let islogin = getsparam("0")
         .map(|s| s.starts_with('-'))
         .unwrap_or(false);
     //won't suspend a login shell, unless forced
@@ -3212,7 +3214,7 @@ pub fn bin_suspend(
     }
     // c:3177 — `if (jobbing)`. jobbing is the job-control-enabled flag;
     // tracks the MONITOR option.
-    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(crate::ported::zsh_h::MONITOR);
 
     if jobbing {
         // c:3177
@@ -3324,7 +3326,7 @@ pub fn acquire_pgrp() -> bool {
     }
     let oldset = signal_block(&blockset); // c:3233
     let mut loop_count = 0i32; // c:3234
-    let interact = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
+    let interact = isset(crate::ported::zsh_h::INTERACTIVE);
     // c:3235 — `while ((ttpgrp = gettygrp()) != -1 && ttpgrp != mypgrp)`.
     loop {
         let ttpgrp = unsafe { libc::tcgetpgrp(0) }; // c:3235 gettygrp
@@ -3552,7 +3554,7 @@ mod tests {
     #[test]
     fn printtime_emits_rusage_directives() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo {
+        let ti = timeinfo {
             ut: 500_000,
             st: 250_000,
             maxrss: 4096,
@@ -3578,7 +3580,7 @@ mod tests {
     #[test]
     fn printtime_percent_directive() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo {
+        let ti = timeinfo {
             ut: 600_000,
             st: 400_000,
             ..Default::default()
@@ -3598,7 +3600,7 @@ mod tests {
     #[test]
     fn printtime_percent_zero_elapsed_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo::default();
+        let ti = timeinfo::default();
         // The catch_unwind wrapper isolates a potential panic so the
         // test reports a clean failure instead of crashing the harness.
         let result = std::panic::catch_unwind(|| printtime(0.0, &ti, "%P", "j"));
@@ -3617,7 +3619,7 @@ mod tests {
     #[test]
     fn printtime_percent_truncates_toward_zero() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo {
+        let ti = timeinfo {
             ut: 996_000,
             st: 0,
             ..Default::default()
@@ -3633,7 +3635,7 @@ mod tests {
     #[test]
     fn printtime_jobname_directive() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo::default();
+        let ti = timeinfo::default();
         let s = printtime(0.0, &ti, "[%J]", "my command");
         assert_eq!(s, "[my command]");
     }
@@ -3642,7 +3644,7 @@ mod tests {
     #[test]
     fn printtime_time_directives() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo {
+        let ti = timeinfo {
             ut: 1_500_000,
             st: 500_000,
             ..Default::default()
@@ -3660,7 +3662,7 @@ mod tests {
     #[test]
     fn printtime_star_directive_routes_to_hhmmss() {
         let _g = crate::test_util::global_state_lock();
-        let ti = crate::ported::zsh_h::timeinfo::default();
+        let ti = timeinfo::default();
         // 75 seconds → "1:15.00" (M:SS form, no hours).
         let s = printtime(75.0, &ti, "%*E", "j");
         assert_eq!(
@@ -3682,7 +3684,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Clear PARAMTAB state so this test's REPORTMEMORY isn't
         // contaminated by earlier tests.
-        crate::ported::params::setsparam("REPORTMEMORY", "100");
+        setsparam("REPORTMEMORY", "100");
         let mut job = Job::default();
         let mut proc = Process::new(123);
         proc.ti.maxrss = 256; // > 100 KB threshold
@@ -3691,7 +3693,7 @@ mod tests {
         job.procs.push(proc);
         job.stat = stat::INUSE;
         assert!(should_report_time(&job, -1.0));
-        crate::ported::params::unsetparam("REPORTMEMORY");
+        unsetparam("REPORTMEMORY");
     }
 
     /// `should_report_time` returns false when both thresholds are
@@ -3699,7 +3701,7 @@ mod tests {
     #[test]
     fn should_report_time_no_thresholds_false() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::unsetparam("REPORTMEMORY");
+        unsetparam("REPORTMEMORY");
         let mut job = Job::default();
         job.procs.push(Process::new(1));
         assert!(!should_report_time(&job, -1.0));
@@ -3717,8 +3719,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Disable both thresholds AND simulate zleactive — if STAT_TIMED
         // doesn't short-circuit, every other condition would return false.
-        crate::ported::params::unsetparam("REPORTMEMORY");
-        crate::ported::builtins::sched::zleactive.store(1, std::sync::atomic::Ordering::SeqCst);
+        unsetparam("REPORTMEMORY");
+        zleactive.store(1, std::sync::atomic::Ordering::SeqCst);
 
         let mut job = Job::default();
         job.stat = stat::INUSE | stat::TIMED;
@@ -3727,7 +3729,7 @@ mod tests {
         let reported = should_report_time(&job, -1.0);
 
         // Cleanup before assert so a failure doesn't leak state.
-        crate::ported::builtins::sched::zleactive.store(0, std::sync::atomic::Ordering::SeqCst);
+        zleactive.store(0, std::sync::atomic::Ordering::SeqCst);
         assert!(
             reported,
             "c:1052-1053 — STAT_TIMED MUST short-circuit to true regardless of threshold/zleactive"
@@ -3740,7 +3742,7 @@ mod tests {
     #[test]
     fn dumptime_emits_one_line_per_process() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setsparam("TIMEFMT", "%J");
+        setsparam("TIMEFMT", "%J");
         let mut job = Job::default();
         let now = Instant::now();
         for (i, text) in ["echo a", "grep b", "tee c"].iter().enumerate() {
@@ -3752,7 +3754,7 @@ mod tests {
         }
         let out = dumptime(&job).expect("expected timing output");
         assert_eq!(out, "echo a\ngrep b\ntee c");
-        crate::ported::params::unsetparam("TIMEFMT");
+        unsetparam("TIMEFMT");
     }
 
     /// `handle_sub` clears SUPERJOB + sets WASSUPER when the subjob
@@ -3952,7 +3954,7 @@ mod tests {
     #[test]
     fn dumptime_skips_proc_without_endtime() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setsparam("TIMEFMT", "%E");
+        setsparam("TIMEFMT", "%E");
         let mut job = Job::default();
         let mut p = Process::new(11001);
         p.bgtime = Some(Instant::now());
@@ -3968,7 +3970,7 @@ mod tests {
             "filter_map drops procs without bg/end pair → empty result → None"
         );
 
-        crate::ported::params::unsetparam("TIMEFMT");
+        unsetparam("TIMEFMT");
     }
 
     /// `dumptime` cites each process's OWN bgtime→endtime elapsed,
@@ -3980,7 +3982,7 @@ mod tests {
     #[test]
     fn dumptime_uses_per_process_elapsed() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setsparam("TIMEFMT", "%E");
+        setsparam("TIMEFMT", "%E");
         let mut job = Job::default();
         let t0 = Instant::now();
         // Three procs with distinct elapsed times: 100ms, 300ms, 600ms.
@@ -4009,7 +4011,7 @@ mod tests {
             "each line must carry its own proc's elapsed; got duplicates: {:?}",
             lines
         );
-        crate::ported::params::unsetparam("TIMEFMT");
+        unsetparam("TIMEFMT");
     }
 
     /// `printjob` appends the dumptime block when the job is
@@ -4017,7 +4019,7 @@ mod tests {
     #[test]
     fn printjob_appends_timing_when_stat_timed() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setsparam("TIMEFMT", "%J");
+        setsparam("TIMEFMT", "%J");
         let mut job = Job::default();
         job.stat = stat::INUSE | stat::TIMED | stat::DONE;
         let mut p = Process::new(42);
@@ -4038,7 +4040,7 @@ mod tests {
             "expected timing line at end; got: {:?}",
             out
         );
-        crate::ported::params::unsetparam("TIMEFMT");
+        unsetparam("TIMEFMT");
     }
 
     /// `update_job` STAT_SUBJOB short-circuit (c:507-540): when the
@@ -4703,13 +4705,13 @@ mod tests {
     fn should_report_time_stat_timed_overrides_zleactive() {
         let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
-        let prev = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed);
-        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        let prev = zleactive.load(Ordering::Relaxed);
+        zleactive.store(1, Ordering::Relaxed);
         let mut job = Job::new();
         job.stat |= stat::TIMED;
         // STAT_TIMED returns true even with zleactive=1 and no procs.
         assert!(should_report_time(&job, -1.0));
-        crate::ported::builtins::sched::zleactive.store(prev, Ordering::Relaxed);
+        zleactive.store(prev, Ordering::Relaxed);
     }
 
     /// Pin: `zleactive` short-circuits per `Src/jobs.c:1074`. When
@@ -4720,8 +4722,8 @@ mod tests {
     fn should_report_time_zleactive_suppresses() {
         let _g = crate::test_util::global_state_lock();
         let _g = ZLEACTIVE_TEST_LOCK.lock().unwrap();
-        let prev = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed);
-        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        let prev = zleactive.load(Ordering::Relaxed);
+        zleactive.store(1, Ordering::Relaxed);
         // Build a job with one proc that would otherwise satisfy the
         // elapsed-time threshold: bgtime now, endtime now + 10s,
         // reporttime=1s.
@@ -4734,9 +4736,9 @@ mod tests {
         // With zleactive=1, suppressed.
         assert!(!should_report_time(&job, 1.0));
         // With zleactive=0, fires.
-        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        zleactive.store(0, Ordering::Relaxed);
         assert!(should_report_time(&job, 1.0));
-        crate::ported::builtins::sched::zleactive.store(prev, Ordering::Relaxed);
+        zleactive.store(prev, Ordering::Relaxed);
     }
 
     /// Pin: reporttime<0 short-circuits per `Src/jobs.c:1065`.

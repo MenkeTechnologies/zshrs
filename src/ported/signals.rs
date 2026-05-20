@@ -19,7 +19,8 @@ pub use crate::signals_h::{signal_default, signal_ignore};
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
 use crate::ported::builtin::{BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT};
 use crate::ported::params::locallevel as LOCALLEVEL;
-use crate::ported::utils::ERRFLAG_ERROR;
+use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::zsh_h::{
     isset, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE,
     POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL,
@@ -285,7 +286,7 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {
         .and_then(|g| g.get(libc::SIGINT as usize).copied())
         .unwrap_or(0);
     let int_trapped = (int_state & !ZSIG_IGNORED) != 0;
-    let trapsasync_set = crate::ported::zsh_h::isset(
+    let trapsasync_set = isset(
         crate::ported::zsh_h::TRAPSASYNC, // c:228 isset(TRAPSASYNC)
     );
     if !(wait_cmd || trapsasync_set || int_trapped) {
@@ -373,7 +374,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
                 let interact =
-                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+                    isset(crate::ported::options::optlookup("interactive"));
                 if !interact {
                     unsafe {
                         libc::_exit(libc::SIGPIPE);
@@ -409,15 +410,15 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
                 let privileged =
-                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("privileged"));
+                    isset(crate::ported::options::optlookup("privileged"));
                 let interactive =
-                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+                    isset(crate::ported::options::optlookup("interactive"));
                 if privileged && interactive {
                     crate::ported::builtin::zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
-                let cur = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
-                crate::ported::utils::errflag
+                let cur = errflag.load(std::sync::atomic::Ordering::Relaxed);
+                errflag
                     .store(cur | ERRFLAG_INT, std::sync::atomic::Ordering::Relaxed); // c:457
                                                                                      // c:458-462 — list_pipe/chline/simple_pline branch
                                                                                      // (loops break, inerrflush, check_cursh_sig) lives
@@ -469,7 +470,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     // common-case behavior here).
                 } else {
                     // c:486 — `errflag = noerrs = 0;`
-                    crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+                    errflag.store(0, std::sync::atomic::Ordering::Relaxed);
                     // c:487 — `zwarn("timeout");`
                     crate::ported::utils::zwarn("timeout"); // c:487
                     crate::ported::builtin::STOPMSG.store(1, std::sync::atomic::Ordering::Relaxed); // c:488
@@ -510,7 +511,7 @@ pub fn killrunjobs(from_signal: i32) {
     // c:506
     // c:512 — `if (unset(HUP)) return;`. HUP option gates the
     // whole walk: when `setopt nohup`, jobs survive shell exit.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::HUP) {
+    if !isset(crate::ported::zsh_h::HUP) {
         // c:512
         return;
     }
@@ -660,7 +661,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     // the `zerr` emission — silently failing with no diagnostic.
     // C names the specific signal in the error so the user knows
     // which trap was rejected.
-    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR); // c:696
+    let jobbing = isset(crate::ported::zsh_h::MONITOR); // c:696
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         // c:697 — `zerr("can't trap SIG%s in interactive shells", sigs[sig])`.
         let signame = getsigname(sig);
@@ -753,7 +754,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
         let posix_traps =
-            crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixtraps")); // c:746
+            isset(crate::ported::options::optlookup("posixtraps")); // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {
@@ -795,7 +796,7 @@ pub fn removetrap(sig: i32) {
     if sig == -1 {
         return;
     }
-    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+    let jobbing = isset(crate::ported::zsh_h::MONITOR);
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         return;
     }
@@ -812,9 +813,9 @@ pub fn removetrap(sig: i32) {
     //   (c) omitted the SIGEXIT/POSIXTRAPS-LOCALTRAPS option gates and the
     //       locallevel-non-zero requirement entirely.
     let cond_local_or_exit = if sig == SIGEXIT {
-        !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS) // c:771 sig==SIGEXIT branch
+        !isset(crate::ported::zsh_h::POSIXTRAPS) // c:771 sig==SIGEXIT branch
     } else {
-        crate::ported::zsh_h::isset(crate::ported::zsh_h::LOCALTRAPS) // c:771 else branch
+        isset(crate::ported::zsh_h::LOCALTRAPS) // c:771 else branch
     };
     if DONTSAVETRAP.load(Ordering::Relaxed) == 0                             // c:769
         && cond_local_or_exit
@@ -841,7 +842,7 @@ pub fn removetrap(sig: i32) {
     // trap. The previous Rust port collapsed everything to a single
     // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
     // special branches AND the RT-signal branch entirely.
-    let interact = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
+    let interact = isset(crate::ported::zsh_h::INTERACTIVE);
     // c:808 `forklevel` — depth of subshell forks. C global at
     // exec.c:1052 set to `locallevel` at every entersubsh() (c:1221).
     // Read live from the ported global so SIGPIPE only re-installs in
@@ -1149,7 +1150,7 @@ pub fn handletrap(sig: i32) -> i32 {
 pub fn queue_traps(wait_cmd: i32) {
     // c:1024
     // c:1026 — both gates must be off for queueing to be enabled.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::TRAPSASYNC) && wait_cmd == 0 {
+    if !isset(crate::ported::zsh_h::TRAPSASYNC) && wait_cmd == 0 {
         trap_queueing_enabled.store(1, Ordering::SeqCst); // c:1031
     }
 }
@@ -1217,7 +1218,7 @@ pub fn dotrap(sig: i32) -> i32 {
     if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) == 0 {
         return 0;
     }
-    if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+    if errflag.load(Ordering::Relaxed) != 0 {
         return 0;
     }
 
@@ -1341,7 +1342,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     // c:1101 — `if ((*sigtr & ZSIG_IGNORED) || !sigfn || errflag) return;`
     if (*sigtr & ZSIG_IGNORED) != 0                                          // c:1101
         || sigfn.is_none()
-        || crate::ported::utils::errflag.load(Ordering::SeqCst) != 0
+        || errflag.load(Ordering::SeqCst) != 0
     {
         return; // c:1102
     }
@@ -1370,8 +1371,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     crate::ported::context::zcontext_save(); // c:1126
                                              // c:1128 — `execsave()` saves trap_return/trap_state. Without a
                                              // canonical `execsave` port yet, snapshot the two atomics inline.
-    let saved_trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
-    let saved_trap_return = crate::ported::exec::TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
+    let saved_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
+    let saved_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
     BREAKS.store(0, Ordering::SeqCst); // c:1129 breaks = 0
     RETFLAG.store(0, Ordering::SeqCst); // c:1129 retflag = 0
     traplocallevel.store(LOCALLEVEL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
@@ -1404,8 +1405,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         let num = format!("{}", sig); // c:1151 sprintf(num, "%d", sig)
         args.push(num); // c:1152
 
-        crate::ported::exec::TRAP_RETURN.store(-1, Ordering::SeqCst); // c:1154 trap_return = -1
-        crate::ported::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1155
+        TRAP_RETURN.store(-1, Ordering::SeqCst); // c:1154 trap_return = -1
+        TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1155
         crate::ported::signals::trapisfunc.store(1, Ordering::SeqCst); // c:1156
         isfunc = 1;
 
@@ -1424,8 +1425,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         crate::ported::mem::zsfree(name); // c:1164 zsfree(name)
     } else {
         // c:1165
-        crate::ported::exec::TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166 trap_return = -2
-        crate::ported::exec::TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
+        TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166 trap_return = -2
+        TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
         crate::ported::signals::trapisfunc.store(0, Ordering::SeqCst); // c:1168
         isfunc = 0;
         // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");`
@@ -1440,14 +1441,14 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     // dispatcher is wired.
     let _ = AFTERTRAPHOOK; // c:1172
 
-    traperr = crate::ported::utils::errflag.load(Ordering::SeqCst); // c:1174
+    traperr = errflag.load(Ordering::SeqCst); // c:1174
 
-    new_trap_state = crate::ported::exec::TRAP_STATE.load(Ordering::SeqCst); // c:1177
-    new_trap_return = crate::ported::exec::TRAP_RETURN.load(Ordering::SeqCst); // c:1178
+    new_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1177
+    new_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1178
 
     // c:1180 — `execrestore()` restores trap_return/trap_state.
-    crate::ported::exec::TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180
-    crate::ported::exec::TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst); // c:1180
+    TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180
+    TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst); // c:1180
     crate::ported::context::zcontext_restore(); // c:1181
 
     if new_trap_state == TRAP_STATE_FORCE_RETURN                             // c:1183
@@ -1459,14 +1460,14 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             BREAKS.store(LOOPS.load(Ordering::SeqCst), Ordering::SeqCst); // c:1187 breaks = loops
             if sig == libc::SIGINT || sig == libc::SIGQUIT {
                 // c:1196
-                crate::ported::utils::errflag.fetch_or(
+                errflag.fetch_or(
                     // c:1197 errflag |= ERRFLAG_INT
                     ERRFLAG_INT,
                     Ordering::SeqCst,
                 );
             } else {
                 // c:1198
-                crate::ported::utils::errflag.fetch_or(
+                errflag.fetch_or(
                     // c:1199 errflag |= ERRFLAG_ERROR
                     ERRFLAG_ERROR,
                     Ordering::SeqCst,
@@ -1489,14 +1490,14 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             // c:1215 try_tryflag
             if traperr != 0 {
                 // c:1216
-                crate::ported::utils::errflag.fetch_or(
+                errflag.fetch_or(
                     // c:1217
                     ERRFLAG_ERROR,
                     Ordering::SeqCst,
                 );
             } else {
                 // c:1218
-                crate::ported::utils::errflag.fetch_and(
+                errflag.fetch_and(
                     // c:1219 errflag &= ~ERRFLAG_ERROR
                     !ERRFLAG_ERROR,
                     Ordering::SeqCst,
@@ -1859,7 +1860,7 @@ pub fn set_interact(v: bool) {
 ///
 /// Route through canonical isset() so the option drives the predicate.
 pub fn is_interact() -> bool {
-    crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+    isset(crate::ported::zsh_h::INTERACTIVE)
 }
 
 // ===========================================================
@@ -2143,7 +2144,7 @@ mod tests {
     #[test]
     fn queue_traps_respects_trapsasync_and_wait_cmd() {
         let _g = crate::test_util::global_state_lock();
-        let saved = crate::ported::zsh_h::isset(TRAPSASYNC);
+        let saved = isset(TRAPSASYNC);
 
         // Setup: TRAPSASYNC off, trap_queueing_enabled cleared.
         dosetopt(TRAPSASYNC, 0, 0);
@@ -2192,7 +2193,7 @@ mod tests {
     fn settrap_rejects_job_control_signals_when_monitor_set() {
         let _g = crate::test_util::global_state_lock();
         // Save current MONITOR state; restore at end.
-        let saved = crate::ported::zsh_h::isset(MONITOR);
+        let saved = isset(MONITOR);
         // MONITOR off → trapping SIGTSTP is allowed.
         dosetopt(MONITOR, 0, 0);
         assert_eq!(
