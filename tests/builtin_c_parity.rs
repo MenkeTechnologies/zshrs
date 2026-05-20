@@ -431,7 +431,9 @@ mod unalias_builtin {
     #[test]
     fn unalias_dash_m_glob() {
         // After `unalias -m 'h*'` the `hi` alias goes away.
-        assert_parity(r#"alias hi=hello; alias hello=world; unalias -m 'h*'; alias 2>/dev/null | grep -E '^(hi|hello)=' | wc -l | tr -d ' '"#);
+        assert_parity(
+            r#"alias hi=hello; alias hello=world; unalias -m 'h*'; alias 2>/dev/null | grep -E '^(hi|hello)=' | wc -l | tr -d ' '"#,
+        );
     }
 }
 
@@ -549,10 +551,12 @@ done"#,
     /// `continue` skips to next iteration.
     #[test]
     fn continue_skips_iteration() {
-        assert_parity(r#"for i in 1 2 3 4; do
+        assert_parity(
+            r#"for i in 1 2 3 4; do
     [[ $((i % 2)) -eq 0 ]] && continue
     echo $i
-done"#);
+done"#,
+        );
     }
 
     /// `return` exits a function.
@@ -631,9 +635,7 @@ mod hash_builtin {
     /// clearing then checking.
     #[test]
     fn hash_dash_r_clears() {
-        assert_parity_no_progname(
-            "hash myc=/usr/bin/echo; hash -r; hash myc 2>&1 | head -1",
-        );
+        assert_parity_no_progname("hash myc=/usr/bin/echo; hash -r; hash myc 2>&1 | head -1");
     }
 
     /// `unhash NAME` removes from hash. bin_unhash() at builtin.c:4346.
@@ -716,8 +718,10 @@ mod test_builtin {
     /// `test 1 -eq 1` integer equality.
     #[test]
     fn test_dash_eq_integer() {
-        assert_parity(r#"test 1 -eq 1; echo $?
-test 1 -eq 2; echo $?"#);
+        assert_parity(
+            r#"test 1 -eq 1; echo $?
+test 1 -eq 2; echo $?"#,
+        );
     }
 
     /// `test -f /etc/hosts` — regular file.
@@ -848,7 +852,9 @@ mod functions_builtin {
     /// `functions +` lists all function names (no bodies).
     #[test]
     fn functions_dash_list_names() {
-        assert_parity(r#"f1() { :; }; f2() { :; }; functions + 2>/dev/null | grep -E '^f[12]$' | sort"#);
+        assert_parity(
+            r#"f1() { :; }; f2() { :; }; functions + 2>/dev/null | grep -E '^f[12]$' | sort"#,
+        );
     }
 
     /// `unfunction f` removes a function.

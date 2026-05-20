@@ -6,16 +6,15 @@
 //! device attributes, color support, bracketed paste, clipboard,
 //! cursor shape, URL encoding, and OSC sequences.
 
-use std::io::{self, Read, Write};
-use std::time::Duration;
-use std::sync::atomic::Ordering;
 use std::cell::{Cell, RefCell};
+use std::io::{self, Read, Write};
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crate::ported::zle::zle_h::{
-    CURC_DEFAULT, CURC_INSERT, CURC_PENDING, CURC_REGION_END, CURC_REGION_START,
-    CURF_BAR, CURF_BLINK, CURF_BLOCK, CURF_BLUE_SHIFT, CURF_COLOR, CURF_COLOR_MASK,
-    CURF_GREEN_SHIFT, CURF_HIDDEN, CURF_RED_SHIFT, CURF_SHAPE_MASK, CURF_STEADY,
-    CURF_UNDERLINE,
+    CURC_DEFAULT, CURC_INSERT, CURC_PENDING, CURC_REGION_END, CURC_REGION_START, CURF_BAR,
+    CURF_BLINK, CURF_BLOCK, CURF_BLUE_SHIFT, CURF_COLOR, CURF_COLOR_MASK, CURF_GREEN_SHIFT,
+    CURF_HIDDEN, CURF_RED_SHIFT, CURF_SHAPE_MASK, CURF_STEADY, CURF_UNDERLINE,
 };
 
 // Cursor-form runtime state, sized by CURC_DEFAULT (number of context slots).
@@ -54,6 +53,12 @@ thread_local! {
 // `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` (Src/Zle/termquery.c:487).
 // Rust port should write to that param when the param layer is wired.
 
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
 /// Default probe timeout (from termquery.c TIMEOUT)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
@@ -63,25 +68,19 @@ use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
 // =====================================================================
 // Pattern-tag bytes — `Src/Zle/termquery.c:36-67`. The `term_pat[]`
@@ -91,48 +90,49 @@ use crate::ported::zle::deltochar::*;
 
 /// Port of `TIMEOUT` from `termquery.c:36`. Sentinel "no response"
 /// value the matcher reports when a probe hits the wait deadline.
-pub const TIMEOUT: i64 = -51;                                                // c:36
+pub const TIMEOUT: i64 = -51; // c:36
 
 /// Port of `TAG` from `termquery.c:38`. High-bit marker (1<<7); any
 /// byte with this bit set is a tag, not literal pattern text.
-pub const TAG: u8 = 1 << 7;                                                  // c:38
+pub const TAG: u8 = 1 << 7; // c:38
 
 /// Port of `SEQ` from `termquery.c:39`. `TAG | (1<<6)` — distinguishes
 /// flow-control tags (T_BEGIN/T_END/T_OR) from data-capture tags.
-pub const SEQ: u8 = TAG | (1 << 6);                                          // c:39
+pub const SEQ: u8 = TAG | (1 << 6); // c:39
 
 /// Port of `T_BEGIN` from `termquery.c:42`. Group-start tag.
-pub const T_BEGIN:    u8 = 0x80;                                             // c:42
+pub const T_BEGIN: u8 = 0x80; // c:42
 /// Port of `T_END` from `termquery.c:43`. Group-end tag.
-pub const T_END:      u8 = 0x81;                                             // c:43
+pub const T_END: u8 = 0x81; // c:43
 /// Port of `T_OR` from `termquery.c:44`. Alternation (within group).
-pub const T_OR:       u8 = 0x82;                                             // c:44
+pub const T_OR: u8 = 0x82; // c:44
 /// Port of `T_REPEAT` from `termquery.c:45`. Repeat preceding block.
-pub const T_REPEAT:   u8 = 0x83;                                             // c:45
+pub const T_REPEAT: u8 = 0x83; // c:45
 /// Port of `T_NUM` from `termquery.c:46`. Decimal number, defaults to 0.
-pub const T_NUM:      u8 = 0x84;                                             // c:46
+pub const T_NUM: u8 = 0x84; // c:46
 /// Port of `T_HEX` from `termquery.c:47`. Hex digit kept as part of a number.
-pub const T_HEX:      u8 = 0x85;                                             // c:47
+pub const T_HEX: u8 = 0x85; // c:47
 /// Port of `T_HEXCH` from `termquery.c:48`. Hex digit thrown away.
-pub const T_HEXCH:    u8 = 0x86;                                             // c:48
+pub const T_HEXCH: u8 = 0x86; // c:48
 /// Port of `T_WILDCARD` from `termquery.c:49`. Match any character.
-pub const T_WILDCARD: u8 = 0x87;                                             // c:49
+pub const T_WILDCARD: u8 = 0x87; // c:49
 /// Port of `T_RECORD` from `termquery.c:50`. Start text capture.
-pub const T_RECORD:   u8 = 0x88;                                             // c:50
+pub const T_RECORD: u8 = 0x88; // c:50
 /// Port of `T_CAPTURE` from `termquery.c:51`. End text capture.
-pub const T_CAPTURE:  u8 = 0x89;                                             // c:51
+pub const T_CAPTURE: u8 = 0x89; // c:51
 /// Port of `T_DROP` from `termquery.c:52`. Drop input + restart without
 /// matching a sequence.
-pub const T_DROP:     u8 = 0x91;                                             // c:52
+pub const T_DROP: u8 = 0x91; // c:52
 /// Port of `T_CONTINUE` from `termquery.c:53`. When matching don't go
 /// back to first state.
-pub const T_CONTINUE: u8 = 0x92;                                             // c:53
+pub const T_CONTINUE: u8 = 0x92; // c:53
 /// Port of `T_NEXT` from `termquery.c:54`. Advance to next stored number.
-pub const T_NEXT:     u8 = 0x94;                                             // c:54
+pub const T_NEXT: u8 = 0x94; // c:54
 
 /// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
 /// WARNING: param names don't match C — Rust=(s, ch) vs C=(pos)
-pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
+pub fn find_branch(s: &str, ch: u8) -> Option<usize> {
+    // c:170
     // C body c:172-183 — scans `s` for the matching paren/bracket/
     //                    brace branch open. We approximate by finding
     //                    the first byte equal to `ch`.
@@ -141,7 +141,8 @@ pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // 
 
 /// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
 /// WARNING: param names don't match C — Rust=(s, open, close) vs C=(pos, direction)
-pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
+pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {
+    // c:185
     // C body c:187-218 — paired-bracket finder; scans forward
     //                    counting opens until depth returns to 0.
     let bytes = s.as_bytes();
@@ -232,7 +233,8 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
 
 /// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
 /// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
-pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
+pub fn handle_color(_seq: &str) -> i32 {
+    // c:438
     // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
     //                    populates terminal color cache. Without
     //                    iTerm2 dispatch: 0.
@@ -242,38 +244,61 @@ pub fn handle_color(_seq: &str) -> i32 {                                     // 
 /// File-static feature names from `Src/Zle/termquery.c:469-470`. Index
 /// matches the C `features[]` array — `handle_query` indexes [3] for
 /// kitty-keyboard, [4] for truecolor.
-static FEATURES: &[&str] = &["bg", "fg", "cursorcolor", "modkeys-kitty", "truecolor", "id"];  // c:469
-static EXTVAR: &str = ".term.extensions";                                    // c:132
-static IDVAR:  &str = ".term.id";                                            // c:133
-static VERVAR: &str = ".term.version";                                       // c:134
+static FEATURES: &[&str] = &[
+    "bg",
+    "fg",
+    "cursorcolor",
+    "modkeys-kitty",
+    "truecolor",
+    "id",
+]; // c:469
+static EXTVAR: &str = ".term.extensions"; // c:132
+static IDVAR: &str = ".term.id"; // c:133
+static VERVAR: &str = ".term.version"; // c:134
 
 /// Direct port of `static void handle_query(int sequence, int *numbers,
 /// int len, char *capture, int clen, void *output)` from
 /// `Src/Zle/termquery.c:474`. Per-query dispatcher invoked by the
 /// state-machine matcher with the parsed response payload.
 /// WARNING: param names don't match C — Rust=(sequence, numbers, capture) vs C=(sequence, numbers, len, capture, clen, output)
-pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {        // c:474
+pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
+    // c:474
     use crate::ported::zsh_h::ASSPM_AUGMENT;
-    match sequence {                                                         // c:482
-        1 => {                                                                // c:484 default colour
-            if numbers.len() == 4 {                                          // c:485
-                handle_color(&format!("{};{};{};{}",                         // c:486 handle_color(...)
-                    numbers[0], numbers[1], numbers[2], numbers[3]));
+    match sequence {
+        // c:482
+        1 => {
+            // c:484 default colour
+            if numbers.len() == 4 {
+                // c:485
+                handle_color(&format!(
+                    "{};{};{};{}", // c:486 handle_color(...)
+                    numbers[0], numbers[1], numbers[2], numbers[3]
+                ));
             }
         }
-        2 => {                                                                // c:488 kitty keyboard
-            crate::ported::params::assignaparam(EXTVAR,                      // c:489-491 assignaparam(EXTVAR, feat, ASSPM_AUGMENT)
-                vec![FEATURES[3].to_string()], ASSPM_AUGMENT);
+        2 => {
+            // c:488 kitty keyboard
+            crate::ported::params::assignaparam(
+                EXTVAR, // c:489-491 assignaparam(EXTVAR, feat, ASSPM_AUGMENT)
+                vec![FEATURES[3].to_string()],
+                ASSPM_AUGMENT,
+            );
         }
-        3 => {                                                                // c:492 truecolor
-            crate::ported::params::assignaparam(EXTVAR,                      // c:493-495
-                vec![FEATURES[4].to_string()], ASSPM_AUGMENT);
+        3 => {
+            // c:492 truecolor
+            crate::ported::params::assignaparam(
+                EXTVAR, // c:493-495
+                vec![FEATURES[4].to_string()],
+                ASSPM_AUGMENT,
+            );
         }
-        4 => {                                                                // c:496 id
-            crate::ported::params::assignsparam(IDVAR, capture, 0);          // c:497 assignsparam(IDVAR, ...)
+        4 => {
+            // c:496 id
+            crate::ported::params::assignsparam(IDVAR, capture, 0); // c:497 assignsparam(IDVAR, ...)
         }
-        5 => {                                                                // c:498 version
-            crate::ported::params::assignsparam(VERVAR, capture, 0);         // c:499 assignsparam(VERVAR, ...)
+        5 => {
+            // c:498 version
+            crate::ported::params::assignsparam(VERVAR, capture, 0); // c:499 assignsparam(VERVAR, ...)
         }
         _ => {}
     }
@@ -286,7 +311,8 @@ pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {        // c
 /// per-capability parsers. zshrs sticks to the daily-driver subset
 /// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
 /// full 5+ probe round-trip.
-pub fn query_terminal() {                                                    // c:505
+pub fn query_terminal() {
+    // c:505
     // c:505-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
     // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
     // c:510-540 — read responses + dispatch through `handle_query()`
@@ -367,7 +393,8 @@ fn base64_encode(data: &[u8]) -> String {
 /// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
 /// `b++`, then later iterations OR-in the high bits. This mirrors
 /// the standard base64 decode but with an unusual write pattern.
-pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
+pub fn base64_decode(src: &str) -> Vec<u8> {
+    // c:570
     let bytes = src.as_bytes();
     let len = bytes.len();
     // c:575 — `hcalloc((3 * len) / 4 + 1)`. Pre-size the output;
@@ -375,30 +402,38 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
     let mut buf = vec![0u8; (3 * len) / 4 + 1];
     let mut i: usize = 0;
     let mut b: usize = 0;
-    while i < len && bytes[i] != b'=' {                                      // c:579
+    while i < len && bytes[i] != b'=' {
+        // c:579
         let c = bytes[i];
         // c:580-584 — character class → 6-bit value.
-        let n: u32 = if c.is_ascii_digit() {                                 // c:580
+        let n: u32 = if c.is_ascii_digit() {
+            // c:580
             (c - b'0') as u32 + 52
-        } else if c.is_ascii_lowercase() {                                   // c:581
+        } else if c.is_ascii_lowercase() {
+            // c:581
             (c - b'a') as u32 + 26
-        } else if c.is_ascii_uppercase() {                                   // c:582
+        } else if c.is_ascii_uppercase() {
+            // c:582
             (c - b'A') as u32
-        } else if c == b'+' {                                                // c:583
+        } else if c == b'+' {
+            // c:583
             62
-        } else if c == b'/' {                                                // c:584
+        } else if c == b'/' {
+            // c:584
             63
         } else {
             0
         };
-        if i % 4 != 0 {                                                      // c:585
+        if i % 4 != 0 {
+            // c:585
             // c:586 — `*b++ |= n >> (2 * (3 - (i % 4)))`.
             buf[b] |= (n >> (2 * (3 - (i % 4)))) as u8;
             b += 1;
         }
-        i += 1;                                                              // c:587 ++i
-        if i >= len {                                                        // c:587
-            break;                                                           // c:588
+        i += 1; // c:587 ++i
+        if i >= len {
+            // c:587
+            break; // c:588
         }
         // c:589 — `*b = n << (2 * (i % 4))`. Sets next slot's high bits.
         if b < buf.len() {
@@ -407,7 +442,7 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
     }
     // C's `hcalloc((3*len)/4 + 1)` overallocates; trim to actual b.
     buf.truncate(b);
-    buf                                                                      // c:591 return buf
+    buf // c:591 return buf
 }
 
 /// Direct port of `static void handle_paste(int sequence, int *numbers,
@@ -419,9 +454,10 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
 ///     `*(char**)output = base64_decode(capture, clen);`
 /// Rust returns the decoded bytes as a String (caller no longer
 /// receives via an out-pointer).
-pub fn handle_paste(seq: &str, len: usize) -> String {                       // c:595
-    let capture = seq.get(..len).unwrap_or(seq);                             // c:598 capture+clen
-    String::from_utf8_lossy(&base64_decode(capture)).into_owned()            // c:598
+pub fn handle_paste(seq: &str, len: usize) -> String {
+    // c:595
+    let capture = seq.get(..len).unwrap_or(seq); // c:598 capture+clen
+    String::from_utf8_lossy(&base64_decode(capture)).into_owned() // c:598
 }
 
 // `handle_query(int sequence, int *numbers, int len, char *capture,
@@ -452,8 +488,6 @@ pub fn url_encode(s: &str) -> String {
     result
 }
 
-
-
 /// Direct port of `char *system_clipget(char clip)` from
 /// `Src/Zle/termquery.c:625`. Emits `ESC ] 52 ; <clip> ; ? ST` and
 /// parses the terminal's `ESC ] 52 ; <clip> ; <base64> ST` reply,
@@ -462,22 +496,25 @@ pub fn url_encode(s: &str) -> String {
 /// `clip` is the OSC-52 clipboard selector (`c` = clipboard, `p` =
 /// primary, `s` = selection); C source embeds it at `seq[5]` of the
 /// fixed template `\033]52;.;?\033\\`.
-pub fn system_clipget(clip: char) -> Option<String> {                        // c:625
-    let mut seq = String::from("\x1b]52;.;?\x1b\\");                         // c:625 fixed template
-    // c:631 — `seq[5] = clip` overwrites the placeholder '.'.
-    unsafe { seq.as_bytes_mut()[5] = clip as u8; }                           // c:631
-    // c:632 — probe_terminal(seq, osc52, &handle_paste, &contents).
-    // Rust's probe_terminal returns the full ESC...ST reply; parse it
-    // here in lieu of the C state-machine handle_paste callback.
-    let reply = probe_terminal(&seq, 200).ok()?;                             // c:632
-    // Expected reply shape: `ESC ] 52 ; <clip> ; <base64> ESC \` (the
-    // terminator may also be a bare BEL `\x07`).
+pub fn system_clipget(clip: char) -> Option<String> {
+    // c:625
+    let mut seq = String::from("\x1b]52;.;?\x1b\\"); // c:625 fixed template
+                                                     // c:631 — `seq[5] = clip` overwrites the placeholder '.'.
+    unsafe {
+        seq.as_bytes_mut()[5] = clip as u8;
+    } // c:631
+      // c:632 — probe_terminal(seq, osc52, &handle_paste, &contents).
+      // Rust's probe_terminal returns the full ESC...ST reply; parse it
+      // here in lieu of the C state-machine handle_paste callback.
+    let reply = probe_terminal(&seq, 200).ok()?; // c:632
+                                                 // Expected reply shape: `ESC ] 52 ; <clip> ; <base64> ESC \` (the
+                                                 // terminator may also be a bare BEL `\x07`).
     let prefix = format!("\x1b]52;{};", clip);
     let rest = reply.strip_prefix(&prefix)?;
     let payload_end = rest.find('\x1b').or_else(|| rest.find('\x07'))?;
     let b64 = &rest[..payload_end];
     let bytes = base64_decode(b64);
-    String::from_utf8(bytes).ok()                                            // c:637 return contents
+    String::from_utf8(bytes).ok() // c:637 return contents
 }
 
 /// Encode `data` as an OSC-52 clipboard-set sequence.
@@ -526,7 +563,7 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
         // c:686 — `int negate = (**e == '-');`
         let (negate, body) = match e.strip_prefix('-') {
             Some(rest) => (true, rest),
-            None       => (false, e.as_str()),
+            None => (false, e.as_str()),
         };
         // c:687-688 — `if (strncmp(*e + negate, class, clen)) continue;`
         if !body.starts_with(class) {
@@ -550,7 +587,8 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
 
 /// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
 /// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
-pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
+pub fn collate_seq(_seq: &str) -> Vec<u8> {
+    // c:676
     // C body c:678-722 — collates a UTF-8 byte sequence into a single
     //                    locale-aware key for sort comparison via
     //                    strxfrm(). Without locale glue: identity.
@@ -558,14 +596,16 @@ pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // 
 }
 
 /// Port of `start_edit()` from Src/Zle/termquery.c:717.
-pub fn start_edit() -> i32 {                                                 // c:717
+pub fn start_edit() -> i32 {
+    // c:717
     // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
     //                    iTerm2 dispatch in headless mode.
     0
 }
 
 /// Port of `end_edit()` from Src/Zle/termquery.c:724.
-pub fn end_edit() -> i32 {                                                   // c:724
+pub fn end_edit() -> i32 {
+    // c:724
     // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
     //                    via shout when zterm_supports_iterm2 is true.
     //                    No iTerm2 dispatch in headless mode.
@@ -591,7 +631,8 @@ pub fn end_edit() -> i32 {                                                   // 
 /// WARNING: signature change — C returns `const char **` (4-NULL-
 /// terminated when disabled); Rust returns a fixed-size array of
 /// String. Caller picks PS1/PS2/RPS marker by index.
-pub fn prompt_markers() -> [String; 3] {                                     // c:731
+pub fn prompt_markers() -> [String; 3] {
+    // c:731
     // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
     //          return nomark;`
     if !extension_enabled("integration", "prompt", true) {
@@ -636,9 +677,9 @@ pub fn prompt_markers() -> [String; 3] {                                     // 
 
     // c:735-738 + c:754 — return the 3-element markers array.
     [
-        "\x1b]133;P;k=i\x1b\\".to_string(),                                  // c:735 PR
-        "\x1b]133;P;k=s\x1b\\".to_string(),                                  // c:736 SE
-        "\x1b]133;P;k=r\x1b\\".to_string(),                                  // c:737 RI
+        "\x1b]133;P;k=i\x1b\\".to_string(), // c:735 PR
+        "\x1b]133;P;k=s\x1b\\".to_string(), // c:736 SE
+        "\x1b]133;P;k=r\x1b\\".to_string(), // c:737 RI
     ]
 }
 
@@ -649,13 +690,18 @@ pub fn prompt_markers() -> [String; 3] {                                     // 
 /// flavors: `start=1` writes `\e]133;C\e\\` (begin output), else
 /// `\e]133;D\e\\` (end output). Gated on the `integration:output`
 /// extension toggle.
-pub fn mark_output(start: bool) {                                            // c:759
-    const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
-    const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
-    if extension_enabled("integration", "output", true) {                    // c:763
+pub fn mark_output(start: bool) {
+    // c:759
+    const START: &[u8] = b"\x1b]133;C\x1b\\"; // c:761
+    const END: &[u8] = b"\x1b]133;D\x1b\\"; // c:762
+    if extension_enabled("integration", "output", true) {
+        // c:763
         let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        if shtty < 0 { return; }
-        let _ = crate::ported::utils::write_loop(                            // c:764
+        if shtty < 0 {
+            return;
+        }
+        let _ = crate::ported::utils::write_loop(
+            // c:764
             shtty,
             if start { START } else { END },
         );
@@ -669,13 +715,13 @@ pub fn mark_output(start: bool) {                                            // 
 /// so the caller chooses (notify_pwd uses SHTTY).
 /// WARNING: signature change — C=(path_components) writes SHTTY vs
 /// Rust=(fd, path_components) writes the given fd.
-pub fn write_urlencoded(fd: i32, path_components: &str) {                    // c:769
+pub fn write_urlencoded(fd: i32, path_components: &str) {
+    // c:769
     // c:772 — `url_encode(path_components, &enc_len)`.
     let enc = url_encode(path_components);
     // c:773 — `write_loop(SHTTY, enc, enc_len)`.
     let _ = crate::ported::utils::write_loop(fd, enc.as_bytes());
 }
-
 
 /// Direct port of `void notify_pwd(void)` from
 /// `Src/Zle/termquery.c:778`. Emits the `OSC 7 ; file://host/path`
@@ -683,7 +729,8 @@ pub fn write_urlencoded(fd: i32, path_components: &str) {                    // 
 /// directory across new tabs and splits. Gated on the
 /// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
 /// contains a `/` (otherwise the resulting URL would be malformed).
-pub fn notify_pwd() {                                                        // c:778
+pub fn notify_pwd() {
+    // c:778
     // c:783 — `extension_enabled("integration", "pwd", 11, 1)` gate.
     if !extension_enabled("integration", "pwd", true) {
         return;
@@ -714,22 +761,23 @@ pub fn notify_pwd() {                                                        // 
 /// composed CURF_* bit pattern. C mutates `*cursor_form`; we return
 /// the value.
 /// WARNING: signature change — C=(teststr, cursor_form*) vs Rust=(spec) -> u32
-pub fn match_cursorform(spec: &str) -> u32 {                                 // c:798
+pub fn match_cursorform(spec: &str) -> u32 {
+    // c:798
     // c:800-810 — name→(value,mask) table. "none" zeros every bit
     //              (mask=0xff). Shape names take 2-bit slots; blink/
     //              steady are mutually-exclusive single bits; hidden
     //              has mask=0 so it ORs in without disturbing shape.
     const SHAPES: &[(&str, u32, u32)] = &[
-        ("none",      0,                       0xff),
+        ("none", 0, 0xff),
         ("underline", CURF_UNDERLINE as u32, CURF_SHAPE_MASK as u32),
-        ("bar",       CURF_BAR       as u32, CURF_SHAPE_MASK as u32),
-        ("block",     CURF_BLOCK     as u32, CURF_SHAPE_MASK as u32),
-        ("blink",     CURF_BLINK     as u32, CURF_STEADY     as u32),
-        ("steady",    CURF_STEADY    as u32, CURF_BLINK      as u32),
-        ("hidden",    CURF_HIDDEN    as u32, 0),
+        ("bar", CURF_BAR as u32, CURF_SHAPE_MASK as u32),
+        ("block", CURF_BLOCK as u32, CURF_SHAPE_MASK as u32),
+        ("blink", CURF_BLINK as u32, CURF_STEADY as u32),
+        ("steady", CURF_STEADY as u32, CURF_BLINK as u32),
+        ("hidden", CURF_HIDDEN as u32, 0),
     ];
 
-    let mut cursor_form: u32 = 0;                                            // c:813
+    let mut cursor_form: u32 = 0; // c:813
     let mut s = spec;
 
     // c:814-852 — walk components separated by ','.
@@ -737,7 +785,8 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
         let mut found = false;
 
         // c:818-841 — color=#RGB or color=#RRGGBB.
-        if let Some(rest) = s.strip_prefix("color=#") {                      // c:818
+        if let Some(rest) = s.strip_prefix("color=#") {
+            // c:818
             // c:820 — `zstrtol(teststr, &end, 16)` consumes hex until
             //         non-hex. We walk the leading hex run by hand.
             let mut end = 0;
@@ -751,20 +800,22 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
             let hex_str = &rest[..end];
             let col: u32 = u32::from_str_radix(hex_str, 16).unwrap_or(0);
 
-            if end == 4 {                                                    // c:822 — 3-digit form #RGB
+            if end == 4 {
+                // c:822 — 3-digit form #RGB
                 // c:823-832 — splat each 4-bit nibble across both
                 //             halves so #f80 → 0xff8800.
-                let red:   u32 = col >> 8;
+                let red: u32 = col >> 8;
                 let green: u32 = (col & 0xf0) >> 4;
-                let blue:  u32 = col & 0xf;
+                let blue: u32 = col & 0xf;
                 cursor_form &= 0xff; // clear color                          // c:828
                 cursor_form |= (CURF_COLOR as u32)
-                    | ((red   << 4 | red)   << CURF_RED_SHIFT)
+                    | ((red << 4 | red) << CURF_RED_SHIFT)
                     | ((green << 4 | green) << CURF_GREEN_SHIFT)
-                    | ((blue  << 4 | blue)  << CURF_BLUE_SHIFT);
+                    | ((blue << 4 | blue) << CURF_BLUE_SHIFT);
                 found = true;
-            } else if end == 6 {                                             // c:833 — 6-digit form #RRGGBB
-                cursor_form |= (col << 8) | (CURF_COLOR as u32);             // c:834
+            } else if end == 6 {
+                // c:833 — 6-digit form #RRGGBB
+                cursor_form |= (col << 8) | (CURF_COLOR as u32); // c:834
                 found = true;
             }
             // c:837 — `teststr = end;` — advance past hex run.
@@ -775,8 +826,8 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
         if !found {
             for (name, value, mask) in SHAPES {
                 if let Some(rest) = s.strip_prefix(name) {
-                    cursor_form &= !*mask;                                   // c:846
-                    cursor_form |=  *value;                                  // c:847
+                    cursor_form &= !*mask; // c:846
+                    cursor_form |= *value; // c:847
                     s = rest;
                     found = true;
                     break;
@@ -790,7 +841,7 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
         if !found {
             match s.find(',') {
                 Some(idx) => s = &s[idx..],
-                None      => break,
+                None => break,
             }
         }
 
@@ -798,7 +849,7 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
         let mut it = s.chars();
         match it.next() {
             Some(',') => s = it.as_str(),
-            _         => break,
+            _ => break,
         }
     }
 
@@ -812,7 +863,8 @@ pub fn match_cursorform(spec: &str) -> u32 {                                 // 
 /// CURF_UNDERLINE`. The `cursor_enabled_mask` gate is computed once on
 /// first call (and again if `trashedzle` flips — currently no
 /// trashedzle global, so the first-call gate is the only one).
-pub fn zle_set_cursorform() {                                                // c:856
+pub fn zle_set_cursorform() {
+    // c:856
     // c:858 — `char **atrs = getaparam("zle_cursorform");`
     //         We fetch the array directly from paramtab since the Rust
     //         `getaparam` shim takes a `Value` rather than a name.
@@ -828,7 +880,8 @@ pub fn zle_set_cursorform() {                                                // 
     };
 
     // c:861-872 — eight ordered prefix tags. Index = CURC_* slot.
-    const CONTEXTS: [&str; 8] = [                                            // c:864-871
+    const CONTEXTS: [&str; 8] = [
+        // c:864-871
         "edit:",
         "command:",
         "insert:",
@@ -850,18 +903,19 @@ pub fn zle_set_cursorform() {                                                // 
             *slot = 0;
         }
         // c:879-880 — built-in defaults.
-        f[CURC_INSERT  as usize] = CURF_BAR       as u32;
+        f[CURC_INSERT as usize] = CURF_BAR as u32;
         f[CURC_PENDING as usize] = CURF_UNDERLINE as u32;
     });
 
     // c:882-895 — walk every spec string in `atrs`.
     for spec in atrs.iter() {
-        if let Some(rest) = spec.strip_prefix("region:") {                   // c:883
+        if let Some(rest) = spec.strip_prefix("region:") {
+            // c:883
             // c:884-885 — region: writes the same form into START and END.
             let v = match_cursorform(rest);
             CURSOR_FORMS.with(|cf| {
                 let mut f = cf.borrow_mut();
-                f[CURC_REGION_END   as usize] = v;
+                f[CURC_REGION_END as usize] = v;
                 f[CURC_REGION_START as usize] = v;
             });
             continue;
@@ -885,10 +939,12 @@ pub fn zle_set_cursorform() {                                                // 
     if !setup {
         CURSORFORM_SETUP.with(|s| s.set(true));
         let mut mask: u32 = 0;
-        if !extension_enabled("cursor", "shape", true) {                     // c:902
+        if !extension_enabled("cursor", "shape", true) {
+            // c:902
             mask |= (CURF_SHAPE_MASK as u32) | (CURF_BLINK as u32) | (CURF_STEADY as u32);
         }
-        if !extension_enabled("cursor", "color", true) {                     // c:904
+        if !extension_enabled("cursor", "color", true) {
+            // c:904
             mask |= CURF_COLOR_MASK;
         }
         CURSOR_ENABLED_MASK.with(|m| m.set(mask));
@@ -902,14 +958,16 @@ pub fn zle_set_cursorform() {                                                // 
 /// `cursor_enabled_mask` are intentionally preserved across the
 /// free so the extension-probe doesn't re-run unless `trashedzle`
 /// flips inside `zle_set_cursorform`.
-pub fn free_cursor_forms() {                                                 // c:904
+pub fn free_cursor_forms() {
+    // c:904
     // c:906-907 — `if (cursor_forms) zfree(...);`  c:908 — `cursor_forms = 0;`
     CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
 /// Port of `cursor_form()` from Src/Zle/termquery.c:933. Stub:
 /// CURF_/CURC_/cursor_forms substrate pending.
-pub fn cursor_form() -> Vec<String> {                                        // c:933
+pub fn cursor_form() -> Vec<String> {
+    // c:933
     Vec::new()
 }
 
@@ -931,8 +989,10 @@ mod term_pat_tag_tests {
     fn t_constants_have_high_bit_set() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
-                    T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
+        for tag in [
+            T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH, T_WILDCARD, T_RECORD, T_CAPTURE,
+            T_DROP, T_CONTINUE, T_NEXT,
+        ] {
             assert!(tag & TAG != 0, "tag 0x{:02x} should have high bit set", tag);
         }
     }
@@ -972,7 +1032,9 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:488-491 — CURF_DEFAULT/UNDERLINE/Bar/BLOCK occupy the
         // low 2 bits per Src/Zle/zle.h.
-        use crate::ported::zle::zle_h::{CURF_DEFAULT, CURF_UNDERLINE, CURF_BAR, CURF_BLOCK, CURF_SHAPE_MASK};
+        use crate::ported::zle::zle_h::{
+            CURF_BAR, CURF_BLOCK, CURF_DEFAULT, CURF_SHAPE_MASK, CURF_UNDERLINE,
+        };
         assert_eq!(CURF_DEFAULT, 0);
         assert_eq!(CURF_UNDERLINE, 1);
         assert_eq!(CURF_BAR, 2);
@@ -986,9 +1048,9 @@ mod tests {
         // c:801-804 — shape names land in CURF_SHAPE_MASK (bits 0-1).
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(match_cursorform("underline"), CURF_UNDERLINE as u32);
-        assert_eq!(match_cursorform("bar"),       CURF_BAR       as u32);
-        assert_eq!(match_cursorform("block"),     CURF_BLOCK     as u32);
-        assert_eq!(match_cursorform("none"),      0);
+        assert_eq!(match_cursorform("bar"), CURF_BAR as u32);
+        assert_eq!(match_cursorform("block"), CURF_BLOCK as u32);
+        assert_eq!(match_cursorform("none"), 0);
     }
 
     #[test]
@@ -1076,10 +1138,15 @@ mod tests {
         free_cursor_forms();
         CURSOR_FORMS.with(|cf| assert_eq!(cf.borrow().len(), 0));
         // setup + enabled_mask MUST survive.
-        assert!(CURSORFORM_SETUP.with(|s| s.get()),
-                "free_cursor_forms must NOT reset setup (C doesn't)");
-        assert_eq!(CURSOR_ENABLED_MASK.with(|m| m.get()), mask_before,
-                "free_cursor_forms must NOT clear enabled_mask (C doesn't)");
+        assert!(
+            CURSORFORM_SETUP.with(|s| s.get()),
+            "free_cursor_forms must NOT reset setup (C doesn't)"
+        );
+        assert_eq!(
+            CURSOR_ENABLED_MASK.with(|m| m.get()),
+            mask_before,
+            "free_cursor_forms must NOT clear enabled_mask (C doesn't)"
+        );
 
         // Re-seed on next call.
         zle_set_cursorform();
@@ -1141,8 +1208,11 @@ mod tests {
         // important invariant is "AID != 0 after first call".
         crate::ported::params::setsparam("HOST", "");
         let _ = prompt_markers();
-        assert_ne!(AID.with(|a| a.get()), 0,
-                   "AID must be nonzero after first call regardless of inputs");
+        assert_ne!(
+            AID.with(|a| a.get()),
+            0,
+            "AID must be nonzero after first call regardless of inputs"
+        );
     }
 
     #[test]
@@ -1163,10 +1233,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:686-690 — `-integration` disables the whole class.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        crate::ported::params::setaparam(
-            ".term.extensions",
-            vec!["-integration".to_string()],
-        );
+        crate::ported::params::setaparam(".term.extensions", vec!["-integration".to_string()]);
         assert!(!extension_enabled("integration", "prompt", true));
         assert!(!extension_enabled("integration", "pwd", true));
         crate::ported::params::setaparam(".term.extensions", vec![]);
@@ -1177,11 +1244,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:690 — `-integration:pwd` only disables `pwd`, not `prompt`.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        crate::ported::params::setaparam(
-            ".term.extensions",
-            vec!["-integration:pwd".to_string()],
-        );
-        assert!( extension_enabled("integration", "prompt", true));
+        crate::ported::params::setaparam(".term.extensions", vec!["-integration:pwd".to_string()]);
+        assert!(extension_enabled("integration", "prompt", true));
         assert!(!extension_enabled("integration", "pwd", true));
         crate::ported::params::setaparam(".term.extensions", vec![]);
     }
@@ -1192,7 +1256,7 @@ mod tests {
         // c:694 — nothing matches → return def.
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::params::setaparam(".term.extensions", vec![]);
-        assert!( extension_enabled("integration", "prompt", true));
+        assert!(extension_enabled("integration", "prompt", true));
         assert!(!extension_enabled("integration", "prompt", false));
     }
 
@@ -1205,10 +1269,10 @@ mod tests {
         zle_set_cursorform();
         CURSOR_FORMS.with(|cf| {
             let f = cf.borrow();
-            assert_eq!(f[CURC_INSERT  as usize], CURF_BAR       as u32);
+            assert_eq!(f[CURC_INSERT as usize], CURF_BAR as u32);
             assert_eq!(f[CURC_PENDING as usize], CURF_UNDERLINE as u32);
             assert_eq!(f[CURC_REGION_START as usize], 0);
-            assert_eq!(f[CURC_REGION_END   as usize], 0);
+            assert_eq!(f[CURC_REGION_END as usize], 0);
         });
     }
 

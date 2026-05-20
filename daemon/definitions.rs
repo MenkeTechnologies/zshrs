@@ -72,10 +72,7 @@ pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpRe
     let name_arg = args.get("name").and_then(Value::as_str);
     let prefix_arg = args.get("prefix").and_then(Value::as_str);
     let shell_id_filter = args.get("shell_id").and_then(Value::as_str);
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(10_000) as usize;
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(10_000) as usize;
 
     // Restrict to KNOWN_KINDS so the caller can't accidentally probe
     // catalog-internal subsystems via this op (catalog/canonical hide
@@ -167,9 +164,7 @@ pub async fn op_definitions_emit(state: &Arc<DaemonState>, args: Value) -> OpRes
         .get("shell_id")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            ErrPayload::new("bad_args", "missing `shell_id` (see docs/SHELL_IDS.md)")
-        })?
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `shell_id` (see docs/SHELL_IDS.md)"))?
         .to_string();
     let kind = args
         .get("kind")
@@ -200,10 +195,7 @@ pub async fn op_definitions_emit(state: &Arc<DaemonState>, args: Value) -> OpRes
     // JSON-string-encoded so canonical rows stay shape-uniform with
     // existing zshrs-recorder ingests.
     let json_value = serde_json::Value::String(value).to_string();
-    let file = args
-        .get("file")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let file = args.get("file").and_then(Value::as_str).map(str::to_string);
     let line = args
         .get("line")
         .and_then(Value::as_u64)
@@ -286,8 +278,7 @@ pub async fn op_definitions_diff(state: &Arc<DaemonState>, args: Value) -> OpRes
                 removed.push(json!({"kind": kind, "name": k, "value": v}));
             } else if let Some(bv) = b_rows.get(k) {
                 if bv != v {
-                    changed
-                        .push(json!({"kind": kind, "name": k, "from": v, "to": bv}));
+                    changed.push(json!({"kind": kind, "name": k, "from": v, "to": bv}));
                 }
             }
         }

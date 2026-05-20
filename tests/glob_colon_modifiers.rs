@@ -37,7 +37,10 @@ fn setup() -> TempDir {
 fn colon_t_returns_basename() {
     let tmp = setup();
     let pattern = format!("{}/*.toml(:t)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     assert_eq!(got, vec!["Cargo.toml".to_string()], "pattern={}", pattern);
 }
 
@@ -45,7 +48,10 @@ fn colon_t_returns_basename() {
 fn colon_e_returns_extension() {
     let tmp = setup();
     let pattern = format!("{}/*.toml(:e)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     assert_eq!(got, vec!["toml".to_string()], "pattern={}", pattern);
 }
 
@@ -53,7 +59,10 @@ fn colon_e_returns_extension() {
 fn colon_r_strips_extension() {
     let tmp = setup();
     let pattern = format!("{}/*.toml(:r)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     let want = format!("{}/Cargo", tmp.path().display());
     assert_eq!(got, vec![want], "pattern={}", pattern);
 }
@@ -62,7 +71,10 @@ fn colon_r_strips_extension() {
 fn colon_h_returns_dirname() {
     let tmp = setup();
     let pattern = format!("{}/docs/AI*.md(:h)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     let want = format!("{}/docs", tmp.path().display());
     assert_eq!(got, vec![want], "pattern={}", pattern);
 }
@@ -71,7 +83,10 @@ fn colon_h_returns_dirname() {
 fn colon_s_substitutes_first_match() {
     let tmp = setup();
     let pattern = format!("{}/*.toml(:s/.toml/.zzz/)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     let want = format!("{}/Cargo.zzz", tmp.path().display());
     assert_eq!(got, vec![want], "pattern={}", pattern);
 }
@@ -81,7 +96,10 @@ fn chained_modifiers_apply_left_to_right() {
     // `:r:t` strips extension THEN takes basename.
     let tmp = setup();
     let pattern = format!("{}/*.toml(:r:t)", tmp.path().display());
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     assert_eq!(got, vec!["Cargo".to_string()], "pattern={}", pattern);
 }
 

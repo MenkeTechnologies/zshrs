@@ -174,7 +174,11 @@ impl crate::ported::vm_helper::ShellExecutor {
         }
         self.execute_script(code)
     }
-    pub(crate) fn run_original_command(&mut self, cmd_name: &str, args: &[String]) -> Result<i32, String> {
+    pub(crate) fn run_original_command(
+        &mut self,
+        cmd_name: &str,
+        args: &[String],
+    ) -> Result<i32, String> {
         // Function dispatch via the compiled pipeline (functions_compiled
         // first, falls back to legacy AST recompile if needed).
         if let Some(status) = self.dispatch_function_call(cmd_name, args) {

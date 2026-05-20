@@ -1385,9 +1385,8 @@ fn zlock(args: &[String]) -> i32 {
                 body["timeout_secs"] = json!(secs);
                 // Bump socket read timeout above the daemon-side wait so the
                 // client doesn't drop first.
-                let _ = client.set_read_timeout(Some(std::time::Duration::from_secs_f64(
-                    secs + 5.0,
-                )));
+                let _ =
+                    client.set_read_timeout(Some(std::time::Duration::from_secs_f64(secs + 5.0)));
             }
             client.call("lock_acquire", body)
         }
@@ -2189,8 +2188,7 @@ fn zd(args: &[String]) -> i32 {
             // Returns the JSON value; serialize so dispatch's caller
             // gets a String (matches HTTP transport's contract).
             match self.client.call(op, body) {
-                Ok(v) => serde_json::to_string(&v)
-                    .map_err(|e| format!("response serialize: {e}")),
+                Ok(v) => serde_json::to_string(&v).map_err(|e| format!("response serialize: {e}")),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -2200,14 +2198,15 @@ fn zd(args: &[String]) -> i32 {
             // path to the equivalent op.
             match path {
                 "/health" => self.post("ping", json!({})),
-                "/ops" => self.post(
-                    "call",
-                    // No-op call so the response includes the op list
-                    // via the daemon's existing introspection. Cleaner
-                    // path: a dedicated "ops" op. For now reuse info.
-                    json!({}),
-                )
-                .or_else(|_| self.post("info", json!({}))),
+                "/ops" => self
+                    .post(
+                        "call",
+                        // No-op call so the response includes the op list
+                        // via the daemon's existing introspection. Cleaner
+                        // path: a dedicated "ops" op. For now reuse info.
+                        json!({}),
+                    )
+                    .or_else(|_| self.post("info", json!({}))),
                 "/metrics" => self.post("metrics", json!({})),
                 other => Err(format!("zd builtin: GET {other} not supported over socket")),
             }
@@ -2218,7 +2217,9 @@ fn zd(args: &[String]) -> i32 {
             ))
         }
     }
-    let mut transport = SocketTransport { client: &mut client };
+    let mut transport = SocketTransport {
+        client: &mut client,
+    };
     dispatch(rest, &mut transport)
 }
 

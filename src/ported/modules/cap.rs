@@ -16,7 +16,6 @@
 
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{module, options};
-use std::ffi::{CStr, CString};
 
 // =====================================================================
 // libcap FFI — declared in `<sys/capability.h>` (libcap), not libc.
@@ -52,7 +51,8 @@ mod ffi {
 /// process's capability set.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
-pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:36
+pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+    // c:36
 
     let mut ret = 0;
     if let Some(arg0) = argv.first() {
@@ -74,7 +74,10 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
             if ffi::cap_set_proc(caps) != 0 {
                 zwarnnam(
                     nam,
-                    &format!("can't change capabilities: {}", std::io::Error::last_os_error()),
+                    &format!(
+                        "can't change capabilities: {}",
+                        std::io::Error::last_os_error()
+                    ),
                 );
                 ret = 1;
             }
@@ -92,7 +95,10 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
             if caps.is_null() || result.is_null() {
                 zwarnnam(
                     nam,
-                    &format!("can't get capabilities: {}", std::io::Error::last_os_error()),
+                    &format!(
+                        "can't get capabilities: {}",
+                        std::io::Error::last_os_error()
+                    ),
                 );
                 ret = 1;
             } else {
@@ -131,7 +137,6 @@ pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
-
     let mut ret = 0;
     // C: do { ... } while(*++argv);
     for file in argv {
@@ -151,7 +156,10 @@ pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
                 std::ptr::null_mut()
             };
             if caps.is_null() || result.is_null() {
-                zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+                zwarnnam(
+                    nam,
+                    &format!("{}: {}", file, std::io::Error::last_os_error()),
+                );
                 ret = 1;
             } else {
                 let s = CStr::from_ptr(result).to_string_lossy();
@@ -187,7 +195,6 @@ pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
-
     let mut ret = 0;
     let cap_str = match argv.first() {
         Some(s) => s.as_str(),
@@ -220,7 +227,10 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
                 }
             };
             if ffi::cap_set_file(path_c.as_ptr(), caps) != 0 {
-                zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+                zwarnnam(
+                    nam,
+                    &format!("{}: {}", file, std::io::Error::last_os_error()),
+                );
                 ret = 1;
             }
         }
@@ -242,14 +252,10 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 // static struct features module_features                            c:129
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (cap.c:123).
-
 
 // `module_features` — port of `static struct features module_features`
 // from cap.c:129. Uses canonical slice-based `module::Features`.
-
-
 
 // =====================================================================
 // Module entry points (cap.c:138-178).
@@ -257,39 +263,45 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/cap.c:139`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:139
-    0                                                                  // c:154
+pub fn setup_(m: *const module) -> i32 {
+    // c:139
+    0 // c:154
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/cap.c:146`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:146
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:146
     *features = featuresarray(m, module_features());
-    0                                                                  // c:161
+    0 // c:161
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/cap.c:154`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:154
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:154
     handlefeatures(m, module_features(), enables) // c:168
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/cap.c:161`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:161
-    0                                                                  // c:175
+pub fn boot_(m: *const module) -> i32 {
+    // c:161
+    0 // c:175
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/cap.c:168`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:168
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:168
     setfeatureenables(m, module_features(), None) // c:175
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/cap.c:175`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:175
-    0                                                                  // c:175
+pub fn finish_(m: *const module) -> i32 {
+    // c:175
+    0 // c:175
 }
 
 // =====================================================================
@@ -299,18 +311,14 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-
 // =====================================================================
 // Tests
 // =====================================================================
-
-
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -322,7 +330,11 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:cap".to_string(), "b:getcap".to_string(), "b:setcap".to_string()]
+    vec![
+        "b:cap".to_string(),
+        "b:getcap".to_string(),
+        "b:setcap".to_string(),
+    ]
 }
 
 // WARNING: NOT IN CAP.C — Rust-only module-framework shim.
@@ -344,11 +356,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -379,17 +387,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 3,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 3,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -397,7 +407,12 @@ mod tests {
     use super::*;
 
     fn empty_ops() -> options {
-        options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     #[test]
@@ -439,7 +454,12 @@ mod tests {
         assert_eq!(bin_cap("cap", &[], &ops, 0), 1);
         assert_eq!(bin_getcap("getcap", &["/etc/passwd".into()], &ops, 0), 1);
         assert_eq!(
-            bin_setcap("setcap", &["cap_net_admin+ep".into(), "/tmp/x".into()], &ops, 0),
+            bin_setcap(
+                "setcap",
+                &["cap_net_admin+ep".into(), "/tmp/x".into()],
+                &ops,
+                0
+            ),
             1
         );
     }
@@ -455,8 +475,11 @@ mod tests {
         let mut features: Vec<String> = Vec::new();
         features_(m, &mut features);
         for f in &features {
-            assert!(f.starts_with("b:"),
-                "feature {} must use 'b:' (builtin) prefix", f);
+            assert!(
+                f.starts_with("b:"),
+                "feature {} must use 'b:' (builtin) prefix",
+                f
+            );
         }
     }
 
@@ -473,8 +496,11 @@ mod tests {
         let mut enables: Option<Vec<i32>> = None;
         enables_(m, &mut enables);
         let e = enables.expect("enables_ must return Some");
-        assert_eq!(e.len(), features.len(),
-            "enables vec length must match features count");
+        assert_eq!(
+            e.len(),
+            features.len(),
+            "enables vec length must match features count"
+        );
     }
 
     /// c:139-175 — module-lifecycle stubs all return 0 in C.

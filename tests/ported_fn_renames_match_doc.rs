@@ -67,8 +67,7 @@ fn find_mismatches_in(file: &PathBuf, out: &mut Vec<Mismatch>) {
         let trimmed = line.trim();
 
         // Mark entry into `mod tests { ... }` (any depth).
-        if !in_test_mod
-            && (trimmed.starts_with("mod tests {") || trimmed.starts_with("mod test {"))
+        if !in_test_mod && (trimmed.starts_with("mod tests {") || trimmed.starts_with("mod test {"))
         {
             in_test_mod = true;
             test_mod_depth = depth + 1;
@@ -172,7 +171,10 @@ fn find_mismatches_in(file: &PathBuf, out: &mut Vec<Mismatch>) {
                 .unwrap_or(0);
             if end > 0 {
                 let rust_name = &rest[..end];
-                if rust_name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+                if rust_name
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                {
                     if let Some(c_name) = pending_c_name.take() {
                         if rust_name != c_name {
                             out.push(Mismatch {
@@ -202,8 +204,8 @@ fn ported_fn_renames_match_doc_cite() {
 
     // Snapshot allowlist: pre-existing rename-mismatches we can't
     // fix in one pass. Format: `<rust_relpath>::<rust_name>->\<c_name>`.
-    let allowlist_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/ported_fn_rename_allowlist.txt");
+    let allowlist_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/ported_fn_rename_allowlist.txt");
     let allowlist_src = fs::read_to_string(&allowlist_path).unwrap_or_default();
     let allowlist: HashSet<String> = allowlist_src
         .lines()

@@ -66,14 +66,6 @@ use std::io::Read;
 use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 
-// === Imports needed by the methods moved from vm_helper (below) ===
-use crate::ported::utils::{errflag, zerr, zerrnam, zwarn, zwarnnam};
-#[allow(unused_imports)]
-use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
-#[allow(unused_imports)]
-use indexmap::IndexMap;
-#[allow(unused_imports)]
-use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 // Names lifted out of inside-fn `use` statements (PORT.md
 // 'no imports inside FNs ever'). Names already imported elsewhere
 // (BINF_PREFIX, EMULATE_CSH, ERRFLAG_ERROR, ZEXIT_*, PM_TYPE) are
@@ -83,11 +75,18 @@ use crate::func_body_fmt::FuncBodyFmt;
 use crate::parse::{Redirect, ShellCommand};
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
+// === Imports needed by the methods moved from vm_helper (below) ===
+use crate::ported::utils::{errflag, zerr, zerrnam, zwarn, zwarnnam};
+#[allow(unused_imports)]
+use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
+#[allow(unused_imports)]
+use indexmap::IndexMap;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
-
+#[allow(unused_imports)]
+use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 
 // ---------------------------------------------------------------------------
 // BIN_* dispatch IDs.
@@ -2739,7 +2738,7 @@ pub fn typeset_single(
     let mut tc: i32 = 0; // c:2029
     let _keeplocal: i32 = 0; // c:2029
     let mut newspecial: i32 = 0; /* NS_NONE */
- // c:2029
+    // c:2029
     let _readonly: i32 = 0; // c:2029
     let _dont_set: i32 = 0; // c:2029
     let mut pname_owned: String = pname.to_string(); // c:2030 subscript path
@@ -8917,6 +8916,15 @@ pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 pub static BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static CONTFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// Same single-storage rationale as LOCALLEVEL above — C zsh has
+// only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
+// Rust port is `crate::ported::init::sourcelevel` (lowercase,
+// matches C name). Re-export that single storage so the bin_break
+// reader and the bin_dot bumps address the same atomic; without
+// this, `bin_dot` could increment one global while `bin_break`
+// inspected the other and `return` inside a sourced file would
+// fall through to `zexit` (Src/builtin.c:5858).
+pub use crate::ported::init::sourcelevel as SOURCELEVEL;
 // `LOCALLEVEL` was previously a SEPARATE AtomicI32 here, but C
 // zsh has only ONE `int locallevel;` global (Src/params.c:54).
 // The canonical Rust port is `crate::ported::params::locallevel`
@@ -8927,15 +8935,6 @@ pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 // incremented a DIFFERENT global, leaving the two views out of
 // sync indefinitely.
 pub use crate::ported::params::locallevel as LOCALLEVEL;
-// Same single-storage rationale as LOCALLEVEL above — C zsh has
-// only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
-// Rust port is `crate::ported::init::sourcelevel` (lowercase,
-// matches C name). Re-export that single storage so the bin_break
-// reader and the bin_dot bumps address the same atomic; without
-// this, `bin_dot` could increment one global while `bin_break`
-// inspected the other and `return` inside a sourced file would
-// fall through to `zexit` (Src/builtin.c:5858).
-pub use crate::ported::init::sourcelevel as SOURCELEVEL;
 use crate::utils::{argzero, set_argzero};
 // `ZEXIT_NORMAL` re-exported from canonical zsh_h.rs (port of the
 // `enum { ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED }` in Src/zsh.h).

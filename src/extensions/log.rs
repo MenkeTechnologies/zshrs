@@ -241,10 +241,7 @@ mod tests {
     #[test]
     fn log_path_appends_zshrs_log_filename() {
         with_zshrs_home(Some("/tmp/zshrs-test-path"), || {
-            assert_eq!(
-                log_path(),
-                PathBuf::from("/tmp/zshrs-test-path/zshrs.log")
-            );
+            assert_eq!(log_path(), PathBuf::from("/tmp/zshrs-test-path/zshrs.log"));
         });
     }
 

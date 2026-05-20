@@ -19,8 +19,8 @@
 //! wordcode directly, matching the C pipeline. Until then, the AST
 //! tree is the working IR.
 
-use serde::{Deserialize, Serialize};
 pub use crate::extensions::heredoc_ast::HereDocInfo;
+use serde::{Deserialize, Serialize};
 
 /// AST node for a complete program (list of commands)
 #[derive(Debug, Clone, Serialize, Deserialize)]

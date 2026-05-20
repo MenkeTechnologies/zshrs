@@ -28,6 +28,12 @@
 // `do_single` / `do_allmatches`. zshrs's port routes those
 // through the executor's completion state directly.
 
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
 /// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
 /// Invalidation counter — bumped every time the cached completion
 /// list goes stale. `complistmatches` reads it to detect "we have a
@@ -40,25 +46,19 @@ use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
 /// Truncate a long completion line with `...` so it fits a column
 /// budget.
@@ -66,7 +66,8 @@ use crate::ported::zle::deltochar::*;
 /// truncates the Cline's display field to `max_len`; ours emits
 /// `…` (three ASCII dots) when truncation is needed.
 /// WARNING: param names don't match C — Rust=(s, max_len) vs C=(l)
-pub fn cut_cline(s: &str, max_len: usize) -> String {                        // c:46
+pub fn cut_cline(s: &str, max_len: usize) -> String {
+    // c:46
     if s.len() <= max_len {
         s.to_string()
     } else {
@@ -93,7 +94,8 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {                        // 
 /// the buffer-edit side ( `do_ambiguous` etc.) wrap this with
 /// foredel+inststr against the `ZLEMETALINE` global.
 /// WARNING: signature change — C=(l, ins, csp, posl) vs Rust=(l) -> String
-pub fn cline_str(                                                            // c:165
+pub fn cline_str(
+    // c:165
     l: Option<&crate::ported::zle::comp_h::Cline>,
 ) -> String {
     use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
@@ -115,7 +117,9 @@ pub fn cline_str(                                                            // 
                 } else {
                     part.word.as_deref()
                 };
-                if let Some(s) = s { out.push_str(s); }
+                if let Some(s) = s {
+                    out.push_str(s);
+                }
                 p = part.next.as_deref();
             }
         }
@@ -125,7 +129,9 @@ pub fn cline_str(                                                            // 
         } else {
             node.word.as_deref()
         };
-        if let Some(a) = anchor { out.push_str(a); }
+        if let Some(a) = anchor {
+            out.push_str(a);
+        }
 
         // c:336-338 — `if (l->olen && (l->flags & CLF_SUF) && !l->suffix)`
         if node.olen != 0 && (node.flags & CLF_SUF) != 0 && node.suffix.is_none() {
@@ -141,7 +147,9 @@ pub fn cline_str(                                                            // 
                 } else {
                     part.word.as_deref()
                 };
-                if let Some(s) = s { out.push_str(s); }
+                if let Some(s) = s {
+                    out.push_str(s);
+                }
                 p = part.next.as_deref();
             }
         }
@@ -154,7 +162,8 @@ pub fn cline_str(                                                            // 
 /// line.
 /// Port of the position-string formatting in
 /// Src/Zle/compresult.c (the `clprintm` group-header path).
-pub fn build_pos_string(current: usize, total: usize) -> String {            // c:489
+pub fn build_pos_string(current: usize, total: usize) -> String {
+    // c:489
     format!("{}/{}", current + 1, total)
 }
 
@@ -167,7 +176,8 @@ pub fn build_pos_string(current: usize, total: usize) -> String {            // 
 /// also tracks cursor placement within the prefix; ours returns
 /// just the common-prefix string.
 /// WARNING: param names don't match C — Rust=(matches) vs C=(cp, pp, ip)
-pub fn unambig_data(matches: &[String]) -> String {                          // c:525
+pub fn unambig_data(matches: &[String]) -> String {
+    // c:525
     if matches.is_empty() {
         return String::new();
     }
@@ -204,7 +214,8 @@ pub fn unambig_data(matches: &[String]) -> String {                          // 
 /// chosen completion" primitive used by every other inserter
 /// (`do_single`, `do_ambiguous`, `do_allmatches`).
 /// WARNING: param names don't match C — Rust=(cursor, word_start, word_end, replacement) vs C=(m, scs)
-pub fn instmatch(                                                            // c:578
+pub fn instmatch(
+    // c:578
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -224,7 +235,8 @@ pub fn instmatch(                                                            // 
 /// Port of `hasbrpsfx(Cmatch m, char *pre, char *suf)` from Src/Zle/compresult.c — used by the
 /// brace-suffix tracking that compsys keeps for menu completion.
 /// WARNING: param names don't match C — Rust=(s) vs C=(m, pre, suf)
-pub fn hasbrpsfx(s: &str) -> bool {                                          // c:685
+pub fn hasbrpsfx(s: &str) -> bool {
+    // c:685
     s.contains('{') || s.contains('}')
 }
 
@@ -237,7 +249,8 @@ pub fn hasbrpsfx(s: &str) -> bool {                                          // 
 /// `menucmp=0`/`lastambig=1` transition flags. Returns 1 if any
 /// completion text was inserted, 0 otherwise.
 /// WARNING: param names don't match C — Rust=(matches) vs C=()
-pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:744
+pub fn do_ambiguous(matches: &[String]) -> i32 {
+    // c:744
     use std::sync::atomic::Ordering;
     // c:748 — `menucmp = menuacc = 0`.
     crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
@@ -249,14 +262,16 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:74
     // provided match strings.
     let ainfo_line = crate::ported::zle::compcore::ainfo
         .get_or_init(|| std::sync::Mutex::new(None))
-        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
     let prefix = if let Some(line) = ainfo_line {
-        cline_str(Some(line.as_ref()))                                       // c:535
+        cline_str(Some(line.as_ref())) // c:535
     } else {
         unambig_data(matches)
     };
     if prefix.is_empty() && matches.is_empty() {
-        return 0;                                                        // c:nomatch
+        return 0; // c:nomatch
     }
     // c:783-790 — buffer-edit: foredel the original word, inststr
     // the unambig prefix, when WB/WE describe a valid range.
@@ -265,13 +280,16 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:74
         let we = crate::ported::zle::compcore::WE.load(Ordering::Relaxed);
         if we > wb && wb >= 0 {
             let span = we - wb;
-            crate::ported::zle::compcore::ZLEMETACS
-                .store(wb, Ordering::Relaxed);                              // c:785
-            crate::ported::zle::zle_utils::foredel(span, 0);                // c:787
-            let _ = crate::ported::zle::zle_tricky::inststr(&prefix);       // c:790
+            crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::Relaxed); // c:785
+            crate::ported::zle::zle_utils::foredel(span, 0); // c:787
+            let _ = crate::ported::zle::zle_tricky::inststr(&prefix); // c:790
         }
     }
-    if !prefix.is_empty() { 1 } else { 0 }
+    if !prefix.is_empty() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Port of `ztat(char *nam, struct stat *buf, int ls)` from `Src/Zle/compresult.c:869`.
@@ -279,11 +297,14 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:74
 /// Returns `Option<Metadata>` mirroring C's `0`/`-1` return where
 /// the metadata is filled into the supplied `struct stat *buf`.
 /// WARNING: param names don't match C — Rust=(path, follow_symlink) vs C=(nam, buf, ls)
-pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {     // c:869
-    if follow_symlink {                                                          // c:869 if (ls)
+pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {
+    // c:869
+    if follow_symlink {
+        // c:869 if (ls)
         // c:869 — `lstat(nam, buf)`. Don't follow symlinks.
         std::fs::symlink_metadata(path).ok()
-    } else {                                                                     // c:869 else
+    } else {
+        // c:869 else
         // c:869 — `stat(nam, buf)`. Follow symlinks.
         std::fs::metadata(path).ok()
     }
@@ -294,7 +315,8 @@ pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {    
 /// the `all-matches` widget and for the implicit case when no
 /// listing fits.
 /// WARNING: param names don't match C — Rust=(cursor, word_start, word_end, matches, separator) vs C=(end)
-pub fn do_allmatches(                                                        // c:897
+pub fn do_allmatches(
+    // c:897
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -313,7 +335,8 @@ pub fn do_allmatches(                                                        // 
 /// the `AUTO_REMOVE_SLASH`-aware insertion that distinguishes
 /// finished-completion from prefix-completion.
 /// WARNING: param names don't match C — Rust=(cursor, word_start, word_end, the_match, add_space) vs C=(m)
-pub fn do_single(                                                            // c:963
+pub fn do_single(
+    // c:963
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -333,7 +356,8 @@ pub fn do_single(                                                            // 
 /// constraints (the `compadd -P pre -S suf` requirements).
 /// Port of `valid_match(m, next)` from Src/Zle/compresult.c.
 /// WARNING: param names don't match C — Rust=(word, prefix, suffix) vs C=(m, next)
-pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {         // c:1210
+pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
+    // c:1210
     word.starts_with(prefix) && (suffix.is_empty() || word.ends_with(suffix))
 }
 
@@ -343,10 +367,11 @@ pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {         // 
 /// return (caller refreshes the listing instead of inserting). The
 /// Rust port returns the next match index; caller drives instmatch.
 /// WARNING: param names don't match C — Rust=(matches, current, forward) vs C=(lst)
-pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) { // c:1253
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_refresh::SHOWINGLIST;
+pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) {
+    // c:1253
     use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+    use crate::ported::zle::zle_refresh::SHOWINGLIST;
+    use std::sync::atomic::Ordering;
     // c:1258 — `if (lst == COMP_LIST_COMPLETE) { showinglist = -2; return; }`.
     // We don't have a `lst` param at this signature; the listing-mode
     // call site (compresult.c via do_menucmp(lst==LIST_COMPLETE)) uses
@@ -380,49 +405,62 @@ pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, 
 /// amatches lacks the brace prefix/suffix, force showinglist=-2.
 /// Then bump menuacc and proceed with the do_single insertion.
 /// WARNING: param names don't match C — Rust=(cursor, word_start, word_end, selected) vs C=()
-pub fn accept_last(                                                          // c:1288
+pub fn accept_last(
+    // c:1288
     buffer: &str,
     cursor: usize,
     word_start: usize,
     word_end: usize,
     selected: &str,
 ) -> (String, usize) {
-    use std::sync::atomic::Ordering;
     use crate::ported::zle::compcore::{amatches, menuacc, MINFO};
     use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
-    use crate::ported::zle::zle_tricky::{LASTPREBR, LASTPOSTBR};
+    use crate::ported::zle::zle_tricky::{LASTPOSTBR, LASTPREBR};
+    use std::sync::atomic::Ordering;
 
     // c:1299 — `if (!menuacc)` snapshot prebr/postbr.
-    if menuacc.load(Ordering::Relaxed) == 0 {                                // c:1299
-        let prebr = LASTPREBR.get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock().map(|s| s.clone()).unwrap_or_default();
-        let postbr = LASTPOSTBR.get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock().map(|s| s.clone()).unwrap_or_default();
-        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(
-            crate::ported::zle::comp_h::Menuinfo::default()
-        )).lock() {
-            m.prebr = Some(prebr.clone());                                   // c:1301
-            m.postbr = Some(postbr.clone());                                 // c:1303
+    if menuacc.load(Ordering::Relaxed) == 0 {
+        // c:1299
+        let prebr = LASTPREBR
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        let postbr = LASTPOSTBR
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        if let Ok(mut m) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .lock()
+        {
+            m.prebr = Some(prebr.clone()); // c:1301
+            m.postbr = Some(postbr.clone()); // c:1303
         }
         // c:1305-1321 — if listshown set and braces differ on any
         // match, set showinglist=-2 so the listing re-renders.
-        if LISTSHOWN.load(Ordering::Relaxed) != 0
-            && (!prebr.is_empty() || !postbr.is_empty())
-        {
-            let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-                .lock().ok().map(|g| g.clone()).unwrap_or_default();
+        if LISTSHOWN.load(Ordering::Relaxed) != 0 && (!prebr.is_empty() || !postbr.is_empty()) {
+            let groups = amatches
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .ok()
+                .map(|g| g.clone())
+                .unwrap_or_default();
             for g in &groups {
-                for m in &g.matches {                                        // c:1315
+                for m in &g.matches {
+                    // c:1315
                     let s = m.str.as_deref().unwrap_or("");
-                    if !hasbrpsfx(s) {                                       // c:1316
-                        SHOWINGLIST.store(-2, Ordering::Relaxed);             // c:1317
+                    if !hasbrpsfx(s) {
+                        // c:1316
+                        SHOWINGLIST.store(-2, Ordering::Relaxed); // c:1317
                         break;
                     }
                 }
             }
         }
     }
-    menuacc.fetch_add(1, Ordering::Relaxed);                                 // c:1323
+    menuacc.fetch_add(1, Ordering::Relaxed); // c:1323
     do_single(buffer, cursor, word_start, word_end, selected, true)
 }
 
@@ -447,17 +485,22 @@ pub fn accept_last(                                                          // 
 /// repeated addition until non-negative. Used to map menu-cycle
 /// indices to match-array offsets (where `0` means "no match" and
 /// `1..N` are the real matches, so the table is 1-indexed).
-pub fn comp_mod(mut v: i32, m: i32) -> i32 {                                     // c:1364
-    if v >= 0 {                                                                  // c:1364
-        v -= 1;                                                                  // c:1367
+pub fn comp_mod(mut v: i32, m: i32) -> i32 {
+    // c:1364
+    if v >= 0 {
+        // c:1364
+        v -= 1; // c:1367
     }
-    if v >= 0 {                                                                  // c:1368
-        v % m                                                                    // c:1369
-    } else {                                                                     // c:1370
-        while v < 0 {                                                            // c:1371
-            v += m;                                                              // c:1372
+    if v >= 0 {
+        // c:1368
+        v % m // c:1369
+    } else {
+        // c:1370
+        while v < 0 {
+            // c:1371
+            v += m; // c:1372
         }
-        v                                                                        // c:1373
+        v // c:1373
     }
 }
 
@@ -467,41 +510,54 @@ pub fn comp_mod(mut v: i32, m: i32) -> i32 {                                    
 /// ambiguous-matches case: cycles `minfo.group` forward until the
 /// `insmnum`-th match in the chain is reached, then routes the
 /// pick through `do_single`.
-pub fn do_ambig_menu() -> i32 {                                              // c:1381
-    use std::sync::atomic::Ordering;
+pub fn do_ambig_menu() -> i32 {
+    // c:1381
     use crate::ported::zle::compcore::{
-        amatches, iforcemenu, insmnum, lastpermmnum, menuacc, oldins, oldlist,
-        MINFO,
+        amatches, iforcemenu, insmnum, lastpermmnum, menuacc, oldins, oldlist, MINFO,
     };
     use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
+    use std::sync::atomic::Ordering;
 
     // c:1386 — `if (iforcemenu == -1) do_ambiguous();`
-    if iforcemenu.load(Ordering::Relaxed) == -1 {                            // c:1386
-        let _ = do_ambiguous(&[]);                                           // c:1387
+    if iforcemenu.load(Ordering::Relaxed) == -1 {
+        // c:1386
+        let _ = do_ambiguous(&[]); // c:1387
     }
 
     let um = USEMENU.load(Ordering::Relaxed);
-    if um != 3 {                                                             // c:1389
-        MENUCMP.store(1, Ordering::Relaxed);                                 // c:1390
-        menuacc.store(0, Ordering::Relaxed);                                 // c:1391
-        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-            m.cur = None;                                                    // c:1392
+    if um != 3 {
+        // c:1389
+        MENUCMP.store(1, Ordering::Relaxed); // c:1390
+        menuacc.store(0, Ordering::Relaxed); // c:1391
+        if let Ok(mut m) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .lock()
+        {
+            m.cur = None; // c:1392
         }
     } else {
-        if oldlist.load(Ordering::Relaxed) != 0 {                            // c:1395
-            let has_cur = MINFO.get().and_then(|m| m.lock().ok())
-                .map(|m| m.cur.is_some()).unwrap_or(false);
-            if oldins.load(Ordering::Relaxed) != 0 && has_cur {              // c:1396
+        if oldlist.load(Ordering::Relaxed) != 0 {
+            // c:1395
+            let has_cur = MINFO
+                .get()
+                .and_then(|m| m.lock().ok())
+                .map(|m| m.cur.is_some())
+                .unwrap_or(false);
+            if oldins.load(Ordering::Relaxed) != 0 && has_cur {
+                // c:1396
                 // C: `accept_last()` — accepts the current menu pick.
                 // Rust sig takes (buf, cs, wb, we, selected); call with
                 // empties since we just want the side-effect.
-                let _ = accept_last("", 0, 0, 0, "");                        // c:1397
+                let _ = accept_last("", 0, 0, 0, ""); // c:1397
             }
         } else {
-            if let Ok(mut m) = MINFO.get_or_init(
-                || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
-            ).lock() {
-                m.cur = None;                                                // c:1399
+            if let Ok(mut m) = MINFO
+                .get_or_init(|| {
+                    std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                })
+                .lock()
+            {
+                m.cur = None; // c:1399
             }
         }
     }
@@ -514,8 +570,12 @@ pub fn do_ambig_menu() -> i32 {                                              // 
     insmnum.store(idx, Ordering::Relaxed);
 
     // c:1430-1438 — walk amatches advancing past groups with mcount<=idx.
-    let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let groups = amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     let mut chosen_group: Option<crate::ported::zle::comp_h::Cmgroup> = None;
     for g in &groups {
         if g.mcount > idx {
@@ -525,10 +585,12 @@ pub fn do_ambig_menu() -> i32 {                                              // 
         idx -= g.mcount;
     }
 
-    let Some(g) = chosen_group else {                                        // c:1440-1444
-        if let Ok(mut m) = MINFO.get_or_init(
-            || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
-        ).lock() {
+    let Some(g) = chosen_group else {
+        // c:1440-1444
+        if let Ok(mut m) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+            .lock()
+        {
             m.cur = None;
             m.asked = 0;
         }
@@ -541,21 +603,26 @@ pub fn do_ambig_menu() -> i32 {                                              // 
     // C path for the common case of a valid match present at the index.
     let mc = g.matches.get(idx as usize).cloned();
 
-    if iforcemenu.load(Ordering::Relaxed) != -1 {                            // c:1454
+    if iforcemenu.load(Ordering::Relaxed) != -1 {
+        // c:1454
         if let Some(ref m) = mc {
             // c:1455 — `minfo.cur = m;`. Inlined per the no-fake-helper
             // rule (set_minfo_cur was a Rust-only wrapper).
-            if let Ok(mut g) = crate::ported::zle::compcore::MINFO.get_or_init(
-                || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
-            ).lock() {
+            if let Ok(mut g) = crate::ported::zle::compcore::MINFO
+                .get_or_init(|| {
+                    std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                })
+                .lock()
+            {
                 g.cur = Some(Box::new(m.clone()));
             }
         }
     }
-    if let Ok(mut mst) = MINFO.get_or_init(
-        || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
-    ).lock() {
-        mst.cur = mc.map(Box::new);                                          // c:1456
+    if let Ok(mut mst) = MINFO
+        .get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default()))
+        .lock()
+    {
+        mst.cur = mc.map(Box::new); // c:1456
     }
     0
 }
@@ -567,7 +634,8 @@ pub fn do_ambig_menu() -> i32 {                                              // 
 /// (`asklistscroll`).
 // Return the number of screen lines needed for the list.                   // c:1450
 /// WARNING: param names don't match C — Rust=(matches, columns) vs C=()
-pub fn list_lines(matches: &[String], columns: usize) -> usize {             // c:1450
+pub fn list_lines(matches: &[String], columns: usize) -> usize {
+    // c:1450
     if columns == 0 {
         return matches.len();
     }
@@ -592,14 +660,21 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {             // 
 ///   `zsfree(complist); complist = v;
 ///    onlyexpl = v ? ((strstr(v,"expl")?1:0) |
 ///                    (strstr(v,"messages")?2:0)) : 0;`
-pub fn comp_list(v: Option<&str>) {                                          // c:1468
+pub fn comp_list(v: Option<&str>) {
+    // c:1468
     use std::sync::atomic::Ordering;
-    let mut g = crate::ported::zle::complete::COMPLIST                       // c:1470 zsfree+assign
-        .get_or_init(|| std::sync::Mutex::new(String::new())).lock().unwrap();
+    let mut g = crate::ported::zle::complete::COMPLIST // c:1470 zsfree+assign
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock()
+        .unwrap();
     g.clear();
-    if let Some(s) = v { g.push_str(s); }
-    let val = v.map_or(0, |s| (s.contains("expl") as i32) | (s.contains("messages") as i32) << 1); // c:1473
-    crate::ported::zle::compcore::onlyexpl.store(val, Ordering::SeqCst);     // c:1473
+    if let Some(s) = v {
+        g.push_str(s);
+    }
+    let val = v.map_or(0, |s| {
+        (s.contains("expl") as i32) | (s.contains("messages") as i32) << 1
+    }); // c:1473
+    crate::ported::zle::compcore::onlyexpl.store(val, Ordering::SeqCst); // c:1473
 }
 
 /// Port of `skipnolist(Cmatch *p, int showall)` from `Src/Zle/compresult.c:1480`.
@@ -622,40 +697,45 @@ pub fn comp_list(v: Option<&str>) {                                          // 
 ///
 /// `showall` mirrors C: when non-zero, the NOLIST/MULT mask is
 /// dropped (only CMF_HIDE filters).
-pub fn skipnolist(p: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {  // c:1481
+pub fn skipnolist(p: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {
+    // c:1481
     use crate::ported::zle::comp_h::{CMF_DISPLINE, CMF_HIDE, CMF_MULT, CMF_NOLIST};
     // c:1483 — `mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT)) | CMF_HIDE`.
-    let mask = if showall != 0 { 0 } else { CMF_NOLIST | CMF_MULT } | CMF_HIDE;
-    let mut i = 0usize;                                                          // c:1485 *p
-    while i < p.len() {                                                    // c:1485 while (*p && ...)
+    let mask = if showall != 0 {
+        0
+    } else {
+        CMF_NOLIST | CMF_MULT
+    } | CMF_HIDE;
+    let mut i = 0usize; // c:1485 *p
+    while i < p.len() {
+        // c:1485 while (*p && ...)
         let m = &p[i];
         let f = m.flags;
-        let skip_mask    = (f & mask) != 0;                                      // c:1485
-        let skip_disp    = m.disp.is_some() && (f & (CMF_DISPLINE | CMF_HIDE)) != 0; // c:1486-1487
+        let skip_mask = (f & mask) != 0; // c:1485
+        let skip_disp = m.disp.is_some() && (f & (CMF_DISPLINE | CMF_HIDE)) != 0; // c:1486-1487
         if !(skip_mask || skip_disp) {
             break;
         }
-        i += 1;                                                                  // c:1488 p++
+        i += 1; // c:1488 p++
     }
-    i                                                                            // c:1490 return p
+    i // c:1490 return p
 }
-
-
 
 /// Port of `mod_export int calclist(int showall)` from
 /// `Src/Zle/compresult.c:1495`. Walks the active `cmgroup` chain,
 /// computes per-group column widths, line counts, and per-match
 /// width entries, then writes `listdat`. Returns 1 when listdat was
 /// updated, 0 when the cached snapshot is still valid.
-pub fn calclist(showall: i32) -> i32 {                                       // c:1495
-    use std::sync::atomic::Ordering::Relaxed;
+pub fn calclist(showall: i32) -> i32 {
+    // c:1495
     use crate::ported::zle::comp_h::*;
+    use std::sync::atomic::Ordering::Relaxed;
 
     let invcount = INVCOUNT.load(Relaxed);
     let onlyexpl_v = crate::ported::zle::compcore::onlyexpl.load(Relaxed);
     let menuacc_v = crate::ported::zle::compcore::menuacc.load(Relaxed);
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;        // c:zterm_columns
-    let zterm_lines = crate::ported::utils::adjustlines() as i32;            // c:zterm_lines
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32; // c:zterm_columns
+    let zterm_lines = crate::ported::utils::adjustlines() as i32; // c:zterm_lines
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
@@ -663,18 +743,20 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
             .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
         let g = ld.lock().unwrap();
         if LASTINVCOUNT.with(|c| c.get()) == invcount
-            && g.valid != 0 && onlyexpl_v == g.onlyexpl
-            && menuacc_v == g.menuacc && showall == g.showall
+            && g.valid != 0
+            && onlyexpl_v == g.onlyexpl
+            && menuacc_v == g.menuacc
+            && showall == g.showall
             && zterm_lines == g.zterm_lines
             && zterm_columns == g.zterm_columns
         {
-            return 0;                                                        // c:1511
+            return 0; // c:1511
         }
     }
-    LASTINVCOUNT.with(|c| c.set(invcount));                                  // c:1512
+    LASTINVCOUNT.with(|c| c.set(invcount)); // c:1512
 
-    let am = crate::ported::zle::compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let am =
+        crate::ported::zle::compcore::amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut groups = am.lock().unwrap();
     let nmatches = crate::ported::zle::compcore::nmatches.load(Relaxed);
     let mut mlens: Vec<i32> = vec![0; (nmatches + 1) as usize];
@@ -697,25 +779,30 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
         let mut totl = 0i32;
         let mut hasf = false;
 
-        g.flags |= CGF_PACKED | CGF_ROWS;                                    // c:1524
+        g.flags |= CGF_PACKED | CGF_ROWS; // c:1524
 
         if onlyexpl_v == 0 && !g.ylist.is_empty() {
-            if !listpacked  { g.flags &= !CGF_PACKED; }                      // c:1528-1529
-            if !listrowsfirst { g.flags &= !CGF_ROWS; }                       // c:1530-1531
+            if !listpacked {
+                g.flags &= !CGF_PACKED;
+            } // c:1528-1529
+            if !listrowsfirst {
+                g.flags &= !CGF_ROWS;
+            } // c:1530-1531
 
-            hidden = 1;                                                      // c:1535
-            for s in g.ylist.iter() {                                        // c:1536-1541
-                if (s.chars().count() as i32) >= zterm_columns
-                    || s.contains('\n')
-                {
+            hidden = 1; // c:1535
+            for s in g.ylist.iter() {
+                // c:1536-1541
+                if (s.chars().count() as i32) >= zterm_columns || s.contains('\n') {
                     nl = true;
                     break;
                 }
             }
-            if nl || g.ylist.len() < 2 {                                     // c:1543
-                g.flags |= CGF_LINES;                                        // c:1547
-                hidden = 1;                                                  // c:1548
-                for s in g.ylist.iter() {                                    // c:1549-1564
+            if nl || g.ylist.len() < 2 {
+                // c:1543
+                g.flags |= CGF_LINES; // c:1547
+                hidden = 1; // c:1548
+                for s in g.ylist.iter() {
+                    // c:1549-1564
                     let mut acc = 0i32;
                     for chunk in s.split('\n') {
                         let w = chunk.chars().count().saturating_sub(1) as i32;
@@ -724,11 +811,16 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                     nlines += acc;
                 }
             } else {
-                for s in g.ylist.iter() {                                    // c:1567-1577
+                for s in g.ylist.iter() {
+                    // c:1567-1577
                     let l = s.chars().count() as i32;
                     ndisp += 1;
-                    if l > glong  { glong = l; }
-                    if l < gshort { gshort = l; }
+                    if l > glong {
+                        glong = l;
+                    }
+                    if l < gshort {
+                        gshort = l;
+                    }
                     totl += l;
                     nlist += 1;
                 }
@@ -736,7 +828,9 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
         } else if onlyexpl_v == 0 {
             // c:1579-1631 — per-match width walk.
             for m in g.matches.iter_mut() {
-                if (m.flags & CMF_FILE) != 0 { hasf = true; }
+                if (m.flags & CMF_FILE) != 0 {
+                    hasf = true;
+                }
                 if menuacc_v != 0 && !hasbrpsfx(m.str.as_deref().unwrap_or("")) {
                     m.flags |= CMF_HIDE;
                     continue;
@@ -752,32 +846,49 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                     }
                     if let Some(disp) = m.disp.clone() {
                         if (m.flags & CMF_DISPLINE) != 0 {
-                            nlines += 1 + crate::ported::zle::zle_tricky::printfmt(&disp, 0, false, false);
+                            nlines += 1 + crate::ported::zle::zle_tricky::printfmt(
+                                &disp, 0, false, false,
+                            );
                             g.flags |= CGF_HASDL;
                         } else {
-                            let l = disp.chars().count() as i32
-                                + if m.modec != '\0' { 1 } else { 0 };
+                            let l =
+                                disp.chars().count() as i32 + if m.modec != '\0' { 1 } else { 0 };
                             ndisp += 1;
-                            if l > glong  { glong = l; }
-                            if l < gshort { gshort = l; }
+                            if l > glong {
+                                glong = l;
+                            }
+                            if l < gshort {
+                                gshort = l;
+                            }
                             totl += l;
                             mlens[m.gnum as usize] = l;
                         }
                         nlist += 1;
-                        if (m.flags & CMF_PACKED) == 0 { g.flags &= !CGF_PACKED; }
-                        if (m.flags & CMF_ROWS) == 0   { g.flags &= !CGF_ROWS;   }
+                        if (m.flags & CMF_PACKED) == 0 {
+                            g.flags &= !CGF_PACKED;
+                        }
+                        if (m.flags & CMF_ROWS) == 0 {
+                            g.flags &= !CGF_ROWS;
+                        }
                     } else {
                         let s = m.str.as_deref().unwrap_or("");
-                        let l = s.chars().count() as i32
-                            + if m.modec != '\0' { 1 } else { 0 };
+                        let l = s.chars().count() as i32 + if m.modec != '\0' { 1 } else { 0 };
                         ndisp += 1;
-                        if l > glong  { glong = l; }
-                        if l < gshort { gshort = l; }
+                        if l > glong {
+                            glong = l;
+                        }
+                        if l < gshort {
+                            gshort = l;
+                        }
                         totl += l;
                         mlens[m.gnum as usize] = l;
                         nlist += 1;
-                        if (m.flags & CMF_PACKED) == 0 { g.flags &= !CGF_PACKED; }
-                        if (m.flags & CMF_ROWS) == 0   { g.flags &= !CGF_ROWS;   }
+                        if (m.flags & CMF_PACKED) == 0 {
+                            g.flags &= !CGF_PACKED;
+                        }
+                        if (m.flags & CMF_ROWS) == 0 {
+                            g.flags &= !CGF_ROWS;
+                        }
                     }
                 } else {
                     hidden = 1;
@@ -787,8 +898,7 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
         // c:1633-1643 — explanation strings.
         for e in g.expls.iter() {
             if (e.count != 0 || e.always != 0)
-                && (onlyexpl_v == 0
-                    || (onlyexpl_v & if e.always > 0 { 2 } else { 1 }) != 0)
+                && (onlyexpl_v == 0 || (onlyexpl_v & if e.always > 0 { 2 } else { 1 }) != 0)
             {
                 nlines += 1 + crate::ported::zle::zle_tricky::printfmt(
                     e.str.as_deref().unwrap_or(""),
@@ -798,17 +908,21 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                 );
             }
         }
-        if listtypes && hasf { g.flags |= CGF_FILES; }                       // c:1644-1645
-        g.totl = totl + ndisp * CM_SPACE;                                    // c:1646
-        g.dcount = ndisp;                                                    // c:1647
-        g.width = glong + CM_SPACE;                                          // c:1648
-        g.shortest = gshort + CM_SPACE;                                      // c:1649
+        if listtypes && hasf {
+            g.flags |= CGF_FILES;
+        } // c:1644-1645
+        g.totl = totl + ndisp * CM_SPACE; // c:1646
+        g.dcount = ndisp; // c:1647
+        g.width = glong + CM_SPACE; // c:1648
+        g.shortest = gshort + CM_SPACE; // c:1649
         if g.width > 0 {
-            g.cols = (zterm_columns / g.width).min(g.dcount);                // c:1650-1651
+            g.cols = (zterm_columns / g.width).min(g.dcount); // c:1650-1651
         }
         if g.cols > 0 {
-            let i = g.cols * g.width - CM_SPACE;                             // c:1653
-            if i > max { max = i; }
+            let i = g.cols * g.width - CM_SPACE; // c:1653
+            if i > max {
+                max = i;
+            }
         }
     }
 
@@ -816,7 +930,7 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
     if onlyexpl_v == 0 {
         for g in groups.iter_mut() {
             let mut glines = 0i32;
-            g.widths.clear();                                                // c:1670-1671
+            g.widths.clear(); // c:1670-1671
             if !g.ylist.is_empty() {
                 if (g.flags & CGF_LINES) == 0 {
                     if g.cols > 0 {
@@ -844,10 +958,12 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                     if (m.flags & CMF_HIDE) == 0 {
                         if m.disp.is_some() {
                             if (m.flags & CMF_DISPLINE) == 0 {
-                                glines += 1 + (mlens[m.gnum as usize].saturating_sub(1)) / zterm_columns;
+                                glines +=
+                                    1 + (mlens[m.gnum as usize].saturating_sub(1)) / zterm_columns;
                             }
                         } else if showall != 0 || (m.flags & (CMF_NOLIST | CMF_MULT)) == 0 {
-                            glines += 1 + (mlens[m.gnum as usize].saturating_sub(1)) / zterm_columns;
+                            glines +=
+                                1 + (mlens[m.gnum as usize].saturating_sub(1)) / zterm_columns;
                         }
                     }
                 }
@@ -862,17 +978,23 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
         // densest tcols whose total width still fits zterm_columns.
         // Four sub-branches: {ylist, matches} × {ROWS, !ROWS}.
         for g in groups.iter_mut() {
-            if (g.flags & CGF_PACKED) == 0 { continue; }                     // c:1717-1718
-            // c:1720-1721 — `ws = g->widths = zalloc(...); memset(ws,0,...)`
+            if (g.flags & CGF_PACKED) == 0 {
+                continue;
+            } // c:1717-1718
+              // c:1720-1721 — `ws = g->widths = zalloc(...); memset(ws,0,...)`
             g.widths = vec![0i32; zterm_columns as usize];
-            let mut tlines = g.lins;                                         // c:1722
-            let mut tcols  = g.cols;                                         // c:1723
-            let mut width: i32 = 0;                                          // c:1724
+            let mut tlines = g.lins; // c:1722
+            let mut tcols = g.cols; // c:1723
+            let mut width: i32 = 0; // c:1724
 
-            if !g.ylist.is_empty() {                                         // c:1726
-                if (g.flags & CGF_LINES) == 0 {                              // c:1727
+            if !g.ylist.is_empty() {
+                // c:1726
+                if (g.flags & CGF_LINES) == 0 {
+                    // c:1727
                     // c:1728-1732 — per-item widths in `ylens`.
-                    let ylens: Vec<i32> = g.ylist.iter()
+                    let ylens: Vec<i32> = g
+                        .ylist
+                        .iter()
                         .map(|s| s.chars().count() as i32 + CM_SPACE)
                         .collect();
 
@@ -880,24 +1002,34 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                         // c:1734-1760 — row-major ylist tcols search.
                         let mut t = zterm_columns / (g.shortest + CM_SPACE);
                         while t > g.cols {
-                            for w in &mut g.widths[..t as usize] { *w = 0; } // c:1741
+                            for w in &mut g.widths[..t as usize] {
+                                *w = 0;
+                            } // c:1741
                             let mut w = 0i32;
                             let mut nth = 0i32;
                             let mut tcol = 0i32;
                             let mut tl = 1i32;
-                            while w < zterm_columns && nth < g.dcount {       // c:1743-1744
-                                if tcol == t { tcol = 0; tl += 1; }          // c:1747-1750
-                                let len = ylens[nth as usize];               // c:1751
-                                if len > g.widths[tcol as usize] {           // c:1753
-                                    w += len - g.widths[tcol as usize];      // c:1754
-                                    g.widths[tcol as usize] = len;           // c:1755
+                            while w < zterm_columns && nth < g.dcount {
+                                // c:1743-1744
+                                if tcol == t {
+                                    tcol = 0;
+                                    tl += 1;
+                                } // c:1747-1750
+                                let len = ylens[nth as usize]; // c:1751
+                                if len > g.widths[tcol as usize] {
+                                    // c:1753
+                                    w += len - g.widths[tcol as usize]; // c:1754
+                                    g.widths[tcol as usize] = len; // c:1755
                                 }
-                                nth += 1; tcol += 1;
+                                nth += 1;
+                                tcol += 1;
                             }
                             width = w;
                             tcols = t;
                             tlines = tl;
-                            if w < zterm_columns { break; }                  // c:1758-1759
+                            if w < zterm_columns {
+                                break;
+                            } // c:1758-1759
                             t -= 1;
                         }
                     } else {
@@ -906,36 +1038,52 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                         // in this branch); preserved as no-op.
                         let mut t = zterm_columns / (g.shortest + CM_SPACE);
                         while t > g.cols {
-                            let mut tl = ((g.dcount + t - 1) / t).max(1);    // c:1768-1769
-                            for w in &mut g.widths[..t as usize] { *w = 0; } // c:1771
+                            let mut tl = ((g.dcount + t - 1) / t).max(1); // c:1768-1769
+                            for w in &mut g.widths[..t as usize] {
+                                *w = 0;
+                            } // c:1771
                             let mut w = 0i32;
                             let mut nth = 0i32;
                             let mut tcol = 0i32;
                             let mut tline = 0i32;
-                            while w < zterm_columns && nth < g.dcount {       // c:1773-1775
-                                if tline == tl { tcol += 1; tline = 0; }     // c:1779-1782
-                                if tcol  == t  { tcol = 0;  tl += 1;    }    // c:1783-1786
-                                let len = ylens[nth as usize];               // c:1787
-                                if len > g.widths[tcol as usize] {           // c:1789
+                            while w < zterm_columns && nth < g.dcount {
+                                // c:1773-1775
+                                if tline == tl {
+                                    tcol += 1;
+                                    tline = 0;
+                                } // c:1779-1782
+                                if tcol == t {
+                                    tcol = 0;
+                                    tl += 1;
+                                } // c:1783-1786
+                                let len = ylens[nth as usize]; // c:1787
+                                if len > g.widths[tcol as usize] {
+                                    // c:1789
                                     w += len - g.widths[tcol as usize];
                                     g.widths[tcol as usize] = len;
                                 }
-                                nth += 1; tline += 1;
+                                nth += 1;
+                                tline += 1;
                             }
                             width = w;
                             tcols = t;
                             tlines = tl;
-                            if w < zterm_columns { break; }                  // c:1794-1795
+                            if w < zterm_columns {
+                                break;
+                            } // c:1794-1795
                             t -= 1;
                         }
                     }
                 }
-            } else if g.width != 0 {                                          // c:1799
+            } else if g.width != 0 {
+                // c:1799
                 if (g.flags & CGF_ROWS) != 0 {
                     // c:1803-1830 — row-major matches tcols search.
                     let mut t = zterm_columns / (g.shortest + CM_SPACE);
                     while t > g.cols {
-                        for w in &mut g.widths[..t as usize] { *w = 0; }     // c:1807
+                        for w in &mut g.widths[..t as usize] {
+                            *w = 0;
+                        } // c:1807
                         let mut w = 0i32;
                         let mut tcol = 0i32;
                         let mut tl = 1i32;
@@ -943,10 +1091,13 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                         // c:1810 — `p = skipnolist(g->matches, showall)`.
                         let mut p_idx = skipnolist(&g.matches, showall);
                         while p_idx < g.matches.len() && w < zterm_columns && nth < g.dcount {
-                            if tcol == t { tcol = 0; tl += 1; }              // c:1816-1819
-                            let m = &g.matches[p_idx];                       // c:1814
-                            let len = mlens[m.gnum as usize]
-                                + if tcol == t - 1 { 0 } else { CM_SPACE };  // c:1820-1821
+                            if tcol == t {
+                                tcol = 0;
+                                tl += 1;
+                            } // c:1816-1819
+                            let m = &g.matches[p_idx]; // c:1814
+                            let len =
+                                mlens[m.gnum as usize] + if tcol == t - 1 { 0 } else { CM_SPACE }; // c:1820-1821
                             if len > g.widths[tcol as usize] {
                                 w += len - g.widths[tcol as usize];
                                 g.widths[tcol as usize] = len;
@@ -964,26 +1115,36 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                         width = w;
                         tcols = t;
                         tlines = tl;
-                        if w < zterm_columns { break; }                      // c:1828-1829
+                        if w < zterm_columns {
+                            break;
+                        } // c:1828-1829
                         t -= 1;
                     }
                 } else {
                     // c:1834-1872 — column-major matches tcols search.
                     let mut t = zterm_columns / (g.shortest + CM_SPACE);
                     while t > g.cols {
-                        let mut tl = ((g.dcount + t - 1) / t).max(1);        // c:1838-1839
-                        for w in &mut g.widths[..t as usize] { *w = 0; }     // c:1841
+                        let mut tl = ((g.dcount + t - 1) / t).max(1); // c:1838-1839
+                        for w in &mut g.widths[..t as usize] {
+                            *w = 0;
+                        } // c:1841
                         let mut w = 0i32;
                         let mut nth = 0i32;
                         let mut tcol = 0i32;
                         let mut tline = 0i32;
-                        let mut p_idx = skipnolist(&g.matches, showall);     // c:1844
+                        let mut p_idx = skipnolist(&g.matches, showall); // c:1844
                         while p_idx < g.matches.len() && w < zterm_columns && nth < g.dcount {
-                            if tline == tl { tcol += 1; tline = 0; }         // c:1850-1853
-                            if tcol  == t  { tcol = 0;  tl += 1;    }        // c:1854-1857
-                            let m = &g.matches[p_idx];                       // c:1848
-                            let len = mlens[m.gnum as usize]
-                                + if tcol == t - 1 { 0 } else { CM_SPACE };  // c:1858-1859
+                            if tline == tl {
+                                tcol += 1;
+                                tline = 0;
+                            } // c:1850-1853
+                            if tcol == t {
+                                tcol = 0;
+                                tl += 1;
+                            } // c:1854-1857
+                            let m = &g.matches[p_idx]; // c:1848
+                            let len =
+                                mlens[m.gnum as usize] + if tcol == t - 1 { 0 } else { CM_SPACE }; // c:1858-1859
                             if len > g.widths[tcol as usize] {
                                 w += len - g.widths[tcol as usize];
                                 g.widths[tcol as usize] = len;
@@ -1000,9 +1161,12 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
                         width = w;
                         tcols = t;
                         tlines = tl;
-                        if w < zterm_columns {                               // c:1866-1869
+                        if w < zterm_columns {
+                            // c:1866-1869
                             // C: `if (++tcol < tcols) tcols = tcol;`
-                            if tcol + 1 < tcols { tcols = tcol + 1; }
+                            if tcol + 1 < tcols {
+                                tcols = tcol + 1;
+                            }
                             break;
                         }
                         t -= 1;
@@ -1011,16 +1175,21 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
             }
 
             // c:1874-1887 — commit the result (or revert if no win).
-            if tcols <= g.cols { tlines = g.lins; }                          // c:1874-1875
-            if tlines == g.lins {                                            // c:1876
-                g.widths.clear();                                            // c:1877-1878
+            if tcols <= g.cols {
+                tlines = g.lins;
+            } // c:1874-1875
+            if tlines == g.lins {
+                // c:1876
+                g.widths.clear(); // c:1877-1878
             } else {
-                nlines += tlines - g.lins;                                   // c:1880
-                g.lins  = tlines;                                            // c:1881
-                g.cols  = tcols;                                             // c:1882
-                g.totl  = width;                                             // c:1883
-                let width_adj = width - CM_SPACE;                            // c:1884
-                if width_adj > max { max = width_adj; }                      // c:1885-1886
+                nlines += tlines - g.lins; // c:1880
+                g.lins = tlines; // c:1881
+                g.cols = tcols; // c:1882
+                g.totl = width; // c:1883
+                let width_adj = width - CM_SPACE; // c:1884
+                if width_adj > max {
+                    max = width_adj;
+                } // c:1885-1886
             }
         }
 
@@ -1033,7 +1202,7 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
         }
     } else {
         for g in groups.iter_mut() {
-            g.widths.clear();                                                // c:1907
+            g.widths.clear(); // c:1907
         }
     }
 
@@ -1050,7 +1219,7 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
     g.zterm_columns = zterm_columns;
     g.zterm_lines = zterm_lines;
     g.showall = showall;
-    1                                                                        // c:1920
+    1 // c:1920
 }
 
 /// Direct port of `int asklist(void)` from
@@ -1067,39 +1236,48 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
 ///     nlines >= zterm_lines`.
 ///   - If threshold tripped, prompt via `getzlequery` and set
 ///     `minfo.asked = 1 or 2`. Else return based on previous asked.
-pub fn asklist() -> i32 {                                                        // c:1925
-    use std::sync::atomic::Ordering;
+pub fn asklist() -> i32 {
+    // c:1925
     use crate::ported::zle::compcore::MINFO;
     use crate::ported::zle::complete::COMPLISTMAX;
-    use crate::ported::zle::zle_refresh::{LASTLISTLEN, CLEARFLAG};
     use crate::ported::zle::zle_refresh::SHOWINGLIST;
-    use crate::ported::zsh_h::{USEZLE, isset};
+    use crate::ported::zle::zle_refresh::{CLEARFLAG, LASTLISTLEN};
+    use crate::ported::zsh_h::{isset, USEZLE};
+    use std::sync::atomic::Ordering;
 
     // c:1928 — `trashzle(); showinglist = listshown = 0; lastlistlen = 0`.
-    crate::ported::zle::zle_main::trashzle();                                    // c:1928
+    crate::ported::zle::zle_main::trashzle(); // c:1928
     SHOWINGLIST.store(0, Ordering::Relaxed);
     crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::Relaxed);
-    LASTLISTLEN.store(0, Ordering::Relaxed);                                     // c:1934
+    LASTLISTLEN.store(0, Ordering::Relaxed); // c:1934
 
     // c:1930 — `clearflag = (isset(USEZLE) && !termflags && dolastprompt)`.
     let usezle = isset(USEZLE);
     let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
-    let dolastprompt = crate::ported::zle::compcore::dolastprompt
-        .load(Ordering::Relaxed) != 0;
+    let dolastprompt = crate::ported::zle::compcore::dolastprompt.load(Ordering::Relaxed) != 0;
     let clearflag = usezle && termflags == 0 && dolastprompt;
     CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);
 
     // c:1937-1940 — snapshot listdat counts + minfo state.
     let listdat = crate::ported::zle::compcore::listdat
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     let zterm_lines = crate::ported::utils::adjustlines() as i32;
     let cmax = COMPLISTMAX.load(Ordering::Relaxed) as i32;
 
-    let has_cur = MINFO.get().and_then(|m| m.lock().ok())
-        .map(|m| m.cur.is_some()).unwrap_or(false);
-    let already_asked = MINFO.get().and_then(|m| m.lock().ok())
-        .map(|m| m.asked).unwrap_or(0);
+    let has_cur = MINFO
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.cur.is_some())
+        .unwrap_or(false);
+    let already_asked = MINFO
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.asked)
+        .unwrap_or(0);
 
     // c:1939-1942 — threshold gate.
     let over_threshold = (cmax > 0 && listdat.nlist >= cmax)
@@ -1115,10 +1293,7 @@ pub fn asklist() -> i32 {                                                       
                 listdat.nlist, listdat.nlines
             )
         } else {
-            format!(
-                "zsh: do you wish to see all {} lines? ",
-                listdat.nlines
-            )
+            format!("zsh: do you wish to see all {} lines? ", listdat.nlines)
         };
         let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
@@ -1127,23 +1302,26 @@ pub fn asklist() -> i32 {                                                       
         // c:1955 — `getzlequery()`.
         let said_yes = crate::ported::zle::zle_utils::getzlequery() != 0;
 
-        if !said_yes {                                                           // c:1956
+        if !said_yes {
+            // c:1956
             // c:1957-1964 — clean up the question line.
             let _ = crate::ported::utils::write_loop(out, b"\n");
             // c:1965 — `minfo.asked = 2`.
-            if let Ok(mut m) = MINFO.get_or_init(
-                || std::sync::Mutex::new(Default::default())
-            ).lock() {
+            if let Ok(mut m) = MINFO
+                .get_or_init(|| std::sync::Mutex::new(Default::default()))
+                .lock()
+            {
                 m.asked = 2;
             }
-            return 1;                                                            // c:1966
+            return 1; // c:1966
         }
         // c:1968-1974 — clean up after a yes.
         let _ = crate::ported::utils::write_loop(out, b"\n");
         // c:1975 — `minfo.asked = 1`.
-        if let Ok(mut m) = MINFO.get_or_init(
-            || std::sync::Mutex::new(Default::default())
-        ).lock() {
+        if let Ok(mut m) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
             m.asked = 1;
         }
     }
@@ -1151,9 +1329,16 @@ pub fn asklist() -> i32 {                                                       
     //                to the final return-1 to suppress the listing.
 
     // c:1981 — `return (minfo.asked ? minfo.asked - 1 : 0);`.
-    let asked_now = MINFO.get().and_then(|m| m.lock().ok())
-        .map(|m| m.asked).unwrap_or(0);
-    if asked_now != 0 { asked_now - 1 } else { 0 }
+    let asked_now = MINFO
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.asked)
+        .unwrap_or(0);
+    if asked_now != 0 {
+        asked_now - 1
+    } else {
+        0
+    }
 }
 
 thread_local! {
@@ -1175,47 +1360,65 @@ thread_local! {
 /// surfaces CMF_HIDE / CMF_NOLIST matches that would otherwise be
 /// skipped.
 /// WARNING: param names don't match C — Rust=(over, showall) vs C=(over, printm, showall)
-pub fn printlist(over: i32, showall: i32) -> i32 {                           // c:1978
-    use std::sync::atomic::Ordering;
+pub fn printlist(over: i32, showall: i32) -> i32 {
+    // c:1978
     use crate::ported::zle::comp_h::{CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
+    use std::sync::atomic::Ordering;
     // c:1985 — `printlist` writes the entire match listing to
     //          `shout`. Resolve once and reuse for every emission so
     //          a single SHTTY load covers the whole render.
     let out_fd: i32 = {
         let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        if fd >= 0 { fd } else { 1 }
+        if fd >= 0 {
+            fd
+        } else {
+            1
+        }
     };
 
     let listdat = crate::ported::zle::compcore::listdat
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
-    let mut cl: i32 = if over != 0 { listdat.nlines } else { -1 };           // c:1984
-    let mut pnl: i32 = 0;                                                    // c:1984
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let mut cl: i32 = if over != 0 { listdat.nlines } else { -1 }; // c:1984
+    let mut pnl: i32 = 0; // c:1984
     let mut ml: i32 = 0;
 
-    if cl < 2 {                                                              // c:1986
+    if cl < 2 {
+        // c:1986
         cl = -1;
-        crate::ported::zle::zle_refresh::tcoutclear(true);                   // c:1988 tcout(TCCLEAREOD)
+        crate::ported::zle::zle_refresh::tcoutclear(true); // c:1988 tcout(TCCLEAREOD)
     }
 
     let groups = crate::ported::zle::compcore::amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
 
-    for g in &groups {                                                       // c:1990
+    for g in &groups {
+        // c:1990
         // c:2000-2027 — explanations.
-        for e in g.expls.iter() {                                            // c:2000
+        for e in g.expls.iter() {
+            // c:2000
             let active = (e.count != 0 || e.always != 0)                     // c:2001
                 && (listdat.onlyexpl == 0
                     || (listdat.onlyexpl
                         & (if e.always > 0 { 2 } else { 1 })) != 0);
-            if !active { continue; }
+            if !active {
+                continue;
+            }
 
-            if pnl != 0 {                                                    // c:2007
-                let _ = crate::ported::utils::write_loop(out_fd, b"\n");                             // c:2008
+            if pnl != 0 {
+                // c:2007
+                let _ = crate::ported::utils::write_loop(out_fd, b"\n"); // c:2008
                 ml += 1;
                 cl -= 1;
-                if cl >= 0 && cl <= 1 {                                      // c:2010
+                if cl >= 0 && cl <= 1 {
+                    // c:2010
                     cl = -1;
                     crate::ported::zle::zle_refresh::tcoutclear(true);
                 }
@@ -1223,31 +1426,43 @@ pub fn printlist(over: i32, showall: i32) -> i32 {                           // 
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
             let n = if e.always != 0 { -1 } else { e.count };
             let l = crate::ported::zle::zle_tricky::printfmt(
-                e.str.as_deref().unwrap_or(""), n, true, true,
+                e.str.as_deref().unwrap_or(""),
+                n,
+                true,
+                true,
             );
             ml += l;
-            if cl >= 0 && (cl - l) <= 1 { cl = -1; }
+            if cl >= 0 && (cl - l) <= 1 {
+                cl = -1;
+            }
             pnl = 1;
         }
 
         // c:2032-2076 — ylist branch (alternative listing).
-        if listdat.onlyexpl == 0 && !g.ylist.is_empty() {                    // c:2032
-            if pnl != 0 {                                                    // c:2033
+        if listdat.onlyexpl == 0 && !g.ylist.is_empty() {
+            // c:2032
+            if pnl != 0 {
+                // c:2033
                 let _ = crate::ported::utils::write_loop(out_fd, b"\n");
                 pnl = 0;
                 ml += 1;
-                if cl >= 0 && cl <= 1 { cl = -1; }
+                if cl >= 0 && cl <= 1 {
+                    cl = -1;
+                }
             }
-            if (g.flags & CGF_LINES) != 0 {                                  // c:2044
+            if (g.flags & CGF_LINES) != 0 {
+                // c:2044
                 let last_idx = g.ylist.len().saturating_sub(1);
                 for (i, p) in g.ylist.iter().enumerate() {
                     let _ = crate::ported::utils::zputs(p);
-                    if i != last_idx {                                        // c:2050
+                    if i != last_idx {
+                        // c:2050
                         // C wraps via " \b" or "\n"; we emit \n for safety.
                         let _ = crate::ported::utils::write_loop(out_fd, b"\n");
                     }
                 }
-            } else {                                                          // c:2058
+            } else {
+                // c:2058
                 // Column layout — emit each entry.
                 for entry in &g.ylist {
                     let _ = crate::ported::utils::zputs(entry);
@@ -1255,20 +1470,21 @@ pub fn printlist(over: i32, showall: i32) -> i32 {                           // 
                     ml += 1;
                 }
             }
-        } else if listdat.onlyexpl == 0
-            && (g.lcount != 0 || (showall != 0 && g.mcount != 0))
-        {
+        } else if listdat.onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {
             // c:2079-2185 — main column-rendered match list.
-            if pnl != 0 {                                                    // c:2080
+            if pnl != 0 {
+                // c:2080
                 let _ = crate::ported::utils::write_loop(out_fd, b"\n");
                 pnl = 0;
                 ml += 1;
             }
 
-            for m in &g.matches {                                            // c:2087
-                let visible = showall != 0
-                    || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
-                if !visible { continue; }
+            for m in &g.matches {
+                // c:2087
+                let visible = showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
+                if !visible {
+                    continue;
+                }
                 // c:2095-2098 — DISPLINE = full-row.
                 let _ = iprintm(Some(g), Some(m), 0, 0, 1, 0);
                 if (m.flags & CMF_DISPLINE) == 0 {
@@ -1283,7 +1499,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {                           // 
     }
 
     let _ = Ordering::Relaxed;
-    ml                                                                       // c:2185
+    ml // c:2185
 }
 
 // =====================================================================
@@ -1301,13 +1517,17 @@ pub fn printlist(over: i32, showall: i32) -> i32 {                           // 
 /// The C signature takes a Cmatch and writes `all->disp`; the Rust
 /// port returns the built String so the caller assigns it.
 /// WARNING: param names don't match C — Rust=() vs C=(all)
-pub fn bld_all_str() -> String {                                             // c:2187
-    use std::sync::atomic::Ordering;
+pub fn bld_all_str() -> String {
+    // c:2187
     use crate::ported::zle::comp_h::{CMF_ALL, CMF_HIDE};
+    use std::sync::atomic::Ordering;
 
     let groups = crate::ported::zle::compcore::amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
 
     // c:2191 — `cols = zterm_columns`. C reads the live tty width
     //          via the cached `zterm_columns` global. Rust port uses
@@ -1315,9 +1535,9 @@ pub fn bld_all_str() -> String {                                             // 
     //          back to $COLUMNS. Was reading raw `std::env::var(
     //          "COLUMNS")` only — wrong: missed the live width.
     let cols: i32 = crate::ported::utils::adjustcolumns() as i32;
-    let mut len: i32 = cols - 5;                                             // c:2192
+    let mut len: i32 = cols - 5; // c:2192
     let mut add: i32 = 0;
-    let mut buf = String::new();                                             // c:2196
+    let mut buf = String::new(); // c:2196
 
     // c:2199-2204 — skip empty groups.
     let mut g_idx = groups.iter().position(|g| g.mcount != 0);
@@ -1326,38 +1546,46 @@ pub fn bld_all_str() -> String {                                             // 
         let mut mp = 0usize;
         while mp < g.matches.len() {
             let m = &g.matches[mp];
-            let visible = (m.flags & (CMF_ALL | CMF_HIDE)) == 0
-                       && m.str.is_some();
-            if visible {                                                     // c:2213
+            let visible = (m.flags & (CMF_ALL | CMF_HIDE)) == 0 && m.str.is_some();
+            if visible {
+                // c:2213
                 let s = m.str.as_deref().unwrap();
                 let t = s.len() as i32 + add;
-                if len >= t {                                                // c:2215
-                    if add != 0 { buf.push(' '); }                           // c:2216
-                    buf.push_str(s);                                         // c:2218
+                if len >= t {
+                    // c:2215
+                    if add != 0 {
+                        buf.push(' ');
+                    } // c:2216
+                    buf.push_str(s); // c:2218
                     len -= t;
                     add = 1;
-                } else {                                                     // c:2221
-                    if len > add + 2 {                                       // c:2222
-                        if add != 0 { buf.push(' '); }
+                } else {
+                    // c:2221
+                    if len > add + 2 {
+                        // c:2222
+                        if add != 0 {
+                            buf.push(' ');
+                        }
                         buf.push_str(&s[..((len - 2).max(0) as usize).min(s.len())]);
                     }
-                    buf.push_str("...");                                     // c:2227
-                    break 'outer;                                            // c:2228
+                    buf.push_str("..."); // c:2227
+                    break 'outer; // c:2228
                 }
             }
             mp += 1;
-            if mp >= g.matches.len() {                                       // c:2232
-                g_idx = (gi + 1..).find(|&i| i < groups.len()
-                                          && groups[i].mcount != 0);
-                if g_idx.is_none() { break 'outer; }
+            if mp >= g.matches.len() {
+                // c:2232
+                g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
+                if g_idx.is_none() {
+                    break 'outer;
+                }
                 continue 'outer;
             }
         }
         let _ = Ordering::Relaxed;
-        g_idx = (gi + 1..).find(|&i| i < groups.len()
-                                  && groups[i].mcount != 0);
+        g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
     }
-    buf                                                                      // c:2238 ztrdup(buf)
+    buf // c:2238 ztrdup(buf)
 }
 
 /// Port of `iprintm(Cmgroup g, Cmatch *mp, UNUSED(int mc), UNUSED(int ml), int lastc, int width)` from `Src/Zle/compresult.c:2241`.
@@ -1373,18 +1601,25 @@ pub fn bld_all_str() -> String {                                             // 
 pub fn iprintm(
     g: Option<&crate::ported::zle::comp_h::Cmgroup>,
     mp: Option<&crate::ported::zle::comp_h::Cmatch>,
-    mc: i32, ml: i32, lastc: i32, width: i32,
-) -> i32 {                                                                    // c:2241
+    mc: i32,
+    ml: i32,
+    lastc: i32,
+    width: i32,
+) -> i32 {
+    // c:2241
     use crate::ported::zle::comp_h::{CGF_FILES, CMF_ALL, CMF_DISPLINE};
     use std::sync::atomic::Ordering;
 
-    let m = match mp { None => return 0, Some(m) => m };                     // c:2245
+    let m = match mp {
+        None => return 0,
+        Some(m) => m,
+    }; // c:2245
     let mut disp_owned: String = String::new();
     let disp_ref: Option<&str> = m.disp.as_deref();
 
     // c:2249-2250 — if CMF_ALL with empty disp, build it via bld_all_str.
     if (m.flags & CMF_ALL) != 0 && disp_ref.map(|s| s.is_empty()).unwrap_or(true) {
-        disp_owned = bld_all_str();                                          // c:2250
+        disp_owned = bld_all_str(); // c:2250
     }
     let disp_now: Option<&str> = if !disp_owned.is_empty() {
         Some(disp_owned.as_str())
@@ -1398,18 +1633,21 @@ pub fn iprintm(
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
 
-    if let Some(d) = disp_now {                                              // c:2253
-        if (m.flags & CMF_DISPLINE) != 0 {                                   // c:2254
+    if let Some(d) = disp_now {
+        // c:2253
+        if (m.flags & CMF_DISPLINE) != 0 {
+            // c:2254
             // c:2255 — `printfmt(d, 0, 1, 0)` then `putc('\n', shout)`.
             let _ = crate::ported::utils::write_loop(out, d.as_bytes());
             let _ = crate::ported::utils::write_loop(out, b"\n");
-            return 0;                                                        // c:2257
+            return 0; // c:2257
         }
-        let _ = crate::ported::utils::write_loop(out, d.as_bytes());         // c:2260 niceformat
+        let _ = crate::ported::utils::write_loop(out, d.as_bytes()); // c:2260 niceformat
         len = d.chars().count() as i32;
-    } else {                                                                 // c:2263
+    } else {
+        // c:2263
         let s = m.str.as_deref().unwrap_or("");
-        let _ = crate::ported::utils::write_loop(out, s.as_bytes());         // c:2266
+        let _ = crate::ported::utils::write_loop(out, s.as_bytes()); // c:2266
         len = s.chars().count() as i32;
         // c:2270-2273 — append modec for file-completion groups.
         if let Some(grp) = g {
@@ -1421,7 +1659,8 @@ pub fn iprintm(
             }
         }
     }
-    if lastc == 0 {                                                          // c:2275
+    if lastc == 0 {
+        // c:2275
         // c:2278-2279 — pad with spaces up to column width.
         let pad = width - len;
         if pad > 0 {
@@ -1429,21 +1668,24 @@ pub fn iprintm(
             let _ = crate::ported::utils::write_loop(out, &spaces);
         }
     }
-    len                                                                      // c:2282
+    len // c:2282
 }
 
 /// Port of `int ilistmatches(Hookdef dummy, Chdata dat)` from
 /// `Src/Zle/compresult.c:2284`. Hook callback for the standard
 /// listing path: runs `calclist`, bails when `listdat.nlines == 0`,
 /// otherwise calls `printlist(0, iprintm, 0)`.
-pub fn ilistmatches() -> i32 {                                               // c:2284
-    use std::sync::atomic::Ordering;
+pub fn ilistmatches() -> i32 {
+    // c:2284
     use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
-    let _ = calclist(0);                                                     // c:2286
-    // c:2288 — bail when listdat.nlines == 0 (no matches to display).
+    use std::sync::atomic::Ordering;
+    let _ = calclist(0); // c:2286
+                         // c:2288 — bail when listdat.nlines == 0 (no matches to display).
     let nlines = crate::ported::zle::compcore::listdat
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
-        .lock().map(|g| g.nlines).unwrap_or(0);
+        .lock()
+        .map(|g| g.nlines)
+        .unwrap_or(0);
     if nlines == 0 {
         SHOWINGLIST.store(0, Ordering::Relaxed);
         LISTSHOWN.store(0, Ordering::Relaxed);
@@ -1451,7 +1693,7 @@ pub fn ilistmatches() -> i32 {                                               // 
     }
     // c:2295 — printlist(0, iprintm, 0).
     let _ = printlist(0, 0);
-    0                                                                        // c:2297
+    0 // c:2297
 }
 
 /// Port of `int list_matches(Hookdef dummy, void *dummy2)` from
@@ -1461,29 +1703,35 @@ pub fn ilistmatches() -> i32 {                                               // 
 /// Walks `amatches` into a `chdata` bag and dispatches via
 /// `runhookdef(COMPLISTMATCHESHOOK, &dat)` so `_main_complete`-style
 /// user hooks can override the default `ilistmatches` rendering.
-pub fn list_matches() -> i32 {                                               // c:2304
-    use std::sync::atomic::Ordering;
+pub fn list_matches() -> i32 {
+    // c:2304
     use crate::ported::zle::compcore::{amatches, nmatches as nmatches_g};
     use crate::ported::zle::zle_tricky::VALIDLIST;
-    if VALIDLIST.load(Ordering::SeqCst) == 0 {                               // c:2311
+    use std::sync::atomic::Ordering;
+    if VALIDLIST.load(Ordering::SeqCst) == 0 {
+        // c:2311
         crate::ported::zle::zle_utils::showmsg("BUG: listmatches called with bogus list");
-        return 1;                                                            // c:2313
+        return 1; // c:2313
     }
     // c:2317-2324 — populate the chdata bag.
-    let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let groups = amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     let mut dat = crate::ported::zle::comp_h::Chdata::default();
-    dat.matches = groups.into_iter().next().map(Box::new);                   // c:2317 first group head
-    dat.num     = nmatches_g.load(Ordering::Relaxed);                        // c:2319
-    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
-    // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
-    // When `gethookdef` returns NULL (no module registered a handler)
-    // or `runhookdef` returns 0 with no Hookfns, fall through to the
-    // canonical `ilistmatches` renderer.
+    dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
+    dat.num = nmatches_g.load(Ordering::Relaxed); // c:2319
+                                                  // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
+                                                  // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
+                                                  // When `gethookdef` returns NULL (no module registered a handler)
+                                                  // or `runhookdef` returns 0 with no Hookfns, fall through to the
+                                                  // canonical `ilistmatches` renderer.
     let h = crate::ported::module::gethookdef("complist-matches");
     let handled = if !h.is_null() {
-        let dat_ptr = (&mut dat) as *mut crate::ported::zle::comp_h::Chdata
-            as *mut std::ffi::c_void;
+        let dat_ptr =
+            (&mut dat) as *mut crate::ported::zle::comp_h::Chdata as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h, dat_ptr) != 0
     } else {
         false
@@ -1503,26 +1751,31 @@ pub fn list_matches() -> i32 {                                               // 
 /// (`lastambig`, `menucmp`, `menuacc`, `validlist`, `showinglist`,
 /// `fromcomp`) to 0, clears `listdat.valid`, and zeros out `nmatches`
 /// + `amatches`.
-pub fn invalidate_list() -> i32 {                                            // c:2334
-    use std::sync::atomic::Ordering;
+pub fn invalidate_list() -> i32 {
+    // c:2334
     use crate::ported::zle::compcore::{
         amatches, fromcomp, lastmatches, menuacc, nmatches as nmatches_g,
     };
     use crate::ported::zle::zle_refresh::SHOWINGLIST;
     use crate::ported::zle::zle_tricky::{LASTAMBIG, MENUCMP, VALIDLIST};
+    use std::sync::atomic::Ordering;
 
-    INVCOUNT.fetch_add(1, Ordering::SeqCst);                                 // c:2336
-    if VALIDLIST.load(Ordering::SeqCst) != 0 {                               // c:2337
-        if SHOWINGLIST.load(Ordering::SeqCst) == -2 {                        // c:2338
+    INVCOUNT.fetch_add(1, Ordering::SeqCst); // c:2336
+    if VALIDLIST.load(Ordering::SeqCst) != 0 {
+        // c:2337
+        if SHOWINGLIST.load(Ordering::SeqCst) == -2 {
+            // c:2338
             // c:2339 — `zrefresh()` triggers a screen redraw so the now-
             // invalidated listing isn't left on screen.
             crate::ported::zle::zle_refresh::zrefresh();
         }
         // c:2341 — `freematches(lastmatches, 1)` fires `minfo.cur = None`
         // via the cm=1 side-effect.
-        let drained = lastmatches.get_or_init(
-            || std::sync::Mutex::new(Vec::new())
-        ).lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
+        let drained = lastmatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default();
         crate::ported::zle::compcore::freematches(drained, 1);
         crate::ported::zle::compcore::hasoldlist.store(0, Ordering::SeqCst); // c:2343
     }
@@ -1536,7 +1789,8 @@ pub fn invalidate_list() -> i32 {                                            // 
     fromcomp.store(0, Ordering::SeqCst);
     // c:2346 — `listdat.valid = 0`.
     if let Ok(mut ld) = crate::ported::zle::compcore::listdat
-        .get_or_init(|| std::sync::Mutex::new(Default::default())).lock()
+        .get_or_init(|| std::sync::Mutex::new(Default::default()))
+        .lock()
     {
         ld.valid = 0;
     }
@@ -1549,17 +1803,17 @@ pub fn invalidate_list() -> i32 {                                            // 
     // ported as a static struct yet.
     // c:2354 — `compwidget = NULL`. The canonical `COMPWIDGET` static
     // lives in zle_main.rs.
-    nmatches_g.store(0, Ordering::SeqCst);                                   // c:2355
-    if let Ok(mut g) = amatches.get_or_init(
-        || std::sync::Mutex::new(Vec::new())
-    ).lock() {
-        g.clear();                                                           // c:2356
+    nmatches_g.store(0, Ordering::SeqCst); // c:2355
+    if let Ok(mut g) = amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+    {
+        g.clear(); // c:2356
     }
-    0                                                                        // c:2358
+    0 // c:2358
 }
 
-pub static INVCOUNT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:37
+pub static INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:37
 
 #[cfg(test)]
 mod tests {
@@ -1716,10 +1970,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366-1369 — positive: decrement then % m.
-        assert_eq!(comp_mod(1, 5), 0);   // (1-1) % 5 = 0
-        assert_eq!(comp_mod(3, 5), 2);   // (3-1) % 5 = 2
-        assert_eq!(comp_mod(5, 5), 4);   // (5-1) % 5 = 4
-        assert_eq!(comp_mod(6, 5), 0);   // (6-1) % 5 = 0
+        assert_eq!(comp_mod(1, 5), 0); // (1-1) % 5 = 0
+        assert_eq!(comp_mod(3, 5), 2); // (3-1) % 5 = 2
+        assert_eq!(comp_mod(5, 5), 4); // (5-1) % 5 = 4
+        assert_eq!(comp_mod(6, 5), 0); // (6-1) % 5 = 0
     }
 
     #[test]
@@ -1728,18 +1982,18 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366 — `if (v >= 0) v--;` so 0 → -1 → falls into else.
         // c:1370-1373 — wrap by adding m until non-negative.
-        assert_eq!(comp_mod(0, 5), 4);   // 0→-1→+5=4
-        assert_eq!(comp_mod(-1, 5), 4);  // -1+5=4
-        assert_eq!(comp_mod(-5, 5), 0);  // -5+5=0
-        assert_eq!(comp_mod(-6, 5), 4);  // -6+5=-1+5=4
+        assert_eq!(comp_mod(0, 5), 4); // 0→-1→+5=4
+        assert_eq!(comp_mod(-1, 5), 4); // -1+5=4
+        assert_eq!(comp_mod(-5, 5), 0); // -5+5=0
+        assert_eq!(comp_mod(-6, 5), 4); // -6+5=-1+5=4
     }
 
     #[test]
     fn comp_list_sets_onlyexpl() {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use std::sync::atomic::Ordering;
         use crate::ported::zle::compcore::onlyexpl;
+        use std::sync::atomic::Ordering;
         // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
         comp_list(Some("expl"));
         assert_eq!(onlyexpl.load(Ordering::SeqCst), 1);
@@ -1758,9 +2012,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_HIDE, CMF_NOLIST};
-        let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
-        let mut b = Cmatch::default(); b.flags = CMF_HIDE;
-        let c = Cmatch::default();      // listable
+        let mut a = Cmatch::default();
+        a.flags = CMF_NOLIST;
+        let mut b = Cmatch::default();
+        b.flags = CMF_HIDE;
+        let c = Cmatch::default(); // listable
         let v = vec![a, b, c];
         // c:1483 — mask = NOLIST|MULT|HIDE. First two skipped, third kept.
         assert_eq!(skipnolist(&v, 0), 2);
@@ -1771,7 +2027,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_NOLIST};
-        let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
+        let mut a = Cmatch::default();
+        a.flags = CMF_NOLIST;
         let v = vec![a];
         // c:1483 — showall=1 drops NOLIST|MULT from mask, only HIDE filters.
         assert_eq!(skipnolist(&v, 1), 0);

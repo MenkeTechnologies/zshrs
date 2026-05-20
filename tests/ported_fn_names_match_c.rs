@@ -85,8 +85,14 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                     i += 1;
                     while i < bytes.len() {
                         let c = bytes[i];
-                        if c == b'\\' { i += 2; continue; }
-                        if c == b'"' { i += 1; break; }
+                        if c == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if c == b'"' {
+                            i += 1;
+                            break;
+                        }
                         i += 1;
                     }
                 }
@@ -100,7 +106,9 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                     if j < bytes.len() && bytes[j] == b'"' {
                         i = j + 1;
                         loop {
-                            if i >= bytes.len() { break; }
+                            if i >= bytes.len() {
+                                break;
+                            }
                             if bytes[i] == b'"' {
                                 let mut closed = 0;
                                 let mut k = i + 1;
@@ -139,13 +147,21 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                         i = j + 1;
                     } else {
                         i += 1;
-                        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                        while i < bytes.len()
+                            && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                        {
                             i += 1;
                         }
                     }
                 }
-                b'{' => { delta += 1; i += 1; }
-                b'}' => { delta -= 1; i += 1; }
+                b'{' => {
+                    delta += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    delta -= 1;
+                    i += 1;
+                }
                 _ => i += 1,
             }
         }
@@ -198,8 +214,7 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
 /// Regenerate after pulling new upstream commits via:
 ///   `tests/data/extract_c_fn_names.sh`
 fn load_c_fn_index() -> HashMap<String, HashSet<String>> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/zsh_c_fn_names.txt");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/zsh_c_fn_names.txt");
     let src = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "missing C-function index at {} ({}). \
@@ -215,7 +230,8 @@ fn load_c_fn_index() -> HashMap<String, HashSet<String>> {
             continue;
         }
         if let Some((file, name)) = line.split_once(':') {
-            index.entry(name.to_string())
+            index
+                .entry(name.to_string())
                 .or_default()
                 .insert(file.to_string());
         }
@@ -303,8 +319,8 @@ fn ported_fns_match_c_source() {
     //
     // To shrink: inline the body at every call site (or rename to a
     // real C function), then remove the line from the snapshot file.
-    let allowlist_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/fake_fn_allowlist.txt");
+    let allowlist_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/fake_fn_allowlist.txt");
     let allowlist_src = fs::read_to_string(&allowlist_path).unwrap_or_else(|_| {
         panic!(
             "missing snapshot file {}. Generate via: \n  \
@@ -334,8 +350,7 @@ fn ported_fns_match_c_source() {
     // landing in the wrong file fails immediately.
     let file_mapping_allowlist_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data/ported_fn_file_mapping_allowlist.txt");
-    let file_mapping_src =
-        fs::read_to_string(&file_mapping_allowlist_path).unwrap_or_default();
+    let file_mapping_src = fs::read_to_string(&file_mapping_allowlist_path).unwrap_or_default();
     let file_mapping_allowlist: HashSet<String> = file_mapping_src
         .lines()
         .filter(|l| !l.trim_start().starts_with('#'))

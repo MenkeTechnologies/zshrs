@@ -46,8 +46,8 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 // =====================================================================
 // 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
@@ -65,54 +65,60 @@ pub const NSUBEXP: usize = 9;
 // endianness; we pin LE — see file header).
 // =====================================================================
 
-pub const P_END:        u8 = 0x00;  // c:97  End of program.
-pub const P_EXCSYNC:    u8 = 0x01;  // c:98  Test if following exclude already failed
-pub const P_EXCEND:     u8 = 0x02;  // c:99  Test if exclude matched orig branch
-pub const P_BACK:       u8 = 0x03;  // c:100 Match "", "next" ptr points backward.
-pub const P_EXACTLY:    u8 = 0x04;  // c:101 lstr — match this string.
-pub const P_NOTHING:    u8 = 0x05;  // c:102 Match empty string.
-pub const P_ONEHASH:    u8 = 0x06;  // c:103 node — match 0 or more of preceding simple.
-pub const P_TWOHASH:    u8 = 0x07;  // c:104 node — match 1 or more of preceding simple.
-pub const P_GFLAGS:     u8 = 0x08;  // c:105 long — match nothing and set globbing flags.
-pub const P_ISSTART:    u8 = 0x09;  // c:106 Match start of string.
-pub const P_ISEND:      u8 = 0x0a;  // c:107 Match end of string.
-pub const P_COUNTSTART: u8 = 0x0b;  // c:108 Initialise P_COUNT.
-pub const P_COUNT:      u8 = 0x0c;  // c:109 3*long uc* node — match a number of repetitions.
-pub const P_BRANCH:     u8 = 0x20;  // c:112 node — match this alternative, or the next.
-pub const P_WBRANCH:    u8 = 0x21;  // c:113 uc* node — P_BRANCH, but match at least 1 char.
-pub const P_EXCLUDE:    u8 = 0x30;  // c:114 uc* node — exclude this from previous branch.
-pub const P_EXCLUDP:    u8 = 0x31;  // c:115 uc* node — exclude, using full file path so far.
-pub const P_ANY:        u8 = 0x40;  // c:117 Match any one character.
-pub const P_ANYOF:      u8 = 0x41;  // c:118 str — match any character in this string.
-pub const P_ANYBUT:     u8 = 0x42;  // c:119 str — match any character not in this string.
-pub const P_STAR:       u8 = 0x43;  // c:120 Match any set of characters.
-pub const P_NUMRNG:     u8 = 0x44;  // c:121 zr,zr — match a numeric range.
-pub const P_NUMFROM:    u8 = 0x45;  // c:122 zr — match a number >= X.
-pub const P_NUMTO:      u8 = 0x46;  // c:123 zr — match a number <= X.
-pub const P_NUMANY:     u8 = 0x47;  // c:124 Match any set of decimal digits.
-pub const P_OPEN:       u8 = 0x80;  // c:126 Mark this point in input as start of n.
-pub const P_CLOSE:      u8 = 0x90;  // c:127 Analogous to OPEN.
+pub const P_END: u8 = 0x00; // c:97  End of program.
+pub const P_EXCSYNC: u8 = 0x01; // c:98  Test if following exclude already failed
+pub const P_EXCEND: u8 = 0x02; // c:99  Test if exclude matched orig branch
+pub const P_BACK: u8 = 0x03; // c:100 Match "", "next" ptr points backward.
+pub const P_EXACTLY: u8 = 0x04; // c:101 lstr — match this string.
+pub const P_NOTHING: u8 = 0x05; // c:102 Match empty string.
+pub const P_ONEHASH: u8 = 0x06; // c:103 node — match 0 or more of preceding simple.
+pub const P_TWOHASH: u8 = 0x07; // c:104 node — match 1 or more of preceding simple.
+pub const P_GFLAGS: u8 = 0x08; // c:105 long — match nothing and set globbing flags.
+pub const P_ISSTART: u8 = 0x09; // c:106 Match start of string.
+pub const P_ISEND: u8 = 0x0a; // c:107 Match end of string.
+pub const P_COUNTSTART: u8 = 0x0b; // c:108 Initialise P_COUNT.
+pub const P_COUNT: u8 = 0x0c; // c:109 3*long uc* node — match a number of repetitions.
+pub const P_BRANCH: u8 = 0x20; // c:112 node — match this alternative, or the next.
+pub const P_WBRANCH: u8 = 0x21; // c:113 uc* node — P_BRANCH, but match at least 1 char.
+pub const P_EXCLUDE: u8 = 0x30; // c:114 uc* node — exclude this from previous branch.
+pub const P_EXCLUDP: u8 = 0x31; // c:115 uc* node — exclude, using full file path so far.
+pub const P_ANY: u8 = 0x40; // c:117 Match any one character.
+pub const P_ANYOF: u8 = 0x41; // c:118 str — match any character in this string.
+pub const P_ANYBUT: u8 = 0x42; // c:119 str — match any character not in this string.
+pub const P_STAR: u8 = 0x43; // c:120 Match any set of characters.
+pub const P_NUMRNG: u8 = 0x44; // c:121 zr,zr — match a numeric range.
+pub const P_NUMFROM: u8 = 0x45; // c:122 zr — match a number >= X.
+pub const P_NUMTO: u8 = 0x46; // c:123 zr — match a number <= X.
+pub const P_NUMANY: u8 = 0x47; // c:124 Match any set of decimal digits.
+pub const P_OPEN: u8 = 0x80; // c:126 Mark this point in input as start of n.
+pub const P_CLOSE: u8 = 0x90; // c:127 Analogous to OPEN.
 
 /// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
 #[inline]
-pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
+pub fn P_ISBRANCH(op: u8) -> bool {
+    (op & 0x20) != 0
+}
 
 /// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
 #[inline]
-pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
+pub fn P_ISEXCLUDE(op: u8) -> bool {
+    (op & 0x30) == 0x30
+}
 
 /// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
 #[inline]
-pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
+pub fn P_NOTDOT(op: u8) -> bool {
+    (op & 0x40) != 0
+}
 
 // =====================================================================
 // 3. Flag-bit constants returned via flagp out-params during compile.
 // pattern.c:216-218
 // =====================================================================
 
-pub const P_SIMPLE:  i32 = 0x01;  // c:216 Simple enough to be # / ## operand.
-pub const P_HSTART:  i32 = 0x02;  // c:217 Starts with # or ##'d pattern.
-pub const P_PURESTR: i32 = 0x04;  // c:218 Can be matched with a strcmp.
+pub const P_SIMPLE: i32 = 0x01; // c:216 Simple enough to be # / ## operand.
+pub const P_HSTART: i32 = 0x02; // c:217 Starts with # or ##'d pattern.
+pub const P_PURESTR: i32 = 0x04; // c:218 Can be matched with a strcmp.
 
 // =====================================================================
 // 5. PAT_* flag constants — re-exports of zsh.h:1623-1640 already in
@@ -122,22 +128,22 @@ pub const P_PURESTR: i32 = 0x04;  // c:218 Can be matched with a strcmp.
 // =====================================================================
 
 pub use crate::ported::zsh_h::{
-    PAT_HEAPDUP, PAT_FILE, PAT_FILET, PAT_ANY, PAT_NOANCH, PAT_NOGLD,
-    PAT_PURES, PAT_STATIC, PAT_SCAN, PAT_ZDUP, PAT_NOTSTART, PAT_NOTEND,
-    PAT_HAS_EXCLUDP, PAT_LCMATCHUC,
+    PAT_ANY, PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH,
+    PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
 };
 
 // C: `static int patnpar;` — number of active parens (1-indexed at
 // compile time; the *struct* patnpar is the actual count).
-pub static patnpar: AtomicI32 = AtomicI32::new(0);              // c:271
+pub static patnpar: AtomicI32 = AtomicI32::new(0); // c:271
 
 // GF_* glob-flag bits live in `zsh.h:1763-1773`, ported to
 // `src/ported/zsh_h.rs:2287-2291` per Rule C. Re-export so pattern's
 // matcher arms can read them without the longer path.
-pub use crate::ported::zsh_h::{
-    GF_LCMATCHUC, GF_IGNCASE, GF_BACKREF, GF_MATCHREF, GF_MULTIBYTE,
+pub use crate::ported::zsh_h::{GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE};
+use crate::zsh_h::{
+    patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK,
+    ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
 };
-use crate::zsh_h::{patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE};
 
 // =====================================================================
 // 7. File-static globals — direct mirror of pattern.c file-scope
@@ -156,13 +162,13 @@ use crate::zsh_h::{patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT
 //
 // In Rust, `Vec<u8>` already tracks both len and capacity, so we
 // hold just the buffer; patcode/patsize/patalloc are derived.
-pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new());     // c:267
+pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new()); // c:267
 
 // C: `static int patflags;` — current PAT_* flag set during compile.
-pub static patflags: AtomicI32 = AtomicI32::new(0);             // c:272
+pub static patflags: AtomicI32 = AtomicI32::new(0); // c:272
 
 // C: `static int patglobflags;` — current globbing flags during compile.
-pub static patglobflags: AtomicI32 = AtomicI32::new(0);         // c:273
+pub static patglobflags: AtomicI32 = AtomicI32::new(0); // c:273
 
 // =====================================================================
 // 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
@@ -171,7 +177,7 @@ pub static patglobflags: AtomicI32 = AtomicI32::new(0);         // c:273
 /// Port of `clear_shiftstate()` from `Src/pattern.c:327`. C uses
 /// `mbstate_t`; Rust `char` is already a code point, so no shift
 /// state to clear.
-pub fn clear_shiftstate() {}                                                  // c:327
+pub fn clear_shiftstate() {} // c:327
 
 /// Port of `metacharinc(char **x)` from `Src/pattern.c:336`. Advances past
 /// Port of `wchar_t metacharinc(char **x)` from `Src/pattern.c:336`.
@@ -190,11 +196,16 @@ pub fn clear_shiftstate() {}                                                  //
 /// pattern compiler stores raw chars; translation happens at
 /// compile time, not at scan time.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x)
-pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
+pub fn metacharinc(s: &str, pos: usize) -> usize {
+    // c:336
     // c:343-360 single-byte short-circuit + c:363-380 mbrtowc loop:
     // both collapse to Rust's `chars().next()` which decodes one
     // valid UTF-8 codepoint from the slice, regardless of byte width.
-    s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
+    s[pos..]
+        .chars()
+        .next()
+        .map(|c| pos + c.len_utf8())
+        .unwrap_or(pos)
 }
 
 // =====================================================================
@@ -207,7 +218,8 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {                            //
 /// Adds `n` bytes (or repeats `ch`) to patout, growing if needed.
 /// Returns offset where the bytes were appended.
 #[allow(unused_variables)]
-fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {        // c:412
+fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {
+    // c:412
     let mut buf = patout.lock().unwrap();
     let start = buf.len() as i64;
     if let Some(bytes) = add {
@@ -239,40 +251,41 @@ fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {        // c
 /// `disables` (from `disable -p`) is not yet modeled in zshrs — the C
 /// `for (i=0; i<ZPC_COUNT; ...) if (*disp) *spp = Marker;` pass is
 /// skipped pending the disable-table port.
-pub fn patcompcharsset() {                                                    // c:464
+pub fn patcompcharsset() {
+    // c:464
     use crate::ported::zsh_h::{
-        EXTENDEDGLOB, KSHGLOB, SHGLOB, Marker as MARKER_CH,
-        ZPC_HASH as ZPC_HASH_C, ZPC_HAT as ZPC_HAT_C, ZPC_INANG as ZPC_INANG_C,
-        ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2,
-        ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE as ZPC_TILDE_C,
+        Marker as MARKER_CH, EXTENDEDGLOB, KSHGLOB, SHGLOB, ZPC_HASH as ZPC_HASH_C,
+        ZPC_HAT as ZPC_HAT_C, ZPC_INANG as ZPC_INANG_C, ZPC_INPAR as ZPC_INPAR_C, ZPC_KSH_AT,
+        ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR,
+        ZPC_TILDE as ZPC_TILDE_C,
     };
     let mut sp = zpc_special.lock().unwrap();
     *sp = [0u8; ZPC_COUNT as usize];
     // c:469 — `memcpy(zpc_special, zpc_chars, ZPC_COUNT)`. The default
     // char for every ZPC_* slot. Direct positional assignment here
     // since zshrs doesn't carry the `zpc_chars` const array yet.
-    sp[ZPC_SLASH as usize]     = b'/';
-    sp[ZPC_NULL as usize]      = 0;
-    sp[ZPC_BAR as usize]       = b'|';
-    sp[ZPC_OUTPAR as usize]    = b')';
-    sp[ZPC_TILDE as usize]     = b'~';
-    sp[ZPC_INPAR as usize]     = b'(';
-    sp[ZPC_QUEST as usize]     = b'?';
-    sp[ZPC_STAR as usize]      = b'*';
-    sp[ZPC_INBRACK as usize]   = b'[';
-    sp[ZPC_INANG as usize]     = b'<';
-    sp[ZPC_HAT as usize]       = b'^';
-    sp[ZPC_HASH as usize]      = b'#';
+    sp[ZPC_SLASH as usize] = b'/';
+    sp[ZPC_NULL as usize] = 0;
+    sp[ZPC_BAR as usize] = b'|';
+    sp[ZPC_OUTPAR as usize] = b')';
+    sp[ZPC_TILDE as usize] = b'~';
+    sp[ZPC_INPAR as usize] = b'(';
+    sp[ZPC_QUEST as usize] = b'?';
+    sp[ZPC_STAR as usize] = b'*';
+    sp[ZPC_INBRACK as usize] = b'[';
+    sp[ZPC_INANG as usize] = b'<';
+    sp[ZPC_HAT as usize] = b'^';
+    sp[ZPC_HASH as usize] = b'#';
     sp[ZPC_BNULLKEEP as usize] = 0;
     // c:478-490 — KSH_GLOB slots (omitted from previous Rust port).
     // Each defaults to the literal ksh-glob trigger char. The
     // option-mask pass below disables them when KSHGLOB is off.
     sp[ZPC_KSH_QUEST as usize] = b'?';
-    sp[ZPC_KSH_STAR  as usize] = b'*';
-    sp[ZPC_KSH_PLUS  as usize] = b'+';
-    sp[ZPC_KSH_BANG  as usize] = b'!';
+    sp[ZPC_KSH_STAR as usize] = b'*';
+    sp[ZPC_KSH_PLUS as usize] = b'+';
+    sp[ZPC_KSH_BANG as usize] = b'!';
     sp[ZPC_KSH_BANG2 as usize] = b'!';
-    sp[ZPC_KSH_AT    as usize] = b'@';
+    sp[ZPC_KSH_AT as usize] = b'@';
 
     let marker_byte = MARKER_CH as u32 as u8;
 
@@ -287,7 +300,7 @@ pub fn patcompcharsset() {                                                    //
         let disp = zpc_disables.lock().unwrap();
         for i in 0..(ZPC_COUNT as usize) {
             if disp[i] != 0 {
-                sp[i] = marker_byte;                                          // c:476
+                sp[i] = marker_byte; // c:476
             }
         }
     }
@@ -295,18 +308,18 @@ pub fn patcompcharsset() {                                                    //
     // c:480-483 — `if (!isset(EXTENDEDGLOB))` mask Tilde/Hat/Hash.
     if !crate::ported::zsh_h::isset(EXTENDEDGLOB) {
         sp[ZPC_TILDE_C as usize] = marker_byte;
-        sp[ZPC_HAT_C   as usize] = marker_byte;
-        sp[ZPC_HASH_C  as usize] = marker_byte;
+        sp[ZPC_HAT_C as usize] = marker_byte;
+        sp[ZPC_HASH_C as usize] = marker_byte;
     }
 
     // c:485-491 — `if (!isset(KSHGLOB))` mask the six KSH_* slots.
     if !crate::ported::zsh_h::isset(KSHGLOB) {
         sp[ZPC_KSH_QUEST as usize] = marker_byte;
-        sp[ZPC_KSH_STAR  as usize] = marker_byte;
-        sp[ZPC_KSH_PLUS  as usize] = marker_byte;
-        sp[ZPC_KSH_BANG  as usize] = marker_byte;
+        sp[ZPC_KSH_STAR as usize] = marker_byte;
+        sp[ZPC_KSH_PLUS as usize] = marker_byte;
+        sp[ZPC_KSH_BANG as usize] = marker_byte;
         sp[ZPC_KSH_BANG2 as usize] = marker_byte;
-        sp[ZPC_KSH_AT    as usize] = marker_byte;
+        sp[ZPC_KSH_AT as usize] = marker_byte;
     }
 
     // c:499-505 — `if (isset(SHGLOB))` mask Inpar/Inang (case/numeric
@@ -335,8 +348,9 @@ pub fn patcompcharsset() {                                                    //
 /// GF_MULTIBYTE even when `setopt nomultibyte`, (c) NEVER set
 /// GF_IGNCASE — `setopt nocaseglob` had zero effect on pattern
 /// case-folding.
-pub fn patcompstart() {                                                       // c:517
-    use crate::ported::zsh_h::{CASEGLOB, CASEPATHS, MULTIBYTE, isset};
+pub fn patcompstart() {
+    // c:517
+    use crate::ported::zsh_h::{isset, CASEGLOB, CASEPATHS, MULTIBYTE};
     // c:519 — `patcompcharsset()` FIRST.
     patcompcharsset();
     patout.lock().unwrap().clear();
@@ -344,13 +358,13 @@ pub fn patcompstart() {                                                       //
     patflags.store(0, Ordering::Relaxed);
     // c:520-523 — CASE option dispatch.
     let mut flags: i32 = if isset(CASEGLOB) || isset(CASEPATHS) {
-        0                                                                    // c:521 case-sensitive
+        0 // c:521 case-sensitive
     } else {
-        GF_IGNCASE                                                           // c:523 default = ignore case
+        GF_IGNCASE // c:523 default = ignore case
     };
     // c:524-525 — MULTIBYTE option respect.
     if isset(MULTIBYTE) {
-        flags |= GF_MULTIBYTE;                                               // c:525
+        flags |= GF_MULTIBYTE; // c:525
     }
     patglobflags.store(flags, Ordering::Relaxed);
     errsfound.store(0, Ordering::Relaxed);
@@ -370,9 +384,7 @@ pub fn patcompstart() {                                                       //
 /// the input cursor at end of parse — used by `bin_zregexparse` to
 /// detect partial-parse cases.
 /// WARNING: param names don't match C — Rust=() vs C=(exp, inflags, endexp)
-pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   // c:540
-    -> Option<Patprog>
-{
+pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> Option<Patprog> {
     // Hold the compile mutex for the entire body — `patcompstart`
     // resets every file-scope static (`Src/pattern.c:267-281`) and the
     // emit/parse helpers mutate them in sequence. C is single-threaded
@@ -381,7 +393,10 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
     patcompstart();
     *patstart.lock().unwrap() = exp.to_string();
     *patparse.lock().unwrap() = exp.to_string();
-    patflags.store(inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32, Ordering::Relaxed); // c:566
+    patflags.store(
+        inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32,
+        Ordering::Relaxed,
+    ); // c:566
     patglobflags.store(0, Ordering::Relaxed);
 
     // c:583-590 — emit P_GFLAGS placeholder. Phase 5.1: instead of
@@ -401,8 +416,8 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
         drop(p);
         match patgetglobflags(&rest) {
             Some((bits, _assert, consumed)) => {
-                hoisted_globflags |= bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE
-                    | GF_BACKREF | GF_MATCHREF);
+                hoisted_globflags |=
+                    bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | GF_BACKREF | GF_MATCHREF);
                 if (bits & GF_MULTIBYTE) == 0 && rest.contains('U') {
                     hoisted_globflags &= !GF_MULTIBYTE;
                 }
@@ -415,7 +430,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
     let mut flagp: i32 = 0;
     let root = patcompswitch(0, &mut flagp);
     if root < 0 {
-        return None;                                                          // c:646 compile error
+        return None; // c:646 compile error
     }
     // Emit the terminal P_END and chain every branch's operand to it.
     let end_off = patnode(P_END);
@@ -449,7 +464,8 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
 /// C: `static long patcompswitch(int paren, int *flagp)`. Parses an
 /// alternation (`a|b|c`), emitting a chain of P_BRANCH nodes. Returns
 /// offset of the first branch, or -1 on error.
-pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    // c:765
+pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
+    // c:765
     // Emit the first P_BRANCH header. Its operand is the content
     // emitted by the immediately-following patcompbranch call (lives
     // inline at starter+I_BODY). Does NOT emit a terminator — caller
@@ -458,7 +474,9 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    //
     let starter = patnode(P_BRANCH);
     let mut branch_flags: i32 = 0;
     let first_branch = patcompbranch(&mut branch_flags, paren);
-    if first_branch < 0 { return -1; }
+    if first_branch < 0 {
+        return -1;
+    }
     *flagp |= branch_flags & P_HSTART;
 
     let mut last_branch = starter;
@@ -467,9 +485,13 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    //
     loop {
         let off = patparse_off.load(Ordering::Relaxed);
         let parse = patparse.lock().unwrap();
-        if off >= parse.len() { break; }
+        if off >= parse.len() {
+            break;
+        }
         let c = parse.as_bytes()[off];
-        if c != b'|' { break; }
+        if c != b'|' {
+            break;
+        }
         drop(parse);
         patparse_off.fetch_add(1, Ordering::Relaxed);
         let br = patnode(P_BRANCH);
@@ -478,7 +500,9 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    //
         set_next(last_branch, br);
         let mut bf: i32 = 0;
         let inner = patcompbranch(&mut bf, paren);
-        if inner < 0 { return -1; }
+        if inner < 0 {
+            return -1;
+        }
         *flagp |= bf & P_HSTART;
         last_branch = br;
     }
@@ -492,7 +516,8 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    //
 /// C: `static long patcompbranch(int *flagp, int paren)`. Parses a
 /// single branch — a sequence of pieces. Returns offset of the first
 /// node in the branch, or -1 on error.
-pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    // c:942
+pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
+    // c:942
     let mut chain_start: i64 = -1;
     let mut last_tail: usize = 0;
     *flagp = P_PURESTR;
@@ -506,17 +531,23 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
             let parse = patparse.lock().unwrap();
             parse.as_bytes().to_vec()
         };
-        if off >= snapshot.len() { break; }
+        if off >= snapshot.len() {
+            break;
+        }
         let c = snapshot[off];
         // Branch terminators: |, ), end of pattern.
-        if c == b'|' || c == b')' { break; }
+        if c == b'|' || c == b')' {
+            break;
+        }
         let bytes = snapshot.as_slice();
         // Mid-pattern `(#cN,M)` counted-repetition specifier — emit
         // P_COUNT with bounds + inline operand following. Detected
         // BEFORE the generic patgetglobflags path because `c` is not
         // a flag char in that fn.
-        if off + 2 < bytes.len() && bytes[off] == b'(' && bytes[off + 1] == b'#'
-           && bytes[off + 2] == b'c'
+        if off + 2 < bytes.len()
+            && bytes[off] == b'('
+            && bytes[off + 1] == b'#'
+            && bytes[off + 2] == b'c'
         {
             let mut j = off + 3;
             let mut min: i64 = 0;
@@ -535,7 +566,9 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
                         mx = mx * 10 + (bytes[j] - b'0') as i64;
                         j += 1;
                     }
-                    if j > max_start { max = mx; }
+                    if j > max_start {
+                        max = mx;
+                    }
                 } else {
                     // (#cN) — exact count N.
                     max = min;
@@ -553,12 +586,17 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
                     let mut piece_flags: i32 = 0;
                     let mut piece_tail: usize = 0;
                     let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
-                    if piece < 0 { return -1; }
+                    if piece < 0 {
+                        return -1;
+                    }
                     // Terminate operand chain with 0 so matcher
                     // knows to stop iterating the body each pass.
                     set_next(piece_tail, 0);
-                    if chain_start < 0 { chain_start = count_off as i64; }
-                    else { set_next(last_tail, count_off); }
+                    if chain_start < 0 {
+                        chain_start = count_off as i64;
+                    } else {
+                        set_next(last_tail, count_off);
+                    }
                     last_tail = count_off;
                     continue;
                 }
@@ -580,15 +618,21 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
                     let mut buf = patout.lock().unwrap();
                     buf.extend_from_slice(&flag_bits.to_le_bytes());
                     drop(buf);
-                    if chain_start < 0 { chain_start = gf_off as i64; }
-                    else { set_next(last_tail, gf_off); }
+                    if chain_start < 0 {
+                        chain_start = gf_off as i64;
+                    } else {
+                        set_next(last_tail, gf_off);
+                    }
                     last_tail = gf_off;
                 }
                 // Emit P_ISSTART / P_ISEND when assertp set.
                 if assertp != 0 {
                     let as_off = patnode(assertp as u8);
-                    if chain_start < 0 { chain_start = as_off as i64; }
-                    else { set_next(last_tail, as_off); }
+                    if chain_start < 0 {
+                        chain_start = as_off as i64;
+                    } else {
+                        set_next(last_tail, as_off);
+                    }
                     last_tail = as_off;
                 }
                 continue;
@@ -599,7 +643,9 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
         let mut piece_flags: i32 = 0;
         let mut piece_tail: usize = 0;
         let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
-        if piece < 0 { return -1; }
+        if piece < 0 {
+            return -1;
+        }
         if chain_start < 0 {
             chain_start = piece;
         } else {
@@ -634,39 +680,79 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
 /// `flag_bits` is the OR of `GF_*` constants currently set;
 /// `assertp_val` is `P_ISSTART` / `P_ISEND` / 0; `consumed_bytes`
 /// counts bytes consumed including the closing `)`.
-pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                // c:1037
+pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
+    // c:1037
     let bytes = s.as_bytes();
-    if !s.starts_with("(#") { return None; }
+    if !s.starts_with("(#") {
+        return None;
+    }
     let mut i = 2;
     let mut bits: i32 = 0;
     let mut assertp: i64 = 0;
 
     while i < bytes.len() && bytes[i] != b')' {
-        match bytes[i] {                                                      // c:1051
+        match bytes[i] {
+            // c:1051
             // c:1075 — `'i'`: full case-insensitive, clears LCMATCHUC.
-            b'i' => { bits |= GF_IGNCASE;   bits &= !GF_LCMATCHUC; i += 1; }
+            b'i' => {
+                bits |= GF_IGNCASE;
+                bits &= !GF_LCMATCHUC;
+                i += 1;
+            }
             // c:1080-1081 — `'I'` clears BOTH GF_LCMATCHUC AND
             // GF_IGNCASE: `patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE)`.
             // The previous Rust port only cleared GF_IGNCASE,
             // leaving GF_LCMATCHUC stuck on under `(#l)(#I)`.
-            b'I' => { bits &= !(GF_LCMATCHUC | GF_IGNCASE); i += 1; }         // c:1080-1081
+            b'I' => {
+                bits &= !(GF_LCMATCHUC | GF_IGNCASE);
+                i += 1;
+            } // c:1080-1081
             // c:1070 — `'l'`: lowercase-in-pattern matches upper-too,
             // clears GF_IGNCASE.
-            b'l' => { bits |= GF_LCMATCHUC; bits &= !GF_IGNCASE;   i += 1; }
+            b'l' => {
+                bits |= GF_LCMATCHUC;
+                bits &= !GF_IGNCASE;
+                i += 1;
+            }
             // c: `'L'` is NOT a documented C flag — C returns 0 from
             // the default arm. The previous Rust port accepted `'L'`
             // and silently cleared GF_LCMATCHUC, diverging from C's
             // reject behavior. Remove the spurious arm so unknown
             // flags fall through to the default `_ => return None`.
-            b'b' => { bits |= GF_BACKREF;   i += 1; }                         // c:1085
-            b'B' => { bits &= !GF_BACKREF;  i += 1; }                         // c:1090
-            b'm' => { bits |= GF_MATCHREF;  i += 1; }                         // c:1095
-            b'M' => { bits &= !GF_MATCHREF; i += 1; }                         // c:1100
-            b's' => { assertp = P_ISSTART as i64; i += 1; }                   // c:1105
-            b'e' => { assertp = P_ISEND   as i64; i += 1; }                   // c:1110
-            b'u' => { bits |= GF_MULTIBYTE;  i += 1; }                        // c:1113
-            b'U' => { bits &= !GF_MULTIBYTE; i += 1; }                        // c:1116
-            b'a' => {                                                         // c:1056 approximate
+            b'b' => {
+                bits |= GF_BACKREF;
+                i += 1;
+            } // c:1085
+            b'B' => {
+                bits &= !GF_BACKREF;
+                i += 1;
+            } // c:1090
+            b'm' => {
+                bits |= GF_MATCHREF;
+                i += 1;
+            } // c:1095
+            b'M' => {
+                bits &= !GF_MATCHREF;
+                i += 1;
+            } // c:1100
+            b's' => {
+                assertp = P_ISSTART as i64;
+                i += 1;
+            } // c:1105
+            b'e' => {
+                assertp = P_ISEND as i64;
+                i += 1;
+            } // c:1110
+            b'u' => {
+                bits |= GF_MULTIBYTE;
+                i += 1;
+            } // c:1113
+            b'U' => {
+                bits &= !GF_MULTIBYTE;
+                i += 1;
+            } // c:1116
+            b'a' => {
+                // c:1056 approximate
                 i += 1;
                 // c:1057 — `ret = zstrtol(++ptr, &nptr, 10);` — C
                 // explicitly checks `ptr == nptr` (no digits
@@ -678,19 +764,27 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                //
                     errs = errs * 10 + (bytes[i] - b'0') as i32;
                     i += 1;
                 }
-                if i == digit_start {                                         // c:1063 ptr == nptr
+                if i == digit_start {
+                    // c:1063 ptr == nptr
                     return None;
                 }
-                if errs < 0 || errs > 254 { return None; }                    // c:1064
-                bits = (bits & !0xff) | (errs & 0xff);                        // c:1066
+                if errs < 0 || errs > 254 {
+                    return None;
+                } // c:1064
+                bits = (bits & !0xff) | (errs & 0xff); // c:1066
             }
-            b'q' => {                                                         // c:1048 qualifiers — skip
-                while i < bytes.len() && bytes[i] != b')' { i += 1; }
+            b'q' => {
+                // c:1048 qualifiers — skip
+                while i < bytes.len() && bytes[i] != b')' {
+                    i += 1;
+                }
             }
             _ => return None,
         }
     }
-    if i >= bytes.len() { return None; }
+    if i >= bytes.len() {
+        return None;
+    }
     i += 1; // skip ')'
     Some((bits, assertp, i))
 }
@@ -703,8 +797,12 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                //
 /// integer code for a POSIX character class name (e.g. "alpha" → 1).
 /// Returns None for unknown names.
 /// WARNING: param names don't match C — Rust=(name) vs C=(start, len)
-pub fn range_type(name: &str) -> Option<usize> {                              // c:1148
-    POSIX_CLASS_NAMES.iter().position(|n| *n == name).map(|i| i + 1)
+pub fn range_type(name: &str) -> Option<usize> {
+    // c:1148
+    POSIX_CLASS_NAMES
+        .iter()
+        .position(|n| *n == name)
+        .map(|i| i + 1)
 }
 
 /// Port of `int pattern_range_to_string(char *rangestr, char *outstr)`
@@ -718,8 +816,9 @@ pub fn range_type(name: &str) -> Option<usize> {                              //
 /// the chars and emits POSIX class names from the `[i]` table at
 /// `range_type`'s reverse lookup.
 /// WARNING: param names don't match C — Rust=(rangestr) vs C=(rangestr, outstr)
-pub fn pattern_range_to_string(rangestr: &str) -> String {                   // c:1179
-    let mut out = String::with_capacity(rangestr.len());                     // c:1181 int len = 0
+pub fn pattern_range_to_string(rangestr: &str) -> String {
+    // c:1179
+    let mut out = String::with_capacity(rangestr.len()); // c:1181 int len = 0
     let mut chars = rangestr.chars().peekable();
     while let Some(c) = chars.next() {
         // c:1184-1247 — swtype dispatch via Meta+PP_*. zshrs stores
@@ -744,21 +843,21 @@ pub fn pattern_range_to_string(rangestr: &str) -> String {                   // 
                     chars.next();
                 }
             }
-            out.push_str(&format!("[:{}:]", name));                          // c:1244
+            out.push_str(&format!("[:{}:]", name)); // c:1244
         } else {
             // c:1185-1213 — single-char or range pair.
             // Check for `c1-c2` PP_RANGE form.
-            out.push(c);                                                     // c:1210/1216
+            out.push(c); // c:1210/1216
             if chars.peek() == Some(&'-') {
                 chars.next();
                 if let Some(c2) = chars.next() {
-                    out.push('-');                                           // c:1219
-                    out.push(c2);                                            // c:1220
+                    out.push('-'); // c:1219
+                    out.push(c2); // c:1220
                 }
             }
         }
     }
-    out                                                                       // c:1261 return len
+    out // c:1261 return len
 }
 
 /// Port of `patcomppiece(int *flagp, int paren)` from `Src/pattern.c:1261`.
@@ -772,7 +871,8 @@ pub fn pattern_range_to_string(rangestr: &str) -> String {                   // 
 /// `(...)` / quantified atoms it points to the trailing P_CLOSE_N or
 /// quantifier-injected node.
 /// WARNING: param names don't match C — Rust=(flagp, paren, tail_out) vs C=(flagp, paren)
-pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { // c:1261
+pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
+    // c:1261
     let _ = paren;
     let off = patparse_off.load(Ordering::Relaxed);
     let parse = patparse.lock().unwrap();
@@ -817,38 +917,103 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
                 i_b += 1;
             }
             while i_b < bb.len() && bb[i_b] != b']' {
-                if i_b + 1 < bb.len() && bb[i_b] == b'[' && bb[i_b+1] == b':' {
+                if i_b + 1 < bb.len() && bb[i_b] == b'[' && bb[i_b + 1] == b':' {
                     let class_start = i_b + 2;
                     let mut j_b = class_start;
-                    while j_b + 1 < bb.len() && !(bb[j_b] == b':' && bb[j_b+1] == b']') {
+                    while j_b + 1 < bb.len() && !(bb[j_b] == b':' && bb[j_b + 1] == b']') {
                         j_b += 1;
                     }
                     if j_b + 1 < bb.len() {
                         let class_name = std::str::from_utf8(&bb[class_start..j_b]).unwrap_or("");
                         // Inline POSIX class expansion.
                         match class_name {
-                            "alpha" => { for c in b'a'..=b'z' { chars.push(c); } for c in b'A'..=b'Z' { chars.push(c); } }
-                            "upper" => { for c in b'A'..=b'Z' { chars.push(c); } }
-                            "lower" => { for c in b'a'..=b'z' { chars.push(c); } }
-                            "digit" => { for c in b'0'..=b'9' { chars.push(c); } }
-                            "xdigit" => { for c in b'0'..=b'9' { chars.push(c); } for c in b'a'..=b'f' { chars.push(c); } for c in b'A'..=b'F' { chars.push(c); } }
-                            "alnum" => { for c in b'a'..=b'z' { chars.push(c); } for c in b'A'..=b'Z' { chars.push(c); } for c in b'0'..=b'9' { chars.push(c); } }
-                            "space" => { for b in b" \t\n\r\x0b\x0c".iter() { chars.push(*b); } }
-                            "blank" => { chars.push(b' '); chars.push(b'\t'); }
-                            "punct" => { for b in b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".iter() { chars.push(*b); } }
-                            "cntrl" => { for c in 0u8..=31 { chars.push(c); } chars.push(127); }
-                            "print" => { for c in 32u8..=126 { chars.push(c); } }
-                            "graph" => { for c in 33u8..=126 { chars.push(c); } }
+                            "alpha" => {
+                                for c in b'a'..=b'z' {
+                                    chars.push(c);
+                                }
+                                for c in b'A'..=b'Z' {
+                                    chars.push(c);
+                                }
+                            }
+                            "upper" => {
+                                for c in b'A'..=b'Z' {
+                                    chars.push(c);
+                                }
+                            }
+                            "lower" => {
+                                for c in b'a'..=b'z' {
+                                    chars.push(c);
+                                }
+                            }
+                            "digit" => {
+                                for c in b'0'..=b'9' {
+                                    chars.push(c);
+                                }
+                            }
+                            "xdigit" => {
+                                for c in b'0'..=b'9' {
+                                    chars.push(c);
+                                }
+                                for c in b'a'..=b'f' {
+                                    chars.push(c);
+                                }
+                                for c in b'A'..=b'F' {
+                                    chars.push(c);
+                                }
+                            }
+                            "alnum" => {
+                                for c in b'a'..=b'z' {
+                                    chars.push(c);
+                                }
+                                for c in b'A'..=b'Z' {
+                                    chars.push(c);
+                                }
+                                for c in b'0'..=b'9' {
+                                    chars.push(c);
+                                }
+                            }
+                            "space" => {
+                                for b in b" \t\n\r\x0b\x0c".iter() {
+                                    chars.push(*b);
+                                }
+                            }
+                            "blank" => {
+                                chars.push(b' ');
+                                chars.push(b'\t');
+                            }
+                            "punct" => {
+                                for b in b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".iter() {
+                                    chars.push(*b);
+                                }
+                            }
+                            "cntrl" => {
+                                for c in 0u8..=31 {
+                                    chars.push(c);
+                                }
+                                chars.push(127);
+                            }
+                            "print" => {
+                                for c in 32u8..=126 {
+                                    chars.push(c);
+                                }
+                            }
+                            "graph" => {
+                                for c in 33u8..=126 {
+                                    chars.push(c);
+                                }
+                            }
                             _ => {}
                         }
                         i_b = j_b + 2;
                         continue;
                     }
                 }
-                if i_b + 2 < bb.len() && bb[i_b+1] == b'-' && bb[i_b+2] != b']' {
+                if i_b + 2 < bb.len() && bb[i_b + 1] == b'-' && bb[i_b + 2] != b']' {
                     let lo = bb[i_b];
-                    let hi = bb[i_b+2];
-                    for c in lo..=hi { chars.push(c); }
+                    let hi = bb[i_b + 2];
+                    for c in lo..=hi {
+                        chars.push(c);
+                    }
                     i_b += 3;
                 } else {
                     chars.push(bb[i_b]);
@@ -857,7 +1022,9 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             }
             drop(parse_b);
             if let Some(p_lock) = patparse.lock().ok() {
-                if i_b < p_lock.len() && p_lock.as_bytes()[i_b] == b']' { i_b += 1; }
+                if i_b < p_lock.len() && p_lock.as_bytes()[i_b] == b']' {
+                    i_b += 1;
+                }
             }
             patparse_off.store(i_b, Ordering::Relaxed);
             let opcode = if negate { P_ANYBUT } else { P_ANYOF };
@@ -880,7 +1047,9 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             let open_off = patnode(opcode);
             let mut inner_flags: i32 = 0;
             let inner = patcompswitch(1, &mut inner_flags);
-            if inner < 0 { return -1; }
+            if inner < 0 {
+                return -1;
+            }
             // Expect closing ')'.
             let cur_off = patparse_off.load(Ordering::Relaxed);
             let p = patparse.lock().unwrap();
@@ -909,7 +1078,9 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             patparse_off.fetch_add(1, Ordering::Relaxed);
             let p = patparse.lock().unwrap();
             let off2 = patparse_off.load(Ordering::Relaxed);
-            if off2 >= p.len() { return -1; }
+            if off2 >= p.len() {
+                return -1;
+            }
             let escaped = p.as_bytes()[off2];
             drop(p);
             patparse_off.fetch_add(1, Ordering::Relaxed);
@@ -929,57 +1100,65 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             let parse_n = patparse.lock().unwrap();
             let nb = parse_n.as_bytes();
             let mut j = patparse_off.load(Ordering::Relaxed);
-            let mut len_flag: u8 = 0;  // bit 0 = lo present, bit 1 = hi present
+            let mut len_flag: u8 = 0; // bit 0 = lo present, bit 1 = hi present
             let mut from: i64 = 0;
             let lo_start = j;
             while j < nb.len() && nb[j].is_ascii_digit() {
                 from = from * 10 + (nb[j] - b'0') as i64;
                 j += 1;
             }
-            if j > lo_start { len_flag |= 1; }                                // c:1538 — `len |= 1`
-            // Mandatory dash.
+            if j > lo_start {
+                len_flag |= 1;
+            } // c:1538 — `len |= 1`
+              // Mandatory dash.
             if j >= nb.len() || nb[j] != b'-' {
                 drop(parse_n);
                 return -1;
             }
-            j += 1;                                                            // c:1543 patparse++
+            j += 1; // c:1543 patparse++
             let mut to: i64 = 0;
             let hi_start = j;
             while j < nb.len() && nb[j].is_ascii_digit() {
                 to = to * 10 + (nb[j] - b'0') as i64;
                 j += 1;
             }
-            if j > hi_start { len_flag |= 2; }                                // c:1548 — `len |= 2`
-            // Expect closing '>'.
+            if j > hi_start {
+                len_flag |= 2;
+            } // c:1548 — `len |= 2`
+              // Expect closing '>'.
             if j >= nb.len() || nb[j] != b'>' {
                 drop(parse_n);
-                return -1;                                                    // c:1551 (return 0 in C)
+                return -1; // c:1551 (return 0 in C)
             }
             j += 1;
             drop(parse_n);
             patparse_off.store(j, Ordering::Relaxed);
 
-            let off2 = match len_flag {                                       // c:1552-1567
-                3 => {                                                        // c:1554 P_NUMRNG
+            let off2 = match len_flag {
+                // c:1552-1567
+                3 => {
+                    // c:1554 P_NUMRNG
                     let off2 = patnode(P_NUMRNG);
                     let mut buf = patout.lock().unwrap();
                     buf.extend_from_slice(&from.to_le_bytes());
                     buf.extend_from_slice(&to.to_le_bytes());
                     off2
                 }
-                2 => {                                                        // c:1559 P_NUMTO
+                2 => {
+                    // c:1559 P_NUMTO
                     let off2 = patnode(P_NUMTO);
                     let mut buf = patout.lock().unwrap();
                     buf.extend_from_slice(&to.to_le_bytes());
                     off2
                 }
-                1 => {                                                        // c:1563 P_NUMFROM
+                1 => {
+                    // c:1563 P_NUMFROM
                     let off2 = patnode(P_NUMFROM);
                     let mut buf = patout.lock().unwrap();
                     buf.extend_from_slice(&from.to_le_bytes());
                     off2
                 }
-                _ => patnode(P_NUMANY),                                       // c:1568
+                _ => patnode(P_NUMANY), // c:1568
             };
             *tail_out = off2;
             off2 as i64
@@ -992,7 +1171,10 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             while local_off < p.len() {
                 let b = p.as_bytes()[local_off];
                 // Stop at metacharacters.
-                if matches!(b, b'?'|b'*'|b'['|b'('|b')'|b'|'|b'\\'|b'#'|b'^'|b'<') {
+                if matches!(
+                    b,
+                    b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'#' | b'^' | b'<'
+                ) {
                     break;
                 }
                 buf.push(b);
@@ -1015,7 +1197,9 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
         }
     };
 
-    if atom < 0 { return atom; }
+    if atom < 0 {
+        return atom;
+    }
 
     // Quantifier: # / ##
     let q_off = patparse_off.load(Ordering::Relaxed);
@@ -1048,7 +1232,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
 /// to backtrack between branch and exclude trees. Currently returns -1
 /// (compile failure) so the higher-level switch falls through.
 #[allow(unused_variables)]
-pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {                    // c:1760
+pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {
+    // c:1760
     -1
 }
 
@@ -1056,11 +1241,12 @@ pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {                    // c
 ///
 /// C: `static long patnode(long op)` — writes a 1-byte opcode plus a
 /// 4-byte zeroed next-offset. Returns the offset of the opcode byte.
-fn patnode(op: u8) -> usize {                                                 // c:1790
+fn patnode(op: u8) -> usize {
+    // c:1790
     let mut buf = patout.lock().unwrap();
     let off = buf.len();
-    buf.push(op);                  // I_OP
-    buf.extend_from_slice(&[0, 0, 0, 0]);  // I_NEXT zeroed
+    buf.push(op); // I_OP
+    buf.extend_from_slice(&[0, 0, 0, 0]); // I_NEXT zeroed
     off
 }
 
@@ -1069,9 +1255,10 @@ fn patnode(op: u8) -> usize {                                                 //
 /// C: `static void patinsert(long op, int opnd, char *xtra, int sz)`.
 /// Inserts an opcode (+ next slot) at position `opnd`, shifting bytes
 /// after it down by `5 + sz`, then writes `xtra` payload of `sz` bytes.
-fn patinsert(op: u8, opnd: usize, xtra: Option<&[u8]>, sz: usize) {            // c:1807
+fn patinsert(op: u8, opnd: usize, xtra: Option<&[u8]>, sz: usize) {
+    // c:1807
     let mut buf = patout.lock().unwrap();
-    let header_sz = 1 + 4;  // op + next
+    let header_sz = 1 + 4; // op + next
     let total = header_sz + sz;
     // Insert `total` zeroed bytes at opnd, then overwrite.
     let mut inserted = vec![0u8; total];
@@ -1090,14 +1277,19 @@ fn patinsert(op: u8, opnd: usize, xtra: Option<&[u8]>, sz: usize) {            /
 /// C: `static void pattail(long p, long val)` — patches the next-offset
 /// field of the opcode at offset `p` to point to `val`. Walks any
 /// existing chain to the end before patching.
-fn pattail(p: usize, val: usize) {                                            // c:1834
+fn pattail(p: usize, val: usize) {
+    // c:1834
     let mut buf = patout.lock().unwrap();
     let mut cur = p;
     loop {
-        if cur + I_BODY > buf.len() { return; }
+        if cur + I_BODY > buf.len() {
+            return;
+        }
         let next_bytes: [u8; 4] = buf[cur + I_NEXT..cur + I_NEXT + 4].try_into().unwrap();
         let next = u32::from_le_bytes(next_bytes) as usize;
-        if next == 0 { break; }
+        if next == 0 {
+            break;
+        }
         cur = next;
     }
     let val_bytes = (val as u32).to_le_bytes();
@@ -1110,9 +1302,12 @@ fn pattail(p: usize, val: usize) {                                            //
 ///
 /// C: `static void patoptail(long p, long val)` — like pattail but
 /// only patches branches (P_BRANCH/P_WBRANCH).
-fn patoptail(p: usize, val: usize) {                                          // c:1856
+fn patoptail(p: usize, val: usize) {
+    // c:1856
     let buf = patout.lock().unwrap();
-    if p + I_OP >= buf.len() { return; }
+    if p + I_OP >= buf.len() {
+        return;
+    }
     let op = buf[p + I_OP];
     drop(buf);
     if P_ISBRANCH(op) {
@@ -1137,9 +1332,9 @@ fn patoptail(p: usize, val: usize) {                                          //
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct rpat {
-    pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
-    pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
-    pub captures_set: u16,              // bitmask of groups successfully captured
+    pub patbeginp: [usize; NSUBEXP], // c:241 capture starts (byte offsets)
+    pub patendp: [usize; NSUBEXP],   // c:242 capture ends
+    pub captures_set: u16,           // bitmask of groups successfully captured
 }
 
 /// Port of `wchar_t charref(char *x, char *y, int *zmb_ind)` from
@@ -1150,13 +1345,15 @@ pub struct rpat {
 /// mbrtowc state machine, which all collapse because Rust's `&str`
 /// is already UTF-8.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, zmb_ind)
-pub fn charref(s: &str, pos: usize) -> Option<char> {                         // c:1909
+pub fn charref(s: &str, pos: usize) -> Option<char> {
+    // c:1909
     s[pos..].chars().next()
 }
 
 /// Port of `void charnext(char *x, char *y)` from `Src/pattern.c:1936`.
 /// Delegates to `metacharinc` — same advance-by-one-codepoint logic.
-pub fn charnext(x: &str, y: usize) -> usize {                               // c:1936
+pub fn charnext(x: &str, y: usize) -> usize {
+    // c:1936
     metacharinc(x, y)
 }
 
@@ -1166,7 +1363,8 @@ pub fn charnext(x: &str, y: usize) -> usize {                               // c
 /// mbrtowc / zshtoken triple collapses to one `chars().next()`
 /// call followed by a byte-count step.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, z)
-pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 // c:1964
+pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
+    // c:1964
     let c = s[*pos..].chars().next()?;
     *pos += c.len_utf8();
     Some(c)
@@ -1177,9 +1375,16 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 //
 /// delegates to `chars().next_back()` since Rust's `&str` is already
 /// UTF-8 — the C body's Meta-byte + mbrtowc-rewind state machine
 /// collapses to a single iterator step.
-pub fn charsub(x: &str, y: usize) -> usize {                                // c:1997
-    if y == 0 { return 0; }
-    let w = x[..y].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
+pub fn charsub(x: &str, y: usize) -> usize {
+    // c:1997
+    if y == 0 {
+        return 0;
+    }
+    let w = x[..y]
+        .chars()
+        .next_back()
+        .map(|c| c.len_utf8())
+        .unwrap_or(1);
     y - w
 }
 
@@ -1189,12 +1394,13 @@ pub fn charsub(x: &str, y: usize) -> usize {                                // c
 
 /// Port of `pattrystart()` from `Src/pattern.c:2063`. C resets per-
 /// match state globals; Rust state is per-call so no-op.
-pub fn pattrystart() {}                                                       // c:2063
+pub fn pattrystart() {} // c:2063
 
 /// Port of `patmungestring(char **string, int *stringlen, int *unmetalenin)` from `Src/pattern.c:2080`. Un-metafies
 /// in C; UTF-8 needs no munging.
 /// WARNING: param names don't match C — Rust=(s) vs C=(string, stringlen, unmetalenin)
-pub fn patmungestring(s: &str) -> String {                                    // c:2080
+pub fn patmungestring(s: &str) -> String {
+    // c:2080
     s.to_string()
 }
 
@@ -1202,8 +1408,9 @@ pub fn patmungestring(s: &str) -> String {                                    //
 ///
 /// C signature: `int pattry(Patprog prog, char *string)`. Returns
 /// non-zero on match, 0 on no-match.
-pub fn pattry(prog: &Patprog, string: &str) -> bool {                         // c:2223
-    pattrylen(prog, string, string.len() as i32, -1, 0)                       // c:2225
+pub fn pattry(prog: &Patprog, string: &str) -> bool {
+    // c:2223
+    pattrylen(prog, string, string.len() as i32, -1, 0) // c:2225
 }
 
 /// Port of `int pattrylen(Patprog prog, char *string, int len,
@@ -1219,9 +1426,14 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {                         //
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(prog, string, len, unmetalen, offset) vs C=(prog, string, len, unmetalen, patstralloc, offset)
-pub fn pattrylen(prog: &Patprog, string: &str, len: i32,                      // c:2236
-                 unmetalen: i32, offset: i32) -> bool {
-    pattryrefs(prog, string, len, unmetalen, offset, None, None, None)        // c:2239
+pub fn pattrylen(
+    prog: &Patprog,
+    string: &str,
+    len: i32, // c:2236
+    unmetalen: i32,
+    offset: i32,
+) -> bool {
+    pattryrefs(prog, string, len, unmetalen, offset, None, None, None) // c:2239
 }
 
 /// Port of `int pattryrefs(Patprog prog, char *string, int stringlen,
@@ -1236,7 +1448,8 @@ pub fn pattrylen(prog: &Patprog, string: &str, len: i32,                      //
 /// via the (begp, endp) out-vecs to match C's `int *begp, int *endp`.
 /// WARNING: param names don't match C — Rust=(prog, string, stringlen, unmetalenin, patoffset, nump, begp, endp) vs C=(prog, string, stringlen, unmetalenin, patstralloc, patoffset, nump, begp, endp)
 #[allow(clippy::too_many_arguments)]
-pub fn pattryrefs(                                                           // c:2294
+pub fn pattryrefs(
+    // c:2294
     prog: &Patprog,
     string: &str,
     stringlen: i32,
@@ -1263,7 +1476,9 @@ pub fn pattryrefs(                                                           // 
     };
     if ok {
         let n = (prog.0.patnpar as usize).min(NSUBEXP);
-        if let Some(np) = nump { *np = n as i32; }
+        if let Some(np) = nump {
+            *np = n as i32;
+        }
         if let Some(bv) = begp {
             bv.clear();
             for i in 0..n {
@@ -1288,11 +1503,11 @@ pub fn pattryrefs(                                                           // 
     ok
 }
 
-
 /// Port of `patmatchlen()` from `Src/pattern.c:2649`. Returns the
 /// length of a successful match, or None.
 /// WARNING: param names don't match C — Rust=(prog, string) vs C=()
-pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           // c:2649
+pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {
+    // c:2649
     let mut state = rpat::new();
     patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags)
 }
@@ -1320,14 +1535,16 @@ pub fn patmatch(pattern: &str, text: &str) -> bool {
 /// variant — delegates to `patmatchrange` since Rust `&[char]` is
 /// already UTF-32, so the MULTIBYTE_SUPPORT split disappears.
 /// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, zmb_ind, indptr, mtp)
-pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {    // c:3610
+pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
+    // c:3610
     patmatchrange(range, ch, igncase)
 }
 
 /// Port of `mb_patmatchindex(...)` from Src/pattern.c:3767. Delegates
 /// to `patmatchindex` (same UTF-32 reason as `mb_patmatchrange`).
 /// WARNING: param names don't match C — Rust=(range, idx) vs C=(range, ind, chr, mtp)
-pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         // c:3767
+pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {
+    // c:3767
     patmatchindex(range, idx)
 }
 
@@ -1344,10 +1561,14 @@ pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         //
 /// the C `indptr`/`mtp` out-args drop since callers in zshrs only
 /// need the bool match decision.
 /// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, indptr, mtp)
-pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       // c:3856
+pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
+    // c:3856
     let test = |c: char| {
-        if igncase { c.to_ascii_lowercase() == ch.to_ascii_lowercase() }
-        else { c == ch }
+        if igncase {
+            c.to_ascii_lowercase() == ch.to_ascii_lowercase()
+        } else {
+            c == ch
+        }
     };
     let mut i = 0;
     while i < range.len() {
@@ -1357,7 +1578,9 @@ pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       //
             let c = if igncase { ch.to_ascii_lowercase() } else { ch };
             let lo2 = if igncase { lo.to_ascii_lowercase() } else { lo };
             let hi2 = if igncase { hi.to_ascii_lowercase() } else { hi };
-            if c >= lo2 && c <= hi2 { return true; }
+            if c >= lo2 && c <= hi2 {
+                return true;
+            }
             i += 3;
         } else if test(range[i]) {
             return true;
@@ -1371,7 +1594,8 @@ pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       //
 /// Port of `patmatchindex(char *range, int ind, int *chr, int *mtp)` from `Src/pattern.c:4004`. Return the
 /// `idx`-th character that matches `range` (used by `${arr:#pat}`).
 /// WARNING: param names don't match C — Rust=(range, idx) vs C=(range, ind, chr, mtp)
-pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            // c:4004
+pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {
+    // c:4004
     let mut n = 0;
     let mut i = 0;
     while i < range.len() {
@@ -1379,12 +1603,16 @@ pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            //
             let lo = range[i] as u32;
             let hi = range[i + 2] as u32;
             for c in lo..=hi {
-                if n == idx { return char::from_u32(c); }
+                if n == idx {
+                    return char::from_u32(c);
+                }
                 n += 1;
             }
             i += 3;
         } else {
-            if n == idx { return Some(range[i]); }
+            if n == idx {
+                return Some(range[i]);
+            }
             n += 1;
             i += 1;
         }
@@ -1396,7 +1624,7 @@ pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            //
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
 /// exists for C parity (Rule A).
 #[allow(unused_variables)]
-pub fn freepatprog(prog: Patprog) {}                                         // c:4161
+pub fn freepatprog(prog: Patprog) {} // c:4161
 
 /// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
 /// from `Src/pattern.c:4171`. Implements `enable -p`/`disable -p`: with
@@ -1405,62 +1633,90 @@ pub fn freepatprog(prog: Patprog) {}                                         // 
 /// lockstep. Otherwise toggles each named token's `zpc_disables[i]`
 /// slot, emitting `invalid pattern: NAME` for misses.
 /// WARNING: param names don't match C — Rust=(cmd, patp, enable) vs C=(cmd, patp, enable)
-pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {          // c:4171
-    let mut ret: i32 = 0;                                                    // c:4173
-    if patp.is_empty() {                                                     // c:4177 !*patp
-        let strings = ZPC_STRINGS;                                           // c:4179 zpc_strings
-        let disp = zpc_disables.lock().unwrap();                             // c:4179 zpc_disables
-        let mut done = false;                                                // c:4178
+pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {
+    // c:4171
+    let mut ret: i32 = 0; // c:4173
+    if patp.is_empty() {
+        // c:4177 !*patp
+        let strings = ZPC_STRINGS; // c:4179 zpc_strings
+        let disp = zpc_disables.lock().unwrap(); // c:4179 zpc_disables
+        let mut done = false; // c:4178
         let mut out: String = String::new();
-        for i in 0..(ZPC_COUNT as usize) {                                   // c:4180
-            let sp = match strings[i] {                                      // c:4182 !*stringp
+        for i in 0..(ZPC_COUNT as usize) {
+            // c:4180
+            let sp = match strings[i] {
+                // c:4182 !*stringp
                 Some(s) => s,
                 None => continue,
             };
             let is_disabled = disp[i] != 0;
-            if enable == is_disabled {                                       // c:4184 enable?*disp:!*disp
+            if enable == is_disabled {
+                // c:4184 enable?*disp:!*disp
                 continue;
             }
-            if done {                                                        // c:4186
-                out.push(' ');                                               // c:4187
+            if done {
+                // c:4186
+                out.push(' '); // c:4187
             }
-            out.push_str(&format!("'{}'", sp));                              // c:4188
-            done = true;                                                     // c:4189
+            out.push_str(&format!("'{}'", sp)); // c:4188
+            done = true; // c:4189
         }
-        if done {                                                            // c:4191
-            println!("{}", out);                                             // c:4187-4192
+        if done {
+            // c:4191
+            println!("{}", out); // c:4187-4192
         }
-        return 0;                                                            // c:4193
+        return 0; // c:4193
     }
-    for p in patp {                                                          // c:4196
+    for p in patp {
+        // c:4196
         let strings = ZPC_STRINGS;
         let mut disp = zpc_disables.lock().unwrap();
         let mut matched = false;
-        for i in 0..(ZPC_COUNT as usize) {                                   // c:4197
+        for i in 0..(ZPC_COUNT as usize) {
+            // c:4197
             if let Some(s) = strings[i] {
-                if s == *p {                                                 // c:4200 !strcmp
-                    disp[i] = if enable { 0u8 } else { 1u8 };                // c:4201 *disp = !enable
+                if s == *p {
+                    // c:4200 !strcmp
+                    disp[i] = if enable { 0u8 } else { 1u8 }; // c:4201 *disp = !enable
                     matched = true;
-                    break;                                                   // c:4202
+                    break; // c:4202
                 }
             }
         }
-        if !matched {                                                        // c:4205
+        if !matched {
+            // c:4205
             crate::ported::utils::zerrnam(cmd, &format!("invalid pattern: {}", p)); // c:4206
-            ret = 1;                                                         // c:4207
+            ret = 1; // c:4207
         }
     }
-    ret                                                                      // c:4211
+    ret // c:4211
 }
 
 /// Port of `mod_export const char *zpc_strings[ZPC_COUNT]` from
 /// `Src/pattern.c:258`. Static token-name table indexed by ZPC_*;
 /// NULL entries (ZPC_NULL, ZPC_BNULLKEEP, ZPC_INPAR_PIPE,
 /// ZPC_KSHCHAR) have no user-visible name.
-pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [        // c:258
-    None, None, Some("|"), None, Some("~"), Some("("), Some("?"), Some("*"),
-    Some("["), Some("<"), Some("^"), Some("#"), None, Some("?("), Some("*("),
-    Some("+("), Some("!("), Some("\\!("), Some("@("),
+pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [
+    // c:258
+    None,
+    None,
+    Some("|"),
+    None,
+    Some("~"),
+    Some("("),
+    Some("?"),
+    Some("*"),
+    Some("["),
+    Some("<"),
+    Some("^"),
+    Some("#"),
+    None,
+    Some("?("),
+    Some("*("),
+    Some("+("),
+    Some("!("),
+    Some("\\!("),
+    Some("@("),
 ];
 
 /// Port of `unsigned int savepatterndisables(void)` from
@@ -1486,22 +1742,26 @@ pub const ZPC_STRINGS: [Option<&'static str>; ZPC_COUNT as usize] = [        // 
 /// list, not the per-token byte array). `restorepatterndisables(u32)`
 /// at c:4258 reads this bitmask back into `zpc_disables`, so the
 /// returned shape MUST be the u32 bitmask.
-pub fn savepatterndisables() -> u32 {                                         // c:4220
-    let disp = zpc_disables.lock().unwrap();                                  // c:4225 disp = zpc_disables
-    let mut disables: u32 = 0;                                                // c:4224
-    let mut bit: u32 = 1;                                                     // c:4226 bit = 1
-    for i in 0..(ZPC_COUNT as usize) {                                        // c:4226-4228
-        if disp[i] != 0 {                                                     // c:4230
-            disables |= bit;                                                  // c:4231
+pub fn savepatterndisables() -> u32 {
+    // c:4220
+    let disp = zpc_disables.lock().unwrap(); // c:4225 disp = zpc_disables
+    let mut disables: u32 = 0; // c:4224
+    let mut bit: u32 = 1; // c:4226 bit = 1
+    for i in 0..(ZPC_COUNT as usize) {
+        // c:4226-4228
+        if disp[i] != 0 {
+            // c:4230
+            disables |= bit; // c:4231
         }
-        bit <<= 1;                                                            // c:4226 bit <<= 1
+        bit <<= 1; // c:4226 bit <<= 1
     }
-    disables                                                                  // c:4232
+    disables // c:4232
 }
 
 /// Port of `startpatternscope()` from `Src/pattern.c:4241`. Begins a
 /// new disable scope.
-pub fn startpatternscope() {                                                  // c:4241
+pub fn startpatternscope() {
+    // c:4241
     // Saving/restoring handled per-call; mark a scope boundary by
     // duplicating the current disables list onto a stack.
     let cur = patterndisables.lock().unwrap().clone();
@@ -1526,14 +1786,17 @@ pub fn startpatternscope() {                                                  //
 ///     }
 /// }
 /// ```
-pub fn restorepatterndisables(disables: u32) {                                // c:4258
-    let mut disp = zpc_disables.lock().unwrap();                              // c:4263
+pub fn restorepatterndisables(disables: u32) {
+    // c:4258
+    let mut disp = zpc_disables.lock().unwrap(); // c:4263
     let mut bit: u32 = 1;
-    for i in 0..(ZPC_COUNT as usize) {                                        // c:4263-4265
-        if (disables & bit) != 0 {                                            // c:4266
-            disp[i] = 1;                                                      // c:4267
+    for i in 0..(ZPC_COUNT as usize) {
+        // c:4263-4265
+        if (disables & bit) != 0 {
+            // c:4266
+            disp[i] = 1; // c:4267
         } else {
-            disp[i] = 0;                                                      // c:4269
+            disp[i] = 0; // c:4269
         }
         bit <<= 1;
     }
@@ -1541,21 +1804,25 @@ pub fn restorepatterndisables(disables: u32) {                                //
 
 /// Port of `endpatternscope()` from `Src/pattern.c:4279`. Ends the
 /// current scope, popping the saved state.
-pub fn endpatternscope() {                                                    // c:4279
+pub fn endpatternscope() {
+    // c:4279
     if let Some(prev) = PATSCOPE_STACK.with(|s| s.borrow_mut().pop()) {
         *patterndisables.lock().unwrap() = prev;
     }
 }
 
 /// Port of `clearpatterndisables()` from `Src/pattern.c:4296`.
-pub fn clearpatterndisables() {                                               // c:4296
+pub fn clearpatterndisables() {
+    // c:4296
     patterndisables.lock().unwrap().clear();
 }
 
 /// Port of `haswilds(char *str)` from `Src/pattern.c:4306`. Quick check whether
 /// `s` contains any wildcard characters.
-pub fn haswilds(str: &str) -> bool {                                            // c:4306
-    str.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
+pub fn haswilds(str: &str) -> bool {
+    // c:4306
+    str.chars()
+        .any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
 }
 
 // =====================================================================
@@ -1585,13 +1852,13 @@ pub type Patprog = Box<(patprog, Vec<u8>)>;
 // the Rust port pins the layout to byte offsets for portability.
 // =====================================================================
 
-const I_OP:   usize = 0; // opcode byte
+const I_OP: usize = 0; // opcode byte
 
 impl rpat {
     fn new() -> Self {
         Self {
             patbeginp: [usize::MAX; NSUBEXP],
-            patendp:   [0; NSUBEXP],
+            patendp: [0; NSUBEXP],
             captures_set: 0,
         }
     }
@@ -1623,13 +1890,13 @@ pub static patstart: Mutex<String> = Mutex::new(String::new()); // c:269
 pub static patparse_off: AtomicUsize = AtomicUsize::new(0);
 
 // C: `static int errsfound;` — approximate-match error count.
-pub static errsfound: AtomicI32 = AtomicI32::new(0);            // c:274
+pub static errsfound: AtomicI32 = AtomicI32::new(0); // c:274
 
 // C: `static int forceerrs;` — required error count for approximate match.
-pub static forceerrs: AtomicI32 = AtomicI32::new(-1);           // c:275
+pub static forceerrs: AtomicI32 = AtomicI32::new(-1); // c:275
 
 // C: `static long patglobflags_orig;` — saved at branch entry.
-pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0);    // c:276
+pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0); // c:276
 
 // C: `static const char *zpc_special;` — table of currently-special
 // characters during compile (indexed by ZPC_*).
@@ -1655,8 +1922,8 @@ pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
 pub const Marker: u8 = crate::ported::zsh_h::Marker as u8;
 
 const POSIX_CLASS_NAMES: &[&str] = &[
-    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower",
-    "print", "punct", "space", "upper", "xdigit",
+    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
+    "upper", "xdigit",
 ];
 
 /// Port of file-static `zpc_disables_stack` from `Src/pattern.c:4244`.
@@ -1683,8 +1950,7 @@ pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Per-token disable byte — when `zpc_disables[i]` is non-zero, the
 /// pattern token at index `i` (ZPC_*) is treated as a literal,
 /// not its meta-meaning.
-pub static zpc_disables: Mutex<[u8; ZPC_COUNT as usize]> =
-    Mutex::new([0u8; ZPC_COUNT as usize]);                                   // c:268
+pub static zpc_disables: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_COUNT as usize]); // c:268
 
 /// Helper: when patinsert shifts a chunk of bytecode, any 4-byte
 /// next_off slot that previously pointed past `opnd` must be bumped
@@ -1696,7 +1962,10 @@ fn fixup_offsets_after_insert(buf: &mut [u8], opnd: usize, delta: u32) {
     let mut i = 0;
     while i + I_BODY <= buf.len() {
         let op = buf[i + I_OP];
-        if op == 0 { i += 1; continue; }  // sentinel byte, skip
+        if op == 0 {
+            i += 1;
+            continue;
+        } // sentinel byte, skip
         let next_bytes = &buf[i + I_NEXT..i + I_NEXT + 4];
         let cur = u32::from_le_bytes(next_bytes.try_into().unwrap());
         if cur != 0 {
@@ -1707,7 +1976,9 @@ fn fixup_offsets_after_insert(buf: &mut [u8], opnd: usize, delta: u32) {
             }
         }
         i = advance_past_instr(buf, i);
-        if i == 0 { break; }
+        if i == 0 {
+            break;
+        }
     }
 }
 
@@ -1717,27 +1988,33 @@ fn fixup_offsets_after_insert(buf: &mut [u8], opnd: usize, delta: u32) {
 /// Encodes the per-opcode payload size table — must stay in sync
 /// with patnode/patinsert calls in the compiler.
 fn advance_past_instr(buf: &[u8], pos: usize) -> usize {
-    if pos + I_BODY > buf.len() { return 0; }
+    if pos + I_BODY > buf.len() {
+        return 0;
+    }
     let op = buf[pos + I_OP];
     let body_start = pos + I_BODY;
     match op {
-        P_END | P_NOTHING | P_BACK | P_EXCSYNC | P_EXCEND
-            | P_ISSTART | P_ISEND | P_COUNTSTART | P_ANY | P_STAR | P_NUMANY
-            => body_start,
-        P_GFLAGS => body_start + 4,                                           // i32 flag-bits payload
+        P_END | P_NOTHING | P_BACK | P_EXCSYNC | P_EXCEND | P_ISSTART | P_ISEND | P_COUNTSTART
+        | P_ANY | P_STAR | P_NUMANY => body_start,
+        P_GFLAGS => body_start + 4, // i32 flag-bits payload
         P_EXACTLY => {
             // payload: u32 len + len bytes
-            if body_start + 4 > buf.len() { return 0; }
-            let len = u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
+            if body_start + 4 > buf.len() {
+                return 0;
+            }
+            let len =
+                u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
             body_start + 4 + len
         }
         P_ANYOF | P_ANYBUT => {
-            if body_start + 4 > buf.len() { return 0; }
-            let len = u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
+            if body_start + 4 > buf.len() {
+                return 0;
+            }
+            let len =
+                u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
             body_start + 4 + len
         }
-        P_ONEHASH | P_TWOHASH | P_BRANCH | P_WBRANCH
-            | P_EXCLUDE | P_EXCLUDP => body_start,
+        P_ONEHASH | P_TWOHASH | P_BRANCH | P_WBRANCH | P_EXCLUDE | P_EXCLUDP => body_start,
         P_OPEN..=0x88 | P_CLOSE..=0x98 => body_start,
         P_NUMRNG => body_start + 16, // two i64
         P_NUMFROM | P_NUMTO => body_start + 8,
@@ -1773,11 +2050,15 @@ fn chain_branches_to(starter: usize, target: usize) {
         pattail(cur + I_BODY, target);
         // Move to next alternative.
         let buf = patout.lock().unwrap();
-        if cur + I_NEXT + 4 > buf.len() { break; }
+        if cur + I_NEXT + 4 > buf.len() {
+            break;
+        }
         let nb: [u8; 4] = buf[cur + I_NEXT..cur + I_NEXT + 4].try_into().unwrap();
         let n = u32::from_le_bytes(nb) as usize;
         drop(buf);
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         cur = n;
     }
 }
@@ -1801,7 +2082,8 @@ fn patmatch_internal(
     string_off: usize,
     state: &mut rpat,
     glob_flags: i32,
-) -> Option<usize> {                                                          // c:2694
+) -> Option<usize> {
+    // c:2694
     let mut scan = prog_off;
     let mut s_off = string_off;
     // Locally-mutable copy of glob_flags so mid-pattern P_GFLAGS can
@@ -1814,17 +2096,20 @@ fn patmatch_internal(
         let next = u32::from_le_bytes(next_bytes) as usize;
 
         match op {
-            P_END => return Some(s_off),                                      // c:end-of-prog
+            P_END => return Some(s_off), // c:end-of-prog
             P_NOTHING => { /* empty match, just continue */ }
             P_BACK => { /* zero-width, walk back via next */ }
-            P_EXACTLY => {                                                    // c:P_EXACTLY arm
+            P_EXACTLY => {
+                // c:P_EXACTLY arm
                 let body = scan + I_BODY;
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let str_bytes = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
-                if s_off + len > input_bytes.len() { return None; }
+                if s_off + len > input_bytes.len() {
+                    return None;
+                }
                 let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
-                let multibyte = (glob_flags & GF_MULTIBYTE) != 0;             // c:349 GF_MULTIBYTE
+                let multibyte = (glob_flags & GF_MULTIBYTE) != 0; // c:349 GF_MULTIBYTE
                 if igncase {
                     let inp_slice = &input_bytes[s_off..s_off + len];
                     if multibyte {
@@ -1842,7 +2127,9 @@ fn patmatch_internal(
                                     (Some(a), Some(b)) => {
                                         let af: String = a.to_lowercase().collect();
                                         let bf: String = b.to_lowercase().collect();
-                                        if af != bf { return None; }
+                                        if af != bf {
+                                            return None;
+                                        }
                                     }
                                 }
                             }
@@ -1850,7 +2137,10 @@ fn patmatch_internal(
                             // Non-UTF-8 input — byte fallback.
                             for k in 0..len {
                                 if inp_slice[k].to_ascii_lowercase()
-                                    != str_bytes[k].to_ascii_lowercase() { return None; }
+                                    != str_bytes[k].to_ascii_lowercase()
+                                {
+                                    return None;
+                                }
                             }
                         }
                     } else {
@@ -1858,7 +2148,10 @@ fn patmatch_internal(
                         // patmatch* path when GF_MULTIBYTE clear).
                         for k in 0..len {
                             if inp_slice[k].to_ascii_lowercase()
-                                != str_bytes[k].to_ascii_lowercase() { return None; }
+                                != str_bytes[k].to_ascii_lowercase()
+                            {
+                                return None;
+                            }
                         }
                     }
                 } else if &input_bytes[s_off..s_off + len] != str_bytes {
@@ -1866,17 +2159,21 @@ fn patmatch_internal(
                 }
                 s_off += len;
             }
-            P_ANY => {                                                        // c:P_ANY arm
+            P_ANY => {
+                // c:P_ANY arm
                 let s = &string[s_off..];
                 let c = s.chars().next()?;
                 s_off += c.len_utf8();
             }
-            P_ANYOF => {                                                      // c:P_ANYOF arm
+            P_ANYOF => {
+                // c:P_ANYOF arm
                 let body = scan + I_BODY;
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
-                if s_off >= input_bytes.len() { return None; }
+                if s_off >= input_bytes.len() {
+                    return None;
+                }
                 let b = input_bytes[s_off];
                 let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
                 let found = if igncase {
@@ -1885,7 +2182,9 @@ fn patmatch_internal(
                 } else {
                     set.contains(&b)
                 };
-                if !found { return None; }
+                if !found {
+                    return None;
+                }
                 s_off += 1;
             }
             P_ANYBUT => {
@@ -1893,7 +2192,9 @@ fn patmatch_internal(
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
-                if s_off >= input_bytes.len() { return None; }
+                if s_off >= input_bytes.len() {
+                    return None;
+                }
                 let b = input_bytes[s_off];
                 let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
                 let found = if igncase {
@@ -1902,10 +2203,13 @@ fn patmatch_internal(
                 } else {
                     set.contains(&b)
                 };
-                if found { return None; }
+                if found {
+                    return None;
+                }
                 s_off += 1;
             }
-            P_STAR => {                                                       // c:P_STAR arm (greedy)
+            P_STAR => {
+                // c:P_STAR arm (greedy)
                 // Greedy: try to match as many chars as possible then
                 // backtrack until the rest matches.
                 let input_bytes = string.as_bytes();
@@ -1913,15 +2217,25 @@ fn patmatch_internal(
                 let mut consumed = max;
                 loop {
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(code, next, string, s_off + consumed, &mut sub_state, glob_flags) {
+                    if let Some(end) = patmatch_internal(
+                        code,
+                        next,
+                        string,
+                        s_off + consumed,
+                        &mut sub_state,
+                        glob_flags,
+                    ) {
                         *state = sub_state;
                         return Some(end);
                     }
-                    if consumed == 0 { return None; }
+                    if consumed == 0 {
+                        return None;
+                    }
                     consumed -= 1;
                 }
             }
-            P_ONEHASH | P_TWOHASH => {                                        // c:P_ONEHASH / P_TWOHASH
+            P_ONEHASH | P_TWOHASH => {
+                // c:P_ONEHASH / P_TWOHASH
                 // The operand (the simple atom being repeated) starts
                 // at `scan + I_BODY` — that's the byte immediately
                 // after the quantifier opcode (which has its own
@@ -1935,37 +2249,47 @@ fn patmatch_internal(
                 loop {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(new_pos) = patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags) {
-                        if new_pos == cur { break; } // zero-width fixed point
+                    if let Some(new_pos) =
+                        patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags)
+                    {
+                        if new_pos == cur {
+                            break;
+                        } // zero-width fixed point
                         *state = sub_state;
                         positions.push(new_pos);
                     } else {
                         break;
                     }
                 }
-                if positions.len() - 1 < min { return None; }
+                if positions.len() - 1 < min {
+                    return None;
+                }
                 // Walk back from longest match trying continuations.
                 while positions.len() > min {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags) {
+                    if let Some(end) =
+                        patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags)
+                    {
                         *state = sub_state;
                         return Some(end);
                     }
-                    if positions.len() <= min + 1 { return None; }
+                    if positions.len() <= min + 1 {
+                        return None;
+                    }
                     positions.pop();
                 }
                 return None;
             }
-            P_BRANCH => {                                                     // c:P_BRANCH arm
+            P_BRANCH => {
+                // c:P_BRANCH arm
                 // c:3046-3050 — if next is NOT another BRANCH, this is
                 // the only alternative; avoid the alt-loop and just
                 // continue with the operand inline (no recursion, no
                 // fallthrough on failure).
                 let next_is_branch = next != 0
                     && next < code.len()
-                    && (code[next + I_OP] == P_BRANCH
-                        || code[next + I_OP] == P_WBRANCH);
+                    && (code[next + I_OP] == P_BRANCH || code[next + I_OP] == P_WBRANCH);
                 if !next_is_branch {
                     scan = scan + I_BODY;
                     continue;
@@ -1974,18 +2298,20 @@ fn patmatch_internal(
                 // return; on failure walk to the next BRANCH via .next.
                 let mut br = scan;
                 loop {
-                    let br_next_bytes: [u8; 4] = code[br + I_NEXT..br + I_NEXT + 4]
-                        .try_into().unwrap();
+                    let br_next_bytes: [u8; 4] =
+                        code[br + I_NEXT..br + I_NEXT + 4].try_into().unwrap();
                     let br_next = u32::from_le_bytes(br_next_bytes) as usize;
                     let operand = br + I_BODY;
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(
-                        code, operand, string, s_off, &mut sub_state, glob_flags
-                    ) {
+                    if let Some(end) =
+                        patmatch_internal(code, operand, string, s_off, &mut sub_state, glob_flags)
+                    {
                         *state = sub_state;
                         return Some(end);
                     }
-                    if br_next == 0 { return None; }
+                    if br_next == 0 {
+                        return None;
+                    }
                     let op_next = code[br_next + I_OP];
                     if op_next != P_BRANCH && op_next != P_WBRANCH {
                         return None;
@@ -1993,7 +2319,8 @@ fn patmatch_internal(
                     br = br_next;
                 }
             }
-            P_NUMRNG => {                                                     // c:P_NUMRNG arm
+            P_NUMRNG => {
+                // c:P_NUMRNG arm
                 let body = scan + I_BODY;
                 let from = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
                 let to = i64::from_le_bytes(code[body + 8..body + 16].try_into().unwrap());
@@ -2003,11 +2330,15 @@ fn patmatch_internal(
                 while k < input_bytes.len() && input_bytes[k].is_ascii_digit() {
                     k += 1;
                 }
-                if k == start { return None; }
+                if k == start {
+                    return None;
+                }
                 let n: i64 = std::str::from_utf8(&input_bytes[start..k])
                     .ok()
                     .and_then(|s| s.parse::<i64>().ok())?;
-                if n < from || n > to { return None; }
+                if n < from || n > to {
+                    return None;
+                }
                 s_off = k;
             }
             P_NUMFROM => {
@@ -2016,11 +2347,18 @@ fn patmatch_internal(
                 let input_bytes = string.as_bytes();
                 let start = s_off;
                 let mut k = start;
-                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() { k += 1; }
-                if k == start { return None; }
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k == start {
+                    return None;
+                }
                 let n: i64 = std::str::from_utf8(&input_bytes[start..k])
-                    .ok().and_then(|s| s.parse::<i64>().ok())?;
-                if n < from { return None; }
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())?;
+                if n < from {
+                    return None;
+                }
                 s_off = k;
             }
             P_NUMTO => {
@@ -2029,35 +2367,53 @@ fn patmatch_internal(
                 let input_bytes = string.as_bytes();
                 let start = s_off;
                 let mut k = start;
-                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() { k += 1; }
-                if k == start { return None; }
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k == start {
+                    return None;
+                }
                 let n: i64 = std::str::from_utf8(&input_bytes[start..k])
-                    .ok().and_then(|s| s.parse::<i64>().ok())?;
-                if n > to { return None; }
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())?;
+                if n > to {
+                    return None;
+                }
                 s_off = k;
             }
             P_NUMANY => {
                 let input_bytes = string.as_bytes();
                 let start = s_off;
-                while s_off < input_bytes.len() && input_bytes[s_off].is_ascii_digit() { s_off += 1; }
-                if s_off == start { return None; }
+                while s_off < input_bytes.len() && input_bytes[s_off].is_ascii_digit() {
+                    s_off += 1;
+                }
+                if s_off == start {
+                    return None;
+                }
             }
-            P_ISSTART => {                                                    // c:P_ISSTART
-                if s_off != 0 { return None; }
+            P_ISSTART => {
+                // c:P_ISSTART
+                if s_off != 0 {
+                    return None;
+                }
             }
-            P_ISEND => {                                                      // c:P_ISEND
-                if s_off < string.len() { return None; }
+            P_ISEND => {
+                // c:P_ISEND
+                if s_off < string.len() {
+                    return None;
+                }
             }
-            P_GFLAGS => {                                                     // c:P_GFLAGS arm
+            P_GFLAGS => {
+                // c:P_GFLAGS arm
                 let body = scan + I_BODY;
                 let bits = i32::from_le_bytes(code[body..body + 4].try_into().unwrap());
                 // C uses absolute set; for the on/off toggle pairs
                 // we currently encode only the "on" bits (i.e. (#I)
                 // emits 0 to clear). Set the running flags directly.
-                glob_flags = (glob_flags
-                    & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE)) | bits;
+                glob_flags = (glob_flags & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE)) | bits;
             }
-            P_COUNT => {                                                      // c:P_COUNT arm
+            P_COUNT => {
+                // c:P_COUNT arm
                 let body = scan + I_BODY;
                 let min = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
                 let max = i64::from_le_bytes(code[body + 8..body + 16].try_into().unwrap());
@@ -2069,10 +2425,16 @@ fn patmatch_internal(
                 let max_usize: i64 = max;
                 loop {
                     let cur = *positions.last().unwrap();
-                    if (positions.len() as i64 - 1) >= max_usize { break; }
+                    if (positions.len() as i64 - 1) >= max_usize {
+                        break;
+                    }
                     let mut sub_state = state.clone();
-                    if let Some(new_pos) = patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags) {
-                        if new_pos == cur { break; }
+                    if let Some(new_pos) =
+                        patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags)
+                    {
+                        if new_pos == cur {
+                            break;
+                        }
                         *state = sub_state;
                         positions.push(new_pos);
                     } else {
@@ -2080,26 +2442,34 @@ fn patmatch_internal(
                     }
                 }
                 let min_usize = min as usize;
-                if positions.len() < min_usize + 1 { return None; }
+                if positions.len() < min_usize + 1 {
+                    return None;
+                }
                 while positions.len() > min_usize {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags) {
+                    if let Some(end) =
+                        patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags)
+                    {
                         *state = sub_state;
                         return Some(end);
                     }
-                    if positions.len() <= min_usize + 1 { return None; }
+                    if positions.len() <= min_usize + 1 {
+                        return None;
+                    }
                     positions.pop();
                 }
                 return None;
             }
-            op if op >= P_OPEN && op < P_CLOSE => {                           // c:P_OPEN_N arm
+            op if op >= P_OPEN && op < P_CLOSE => {
+                // c:P_OPEN_N arm
                 let n = (op - P_OPEN) as usize;
                 if n > 0 && n <= NSUBEXP {
                     state.patbeginp[n - 1] = s_off;
                 }
             }
-            op if op >= P_CLOSE && op < 0xa0 => {                             // c:P_CLOSE_N arm
+            op if op >= P_CLOSE && op < 0xa0 => {
+                // c:P_CLOSE_N arm
                 let n = (op - P_CLOSE) as usize;
                 if n > 0 && n <= NSUBEXP {
                     state.patendp[n - 1] = s_off;
@@ -2114,7 +2484,9 @@ fn patmatch_internal(
             }
         }
 
-        if next == 0 { break; }
+        if next == 0 {
+            break;
+        }
         scan = next;
     }
     Some(s_off)
@@ -2122,14 +2494,16 @@ fn patmatch_internal(
 
 /// Port of `patallocstr()` from `Src/pattern.c:2132`.
 /// WARNING: param names don't match C — Rust=(s) vs C=(prog, string, stringlen, unmetalen, force, patstralloc)
-pub fn patallocstr(s: &str) -> String {                                       // c:2132
+pub fn patallocstr(s: &str) -> String {
+    // c:2132
     s.to_string()
 }
 
 /// Port of `patrepeat(Upat p, char *charstart)` from `Src/pattern.c:4096`. Counts how many
 /// times the pattern matches consecutively at the start of `s`.
 /// WARNING: param names don't match C — Rust=(prog, s, max) vs C=(p, charstart)
-pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      // c:4096
+pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {
+    // c:4096
     let mut pos = 0;
     let mut count = 0;
     let max = max.unwrap_or(usize::MAX);
@@ -2190,9 +2564,12 @@ pub fn extract_numeric_ranges(s: &str) -> Vec<(usize, usize, Option<i64>, Option
                 j += 1;
             }
             let lo: Option<i64> = if j > lo_start {
-                std::str::from_utf8(&bytes[lo_start..j]).ok()
+                std::str::from_utf8(&bytes[lo_start..j])
+                    .ok()
                     .and_then(|s| s.parse::<i64>().ok())
-            } else { None };
+            } else {
+                None
+            };
             if j < bytes.len() && bytes[j] == b'-' {
                 j += 1;
                 let hi_start = j;
@@ -2200,9 +2577,12 @@ pub fn extract_numeric_ranges(s: &str) -> Vec<(usize, usize, Option<i64>, Option
                     j += 1;
                 }
                 let hi: Option<i64> = if j > hi_start {
-                    std::str::from_utf8(&bytes[hi_start..j]).ok()
+                    std::str::from_utf8(&bytes[hi_start..j])
+                        .ok()
                         .and_then(|s| s.parse::<i64>().ok())
-                } else { None };
+                } else {
+                    None
+                };
                 if j < bytes.len() && bytes[j] == b'>' {
                     out.push((start, j + 1, lo, hi));
                     i = j + 1;
@@ -2234,7 +2614,6 @@ pub fn numeric_ranges_to_star(s: &str) -> String {
 pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool {
     lo.map_or(true, |l| n >= l) && hi.map_or(true, |h| n <= h)
 }
-
 
 // =====================================================================
 // Tests
@@ -2333,7 +2712,16 @@ mod tests {
         let mut nump = 0i32;
         let mut begp: Vec<i32> = Vec::new();
         let mut endp: Vec<i32> = Vec::new();
-        let ok = pattryrefs(&prog, "foobar", -1, -1, 0, Some(&mut nump), Some(&mut begp), Some(&mut endp));
+        let ok = pattryrefs(
+            &prog,
+            "foobar",
+            -1,
+            -1,
+            0,
+            Some(&mut nump),
+            Some(&mut begp),
+            Some(&mut endp),
+        );
         assert!(ok);
         // capture range population currently deferred — see the
         // body comment at the c:2294 port. Verify match success.
@@ -2386,16 +2774,20 @@ mod tests {
     fn patcompile_concurrent_safe() {
         let _g = crate::test_util::global_state_lock();
         use std::thread;
-        let handles: Vec<_> = (0..8).map(|i| {
-            thread::spawn(move || {
-                for _ in 0..200 {
-                    assert!(patmatch(":completion:*", ":completion:zsh"));
-                    assert!(patmatch("hello*", "hello world"));
-                    let _ = i;
-                }
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || {
+                    for _ in 0..200 {
+                        assert!(patmatch(":completion:*", ":completion:zsh"));
+                        assert!(patmatch("hello*", "hello world"));
+                        let _ = i;
+                    }
+                })
             })
-        }).collect();
-        for h in handles { h.join().unwrap(); }
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
@@ -2465,10 +2857,16 @@ mod tests {
         // Two-flag chain: `(#l)` sets LCMATCHUC; `(#I)` should
         // clear it. C clears via `~(GF_LCMATCHUC|GF_IGNCASE)`.
         let (bits, _, _) = patgetglobflags("(#lI)").unwrap();
-        assert_eq!(bits & GF_LCMATCHUC, 0,
-            "c:1081 — (#I) must clear GF_LCMATCHUC");
-        assert_eq!(bits & GF_IGNCASE, 0,
-            "c:1081 — (#I) must clear GF_IGNCASE too");
+        assert_eq!(
+            bits & GF_LCMATCHUC,
+            0,
+            "c:1081 — (#I) must clear GF_LCMATCHUC"
+        );
+        assert_eq!(
+            bits & GF_IGNCASE,
+            0,
+            "c:1081 — (#I) must clear GF_IGNCASE too"
+        );
     }
 
     /// Pin: `(#L)` is NOT a documented flag per C pattern.c (no
@@ -2479,13 +2877,22 @@ mod tests {
     fn patgetglobflags_rejects_undocumented_flag_letters() {
         let _g = crate::test_util::global_state_lock();
         // 'L' (capital L) — not a documented C flag.
-        assert_eq!(patgetglobflags("(#L)"), None,
-            "c:1120 default — unknown flag 'L' must be rejected");
+        assert_eq!(
+            patgetglobflags("(#L)"),
+            None,
+            "c:1120 default — unknown flag 'L' must be rejected"
+        );
         // Other lower-rule letters that aren't documented either.
-        assert_eq!(patgetglobflags("(#x)"), None,
-            "c:1120 default — unknown flag 'x' must be rejected");
-        assert_eq!(patgetglobflags("(#9)"), None,
-            "c:1120 default — bare digit (not after 'a') must be rejected");
+        assert_eq!(
+            patgetglobflags("(#x)"),
+            None,
+            "c:1120 default — unknown flag 'x' must be rejected"
+        );
+        assert_eq!(
+            patgetglobflags("(#9)"),
+            None,
+            "c:1120 default — bare digit (not after 'a') must be rejected"
+        );
     }
 
     /// Pin: `(#a)` without digits — C `zstrtol` returns 0 with
@@ -2496,8 +2903,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // `(#a)` with no digits after 'a' — C rejects (c:1063
         // `ptr == nptr` check).
-        assert_eq!(patgetglobflags("(#a)"), None,
-            "c:1063 — `(#a)` without digits must be rejected");
+        assert_eq!(
+            patgetglobflags("(#a)"),
+            None,
+            "c:1063 — `(#a)` without digits must be rejected"
+        );
     }
 
     #[test]
@@ -2806,38 +3216,46 @@ mod tests {
     fn patcompstart_sets_patglobflags_per_option_state() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set};
-        let saved_caseglob  = opt_state_get("caseglob").unwrap_or(false);
+        let saved_caseglob = opt_state_get("caseglob").unwrap_or(false);
         let saved_casepaths = opt_state_get("casepaths").unwrap_or(false);
         let saved_multibyte = opt_state_get("multibyte").unwrap_or(false);
 
         // 1. CASEGLOB ON + CASEPATHS ON + MULTIBYTE ON → flags = GF_MULTIBYTE only.
-        opt_state_set("caseglob",  true);
+        opt_state_set("caseglob", true);
         opt_state_set("casepaths", true);
         opt_state_set("multibyte", true);
         patcompstart();
         let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(f & GF_IGNCASE,  0,
-            "c:521 — CASEGLOB on → GF_IGNCASE off");
-        assert_ne!(f & GF_MULTIBYTE, 0,
-            "c:525 — MULTIBYTE on → GF_MULTIBYTE bit set");
+        assert_eq!(f & GF_IGNCASE, 0, "c:521 — CASEGLOB on → GF_IGNCASE off");
+        assert_ne!(
+            f & GF_MULTIBYTE,
+            0,
+            "c:525 — MULTIBYTE on → GF_MULTIBYTE bit set"
+        );
 
         // 2. CASEGLOB OFF + CASEPATHS OFF → flags |= GF_IGNCASE.
-        opt_state_set("caseglob",  false);
+        opt_state_set("caseglob", false);
         opt_state_set("casepaths", false);
         patcompstart();
         let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
-        assert_ne!(f & GF_IGNCASE,  0,
-            "c:523 — default case-insensitive → GF_IGNCASE bit set");
+        assert_ne!(
+            f & GF_IGNCASE,
+            0,
+            "c:523 — default case-insensitive → GF_IGNCASE bit set"
+        );
 
         // 3. MULTIBYTE OFF → GF_MULTIBYTE bit cleared.
         opt_state_set("multibyte", false);
         patcompstart();
         let f = patglobflags.load(std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(f & GF_MULTIBYTE, 0,
-            "c:524 — !MULTIBYTE → GF_MULTIBYTE bit clear");
+        assert_eq!(
+            f & GF_MULTIBYTE,
+            0,
+            "c:524 — !MULTIBYTE → GF_MULTIBYTE bit clear"
+        );
 
         // Restore.
-        opt_state_set("caseglob",  saved_caseglob);
+        opt_state_set("caseglob", saved_caseglob);
         opt_state_set("casepaths", saved_casepaths);
         opt_state_set("multibyte", saved_multibyte);
     }
@@ -2852,10 +3270,15 @@ mod tests {
     fn pattern_marker_alias_matches_canonical_zsh_h_marker() {
         let _g = crate::test_util::global_state_lock();
         // c:224 — canonical Marker is 0xa2.
-        assert_eq!(Marker, 0xa2_u8,
-            "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)");
-        assert_eq!(Marker, crate::ported::zsh_h::Marker as u8,
-            "pattern.rs::Marker must alias zsh_h::Marker");
+        assert_eq!(
+            Marker, 0xa2_u8,
+            "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)"
+        );
+        assert_eq!(
+            Marker,
+            crate::ported::zsh_h::Marker as u8,
+            "pattern.rs::Marker must alias zsh_h::Marker"
+        );
     }
 
     /// `Src/pattern.c:464-510` — `patcompcharsset` masks special chars
@@ -2870,30 +3293,35 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::options::{opt_state_get, opt_state_set};
         use crate::ported::zsh_h::{
-            Marker as MARKER_CH, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INPAR,
-            ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS,
-            ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE,
+            Marker as MARKER_CH, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INPAR, ZPC_KSH_AT, ZPC_KSH_BANG,
+            ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR, ZPC_TILDE,
         };
         let marker_byte = MARKER_CH as u32 as u8;
 
         // Save state.
         let saved_extended = opt_state_get("extendedglob").unwrap_or(false);
-        let saved_ksh      = opt_state_get("kshglob").unwrap_or(false);
-        let saved_sh       = opt_state_get("shglob").unwrap_or(false);
+        let saved_ksh = opt_state_get("kshglob").unwrap_or(false);
+        let saved_sh = opt_state_get("shglob").unwrap_or(false);
 
         // 1. EXTENDEDGLOB off → Tilde/Hat/Hash → Marker.
         opt_state_set("extendedglob", false);
-        opt_state_set("kshglob", true);    // so KSH_* slots stay literal
-        opt_state_set("shglob", false);    // so Inpar/Inang stay literal
+        opt_state_set("kshglob", true); // so KSH_* slots stay literal
+        opt_state_set("shglob", false); // so Inpar/Inang stay literal
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_TILDE as usize], marker_byte,
-                "c:480 — !EXTENDEDGLOB → Tilde = Marker");
-            assert_eq!(sp[ZPC_HAT as usize],   marker_byte,
-                "c:481 — !EXTENDEDGLOB → Hat = Marker");
-            assert_eq!(sp[ZPC_HASH as usize],  marker_byte,
-                "c:482 — !EXTENDEDGLOB → Hash = Marker");
+            assert_eq!(
+                sp[ZPC_TILDE as usize], marker_byte,
+                "c:480 — !EXTENDEDGLOB → Tilde = Marker"
+            );
+            assert_eq!(
+                sp[ZPC_HAT as usize], marker_byte,
+                "c:481 — !EXTENDEDGLOB → Hat = Marker"
+            );
+            assert_eq!(
+                sp[ZPC_HASH as usize], marker_byte,
+                "c:482 — !EXTENDEDGLOB → Hash = Marker"
+            );
         }
 
         // 2. EXTENDEDGLOB on → Tilde/Hat/Hash → literal chars.
@@ -2901,10 +3329,12 @@ mod tests {
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_TILDE as usize], b'~',
-                "c:478 — EXTENDEDGLOB on → Tilde = literal '~'");
-            assert_eq!(sp[ZPC_HAT as usize],   b'^');
-            assert_eq!(sp[ZPC_HASH as usize],  b'#');
+            assert_eq!(
+                sp[ZPC_TILDE as usize], b'~',
+                "c:478 — EXTENDEDGLOB on → Tilde = literal '~'"
+            );
+            assert_eq!(sp[ZPC_HAT as usize], b'^');
+            assert_eq!(sp[ZPC_HASH as usize], b'#');
         }
 
         // 3. KSHGLOB off → KSH_* slots → Marker.
@@ -2912,13 +3342,15 @@ mod tests {
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_KSH_QUEST as usize], marker_byte,
-                "c:486 — !KSHGLOB → KSH_QUEST = Marker");
-            assert_eq!(sp[ZPC_KSH_STAR  as usize], marker_byte);
-            assert_eq!(sp[ZPC_KSH_PLUS  as usize], marker_byte);
-            assert_eq!(sp[ZPC_KSH_BANG  as usize], marker_byte);
+            assert_eq!(
+                sp[ZPC_KSH_QUEST as usize], marker_byte,
+                "c:486 — !KSHGLOB → KSH_QUEST = Marker"
+            );
+            assert_eq!(sp[ZPC_KSH_STAR as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_PLUS as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_BANG as usize], marker_byte);
             assert_eq!(sp[ZPC_KSH_BANG2 as usize], marker_byte);
-            assert_eq!(sp[ZPC_KSH_AT    as usize], marker_byte);
+            assert_eq!(sp[ZPC_KSH_AT as usize], marker_byte);
         }
 
         // 4. KSHGLOB on → KSH_* slots → literal trigger chars.
@@ -2926,13 +3358,15 @@ mod tests {
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_KSH_QUEST as usize], b'?',
-                "c:478 — KSHGLOB on → KSH_QUEST = '?'");
-            assert_eq!(sp[ZPC_KSH_STAR  as usize], b'*');
-            assert_eq!(sp[ZPC_KSH_PLUS  as usize], b'+');
-            assert_eq!(sp[ZPC_KSH_BANG  as usize], b'!');
+            assert_eq!(
+                sp[ZPC_KSH_QUEST as usize], b'?',
+                "c:478 — KSHGLOB on → KSH_QUEST = '?'"
+            );
+            assert_eq!(sp[ZPC_KSH_STAR as usize], b'*');
+            assert_eq!(sp[ZPC_KSH_PLUS as usize], b'+');
+            assert_eq!(sp[ZPC_KSH_BANG as usize], b'!');
             assert_eq!(sp[ZPC_KSH_BANG2 as usize], b'!');
-            assert_eq!(sp[ZPC_KSH_AT    as usize], b'@');
+            assert_eq!(sp[ZPC_KSH_AT as usize], b'@');
         }
 
         // 5. SHGLOB on → Inpar/Inang → Marker.
@@ -2940,10 +3374,14 @@ mod tests {
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_INPAR as usize], marker_byte,
-                "c:501 — SHGLOB on → Inpar = Marker");
-            assert_eq!(sp[ZPC_INANG as usize], marker_byte,
-                "c:501 — SHGLOB on → Inang = Marker");
+            assert_eq!(
+                sp[ZPC_INPAR as usize], marker_byte,
+                "c:501 — SHGLOB on → Inpar = Marker"
+            );
+            assert_eq!(
+                sp[ZPC_INANG as usize], marker_byte,
+                "c:501 — SHGLOB on → Inang = Marker"
+            );
         }
 
         // 6. SHGLOB off → Inpar/Inang → literal chars.
@@ -2951,15 +3389,17 @@ mod tests {
         patcompcharsset();
         {
             let sp = zpc_special.lock().unwrap();
-            assert_eq!(sp[ZPC_INPAR as usize], b'(',
-                "c:478 — !SHGLOB → Inpar = '('");
+            assert_eq!(
+                sp[ZPC_INPAR as usize], b'(',
+                "c:478 — !SHGLOB → Inpar = '('"
+            );
             assert_eq!(sp[ZPC_INANG as usize], b'<');
         }
 
         // Restore.
         opt_state_set("extendedglob", saved_extended);
-        opt_state_set("kshglob",      saved_ksh);
-        opt_state_set("shglob",       saved_sh);
+        opt_state_set("kshglob", saved_ksh);
+        opt_state_set("shglob", saved_sh);
     }
 
     /// `Src/pattern.c:4220-4233` — `savepatterndisables` encodes the
@@ -2976,13 +3416,19 @@ mod tests {
         let saved = savepatterndisables();
         // Clear everything, install a known pattern.
         restorepatterndisables(0);
-        assert_eq!(savepatterndisables(), 0,
-            "c:4220 — all-zeros zpc_disables → 0 bitmask");
+        assert_eq!(
+            savepatterndisables(),
+            0,
+            "c:4220 — all-zeros zpc_disables → 0 bitmask"
+        );
         // Set slot 0 and slot 3.
         let want = (1u32 << 0) | (1u32 << 3);
         restorepatterndisables(want);
-        assert_eq!(savepatterndisables(), want,
-            "c:4220 — round-trip: restore → save must yield same bitmask");
+        assert_eq!(
+            savepatterndisables(),
+            want,
+            "c:4220 — round-trip: restore → save must yield same bitmask"
+        );
         // Restore prior state so test isolation holds.
         restorepatterndisables(saved);
     }
@@ -2998,9 +3444,14 @@ mod tests {
         for slot in 0..(ZPC_COUNT as usize) {
             restorepatterndisables(1u32 << slot);
             let got = savepatterndisables();
-            assert_eq!(got, 1u32 << slot,
+            assert_eq!(
+                got,
+                1u32 << slot,
                 "c:4220 — slot {} must map to bit {}, got 0x{:x}",
-                slot, slot, got);
+                slot,
+                slot,
+                got
+            );
         }
         restorepatterndisables(saved);
     }

@@ -8,31 +8,28 @@
 //! Provides zstyle, zformat, zparseopts builtins.
 
 use crate::ported::utils::zwarnnam;
-use indexmap::IndexMap;
-use regex::Regex;
-use std::collections::HashMap;
 use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
+use std::collections::HashMap;
 use std::io::Write;
-use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
 
 /// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
 /// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
 /// $mend into the MatchData struct.
 #[allow(non_snake_case)]
-pub fn savematch(m: &mut MatchData) {                                         // c:40
-    crate::ported::signals_h::queue_signals();                                // c:44
-    // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
-    // captures. The previous Rust port hardcoded `a = None` for all
-    // three because the fabricated `getaparam(Option<&mut value>)` sig
-    // couldn't take a name string. Now that `getaparam(&str)` matches
-    // C, real reads from paramtab work end-to-end.
-    m.r#match = crate::ported::params::getaparam("match");                    // c:45-46
-    m.mbegin = crate::ported::params::getaparam("mbegin");                    // c:47-48
-    m.mend = crate::ported::params::getaparam("mend");                        // c:49-50
-    crate::ported::signals_h::unqueue_signals();                              // c:51
+pub fn savematch(m: &mut MatchData) {
+    // c:40
+    crate::ported::signals_h::queue_signals(); // c:44
+                                               // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
+                                               // captures. The previous Rust port hardcoded `a = None` for all
+                                               // three because the fabricated `getaparam(Option<&mut value>)` sig
+                                               // couldn't take a name string. Now that `getaparam(&str)` matches
+                                               // C, real reads from paramtab work end-to-end.
+    m.r#match = crate::ported::params::getaparam("match"); // c:45-46
+    m.mbegin = crate::ported::params::getaparam("mbegin"); // c:47-48
+    m.mend = crate::ported::params::getaparam("mend"); // c:49-50
+    crate::ported::signals_h::unqueue_signals(); // c:51
 }
-
-
 
 /// Port of `static void restorematch(MatchData *m)` from
 /// `Src/Modules/zutil.c:55`.
@@ -55,7 +52,8 @@ pub fn savematch(m: &mut MatchData) {                                         //
 /// params.rs:4731). Skipping the unset means a regex callout that
 /// set `$match` from an originally-unset state would leave `$match`
 /// set after restorematch — the OPPOSITE of the documented contract.
-pub fn restorematch(m: &MatchData) {                                         // c:55
+pub fn restorematch(m: &MatchData) {
+    // c:55
     // c:57-60 — `$match`.
     if let Some(v) = m.r#match.as_ref() {
         crate::ported::params::assignaparam("match", v.clone(), 0);
@@ -79,7 +77,8 @@ pub fn restorematch(m: &MatchData) {                                         // 
 /// Port of `freematch(Cmatch m, int nbeg, int nend)` from Src/Modules/zutil.c:72.
 /// C: `static void freematch(MatchData *m)` — drops the captured arrays.
 #[allow(non_snake_case)]
-pub fn freematch(m: &mut MatchData) {                                        // c:72
+pub fn freematch(m: &mut MatchData) {
+    // c:72
     // c:72
     // c:74-81 — freearray(m->match/mbegin/mend) when non-NULL. Rust
     // path: take() drops the inner Vec, mirroring freearray + NULL set.
@@ -95,12 +94,12 @@ pub fn freematch(m: &mut MatchData) {                                        // 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
 #[allow(non_camel_case_types)]
 pub struct stypat {
-    pub next: Option<Box<stypat>>,                            // c:98 Stypat next
-    pub pat: String,                                          // c:99 char *pat
-    pub prog: Option<crate::ported::zsh_h::Patprog>,          // c:100 Patprog prog (compiled)
-    pub weight: u64,                                          // c:101 zulong weight
-    pub eval: Option<crate::ported::zsh_h::Eprog>,            // c:102 Eprog eval
-    pub vals: Vec<String>,                                    // c:103 char **vals
+    pub next: Option<Box<stypat>>,                   // c:98 Stypat next
+    pub pat: String,                                 // c:99 char *pat
+    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:100 Patprog prog (compiled)
+    pub weight: u64,                                 // c:101 zulong weight
+    pub eval: Option<crate::ported::zsh_h::Eprog>,   // c:102 Eprog eval
+    pub vals: Vec<String>,                           // c:103 char **vals
 }
 pub type Stypat = Box<stypat>;
 
@@ -125,7 +124,8 @@ pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<style_table>> =
 /// Port of `freestylepatnode(Stypat p)` from Src/Modules/zutil.c:111.
 /// C: `static void freestylepatnode(Stypat p)` — drops pat/prog/vals/eval.
 #[allow(non_snake_case)]
-pub fn freestylepatnode(p: Stypat) {                                          // c:111
+pub fn freestylepatnode(p: Stypat) {
+    // c:111
     // c:111 zsfree(p->pat) — String drop
     // c:114 freepatprog(p->prog) — Option<()> drop
     // c:115-116 if (p->vals) freearray(p->vals) — Vec<String> drop
@@ -138,7 +138,8 @@ pub fn freestylepatnode(p: Stypat) {                                          //
 /// C: `static void freestylenode(HashNode hn)` — walk pats list freeing
 /// each via freestylepatnode, then free node name + Style.
 #[allow(non_snake_case)]
-pub fn freestylenode(hn: HashNode) {                                          // c:123
+pub fn freestylenode(hn: HashNode) {
+    // c:123
     // c:123 — Style s = (Style) hn; (C uses hashnode-prefix
     // inheritance; the Rust HashNode and Style are separate Boxes so
     // the cast collapses to dropping hn — its underlying style.pats
@@ -156,17 +157,20 @@ pub fn freestylenode(hn: HashNode) {                                          //
 /// from style.pats list, then freestylepatnode. If style empties,
 /// remove from zstyletab too.
 #[allow(non_snake_case)]
-pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat>) { // c:151
+pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat>) {
+    // c:151
     // c:151-158 — relink prev->next to p->next (or s->pats if no prev).
     // Use Option::take() to move the chain pointer out of p, since
     // stypat doesn't derive Clone (matching C's pointer-move semantics).
-    let next = p.next.take();                                                 // c:155 capture p->next
+    let next = p.next.take(); // c:155 capture p->next
     let s_has_some = s.is_some();
-    if let Some(s_ref) = s {                                                  // c:153
-        if let Some(prev_ref) = prev {                                        // c:154
-            prev_ref.next = next;                                             // c:155 prev->next = p->next
+    if let Some(s_ref) = s {
+        // c:153
+        if let Some(prev_ref) = prev {
+            // c:154
+            prev_ref.next = next; // c:155 prev->next = p->next
         } else {
-            s_ref.pats = next;                                                // c:157 s->pats = p->next
+            s_ref.pats = next; // c:157 s->pats = p->next
         }
     }
     // c:160 — freestylepatnode(p);
@@ -193,10 +197,12 @@ impl style_table {
         let style_patterns = self.styles.entry(style.to_string()).or_default();
         // c:319-333 — Exists → replace.
         if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
-            existing.vals = values;                                           // c:328
+            existing.vals = values; // c:328
             existing.eval = if eval {
                 Some(Box::new(crate::ported::zsh_h::eprog::default()))
-            } else { None };                                                  // c:329
+            } else {
+                None
+            }; // c:329
             return;
         }
         // c:344-385 — Calculate weight: high 32 bits = colon-component
@@ -205,27 +211,30 @@ impl style_table {
         let mut tmp: u64 = 2;
         let mut first = true;
         for ch in pattern.chars() {
-            if first && ch == '*' {                                           // c:365
+            if first && ch == '*' {
+                // c:365
                 tmp = 0;
                 continue;
             }
             first = false;
-            if matches!(ch, '(' | '|' | '*' | '[' | '<' | '?' | '#' | '^') {  // c:372
+            if matches!(ch, '(' | '|' | '*' | '[' | '<' | '?' | '#' | '^') {
+                // c:372
                 tmp = 1;
             }
-            if ch == ':' {                                                    // c:377
-                weight += 1u64 << 32;                                         // c:379
+            if ch == ':' {
+                // c:377
+                weight += 1u64 << 32; // c:379
                 first = true;
                 weight += tmp;
                 tmp = 2;
             }
         }
-        weight += tmp;                                                        // c:386
-        // c:337-342 — New pattern: build stypat.
-        // c:339 — p->prog = prog; the C arg comes from patcompile()
-        // before setstypat is called. The style_table::set API takes
-        // pattern as &str and compiles at lookup-time via patmatch,
-        // so we record None here and rely on get() to match.
+        weight += tmp; // c:386
+                       // c:337-342 — New pattern: build stypat.
+                       // c:339 — p->prog = prog; the C arg comes from patcompile()
+                       // before setstypat is called. The style_table::set API takes
+                       // pattern as &str and compiles at lookup-time via patmatch,
+                       // so we record None here and rely on get() to match.
         let prog: Option<crate::ported::zsh_h::Patprog> = None;
         // c:341 — p->eval = eprog; signals "this is an -e style".
         // Eprog body parsing requires parse_string (unported), so we
@@ -238,12 +247,12 @@ impl style_table {
             None
         };
         let sp = stypat {
-            next: None,                                                       // c:342
-            pat: pattern.to_string(),                                         // c:338
-            prog,                                                             // c:339
-            weight,                                                           // c:386
-            eval: eval_eprog,                                                 // c:341
-            vals: values,                                                     // c:340
+            next: None,               // c:342
+            pat: pattern.to_string(), // c:338
+            prog,                     // c:339
+            weight,                   // c:386
+            eval: eval_eprog,         // c:341
+            vals: values,             // c:340
         };
         // c:388-396 — insert q in weight-descending order (highest first).
         let pos = style_patterns
@@ -389,26 +398,31 @@ impl style_table {
 /// C: `static void printstylenode(HashNode hn, int printflags)` — emit
 /// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
-pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
+pub fn printstylenode(hn: HashNode, printflags: i32) {
+    // c:184
     // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
     // walk the canonical zstyletab by style name instead.
     let nam: String = hn.nam.clone();
     let mut stdout = std::io::stdout().lock();
-    if printflags == 1 {                                                      // c:190 ZSLIST_BASIC
-        let _ = writeln!(stdout, "{}", nam);                                  // c:191-192
+    if printflags == 1 {
+        // c:190 ZSLIST_BASIC
+        let _ = writeln!(stdout, "{}", nam); // c:191-192
         return;
     }
     // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
     if let Ok(t) = zstyletab.lock() {
-        for (pat, style, vals) in t.list(None) {                              // c:196-208
-            if style != nam { continue; }
-            let _ = write!(stdout, "zstyle ");
-            let _ = write!(stdout, "{} ", pat);                               // c:201
-            let _ = write!(stdout, "{}", style);                              // c:201
-            for v in &vals {
-                let _ = write!(stdout, " {}", v);                             // c:206-209
+        for (pat, style, vals) in t.list(None) {
+            // c:196-208
+            if style != nam {
+                continue;
             }
-            let _ = writeln!(stdout);                                         // c:210
+            let _ = write!(stdout, "zstyle ");
+            let _ = write!(stdout, "{} ", pat); // c:201
+            let _ = write!(stdout, "{}", style); // c:201
+            for v in &vals {
+                let _ = write!(stdout, " {}", v); // c:206-209
+            }
+            let _ = writeln!(stdout); // c:210
         }
     }
 }
@@ -418,7 +432,8 @@ pub fn printstylenode(hn: HashNode, printflags: i32) {                        //
 /// every pattern of `hn`'s style, switching on `spatflags` (ZSPAT_NAME /
 /// ZSPAT_PAT / ZSPAT_REMOVE).
 #[allow(non_snake_case)]
-pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          // c:229
+pub fn scanpatstyles(hn: HashNode, spatflags: i32) {
+    // c:229
     // c:229 — Style s = (Style)hn;
     let _s: HashNode = hn;
     // c:232 — Stypat p, q;
@@ -428,15 +443,16 @@ pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          //
     // the HashNode→Style cast doesn't yield the pats list directly
     // (separate Boxes), so the body switches on spatflags and exits
     // each branch without traversal until the cast is wired.
-    match spatflags {                                                         // c:236
-        0 => {                                                                // c:237 ZSPAT_NAME
-            // c:238-241 — if pat matches zstyle_patname, addlinknode + return
+    match spatflags {
+        // c:236
+        0 => { // c:237 ZSPAT_NAME
+             // c:238-241 — if pat matches zstyle_patname, addlinknode + return
         }
-        1 => {                                                                // c:244 ZSPAT_PAT
-            // c:246-251 — addlinknode unless already present
+        1 => { // c:244 ZSPAT_PAT
+             // c:246-251 — addlinknode unless already present
         }
-        2 => {                                                                // c:253 ZSPAT_REMOVE
-            // c:254-262 — if pat matches, freestypat(p, s, q) + return
+        2 => { // c:253 ZSPAT_REMOVE
+             // c:254-262 — if pat matches, freestypat(p, s, q) + return
         }
         _ => {}
     }
@@ -655,14 +671,18 @@ pub fn newzstyletable(size: i32, name: &str) -> Option<HashNode> {
 /// ignored because style_table::set compiles at lookup-time via patmatch.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(style_name, pat, vals, eval) vs C=(s, pat, prog, vals, eval)
-pub fn setstypat(style_name: &str, pat: &str,                                // c:295
-                 _prog: Option<crate::ported::zsh_h::Patprog>,
-                 vals: Vec<String>, eval: i32) -> i32 {
+pub fn setstypat(
+    style_name: &str,
+    pat: &str, // c:295
+    _prog: Option<crate::ported::zsh_h::Patprog>,
+    vals: Vec<String>,
+    eval: i32,
+) -> i32 {
     // c:307-318 — eval branch needs parse_string (unported); style_table
     // records the eval=true flag via the Option<Eprog> sentinel and
     // emits via the evalstyle hook at lookup time.
     if let Ok(mut t) = zstyletab.lock() {
-        t.set(pat, style_name, vals, eval != 0);                             // c:319 set/replace
+        t.set(pat, style_name, vals, eval != 0); // c:319 set/replace
         0
     } else {
         1
@@ -677,9 +697,15 @@ pub fn setstypat(style_name: &str, pat: &str,                                // 
 ///     `Style s = (Style) zshcalloc(sizeof(*s));
 ///      zstyletab->addnode(zstyletab, ztrdup(name), s);
 ///      return s;`
-pub fn addstyle(name: &str) -> Option<Style> {                               // c:403
-    Some(Box::new(style {                                                    // c:405 zshcalloc + return
-        node: crate::ported::zsh_h::hashnode { next: None, nam: name.to_string(), flags: 0 },
+pub fn addstyle(name: &str) -> Option<Style> {
+    // c:403
+    Some(Box::new(style {
+        // c:405 zshcalloc + return
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: 0,
+        },
         pats: None,
     }))
     // c:407 addnode — zstyletab integration is the caller's job; the
@@ -689,10 +715,11 @@ pub fn addstyle(name: &str) -> Option<Style> {                               // 
 /// Port of `evalstyle(Stypat p)` from Src/Modules/zutil.c:413.
 /// Runs `p.eval` and reads `$reply` (array first, falling back to
 /// scalar form). Returns empty Vec on error or unset.
-pub fn evalstyle(p: &Stypat) -> Vec<String> {                                // c:413
-    use std::sync::atomic::Ordering;
+pub fn evalstyle(p: &Stypat) -> Vec<String> {
+    // c:413
     use crate::ported::utils::errflag;
     use crate::ported::zsh_h::ERRFLAG_INT;
+    use std::sync::atomic::Ordering;
 
     // c:415 — int ef = errflag;
     let ef = errflag.load(Ordering::Relaxed);
@@ -708,7 +735,7 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {                                // 
     let cur = errflag.load(Ordering::Relaxed);
     errflag.store(ef | (cur & ERRFLAG_INT), Ordering::Relaxed);
     if (cur & !ERRFLAG_INT) != 0 {
-        return Vec::new();                                                   // c:423
+        return Vec::new(); // c:423
     }
     // c:427-433 — `if ((ret = getaparam("reply"))) ret = arrdup(ret);
     //              else if ((str = getsparam("reply"))) ret = [str];`
@@ -730,13 +757,16 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {                                // 
 /// C: `static char **lookupstyle(char *ctxt, char *style)` — find best
 /// pat-style match against the style entry; return its vals.
 #[allow(non_snake_case)]
-pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  // c:443
+pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
+    // c:443
     // c:443-463 — zstyletab->getnode2 + savematch/pattry/restorematch
     // loop. style_table::get() encapsulates the pat-walk; weight order
     // is enforced at insert time so first-match wins.
-    match zstyletab.lock() {                                                    // c:449
-        Ok(t) => t.get(ctxt, style)
-            .map(|v| v.to_vec())                                                // c:455 found = p->vals
+    match zstyletab.lock() {
+        // c:449
+        Ok(t) => t
+            .get(ctxt, style)
+            .map(|v| v.to_vec()) // c:455 found = p->vals
             .unwrap_or_default(),
         Err(_) => Vec::new(),
     }
@@ -752,13 +782,19 @@ use crate::ported::zsh_h::module;
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
 /// match check for context+style. Returns `!found` so 0 == success.
 #[allow(non_snake_case)]
-pub fn testforstyle(ctxt: &str, style: &str) -> i32 {                         // c:465
+pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
+    // c:465
     // c:465-484 — zstyletab lookup + pattern match against ctxt.
-    let found = match zstyletab.lock() {                                       // c:471
-        Ok(t) => t.get(ctxt, style).is_some(),                                 // c:476 pattry
+    let found = match zstyletab.lock() {
+        // c:471
+        Ok(t) => t.get(ctxt, style).is_some(), // c:476 pattry
         Err(_) => false,
     };
-    if found { 0 } else { 1 }                                                  // c:485 return !found
+    if found {
+        0
+    } else {
+        1
+    } // c:485 return !found
 }
 
 /// Direct port of `bin_zstyle(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:487`.
@@ -773,68 +809,95 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {                         //
 /// engine in zutil.c hasn't landed). Without it, the lookups all
 /// return "no match" (ret=1).
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zstyle(nam: &str, args: &[String],                                 // c:487
-                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-
+pub fn bin_zstyle(
+    nam: &str,
+    args: &[String], // c:487
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // c:495-540 — flag dispatch backed by the global zstyletab.
-    if args.is_empty() {                                                     // c:495
+    if args.is_empty() {
+        // c:495
         // c:496 — list mode: walk zstyletab printing each entry.
-        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let t = match zstyletab.lock() {
+            Ok(g) => g,
+            Err(_) => return 1,
+        };
         let mut out = std::io::stdout().lock();
-        for (pat, style, vals) in t.list(None) {                             // c:496
+        for (pat, style, vals) in t.list(None) {
+            // c:496
             let _ = write!(out, "{} {}", pat, style);
             for v in &vals {
                 let _ = write!(out, " {}", v);
             }
             let _ = writeln!(out);
         }
-        return 0;                                                            // c:497
+        return 0; // c:497
     }
-    if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {                        // c:511
+    if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {
+        // c:511
         // -L: emit as replayable `zstyle` commands.
-        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let t = match zstyletab.lock() {
+            Ok(g) => g,
+            Err(_) => return 1,
+        };
         let mut out = std::io::stdout().lock();
-        for (pat, style, vals) in t.list(None) {                             // c:511
+        for (pat, style, vals) in t.list(None) {
+            // c:511
             let _ = write!(out, "zstyle {} {}", pat, style);
             for v in &vals {
                 let _ = write!(out, " {}", v);
             }
             let _ = writeln!(out);
         }
-        return 0;                                                            // c:514
+        return 0; // c:514
     }
-    if OPT_ISSET(ops, b'd') {                                                // c:520
+    if OPT_ISSET(ops, b'd') {
+        // c:520
         // -d: delete the style. C: `args[0]` is pattern (optional),
         // `args[1]` is style (optional). With no args → wipe all.
         let pat = args.first().map(|s| s.as_str());
         let sty = args.get(1).map(|s| s.as_str());
         if let Ok(mut t) = zstyletab.lock() {
-            t.delete(pat, sty);                                              // c:521-523
+            t.delete(pat, sty); // c:521-523
         }
-        return 0;                                                            // c:524
+        return 0; // c:524
     }
     // c:541-942 — -s/-b/-t/-T/-m/-a/-e per-context lookup arms.
     // -g has different arg layout (args[0] = output name, not context)
     // so it gets its own block below.
-    if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b't')
-        || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'a')
+    if OPT_ISSET(ops, b's')
+        || OPT_ISSET(ops, b'b')
+        || OPT_ISSET(ops, b't')
+        || OPT_ISSET(ops, b'T')
+        || OPT_ISSET(ops, b'a')
         || OPT_ISSET(ops, b'e')
         || OPT_ISSET(ops, b'm')
     {
-        if args.len() < 2 { return 1; }
-        let ctxt = &args[0];                                                 // c:541
+        if args.len() < 2 {
+            return 1;
+        }
+        let ctxt = &args[0]; // c:541
         let style = &args[1];
-        let vals = lookupstyle(ctxt, style);                                 // c:443
-        // c:559-732 — per-flag return semantics: just check found vs not.
-        // For -t: 0 if found AND first value matches one of the "true"
-        // tokens (when arg given) or first ∈ {true,yes,on,1}.
-        if OPT_ISSET(ops, b't') {                                            // c:660
-            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let vals = lookupstyle(ctxt, style); // c:443
+                                             // c:559-732 — per-flag return semantics: just check found vs not.
+                                             // For -t: 0 if found AND first value matches one of the "true"
+                                             // tokens (when arg given) or first ∈ {true,yes,on,1}.
+        if OPT_ISSET(ops, b't') {
+            // c:660
+            let t = match zstyletab.lock() {
+                Ok(g) => g,
+                Err(_) => return 1,
+            };
             return if t.test(ctxt, style, None) { 0 } else { 1 };
         }
-        if OPT_ISSET(ops, b'T') {                                            // c:692
+        if OPT_ISSET(ops, b'T') {
+            // c:692
             // -T: same as -t but missing entries succeed (return 0).
-            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+            let t = match zstyletab.lock() {
+                Ok(g) => g,
+                Err(_) => return 1,
+            };
             if t.get(ctxt, style).is_some() {
                 return if t.test(ctxt, style, None) { 0 } else { 1 };
             }
@@ -842,8 +905,11 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
         }
         // -m PATTERN: pattern-match args[2] against each value, return
         // 0 if any matches. C: zutil.c:727-747.
-        if OPT_ISSET(ops, b'm') {                                            // c:727
-            if args.len() < 3 { return 1; }
+        if OPT_ISSET(ops, b'm') {
+            // c:727
+            if args.len() < 3 {
+                return 1;
+            }
             let pat = &args[2];
             let prog = match crate::ported::pattern::patcompile(
                 pat,
@@ -853,87 +919,114 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
                 Some(p) => p,
                 None => return 1,
             };
-            for v in &vals {                                                 // c:738
-                if crate::ported::pattern::pattry(&prog, v) {                // c:739
-                    return 0;                                                // c:741
+            for v in &vals {
+                // c:738
+                if crate::ported::pattern::pattry(&prog, v) {
+                    // c:739
+                    return 0; // c:741
                 }
             }
-            return 1;                                                        // c:746
+            return 1; // c:746
         }
         // -s CONTEXT STYLE NAME [SEP]: join vals with SEP (default " "),
         // setsparam(NAME, joined). Return 0 if found else 1 (empty str).
         // C: zutil.c:643-658.
-        if OPT_ISSET(ops, b's') {                                            // c:643
-            if args.len() < 3 { return 1; }
+        if OPT_ISSET(ops, b's') {
+            // c:643
+            if args.len() < 3 {
+                return 1;
+            }
             let pname = &args[2];
             if !vals.is_empty() {
-                let sep = args.get(3).map(|s| s.as_str()).unwrap_or(" ");    // c:649
+                let sep = args.get(3).map(|s| s.as_str()).unwrap_or(" "); // c:649
                 let ret = vals.join(sep);
                 crate::ported::params::setsparam(pname, &ret);
-                return 0;                                                    // c:650
+                return 0; // c:650
             }
-            crate::ported::params::setsparam(pname, "");                     // c:652
-            return 1;                                                        // c:653
+            crate::ported::params::setsparam(pname, ""); // c:652
+            return 1; // c:653
         }
         // -b CONTEXT STYLE NAME: coerce single bool-ish val to "yes"/"no".
         // C: zutil.c:660-680.
-        if OPT_ISSET(ops, b'b') {                                            // c:660
-            if args.len() < 3 { return 1; }
+        if OPT_ISSET(ops, b'b') {
+            // c:660
+            if args.len() < 3 {
+                return 1;
+            }
             let pname = &args[2];
             let truthy = vals.len() == 1                                     // c:665-670
                 && matches!(vals[0].as_str(),
                             "yes" | "true" | "on" | "1");
             let (ret, code) = if truthy { ("yes", 0) } else { ("no", 1) };
-            crate::ported::params::setsparam(pname, ret);                    // c:677
-            return code;                                                     // c:672/675
+            crate::ported::params::setsparam(pname, ret); // c:677
+            return code; // c:672/675
         }
         // -a CONTEXT STYLE NAME: setaparam(NAME, vals).
         // C: zutil.c:682-699.
-        if OPT_ISSET(ops, b'a') {                                            // c:682
-            if args.len() < 3 { return 1; }
+        if OPT_ISSET(ops, b'a') {
+            // c:682
+            if args.len() < 3 {
+                return 1;
+            }
             let pname = &args[2];
             let found = !vals.is_empty();
-            crate::ported::params::setaparam(pname,                          // c:696
-                if found { vals } else { Vec::new() });
-            return if found { 0 } else { 1 };                                // c:689/694
+            crate::ported::params::setaparam(
+                pname, // c:696
+                if found { vals } else { Vec::new() },
+            );
+            return if found { 0 } else { 1 }; // c:689/694
         }
         // -e: deferred-eval style lookup. For now: bind joined value.
         if OPT_ISSET(ops, b'e') {
-            if args.len() < 3 { return 1; }
+            if args.len() < 3 {
+                return 1;
+            }
             let pname = &args[2];
-            if vals.is_empty() { return 1; }
+            if vals.is_empty() {
+                return 1;
+            }
             let val = vals.join(" ");
             crate::ported::params::setsparam(pname, &val);
             return 0;
         }
         // -g: handled below (different arg layout).
-        if vals.is_empty() { return 1; }
+        if vals.is_empty() {
+            return 1;
+        }
         return 0;
     }
     // -g NAME [PATTERN [STYLE]]: collect into array NAME.
     // C: zutil.c:758-795. Distinct arg layout: args[0]=NAME (not ctxt).
-    if OPT_ISSET(ops, b'g') {                                                // c:758
-        if args.is_empty() { return 1; }
-        let pname = &args[0];                                                // c:792 args[1]→args[0]
-        let pat_arg = args.get(1).map(|s| s.as_str());                       // c:766
-        let sty_arg = args.get(2).map(|s| s.as_str());                       // c:767
+    if OPT_ISSET(ops, b'g') {
+        // c:758
+        if args.is_empty() {
+            return 1;
+        }
+        let pname = &args[0]; // c:792 args[1]→args[0]
+        let pat_arg = args.get(1).map(|s| s.as_str()); // c:766
+        let sty_arg = args.get(2).map(|s| s.as_str()); // c:767
         let mut out: Vec<String> = Vec::new();
-        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let t = match zstyletab.lock() {
+            Ok(g) => g,
+            Err(_) => return 1,
+        };
         match (pat_arg, sty_arg) {
             (None, _) => {
                 // Collect distinct context patterns. c:788
-                let mut seen: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 for (p, _s, _v) in t.list(None) {
-                    if seen.insert(p.clone()) { out.push(p); }
+                    if seen.insert(p.clone()) {
+                        out.push(p);
+                    }
                 }
             }
             (Some(pat), None) => {
                 // Collect style names attached to context = pat. c:783
-                let mut seen: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 for (p, s, _v) in t.list(None) {
-                    if p == pat && seen.insert(s.clone()) { out.push(s); }
+                    if p == pat && seen.insert(s.clone()) {
+                        out.push(s);
+                    }
                 }
             }
             (Some(pat), Some(sty)) => {
@@ -944,22 +1037,22 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
             }
         }
         drop(t);
-        crate::ported::params::setaparam(pname, out);                        // c:792
+        crate::ported::params::setaparam(pname, out); // c:792
         return 0;
     }
 
     // c:945 — set/replace style: addstyle each value.
     if args.len() < 3 {
-        zwarnnam(nam, "not enough arguments");                               // c:947
+        zwarnnam(nam, "not enough arguments"); // c:947
         return 1;
     }
-    let ctxt = &args[0];                                                     // c:945
+    let ctxt = &args[0]; // c:945
     let style = &args[1];
-    let values: Vec<String> = args[2..].to_vec();                            // c:949
+    let values: Vec<String> = args[2..].to_vec(); // c:949
     if let Ok(mut t) = zstyletab.lock() {
-        t.set(ctxt, style, values, false);                                   // c:295 setstypat
+        t.set(ctxt, style, values, false); // c:295 setstypat
     }
-    0                                                                        // c:951
+    0 // c:951
 }
 
 /// Port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:955`.
@@ -969,110 +1062,137 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
 /// option flags); the first arg is `-f`/`-F`/`-a` (a single letter
 /// after the dash) selecting the substitution mode.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zformat(nam: &str, args: &[String],                                // c:955
-                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    let mut presence = 0i32;                                                  // c:958
-    if args.is_empty() {                                                      // c:960
-        crate::ported::utils::zwarnnam(nam,
-            &format!("invalid argument: {}", ""));
+pub fn bin_zformat(
+    nam: &str,
+    args: &[String], // c:955
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    let mut presence = 0i32; // c:958
+    if args.is_empty() {
+        // c:960
+        crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", ""));
         return 1;
     }
     let opt_arg = &args[0];
     let bytes = opt_arg.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {             // c:960-963
-        crate::ported::utils::zwarnnam(nam,
-            &format!("invalid argument: {}", opt_arg));
-        return 1;                                                             // c:962
+    if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {
+        // c:960-963
+        crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", opt_arg));
+        return 1; // c:962
     }
-    let opt = bytes[1];                                                       // c:961
-    let args = &args[1..];                                                    // c:965 args++
+    let opt = bytes[1]; // c:961
+    let args = &args[1..]; // c:965 args++
 
-    match opt {                                                               // c:967
-        b'F' | b'f' => {                                                      // c:968 / c:971
-            if opt == b'F' { presence = 1; }                                  // c:969 fall-through
-            // c:973-994 — -f / -F branch.
-            if args.len() < 2 {                                               // c:973 args[0]/args[1]
-                crate::ported::utils::zwarnnam(nam,
-                    "missing arguments to -f/-F");
+    match opt {
+        // c:967
+        b'F' | b'f' => {
+            // c:968 / c:971
+            if opt == b'F' {
+                presence = 1;
+            } // c:969 fall-through
+              // c:973-994 — -f / -F branch.
+            if args.len() < 2 {
+                // c:973 args[0]/args[1]
+                crate::ported::utils::zwarnnam(nam, "missing arguments to -f/-F");
                 return 1;
             }
-            let mut specs: HashMap<char, String> = HashMap::new();            // c:973
-            specs.insert('%', "%".to_string());                               // c:976
-            specs.insert(')', ")".to_string());                               // c:977
-            for ap in &args[2..] {                                            // c:980
+            let mut specs: HashMap<char, String> = HashMap::new(); // c:973
+            specs.insert('%', "%".to_string()); // c:976
+            specs.insert(')', ")".to_string()); // c:977
+            for ap in &args[2..] {
+                // c:980
                 let ab = ap.as_bytes();
                 if ab.is_empty() || ab[0] == b'-' || ab[0] == b'.'            // c:981
                     || ab[0].is_ascii_digit()
-                    || ab.len() < 2 || ab[1] != b':' {
-                    crate::ported::utils::zwarnnam(nam,
-                        &format!("invalid argument: {}", ap));                // c:984
-                    return 1;                                                 // c:985
+                    || ab.len() < 2 || ab[1] != b':'
+                {
+                    crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", ap)); // c:984
+                    return 1; // c:985
                 }
-                specs.insert(ab[0] as char, ap[2..].to_string());             // c:987
+                specs.insert(ab[0] as char, ap[2..].to_string()); // c:987
             }
-            let out = zformat_substring(&args[1], &specs, presence != 0);     // c:990
-            crate::ported::params::setsparam(&args[0], &out);         // c:993 setsparam
-            return 0;                                                         // c:994
+            let out = zformat_substring(&args[1], &specs, presence != 0); // c:990
+            crate::ported::params::setsparam(&args[0], &out); // c:993 setsparam
+            return 0; // c:994
         }
-        b'a' => {                                                             // c:996
+        b'a' => {
+            // c:996
             // c:998-1083 — -a column-format branch.
-            if args.len() < 2 {                                               // c:998
-                crate::ported::utils::zwarnnam(nam,
-                    "missing arguments to -a");
+            if args.len() < 2 {
+                // c:998
+                crate::ported::utils::zwarnnam(nam, "missing arguments to -a");
                 return 1;
             }
-            let mut pre = 0usize;                                             // c:1000
-            let mut suf = 0usize;                                             // c:1000
-            // First pass: compute max prefix/suffix widths.
-            for ap in &args[2..] {                                            // c:1005
-                let mut nbc = 0usize;                                         // c:1006
+            let mut pre = 0usize; // c:1000
+            let mut suf = 0usize; // c:1000
+                                  // First pass: compute max prefix/suffix widths.
+            for ap in &args[2..] {
+                // c:1005
+                let mut nbc = 0usize; // c:1006
                 let bytes = ap.as_bytes();
                 let mut cp_idx = 0usize;
-                while cp_idx < bytes.len() && bytes[cp_idx] != b':' {         // c:1007
-                    if bytes[cp_idx] == b'\\' && cp_idx + 1 < bytes.len() {   // c:1008
+                while cp_idx < bytes.len() && bytes[cp_idx] != b':' {
+                    // c:1007
+                    if bytes[cp_idx] == b'\\' && cp_idx + 1 < bytes.len() {
+                        // c:1008
                         cp_idx += 1;
                         nbc += 1;
                     }
                     cp_idx += 1;
                 }
                 if cp_idx < bytes.len() && bytes[cp_idx] == b':'              // c:1010
-                    && cp_idx + 1 < bytes.len() {
-                    let d = cp_idx.saturating_sub(nbc);                       // c:1015
-                    if d > pre { pre = d; }                                   // c:1016
-                    // multi-byte width branch (c:1017-1029) collapses to
-                    // ASCII byte count for the common case in Rust.
-                    let s = bytes.len() - cp_idx - 1;                         // c:1030
-                    if s > suf { suf = s; }                                   // c:1031
+                    && cp_idx + 1 < bytes.len()
+                {
+                    let d = cp_idx.saturating_sub(nbc); // c:1015
+                    if d > pre {
+                        pre = d;
+                    } // c:1016
+                      // multi-byte width branch (c:1017-1029) collapses to
+                      // ASCII byte count for the common case in Rust.
+                    let s = bytes.len() - cp_idx - 1; // c:1030
+                    if s > suf {
+                        suf = s;
+                    } // c:1031
                 }
             }
             // Second pass: build formatted columns + setaparam.
-            let middle = &args[1];                                            // c:1037
-            let sl = middle.len();                                            // c:1037
-            let mut ret: Vec<String> = Vec::new();                            // c:1043
-            for ap in &args[2..] {                                            // c:1051
+            let middle = &args[1]; // c:1037
+            let sl = middle.len(); // c:1037
+            let mut ret: Vec<String> = Vec::new(); // c:1043
+            for ap in &args[2..] {
+                // c:1051
                 let bytes = ap.as_bytes();
-                let mut copy: Vec<u8> = Vec::with_capacity(bytes.len());      // c:1052
+                let mut copy: Vec<u8> = Vec::with_capacity(bytes.len()); // c:1052
                 let mut k = 0usize;
                 let mut sep_at: Option<usize> = None;
-                while k < bytes.len() {                                       // c:1053
-                    if bytes[k] == b':' { sep_at = Some(copy.len()); break; }
-                    if bytes[k] == b'\\' && k + 1 < bytes.len() {             // c:1054
+                while k < bytes.len() {
+                    // c:1053
+                    if bytes[k] == b':' {
+                        sep_at = Some(copy.len());
+                        break;
+                    }
+                    if bytes[k] == b'\\' && k + 1 < bytes.len() {
+                        // c:1054
                         k += 1;
                     }
-                    copy.push(bytes[k]);                                      // c:1055
+                    copy.push(bytes[k]); // c:1055
                     k += 1;
                 }
-                if let Some(left_len) = sep_at {                              // c:1058
+                if let Some(left_len) = sep_at {
+                    // c:1058
                     let after = std::str::from_utf8(&bytes[(k + 1)..]).unwrap_or("");
                     let mut buf = String::with_capacity(pre + sl + after.len());
                     let prefix = std::str::from_utf8(&copy[..left_len]).unwrap_or("");
-                    buf.push_str(prefix);                                     // c:1062
-                    for _ in prefix.chars().count()..pre { buf.push(' '); }   // c:1075-1076
-                    buf.push_str(middle);                                     // c:1078
-                    buf.push_str(after);                                      // c:1080
-                    ret.push(buf);                                            // c:1081 ztrdup
+                    buf.push_str(prefix); // c:1062
+                    for _ in prefix.chars().count()..pre {
+                        buf.push(' ');
+                    } // c:1075-1076
+                    buf.push_str(middle); // c:1078
+                    buf.push_str(after); // c:1080
+                    ret.push(buf); // c:1081 ztrdup
                 } else {
-                    ret.push(String::from_utf8_lossy(&copy).into_owned());    // c:1082
+                    ret.push(String::from_utf8_lossy(&copy).into_owned()); // c:1082
                 }
             }
             // c:1083 — setaparam(args[0], ret). Direct write to paramtab
@@ -1091,19 +1211,30 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
                     u_val: 0,
                     u_dval: 0.0,
                     u_hash: None,
-                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
                 });
                 tab.insert(args[0].clone(), pm);
             }
             let _ = sl;
-            return 0;                                                         // c:1084
+            return 0; // c:1084
         }
         _ => {}
     }
-    crate::ported::utils::zwarnnam(nam,                                       // c:1085
-        &format!("invalid option: -{}", opt as char));
-    1                                                                         // c:1086
+    crate::ported::utils::zwarnnam(
+        nam, // c:1085
+        &format!("invalid option: -{}", opt as char),
+    );
+    1 // c:1086
 }
 
 /// Port of `connectstates(LinkList out, LinkList in)` from `Src/Modules/zutil.c:1119`.
@@ -1112,7 +1243,7 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
 /// outbranch.actions ++ inbranch.actions, then add it to the
 /// outbranch.state's branches list.
 pub fn connectstates(
-    out: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],                    // c:1119
+    out: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>], // c:1119
     in_: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
 ) {
     // c:1123 — for (outnode = firstnode(out); outnode; ...)
@@ -1122,13 +1253,12 @@ pub fn connectstates(
             let outbranch = outnode.borrow();
             let inbranch = innode.borrow();
             // c:1128 — `br = hcalloc`; c:1130-1135 — populate.
-            let mut new_actions: Vec<String> = Vec::with_capacity(
-                outbranch.actions.len() + inbranch.actions.len(),
-            );
-            new_actions.extend(outbranch.actions.iter().cloned());            // c:1132-1133
-            new_actions.extend(inbranch.actions.iter().cloned());             // c:1134-1135
+            let mut new_actions: Vec<String> =
+                Vec::with_capacity(outbranch.actions.len() + inbranch.actions.len());
+            new_actions.extend(outbranch.actions.iter().cloned()); // c:1132-1133
+            new_actions.extend(inbranch.actions.iter().cloned()); // c:1134-1135
             let br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
-                state: inbranch.state.clone(),                                // c:1130
+                state: inbranch.state.clone(), // c:1130
                 actions: new_actions,
             }));
             // c:1136 — addlinknode(outbranch->state->branches, br);
@@ -1141,15 +1271,17 @@ pub fn connectstates(
 /// from `Src/Modules/zutil.c:1142`. Atom in the zregexparse grammar:
 ///   `/pat/[+/-]` \[`%lookahead%`\] \[`-guard`\] \[`:action`\]    — pattern atom
 ///   `(` ... `)`                                            — grouped alt
-pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // c:1142
+pub fn rparseelt(result: &mut RParseResult) -> i32 {
+    // c:1142
     // c:1145 — s = *rparseargs;
     let s = match RPARSEARGS.with(|q| q.borrow().front().cloned()) {
         Some(s) => s,
-        None => return 1,                                                    // c:1147-1148
+        None => return 1, // c:1147-1148
     };
     let first = s.chars().next();
     match first {
-        Some('/') => {                                                       // c:1151
+        Some('/') => {
+            // c:1151
             // c:1157 — l = strlen(s);
             // c:1158-1161 — require `/.../` or `/.../[+-]`.
             let l = s.len();
@@ -1178,28 +1310,32 @@ pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // 
                     if la.starts_with('%') && la.len() >= 2 && la.ends_with('%') {
                         RPARSEARGS.with(|q| q.borrow_mut().pop_front());
                         Some(la[1..la.len() - 1].to_string())
-                    } else { None }
-                } else { None }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             };
             // c:1181-1202 — assemble compiled pattern string
             //   "[]"        → no pattern (NULL)
             //   else        → "(#b)((#B)<pat>)<lookahead?>*"
             if pattern == "[]" {
-                st.pattern = None;                                           // c:1182
+                st.pattern = None; // c:1182
             } else {
                 let mut buf = String::with_capacity(pattern.len() + 16);
-                buf.push_str("(#b)((#B)");                                   // c:1189-1190
-                buf.push_str(pattern);                                       // c:1191-1192
-                buf.push(')');                                               // c:1193
+                buf.push_str("(#b)((#B)"); // c:1189-1190
+                buf.push_str(pattern); // c:1191-1192
+                buf.push(')'); // c:1193
                 if let Some(la) = lookahead.as_ref() {
-                    buf.push_str("(#B)");                                    // c:1196
-                    buf.push_str(la);                                        // c:1198
+                    buf.push_str("(#B)"); // c:1196
+                    buf.push_str(la); // c:1198
                 }
-                buf.push('*');                                               // c:1201
+                buf.push('*'); // c:1201
                 st.pattern = Some(buf);
             }
-            st.patprog = None;                                               // c:1203
-            // c:1204-1211 — optional `-guard` arg.
+            st.patprog = None; // c:1203
+                               // c:1204-1211 — optional `-guard` arg.
             let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
             if let Some(g) = nxt {
                 if g.starts_with('-') {
@@ -1220,25 +1356,26 @@ pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // 
             RPARSESTATES.with(|s| s.borrow_mut().push(st_rc.clone()));
 
             // c:1220-1230 — result->in = [br(st)], result->out = [br(st)].
-            result.nullacts = None;                                          // c:1220
+            result.nullacts = None; // c:1220
             let in_br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
                 state: st_rc.clone(),
                 actions: Vec::new(),
             }));
-            result.in_ = vec![in_br];                                        // c:1221-1225
+            result.in_ = vec![in_br]; // c:1221-1225
             let out_br = std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
                 state: st_rc,
                 actions: Vec::new(),
             }));
-            result.out = vec![out_br];                                       // c:1226-1230
-            0                                                                // c:1248
+            result.out = vec![out_br]; // c:1226-1230
+            0 // c:1248
         }
-        Some('(') if s.len() == 1 => {                                       // c:1233-1235
+        Some('(') if s.len() == 1 => {
+            // c:1233-1235
             // c:1236 — rparseargs++;
             RPARSEARGS.with(|q| q.borrow_mut().pop_front());
             // c:1237 — if (rparsealt(result, perr)) longjmp(*perr, 2);
             if rparsealt(result) != 0 {
-                return 1;                                                    // longjmp surrogate
+                return 1; // longjmp surrogate
             }
             // c:1239-1241 — require closing `)`.
             let nxt = RPARSEARGS.with(|q| q.borrow().front().cloned());
@@ -1249,14 +1386,15 @@ pub fn rparseelt(result: &mut RParseResult) -> i32 {                         // 
             RPARSEARGS.with(|q| q.borrow_mut().pop_front());
             0
         }
-        _ => 1,                                                              // c:1244-1245
+        _ => 1, // c:1244-1245
     }
 }
 
 /// Port of `static int rparseclo(RParseResult *result, jmp_buf *perr)`
 /// from `Src/Modules/zutil.c:1252`. Closure: atom followed by `#`
 /// (zero-or-more); a string of `#`s collapses to one.
-pub fn rparseclo(result: &mut RParseResult) -> i32 {                         // c:1252
+pub fn rparseclo(result: &mut RParseResult) -> i32 {
+    // c:1252
     // c:1254 — if (rparseelt(result, perr)) return 1;
     if rparseelt(result) != 0 {
         return 1;
@@ -1281,7 +1419,7 @@ pub fn rparseclo(result: &mut RParseResult) -> i32 {                         // 
         // c:1263 — result->nullacts = newlinklist();
         result.nullacts = Some(Vec::new());
     }
-    0                                                                        // c:1265
+    0 // c:1265
 }
 
 // === auto-generated stubs ===
@@ -1290,13 +1428,12 @@ pub fn rparseclo(result: &mut RParseResult) -> i32 {                         // 
 // state owned by the module's typed struct. Name-parity shims.
 
 use crate::ported::zsh_h::HashNode;
-use crate::zsh_h::isset;
 
 /// Port of `prependactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1269`.
 /// For each branch, pushnode (insert at HEAD) each action from `acts`
 /// in reverse — net effect: branch.actions gets `acts` prepended.
 pub fn prependactions(
-    acts: &[String],                                                         // c:1269
+    acts: &[String], // c:1269
     branches: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
 ) {
     // c:1273 — for (bln = firstnode(branches); bln; ...)
@@ -1316,7 +1453,7 @@ pub fn prependactions(
 /// Port of `appendactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1282`.
 /// For each branch, append each action from `acts` to br.actions.
 pub fn appendactions(
-    acts: &[String],                                                         // c:1282
+    acts: &[String], // c:1282
     branches: &[std::rc::Rc<std::cell::RefCell<RParseBranch>>],
 ) {
     // c:1285 — for (bln = firstnode(branches); bln; ...)
@@ -1382,19 +1519,21 @@ pub fn appendactions(
 /// (Rust `RParseResult.args` vs C `in/out`) is a pre-existing port
 /// gap tracked separately; the action-consumption branch operates
 /// on the available `nullacts` field.
-pub fn rparseseq(result: &mut RParseResult) -> i32 {                         // c:1294
+pub fn rparseseq(result: &mut RParseResult) -> i32 {
+    // c:1294
     // c:1300-1302 — initialize result with empty lists.
-    result.nullacts = Some(Vec::new());                                      // c:1300
-    result.in_ = Vec::new();                                                 // c:1301
-    result.out = Vec::new();                                                 // c:1302
+    result.nullacts = Some(Vec::new()); // c:1300
+    result.in_ = Vec::new(); // c:1301
+    result.out = Vec::new(); // c:1302
 
-    loop {                                                                   // c:1304
+    loop {
+        // c:1304
         // c:1305 — `if ((s = *rparseargs) && s[0]=='{' && s[l-1]=='}')`
         let s = RPARSEARGS.with(|q| q.borrow().front().cloned());
         let action_arg = match s {
-            Some(ref arg) if arg.len() >= 2
-                && arg.starts_with('{')
-                && arg.ends_with('}') => Some(arg.clone()),
+            Some(ref arg) if arg.len() >= 2 && arg.starts_with('{') && arg.ends_with('}') => {
+                Some(arg.clone())
+            }
             _ => None,
         };
         if let Some(arg) = action_arg {
@@ -1415,7 +1554,8 @@ pub fn rparseseq(result: &mut RParseResult) -> i32 {                         // 
         }
         // c:1319 — `else if (!rparseclo(&sub, perr))`
         let mut sub = RParseResult::default();
-        if rparseclo(&mut sub) == 0 {                                        // c:1319
+        if rparseclo(&mut sub) == 0 {
+            // c:1319
             // c:1320 — connectstates(result->out, sub.in);
             {
                 let out_snap = result.out.clone();
@@ -1447,17 +1587,19 @@ pub fn rparseseq(result: &mut RParseResult) -> i32 {                         // 
                     result.nullacts = None;
                 }
             }
-        } else {                                                             // c:1338
-            break;                                                           // c:1339
+        } else {
+            // c:1338
+            break; // c:1339
         }
     }
-    0                                                                        // c:1341
+    0 // c:1341
 }
 
 /// Port of `static int rparsealt(RParseResult *result, jmp_buf *perr)`
 /// from `Src/Modules/zutil.c:1345`. Alternation: one or more `seq`
 /// terms separated by `|`.
-pub fn rparsealt(result: &mut RParseResult) -> i32 {                         // c:1345
+pub fn rparsealt(result: &mut RParseResult) -> i32 {
+    // c:1345
     // c:1349-1350 — if (rparseseq(result, perr)) return 1;
     if rparseseq(result) != 0 {
         return 1;
@@ -1486,7 +1628,7 @@ pub fn rparsealt(result: &mut RParseResult) -> i32 {                         // 
         result.in_.extend(sub.in_.into_iter());
         result.out.extend(sub.out.into_iter());
     }
-    0                                                                        // c:1362
+    0 // c:1362
 }
 
 /// Port of `rmatch(RParseResult *sm, char *subj, char *var1, char *var2, int comp)` from Src/Modules/zutil.c:1366.
@@ -1540,16 +1682,20 @@ pub fn rmatch(
 /// return ret;
 /// ```
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zregexparse(nam: &str, args: &[String],                            // c:1486
-                       ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zregexparse(
+    nam: &str,
+    args: &[String], // c:1486
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     if args.len() < 3 {
         zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    let var1 = &args[0];                                                     // c:1489
-    let var2 = &args[1];                                                     // c:1490
-    let subj = &args[2];                                                     // c:1491
-    let _rparseargs = &args[3..];                                            // c:1497
+    let var1 = &args[0]; // c:1489
+    let var2 = &args[1]; // c:1490
+    let subj = &args[2]; // c:1491
+    let _rparseargs = &args[3..]; // c:1497
     let _ = (var1, var2, subj);
 
     // c:1494 — `oldextendedglob = opts[EXTENDEDGLOB]; opts[EXTENDEDGLOB] = 1;`
@@ -1557,10 +1703,10 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     crate::ported::options::opt_state_set(
         &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
         true,
-    );                                                                       // c:1496
+    ); // c:1496
 
     // c:1499 — `pushheap(); rparsestates = newlinklist();`
-    crate::ported::mem::pushheap();                                          // c:1499
+    crate::ported::mem::pushheap(); // c:1499
 
     // c:1500 — `if (setjmp(rparseerr) || rparsealt(&result, &rparseerr) ||
     // *rparseargs)`. rparsealt is a stub here (the alternation parser
@@ -1580,17 +1726,23 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
         }
     });
     let mut result = RParseResult::default();
-    let parse_err = rparsealt(&mut result) != 0
-        || RPARSEARGS.with(|q| !q.borrow().is_empty());
-    if parse_err {                                                           // c:1500
-        zwarnnam(nam, &format!("invalid regex : {}",                         // c:1502
-            args.last().map(|s| s.as_str()).unwrap_or("")));
-        ret = 3;                                                             // c:1505
+    let parse_err = rparsealt(&mut result) != 0 || RPARSEARGS.with(|q| !q.borrow().is_empty());
+    if parse_err {
+        // c:1500
+        zwarnnam(
+            nam,
+            &format!(
+                "invalid regex : {}", // c:1502
+                args.last().map(|s| s.as_str()).unwrap_or("")
+            ),
+        );
+        ret = 3; // c:1505
     } else {
-        ret = 0;                                                             // c:1508
+        ret = 0; // c:1508
     }
 
-    if ret == 0 {                                                            // c:1510
+    if ret == 0 {
+        // c:1510
         // c:1511 — `rmatch(&result, subj, var1, var2, OPT_ISSET(ops,'c'))`
         // — match the parsed regex tree against subj, capturing into
         // var1/var2. The rmatch port is open work; placeholder fall-
@@ -1599,12 +1751,12 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
         let _ = (var1, var2, subj);
     }
 
-    crate::ported::mem::popheap();                                           // c:1513
+    crate::ported::mem::popheap(); // c:1513
     crate::ported::options::opt_state_set(
         &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
         oldext,
-    );                                                                       // c:1514
-    ret                                                                      // c:1515
+    ); // c:1514
+    ret // c:1515
 }
 
 /// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
@@ -1639,34 +1791,35 @@ pub type Zoptval = Box<zoptval>;
 
 /// `ZOF_ARG` from `Src/Modules/zutil.c:1531`. Option takes an argument
 /// (suffix `:`).
-pub const ZOF_ARG:  i32 = 1;                                                 // c:1531
+pub const ZOF_ARG: i32 = 1; // c:1531
 /// `ZOF_OPT` from `Src/Modules/zutil.c:1532`. Argument is optional
 /// (suffix `::`).
-pub const ZOF_OPT:  i32 = 2;                                                 // c:1532
+pub const ZOF_OPT: i32 = 2; // c:1532
 /// `ZOF_MULT` from `Src/Modules/zutil.c:1533`. Multiple occurrences
 /// allowed (suffix `+`).
-pub const ZOF_MULT: i32 = 4;                                                 // c:1533
+pub const ZOF_MULT: i32 = 4; // c:1533
 /// `ZOF_SAME` from `Src/Modules/zutil.c:1534`. All same-name options
 /// share one slot (default for arrays without `+`).
-pub const ZOF_SAME: i32 = 8;                                                 // c:1534
+pub const ZOF_SAME: i32 = 8; // c:1534
 /// `ZOF_MAP` from `Src/Modules/zutil.c:1535`. Option spec includes a
 /// `=` mapping to a different array name.
-pub const ZOF_MAP:  i32 = 16;                                                // c:1535
+pub const ZOF_MAP: i32 = 16; // c:1535
 /// `ZOF_CYC` from `Src/Modules/zutil.c:1536`. Cyclic mapping detected
 /// during option parsing (error guard).
-pub const ZOF_CYC:  i32 = 32;                                                // c:1536
+pub const ZOF_CYC: i32 = 32; // c:1536
 /// `ZOF_GNUS` from `Src/Modules/zutil.c:1537`. GNU-style `--option`
 /// short variant.
-pub const ZOF_GNUS: i32 = 64;                                                // c:1537
+pub const ZOF_GNUS: i32 = 64; // c:1537
 /// `ZOF_GNUL` from `Src/Modules/zutil.c:1538`. GNU-style `--option=value`
 /// long variant.
-pub const ZOF_GNUL: i32 = 128;                                               // c:1538
+pub const ZOF_GNUL: i32 = 128; // c:1538
 
 /// Port of `get_opt_desc(char *name)` from Src/Modules/zutil.c:1558.
 /// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {                       // c:1558
+pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {
+    // c:1558
     // c:1570
     // c:1570-1568 — walk opt_descs linked-list, name-compare.
     None
@@ -1677,7 +1830,8 @@ pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {                       // c
 /// opt_descs; returns the desc or NULL.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {                          // c:1570
+pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {
+    // c:1570
     // c:1570
     // c:1572-1600 — walks opt_descs comparing prefix with str.
     None
@@ -1687,7 +1841,8 @@ pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {                          // c
 /// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {                         // c:1602
+pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {
+    // c:1602
     // c:1602
     // c:1604-1612 — walk opt_arrs linked-list, name-compare.
     None
@@ -1754,7 +1909,8 @@ pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
 /// The `d->arr->num` increments + `d->arr->vals/last` chain are
 /// also flattened.
 #[allow(non_snake_case)]
-pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // c:1642
+pub fn add_opt_val(d: &mut zoptdesc, arg: String) {
+    // c:1642
     // c:1644 — `Zoptval v = NULL;` — local cursor; in Rust the
     // collapsed-Vec model uses `arg` directly, no Zoptval allocation.
 
@@ -1766,33 +1922,41 @@ pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // 
     // map_opt_desc resolves -foo ↔ --foo aliases. Without a mutable
     // pointer-swap path in safe Rust, we read the map result and
     // operate on `d` directly when it exists.
-    let _map = map_opt_desc(None);                                           // c:1648
+    let _map = map_opt_desc(None); // c:1648
 
     // c:1652-1653 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
-    let multi_allowed = (d.flags & ZOF_MULT) != 0;                           // c:1652
-    let _existing_head = if !multi_allowed { !d.vals.is_empty() } else { false };
+    let multi_allowed = (d.flags & ZOF_MULT) != 0; // c:1652
+    let _existing_head = if !multi_allowed {
+        !d.vals.is_empty()
+    } else {
+        false
+    };
     // c:1654-1658 — `if (!v) { v = zhalloc(...); new = 1; }`
-    let _new = true;                                                         // c:1654-1657 always-new collapsed
+    let _new = true; // c:1654-1657 always-new collapsed
 
-    if (d.flags & ZOF_ARG) != 0 && (d.flags & (ZOF_OPT | ZOF_SAME)) == 0 {   // c:1661
+    if (d.flags & ZOF_ARG) != 0 && (d.flags & (ZOF_OPT | ZOF_SAME)) == 0 {
+        // c:1661
         // c:1662 — `v->str = NULL;` — no formatted-str variant.
         // c:1663-1664 — `if (d->arr) d->arr->num += (arg ? 2 : 1);`
         // Bind to the option's array via the canonical Vec push.
-        d.vals.push(arg);                                                    // c:1664
-    } else if !arg.is_empty() || (d.flags & ZOF_GNUL) != 0 {                 // c:1665
+        d.vals.push(arg); // c:1664
+    } else if !arg.is_empty() || (d.flags & ZOF_GNUL) != 0 {
+        // c:1665
         // c:1667-1674 — build `-name[=]arg` formatted string.
-        let mut s = String::with_capacity(d.name.len() + arg.len() + 3);     // c:1667
-        s.push('-');                                                         // c:1669
-        s.push_str(&d.name);                                                 // c:1670
-        if (d.flags & ZOF_GNUL) != 0 {                                       // c:1671
-            s.push('=');                                                     // c:1672
+        let mut s = String::with_capacity(d.name.len() + arg.len() + 3); // c:1667
+        s.push('-'); // c:1669
+        s.push_str(&d.name); // c:1670
+        if (d.flags & ZOF_GNUL) != 0 {
+            // c:1671
+            s.push('='); // c:1672
         }
-        s.push_str(&arg);                                                    // c:1673
-        d.vals.push(s);                                                      // c:1675 d->arr->num += 1
-    } else {                                                                 // c:1677
+        s.push_str(&arg); // c:1673
+        d.vals.push(s); // c:1675 d->arr->num += 1
+    } else {
+        // c:1677
         // c:1678 — `v->str = NULL;` — record empty marker (option seen,
         // no arg). c:1680 — d->arr->num += 1.
-        d.vals.push(format!("-{}", d.name));                                 // c:1680
+        d.vals.push(format!("-{}", d.name)); // c:1680
     }
     // c:1682-1695 — `if (new) { …chain bookkeeping… }`. Collapsed
     // into the single `push` above since Rust Vec maintains order
@@ -1803,9 +1967,11 @@ pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // 
 /// Returns a `Vec<String>` sized for `num*2` future key/value pushes;
 /// when `keep && num > 0` and `assoc` names a live associative-array
 /// param, pre-load its existing key/value pairs at the front.
-pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> { // c:1710
+pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
+    // c:1710
     let mut aval: Vec<String> = Vec::new();
-    if keep && num > 0 {                                                     // c:1715
+    if keep && num > 0 {
+        // c:1715
         // c:1717-1718 — fetchvalue(assoc, SCANPM_WANTKEYS|WANTVALS|MATCHMANY)
         //               → all key/value pairs of the associative array.
         // c:1719-1727 — the C body walks `getarrvalue(v)` (a flat
@@ -1835,24 +2001,27 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> { 
 ///   - Option descs: `name`, `name+` (multi), `name:` (mandatory arg),
 ///     `name::` (optional arg), `name:-` (same-arg), `=ARR` suffix.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zparseopts(nam: &str, args: &[String],                             // c:1738
-                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-
+pub fn bin_zparseopts(
+    nam: &str,
+    args: &[String], // c:1738
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     #[derive(Clone)]
     struct Desc {
         name: String,
         flags: i32,
         arr_name: Option<String>,
-        vals: Vec<Val>,                 // collected values
+        vals: Vec<Val>, // collected values
     }
     #[derive(Clone)]
     struct Val {
-        name: String,                   // option name as it appeared
-        arg: Option<String>,            // arg if any
+        name: String,        // option name as it appeared
+        arg: Option<String>, // arg if any
     }
 
-    let mut del = false;                // c:1742
-    let mut flags_map = 0i32;           // c:1742
+    let mut del = false; // c:1742
+    let mut flags_map = 0i32; // c:1742
     let mut extract = false;
     let mut fail = false;
     let mut gnu = false;
@@ -1866,26 +2035,59 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     let mut i = 0usize;
     while i < args.len() {
         let o = &args[i];
-        if !o.starts_with('-') { break; }
-        if o.len() == 1 { break; }                                            // "-"
+        if !o.starts_with('-') {
+            break;
+        }
+        if o.len() == 1 {
+            break;
+        } // "-"
         let bytes = o.as_bytes();
         match bytes[1] {
-            b'-' if bytes.len() == 2 => { i += 1; break; }                    // "--"
-            b'-' => { break; }                                                // "-something"
-            b'D' if bytes.len() == 2 => { del = true; i += 1; }
-            b'E' if bytes.len() == 2 => { extract = true; i += 1; }
-            b'F' if bytes.len() == 2 => { fail = true; i += 1; }
-            b'G' if bytes.len() == 2 => { gnu = true; i += 1; }
-            b'K' if bytes.len() == 2 => { keep = true; i += 1; }
-            b'M' if bytes.len() == 2 => { flags_map |= ZOF_MAP; i += 1; }
+            b'-' if bytes.len() == 2 => {
+                i += 1;
+                break;
+            } // "--"
+            b'-' => {
+                break;
+            } // "-something"
+            b'D' if bytes.len() == 2 => {
+                del = true;
+                i += 1;
+            }
+            b'E' if bytes.len() == 2 => {
+                extract = true;
+                i += 1;
+            }
+            b'F' if bytes.len() == 2 => {
+                fail = true;
+                i += 1;
+            }
+            b'G' if bytes.len() == 2 => {
+                gnu = true;
+                i += 1;
+            }
+            b'K' if bytes.len() == 2 => {
+                keep = true;
+                i += 1;
+            }
+            b'M' if bytes.len() == 2 => {
+                flags_map |= ZOF_MAP;
+                i += 1;
+            }
             b'a' => {
                 if defarr.is_some() {
                     zwarnnam(nam, "default array given more than once");
                     return 1;
                 }
-                let n = if o.len() > 2 { o[2..].to_string() }
-                        else if i + 1 < args.len() { i += 1; args[i].clone() }
-                        else { zwarnnam(nam, "missing array name"); return 1; };
+                let n = if o.len() > 2 {
+                    o[2..].to_string()
+                } else if i + 1 < args.len() {
+                    i += 1;
+                    args[i].clone()
+                } else {
+                    zwarnnam(nam, "missing array name");
+                    return 1;
+                };
                 defarr = Some(n);
                 i += 1;
             }
@@ -1894,9 +2096,15 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
                     zwarnnam(nam, "associative array given more than once");
                     return 1;
                 }
-                let n = if o.len() > 2 { o[2..].to_string() }
-                        else if i + 1 < args.len() { i += 1; args[i].clone() }
-                        else { zwarnnam(nam, "missing array name"); return 1; };
+                let n = if o.len() > 2 {
+                    o[2..].to_string()
+                } else if i + 1 < args.len() {
+                    i += 1;
+                    args[i].clone()
+                } else {
+                    zwarnnam(nam, "missing array name");
+                    return 1;
+                };
                 assoc = Some(n);
                 i += 1;
             }
@@ -1905,16 +2113,23 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
                     zwarnnam(nam, "argv array given more than once");
                     return 1;
                 }
-                let n = if o.len() > 2 { o[2..].to_string() }
-                        else if i + 1 < args.len() { i += 1; args[i].clone() }
-                        else { zwarnnam(nam, "missing array name"); return 1; };
+                let n = if o.len() > 2 {
+                    o[2..].to_string()
+                } else if i + 1 < args.len() {
+                    i += 1;
+                    args[i].clone()
+                } else {
+                    zwarnnam(nam, "missing array name");
+                    return 1;
+                };
                 paramsname = Some(n);
                 i += 1;
             }
-            _ => break,                                                       // option-desc
+            _ => break, // option-desc
         }
     }
-    if i >= args.len() {                                                      // c:1874
+    if i >= args.len() {
+        // c:1874
         zwarnnam(nam, "missing option descriptions");
         return 1;
     }
@@ -1941,8 +2156,14 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
                 continue;
             }
             if p > 0 {
-                if c == b'+' { f |= ZOF_MULT; p += 1; break; }
-                if c == b':' || c == b'=' { break; }
+                if c == b'+' {
+                    f |= ZOF_MULT;
+                    p += 1;
+                    break;
+                }
+                if c == b':' || c == b'=' {
+                    break;
+                }
             }
             name.push(c as char);
             p += 1;
@@ -1954,15 +2175,23 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
             if gnu {
                 f |= if name.len() > 1 { ZOF_GNUL } else { ZOF_GNUS };
             }
-            if p < bytes.len() && bytes[p] == b':' { p += 1; f |= ZOF_OPT; }
-            if p < bytes.len() && bytes[p] == b'-' { p += 1; f |= ZOF_SAME; }
+            if p < bytes.len() && bytes[p] == b':' {
+                p += 1;
+                f |= ZOF_OPT;
+            }
+            if p < bytes.len() && bytes[p] == b'-' {
+                p += 1;
+                f |= ZOF_SAME;
+            }
         }
         // c:1913-1930 — `=ARR` suffix → bind to named array.
         let mut arr_name: Option<String> = None;
         if p < bytes.len() && bytes[p] == b'=' {
             p += 1;
             let arr = std::str::from_utf8(&bytes[p..]).unwrap_or("").to_string();
-            if !named_arrays.contains(&arr) { named_arrays.push(arr.clone()); }
+            if !named_arrays.contains(&arr) {
+                named_arrays.push(arr.clone());
+            }
             arr_name = Some(arr);
             f |= flags_map;
         } else if p < bytes.len() {
@@ -1976,7 +2205,12 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
             zwarnnam(nam, &format!("option defined more than once: {}", name));
             return 1;
         }
-        descs.push(Desc { name, flags: f, arr_name, vals: Vec::new() });
+        descs.push(Desc {
+            name,
+            flags: f,
+            arr_name,
+            vals: Vec::new(),
+        });
     }
 
     // Phase 3: source params (c:1955-1959).
@@ -1990,7 +2224,7 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     });
 
     // Phase 4: walk params (c:1961-2060).
-    let mut new_params: Vec<String> = Vec::new();          // -E -D rebuild
+    let mut new_params: Vec<String> = Vec::new(); // -E -D rebuild
     let mut pi = 0usize;
     let mut stopped = false;
     while pi < params.len() {
@@ -1998,59 +2232,91 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
         // Not an option (or `-` in GNU mode).
         if !o_raw.starts_with('-') || (gnu && o_raw == "-") {
             if extract {
-                if del { new_params.push(o_raw); }
+                if del {
+                    new_params.push(o_raw);
+                }
                 pi += 1;
                 continue;
-            } else { stopped = true; break; }
+            } else {
+                stopped = true;
+                break;
+            }
         }
         // `--` or non-GNU `-`: end.
         if o_raw == "-" || o_raw == "--" {
-            if del && extract { new_params.push(o_raw); }
+            if del && extract {
+                new_params.push(o_raw);
+            }
             pi += 1;
             stopped = true;
             break;
         }
         // Try whole-name match. c:1978.
         let body = &o_raw[1..];
-        let whole_idx = descs.iter().position(|d|
-            body == d.name || body.starts_with(&d.name)
-                && body.as_bytes().get(d.name.len()).is_some_and(|b| *b == b'=' || *b == 0));
-        let whole_match = whole_idx.map(|idx| {
-            let d = &descs[idx];
-            body == d.name ||
-                (body.starts_with(&d.name) && (
-                    body.as_bytes().get(d.name.len()) == Some(&b'=')))
-        }).unwrap_or(false);
+        let whole_idx = descs.iter().position(|d| {
+            body == d.name
+                || body.starts_with(&d.name)
+                    && body
+                        .as_bytes()
+                        .get(d.name.len())
+                        .is_some_and(|b| *b == b'=' || *b == 0)
+        });
+        let whole_match = whole_idx
+            .map(|idx| {
+                let d = &descs[idx];
+                body == d.name
+                    || (body.starts_with(&d.name)
+                        && (body.as_bytes().get(d.name.len()) == Some(&b'=')))
+            })
+            .unwrap_or(false);
         if whole_match {
             let idx = whole_idx.unwrap();
             let dn_len = descs[idx].name.len();
             let dflags = descs[idx].flags;
             let dname = descs[idx].name.clone();
             if (dflags & ZOF_ARG) != 0 {
-                let e = &body[dn_len..];                 // pointer past name
-                if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {  // c:2031
+                let e = &body[dn_len..]; // pointer past name
+                if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {
+                    // c:2031
                     let arg = e[1..].to_string();
-                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(arg) });
-                } else if !e.is_empty() {                              // c:2038
-                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(e.to_string()) });
+                    descs[idx].vals.push(Val {
+                        name: o_raw.clone(),
+                        arg: Some(arg),
+                    });
+                } else if !e.is_empty() {
+                    // c:2038
+                    descs[idx].vals.push(Val {
+                        name: o_raw.clone(),
+                        arg: Some(e.to_string()),
+                    });
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
                         && pi + 1 < params.len()
                         && !params[pi + 1].starts_with('-'))
-                {                                                       // c:2044
+                {
+                    // c:2044
                     if pi + 1 >= params.len() {
-                        zwarnnam(nam,
-                            &format!("missing argument for option: -{}", dname));
+                        zwarnnam(nam, &format!("missing argument for option: -{}", dname));
                         return 1;
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(arg) });
-                } else {                                                // c:2055
-                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: None });
+                    descs[idx].vals.push(Val {
+                        name: o_raw.clone(),
+                        arg: Some(arg),
+                    });
+                } else {
+                    // c:2055
+                    descs[idx].vals.push(Val {
+                        name: o_raw.clone(),
+                        arg: None,
+                    });
                 }
             } else {
-                descs[idx].vals.push(Val { name: o_raw.clone(), arg: None });
+                descs[idx].vals.push(Val {
+                    name: o_raw.clone(),
+                    arg: None,
+                });
             }
             pi += 1;
             continue;
@@ -2068,7 +2334,10 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
                     if ch != '-' || ci > 0 {
                         zwarnnam(nam, &format!("bad option: -{}", ch));
                     } else {
-                        zwarnnam(nam, &format!("bad option: -{}", chars.iter().collect::<String>()));
+                        zwarnnam(
+                            nam,
+                            &format!("bad option: -{}", chars.iter().collect::<String>()),
+                        );
                     }
                     return 1;
                 }
@@ -2097,18 +2366,29 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    descs[idx].vals.push(Val { name: format!("-{}", ch), arg: Some(arg) });
+                    descs[idx].vals.push(Val {
+                        name: format!("-{}", ch),
+                        arg: Some(arg),
+                    });
                 } else {
-                    descs[idx].vals.push(Val { name: format!("-{}", ch), arg: None });
+                    descs[idx].vals.push(Val {
+                        name: format!("-{}", ch),
+                        arg: None,
+                    });
                 }
             } else {
-                descs[idx].vals.push(Val { name: format!("-{}", ch), arg: None });
+                descs[idx].vals.push(Val {
+                    name: format!("-{}", ch),
+                    arg: None,
+                });
             }
             ci += 1;
         }
         if !consumed_param {
             if extract {
-                if del { new_params.push(o_raw); }
+                if del {
+                    new_params.push(o_raw);
+                }
                 pi += 1;
                 continue;
             } else {
@@ -2155,11 +2435,16 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     if let Some(aname) = assoc {
         let mut flat: Vec<String> = Vec::new();
         for d in &descs {
-            if d.vals.is_empty() { continue; }
+            if d.vals.is_empty() {
+                continue;
+            }
             flat.push(format!("-{}", d.name));
-            let joined: String = d.vals.iter()
+            let joined: String = d
+                .vals
+                .iter()
                 .filter_map(|v| v.arg.clone())
-                .collect::<Vec<_>>().join(" ");
+                .collect::<Vec<_>>()
+                .join(" ");
             flat.push(joined);
         }
         if !keep || !flat.is_empty() {
@@ -2188,46 +2473,49 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
 
 // `bintab` — port of `static struct builtin bintab[]` (zutil.c).
 
-
 // `module_features` — port of `static struct features module_features`
 // from zutil.c:2143.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zutil.c:2152`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:2152
+pub fn setup_(m: *const module) -> i32 {
+    // c:2152
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zutil.c:2161`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:2161
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:2161
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zutil.c:2169`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:2169
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:2169
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zutil.c:2176`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:2176
+pub fn boot_(m: *const module) -> i32 {
+    // c:2176
     0
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zutil.c:2183`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:2183
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:2183
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zutil.c:2190`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:2190
+pub fn finish_(m: *const module) -> i32 {
+    // c:2190
     0
 }
 // zstyle_entry is defined below (moved from vm_helper).
@@ -2293,20 +2581,20 @@ pub struct zstyle_entry {
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct RParseState {
-    pub cutoff:   i32,                                                       // c:1094
-    pub pattern:  Option<String>,                                            // c:1095
-    pub patprog:  Option<crate::ported::zsh_h::Patprog>,                     // c:1096 compiled on first match
-    pub guard:    Option<String>,                                            // c:1097
-    pub action:   Option<String>,                                            // c:1098
-    pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1099
+    pub cutoff: i32,                                                  // c:1094
+    pub pattern: Option<String>,                                      // c:1095
+    pub patprog: Option<crate::ported::zsh_h::Patprog>, // c:1096 compiled on first match
+    pub guard: Option<String>,                          // c:1097
+    pub action: Option<String>,                         // c:1098
+    pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1099
 }
 
 /// Port of `RParseBranch` from `Src/Modules/zutil.c:1102-1105`.
 /// One transition: target state + action list to run when taken.
 #[allow(non_camel_case_types)]
 pub struct RParseBranch {
-    pub state:   std::rc::Rc<std::cell::RefCell<RParseState>>,               // c:1103
-    pub actions: Vec<String>,                                                // c:1104
+    pub state: std::rc::Rc<std::cell::RefCell<RParseState>>, // c:1103
+    pub actions: Vec<String>,                                // c:1104
 }
 
 /// Port of `RParseResult` from `Src/Modules/zutil.c:1107-1111`.
@@ -2314,11 +2602,11 @@ pub struct RParseBranch {
 /// for the entry/exit transitions of this sub-parse.
 #[derive(Default)]
 pub struct RParseResult {
-    pub nullacts: Option<Vec<String>>,                                       // c:1108 (None = NULL)
-    pub in_:      Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1109
-    pub out:      Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>,        // c:1110
+    pub nullacts: Option<Vec<String>>, // c:1108 (None = NULL)
+    pub in_: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1109
+    pub out: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1110
     /// Legacy field — kept until callers migrate off the old shape.
-    pub args:     Vec<String>,
+    pub args: Vec<String>,
 }
 
 /// `rparseargs` — C global at zutil.c:1113. Cursor into the input
@@ -2384,7 +2672,6 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
@@ -2395,7 +2682,12 @@ static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zformat".to_string(), "b:zparseopts".to_string(), "b:zregexparse".to_string(), "b:zstyle".to_string()]
+    vec![
+        "b:zformat".to_string(),
+        "b:zparseopts".to_string(),
+        "b:zregexparse".to_string(),
+        "b:zstyle".to_string(),
+    ]
 }
 
 // WARNING: NOT IN ZUTIL.C — Rust-only module-framework shim.
@@ -2417,11 +2709,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -2452,17 +2740,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 4,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 4,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -2584,9 +2874,11 @@ mod rparse_tests {
         RPARSESTATES.with(|s| s.borrow_mut().clear());
         let mut r = RParseResult::default();
         assert_eq!(rparseclo(&mut r), 0);
-        assert!(r.nullacts.is_none(),
+        assert!(
+            r.nullacts.is_none(),
             "c:1257 — without trailing `#`, nullacts must stay None \
-             (empty-match must NOT be allowed for non-Kleene atoms)");
+             (empty-match must NOT be allowed for non-Kleene atoms)"
+        );
     }
 
     /// `rparseseq` on `{init} /pat/` collects the action into nullacts
@@ -2655,17 +2947,24 @@ mod rparse_tests {
 
         let state_a = r.in_[0].borrow().state.clone();
         let state_b = r.out[0].borrow().state.clone();
-        assert!(!std::rc::Rc::ptr_eq(&state_a, &state_b),
-            "sequence creates distinct states for a and b");
+        assert!(
+            !std::rc::Rc::ptr_eq(&state_a, &state_b),
+            "sequence creates distinct states for a and b"
+        );
 
         // c:1136 — connectstates appends a transition branch onto
         // outbranch.state.branches (= state_a.branches).
         let a_branches = &state_a.borrow().branches;
-        assert_eq!(a_branches.len(), 1,
-            "c:1136 — state_a.branches must hold the a→b transition");
+        assert_eq!(
+            a_branches.len(),
+            1,
+            "c:1136 — state_a.branches must hold the a→b transition"
+        );
         let transition_target = a_branches[0].borrow().state.clone();
-        assert!(std::rc::Rc::ptr_eq(&transition_target, &state_b),
-            "transition target must be state_b (the Rc graph is shared, not deep-copied)");
+        assert!(
+            std::rc::Rc::ptr_eq(&transition_target, &state_b),
+            "transition target must be state_b (the Rc graph is shared, not deep-copied)"
+        );
     }
 
     /// `(` introduces a grouped subexpression; matching `)` closes it.
@@ -2701,7 +3000,12 @@ mod rparse_tests {
         prependactions(&acts, &[br.clone()]);
         assert_eq!(
             br.borrow().actions,
-            vec!["a".to_string(), "b".to_string(), "x".to_string(), "y".to_string()]
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "x".to_string(),
+                "y".to_string()
+            ]
         );
     }
 
@@ -2736,31 +3040,43 @@ mod rparse_tests {
         let out_b = std::rc::Rc::new(std::cell::RefCell::new(RParseState::default()));
         let out = vec![
             std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
-                state: out_a.clone(), actions: vec![],
+                state: out_a.clone(),
+                actions: vec![],
             })),
             std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
-                state: out_b.clone(), actions: vec![],
+                state: out_b.clone(),
+                actions: vec![],
             })),
         ];
         // Three in-branches, each rooted at its own state.
         let in_states: Vec<_> = (0..3)
             .map(|_| std::rc::Rc::new(std::cell::RefCell::new(RParseState::default())))
             .collect();
-        let in_: Vec<_> = in_states.iter().map(|st| {
-            std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
-                state: st.clone(), actions: vec![],
-            }))
-        }).collect();
+        let in_: Vec<_> = in_states
+            .iter()
+            .map(|st| {
+                std::rc::Rc::new(std::cell::RefCell::new(RParseBranch {
+                    state: st.clone(),
+                    actions: vec![],
+                }))
+            })
+            .collect();
 
         connectstates(&out, &in_);
 
         // c:1136 — each new branch added to outbranch.state.branches.
         // out_a gets 3 transitions (one per in-branch);
         // out_b gets 3 transitions.
-        assert_eq!(out_a.borrow().branches.len(), 3,
-            "c:1126-1136 — out_a must receive N=3 transitions");
-        assert_eq!(out_b.borrow().branches.len(), 3,
-            "c:1126-1136 — out_b must also receive N=3 transitions");
+        assert_eq!(
+            out_a.borrow().branches.len(),
+            3,
+            "c:1126-1136 — out_a must receive N=3 transitions"
+        );
+        assert_eq!(
+            out_b.borrow().branches.len(),
+            3,
+            "c:1126-1136 — out_b must also receive N=3 transitions"
+        );
 
         // Each transition's target state must be one of the in-states
         // (Rc::ptr_eq verifies graph-sharing, not deep-copy).
@@ -2787,9 +3103,9 @@ mod tests {
     fn test_style_pattern_weight() {
         let _g = crate::test_util::global_state_lock();
         let mut t = style_table::new();
-        t.set("*",                  "s", vec!["broad".to_string()], false);
-        t.set(":completion:*",      "s", vec!["mid".to_string()],   false);
-        t.set(":completion:zsh:*",  "s", vec!["narrow".to_string()],false);
+        t.set("*", "s", vec!["broad".to_string()], false);
+        t.set(":completion:*", "s", vec!["mid".to_string()], false);
+        t.set(":completion:zsh:*", "s", vec!["narrow".to_string()], false);
         // Most-specific match wins (sorted descending by weight at insertion).
         assert_eq!(t.get(":completion:zsh:complete", "s").unwrap()[0], "narrow");
         assert_eq!(t.get(":completion:bash:complete", "s").unwrap()[0], "mid");
@@ -2801,13 +3117,19 @@ mod tests {
     fn zof_flags_are_distinct_powers_of_two() {
         let _g = crate::test_util::global_state_lock();
         // c:1531-1538 — ZOF_* are independent bits in a single u8 field.
-        let all = [ZOF_ARG, ZOF_OPT, ZOF_MULT, ZOF_SAME, ZOF_MAP, ZOF_CYC, ZOF_GNUS, ZOF_GNUL];
+        let all = [
+            ZOF_ARG, ZOF_OPT, ZOF_MULT, ZOF_SAME, ZOF_MAP, ZOF_CYC, ZOF_GNUS, ZOF_GNUL,
+        ];
         let xor: i32 = all.iter().fold(0, |acc, &x| acc | x);
         let sum: i32 = all.iter().sum();
         assert_eq!(xor, sum, "ZOF_* bits must be disjoint");
         // Ensure each is a power of two.
         for v in all {
-            assert!(v > 0 && (v & (v - 1)) == 0, "ZOF value {} is not a power of 2", v);
+            assert!(
+                v > 0 && (v & (v - 1)) == 0,
+                "ZOF value {} is not a power of 2",
+                v
+            );
         }
     }
 
@@ -2893,8 +3215,7 @@ mod tests {
         let key_pat = "test_zutil_global_marker_*";
         {
             let mut t = zstyletab.lock().unwrap();
-            t.set(key_pat, key_style,
-                  vec!["yes".to_string()], false);
+            t.set(key_pat, key_style, vec!["yes".to_string()], false);
         }
         let found = lookupstyle("test_zutil_global_marker_x", key_style);
         assert_eq!(found, vec!["yes".to_string()]);
@@ -2960,8 +3281,10 @@ mod tests {
         specs.insert('n', "hello".to_string());
         // %z is unknown; must round-trip
         let result = zformat_substring("%z %n", &specs, false);
-        assert_eq!(result, "%z hello",
-            "c:923-936 — unknown spec emits raw `%X` segment");
+        assert_eq!(
+            result, "%z hello",
+            "c:923-936 — unknown spec emits raw `%X` segment"
+        );
     }
 
     /// `Src/Modules/zutil.c:825-826` — Right-align flag with explicit
@@ -2974,9 +3297,9 @@ mod tests {
         let mut specs = HashMap::new();
         specs.insert('n', "ab".to_string());
         // Left-align (default): pad on RIGHT
-        assert_eq!(zformat_substring("[%5n]",  &specs, false),  "[ab   ]");
+        assert_eq!(zformat_substring("[%5n]", &specs, false), "[ab   ]");
         // Right-align (-): pad on LEFT
-        assert_eq!(zformat_substring("[%-5n]", &specs, false),  "[   ab]");
+        assert_eq!(zformat_substring("[%-5n]", &specs, false), "[   ab]");
     }
 
     /// `Src/Modules/zutil.c:825-845` — Min + Max combined: `%5.10n`
@@ -2993,8 +3316,10 @@ mod tests {
         // Short value: min=5 right-pads (default = left-align)
         specs.insert('n', "hi".to_string());
         let r = zformat_substring("[%5.10n]", &specs, false);
-        assert_eq!(r, "[hi   ]",
-            "c:828-845 — min-pad then max-truncate; short value gets the pad only");
+        assert_eq!(
+            r, "[hi   ]",
+            "c:828-845 — min-pad then max-truncate; short value gets the pad only"
+        );
     }
 
     /// `Src/Modules/zutil.c:975-976` — `%)` is pre-registered as `)`
@@ -3021,8 +3346,10 @@ mod tests {
         specs.insert('s', "anything".to_string());
         // presence=true: spec exists → TRUE branch (first text).
         let r = zformat_substring("%(s.yes.no)", &specs, true);
-        assert_eq!(r, "yes",
-            "c:847-887 — spec set, presence=true → TRUE branch (true-text first)");
+        assert_eq!(
+            r, "yes",
+            "c:847-887 — spec set, presence=true → TRUE branch (true-text first)"
+        );
     }
 
     /// `Src/Modules/zutil.c:847-887` — Ternary with missing spec in
@@ -3034,8 +3361,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let specs = HashMap::new();
         let r = zformat_substring("%(s.yes.no)", &specs, true);
-        assert_eq!(r, "no",
-            "c:847-887 — spec unset, presence=true → FALSE branch (false-text second)");
+        assert_eq!(
+            r, "no",
+            "c:847-887 — spec unset, presence=true → FALSE branch (false-text second)"
+        );
     }
 
     /// `Src/Modules/zutil.c:937-948` — Plain (non-`%`) bytes between
@@ -3060,8 +3389,10 @@ mod tests {
         let mut specs = HashMap::new();
         specs.insert('n', "abc".to_string());
         let r = zformat_substring("[%3.0n]", &specs, false);
-        assert_eq!(r, "[   ]",
-            "c:890-922 — max=0 → empty value, min=3 → 3 spaces");
+        assert_eq!(
+            r, "[   ]",
+            "c:890-922 — max=0 → empty value, min=3 → 3 spaces"
+        );
     }
 
     /// `Src/Modules/zutil.c:55-68` — `restorematch` MUST `unsetparam`
@@ -3072,10 +3403,11 @@ mod tests {
     fn restorematch_unsets_params_when_snapshot_is_none() {
         let _g = crate::test_util::global_state_lock();
         // Pre-seed `$match` so we can observe the unset.
-        crate::ported::params::assignaparam("match",
-            vec!["seed".to_string()], 0);
-        assert!(crate::ported::params::getaparam("match").is_some(),
-            "test setup: $match seeded");
+        crate::ported::params::assignaparam("match", vec!["seed".to_string()], 0);
+        assert!(
+            crate::ported::params::getaparam("match").is_some(),
+            "test setup: $match seeded"
+        );
 
         // Snapshot with all three fields None — restorematch must
         // unsetparam each (c:60/64/68).
@@ -3085,7 +3417,9 @@ mod tests {
             mend: None,
         };
         restorematch(&snap);
-        assert!(crate::ported::params::getaparam("match").is_none(),
-            "c:60 — None snapshot must unsetparam(\"match\")");
+        assert!(
+            crate::ported::params::getaparam("match").is_none(),
+            "c:60 — None snapshot must unsetparam(\"match\")"
+        );
     }
 }

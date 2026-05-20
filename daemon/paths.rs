@@ -396,10 +396,7 @@ pub fn load_log_directive(paths: &CachePaths) -> String {
         Ok(b) => b,
         Err(_) => return DEFAULT.into(),
     };
-    let parsed: toml::Value = match body
-        .parse::<toml::Table>()
-        .map(toml::Value::Table)
-    {
+    let parsed: toml::Value = match body.parse::<toml::Table>().map(toml::Value::Table) {
         Ok(v) => v,
         Err(_) => return DEFAULT.into(),
     };

@@ -92,12 +92,7 @@ fn assert_parity(script: &str, label: &str) {
 --- zsh stdout ---\n{:?}\n--- zshrs stdout ---\n{:?}\n\
 --- zsh stderr (context) ---\n{:?}\n--- zshrs stderr (context) ---\n{:?}\n\
 --- exit zsh={} zshrs={}",
-            z.stdout,
-            r.stdout,
-            z.stderr,
-            r.stderr,
-            z.exit,
-            r.exit
+            z.stdout, r.stdout, z.stderr, r.stderr, z.exit, r.exit
         );
     }
 }
@@ -1804,7 +1799,7 @@ mod corpus_dash_fc_bulk_l {
         bulk_l_typeset_unique_array_flag => (r#"typeset -aU"#, r##"typeset -aU al_U=(z z y); print -r "$al_U""##);
         bulk_l_scalar_anchor_replace_all => (r#"//#/"#, r##"sl_aa='ax/x/x'; print -r "${sl_aa//\/_}""##);
         bulk_l_array_join_newline_j_flag => (r#"join newline"#, r##"al_jn=(u v); print -r "${(j:
-:)al_jn}""##);
+    :)al_jn}""##);
         bulk_l_disable_builtin_where => (r#"disable where"#, r##"disable where 2>/dev/null; print -r "dwh=$?"; enable where 2>/dev/null; print -r "ewh=$?""##);
         bulk_l_unset_pattern_minus_m => (r#"unset -m"#, r##"unset -m 'uvp_l_*' 2>/dev/null; typeset uvp_l_x=1 uvp_l_y=2; unset -m 'uvp_l_*'; print -r "${+uvp_l_x}${+uvp_l_y}""##);
         bulk_l_hyphen_paren_subshell_exit => (r#"( subshell )"#, r##"( exit 4 ); print -r "sex=$?""##);
@@ -2094,7 +2089,7 @@ mod corpus_dash_fc_bulk_t {
         bulk_t_fc_brace_alpha_range_suffix => (r#"{a..c}"#, r##"ARY_t=( {a..c}_t ); print -r "$#ARY_t $ARY_t[2]""##);
         bulk_t_fc_array_ie_first_match => (r#"(ie)"#, r##"ary_t=(xa xb xc); print -r "${ary_t[(ie)x*]}""##);
         bulk_t_fc_join_newline_j_flag => (r#"(j:\\n:)"#, r##"a_t=(p q); print -r "${(j:
-:)a_t}""##);
+    :)a_t}""##);
         bulk_t_fc_subshell_exit_code => (r#"( exit N )"#, r##"( exit 3 ); print -r "sx=$?""##);
         bulk_t_fc_subshell_local_hides => (r#"local in ( )"#, r##"( typeset x_sc_t=1; print -r "in=$x_sc_t" ); print -r "out=${+x_sc_t}""##);
         bulk_t_fc_status_after_false_true => (r#"\$status chain"#, r##"false; true; print -r "st=$status""##);
@@ -2340,7 +2335,7 @@ mod corpus_dash_fc_bulk_aa {
         bulk_aa_fc_prompt_percent_hash => (r#"(%)#"#, r##"print -r "${(%)#}""##);
         bulk_aa_fc_function_arg_count_three => (r#"\$# 3"#, r##"c3_aa() { print -r "$#"; }; c3_aa one two three"##);
         bulk_aa_fc_join_newline_array => (r#"(j:\\n:)"#, r##"ab_aa=(l m); print -r "${(j:
-:)ab_aa}""##);
+    :)ab_aa}""##);
         bulk_aa_fc_param_equals_default_empty => (r#"\${=:-}"#, r##"print -r "${=:-}""##);
         bulk_aa_fc_dirname_plus_pwd => (r#":hPWD"#, r##"print -r "${PWD:h}$PWD""##);
         bulk_aa_fc_assoc_sorted_keys => (r#"(k) assoc"#, r##"typeset -A Aa2_aa=(mk_az vz_az); print -r "${(k)Aa2_aa}""##);
@@ -2781,7 +2776,6 @@ mod corpus_dash_fc_bulk_ah {
         bulk_ah_fc_row_144 => (r#"bulk ah 144"#, r##"print -r "$(( 0x80 >> 4 ))""##);
     }
 }
-
 
 mod corpus_dash_fc_bulk_ai {
     use super::*;

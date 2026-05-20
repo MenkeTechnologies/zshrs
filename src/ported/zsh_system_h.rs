@@ -46,11 +46,12 @@
 /// path length. C falls back to MAXPATHLEN, _POSIX_PATH_MAX, then
 /// 1024; the Rust port uses libc's PATH_MAX.
 use std::os::unix::fs::MetadataExt;
-pub const PATH_MAX: usize = libc::PATH_MAX as usize;                     // c:298
+
+pub const PATH_MAX: usize = libc::PATH_MAX as usize; // c:298
 
 /// Port of `#define ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307`.
 /// Initial fd-table size; reallocated later if needed.
-pub const ZSH_INITIAL_OPEN_MAX: usize = 64;                              // c:307
+pub const ZSH_INITIAL_OPEN_MAX: usize = 64; // c:307
 
 /// Port of `#define OPEN_MAX` fallback chain from
 /// `Src/zsh_system.h:308-315`. C uses libc's `OPEN_MAX` macro when
@@ -59,7 +60,7 @@ pub const ZSH_INITIAL_OPEN_MAX: usize = 64;                              // c:30
 /// drop the `OPEN_MAX` macro (they use `sysconf(_SC_OPEN_MAX)` at
 /// runtime instead), so the Rust port takes the same fallback as
 /// the C "we will just pick something" comment at c:312.
-pub const OPEN_MAX: usize = ZSH_INITIAL_OPEN_MAX;                        // c:313
+pub const OPEN_MAX: usize = ZSH_INITIAL_OPEN_MAX; // c:313
 
 /// Port of `#define DIGBUFSIZE` from `Src/zsh_system.h:569`. Length
 /// of a buffer that can hold the printable decimal form of a
@@ -67,21 +68,20 @@ pub const OPEN_MAX: usize = ZSH_INITIAL_OPEN_MAX;                        // c:31
 ///
 /// C: `((int)(((sizeof(zlong) * 8) - 1) * 30103/100000) + 3)`
 /// For zlong = i64 (8 bytes): `((63 * 30103) / 100000) + 3 = 21`.
-pub const DIGBUFSIZE: usize = (((std::mem::size_of::<i64>() * 8) - 1)
-                                * 30103 / 100000) + 3;                   // c:569
+pub const DIGBUFSIZE: usize = (((std::mem::size_of::<i64>() * 8) - 1) * 30103 / 100000) + 3; // c:569
 
 /// Port of `#define BDIGBUFSIZE` from `Src/zsh_system.h:570`. Length
 /// of a buffer for a number in printable binary form.
 ///
 /// C: `((int)((sizeof(zlong) * 8) + 4))`
 /// For zlong = i64: `64 + 4 = 68`.
-pub const BDIGBUFSIZE: usize = (std::mem::size_of::<i64>() * 8) + 4;     // c:570
+pub const BDIGBUFSIZE: usize = (std::mem::size_of::<i64>() * 8) + 4; // c:570
 
 /// Port of `#define VDISABLEVAL` from `Src/zsh_system.h:396-399`.
 /// Termios "disable this special character" sentinel — C source uses
 /// `_POSIX_VDISABLE` when defined, else 0. Rust pulls from libc.
 #[cfg(unix)]
-pub const VDISABLEVAL: u8 = libc::_POSIX_VDISABLE;                       // c:396
+pub const VDISABLEVAL: u8 = libc::_POSIX_VDISABLE; // c:396
 
 #[cfg(not(unix))]
 pub const VDISABLEVAL: u8 = 0;
@@ -107,17 +107,17 @@ pub const VDISABLEVAL: u8 = 0;
 // ---------------------------------------------------------------------------
 
 #[allow(non_camel_case_types)]
-pub type timespec = libc::timespec;                                          // c:245
+pub type timespec = libc::timespec; // c:245
 
 /// Port of `#define DEFAULT_WORDCHARS` from `Src/zsh_system.h:427`.
 /// Default value of `$WORDCHARS` — the chars besides alphanumerics
 /// + `_` that ZLE and the completion system treat as word constituents.
-pub const DEFAULT_WORDCHARS: &str = "*?_-.[]~=/&;!#$%^(){}<>";           // c:427
+pub const DEFAULT_WORDCHARS: &str = "*?_-.[]~=/&;!#$%^(){}<>"; // c:427
 
 /// Port of `#define DEFAULT_TIMEFMT` from `Src/zsh_system.h:428`.
 /// Default value of `$TIMEFMT` — the format string the `time` builtin
 /// uses when printing a job's resource summary.
-pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";  // c:428
+pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total"; // c:428
 
 // ---------------------------------------------------------------------------
 // File mode bits (c:594, 682-735) — `S_IFMT` mask + permission bits
@@ -127,39 +127,39 @@ pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";  // 
 
 /// Port of `#define S_IFMT` from `Src/zsh_system.h:594`. Mask
 /// isolating the file-type bits from a stat mode word.
-pub const S_IFMT: u32 = 0o170_000;                                       // c:594
+pub const S_IFMT: u32 = 0o170_000; // c:594
 
 // File-type bits — for the predicate macros below. Pulled from libc
 // where available so they match the host's `<sys/stat.h>` exactly.
-pub const S_IFBLK:  u32 = libc::S_IFBLK as u32;
-pub const S_IFCHR:  u32 = libc::S_IFCHR as u32;
-pub const S_IFDIR:  u32 = libc::S_IFDIR as u32;
-pub const S_IFIFO:  u32 = libc::S_IFIFO as u32;
-pub const S_IFLNK:  u32 = libc::S_IFLNK as u32;
-pub const S_IFREG:  u32 = libc::S_IFREG as u32;
+pub const S_IFBLK: u32 = libc::S_IFBLK as u32;
+pub const S_IFCHR: u32 = libc::S_IFCHR as u32;
+pub const S_IFDIR: u32 = libc::S_IFDIR as u32;
+pub const S_IFIFO: u32 = libc::S_IFIFO as u32;
+pub const S_IFLNK: u32 = libc::S_IFLNK as u32;
+pub const S_IFREG: u32 = libc::S_IFREG as u32;
 pub const S_IFSOCK: u32 = libc::S_IFSOCK as u32;
 
 // Permission bits (c:682-735). Octal values match POSIX exactly.
-pub const S_ISUID: u32 = 0o4000;                                         // c:682
-pub const S_ISGID: u32 = 0o2000;                                         // c:685
-pub const S_ISVTX: u32 = 0o1000;                                         // c:688
-pub const S_IRUSR: u32 = 0o0400;                                         // c:691
-pub const S_IWUSR: u32 = 0o0200;                                         // c:694
-pub const S_IXUSR: u32 = 0o0100;                                         // c:697
-pub const S_IRGRP: u32 = 0o0040;                                         // c:700
-pub const S_IWGRP: u32 = 0o0020;                                         // c:703
-pub const S_IXGRP: u32 = 0o0010;                                         // c:706
-pub const S_IROTH: u32 = 0o0004;                                         // c:709
-pub const S_IWOTH: u32 = 0o0002;                                         // c:712
-pub const S_IXOTH: u32 = 0o0001;                                         // c:715
+pub const S_ISUID: u32 = 0o4000; // c:682
+pub const S_ISGID: u32 = 0o2000; // c:685
+pub const S_ISVTX: u32 = 0o1000; // c:688
+pub const S_IRUSR: u32 = 0o0400; // c:691
+pub const S_IWUSR: u32 = 0o0200; // c:694
+pub const S_IXUSR: u32 = 0o0100; // c:697
+pub const S_IRGRP: u32 = 0o0040; // c:700
+pub const S_IWGRP: u32 = 0o0020; // c:703
+pub const S_IXGRP: u32 = 0o0010; // c:706
+pub const S_IROTH: u32 = 0o0004; // c:709
+pub const S_IWOTH: u32 = 0o0002; // c:712
+pub const S_IXOTH: u32 = 0o0001; // c:715
 
 // Aggregate masks (c:718-735).
-pub const S_IRWXU: u32 = S_IRUSR | S_IWUSR | S_IXUSR;                    // c:718
-pub const S_IRWXG: u32 = S_IRGRP | S_IWGRP | S_IXGRP;                    // c:721
-pub const S_IRWXO: u32 = S_IROTH | S_IWOTH | S_IXOTH;                    // c:724
-pub const S_IRUGO: u32 = S_IRUSR | S_IRGRP | S_IROTH;                    // c:727
-pub const S_IWUGO: u32 = S_IWUSR | S_IWGRP | S_IWOTH;                    // c:730
-pub const S_IXUGO: u32 = S_IXUSR | S_IXGRP | S_IXOTH;                    // c:733
+pub const S_IRWXU: u32 = S_IRUSR | S_IWUSR | S_IXUSR; // c:718
+pub const S_IRWXG: u32 = S_IRGRP | S_IWGRP | S_IXGRP; // c:721
+pub const S_IRWXO: u32 = S_IROTH | S_IWOTH | S_IXOTH; // c:724
+pub const S_IRUGO: u32 = S_IRUSR | S_IRGRP | S_IROTH; // c:727
+pub const S_IWUGO: u32 = S_IWUSR | S_IWGRP | S_IWOTH; // c:730
+pub const S_IXUGO: u32 = S_IXUSR | S_IXGRP | S_IXOTH; // c:733
 
 // ---------------------------------------------------------------------------
 // Stat-mode predicate macros (c:598-636 + c:640-678 fallbacks).
@@ -172,21 +172,24 @@ pub const S_IXUGO: u32 = S_IXUSR | S_IXGRP | S_IXOTH;                    // c:73
 /// Port of `#define S_ISBLK(m)` from `Src/zsh_system.h:598`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISBLK(m: u32) -> bool {                                   // c:598
+pub const fn S_ISBLK(m: u32) -> bool {
+    // c:598
     (m & S_IFMT) == S_IFBLK
 }
 
 /// Port of `#define S_ISCHR(m)` from `Src/zsh_system.h:601`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISCHR(m: u32) -> bool {                                   // c:601
+pub const fn S_ISCHR(m: u32) -> bool {
+    // c:601
     (m & S_IFMT) == S_IFCHR
 }
 
 /// Port of `#define S_ISDIR(m)` from `Src/zsh_system.h:604`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISDIR(m: u32) -> bool {                                   // c:604
+pub const fn S_ISDIR(m: u32) -> bool {
+    // c:604
     (m & S_IFMT) == S_IFDIR
 }
 
@@ -194,21 +197,24 @@ pub const fn S_ISDIR(m: u32) -> bool {                                   // c:60
 /// Solaris-only file type; returns false on every other host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISDOOR(_m: u32) -> bool {                                 // c:607 + c:649 fallback
+pub const fn S_ISDOOR(_m: u32) -> bool {
+    // c:607 + c:649 fallback
     false
 }
 
 /// Port of `#define S_ISFIFO(m)` from `Src/zsh_system.h:610`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISFIFO(m: u32) -> bool {                                  // c:610
+pub const fn S_ISFIFO(m: u32) -> bool {
+    // c:610
     (m & S_IFMT) == S_IFIFO
 }
 
 /// Port of `#define S_ISLNK(m)` from `Src/zsh_system.h:613`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISLNK(m: u32) -> bool {                                   // c:613
+pub const fn S_ISLNK(m: u32) -> bool {
+    // c:613
     (m & S_IFMT) == S_IFLNK
 }
 
@@ -216,7 +222,8 @@ pub const fn S_ISLNK(m: u32) -> bool {                                   // c:61
 /// V7-only file type; returns false on every modern host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISMPB(_m: u32) -> bool {                                  // c:616 + c:658 fallback
+pub const fn S_ISMPB(_m: u32) -> bool {
+    // c:616 + c:658 fallback
     false
 }
 
@@ -224,7 +231,8 @@ pub const fn S_ISMPB(_m: u32) -> bool {                                  // c:61
 /// V7-only file type; returns false on every modern host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISMPC(_m: u32) -> bool {                                  // c:619 + c:661 fallback
+pub const fn S_ISMPC(_m: u32) -> bool {
+    // c:619 + c:661 fallback
     false
 }
 
@@ -232,7 +240,8 @@ pub const fn S_ISMPC(_m: u32) -> bool {                                  // c:61
 /// HP/UX-only file type; returns false on every other host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISNWK(_m: u32) -> bool {                                  // c:622 + c:664 fallback
+pub const fn S_ISNWK(_m: u32) -> bool {
+    // c:622 + c:664 fallback
     false
 }
 
@@ -240,7 +249,8 @@ pub const fn S_ISNWK(_m: u32) -> bool {                                  // c:62
 /// Cray-only file type; returns false on every other host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISOFD(_m: u32) -> bool {                                  // c:625 + c:667 fallback
+pub const fn S_ISOFD(_m: u32) -> bool {
+    // c:625 + c:667 fallback
     false
 }
 
@@ -248,21 +258,24 @@ pub const fn S_ISOFD(_m: u32) -> bool {                                  // c:62
 /// Cray-only file type; returns false on every other host.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISOFL(_m: u32) -> bool {                                  // c:628 + c:670 fallback
+pub const fn S_ISOFL(_m: u32) -> bool {
+    // c:628 + c:670 fallback
     false
 }
 
 /// Port of `#define S_ISREG(m)` from `Src/zsh_system.h:631`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISREG(m: u32) -> bool {                                   // c:631
+pub const fn S_ISREG(m: u32) -> bool {
+    // c:631
     (m & S_IFMT) == S_IFREG
 }
 
 /// Port of `#define S_ISSOCK(m)` from `Src/zsh_system.h:634`.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn S_ISSOCK(m: u32) -> bool {                                  // c:634
+pub const fn S_ISSOCK(m: u32) -> bool {
+    // c:634
     (m & S_IFMT) == S_IFSOCK
 }
 
@@ -278,7 +291,8 @@ pub const fn S_ISSOCK(m: u32) -> bool {                                  // c:63
 /// True iff the child exited normally (didn't terminate via signal).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WIFEXITED(x: i32) -> bool {                                 // c:347
+pub const fn WIFEXITED(x: i32) -> bool {
+    // c:347
     (x & 0o377) == 0
 }
 
@@ -287,7 +301,8 @@ pub const fn WIFEXITED(x: i32) -> bool {                                 // c:34
 /// `WIFEXITED` is true).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WEXITSTATUS(x: i32) -> i32 {                                // c:350
+pub const fn WEXITSTATUS(x: i32) -> i32 {
+    // c:350
     (x >> 8) & 0o377
 }
 
@@ -295,7 +310,8 @@ pub const fn WEXITSTATUS(x: i32) -> i32 {                                // c:35
 /// True iff the child was killed by a signal.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WIFSIGNALED(x: i32) -> bool {                               // c:353
+pub const fn WIFSIGNALED(x: i32) -> bool {
+    // c:353
     let lo = x & 0o377;
     lo != 0 && lo != 0o177
 }
@@ -304,7 +320,8 @@ pub const fn WIFSIGNALED(x: i32) -> bool {                               // c:35
 /// Signal that killed the child (only valid when `WIFSIGNALED` is true).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WTERMSIG(x: i32) -> i32 {                                   // c:356
+pub const fn WTERMSIG(x: i32) -> i32 {
+    // c:356
     x & 0o177
 }
 
@@ -313,7 +330,8 @@ pub const fn WTERMSIG(x: i32) -> i32 {                                   // c:35
 /// `WIFSIGNALED` is true).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WCOREDUMP(x: i32) -> bool {                                 // c:359
+pub const fn WCOREDUMP(x: i32) -> bool {
+    // c:359
     (x & 0o200) != 0
 }
 
@@ -321,7 +339,8 @@ pub const fn WCOREDUMP(x: i32) -> bool {                                 // c:35
 /// True iff the child is stopped (raised SIGSTOP or similar).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WIFSTOPPED(x: i32) -> bool {                                // c:362
+pub const fn WIFSTOPPED(x: i32) -> bool {
+    // c:362
     (x & 0o377) == 0o177
 }
 
@@ -329,7 +348,8 @@ pub const fn WIFSTOPPED(x: i32) -> bool {                                // c:36
 /// Signal that stopped the child (only valid when `WIFSTOPPED` is true).
 #[inline]
 #[allow(non_snake_case)]
-pub const fn WSTOPSIG(x: i32) -> i32 {                                   // c:365
+pub const fn WSTOPSIG(x: i32) -> i32 {
+    // c:365
     (x >> 8) & 0o377
 }
 
@@ -339,19 +359,19 @@ pub const fn WSTOPSIG(x: i32) -> i32 {                                   // c:36
 
 /// Port of `#define F_OK` from `Src/zsh_system.h:747`. Test for
 /// existence.
-pub const F_OK: i32 = 0;                                                 // c:747
+pub const F_OK: i32 = 0; // c:747
 
 /// Port of `#define X_OK` from `Src/zsh_system.h:748`. Test for
 /// execute permission.
-pub const X_OK: i32 = 1;                                                 // c:748
+pub const X_OK: i32 = 1; // c:748
 
 /// Port of `#define W_OK` from `Src/zsh_system.h:749`. Test for
 /// write permission.
-pub const W_OK: i32 = 2;                                                 // c:749
+pub const W_OK: i32 = 2; // c:749
 
 /// Port of `#define R_OK` from `Src/zsh_system.h:750`. Test for
 /// read permission.
-pub const R_OK: i32 = 4;                                                 // c:750
+pub const R_OK: i32 = 4; // c:750
 
 // ---------------------------------------------------------------------------
 // Misc macros (c:791, 818).
@@ -361,7 +381,7 @@ pub const R_OK: i32 = 4;                                                 // c:75
 /// falls back to 0 when libc doesn't expose it; Rust uses the libc
 /// constant directly (Linux/macOS/BSD all define it).
 #[cfg(unix)]
-pub const O_NOCTTY: i32 = libc::O_NOCTTY;                                // c:791
+pub const O_NOCTTY: i32 = libc::O_NOCTTY; // c:791
 
 #[cfg(not(unix))]
 pub const O_NOCTTY: i32 = 0;
@@ -372,7 +392,8 @@ pub const O_NOCTTY: i32 = 0;
 /// matches the non-Cygwin arm.
 #[inline]
 #[allow(non_snake_case)]
-pub const fn IS_DIRSEP(c: char) -> bool {                                // c:818
+pub const fn IS_DIRSEP(c: char) -> bool {
+    // c:818
     c == '/'
 }
 
@@ -390,7 +411,8 @@ pub const fn IS_DIRSEP(c: char) -> bool {                                // c:81
 /// Port of `#define GET_ST_ATIME_NSEC(st)` from `Src/zsh_system.h:878`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn GET_ST_ATIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:878
+pub fn GET_ST_ATIME_NSEC(st: &std::fs::Metadata) -> u32 {
+    // c:878
     st.accessed()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -401,7 +423,8 @@ pub fn GET_ST_ATIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:87
 /// Port of `#define GET_ST_MTIME_NSEC(st)` from `Src/zsh_system.h:885`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:885
+pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {
+    // c:885
     st.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -414,7 +437,8 @@ pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:88
 /// pull it from `MetadataExt::ctime_nsec()`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn GET_ST_CTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:892
+pub fn GET_ST_CTIME_NSEC(st: &std::fs::Metadata) -> u32 {
+    // c:892
     #[cfg(unix)]
     {
         st.ctime_nsec() as u32
@@ -480,9 +504,9 @@ mod tests {
     #[test]
     fn stat_predicates_dispatch() {
         let _g = crate::test_util::global_state_lock();
-        let dir_mode  = libc::S_IFDIR  as u32 | 0o755;
-        let file_mode = libc::S_IFREG  as u32 | 0o644;
-        let link_mode = libc::S_IFLNK  as u32 | 0o777;
+        let dir_mode = libc::S_IFDIR as u32 | 0o755;
+        let file_mode = libc::S_IFREG as u32 | 0o644;
+        let link_mode = libc::S_IFLNK as u32 | 0o777;
         assert!(S_ISDIR(dir_mode));
         assert!(!S_ISDIR(file_mode));
         assert!(S_ISREG(file_mode));

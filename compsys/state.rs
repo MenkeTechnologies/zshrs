@@ -362,7 +362,7 @@ impl CompParams {
 fn parse_command_line(line: &str, cursor: usize) -> (Vec<String>, usize, String, String) {
     let mut words = Vec::new();
     let mut current_word = String::new();
-    
+
     let mut in_word = false;
     let mut word_start = 0;
     let mut cursor_in_word: Option<usize> = None; // word index where cursor is

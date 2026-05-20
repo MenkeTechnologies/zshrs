@@ -260,8 +260,7 @@ mod tests {
     /// switched to setting cancelled=true (so queued tasks would be
     /// skipped on drop instead of drained).
     fn wait_for_count(counter: &AtomicUsize, target: usize, max_wait_ms: u64) {
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
         while counter.load(Ordering::Relaxed) < target {
             if std::time::Instant::now() >= deadline {
                 panic!(

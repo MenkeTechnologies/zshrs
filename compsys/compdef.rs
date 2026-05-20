@@ -141,10 +141,9 @@ pub fn compdef_execute(cache: &mut CompsysCache, args: &[String]) -> i32 {
             let service = &cmd[eq_pos + 1..];
 
             // Register with service indirection
-            if opts.no_overwrite
-                && cache.get_comp(cmd_name).unwrap_or(None).is_some() {
-                    continue;
-                }
+            if opts.no_overwrite && cache.get_comp(cmd_name).unwrap_or(None).is_some() {
+                continue;
+            }
 
             // Store the service mapping
             let _ = cache.set_service(cmd_name, service);
@@ -156,10 +155,9 @@ pub fn compdef_execute(cache: &mut CompsysCache, args: &[String]) -> i32 {
         // Register based on mode
         match mode {
             CompdefMode::Normal => {
-                if opts.no_overwrite
-                    && cache.get_comp(cmd).unwrap_or(None).is_some() {
-                        continue;
-                    }
+                if opts.no_overwrite && cache.get_comp(cmd).unwrap_or(None).is_some() {
+                    continue;
+                }
                 let _ = cache.set_comp(cmd, function);
             }
             CompdefMode::PatternInitial => {

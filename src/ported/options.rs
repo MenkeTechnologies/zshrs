@@ -8,34 +8,36 @@
 //! - Option aliases (bash/ksh compatibility)
 //! - setopt/unsetopt builtins
 
-use std::collections::HashMap;
-use std::sync::atomic::AtomicI32;
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::EMULATE_FULLY;
-use crate::ported::zsh_h::{APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, MAILWARNING, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND, };
-use crate::ported::zsh_h::OPT_SIZE;
 use crate::ported::zsh_h as zh;
+use crate::ported::zsh_h::EMULATE_FULLY;
+use crate::ported::zsh_h::OPT_SIZE;
+use crate::ported::zsh_h::{
+    APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES,
+    MAILWARNING, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
+};
+use std::sync::atomic::AtomicI32;
 
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
 // bits ARE the emulation bits. Direct mirror of the C macros.
-const OPT_CSH: u8 = EMULATE_CSH as u8;                 // c:55
-const OPT_KSH: u8 = EMULATE_KSH as u8;                 // c:56
-const OPT_SH:  u8 = EMULATE_SH  as u8;                 // c:57
-const OPT_ZSH: u8 = EMULATE_ZSH as u8;                 // c:58
-const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH;                    // c:60
-const OPT_BOURNE: u8 = OPT_KSH | OPT_SH;                                     // c:61
-const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH;                           // c:62
-const OPT_NONBOURNE: u8 = OPT_ALL & !OPT_BOURNE;                             // c:63
-const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH;                                   // c:64
+const OPT_CSH: u8 = EMULATE_CSH as u8; // c:55
+const OPT_KSH: u8 = EMULATE_KSH as u8; // c:56
+const OPT_SH: u8 = EMULATE_SH as u8; // c:57
+const OPT_ZSH: u8 = EMULATE_ZSH as u8; // c:58
+const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH; // c:60
+const OPT_BOURNE: u8 = OPT_KSH | OPT_SH; // c:61
+const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH; // c:62
+const OPT_NONBOURNE: u8 = OPT_ALL & !OPT_BOURNE; // c:63
+const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH; // c:64
 
 /// Option flags
 // option is relevant to emulation                                          // c:66
-const OPT_EMULATE: u16 = EMULATE_UNUSED as u16;        // c:67
-// option should never be set by emulate()                                  // c:68
+const OPT_EMULATE: u16 = EMULATE_UNUSED as u16; // c:67
+                                                // option should never be set by emulate()                                  // c:68
 const OPT_SPECIAL: u16 = (EMULATE_UNUSED << 1) as u16; // c:69
-// option is an alias to an other option                                    // c:70
-const OPT_ALIAS: u16 = (EMULATE_UNUSED << 2) as u16;   // c:71
+                                                       // option is an alias to an other option                                    // c:70
+const OPT_ALIAS: u16 = (EMULATE_UNUSED << 2) as u16; // c:71
 
 /// Every recognised shell option.
 /// Port of the `OPT_*` enum from Src/zsh.h — the C source uses
@@ -115,21 +117,26 @@ pub static zshletters: &[(char, &str, bool)] = &[
 /// }
 /// ```
 /// Port of `printoptionnode(HashNode hn, int set)` from `Src/options.c:450`.
-pub fn printoptionnode(hn: &str, set: bool) {                                // c:450
-    let on = opt_state_get(hn).unwrap_or(false);                             // c:450 isset(optno)
-    let default_on = default_on_options().contains(&hn);                     // c:455 defset(on, emulation)
-    let kshprint = opt_state_get("kshoptionprint").unwrap_or(false);         // c:456 isset(KSHOPTIONPRINT)
-    if kshprint {                                                            // c:456
-        if default_on {                                                      // c:457
-            println!("no{:<19} {}", hn, if on { "off" } else { "on" });      // c:458
+pub fn printoptionnode(hn: &str, set: bool) {
+    // c:450
+    let on = opt_state_get(hn).unwrap_or(false); // c:450 isset(optno)
+    let default_on = default_on_options().contains(&hn); // c:455 defset(on, emulation)
+    let kshprint = opt_state_get("kshoptionprint").unwrap_or(false); // c:456 isset(KSHOPTIONPRINT)
+    if kshprint {
+        // c:456
+        if default_on {
+            // c:457
+            println!("no{:<19} {}", hn, if on { "off" } else { "on" }); // c:458
         } else {
-            println!("{:<21} {}", hn, if on { "on" } else { "off" });        // c:460
+            println!("{:<21} {}", hn, if on { "on" } else { "off" }); // c:460
         }
-    } else if set == (on ^ default_on) {                                     // c:462
-        if set ^ on {                                                        // c:463
-            print!("no");                                                    // c:464
+    } else if set == (on ^ default_on) {
+        // c:462
+        if set ^ on {
+            // c:463
+            print!("no"); // c:464
         }
-        println!("{}", hn);                                                  // c:465
+        println!("{}", hn); // c:465
     }
 }
 
@@ -152,9 +159,11 @@ pub fn printoptionnode(hn: &str, set: bool) {                                // 
 /// static `optns[]` array; the Rust port populates `OPTS_LIVE`
 /// (the canonical `opts[]` store) with each option's
 /// `defset(name, EMULATE_ZSH)` default. Idempotent.
-pub fn createoptiontable() {                                                 // c:471
+pub fn createoptiontable() {
+    // c:471
     let zsh_emu = EMULATE_ZSH;
-    for name in ZSH_OPTIONS_SET.iter() {                                     // c:46 opts[optno] = defset(...)
+    for name in ZSH_OPTIONS_SET.iter() {
+        // c:46 opts[optno] = defset(...)
         opt_state_set(name, defset(name, zsh_emu));
     }
 }
@@ -171,16 +180,18 @@ pub fn createoptiontable() {                                                 // 
 /// Per-option callback invoked by `scanhashtable(optiontab, ...,
 /// setemulate, ...)` to populate the `new_opts[]` table with each
 /// option's default-for-target-emulation state.
-pub fn setemulate(name: &str, fully: i32) {                                  // c:507
-    let flags = optns_flags(name);                                           // c:507
-    // c:515-517 — emulation-relevant filter.
+pub fn setemulate(name: &str, fully: i32) {
+    // c:507
+    let flags = optns_flags(name); // c:507
+                                   // c:515-517 — emulation-relevant filter.
     let is_alias = (flags & OPT_ALIAS) != 0;
     let is_special = (flags & OPT_SPECIAL) != 0;
     let is_emulate = (flags & OPT_EMULATE) != 0;
     if is_alias {
         return;
     }
-    if !((fully != 0 && !is_special) || is_emulate) {                        // c:516-517
+    if !((fully != 0 && !is_special) || is_emulate) {
+        // c:516-517
         return;
     }
     // c:518 — `setemulate_opts[on->optno] = defset(on, setemulate_emulation);`
@@ -203,21 +214,27 @@ pub fn setemulate(name: &str, fully: i32) {                                  // 
 /// emulation state by walking `optiontab` via the `setemulate`
 /// per-option callback. Does NOT mutate the live `opts[]` — that
 /// happens in the caller (`emulate()` and `bin_emulate -L`).
-pub fn installemulation(new_emulation: i32,
-                        new_opts: &mut std::collections::HashMap<String, bool>) { // c:523
+pub fn installemulation(
+    new_emulation: i32,
+    new_opts: &mut std::collections::HashMap<String, bool>,
+) {
+    // c:523
     // c:525 — `setemulate_emulation = new_emulation;`
-    SETEMULATE_EMULATION
-        .store(new_emulation, std::sync::atomic::Ordering::Relaxed);         // c:525
-    // c:526 — `setemulate_opts = new_opts;`. We can't alias the
-    // caller's HashMap directly, so the per-option callback writes
-    // into our module-static and we splice it back into `new_opts`.
+    SETEMULATE_EMULATION.store(new_emulation, std::sync::atomic::Ordering::Relaxed); // c:525
+                                                                                     // c:526 — `setemulate_opts = new_opts;`. We can't alias the
+                                                                                     // caller's HashMap directly, so the per-option callback writes
+                                                                                     // into our module-static and we splice it back into `new_opts`.
     if let Ok(mut tab) = setemulate_opts_lock().lock() {
         tab.clear();
     }
     // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully).
-    let fully = if (new_emulation & EMULATE_FULLY) != 0 { 1 } else { 0 };    // c:528
+    let fully = if (new_emulation & EMULATE_FULLY) != 0 {
+        1
+    } else {
+        0
+    }; // c:528
     for name in ZSH_OPTIONS_SET.iter() {
-        setemulate(name, fully);                                             // c:527
+        setemulate(name, fully); // c:527
     }
     // Splice setemulate_opts → new_opts so the C semantic of
     // "new_opts is now populated" holds for the caller.
@@ -233,9 +250,14 @@ pub fn installemulation(new_emulation: i32,
 /// inlines the body of `installemulation()` (c:523) to populate
 /// `opts[]` per the new emulation, skipping OPT_SPECIAL entries per
 /// the exec.c:5933-5938 walk.
-pub fn emulate(mode: &str, fully: bool) {                                    // c:533
+pub fn emulate(mode: &str, fully: bool) {
+    // c:533
     let ch = mode.chars().next().unwrap_or('z');
-    let ch = if ch == 'r' { mode.chars().nth(1).unwrap_or('z') } else { ch };
+    let ch = if ch == 'r' {
+        mode.chars().nth(1).unwrap_or('z')
+    } else {
+        ch
+    };
     let new_emu = match ch {
         'c' => crate::ported::zsh_h::EMULATE_CSH,
         'k' => crate::ported::zsh_h::EMULATE_KSH,
@@ -249,13 +271,13 @@ pub fn emulate(mode: &str, fully: bool) {                                    // 
     // OPT_SPECIAL-skip walk, inlined here per the C source.
     let mut emu = new_emu;
     if fully {
-        emu |= crate::ported::zsh_h::EMULATE_FULLY;                          // c:551
+        emu |= crate::ported::zsh_h::EMULATE_FULLY; // c:551
     }
-    let mut new_opts: std::collections::HashMap<String, bool> =
-        std::collections::HashMap::new();
-    installemulation(emu, &mut new_opts);                                    // c:552
+    let mut new_opts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    installemulation(emu, &mut new_opts); // c:552
     for (k, v) in &new_opts {
-        if (optns_flags(k) & OPT_SPECIAL) == 0 {                             // exec.c:5933-5938
+        if (optns_flags(k) & OPT_SPECIAL) == 0 {
+            // exec.c:5933-5938
             opt_state_set(k, *v);
         }
     }
@@ -266,8 +288,6 @@ pub fn emulate(mode: &str, fully: bool) {                                    // 
         }
     }
 }
-
-
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
@@ -292,9 +312,9 @@ pub fn emulate(mode: &str, fully: bool) {                                    // 
 // ===========================================================
 
 // BEGIN moved-from-exec-rs (statics)
+use crate::zsh_h::{isset, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH};
 use std::collections::HashSet;
 use std::sync::LazyLock;
-use crate::zsh_h::{isset, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH};
 
 /// `setopt OPT` builtin per-arg dispatch.
 /// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
@@ -304,7 +324,7 @@ pub fn setoption(hn: &str, value: i32) -> i32 {
     // live state into the `opts[]` array. The Rust port stores it
     // in OPTS_LIVE via `opt_state_set` (the same global the
     // `optlookup("hn")>0` and `isset(OPT)` paths read).
-    opt_state_set(hn, value != 0);                                         // c:735+ dosetopt body
+    opt_state_set(hn, value != 0); // c:735+ dosetopt body
     0
 }
 
@@ -326,36 +346,39 @@ pub fn setoption(hn: &str, value: i32) -> i32 {
 ///     applies it across the option table
 ///   - tail: `inittyptab()` rebuilds the type table to reflect any
 ///     option changes that affect lexer/expansion
-pub fn bin_setopt(nam: &str, args: &[String],                                // c:580
-                  _ops: &crate::ported::zsh_h::options, isun: i32) -> i32 {
+pub fn bin_setopt(
+    nam: &str,
+    args: &[String], // c:580
+    _ops: &crate::ported::zsh_h::options,
+    isun: i32,
+) -> i32 {
     let mut retval = 0i32;
-    let mut match_glob = false;                                              // c:582
+    let mut match_glob = false; // c:582
     let mut idx = 0usize;
 
-    if args.is_empty() {                                                     // c:586
+    if args.is_empty() {
+        // c:586
         // c:587 — scanhashtable(optiontab, 1, 0, OPT_ALIAS,
         // optiontab->printnode, !isun): walk every option in the
         // table and emit each one whose current state matches !isun.
         let want_set = isun == 0;
-        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter()
-            .map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter().map(|s| s.to_string()).collect();
         names.sort();
         for n in names {
             let on = opt_state_get(&n).unwrap_or(false);
             if on == want_set {
-                printoptionnode(&n, want_set);                               // c:587 printnode
+                printoptionnode(&n, want_set); // c:587 printnode
             }
         }
-        return 0;                                                            // c:589
+        return 0; // c:589
     }
 
     // c:592-636 — leading `-`/`+` flag parse loop.
-    'outer: while idx < args.len()
-        && (args[idx].starts_with('-') || args[idx].starts_with('+'))
-    {
-        let leading = args[idx].as_bytes()[0];                               // c:594
-        let action: i32 = ((leading == b'-') as i32) ^ isun;                 // c:594
-        if args[idx].len() == 1 {                                            // c:596 args[0][1] empty
+    'outer: while idx < args.len() && (args[idx].starts_with('-') || args[idx].starts_with('+')) {
+        let leading = args[idx].as_bytes()[0]; // c:594
+        let action: i32 = ((leading == b'-') as i32) ^ isun; // c:594
+        if args[idx].len() == 1 {
+            // c:596 args[0][1] empty
             // c:597 — `*args = "--";` then fall through to the
             // inner while which immediately matches `-` and breaks
             // into doneoptions. Equivalent: skip past this arg and
@@ -363,117 +386,154 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
             idx += 1;
             break 'outer;
         }
-        let body_bytes = args[idx].as_bytes()[1..].to_vec();                 // c:599 *++*args
+        let body_bytes = args[idx].as_bytes()[1..].to_vec(); // c:599 *++*args
         let mut k = 0usize;
-        while k < body_bytes.len() {                                         // c:599
+        while k < body_bytes.len() {
+            // c:599
             let mut c = body_bytes[k];
             // c:600-601 — `if(**args == Meta) *++*args ^= 32;` —
             // unmeta the next byte before reading.
-            if c == crate::ported::zsh_h::META as u8 {                       // c:600
+            if c == crate::ported::zsh_h::META as u8 {
+                // c:600
                 k += 1;
-                if k < body_bytes.len() { c = body_bytes[k] ^ 32; }          // c:601
-                else { break; }
+                if k < body_bytes.len() {
+                    c = body_bytes[k] ^ 32;
+                }
+                // c:601
+                else {
+                    break;
+                }
             }
-            if c == b'-' {                                                   // c:603 pseudo `--`
-                idx += 1;                                                    // c:604
-                break 'outer;                                                // c:605 goto doneoptions
-            } else if c == b'o' {                                            // c:606
+            if c == b'-' {
+                // c:603 pseudo `--`
+                idx += 1; // c:604
+                break 'outer; // c:605 goto doneoptions
+            } else if c == b'o' {
+                // c:606
                 // c:607-608 — if more chars after 'o', use them as the
                 // option name; otherwise advance to next arg.
-                let oarg: String = if k + 1 < body_bytes.len() {             // c:607
+                let oarg: String = if k + 1 < body_bytes.len() {
+                    // c:607
                     String::from_utf8_lossy(&body_bytes[k + 1..]).into_owned()
                 } else {
-                    idx += 1;                                                // c:608
-                    if idx >= args.len() {                                   // c:609 !*args
-                        zwarnnam(nam, "string expected after -o");           // c:610
-                        return 1;                                            // c:612
+                    idx += 1; // c:608
+                    if idx >= args.len() {
+                        // c:609 !*args
+                        zwarnnam(nam, "string expected after -o"); // c:610
+                        return 1; // c:612
                     }
                     args[idx].clone()
                 };
-                let optno = optlookup(&oarg);                                // c:614
-                if optno == 0 {                                              // c:614
-                    zwarnnam(nam,                                            // c:615
-                        &format!("no such option: {}", oarg));
+                let optno = optlookup(&oarg); // c:614
+                if optno == 0 {
+                    // c:614
+                    zwarnnam(
+                        nam, // c:615
+                        &format!("no such option: {}", oarg),
+                    );
                     retval |= 1;
-                } else if dosetopt(optno, action, 0) != 0 {                  // c:617
-                    zwarnnam(nam,                                            // c:618
-                        &format!("can't change option: {}", oarg));
+                } else if dosetopt(optno, action, 0) != 0 {
+                    // c:617
+                    zwarnnam(
+                        nam, // c:618
+                        &format!("can't change option: {}", oarg),
+                    );
                     retval |= 1;
                 }
-                break;                                                       // c:622 break inner
-            } else if c == b'm' {                                            // c:624
-                match_glob = true;                                           // c:625
-            } else {                                                         // c:626
-                let optno = optlookupc(c as char);                           // c:627
-                if optno == 0 {                                              // c:627
-                    zwarnnam(nam, &format!("bad option: -{}", c as char));   // c:628
+                break; // c:622 break inner
+            } else if c == b'm' {
+                // c:624
+                match_glob = true; // c:625
+            } else {
+                // c:626
+                let optno = optlookupc(c as char); // c:627
+                if optno == 0 {
+                    // c:627
+                    zwarnnam(nam, &format!("bad option: -{}", c as char)); // c:628
                     retval |= 1;
-                } else if dosetopt(optno, action, 0) != 0 {                  // c:630
-                    zwarnnam(nam,                                            // c:631
-                        &format!("can't change option: -{}", c as char));
+                } else if dosetopt(optno, action, 0) != 0 {
+                    // c:630
+                    zwarnnam(
+                        nam, // c:631
+                        &format!("can't change option: -{}", c as char),
+                    );
                     retval |= 1;
                 }
             }
             k += 1;
         }
-        idx += 1;                                                            // c:636 args++
+        idx += 1; // c:636 args++
     }
 
     // c:638 — doneoptions: positional args remain.
-    if !match_glob {                                                         // c:640
+    if !match_glob {
+        // c:640
         // c:642-650 — bare option names.
-        while idx < args.len() {                                             // c:642
+        while idx < args.len() {
+            // c:642
             let oname = args[idx].clone();
             idx += 1;
-            let optno = optlookup(&oname);                                   // c:643
-            if optno == 0 {                                                  // c:643
-                zwarnnam(nam,                                                // c:644
-                    &format!("no such option: {}", oname));
+            let optno = optlookup(&oname); // c:643
+            if optno == 0 {
+                // c:643
+                zwarnnam(
+                    nam, // c:644
+                    &format!("no such option: {}", oname),
+                );
                 retval |= 1;
             } else {
-                let v = (isun == 0) as i32;                                  // c:646 !isun
-                if dosetopt(optno, v, 0) != 0 {                              // c:646
-                    zwarnnam(nam,                                            // c:647
-                        &format!("can't change option: {}", oname));
+                let v = (isun == 0) as i32; // c:646 !isun
+                if dosetopt(optno, v, 0) != 0 {
+                    // c:646
+                    zwarnnam(
+                        nam, // c:647
+                        &format!("can't change option: {}", oname),
+                    );
                     retval |= 1;
                 }
             }
         }
-    } else {                                                                 // c:653
+    } else {
+        // c:653
         // c:655-678 — globbing branch.
-        while idx < args.len() {                                             // c:655
+        while idx < args.len() {
+            // c:655
             let raw = args[idx].clone();
             idx += 1;
             // c:660-666 — `s = dupstring(*args);` then walk: strip
             // `_`, lowercase A-Z (mirrors optlookup's canonicalisation
             // documented at c:684).
-            let normalized: String = raw.chars()
+            let normalized: String = raw
+                .chars()
                 .filter(|&c| c != '_')
-                .map(|c| c.to_ascii_lowercase()).collect();
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
             let prog = crate::ported::pattern::patcompile(
                 &normalized,
                 crate::ported::zsh_h::PAT_HEAPDUP,
                 None,
             );
-            if prog.is_none() {                                              // c:670
-                zwarnnam(nam, &format!("bad pattern: {}", raw));             // c:671
+            if prog.is_none() {
+                // c:670
+                zwarnnam(nam, &format!("bad pattern: {}", raw)); // c:671
                 retval |= 1;
-                break;                                                       // c:673
+                break; // c:673
             }
             // c:676 — scanmatchtable(optiontab, pprog, 0, 0, OPT_ALIAS,
             // setoption, !isun): the `setoption` static at c:572 calls
             // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
             let v = (isun == 0) as i32;
-            for opt_name in ZSH_OPTIONS_SET.iter() {                         // c:676
+            for opt_name in ZSH_OPTIONS_SET.iter() {
+                // c:676
                 if crate::ported::pattern::patmatch(&normalized, opt_name) {
-                    let _ = setoption(opt_name, v);                          // c:572 setoption
+                    let _ = setoption(opt_name, v); // c:572 setoption
                 }
             }
         }
     }
-    crate::ported::utils::inittyptab();                                                            // c:678
-    retval                                                                   // c:679
+    crate::ported::utils::inittyptab(); // c:678
+    retval // c:679
 }
 
 // Identify an option name                                                  // c:680
@@ -499,7 +559,8 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
 /// target optno with a negative sign for `OPT_ALIAS`-negating rows
 /// (`braceexpand` → `-IGNOREBRACES`, `log` → `-HISTNOFUNCTIONS`,
 /// etc.). Returns `OPT_INVALID` when the name is unknown.
-pub fn optlookup(name: &str) -> i32 {                                        // c:684
+pub fn optlookup(name: &str) -> i32 {
+    // c:684
 
     // c:689 — `s = t = dupstring(name);`
     // c:691-705 — strip `_` + ASCII-only lowercase. C's comment
@@ -517,12 +578,16 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
     // divergence for non-ASCII option names (which shouldn't
     // exist but could from fuzzing). Match C: only fold the
     // ASCII A..=Z range; pass every other byte through.
-    let s: String = name.chars()                                             // c:689
-        .filter(|&c| c != '_')                                               // c:693-694
-        .map(|c| if ('A'..='Z').contains(&c) {                               // c:702 (*t >= 'A' && *t <= 'Z')
-            ((c as u8 - b'A') + b'a') as char                                // c:703 *t = (*t - 'A') + 'a'
-        } else {
-            c
+    let s: String = name
+        .chars() // c:689
+        .filter(|&c| c != '_') // c:693-694
+        .map(|c| {
+            if ('A'..='Z').contains(&c) {
+                // c:702 (*t >= 'A' && *t <= 'Z')
+                ((c as u8 - b'A') + b'a') as char // c:703 *t = (*t - 'A') + 'a'
+            } else {
+                c
+            }
         })
         .collect();
 
@@ -531,18 +596,18 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
     // C zsh stores these as hash entries in optiontab with
     // `optno = -target` (negative) for the `-PREFIX` rows.
     let alias_optno: Option<i32> = match s.as_str() {
-        "braceexpand" => Some(-IGNOREBRACES),                                // c:269 -IGNOREBRACES
-        "dotglob"     => Some(GLOBDOTS),                                     // c:270 GLOBDOTS
-        "hashall"     => Some(HASHCMDS),                                     // c:271 HASHCMDS
-        "histappend"  => Some(APPENDHISTORY),                                // c:272 APPENDHISTORY
-        "histexpand"  => Some(BANGHIST),                                     // c:273 BANGHIST
-        "log"         => Some(-HISTNOFUNCTIONS),                             // c:274 -HISTNOFUNCTIONS
-        "mailwarn"    => Some(MAILWARNING),                                  // c:275 MAILWARNING
-        "onecmd"      => Some(SINGLECOMMAND),                                // c:276 SINGLECOMMAND
-        "physical"    => Some(CHASELINKS),                                   // c:277 CHASELINKS
-        "promptvars"  => Some(PROMPTSUBST),                                  // c:278 PROMPTSUBST
-        "stdin"       => Some(SHINSTDIN),                                    // c:279 SHINSTDIN
-        "trackall"    => Some(HASHCMDS),                                     // c:280 HASHCMDS
+        "braceexpand" => Some(-IGNOREBRACES), // c:269 -IGNOREBRACES
+        "dotglob" => Some(GLOBDOTS),          // c:270 GLOBDOTS
+        "hashall" => Some(HASHCMDS),          // c:271 HASHCMDS
+        "histappend" => Some(APPENDHISTORY),  // c:272 APPENDHISTORY
+        "histexpand" => Some(BANGHIST),       // c:273 BANGHIST
+        "log" => Some(-HISTNOFUNCTIONS),      // c:274 -HISTNOFUNCTIONS
+        "mailwarn" => Some(MAILWARNING),      // c:275 MAILWARNING
+        "onecmd" => Some(SINGLECOMMAND),      // c:276 SINGLECOMMAND
+        "physical" => Some(CHASELINKS),       // c:277 CHASELINKS
+        "promptvars" => Some(PROMPTSUBST),    // c:278 PROMPTSUBST
+        "stdin" => Some(SHINSTDIN),           // c:279 SHINSTDIN
+        "trackall" => Some(HASHCMDS),         // c:280 HASHCMDS
         _ => None,
     };
     if let Some(optno) = alias_optno {
@@ -550,14 +615,17 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
     }
 
     // c:708-712 — `if s[0..2] == "no" && getnode(s+2)` → -optno, else getnode(s).
-    if let Some(stripped) = s.strip_prefix("no") {                           // c:708
-        if let Some(optno) = optno_by_name(stripped) {                       // c:709
-            return -optno;                                                   // c:710
+    if let Some(stripped) = s.strip_prefix("no") {
+        // c:708
+        if let Some(optno) = optno_by_name(stripped) {
+            // c:709
+            return -optno; // c:710
         }
     }
-    match optno_by_name(&s) {                                                // c:721
-        Some(optno) => optno,                                                // c:721
-        None => OPT_INVALID,                                                 // c:721
+    match optno_by_name(&s) {
+        // c:721
+        Some(optno) => optno, // c:721
+        None => OPT_INVALID,  // c:721
     }
 }
 
@@ -567,7 +635,8 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
 /// unrecognised letters. Walks the active letter table (`KSH_LETTERS`
 /// when `SHOPTIONLETTERS` is set, `zshletters` otherwise) and
 /// resolves the canonical name via `optno_by_name`.
-pub fn optlookupc(c: char) -> i32 {                                          // c:721
+pub fn optlookupc(c: char) -> i32 {
+    // c:721
     let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
@@ -582,7 +651,7 @@ pub fn optlookupc(c: char) -> i32 {                                          // 
             // to flip `value`. Without applying the negation here,
             // `optlookupc('n')` returned the positive EXECOPT and
             // `setopt -n` SET exec instead of unsetting it.
-            let optno = optno_by_name(name).unwrap_or(0);                    // c:725
+            let optno = optno_by_name(name).unwrap_or(0); // c:725
             return if *negated { -optno } else { optno };
         }
     }
@@ -605,18 +674,20 @@ pub fn optlookupc(c: char) -> i32 {                                          // 
 ///     not via `setopt`; either no-op if already correct, or reject.
 ///   * c:752 — `force=0 && optno==USEZLE && value` → require a
 ///     terminal (interactive + valid SHTTY); reject otherwise.
-pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // c:735
-    if optno == 0 { return -1; }
+pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
+    // c:735
+    if optno == 0 {
+        return -1;
+    }
     let mut idx = optno;
-    if idx < 0 {                                                             // c:739
+    if idx < 0 {
+        // c:739
         idx = -idx;
-        value = if value != 0 { 0 } else { 1 };                              // c:741
+        value = if value != 0 { 0 } else { 1 }; // c:741
     }
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
-        use crate::ported::zsh_h::{
-            EXECOPT, INTERACTIVE, SHINSTDIN, SINGLECOMMAND, USEZLE,
-        };
+        use crate::ported::zsh_h::{EXECOPT, INTERACTIVE, SHINSTDIN, SINGLECOMMAND, USEZLE};
         // c:743 — interactive + EXECOPT off is forbidden.
         if idx == EXECOPT && value == 0 && crate::ported::zsh_h::interact() {
             return -1;
@@ -632,10 +703,10 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
             if let Some(name) = cur_name {
                 let cur = opt_state_get(name).unwrap_or(false);
                 if cur as i32 == value {
-                    return 0;                                                // c:749 already matches
+                    return 0; // c:749 already matches
                 }
             }
-            return -1;                                                       // c:750
+            return -1; // c:750
         }
         // c:752 — USEZLE on requires interactive AND a real tty.
         // We don't yet track SHTTY/shout here; approximate by requiring
@@ -653,31 +724,33 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
         // option flag without actually acquiring the process group,
         // leaving job control half-broken.
         use crate::ported::zsh_h::MONITOR;
-        if idx == MONITOR && value != 0 {                                    // c:851
+        if idx == MONITOR && value != 0 {
+            // c:851
             let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
             if let Some(name) = cur_name {
                 let cur = opt_state_get(name).unwrap_or(false);
-                if cur as i32 == value {                                     // c:852 no-op
+                if cur as i32 == value {
+                    // c:852 no-op
                     return 0;
                 }
             }
             // c:854 — `if (SHTTY == -1) return -1;`
-            let shtty = crate::ported::init::SHTTY
-                .load(std::sync::atomic::Ordering::SeqCst);
-            if shtty == -1 {                                                 // c:854
+            let shtty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::SeqCst);
+            if shtty == -1 {
+                // c:854
                 return -1;
             }
             // c:855-859 — `if (!origpgrp) { origpgrp = GETPGRP();
             //               acquire_pgrp(); }`. Capture the parent's
             // pgrp once so SIGTSTP-restore (bin_suspend) can later
             // killpg back to it.
-            let origpgrp = crate::ported::jobs::ORIGPGRP
-                .get_or_init(|| std::sync::Mutex::new(0));
+            let origpgrp = crate::ported::jobs::ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0));
             let mut og = origpgrp.lock().expect("origpgrp poisoned");
-            if *og == 0 {                                                    // c:855
-                *og = unsafe { libc::getpgrp() };                            // c:856 GETPGRP()
+            if *og == 0 {
+                // c:855
+                *og = unsafe { libc::getpgrp() }; // c:856 GETPGRP()
                 drop(og);
-                let _ = crate::ported::jobs::acquire_pgrp();                 // c:857
+                let _ = crate::ported::jobs::acquire_pgrp(); // c:857
             }
         }
     }
@@ -689,7 +762,8 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
     // could be on at once, leaving ZLE keymap selection ambiguous.
     {
         use crate::ported::zsh_h::{EMACSMODE, VIMODE};
-        if (idx == EMACSMODE || idx == VIMODE) && value != 0 {               // c:859
+        if (idx == EMACSMODE || idx == VIMODE) && value != 0 {
+            // c:859
             // c:870 — turn off the OTHER keymap option. Resolve
             // the canonical name via opt_name (matches the
             // storage key used by isset/opt_state_get/_set).
@@ -705,17 +779,24 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
     // Also no `!force` guard in C.
     {
         use crate::ported::zsh_h::SUNKEYBOARDHACK;
-        if idx == SUNKEYBOARDHACK {                                          // c:871
+        if idx == SUNKEYBOARDHACK {
+            // c:871
             // c:873 — `keyboardhackchar = (value ? '`' : '\0');`
-            crate::ported::params::keyboardhacksetfn(
-                if value != 0 { "`".to_string() } else { String::new() });
+            crate::ported::params::keyboardhacksetfn(if value != 0 {
+                "`".to_string()
+            } else {
+                String::new()
+            });
         }
     }
     // c:744 — locate the option name whose FNV hash matches idx.
     let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
     let ret = match name {
-        Some(n) => { opt_state_set(n, value != 0); 0 }                       // c:760 opts[optno] = value
-        None => -1,                                                          // c:758
+        Some(n) => {
+            opt_state_set(n, value != 0);
+            0
+        } // c:760 opts[optno] = value
+        None => -1, // c:758
     };
     // c:877-884 — `if (optno == MULTIBYTE || BANGHIST || SHINSTDIN)
     //                  inittyptab();`. These options change which
@@ -725,10 +806,10 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {             // 
     // BANGHIST off would still leave `!` flagged ISPECIAL in the
     // typtab, defeating the option's purpose.
     use crate::ported::zsh_h::{BANGHIST, MULTIBYTE, SHINSTDIN as SHINSTDIN_C};
-    if ret == 0
-        && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN_C)       // c:879-882
+    if ret == 0 && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN_C)
+    // c:879-882
     {
-        crate::ported::utils::inittyptab();                                  // c:883
+        crate::ported::utils::inittyptab(); // c:883
     }
     ret
 }
@@ -745,18 +826,19 @@ pub fn dashgetfn() -> String {
     // ASCII punctuation between '0' and '@'). Option letters in this
     // range — e.g. `-?` could be valid — were silently dropped from
     // the `$-` string. Match C exactly with FIRST_OPT..=LAST_OPT.
-    const FIRST_OPT: u8 = b'0';                                              // c:289
-    const LAST_OPT:  u8 = b'y';                                              // c:290
+    const FIRST_OPT: u8 = b'0'; // c:289
+    const LAST_OPT: u8 = b'y'; // c:290
     let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
     };
     let mut out = String::new();
-    for c in (FIRST_OPT..=LAST_OPT).map(|b| b as char) {                     // c:896
+    for c in (FIRST_OPT..=LAST_OPT).map(|b| b as char) {
+        // c:896
         for (ch, name, negated) in letters {
             if *ch == c {
-                let value = opt_state_get(name).unwrap_or(false);            // c:891 `opts[optno]`
+                let value = opt_state_get(name).unwrap_or(false); // c:891 `opts[optno]`
                 let effective = if *negated { !value } else { value };
                 if effective {
                     out.push(c);
@@ -774,12 +856,14 @@ pub fn dashgetfn() -> String {
 /// printoptionnodestate callback to each non-alias entry.
 /// Static-link path: walks ZSH_OPTIONS_SET (canonical option name
 /// registry) and reads each option's live state via opt_state_get.
-pub fn printoptionstates(hadplus: bool) {                                    // c:909
+pub fn printoptionstates(hadplus: bool) {
+    // c:909
     let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
     names.sort();
-    for n in names {                                                         // c:910 scanhashtable
+    for n in names {
+        // c:910 scanhashtable
         let value = opt_state_get(n).unwrap_or(false);
-        printoptionnodestate(n, value, hadplus);                             // c:916
+        printoptionnodestate(n, value, hadplus); // c:916
     }
 }
 
@@ -799,19 +883,28 @@ pub fn printoptionstates(hadplus: bool) {                                    // 
 /// ```
 /// Port of `printoptionnodestate(HashNode hn, int hadplus)` from `Src/options.c:916`.
 /// WARNING: param names don't match C — Rust=(name, value, hadplus) vs C=(hn, hadplus)
-pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // c:916
-    let default_on = default_on_options().contains(&name);                   // c:916 defset
-    if hadplus {                                                             // c:920
-        let sign = if default_on != value { '-' } else { '+' };              // c:922
-        let no_prefix = if default_on { "no" } else { "" };                  // c:923
-        println!("set {}o {}{}", sign, no_prefix, name);                     // c:921
+pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {
+    // c:916
+    let default_on = default_on_options().contains(&name); // c:916 defset
+    if hadplus {
+        // c:920
+        let sign = if default_on != value { '-' } else { '+' }; // c:922
+        let no_prefix = if default_on { "no" } else { "" }; // c:923
+        println!("set {}o {}{}", sign, no_prefix, name); // c:921
     } else {
-        if default_on {                                                      // c:927
-            println!("no{:<19} {}", name,                                    // c:928
-                if value { "off" } else { "on" });
+        if default_on {
+            // c:927
+            println!(
+                "no{:<19} {}",
+                name, // c:928
+                if value { "off" } else { "on" }
+            );
         } else {
-            println!("{:<21} {}", name,                                      // c:930
-                if value { "on" } else { "off" });
+            println!(
+                "{:<21} {}",
+                name, // c:930
+                if value { "on" } else { "off" }
+            );
         }
     }
 }
@@ -830,30 +923,33 @@ pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // 
 ///     printoptionlist_printequiv(*lp);
 /// }
 /// ```
-pub fn printoptionlist() {                                                   // c:938
+pub fn printoptionlist() {
+    // c:938
     println!();
-    println!("Named options:");                                              // c:945
+    println!("Named options:"); // c:945
     let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
     names.sort();
-    for n in &names {                                                        // c:946 scanhashtable
-        printoptionlist_printoption(n, 0);                                   // c:958
+    for n in &names {
+        // c:946 scanhashtable
+        printoptionlist_printoption(n, 0); // c:958
     }
     println!();
-    println!("Option aliases:");                                             // c:947
-    // c:948 — alias-only walk; static-link path lacks OPT_ALIAS bit
-    // tracking on each option, so the alias walk emits nothing here.
+    println!("Option aliases:"); // c:947
+                                 // c:948 — alias-only walk; static-link path lacks OPT_ALIAS bit
+                                 // tracking on each option, so the alias walk emits nothing here.
     println!();
-    println!("Option letters:");                                             // c:949
+    println!("Option letters:"); // c:949
     let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
     };
-    for c in (b'A'..=b'z').map(|b| b as char) {                              // c:950
+    for c in (b'A'..=b'z').map(|b| b as char) {
+        // c:950
         for (ch, aname, _negated) in letters {
             if *ch == c {
-                print!("  -{}  ", c);                                        // c:953
-                printoptionlist_printequiv(optlookup(aname));                // c:954
+                print!("  -{}  ", c); // c:953
+                printoptionlist_printequiv(optlookup(aname)); // c:954
                 break;
             }
         }
@@ -872,8 +968,9 @@ pub fn printoptionlist() {                                                   // 
 /// Static-link path: OPT_ALIAS flag tracking on each option isn't
 /// ported, so every entry takes the non-alias branch.
 /// WARNING: param names don't match C — Rust=(name, _ignored) vs C=(hn, ignored)
-pub fn printoptionlist_printoption(name: &str, _ignored: i32) {              // c:958
-    println!("  --{}", name);                                                // c:971
+pub fn printoptionlist_printoption(name: &str, _ignored: i32) {
+    // c:958
+    println!("  --{}", name); // c:971
 }
 
 /// Direct port of `printoptionlist_printequiv(int optno)` from Src/options.c:971.
@@ -884,15 +981,17 @@ pub fn printoptionlist_printoption(name: &str, _ignored: i32) {              // 
 /// printf("  equivalent to --%s%s\n", isneg ? "no-" : "",
 ///        optns[optno-1].node.nam);
 /// ```
-pub fn printoptionlist_printequiv(optno: i32) {                              // c:971
-    let isneg = optno < 0;                                                   // c:971
-    let abs_optno = if isneg { -optno } else { optno };                      // c:974
-    let prefix = if isneg { "no-" } else { "" };                             // c:975
-    let name = ZSH_OPTIONS_SET.iter()
+pub fn printoptionlist_printequiv(optno: i32) {
+    // c:971
+    let isneg = optno < 0; // c:971
+    let abs_optno = if isneg { -optno } else { optno }; // c:974
+    let prefix = if isneg { "no-" } else { "" }; // c:975
+    let name = ZSH_OPTIONS_SET
+        .iter()
         .find(|n| optlookup(n) == abs_optno)
         .copied()
-        .unwrap_or("?");                                                     // c:976 optns[optno-1].node.nam
-    println!("  equivalent to --{}{}", prefix, name);                        // c:975
+        .unwrap_or("?"); // c:976 optns[optno-1].node.nam
+    println!("  equivalent to --{}{}", prefix, name); // c:975
 }
 
 /// C body (c:990-997):
@@ -910,11 +1009,13 @@ pub fn printoptionlist_printequiv(optno: i32) {                              // 
 /// port emits every non-default option whose value matches `value`.
 /// Port of `print_emulate_option(HashNode hn, int fully)` from `Src/options.c:984`.
 /// WARNING: param names don't match C — Rust=(name, value, _fully) vs C=(hn, fully)
-pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // c:984
-    if !value {                                                              // c:984 !print_emulate_opts[optno]
-        print!("no");                                                        // c:995
+pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {
+    // c:984
+    if !value {
+        // c:984 !print_emulate_opts[optno]
+        print!("no"); // c:995
     }
-    println!("{}", name);                                                    // c:996
+    println!("{}", name); // c:996
 }
 
 /// Port of `mod_export int emulation;` from `Src/options.c:36`.
@@ -925,7 +1026,7 @@ pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // 
 /// calls `installemulation()` (options.c:523) early in startup to
 /// flip the right bit.
 #[allow(non_upper_case_globals)]
-pub static emulation: AtomicI32 = AtomicI32::new(0);                         // c:36
+pub static emulation: AtomicI32 = AtomicI32::new(0); // c:36
 
 /// Ksh single-letter options
 pub static KSH_LETTERS: &[(char, &str, bool)] = &[
@@ -1174,16 +1275,16 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
         // `setopt`/`unsetopt` "no such option" check we accept the
         // alias spellings too so scripts written for bash/ksh (e.g.
         // p10k's `setopt brace_expand`, `dotglob` users) don't error.
-        "braceexpand",   // alias of `noignorebraces`
-        "dotglob",       // alias of `globdots`
-        "hashall",       // alias of `hashcmds`
-        "histappend",    // alias of `appendhistory`
-        "histexpand",    // alias of `banghist`
-        "log",           // alias of `nohistnofunctions`
-        "mailwarn",      // alias of `mailwarning`
-        "onecmd",        // alias of `singlecommand`
-        "physical",      // alias of `chaselinks`
-        "promptvars",    // alias of `promptsubst`
+        "braceexpand", // alias of `noignorebraces`
+        "dotglob",     // alias of `globdots`
+        "hashall",     // alias of `hashcmds`
+        "histappend",  // alias of `appendhistory`
+        "histexpand",  // alias of `banghist`
+        "log",         // alias of `nohistnofunctions`
+        "mailwarn",    // alias of `mailwarning`
+        "onecmd",      // alias of `singlecommand`
+        "physical",    // alias of `chaselinks`
+        "promptvars",  // alias of `promptsubst`
     ]
     .into_iter()
     .collect()
@@ -1196,7 +1297,6 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
 // END moved-from-exec-rs (helpers)
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
 
 // ===========================================================
 // Direct ports of the static option-table builders / lookup /
@@ -1218,7 +1318,7 @@ pub use crate::ported::zsh_h::OPT_INVALID;
 /// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
 /// The target emulation bitmap, written by `installemulation` and
 /// read by the `setemulate` per-option callback (c:518).
-static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
+static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 = // c:496
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
@@ -1228,7 +1328,7 @@ static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // 
 /// hashed instead of densely indexed.
 static SETEMULATE_OPTS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, bool>>,
-> = std::sync::OnceLock::new();                                              // c:501
+> = std::sync::OnceLock::new(); // c:501
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
@@ -1253,8 +1353,7 @@ static SETEMULATE_OPTS: std::sync::OnceLock<
 // read-through cache of this map. !!!
 // =====================================================================
 
-static OPTS_LIVE: std::sync::OnceLock<
-    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+static OPTS_LIVE: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
     std::sync::OnceLock::new();
 
 // =====================================================================
@@ -1279,187 +1378,187 @@ pub fn defset(X: &str, my_emulation: i32) -> bool {
 /// Port of looking up `optns[optno].node.flags`.
 fn optns_flags(name: &str) -> u16 {
     match name.to_lowercase().as_str() {
-        "aliases" => OPT_EMULATE | (OPT_ALL as u16),                         // c:80
-        "aliasfuncdef" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:81
-        "allexport" => OPT_EMULATE,                                          // c:82
-        "alwayslastprompt" => OPT_ALL as u16,                                 // c:83
-        "alwaystoend" => 0,                                                  // c:84
-        "appendcreate" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:85
-        "appendhistory" => OPT_ALL as u16,                                    // c:86
-        "autocd" => OPT_EMULATE,                                             // c:87
-        "autocontinue" => 0,                                                 // c:88
-        "autolist" => OPT_ALL as u16,                                         // c:89
-        "automenu" => OPT_ALL as u16,                                         // c:90
-        "autonamedirs" => 0,                                                 // c:91
-        "autoparamkeys" => OPT_ALL as u16,                                    // c:92
-        "autoparamslash" => OPT_ALL as u16,                                   // c:93
-        "autopushd" => 0,                                                    // c:94
-        "autoremoveslash" => OPT_ALL as u16,                                  // c:95
-        "autoresume" => 0,                                                   // c:96
-        "badpattern" => OPT_EMULATE | (OPT_NONBOURNE as u16),                 // c:97
-        "banghist" => OPT_NONBOURNE as u16,                                   // c:98
-        "bareglobqual" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:99
-        "bashautolist" => 0,                                                 // c:100
-        "bashrematch" => OPT_EMULATE,                                        // c:101
-        "beep" => OPT_ALL as u16,                                             // c:102
-        "bgnice" => OPT_EMULATE | (OPT_NONBOURNE as u16),                     // c:103
-        "braceccl" => 0,                                                     // c:104
-        "bsdecho" => OPT_EMULATE,                                            // c:105
-        "caseglob" => OPT_ALL as u16,                                         // c:106
-        "casematch" => OPT_ALL as u16,                                        // c:107
-        "cbases" => 0,                                                       // c:108
-        "cdablevars" => OPT_EMULATE,                                         // c:109
-        "cdsilent" => 0,                                                     // c:110
-        "chasedots" => 0,                                                    // c:111
-        "chaselinks" => 0,                                                   // c:112
-        "checkjobs" => OPT_EMULATE | (OPT_ZSH as u16),                        // c:113
-        "checkrunningjobs" => OPT_EMULATE | (OPT_ZSH as u16),                 // c:114
-        "clobber" => OPT_EMULATE | (OPT_ALL as u16),                          // c:115
-        "combiningchars" => 0,                                               // c:116
-        "completealiases" => 0,                                              // c:117
-        "completeinword" => 0,                                               // c:118
-        "correct" => 0,                                                      // c:119
-        "correctall" => 0,                                                   // c:120
-        "cprecedences" => OPT_EMULATE,                                       // c:121
-        "cshjunkiehistory" => OPT_EMULATE,                                   // c:122
-        "cshjunkieloops" => OPT_EMULATE,                                     // c:123
-        "cshjunkiequotes" => OPT_EMULATE,                                    // c:124
-        "cshnullcmd" => OPT_EMULATE,                                         // c:125
-        "cshnullglob" => OPT_EMULATE,                                        // c:126
-        "debugbeforecmd" => OPT_ALL as u16,                                   // c:127
-        "emacs" => 0,                                                        // c:128
-        "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16),                     // c:129
-        "errexit" => OPT_EMULATE,                                            // c:130
-        "errreturn" => OPT_EMULATE,                                          // c:131
-        "exec" => OPT_ALL as u16,                                             // c:132
-        "extendedglob" => OPT_EMULATE,                                       // c:133
-        "extendedhistory" => OPT_CSH as u16,                                  // c:134
-        "evallineno" => OPT_EMULATE | (OPT_ZSH as u16),                       // c:135
-        "flowcontrol" => OPT_ALL as u16,                                      // c:136
-        "forcefloat" => 0,                                                   // c:137
-        "functionargzero" => OPT_EMULATE | (OPT_NONBOURNE as u16),            // c:138
-        "glob" => OPT_EMULATE | (OPT_ALL as u16),                             // c:139
-        "globalexport" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:140
-        "globalrcs" => OPT_ALL as u16,                                        // c:141
-        "globassign" => OPT_EMULATE,                                         // c:142
-        "globcomplete" => 0,                                                 // c:143
-        "globdots" => OPT_EMULATE,                                           // c:144
-        "globstarshort" => OPT_EMULATE,                                      // c:145
-        "globsubst" => OPT_EMULATE | (OPT_NONZSH as u16),                     // c:146
-        "hashcmds" => OPT_ALL as u16,                                         // c:147
-        "hashdirs" => OPT_ALL as u16,                                         // c:148
-        "hashexecutablesonly" => 0,                                          // c:149
-        "hashlistall" => OPT_ALL as u16,                                      // c:150
-        "histallowclobber" => 0,                                             // c:151
-        "histbeep" => OPT_ALL as u16,                                         // c:152
-        "histexpiredupsfirst" => 0,                                          // c:153
-        "histfcntllock" => 0,                                                // c:154
-        "histfindnodups" => 0,                                               // c:155
-        "histignorealldups" => 0,                                            // c:156
-        "histignoredups" => 0,                                               // c:157
-        "histignorespace" => 0,                                              // c:158
-        "histlexwords" => 0,                                                 // c:159
-        "histnofunctions" => 0,                                              // c:160
-        "histnostore" => 0,                                                  // c:161
-        "histreduceblanks" => 0,                                             // c:162
-        "histsavebycopy" => OPT_ALL as u16,                                   // c:163
-        "histsavenodups" => 0,                                               // c:164
-        "histsubstpattern" => OPT_EMULATE,                                   // c:165
-        "histverify" => 0,                                                   // c:166
-        "hup" => OPT_EMULATE | (OPT_ZSH as u16),                              // c:167
-        "ignorebraces" => OPT_EMULATE | (OPT_SH as u16),                      // c:168
-        "ignoreclosebraces" => 0,                                            // c:169
-        "ignoreeof" => 0,                                                    // c:170
-        "incappendhistory" => 0,                                             // c:171
-        "incappendhistorytime" => 0,                                         // c:172
-        "interactive" => OPT_SPECIAL as u16,                                  // c:173
-        "interactivecomments" => OPT_EMULATE | (OPT_BOURNE as u16),           // c:174
-        "ksharrays" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:175
-        "kshautoload" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:176
-        "kshglob" => OPT_EMULATE | (OPT_KSH as u16),                          // c:177
-        "kshoptionprint" => OPT_EMULATE | (OPT_KSH as u16),                   // c:178
-        "kshtypeset" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:179
-        "kshzerosubscript" => OPT_EMULATE | (OPT_BOURNE as u16),              // c:180
-        "listambiguous" => OPT_ALL as u16,                                    // c:181
-        "listbeep" => OPT_ALL as u16,                                         // c:182
-        "listpacked" => 0,                                                   // c:183
-        "listrowsfirst" => 0,                                                // c:184
-        "listtypes" => OPT_ALL as u16,                                        // c:185
-        "localoptions" => OPT_EMULATE | (OPT_KSH as u16),                     // c:186
-        "localloops" => 0,                                                   // c:187
-        "localpatterns" => 0,                                                // c:188
-        "localtraps" => OPT_EMULATE | (OPT_KSH as u16),                       // c:189
-        "loginshell" => OPT_SPECIAL as u16,                                   // c:190
-        "longlistjobs" => 0,                                                 // c:191
-        "magicequalsubst" => OPT_EMULATE,                                    // c:192
-        "mailwarning" => 0,                                                  // c:193
-        "markdirs" => 0,                                                     // c:194
-        "menucomplete" => 0,                                                 // c:195
-        "monitor" => OPT_SPECIAL as u16,                                      // c:196
-        "multibyte" => 0,                                                    // c:197
-        "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:198
-        "multios" => OPT_EMULATE | (OPT_ZSH as u16),                          // c:199
-        "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16),                    // c:200
-        "notify" => OPT_EMULATE | (OPT_ZSH as u16),                           // c:201
-        "nullglob" => OPT_EMULATE,                                           // c:202
-        "numericglobsort" => 0,                                              // c:203
-        "octalzeroes" => OPT_EMULATE | (OPT_SH as u16),                       // c:204
-        "overstrike" => 0,                                                   // c:205
-        "pathdirs" => 0,                                                     // c:206
-        "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:207
-        "pipefail" => OPT_EMULATE,                                           // c:208
-        "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:209
-        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:210
-        "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16),                 // c:211
-        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16),                       // c:212
-        "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16),              // c:213
-        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:214
-        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:215
-        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:216
-        "printeightbit" => 0,                                                // c:217
-        "printexitvalue" => 0,                                               // c:218
-        "privileged" => OPT_SPECIAL as u16,                                   // c:219
-        "promptbang" => OPT_EMULATE | (OPT_KSH as u16),                       // c:220
-        "promptcr" => OPT_ALL as u16,                                         // c:221
-        "promptpercent" => OPT_EMULATE | (OPT_NONBOURNE as u16),              // c:222
-        "promptsp" => OPT_ALL as u16,                                         // c:223
-        "promptsubst" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:224
-        "pushdignoredups" => 0,                                              // c:225
-        "pushdminus" => 0,                                                   // c:226
-        "pushdsilent" => 0,                                                  // c:227
-        "pushdtohome" => 0,                                                  // c:228
-        "rcexpandparam" => OPT_EMULATE,                                      // c:229
-        "rcquotes" => 0,                                                     // c:230
-        "rcs" => OPT_ALL as u16,                                              // c:231
-        "recexact" => 0,                                                     // c:232
-        "rematchpcre" => 0,                                                  // c:233
-        "restricted" => OPT_SPECIAL as u16,                                   // c:234
-        "rmstarsilent" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:235
-        "rmstarwait" => 0,                                                   // c:236
-        "sharehistory" => 0,                                                 // c:237
-        "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16),               // c:238
-        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16),                        // c:239
-        "shinstdin" => OPT_SPECIAL as u16,                                    // c:240
-        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:241
-        "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16),               // c:242
-        "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16),                 // c:243
-        "shortrepeat" => OPT_EMULATE | (OPT_ZSH as u16),                      // c:244
-        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:245
-        "singlecommand" => OPT_SPECIAL as u16,                                // c:246
-        "singlelinezle" => 0,                                                // c:247
-        "sourcetrace" => 0,                                                  // c:248
-        "sunkeyboardhack" => 0,                                              // c:249
-        "transientrprompt" => 0,                                             // c:250
-        "trapsasync" => 0,                                                   // c:251
-        "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16),                 // c:252
-        "unset" => OPT_EMULATE | (OPT_BSHELL as u16),                         // c:253
-        "verbose" => OPT_EMULATE,                                            // c:254
-        "vi" => 0,                                                           // c:255
-        "warncreateglobal" => 0,                                             // c:256
-        "warnnestedvar" => 0,                                                // c:257
-        "xtrace" => OPT_EMULATE,                                             // c:258
-        "zle" => OPT_SPECIAL as u16,                                          // c:259
-        "dvorak" => 0,                                                       // c:260
+        "aliases" => OPT_EMULATE | (OPT_ALL as u16), // c:80
+        "aliasfuncdef" => OPT_EMULATE | (OPT_BOURNE as u16), // c:81
+        "allexport" => OPT_EMULATE,                  // c:82
+        "alwayslastprompt" => OPT_ALL as u16,        // c:83
+        "alwaystoend" => 0,                          // c:84
+        "appendcreate" => OPT_EMULATE | (OPT_BOURNE as u16), // c:85
+        "appendhistory" => OPT_ALL as u16,           // c:86
+        "autocd" => OPT_EMULATE,                     // c:87
+        "autocontinue" => 0,                         // c:88
+        "autolist" => OPT_ALL as u16,                // c:89
+        "automenu" => OPT_ALL as u16,                // c:90
+        "autonamedirs" => 0,                         // c:91
+        "autoparamkeys" => OPT_ALL as u16,           // c:92
+        "autoparamslash" => OPT_ALL as u16,          // c:93
+        "autopushd" => 0,                            // c:94
+        "autoremoveslash" => OPT_ALL as u16,         // c:95
+        "autoresume" => 0,                           // c:96
+        "badpattern" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:97
+        "banghist" => OPT_NONBOURNE as u16,          // c:98
+        "bareglobqual" => OPT_EMULATE | (OPT_ZSH as u16), // c:99
+        "bashautolist" => 0,                         // c:100
+        "bashrematch" => OPT_EMULATE,                // c:101
+        "beep" => OPT_ALL as u16,                    // c:102
+        "bgnice" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:103
+        "braceccl" => 0,                             // c:104
+        "bsdecho" => OPT_EMULATE,                    // c:105
+        "caseglob" => OPT_ALL as u16,                // c:106
+        "casematch" => OPT_ALL as u16,               // c:107
+        "cbases" => 0,                               // c:108
+        "cdablevars" => OPT_EMULATE,                 // c:109
+        "cdsilent" => 0,                             // c:110
+        "chasedots" => 0,                            // c:111
+        "chaselinks" => 0,                           // c:112
+        "checkjobs" => OPT_EMULATE | (OPT_ZSH as u16), // c:113
+        "checkrunningjobs" => OPT_EMULATE | (OPT_ZSH as u16), // c:114
+        "clobber" => OPT_EMULATE | (OPT_ALL as u16), // c:115
+        "combiningchars" => 0,                       // c:116
+        "completealiases" => 0,                      // c:117
+        "completeinword" => 0,                       // c:118
+        "correct" => 0,                              // c:119
+        "correctall" => 0,                           // c:120
+        "cprecedences" => OPT_EMULATE,               // c:121
+        "cshjunkiehistory" => OPT_EMULATE,           // c:122
+        "cshjunkieloops" => OPT_EMULATE,             // c:123
+        "cshjunkiequotes" => OPT_EMULATE,            // c:124
+        "cshnullcmd" => OPT_EMULATE,                 // c:125
+        "cshnullglob" => OPT_EMULATE,                // c:126
+        "debugbeforecmd" => OPT_ALL as u16,          // c:127
+        "emacs" => 0,                                // c:128
+        "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:129
+        "errexit" => OPT_EMULATE,                    // c:130
+        "errreturn" => OPT_EMULATE,                  // c:131
+        "exec" => OPT_ALL as u16,                    // c:132
+        "extendedglob" => OPT_EMULATE,               // c:133
+        "extendedhistory" => OPT_CSH as u16,         // c:134
+        "evallineno" => OPT_EMULATE | (OPT_ZSH as u16), // c:135
+        "flowcontrol" => OPT_ALL as u16,             // c:136
+        "forcefloat" => 0,                           // c:137
+        "functionargzero" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:138
+        "glob" => OPT_EMULATE | (OPT_ALL as u16),    // c:139
+        "globalexport" => OPT_EMULATE | (OPT_ZSH as u16), // c:140
+        "globalrcs" => OPT_ALL as u16,               // c:141
+        "globassign" => OPT_EMULATE,                 // c:142
+        "globcomplete" => 0,                         // c:143
+        "globdots" => OPT_EMULATE,                   // c:144
+        "globstarshort" => OPT_EMULATE,              // c:145
+        "globsubst" => OPT_EMULATE | (OPT_NONZSH as u16), // c:146
+        "hashcmds" => OPT_ALL as u16,                // c:147
+        "hashdirs" => OPT_ALL as u16,                // c:148
+        "hashexecutablesonly" => 0,                  // c:149
+        "hashlistall" => OPT_ALL as u16,             // c:150
+        "histallowclobber" => 0,                     // c:151
+        "histbeep" => OPT_ALL as u16,                // c:152
+        "histexpiredupsfirst" => 0,                  // c:153
+        "histfcntllock" => 0,                        // c:154
+        "histfindnodups" => 0,                       // c:155
+        "histignorealldups" => 0,                    // c:156
+        "histignoredups" => 0,                       // c:157
+        "histignorespace" => 0,                      // c:158
+        "histlexwords" => 0,                         // c:159
+        "histnofunctions" => 0,                      // c:160
+        "histnostore" => 0,                          // c:161
+        "histreduceblanks" => 0,                     // c:162
+        "histsavebycopy" => OPT_ALL as u16,          // c:163
+        "histsavenodups" => 0,                       // c:164
+        "histsubstpattern" => OPT_EMULATE,           // c:165
+        "histverify" => 0,                           // c:166
+        "hup" => OPT_EMULATE | (OPT_ZSH as u16),     // c:167
+        "ignorebraces" => OPT_EMULATE | (OPT_SH as u16), // c:168
+        "ignoreclosebraces" => 0,                    // c:169
+        "ignoreeof" => 0,                            // c:170
+        "incappendhistory" => 0,                     // c:171
+        "incappendhistorytime" => 0,                 // c:172
+        "interactive" => OPT_SPECIAL as u16,         // c:173
+        "interactivecomments" => OPT_EMULATE | (OPT_BOURNE as u16), // c:174
+        "ksharrays" => OPT_EMULATE | (OPT_BOURNE as u16), // c:175
+        "kshautoload" => OPT_EMULATE | (OPT_BOURNE as u16), // c:176
+        "kshglob" => OPT_EMULATE | (OPT_KSH as u16), // c:177
+        "kshoptionprint" => OPT_EMULATE | (OPT_KSH as u16), // c:178
+        "kshtypeset" => OPT_EMULATE | (OPT_BOURNE as u16), // c:179
+        "kshzerosubscript" => OPT_EMULATE | (OPT_BOURNE as u16), // c:180
+        "listambiguous" => OPT_ALL as u16,           // c:181
+        "listbeep" => OPT_ALL as u16,                // c:182
+        "listpacked" => 0,                           // c:183
+        "listrowsfirst" => 0,                        // c:184
+        "listtypes" => OPT_ALL as u16,               // c:185
+        "localoptions" => OPT_EMULATE | (OPT_KSH as u16), // c:186
+        "localloops" => 0,                           // c:187
+        "localpatterns" => 0,                        // c:188
+        "localtraps" => OPT_EMULATE | (OPT_KSH as u16), // c:189
+        "loginshell" => OPT_SPECIAL as u16,          // c:190
+        "longlistjobs" => 0,                         // c:191
+        "magicequalsubst" => OPT_EMULATE,            // c:192
+        "mailwarning" => 0,                          // c:193
+        "markdirs" => 0,                             // c:194
+        "menucomplete" => 0,                         // c:195
+        "monitor" => OPT_SPECIAL as u16,             // c:196
+        "multibyte" => 0,                            // c:197
+        "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16), // c:198
+        "multios" => OPT_EMULATE | (OPT_ZSH as u16), // c:199
+        "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:200
+        "notify" => OPT_EMULATE | (OPT_ZSH as u16),  // c:201
+        "nullglob" => OPT_EMULATE,                   // c:202
+        "numericglobsort" => 0,                      // c:203
+        "octalzeroes" => OPT_EMULATE | (OPT_SH as u16), // c:204
+        "overstrike" => 0,                           // c:205
+        "pathdirs" => 0,                             // c:206
+        "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16), // c:207
+        "pipefail" => OPT_EMULATE,                   // c:208
+        "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16), // c:209
+        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16), // c:210
+        "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16), // c:211
+        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:212
+        "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16), // c:213
+        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16), // c:214
+        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16), // c:215
+        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16), // c:216
+        "printeightbit" => 0,                        // c:217
+        "printexitvalue" => 0,                       // c:218
+        "privileged" => OPT_SPECIAL as u16,          // c:219
+        "promptbang" => OPT_EMULATE | (OPT_KSH as u16), // c:220
+        "promptcr" => OPT_ALL as u16,                // c:221
+        "promptpercent" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:222
+        "promptsp" => OPT_ALL as u16,                // c:223
+        "promptsubst" => OPT_EMULATE | (OPT_BOURNE as u16), // c:224
+        "pushdignoredups" => 0,                      // c:225
+        "pushdminus" => 0,                           // c:226
+        "pushdsilent" => 0,                          // c:227
+        "pushdtohome" => 0,                          // c:228
+        "rcexpandparam" => OPT_EMULATE,              // c:229
+        "rcquotes" => 0,                             // c:230
+        "rcs" => OPT_ALL as u16,                     // c:231
+        "recexact" => 0,                             // c:232
+        "rematchpcre" => 0,                          // c:233
+        "restricted" => OPT_SPECIAL as u16,          // c:234
+        "rmstarsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:235
+        "rmstarwait" => 0,                           // c:236
+        "sharehistory" => 0,                         // c:237
+        "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16), // c:238
+        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16), // c:239
+        "shinstdin" => OPT_SPECIAL as u16,           // c:240
+        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:241
+        "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16), // c:242
+        "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:243
+        "shortrepeat" => OPT_EMULATE | (OPT_ZSH as u16), // c:244
+        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16), // c:245
+        "singlecommand" => OPT_SPECIAL as u16,       // c:246
+        "singlelinezle" => 0,                        // c:247
+        "sourcetrace" => 0,                          // c:248
+        "sunkeyboardhack" => 0,                      // c:249
+        "transientrprompt" => 0,                     // c:250
+        "trapsasync" => 0,                           // c:251
+        "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:252
+        "unset" => OPT_EMULATE | (OPT_BSHELL as u16), // c:253
+        "verbose" => OPT_EMULATE,                    // c:254
+        "vi" => 0,                                   // c:255
+        "warncreateglobal" => 0,                     // c:256
+        "warnnestedvar" => 0,                        // c:257
+        "xtrace" => OPT_EMULATE,                     // c:258
+        "zle" => OPT_SPECIAL as u16,                 // c:259
+        "dvorak" => 0,                               // c:260
         _ => 0,
     }
 }
@@ -1479,11 +1578,8 @@ pub(crate) fn default_on_options() -> std::collections::HashSet<&'static str> {
     set
 }
 
-fn setemulate_opts_lock()
-    -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>>
-{
-    SETEMULATE_OPTS
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+fn setemulate_opts_lock() -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>> {
+    SETEMULATE_OPTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 /// Reverse lookup to map a canonical option name back to its
@@ -1516,16 +1612,14 @@ fn optno_by_name(name: &str) -> Option<i32> {
 /// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
 /// state of `name` from the process-wide option store.
 pub fn opt_state_get(name: &str) -> Option<bool> {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
-        std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     m.read().ok().and_then(|g| g.get(name).copied())
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Write `value`
 /// into the process-wide option store.
 pub fn opt_state_set(name: &str, value: bool) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
-        std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     if let Ok(mut g) = m.write() {
         g.insert(name.to_string(), value);
     }
@@ -1534,8 +1628,7 @@ pub fn opt_state_set(name: &str, value: bool) {
 /// !!! RUST-ONLY HELPER — see WARNING block above. Remove an entry
 /// from the process-wide option store (`!= isset(opt)`).
 pub fn opt_state_unset(name: &str) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
-        std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     if let Ok(mut g) = m.write() {
         g.remove(name);
     }
@@ -1544,8 +1637,7 @@ pub fn opt_state_unset(name: &str) {
 /// !!! RUST-ONLY HELPER — see WARNING block above. Snapshot the
 /// full option store. Caller gets a HashMap<String, bool>.
 pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
-        std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     m.read().map(|g| g.clone()).unwrap_or_default()
 }
 
@@ -1553,8 +1645,7 @@ pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
 /// currently in the option store (= count of options that have been
 /// touched by set/setopt/unset).
 pub fn opt_state_len() -> usize {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
-        std::collections::HashMap::new()));
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     m.read().map(|g| g.len()).unwrap_or(0)
 }
 
@@ -1569,19 +1660,20 @@ pub fn opt_state_len() -> usize {
 /// emulation. Static-link path: walk ZSH_OPTIONS_SET, look up each
 /// option's value in cmdopts (here keyed by name), emit via
 /// print_emulate_option.
-pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>,
-                            fully: bool) {                                   // c:1003
+pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>, fully: bool) {
+    // c:1003
     let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
     names.sort();
-    for n in names {                                                         // c:1004 scanhashtable
+    for n in names {
+        // c:1004 scanhashtable
         let value = cmdopts.get(n).copied().unwrap_or(false);
-        print_emulate_option(n, value, fully);                               // c:986 callback
+        print_emulate_option(n, value, fully); // c:986 callback
     }
 }
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::isset;
     use super::*;
+    use crate::zsh_h::isset;
 
     // Tests share global OPTS_LIVE state; serialize via this mutex so
     // parallel cargo-test threads don't stomp each other's option-state
@@ -1634,14 +1726,12 @@ mod tests {
         opt_state_set("vi", true);
         // `setopt emacs` (force=1 to bypass any unrelated gates).
         dosetopt(EMACSMODE, 1, 1);
-        assert!(isset(EMACSMODE),  "EMACSMODE must be set");
-        assert!(!isset(VIMODE),
-            "c:870 — setopt emacs must clear VIMODE");
+        assert!(isset(EMACSMODE), "EMACSMODE must be set");
+        assert!(!isset(VIMODE), "c:870 — setopt emacs must clear VIMODE");
         // `setopt vi` clears EMACSMODE.
         dosetopt(VIMODE, 1, 1);
-        assert!(isset(VIMODE),     "VIMODE must be set");
-        assert!(!isset(EMACSMODE),
-            "c:870 — setopt vi must clear EMACSMODE");
+        assert!(isset(VIMODE), "VIMODE must be set");
+        assert!(!isset(EMACSMODE), "c:870 — setopt vi must clear EMACSMODE");
         // Cleanup.
         opt_state_set("emacs", false);
         opt_state_set("vi", false);
@@ -1768,10 +1858,16 @@ mod tests {
         // ASCII A..=Z fold to a..=z (canonical).
         let glob = optlookup("glob");
         assert!(glob > 0, "GLOB must be a valid option");
-        assert_eq!(optlookup("GLOB"), glob,
-            "c:702 — ASCII 'G' must fold to 'g'");
-        assert_eq!(optlookup("Glob"), glob,
-            "c:702 — ASCII 'G' must fold to 'g' (mixed case)");
+        assert_eq!(
+            optlookup("GLOB"),
+            glob,
+            "c:702 — ASCII 'G' must fold to 'g'"
+        );
+        assert_eq!(
+            optlookup("Glob"),
+            glob,
+            "c:702 — ASCII 'G' must fold to 'g' (mixed case)"
+        );
         // Non-ASCII chars pass through (locale-independent, matching
         // C). A name like `'glöb'` (with non-ASCII char) doesn't
         // exist as an option — lookup fails with OPT_INVALID
@@ -1781,11 +1877,17 @@ mod tests {
         // Use raw byte string to avoid \u{...} brace-counting issue
         // in build.rs.
         let glob_with_high_byte = std::str::from_utf8(b"gl\xc3\xb6b").unwrap();
-        assert_eq!(optlookup(glob_with_high_byte), OPT_INVALID,
-            "c:702 — non-ASCII chars NOT folded; lookup fails");
+        assert_eq!(
+            optlookup(glob_with_high_byte),
+            OPT_INVALID,
+            "c:702 — non-ASCII chars NOT folded; lookup fails"
+        );
         // Underscores still strip.
-        assert_eq!(optlookup("G_L_O_B"), glob,
-            "c:693 — underscores stripped regardless of case");
+        assert_eq!(
+            optlookup("G_L_O_B"),
+            glob,
+            "c:693 — underscores stripped regardless of case"
+        );
     }
 
     /// `Src/options.c:684-714` — `optlookup(name)` returns
@@ -1798,13 +1900,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
-        assert_eq!(optlookup(""),            OPT_INVALID,
-            "c:714 — empty name");
+        assert_eq!(optlookup(""), OPT_INVALID, "c:714 — empty name");
         assert_eq!(optlookup("definitely_not_an_option"), OPT_INVALID);
-        assert_eq!(optlookup("no_such_option_either"),    OPT_INVALID);
+        assert_eq!(optlookup("no_such_option_either"), OPT_INVALID);
         // The "no" prefix on a NON-existent option is also invalid
         // (c:708 lookup of `s+2` fails, c:711 lookup of full `s` fails too).
-        assert_eq!(optlookup("nodefinitelynot"),          OPT_INVALID);
+        assert_eq!(optlookup("nodefinitelynot"), OPT_INVALID);
     }
 
     /// `Src/options.c:708-712` — the `no` prefix branch returns the
@@ -1826,7 +1927,10 @@ mod tests {
         // `notify` is its own option (not a no-prefix), so it must
         // resolve to a POSITIVE optno, not the negation of `tify`.
         let n2 = optlookup("notify");
-        assert!(n2 > 0, "c:711 — `notify` is a real option, must be positive");
+        assert!(
+            n2 > 0,
+            "c:711 — `notify` is a real option, must be positive"
+        );
     }
 
     /// `Src/zsh.h:2363` — `OPT_INVALID` is the first slot in the
@@ -1841,11 +1945,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // C zsh.h:2363 declares `OPT_INVALID,` as the first enum
         // slot, which by default has value 0.
-        assert_eq!(OPT_INVALID, 0,
-            "Src/zsh.h:2363 — OPT_INVALID is enum slot 0");
+        assert_eq!(
+            OPT_INVALID, 0,
+            "Src/zsh.h:2363 — OPT_INVALID is enum slot 0"
+        );
         // ALIASESOPT is the next enum slot — must be 1.
-        assert_eq!(crate::ported::zsh_h::ALIASESOPT, 1,
-            "Src/zsh.h:2364 — ALIASESOPT immediately follows OPT_INVALID");
+        assert_eq!(
+            crate::ported::zsh_h::ALIASESOPT,
+            1,
+            "Src/zsh.h:2364 — ALIASESOPT immediately follows OPT_INVALID"
+        );
     }
 
     /// `Src/options.c:721-733` — `optlookupc(c)` returns 0 for any
@@ -1858,11 +1967,11 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createoptiontable();
         // c:723 — `if (c < FIRST_OPT || c > LAST_OPT) return 0`.
-        assert_eq!(optlookupc(' '),  0, "space below FIRST_OPT");
+        assert_eq!(optlookupc(' '), 0, "space below FIRST_OPT");
         assert_eq!(optlookupc('\0'), 0, "NUL is invalid");
-        assert_eq!(optlookupc('~'),  0, "tilde above LAST_OPT");
+        assert_eq!(optlookupc('~'), 0, "tilde above LAST_OPT");
         // High Unicode never maps to an option letter.
-        assert_eq!(optlookupc('字'),  0);
+        assert_eq!(optlookupc('字'), 0);
     }
 
     /// `Src/options.c:735-760` — `dosetopt` rejects user-level changes
@@ -1891,23 +2000,40 @@ mod tests {
         opt_state_set("singlecommand", false);
 
         // c:746 — force=0 + changing value → reject (-1).
-        assert_eq!(dosetopt(INTERACTIVE, 1, 0), -1,
-            "c:746 — dosetopt INTERACTIVE on without force must reject");
-        assert_eq!(dosetopt(SHINSTDIN, 1, 0), -1,
-            "c:746 — dosetopt SHINSTDIN on without force must reject");
-        assert_eq!(dosetopt(SINGLECOMMAND, 1, 0), -1,
-            "c:746 — dosetopt SINGLECOMMAND on without force must reject");
+        assert_eq!(
+            dosetopt(INTERACTIVE, 1, 0),
+            -1,
+            "c:746 — dosetopt INTERACTIVE on without force must reject"
+        );
+        assert_eq!(
+            dosetopt(SHINSTDIN, 1, 0),
+            -1,
+            "c:746 — dosetopt SHINSTDIN on without force must reject"
+        );
+        assert_eq!(
+            dosetopt(SINGLECOMMAND, 1, 0),
+            -1,
+            "c:746 — dosetopt SINGLECOMMAND on without force must reject"
+        );
 
         // c:749 — force=0 + same value → no-op success (0).
-        assert_eq!(dosetopt(INTERACTIVE, 0, 0), 0,
-            "c:749 — same value is a no-op success");
+        assert_eq!(
+            dosetopt(INTERACTIVE, 0, 0),
+            0,
+            "c:749 — same value is a no-op success"
+        );
 
         // force=1 → allowed even if changing locked option.
-        assert_eq!(dosetopt(INTERACTIVE, 1, 1), 0,
-            "c:743 — force=1 bypasses the lock");
+        assert_eq!(
+            dosetopt(INTERACTIVE, 1, 1),
+            0,
+            "c:743 — force=1 bypasses the lock"
+        );
         // Verify state flipped this time.
-        assert!(opt_state_get("interactive").unwrap_or(false),
-            "force=1 must actually flip the option");
+        assert!(
+            opt_state_get("interactive").unwrap_or(false),
+            "force=1 must actually flip the option"
+        );
 
         // Restore prior state.
         opt_state_set("interactive", saved_interactive);
@@ -1935,10 +2061,14 @@ mod tests {
         opt_state_set("interactive", true);
         opt_state_set("monitor", true);
         let dash = dashgetfn();
-        assert!(dash.contains('i'),
-            "c:891 — interactive set → 'i' appears in $-");
-        assert!(dash.contains('m'),
-            "c:891 — monitor set → 'm' appears in $-");
+        assert!(
+            dash.contains('i'),
+            "c:891 — interactive set → 'i' appears in $-"
+        );
+        assert!(
+            dash.contains('m'),
+            "c:891 — monitor set → 'm' appears in $-"
+        );
 
         // Pin the range endpoints: any letter ≥ '0' (0x30) and ≤ 'y'
         // (0x79) must be considered by the loop. C uses FIRST_OPT='0'
@@ -1973,13 +2103,17 @@ mod tests {
 
         // dosetopt(+optno, 0, 0) → unset.
         let _ = dosetopt(auto_menu, 0, 0);
-        assert!(!opt_state_get("automenu").unwrap_or(true),
-            "automenu = 0 → unset");
+        assert!(
+            !opt_state_get("automenu").unwrap_or(true),
+            "automenu = 0 → unset"
+        );
 
         // dosetopt(-optno, 0, 0) → value flipped to 1 → set.
         let _ = dosetopt(-auto_menu, 0, 0);
-        assert!(opt_state_get("automenu").unwrap_or(false),
-            "c:741 — negative optno flips value (0 → 1)");
+        assert!(
+            opt_state_get("automenu").unwrap_or(false),
+            "c:741 — negative optno flips value (0 → 1)"
+        );
 
         // Restore.
         opt_state_set("automenu", saved);

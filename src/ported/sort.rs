@@ -57,23 +57,28 @@ use std::ffi::CString;
 /// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
 /// shorter strings sort below their longer continuations.
 /// WARNING: param names don't match C — Rust=(a, b, sort_flags) vs C=(a, b)
-pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // c:44
+pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
+    // c:44
     let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
     // C's `len == -1` sentinel = "no embedded NULs, use strlen".
     let a_has_len = a.len >= 0;
     let b_has_len = b.len >= 0;
     let result = if !a_has_len && !b_has_len {
-        zstrcmp(
-            &a.cmp,
-            &b.cmp,
-            sort_flags & !(SORTIT_BACKWARDS as u32),
-        )
+        zstrcmp(&a.cmp, &b.cmp, sort_flags & !(SORTIT_BACKWARDS as u32))
     } else {
         // Embedded-null path: compare first min(a.len, b.len)
         // bytes; equal-prefix-but-different-length means the
         // shorter sorts lower.
-        let la = if a_has_len { a.len as usize } else { a.cmp.len() };
-        let lb = if b_has_len { b.len as usize } else { b.cmp.len() };
+        let la = if a_has_len {
+            a.len as usize
+        } else {
+            a.cmp.len()
+        };
+        let lb = if b_has_len {
+            b.len as usize
+        } else {
+            b.cmp.len()
+        };
         let len = la.min(lb);
         let ab = a.cmp.as_bytes();
         let bb = b.cmp.as_bytes();
@@ -81,9 +86,9 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // 
         let take_b = bb.len().min(len);
         match ab[..take_a].cmp(&bb[..take_b]) {
             Ordering::Equal => match (a_has_len, b_has_len) {
-                (true, true)   => la.cmp(&lb),
-                (true, false)  => Ordering::Greater,
-                (false, true)  => Ordering::Less,
+                (true, true) => la.cmp(&lb),
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
                 (false, false) => Ordering::Equal,
             },
             o => o,
@@ -111,7 +116,8 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // 
 /// extending the latter's signature to accept the flag bits directly
 /// (tracked as a follow-up; not a behavioral bug).
 /// WARNING: param names don't match C — Rust=(a, bs, sortflags) vs C=(as, bs, sortflags)
-pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // c:191
+pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
+    // c:191
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
         -1 // c:209-210
     } else if sortflags & (SORTIT_NUMERICALLY as u32) != 0 {
@@ -273,7 +279,8 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
 /// pre-unmetafied lengths; after sort it's re-ordered in lockstep
 /// with `arr` so the lengths track their owning strings.
 /// WARNING: param names don't match C — Rust=(sort_flags, unmetalenp) vs C=(array, sortwhat, unmetalenp)
-pub fn strmetasort(                                                          // c:234
+pub fn strmetasort(
+    // c:234
     arr: &mut [String],
     sort_flags: u32,
     unmetalenp: Option<&mut [usize]>,
@@ -287,10 +294,10 @@ pub fn strmetasort(                                                          // 
     let apply_transforms = |s: &str| -> String {
         let mut t = s.to_string();
         if sort_flags & (SORTIT_IGNORING_CASE as u32) != 0 {
-            t = t.to_lowercase();                                            // c:329-374
+            t = t.to_lowercase(); // c:329-374
         }
         if sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32) != 0 {
-            t = t.chars().filter(|&c| c != '\\').collect();                  // c:375-385
+            t = t.chars().filter(|&c| c != '\\').collect(); // c:375-385
         }
         t
     };
@@ -386,7 +393,10 @@ mod tests {
             zstrcmp("file10", "file2", SORTIT_NUMERICALLY as u32),
             Ordering::Greater
         );
-        assert_eq!(zstrcmp("100", "20", SORTIT_NUMERICALLY as u32), Ordering::Greater);
+        assert_eq!(
+            zstrcmp("100", "20", SORTIT_NUMERICALLY as u32),
+            Ordering::Greater
+        );
     }
 
     #[test]
@@ -407,7 +417,11 @@ mod tests {
             "file1".to_string(),
             "file20".to_string(),
         ];
-        strmetasort(&mut arr, (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32, None);
+        strmetasort(
+            &mut arr,
+            (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32,
+            None,
+        );
         assert_eq!(arr, vec!["file1", "file2", "file10", "file20"]);
     }
 
@@ -480,8 +494,18 @@ mod tests {
         // C: "the string that's finished sorts below the other"
         // (sort.c:88-89). With len markers, prefix "abc" + 0 sorts
         // below prefix "abc" + 0 + "d" (the longer continuation).
-        let a = sortelt { orig: "abc".to_string(), cmp: "abc".to_string(), origlen: 3, len: 3 };
-        let b = sortelt { orig: "abc".to_string(), cmp: "abc".to_string(), origlen: 5, len: 5 };
+        let a = sortelt {
+            orig: "abc".to_string(),
+            cmp: "abc".to_string(),
+            origlen: 3,
+            len: 3,
+        };
+        let b = sortelt {
+            orig: "abc".to_string(),
+            cmp: "abc".to_string(),
+            origlen: 5,
+            len: 5,
+        };
         assert_eq!(eltpcmp(&a, &b, 0), Ordering::Less);
         assert_eq!(eltpcmp(&b, &a, 0), Ordering::Greater);
     }

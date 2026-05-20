@@ -65,9 +65,10 @@ use std::sync::atomic::Ordering;
 /// type static table; consumers cast back at call time.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
-pub struct gsu_closure {                                                 // c:34
-    pub kind: u8,                                                        // c:35-41 union tag
-    pub g: usize,                                                        // c:42 void *g
+pub struct gsu_closure {
+    // c:34
+    pub kind: u8, // c:35-41 union tag
+    pub g: usize, // c:42 void *g
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +84,16 @@ pub struct gsu_closure {                                                 // c:34
 ///
 /// C signature: `static void makeprivate(HashNode hn, int flags)`.
 #[allow(unused_variables)]
-pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
-    if hn.is_null() { return; }
+pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {
+    // c:80
+    if hn.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*hn).level };
     let cur_local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    if pm_level != cur_local { return; }                                  // c:83 only act on this scope's entries
+    if pm_level != cur_local {
+        return;
+    } // c:83 only act on this scope's entries
 
     let pm_flags = unsafe { (*hn).node.flags };
     let pm_ename = unsafe { (*hn).ename.is_some() };
@@ -100,27 +106,30 @@ pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
     // or shadows a preexisting param.
     let outer_cond = pm_ename
         || pm_norestore
-        || (has_old && (
-            // We can't easily inspect hn->old->level / hn->old->flags
-            // through a Box reference and locallevel arithmetic; the
-            // C `(hn->old->level == locallevel - 1 || ...)` check
-            // approximates as "an old entry exists at the parent scope".
-            true
-        ));
+        || (has_old
+            && (
+                // We can't easily inspect hn->old->level / hn->old->flags
+                // through a Box reference and locallevel arithmetic; the
+                // C `(hn->old->level == locallevel - 1 || ...)` check
+                // approximates as "an old entry exists at the parent scope".
+                true
+            ));
 
     if outer_cond {
         // c:90-137 — handle name-clash. The full C body's switch on
         // PM_TYPE(hn->node.flags) for the four scalar/int/float/array/
         // hash setfn dispatches lives here. Static-link path: report
         // the rejection via MAKEPRIVATE_ERROR and return.
-        if pm_special && !pm_removable {                                 // c:87-89
+        if pm_special && !pm_removable {
+            // c:87-89
             crate::ported::utils::zerr(
-                &format!("can't change scope of existing param: {}",
-                         unsafe { (*hn).node.nam.clone() }),             // c:133
+                &format!("can't change scope of existing param: {}", unsafe {
+                    (*hn).node.nam.clone()
+                }), // c:133
             );
         }
         MAKEPRIVATE_ERROR.store(1, std::sync::atomic::Ordering::Relaxed); // c:130/135
-        return;                                                           // c:137
+        return; // c:137
     }
 
     // c:139-172 — promote hn to private. The C body installs a
@@ -141,7 +150,9 @@ pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
             | crate::ported::zsh_h::PM_RO_BY_DESIGN) as i32;
     }
     // c:175 — `hn->level -= 1;`  (move into the surrounding scope)
-    unsafe { (*hn).level -= 1; }
+    unsafe {
+        (*hn).level -= 1;
+    }
 }
 
 /// Port of `is_private(Param pm)` from `Src/Modules/param_private.c:181`.
@@ -178,18 +189,25 @@ pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
 /// Static-link path: the `PRIVATE_PARAMS` registry below tracks
 /// every private param installed via `bin_private`, so private-ness
 /// is just a presence check there.
-pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {       // c:181
+pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {
+    // c:181
     // C walks `locallist` / `funcstack` / `params_unprivatized` to
     // determine private-ness; the Rust idiom replacement is a direct
     // presence check against the static `PRIVATE_PARAMS` registry
     // populated at `bin_private` time. Covers c:181-210 verbatim
     // semantics without the C linked-list walk.
-    if pm.is_null() { return 0; }
+    if pm.is_null() {
+        return 0;
+    }
     let name = unsafe { (*pm).node.nam.clone() };
-    if PRIVATE_PARAMS.lock().map(|p| p.contains(&name)).unwrap_or(false) {
-        1                                                                // c:210
+    if PRIVATE_PARAMS
+        .lock()
+        .map(|p| p.contains(&name))
+        .unwrap_or(false)
+    {
+        1 // c:210
     } else {
-        0                                                                // c:208 default error
+        0 // c:208 default error
     }
 }
 
@@ -216,80 +234,104 @@ pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {       // c:18
 /// Builtin spec from c:702: `"AE:%F:HL:R:TUZ:afhi:lprtuxmM"`. Most
 /// flags are typeset's; `private` adds nothing of its own that isn't
 /// in typeset.
-pub fn bin_private(nam: &str, args: &[String],                               // c:217
-                   ops: &mut crate::ported::zsh_h::options, func: i32,
-                   assigns: &mut Vec<(String, String)>) -> i32 {
+pub fn bin_private(
+    nam: &str,
+    args: &[String], // c:217
+    ops: &mut crate::ported::zsh_h::options,
+    func: i32,
+    assigns: &mut Vec<(String, String)>,
+) -> i32 {
     // c:220 — `int from_typeset = 1;`
-    let mut from_typeset: i32 = 1;                                            // c:220
-    // c:221 — `int ofake = fakelevel;`
-    let ofake = FAKELEVEL.load(Ordering::Relaxed);                            // c:221
-    // c:222 — `int hasargs = (assigns && firstnode(assigns));`
-    let hasargs = !assigns.is_empty();                                        // c:222
-    // c:223 — `makeprivate_error = 0;`
-    MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed);                            // c:223
+    let mut from_typeset: i32 = 1; // c:220
+                                   // c:221 — `int ofake = fakelevel;`
+    let ofake = FAKELEVEL.load(Ordering::Relaxed); // c:221
+                                                   // c:222 — `int hasargs = (assigns && firstnode(assigns));`
+    let hasargs = !assigns.is_empty(); // c:222
+                                       // c:223 — `makeprivate_error = 0;`
+    MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed); // c:223
 
     // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
-    if !OPT_ISSET(ops, b'P') {                                                // c:225
-        FAKELEVEL.store(0, Ordering::Relaxed);                                // c:226
-        from_typeset = crate::ported::builtin::bin_typeset(nam, args, ops, func);       // c:227
-        FAKELEVEL.store(ofake, Ordering::Relaxed);                            // c:228
-        return from_typeset;                                                  // c:229
+    if !OPT_ISSET(ops, b'P') {
+        // c:225
+        FAKELEVEL.store(0, Ordering::Relaxed); // c:226
+        from_typeset = crate::ported::builtin::bin_typeset(nam, args, ops, func); // c:227
+        FAKELEVEL.store(ofake, Ordering::Relaxed); // c:228
+        return from_typeset; // c:229
     }
     // c:231-233 — refuse `-P -T`.
-    if OPT_ISSET(ops, b'T') {                                                 // c:231
-        crate::ported::utils::zwarn("bad option: -T");                        // c:232
-        return 1;                                                             // c:233
+    if OPT_ISSET(ops, b'T') {
+        // c:231
+        crate::ported::utils::zwarn("bad option: -T"); // c:232
+        return 1; // c:233
     }
 
     // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
     let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
-    if locallevel == 0 {                                                      // c:235
-        let warn = crate::ported::zsh_h::isset(crate::ported::options::optlookup("warncreateglobal"));
-        if warn {                                                             // c:236
-            zwarnnam(nam, "invalid local scope, using globals");              // c:237
+    if locallevel == 0 {
+        // c:235
+        let warn =
+            crate::ported::zsh_h::isset(crate::ported::options::optlookup("warncreateglobal"));
+        if warn {
+            // c:236
+            zwarnnam(nam, "invalid local scope, using globals"); // c:237
         }
-        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:238
+        return crate::ported::builtin::bin_typeset("private", args, ops, func); // c:238
     }
 
     // c:241-242 — `if (!(OPT_ISSET(ops,'m') || OPT_ISSET(ops,'+'))) ops->ind['g'] = 2;`
-    if !(OPT_ISSET(ops, b'm') || OPT_ISSET(ops, b'+')) {                      // c:241
-        ops.ind[b'g' as usize] = 2;                                           // c:242
+    if !(OPT_ISSET(ops, b'm') || OPT_ISSET(ops, b'+')) {
+        // c:241
+        ops.ind[b'g' as usize] = 2; // c:242
     }
     // c:243-247 — `if (OPT_ISSET('p') || OPT_ISSET('m') || (!hasargs && OPT_ISSET('+')))`
     if OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'm')                           // c:243
         || (!hasargs && OPT_ISSET(ops, b'+'))
     {
-        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:245
+        return crate::ported::builtin::bin_typeset("private", args, ops, func); // c:245
     }
 
     // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
-    crate::ported::mem::queue_signals();                                      // c:248
-    FAKELEVEL.store(locallevel, Ordering::Relaxed);                           // c:249
-    // c:250 — startparamscope(): increment locallevel via the canonical
-    // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
-    // typed paramtab isn't possible without the typed-table port — the
-    // scope counter advance is the core observable side effect.
+    crate::ported::mem::queue_signals(); // c:248
+    FAKELEVEL.store(locallevel, Ordering::Relaxed); // c:249
+                                                    // c:250 — startparamscope(): increment locallevel via the canonical
+                                                    // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
+                                                    // typed paramtab isn't possible without the typed-table port — the
+                                                    // scope counter advance is the core observable side effect.
     let mut paramscope_buf = crate::ported::params::newparamtable(17, "private_scope")
-        .unwrap_or_else(|| Box::new(crate::ported::zsh_h::hashtable {
-            hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
-            hash: None, emptytable: None, filltable: None, cmpnodes: None,
-            addnode: None, getnode: None, getnode2: None, removenode: None,
-            disablenode: None, enablenode: None, freenode: None,
-            printnode: None, scantab: None,
-        }));
-    crate::ported::params::startparamscope(&mut paramscope_buf);              // c:250
-    from_typeset = crate::ported::builtin::bin_typeset("private", args, ops, func);     // c:251
-    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
-    // walks paramtab calling makeprivate on each entry to promote
-    // assignments made during bin_typeset. The typed paramtab walk
-    // isn't reachable; with executor-backed param storage the
-    // assignment paths in bin_typeset write through directly.
-    crate::ported::params::endparamscope();                                   // c:253
-    FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
-    crate::ported::mem::unqueue_signals();                                    // c:255
+        .unwrap_or_else(|| {
+            Box::new(crate::ported::zsh_h::hashtable {
+                hsize: 0,
+                ct: 0,
+                nodes: Vec::new(),
+                tmpdata: 0,
+                hash: None,
+                emptytable: None,
+                filltable: None,
+                cmpnodes: None,
+                addnode: None,
+                getnode: None,
+                getnode2: None,
+                removenode: None,
+                disablenode: None,
+                enablenode: None,
+                freenode: None,
+                printnode: None,
+                scantab: None,
+            })
+        });
+    crate::ported::params::startparamscope(&mut paramscope_buf); // c:250
+    from_typeset = crate::ported::builtin::bin_typeset("private", args, ops, func); // c:251
+                                                                                    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
+                                                                                    // walks paramtab calling makeprivate on each entry to promote
+                                                                                    // assignments made during bin_typeset. The typed paramtab walk
+                                                                                    // isn't reachable; with executor-backed param storage the
+                                                                                    // assignment paths in bin_typeset write through directly.
+    crate::ported::params::endparamscope(); // c:253
+    FAKELEVEL.store(ofake, Ordering::Relaxed); // c:254
+    crate::ported::mem::unqueue_signals(); // c:255
 
     let mpe = MAKEPRIVATE_ERROR.load(Ordering::Relaxed);
-    mpe | from_typeset                                                        // c:257
+    mpe | from_typeset // c:257
 }
 
 /// Port of `setfn_error(Param pm)` from `Src/Modules/param_private.c:260`.
@@ -304,7 +346,8 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
 ///
 /// Helper used by every `pp{s,i,f,a,h}_setfn` callback to raise the
 /// "attempt to assign private in nested scope" error.
-pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {                   // c:260
+pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {
+    // c:260
     // The C source assumes `pm != NULL` (every caller routes through
     // the GSU dispatch table which guarantees a live param). The Rust
     // port was reachable with NULL through testing and via callers
@@ -315,9 +358,14 @@ pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {                   // 
     if pm.is_null() {
         return;
     }
-    unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_UNSET as i32; }    // c:262
+    unsafe {
+        (*pm).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+    } // c:262
     let name = unsafe { (*pm).node.nam.clone() };
-    crate::ported::utils::zerr(&format!("{}: attempt to assign private in nested scope", name)); // c:263
+    crate::ported::utils::zerr(&format!(
+        "{}: attempt to assign private in nested scope",
+        name
+    )); // c:263
 }
 
 /// Port of `pps_getfn(Param pm)` from `Src/Modules/param_private.c:287`.
@@ -336,16 +384,20 @@ pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {                   // 
 ///
 /// Scalar private getter — chains through the saved original `getfn`
 /// when locallevel allows; else returns empty string.
-pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:287
-    if pm.is_null() { return String::new(); }
+pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {
+    // c:287
+    if pm.is_null() {
+        return String::new();
+    }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:292
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+        // c:292
         // c:293 — gsu->getfn(pm). Static-link path: read the param's
         // u_str field directly since the gsu_closure indirection
         // collapses to a single string slot.
         unsafe { (*pm).u_str.clone().unwrap_or_default() }
     } else {
-        String::new()                                                    // c:295 hcalloc(1)
+        String::new() // c:295 hcalloc(1)
     }
 }
 
@@ -362,14 +414,22 @@ pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:28
 ///         setfn_error(pm);
 /// }
 /// ```
-pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:300
-    if pm.is_null() { return; }
+pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {
+    // c:300
+    if pm.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*pm).level };
     if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) { // c:304
-        unsafe { (*pm).u_str = Some(x.to_string()); }                    // c:305 gsu->setfn
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        // c:304
+        unsafe {
+            (*pm).u_str = Some(x.to_string());
+        } // c:305 gsu->setfn
     } else {
-        setfn_error(pm);                                                 // c:307
+        setfn_error(pm); // c:307
     }
 }
 
@@ -390,136 +450,213 @@ pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:30
 ///         zfree(c, sizeof(struct gsu_closure));
 /// }
 /// ```
-pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:312
-    if pm.is_null() { return; }
-    let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:317
-        // c:318 — gsu->unsetfn(pm, explicit). Set u_str to None.
-        unsafe { (*pm).u_str = None; }
+pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {
+    // c:312
+    if pm.is_null() {
+        return;
     }
-    if explicit != 0 {                                                    // c:328
-        unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32; } // c:328
+    let pm_level = unsafe { (*pm).level };
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+        // c:317
+        // c:318 — gsu->unsetfn(pm, explicit). Set u_str to None.
+        unsafe {
+            (*pm).u_str = None;
+        }
+    }
+    if explicit != 0 {
+        // c:328
+        unsafe {
+            (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32;
+        } // c:328
     } else {
         // c:328 — zfree(c, sizeof(struct gsu_closure)) — Drop on out-of-scope.
         if let Ok(mut p) = PRIVATE_PARAMS.lock() {
-            unsafe { p.remove(&(*pm).node.nam); }
+            unsafe {
+                p.remove(&(*pm).node.nam);
+            }
         }
     }
 }
 
 /// Port of `ppi_getfn(Param pm)` from `Src/Modules/param_private.c:328`.
-pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:328
-    if pm.is_null() { return 0; }
+pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {
+    // c:328
+    if pm.is_null() {
+        return 0;
+    }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:340
-        unsafe { (*pm).u_val }                                           // c:340 gsu->getfn
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+        // c:340
+        unsafe { (*pm).u_val } // c:340 gsu->getfn
     } else {
-        0                                                                // c:340
+        0 // c:340
     }
 }
 
 /// Port of `ppi_setfn(Param pm, zlong x)` from `Src/Modules/param_private.c:340`.
-pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {         // c:340
-    if pm.is_null() { return; }
+pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {
+    // c:340
+    if pm.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*pm).level };
     if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
-        unsafe { (*pm).u_val = x; }                                      // c:352
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        unsafe {
+            (*pm).u_val = x;
+        } // c:352
     } else {
-        setfn_error(pm);                                                 // c:352
+        setfn_error(pm); // c:352
     }
 }
 
 /// Port of `ppi_unsetfn(Param pm, int explicit)` from `Src/Modules/param_private.c:352`.
-pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:352
-    if pm.is_null() { return; }
-    let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:357
-        unsafe { (*pm).u_val = 0; }                                      // c:368
+pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {
+    // c:352
+    if pm.is_null() {
+        return;
     }
-    if explicit != 0 {                                                    // c:368
-        unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32; } // c:368
+    let pm_level = unsafe { (*pm).level };
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+        // c:357
+        unsafe {
+            (*pm).u_val = 0;
+        } // c:368
+    }
+    if explicit != 0 {
+        // c:368
+        unsafe {
+            (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32;
+        } // c:368
     } else {
         if let Ok(mut p) = PRIVATE_PARAMS.lock() {
-            unsafe { p.remove(&(*pm).node.nam); }
+            unsafe {
+                p.remove(&(*pm).node.nam);
+            }
         }
     }
 }
 
 /// Port of `ppf_getfn(Param pm)` from `Src/Modules/param_private.c:368`.
-pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {          // c:368
-    if pm.is_null() { return 0.0; }
+pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {
+    // c:368
+    if pm.is_null() {
+        return 0.0;
+    }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:380
-        unsafe { (*pm).u_dval }                                          // c:380
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+        // c:380
+        unsafe { (*pm).u_dval } // c:380
     } else {
-        0.0                                                              // c:380
+        0.0 // c:380
     }
 }
 
 /// Port of `ppf_setfn(Param pm, double x)` from `Src/Modules/param_private.c:380`.
-pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {         // c:380
-    if pm.is_null() { return; }
+pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {
+    // c:380
+    if pm.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*pm).level };
     if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
-        unsafe { (*pm).u_dval = x; }                                     // c:392
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        unsafe {
+            (*pm).u_dval = x;
+        } // c:392
     } else {
-        setfn_error(pm);                                                 // c:392
+        setfn_error(pm); // c:392
     }
 }
 
 /// Port of `ppf_unsetfn(Param pm, int explicit)` from `Src/Modules/param_private.c:392`.
-pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:392
-    if pm.is_null() { return; }
-    let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:397
-        unsafe { (*pm).u_dval = 0.0; }                                   // c:408
+pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {
+    // c:392
+    if pm.is_null() {
+        return;
     }
-    if explicit != 0 {                                                    // c:408
-        unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32; }
+    let pm_level = unsafe { (*pm).level };
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+        // c:397
+        unsafe {
+            (*pm).u_dval = 0.0;
+        } // c:408
+    }
+    if explicit != 0 {
+        // c:408
+        unsafe {
+            (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32;
+        }
     } else {
         if let Ok(mut p) = PRIVATE_PARAMS.lock() {
-            unsafe { p.remove(&(*pm).node.nam); }
+            unsafe {
+                p.remove(&(*pm).node.nam);
+            }
         }
     }
 }
 
 /// Port of `ppa_getfn(Param pm)` from `Src/Modules/param_private.c:408`.
-pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {  // c:408
-    if pm.is_null() { return Vec::new(); }
+pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
+    // c:408
+    if pm.is_null() {
+        return Vec::new();
+    }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:421
-        unsafe { (*pm).u_arr.clone().unwrap_or_default() }              // c:421
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+        // c:421
+        unsafe { (*pm).u_arr.clone().unwrap_or_default() } // c:421
     } else {
-        Vec::new()                                                       // c:421 nullarray
+        Vec::new() // c:421 nullarray
     }
 }
 
 /// Port of `ppa_setfn(Param pm, char **x)` from `Src/Modules/param_private.c:421`.
-pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {  // c:421
-    if pm.is_null() { return; }
+pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {
+    // c:421
+    if pm.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*pm).level };
     if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
-        unsafe { (*pm).u_arr = Some(x); }                                // c:433
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        unsafe {
+            (*pm).u_arr = Some(x);
+        } // c:433
     } else {
-        setfn_error(pm);                                                 // c:433
+        setfn_error(pm); // c:433
     }
 }
 
 /// Port of `ppa_unsetfn(Param pm, int explicit)` from `Src/Modules/param_private.c:433`.
-pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:433
-    if pm.is_null() { return; }
-    let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:438
-        unsafe { (*pm).u_arr = None; }                                   // c:439
+pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {
+    // c:433
+    if pm.is_null() {
+        return;
     }
-    if explicit != 0 {                                                    // c:440
-        unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32; }
+    let pm_level = unsafe { (*pm).level };
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+        // c:438
+        unsafe {
+            (*pm).u_arr = None;
+        } // c:439
+    }
+    if explicit != 0 {
+        // c:440
+        unsafe {
+            (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32;
+        }
     } else {
         if let Ok(mut p) = PRIVATE_PARAMS.lock() {
-            unsafe { p.remove(&(*pm).node.nam); }
+            unsafe {
+                p.remove(&(*pm).node.nam);
+            }
         }
     }
 }
@@ -530,7 +667,7 @@ pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 /// boot_, freed in finish_ via deletehashtable.
 #[allow(non_upper_case_globals)]
 pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
-    std::sync::Mutex::new(None);                                              // c:447
+    std::sync::Mutex::new(None); // c:447
 
 /// Port of `pph_getfn(Param pm)` from `Src/Modules/param_private.c:451`.
 ///
@@ -539,42 +676,66 @@ pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>>
 /// raw-pointer reference). Returns `Some(())` if a hash exists at
 /// the current scope, else `None` (matches C's `emptytable` fallback
 /// signal).
-pub fn pph_getfn(pm: *mut crate::ported::zsh_h::param) -> Option<()> {   // c:451
-    if pm.is_null() { return None; }
+pub fn pph_getfn(pm: *mut crate::ported::zsh_h::param) -> Option<()> {
+    // c:451
+    if pm.is_null() {
+        return None;
+    }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:463
-        unsafe { (*pm).u_hash.as_ref().map(|_| ()) }                     // c:463
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {
+        // c:463
+        unsafe { (*pm).u_hash.as_ref().map(|_| ()) } // c:463
     } else {
-        None                                                             // c:463 emptytable
+        None // c:463 emptytable
     }
 }
 
 /// Port of `pph_setfn(Param pm, HashTable x)` from `Src/Modules/param_private.c:463`.
 /// WARNING: param names don't match C — Rust=(pm) vs C=(pm, x)
-pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // c:463
-                 x: Option<crate::ported::zsh_h::HashTable>) {            // c:475
-    if pm.is_null() { return; }
+pub fn pph_setfn(
+    pm: *mut crate::ported::zsh_h::param, // c:463
+    x: Option<crate::ported::zsh_h::HashTable>,
+) {
+    // c:475
+    if pm.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*pm).level };
     if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
-        unsafe { (*pm).u_hash = x; }                                     // c:475
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+            > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        unsafe {
+            (*pm).u_hash = x;
+        } // c:475
     } else {
-        setfn_error(pm);                                                 // c:475
+        setfn_error(pm); // c:475
     }
 }
 
 /// Port of `pph_unsetfn(Param pm, int explicit)` from `Src/Modules/param_private.c:475`.
-pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:475
-    if pm.is_null() { return; }
-    let pm_level = unsafe { (*pm).level };
-    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:480
-        unsafe { (*pm).u_hash = None; }                                  // c:481
+pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {
+    // c:475
+    if pm.is_null() {
+        return;
     }
-    if explicit != 0 {                                                    // c:482
-        unsafe { (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32; }
+    let pm_level = unsafe { (*pm).level };
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {
+        // c:480
+        unsafe {
+            (*pm).u_hash = None;
+        } // c:481
+    }
+    if explicit != 0 {
+        // c:482
+        unsafe {
+            (*pm).node.flags |= crate::ported::zsh_h::PM_DECLARED as i32;
+        }
     } else {
         if let Ok(mut p) = PRIVATE_PARAMS.lock() {
-            unsafe { p.remove(&(*pm).node.nam); }
+            unsafe {
+                p.remove(&(*pm).node.nam);
+            }
         }
     }
 }
@@ -582,8 +743,8 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 /// `PM_WAS_UNSET` / `PM_WAS_RONLY` — file-scope `#define` aliases
 /// from `Src/Modules/param_private.c:568` reusing existing PM_*
 /// flag bits the private-scope save/restore code repurposes.
-pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE;        // c:508
-pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:509
+pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE; // c:508
+pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED; // c:509
 
 /// Port of `scopeprivate(HashNode hn, int onoff)` from `Src/Modules/param_private.c:512`.
 ///
@@ -591,15 +752,23 @@ pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:50
 /// private params with PM_UNSET+PM_READONLY (entry) or restore
 /// previous state (exit). The `onoff` arg is `PM_UNSET` on entry,
 /// `0` on exit (matching `wrap_private`'s c:555/557 calls).
-pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:512
-    if hn.is_null() { return; }
+pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {
+    // c:512
+    if hn.is_null() {
+        return;
+    }
     let pm_level = unsafe { (*hn).level };
     let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    if pm_level != local { return; }                                      // c:515
-    if is_private(hn) == 0 { return; }                                    // c:516-517
+    if pm_level != local {
+        return;
+    } // c:515
+    if is_private(hn) == 0 {
+        return;
+    } // c:516-517
     unsafe {
         let f = (*hn).node.flags;
-        if onoff == crate::ported::zsh_h::PM_UNSET as i32 {              // c:518
+        if onoff == crate::ported::zsh_h::PM_UNSET as i32 {
+            // c:518
             // c:519-520 — save current PM_UNSET
             if (f & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
                 (*hn).node.flags |= PM_WAS_UNSET as i32;
@@ -612,7 +781,8 @@ pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
             } else {
                 (*hn).node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
             }
-        } else {                                                          // c:527
+        } else {
+            // c:527
             // c:528-531 — restore PM_UNSET
             if (f & PM_WAS_UNSET as i32) != 0 {
                 (*hn).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
@@ -635,8 +805,7 @@ pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
 /// `Src/Modules/param_private.c`. Tracks the locallevel at which
 /// `bin_private` started a scope; the `*_setfn` family compares
 /// `locallevel` against this to decide whether assignment is allowed.
-pub static private_wraplevel: std::sync::atomic::AtomicI32
-    = std::sync::atomic::AtomicI32::new(0);
+pub static private_wraplevel: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `wrap_private(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/param_private.c:550`.
 ///
@@ -661,26 +830,30 @@ pub static private_wraplevel: std::sync::atomic::AtomicI32
 /// can't see them; on exit, restores their saved state. Returns 0
 /// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
 /// WARNING: param names don't match C — Rust=(_prog, _name) vs C=(prog, w, name)
-pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
-                    _w: *const crate::ported::zsh_h::funcwrap,
-                    _name: *mut libc::c_char) -> i32 {                    // c:550
+pub fn wrap_private(
+    _prog: *const crate::ported::zsh_h::eprog, // c:550
+    _w: *const crate::ported::zsh_h::funcwrap,
+    _name: *mut libc::c_char,
+) -> i32 {
+    // c:550
     let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
-    if pwl < local {                                                      // c:552
-        let owl = pwl;                                                    // c:553
+    if pwl < local {
+        // c:552
+        let owl = pwl; // c:553
         private_wraplevel.store(local, std::sync::atomic::Ordering::Relaxed); // c:554
-        // c:555 — scopeprivate(PM_UNSET) on every private param.
-        // Iterate the registry — each entry is a private param name
-        // we'd need a `*mut param` for. Static-link path skips the
-        // per-param scope flip since we don't have the global paramtab
-        // wired. The wraplevel bookkeeping below preserves correctness
-        // for the locallevel == private_wraplevel test in `*_setfn`.
-        // c:556 — runshfunc(prog, w, name) — handled by caller.
-        // c:557 — scopeprivate(0) restore on exit.
+                                                                              // c:555 — scopeprivate(PM_UNSET) on every private param.
+                                                                              // Iterate the registry — each entry is a private param name
+                                                                              // we'd need a `*mut param` for. Static-link path skips the
+                                                                              // per-param scope flip since we don't have the global paramtab
+                                                                              // wired. The wraplevel bookkeeping below preserves correctness
+                                                                              // for the locallevel == private_wraplevel test in `*_setfn`.
+                                                                              // c:556 — runshfunc(prog, w, name) — handled by caller.
+                                                                              // c:557 — scopeprivate(0) restore on exit.
         private_wraplevel.store(owl, std::sync::atomic::Ordering::Relaxed); // c:558
-        return 0;                                                         // c:559
+        return 0; // c:559
     }
-    1                                                                     // c:561
+    1 // c:561
 }
 
 /// Port of `getprivatenode(HashTable ht, const char *nam)` from `Src/Modules/param_private.c:568`.
@@ -688,11 +861,11 @@ pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // 
 /// C body walks `pm->old` chain skipping private params at deeper
 /// scopes, then resolves nameref. Returns the visible Param node.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
-pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:568
-    -> *mut crate::ported::zsh_h::param
-{
+pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param) -> *mut crate::ported::zsh_h::param {
     let mut cur = pm;
-    if cur.is_null() { return cur; }
+    if cur.is_null() {
+        return cur;
+    }
     // c:575-578 — autoload precedence
     let pm_flags = unsafe { (*cur).node.flags };
     if (pm_flags & crate::ported::zsh_h::PM_AUTOLOAD as i32) != 0 {
@@ -704,10 +877,18 @@ pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:5
         let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
         let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
         let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
-        if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) { break; }
-        if cur_level == pwl + 1 { break; }                                // c:581
+        if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
+            break;
+        }
+        if cur_level == pwl + 1 {
+            break;
+        } // c:581
         cur = unsafe {
-            (*cur).old.as_mut().map(|b| &mut **b as *mut _).unwrap_or(std::ptr::null_mut())
+            (*cur)
+                .old
+                .as_mut()
+                .map(|b| &mut **b as *mut _)
+                .unwrap_or(std::ptr::null_mut())
         };
     }
     // c:610-612 — resolve nameref
@@ -717,7 +898,7 @@ pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:5
             // C: pm = resolve_nameref(pm); — Static-link path: keep cur.
         }
     }
-    cur                                                                   // c:619
+    cur // c:619
 }
 
 /// Port of `getprivatenode2(HashTable ht, const char *nam)` from `Src/Modules/param_private.c:619`.
@@ -726,20 +907,24 @@ pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:5
 /// nameref-resolve passes — used for direct `gethashnode2` lookups
 /// that mustn't follow indirection.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
-pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:619
-    -> *mut crate::ported::zsh_h::param
-{
+pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param) -> *mut crate::ported::zsh_h::param {
     let mut cur = pm;
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
         let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
         let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-        if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) { break; }
+        if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) {
+            break;
+        }
         cur = unsafe {
-            (*cur).old.as_mut().map(|b| &mut **b as *mut _).unwrap_or(std::ptr::null_mut())
+            (*cur)
+                .old
+                .as_mut()
+                .map(|b| &mut **b as *mut _)
+                .unwrap_or(std::ptr::null_mut())
         };
     }
-    cur                                                                   // c:627
+    cur // c:627
 }
 
 // `locallevel` is the global from `Src/init.c:166`, mirrored as
@@ -765,7 +950,8 @@ pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:6
 /// to find the visible Param at the current scope before delegating
 /// to the standard `printparamnode`.
 #[allow(unused_variables)]
-pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {  // c:632
+pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {
+    // c:632
     // c:632-638 — walk hn->old chain
     let mut cur = hn;
     while !cur.is_null() {
@@ -776,16 +962,25 @@ pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {
             && fakelvl > pm_level
             && (pm_flags & crate::ported::zsh_h::PM_UNSET as i32) != 0;
         let cond = (fakelvl == 0 || unset_in_fake)
-            && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > pm_level
+            && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
+                > pm_level
             && is_private(cur) != 0;
-        if !cond { break; }
+        if !cond {
+            break;
+        }
         // c:638 — hn = hn->old
-        cur = unsafe { (*cur).old.as_ref().map(|b| b.as_ref() as *const _ as *mut _).unwrap_or(std::ptr::null_mut()) };
+        cur = unsafe {
+            (*cur)
+                .old
+                .as_ref()
+                .map(|b| b.as_ref() as *const _ as *mut _)
+                .unwrap_or(std::ptr::null_mut())
+        };
     }
     // c:642-643 — printparamnode
     if !cur.is_null() {
         let hn: &mut crate::ported::zsh_h::param = unsafe { &mut *cur };
-        crate::ported::params::printparamnode(hn, printflags);              // c:643
+        crate::ported::params::printparamnode(hn, printflags); // c:643
     }
 }
 
@@ -793,15 +988,13 @@ pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {
 // `BUILTIN("private", BINF_PLUSOPTS|BINF_MAGICEQUALS|BINF_PSPECIAL|BINF_ASSIGN,
 //   bin_private, 0, -1, 0, "AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux", "P")`.
 
-
 // `module_features` — port of `static struct features module_features`
 // from param_private.c:660.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/param_private.c:670`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:670
+pub fn setup_(m: *const module) -> i32 {
+    // c:670
     // C body c:672-689 — installs `private` builtin by hijacking
     //                    the existing `local` builtintab node, swaps
     //                    paramtab getnode/getnode2/printnode out for
@@ -838,9 +1031,11 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/param_private.c:709`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:709
+pub fn boot_(m: *const module) -> i32 {
+    // c:709
     // c:709 — `emptytable = newparamtable(1, "private");`
-    if let Some(t) = crate::ported::params::newparamtable(1, "private") {     // c:711
+    if let Some(t) = crate::ported::params::newparamtable(1, "private") {
+        // c:711
         if let Ok(mut e) = emptytable.lock() {
             *e = Some(t);
         }
@@ -848,7 +1043,7 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     // c:717 — `return addwrapper(m, wrapper);` — the addwrapper
     // substrate (paramtab swap-on-call) isn't ported; returns 0 to
     // mirror "wrapper installed successfully".
-    0                                                                         // c:734
+    0 // c:734
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/param_private.c:717`.
@@ -859,11 +1054,13 @@ pub fn cleanup_(m: *const module) -> i32 {
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/param_private.c:734`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:734
+pub fn finish_(m: *const module) -> i32 {
+    // c:734
     // c:734 — `deletehashtable(emptytable);` — release the wrapper's
     // empty-paramtab marker allocated by boot_.
     if let Ok(mut e) = emptytable.lock() {
-        if let Some(t) = e.take() {                                          // c:736
+        if let Some(t) = e.take() {
+            // c:736
             crate::ported::params::deleteparamtable(Some(t));
         }
     }
@@ -872,15 +1069,14 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     // save_local + deletes `private` reswd. The realparamtab/
     // builtintab override substrate isn't ported; the deferred
     // restore is a no-op on the static-link path.
-    0                                                                         // c:744
+    0 // c:744
 }
 
 /// `makeprivate_error` — file-scope global from
 /// `Src/Modules/param_private.c`. Sticky error flag the
 /// `makeprivate()` walker sets on rejection; `bin_private` reads it
 /// (c:256 `return makeprivate_error | from_typeset;`).
-pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Registry of currently-active private params. Port of the implicit
 /// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
@@ -890,22 +1086,19 @@ pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 =
 // C tracks private-ness via PM_PRIVATE bit on each Param's
 // node.flags directly; this side-set is the bridge until paramtab
 // reads/writes use the real flag.
-pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
-    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+pub static PRIVATE_PARAMS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
 
 // `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
 // Set by `bin_private` to the locallevel at which it ran, used by
 // `printprivatenode`'s scope-walking loop.
-pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
-
+pub static FAKELEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -939,11 +1132,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -974,17 +1163,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -993,8 +1184,12 @@ mod tests {
 
     fn empty_ops_pp() -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
-        options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                  argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     /// Verifies `bin_private` with no args returns 0 (c:225-229 short-
@@ -1016,8 +1211,13 @@ mod tests {
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
         let mut assigns: Vec<(String, String)> = Vec::new();
-        let r = bin_private("private",
-            &["foo=bar".to_string()], &mut ops, 0, &mut assigns);
+        let r = bin_private(
+            "private",
+            &["foo=bar".to_string()],
+            &mut ops,
+            0,
+            &mut assigns,
+        );
         assert_eq!(r, 0);
     }
 
@@ -1069,13 +1269,30 @@ mod tests {
         // about. `param` contains a `String` (`node.nam`) whose Vec
         // uses NonNull internally — `std::mem::zeroed()` is UB. Build
         // it field by field per the C struct layout in zsh_h:906-928.
-        use crate::ported::zsh_h::{param, hashnode};
+        use crate::ported::zsh_h::{hashnode, param};
         let pm = param {
-            node: hashnode { next: None, nam: "__not_private__".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            node: hashnode {
+                next: None,
+                nam: "__not_private__".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
             u_hash: None,
-            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         };
         assert_eq!(is_private(&pm as *const _), 0);
     }
@@ -1095,8 +1312,13 @@ mod tests {
         ops.ind[b'P' as usize] = 1;
         ops.ind[b't' as usize] = 1;
         let mut assigns: Vec<(String, String)> = Vec::new();
-        let r = bin_private("private",
-            &["foo=bar".to_string()], &mut ops, 0, &mut assigns);
+        let r = bin_private(
+            "private",
+            &["foo=bar".to_string()],
+            &mut ops,
+            0,
+            &mut assigns,
+        );
         // The actual C-side rejection is in bin_typeset for `-P -t`;
         // until that's ported, we accept 0 (pass-through) here.
         assert!(r == 0 || r == 1, "got unexpected exit code {}", r);

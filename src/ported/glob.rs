@@ -10,30 +10,26 @@
 //! - Brace expansion ({a,b,c}, {1..10})
 //! - Sorting and filtering matches
 
-use std::cmp::Ordering;
+use crate::ported::options::opt_state_get;
+use crate::ported::sort::zstrcmp;
 use crate::ported::utils::zerr;
-use std::collections::{HashMap, HashSet};
+use crate::ported::utils::{init_dirsav, lchdir, restoredir};
+#[allow(unused_imports)]
+use crate::ported::vm_helper::{self};
+use crate::ported::zsh_h::Bnullkeep;
+use crate::ported::zsh_h::Pound;
+use crate::ported::zsh_h::{
+    isset, BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, LISTTYPES,
+    MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
+};
+use crate::ported::zsh_h::{SUB_END, SUB_LONG, SUB_START};
+use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::ported::sort::zstrcmp;
-use crate::ported::utils::{init_dirsav, restoredir, lchdir};
-use std::path::Component;
-use crate::ported::zsh_h::{SUB_END, SUB_LONG, SUB_START};
-use crate::ported::zsh_h::{Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde};
-use crate::ported::zsh_h::Bnullkeep;
-use std::process::Command;
-use crate::ported::options::opt_state_get;
-#[allow(unused_imports)]
-use crate::ported::vm_helper::{
-    self,
-};
-use crate::ported::zsh_h::{
-    isset,
-    BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS,
-    GLOBSTARSHORT, LISTTYPES, MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
-};
 
 /// A glob match with metadata for sorting
 #[derive(Debug, Clone)]
@@ -68,15 +64,15 @@ impl GlobOptSnapshot {
     /// (`opt_state_get`) once. Returns a self-contained snapshot.
     pub fn capture() -> Self {
         Self {
-            bareglobqual:    isset(BAREGLOBQUAL),
-            braceccl:        isset(BRACECCL),
-            caseglob:        isset(CASEGLOB),
-            extendedglob:    isset(EXTENDEDGLOB),
-            globdots:        isset(GLOBDOTS),
-            globstarshort:   isset(GLOBSTARSHORT),
-            listtypes:       isset(LISTTYPES),
-            markdirs:        isset(MARKDIRS),
-            nullglob:        isset(NULLGLOB),
+            bareglobqual: isset(BAREGLOBQUAL),
+            braceccl: isset(BRACECCL),
+            caseglob: isset(CASEGLOB),
+            extendedglob: isset(EXTENDEDGLOB),
+            globdots: isset(GLOBDOTS),
+            globstarshort: isset(GLOBSTARSHORT),
+            listtypes: isset(LISTTYPES),
+            markdirs: isset(MARKDIRS),
+            nullglob: isset(NULLGLOB),
             numericglobsort: isset(NUMERICGLOBSORT),
         }
     }
@@ -97,7 +93,7 @@ thread_local! {
 // =====================================================================
 
 /// Port of `GS_NAME` from `Src/glob.c:77`. Sort by filename.
-pub const GS_NAME:  i32 = 1;                                                 // c:77
+pub const GS_NAME: i32 = 1; // c:77
 
 impl Drop for GlobOptsGuard {
     fn drop(&mut self) {
@@ -107,52 +103,52 @@ impl Drop for GlobOptsGuard {
     }
 }
 /// Port of `GS_DEPTH` from `Src/glob.c:78`. Sort by directory depth.
-pub const GS_DEPTH: i32 = 2;                                                 // c:78
+pub const GS_DEPTH: i32 = 2; // c:78
 /// Port of `GS_EXEC` from `Src/glob.c:79`. Sort via external function.
-pub const GS_EXEC:  i32 = 4;                                                 // c:79
+pub const GS_EXEC: i32 = 4; // c:79
 
 /// Port of `GS_SHIFT_BASE` from `Src/glob.c:81`. Bit position where
 /// the size/mtime/atime/ctime/links sort keys live.
-pub const GS_SHIFT_BASE: i32 = 8;                                            // c:81
+pub const GS_SHIFT_BASE: i32 = 8; // c:81
 
 /// Port of `GS_SIZE` from `Src/glob.c:83`. Sort by file size.
-pub const GS_SIZE:  i32 = GS_SHIFT_BASE;                                     // c:83
+pub const GS_SIZE: i32 = GS_SHIFT_BASE; // c:83
 /// Port of `GS_ATIME` from `Src/glob.c:84`. Sort by access time.
-pub const GS_ATIME: i32 = GS_SHIFT_BASE << 1;                                // c:84
+pub const GS_ATIME: i32 = GS_SHIFT_BASE << 1; // c:84
 /// Port of `GS_MTIME` from `Src/glob.c:85`. Sort by modification time.
-pub const GS_MTIME: i32 = GS_SHIFT_BASE << 2;                                // c:85
+pub const GS_MTIME: i32 = GS_SHIFT_BASE << 2; // c:85
 /// Port of `GS_CTIME` from `Src/glob.c:86`. Sort by inode-change time.
-pub const GS_CTIME: i32 = GS_SHIFT_BASE << 3;                                // c:86
+pub const GS_CTIME: i32 = GS_SHIFT_BASE << 3; // c:86
 /// Port of `GS_LINKS` from `Src/glob.c:87`. Sort by hard-link count.
-pub const GS_LINKS: i32 = GS_SHIFT_BASE << 4;                                // c:87
+pub const GS_LINKS: i32 = GS_SHIFT_BASE << 4; // c:87
 
 /// Port of `GS_SHIFT` from `Src/glob.c:89`. Bit-shift offset where the
 /// reverse-direction variants of the size/atime/mtime/ctime/links
 /// sort flags live.
-pub const GS_SHIFT: i32 = 5;                                                 // c:89
+pub const GS_SHIFT: i32 = 5; // c:89
 
 /// Port of `GS__SIZE`  from `Src/glob.c:90` (reverse-sort variant).
-pub const GS__SIZE:  i32 = GS_SIZE  << GS_SHIFT;                             // c:90
+pub const GS__SIZE: i32 = GS_SIZE << GS_SHIFT; // c:90
 /// Port of `GS__ATIME` from `Src/glob.c:91`.
-pub const GS__ATIME: i32 = GS_ATIME << GS_SHIFT;                             // c:91
+pub const GS__ATIME: i32 = GS_ATIME << GS_SHIFT; // c:91
 /// Port of `GS__MTIME` from `Src/glob.c:92`.
-pub const GS__MTIME: i32 = GS_MTIME << GS_SHIFT;                             // c:92
+pub const GS__MTIME: i32 = GS_MTIME << GS_SHIFT; // c:92
 /// Port of `GS__CTIME` from `Src/glob.c:93`.
-pub const GS__CTIME: i32 = GS_CTIME << GS_SHIFT;                             // c:93
+pub const GS__CTIME: i32 = GS_CTIME << GS_SHIFT; // c:93
 /// Port of `GS__LINKS` from `Src/glob.c:94`.
-pub const GS__LINKS: i32 = GS_LINKS << GS_SHIFT;                             // c:94
+pub const GS__LINKS: i32 = GS_LINKS << GS_SHIFT; // c:94
 
 /// Port of `GS_DESC` from `Src/glob.c:96`. Descending-order toggle.
-pub const GS_DESC: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT);                    // c:96
+pub const GS_DESC: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT); // c:96
 /// Port of `GS_NONE` from `Src/glob.c:97`. Marker for no-sort spec.
-pub const GS_NONE: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT + 1);                // c:97
+pub const GS_NONE: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT + 1); // c:97
 
 /// Port of `GS_NORMAL` from `Src/glob.c:99`. Forward-direction sort
 /// keys (excluding NAME/DEPTH/EXEC and the reverse variants).
 pub const GS_NORMAL: i32 = GS_SIZE | GS_ATIME | GS_MTIME | GS_CTIME | GS_LINKS; // c:99
 /// Port of `GS_LINKED` from `Src/glob.c:100`. Reverse-direction
 /// (linked) sort keys.
-pub const GS_LINKED: i32 = GS_NORMAL << GS_SHIFT;                            // c:100
+pub const GS_LINKED: i32 = GS_NORMAL << GS_SHIFT; // c:100
 
 // =====================================================================
 // TT_* — time + size unit selectors. Two parallel namespaces using
@@ -160,35 +156,35 @@ pub const GS_LINKED: i32 = GS_NORMAL << GS_SHIFT;                            // 
 // =====================================================================
 
 /// Port of `TT_DAYS` from `Src/glob.c:121`. Time qualifier in days.
-pub const TT_DAYS:    i32 = 0;                                               // c:121
+pub const TT_DAYS: i32 = 0; // c:121
 /// Port of `TT_HOURS` from `Src/glob.c:122`. Time qualifier in hours.
-pub const TT_HOURS:   i32 = 1;                                               // c:122
+pub const TT_HOURS: i32 = 1; // c:122
 /// Port of `TT_MINS` from `Src/glob.c:123`. Time qualifier in minutes.
-pub const TT_MINS:    i32 = 2;                                               // c:123
+pub const TT_MINS: i32 = 2; // c:123
 /// Port of `TT_WEEKS` from `Src/glob.c:124`. Time qualifier in weeks.
-pub const TT_WEEKS:   i32 = 3;                                               // c:124
+pub const TT_WEEKS: i32 = 3; // c:124
 /// Port of `TT_MONTHS` from `Src/glob.c:125`. Time qualifier in months.
-pub const TT_MONTHS:  i32 = 4;                                               // c:125
+pub const TT_MONTHS: i32 = 4; // c:125
 /// Port of `TT_SECONDS` from `Src/glob.c:126`. Time qualifier in seconds.
-pub const TT_SECONDS: i32 = 5;                                               // c:126
+pub const TT_SECONDS: i32 = 5; // c:126
 
 /// Port of `TT_BYTES` from `Src/glob.c:128`. Size qualifier in bytes.
-pub const TT_BYTES:        i32 = 0;                                          // c:128
+pub const TT_BYTES: i32 = 0; // c:128
 /// Port of `TT_POSIX_BLOCKS` from `Src/glob.c:129`. Size qualifier
 /// in POSIX 512-byte blocks (the `b` glob qualifier suffix).
-pub const TT_POSIX_BLOCKS: i32 = 1;                                          // c:129
+pub const TT_POSIX_BLOCKS: i32 = 1; // c:129
 /// Port of `TT_KILOBYTES` from `Src/glob.c:130`.
-pub const TT_KILOBYTES:    i32 = 2;                                          // c:130
+pub const TT_KILOBYTES: i32 = 2; // c:130
 /// Port of `TT_MEGABYTES` from `Src/glob.c:131`.
-pub const TT_MEGABYTES:    i32 = 3;                                          // c:131
+pub const TT_MEGABYTES: i32 = 3; // c:131
 /// Port of `TT_GIGABYTES` from `Src/glob.c:132`.
-pub const TT_GIGABYTES:    i32 = 4;                                          // c:132
+pub const TT_GIGABYTES: i32 = 4; // c:132
 /// Port of `TT_TERABYTES` from `Src/glob.c:133`.
-pub const TT_TERABYTES:    i32 = 5;                                          // c:133
+pub const TT_TERABYTES: i32 = 5; // c:133
 
 /// Port of `MAX_SORTS` from `Src/glob.c:164`. Maximum sort-spec keys
 /// per glob (`glob -O 'reverse(name).size'` style).
-pub const MAX_SORTS: usize = 12;                                             // c:164
+pub const MAX_SORTS: usize = 12; // c:164
 
 /// Main glob state — port of `struct globdata` from Src/glob.c:168.
 /// C zsh has a single file-static `static struct globdata curglobdata;`
@@ -201,13 +197,14 @@ pub const MAX_SORTS: usize = 12;                                             // 
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
 #[allow(non_camel_case_types)]
-pub struct globdata {                                                       // c:168
+pub struct globdata {
+    // c:168
     pub matches: Vec<gmatch>,
     pub qualifiers: Option<qualifier_set>,
-    pub pathbuf: String,                                                     // c:170 gd_pathbuf
-    pub pathpos: usize,                                                      // c:169 gd_pathpos
-    pub matchct: i32,                                                        // c:173 gd_matchct
-    pub pathbufcwd: i32,                                                     // c:175 gd_pathbufcwd
+    pub pathbuf: String, // c:170 gd_pathbuf
+    pub pathpos: usize,  // c:169 gd_pathpos
+    pub matchct: i32,    // c:173 gd_matchct
+    pub pathbufcwd: i32, // c:175 gd_pathbufcwd
 }
 
 /// Port of `struct complist` from `Src/glob.c:252`.
@@ -221,17 +218,19 @@ pub struct globdata {                                                       // c
 /// };
 /// ```
 #[allow(non_camel_case_types)]
-pub struct complist {                                                        // c:252
-    pub next: Option<Box<complist>>,                                         // c:253
-    pub pat: crate::ported::pattern::Patprog,                                // c:254
-    pub closure: i32,                                                        // c:255
-    pub follow: i32,                                                         // c:256
+pub struct complist {
+    // c:252
+    pub next: Option<Box<complist>>,          // c:253
+    pub pat: crate::ported::pattern::Patprog, // c:254
+    pub closure: i32,                         // c:255
+    pub follow: i32,                          // c:256
 }
 
 /// Add path component (from glob.c addpath lines 263-274)
 /// Append a path component to a glob path buffer.
 /// Port of `addpath(char *s, int l)` from Src/glob.c:265.
-pub fn addpath(s: &mut String, l: &str) {                          // c:265
+pub fn addpath(s: &mut String, l: &str) {
+    // c:265
     s.push_str(l);
     if !s.ends_with('/') {
         s.push('/');
@@ -241,7 +240,8 @@ pub fn addpath(s: &mut String, l: &str) {                          // c:265
 /// Stat full path (from glob.c statfullpath lines 282-347)
 /// `stat`/`lstat` a (pathbuf, name) tuple.
 /// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
-pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
+pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> {
+    // c:283
     let full = if st.is_empty() {
         if s.is_empty() {
             ".".to_string()
@@ -294,63 +294,72 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { /
 /// }
 /// ```
 #[allow(unused_variables)]
-pub fn insert(s: &str, checked: i32) {                                       // c:346
-    use std::sync::atomic::Ordering;
-    crate::ported::signals::queue_signals();                                 // c:352
+pub fn insert(s: &str, checked: i32) {
+    crate::ported::signals::queue_signals(); // c:352
 
     // c:353 — `inserts = NULL;`. Module-static; this is the loop
     // sentinel that controls the `while (!inserts || (news =...))`
     // tail loop. Set to None to mean "C's NULL → straight pass".
-    let mut inserts_local: Option<Vec<String>> = None;                       // c:353
+    let mut inserts_local: Option<Vec<String>> = None; // c:353
 
-    let mut news: String = s.to_string();                                    // c:349
-    let mut statted: i32 = 0;                                                // c:350
+    let mut news: String = s.to_string(); // c:349
+    let mut statted: i32 = 0; // c:350
 
     // c:355 — `if (gf_listtypes || gf_markdirs)`. The `gf_*` globals
     // are file-static in glob.c (no Rust port yet); read them off the
     // captured option snapshot when available.
-    let (gf_listtypes, gf_markdirs, gf_follow): (i32, i32, i32) = {          // c:355,366
+    let (gf_listtypes, gf_markdirs, gf_follow): (i32, i32, i32) = {
+        // c:355,366
         // gf_listtypes / gf_markdirs are populated by the qualifier
         // parser (c:2187-2188); without a wired flag-state, treat both
         // as zero. Tests in this file don't exercise the type-marker
         // path so the stub is correct for the current call sites.
         (0, 0, 0)
     };
-    let mut buf: Option<std::fs::Metadata> = None;                           // c:348 struct stat buf
-    let mut buf2: Option<std::fs::Metadata> = None;                          // c:348 struct stat buf2
+    let mut buf: Option<std::fs::Metadata> = None; // c:348 struct stat buf
+    let mut buf2: Option<std::fs::Metadata> = None; // c:348 struct stat buf2
 
-    let mut checked_v = checked;                                             // c:346
+    let mut checked_v = checked; // c:346
 
-    if gf_listtypes != 0 || gf_markdirs != 0 {                               // c:355
-        let st = statfullpath(s, "", true);                                  // c:358
+    if gf_listtypes != 0 || gf_markdirs != 0 {
+        // c:355
+        let st = statfullpath(s, "", true); // c:358
         match st {
             None => {
-                crate::ported::signals::unqueue_signals();                   // c:359
-                return;                                                      // c:360
+                crate::ported::signals::unqueue_signals(); // c:359
+                return; // c:360
             }
             Some(m) => {
-                buf = Some(m.clone());                                       // c:358 buf populated
-                checked_v = 1;                                               // c:363
-                statted = 1;                                                 // c:363
+                buf = Some(m.clone()); // c:358 buf populated
+                checked_v = 1; // c:363
+                statted = 1; // c:363
             }
         }
         use std::os::unix::fs::MetadataExt;
-        let mut mode = buf.as_ref().map(|b| b.mode()).unwrap_or(0);          // c:365
-        if gf_follow != 0 {                                                  // c:366
-            let is_lnk = buf.as_ref().map(|b| (b.mode() & 0o170000) == 0o120000).unwrap_or(false);
-            if !is_lnk {                                                     // c:367
-                buf2 = buf.clone();                                          // c:368 memcpy(buf2, buf)
+        let mut mode = buf.as_ref().map(|b| b.mode()).unwrap_or(0); // c:365
+        if gf_follow != 0 {
+            // c:366
+            let is_lnk = buf
+                .as_ref()
+                .map(|b| (b.mode() & 0o170000) == 0o120000)
+                .unwrap_or(false);
+            if !is_lnk {
+                // c:367
+                buf2 = buf.clone(); // c:368 memcpy(buf2, buf)
             } else {
-                buf2 = statfullpath(s, "", false);                           // c:367 statfullpath(.., 0)
-                if buf2.is_none() { buf2 = buf.clone(); }                    // c:368
+                buf2 = statfullpath(s, "", false); // c:367 statfullpath(.., 0)
+                if buf2.is_none() {
+                    buf2 = buf.clone();
+                } // c:368
             }
-            statted |= 2;                                                    // c:369
-            mode = buf2.as_ref().map(|b| b.mode()).unwrap_or(mode);          // c:370
+            statted |= 2; // c:369
+            mode = buf2.as_ref().map(|b| b.mode()).unwrap_or(mode); // c:370
         }
         let is_dir = (mode & 0o170000) == 0o040000;
-        if gf_listtypes != 0 || is_dir {                                     // c:372
-            let marker = file_type(mode);                                    // c:377
-            news.push(marker);                                               // c:377-378
+        if gf_listtypes != 0 || is_dir {
+            // c:372
+            let marker = file_type(mode); // c:377
+            news.push(marker); // c:377-378
         }
     }
 
@@ -360,40 +369,48 @@ pub fn insert(s: &str, checked: i32) {                                       // 
     // canonical caller (apply_glob_qualifiers) already dispatches the
     // filter pass. Snapshot zero for both counts so the qual-eval
     // branch is skipped here.
-    let qualct: i32 = 0;                                                     // c:381 qualct
-    let qualorct: i32 = 0;                                                   // c:381 qualorct
-    let pathbuf_local: String = String::new();                               // c:170 gd_pathbuf — caller scope
+    let qualct: i32 = 0; // c:381 qualct
+    let qualorct: i32 = 0; // c:381 qualorct
+    let pathbuf_local: String = String::new(); // c:170 gd_pathbuf — caller scope
 
-    if qualct != 0 || qualorct != 0 {                                        // c:381
+    if qualct != 0 || qualorct != 0 {
+        // c:381
         // c:385-388 — stat if not already
         if statted == 0 {
-            if statfullpath(s, "", true).is_none() {                         // c:385
-                crate::ported::signals::unqueue_signals();                   // c:386
-                return;                                                      // c:387
+            if statfullpath(s, "", true).is_none() {
+                // c:385
+                crate::ported::signals::unqueue_signals(); // c:386
+                return; // c:387
             }
         }
-        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:389
-        statted = 1;                                                         // c:391
-        // c:392-418 — for (qn = qo; qn && qn->func;) ...
-        // The qualifier-fn pointer chain (`qn->func`) isn't exposed
-        // as a free fn array yet; the apply_glob_qualifiers entry
-        // upstream of this insert call already runs every qualifier
-        // and only invokes `insert` for survivors. Skip the loop.
-    } else if checked_v == 0 {                                               // c:419
-        if statfullpath(s, "", true).is_none() {                             // c:420
-            crate::ported::signals::unqueue_signals();                       // c:421
-            return;                                                          // c:422
+        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:389
+        statted = 1; // c:391
+                     // c:392-418 — for (qn = qo; qn && qn->func;) ...
+                     // The qualifier-fn pointer chain (`qn->func`) isn't exposed
+                     // as a free fn array yet; the apply_glob_qualifiers entry
+                     // upstream of this insert call already runs every qualifier
+                     // and only invokes `insert` for survivors. Skip the loop.
+    } else if checked_v == 0 {
+        // c:419
+        if statfullpath(s, "", true).is_none() {
+            // c:420
+            crate::ported::signals::unqueue_signals(); // c:421
+            return; // c:422
         }
-        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:424
-    } else {                                                                 // c:425
-        news = crate::ported::string::dyncat(&pathbuf_local, &news);          // c:426
+        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:424
+    } else {
+        // c:425
+        news = crate::ported::string::dyncat(&pathbuf_local, &news); // c:426
     }
 
     // c:428 — `while (!inserts || (news = dupstring(*inserts++)))`
     let mut inserts_idx: usize = 0;
     loop {
-        let cur_news: String = if let Some(list) = inserts_local.as_ref() {  // c:428
-            if inserts_idx >= list.len() { break; }
+        let cur_news: String = if let Some(list) = inserts_local.as_ref() {
+            // c:428
+            if inserts_idx >= list.len() {
+                break;
+            }
             let s = crate::ported::mem::dupstring(&list[inserts_idx]);
             inserts_idx += 1;
             s
@@ -405,37 +422,45 @@ pub fn insert(s: &str, checked: i32) {                                       // 
         // c:429-433 — `if (colonmod) modify(&news, &mod, 1);`
         // The colonmod static + modify() port aren't wired; skip the
         // `(:r:s/.../.../)` colon-modifier branch.
-        let colonmod: Option<String> = None;                                 // c:429
-        if let Some(_mod_str) = colonmod {                                   // c:429
-            // modify(&cur_news, &mod_str, 1);                               // c:432
+        let colonmod: Option<String> = None; // c:429
+        if let Some(_mod_str) = colonmod { // c:429
+             // modify(&cur_news, &mod_str, 1);                               // c:432
         }
 
         // c:434-437 — late stat for normal-sort if not already statted.
-        let gf_sorts: i32 = 0;                                               // c:434 gf_sorts (file-static)
-        if statted == 0 && (gf_sorts & GS_NORMAL) != 0 {                     // c:434
-            buf = statfullpath(s, "", true);                                 // c:435
-            statted = 1;                                                     // c:436
+        let gf_sorts: i32 = 0; // c:434 gf_sorts (file-static)
+        if statted == 0 && (gf_sorts & GS_NORMAL) != 0 {
+            // c:434
+            buf = statfullpath(s, "", true); // c:435
+            statted = 1; // c:436
         }
         // c:438-445 — link-target stat for linked-sort branch.
-        if (statted & 2) == 0 && (gf_sorts & GS_LINKED) != 0 {               // c:438
-            if statted != 0 {                                                // c:439
+        if (statted & 2) == 0 && (gf_sorts & GS_LINKED) != 0 {
+            // c:438
+            if statted != 0 {
+                // c:439
                 use std::os::unix::fs::MetadataExt;
-                let is_lnk = buf.as_ref()
+                let is_lnk = buf
+                    .as_ref()
                     .map(|b| (b.mode() & 0o170000) == 0o120000)
                     .unwrap_or(false);
-                if !is_lnk {                                                 // c:440
-                    buf2 = buf.clone();                                      // c:441
+                if !is_lnk {
+                    // c:440
+                    buf2 = buf.clone(); // c:441
                 } else {
-                    buf2 = statfullpath(s, "", false);                       // c:440
-                    if buf2.is_none() { buf2 = buf.clone(); }                // c:441
+                    buf2 = statfullpath(s, "", false); // c:440
+                    if buf2.is_none() {
+                        buf2 = buf.clone();
+                    } // c:441
                 }
-            } else {                                                         // c:442
-                buf2 = statfullpath(s, "", false);                           // c:442
+            } else {
+                // c:442
+                buf2 = statfullpath(s, "", false); // c:442
                 if buf2.is_none() {
-                    buf2 = statfullpath(s, "", true);                        // c:443
+                    buf2 = statfullpath(s, "", true); // c:443
                 }
             }
-            statted |= 2;                                                    // c:444
+            statted |= 2; // c:444
         }
 
         // c:446 — `matchptr->name = news;`
@@ -443,33 +468,47 @@ pub fn insert(s: &str, checked: i32) {                                       // 
         // builds a `Vec<gmatch>` inside `globdata::matches` (the
         // caller owns the destination). The actual append happens
         // there. The structural body below mirrors the C copy.
-        let mut entry = gmatch {                                             // c:446
+        let mut entry = gmatch {
+            // c:446
             name: cur_news.clone(),
             path: std::path::PathBuf::from(&cur_news),
-            size: 0, atime: 0, mtime: 0, ctime: 0, links: 0,
-            mode: 0, uid: 0, gid: 0, dev: 0, ino: 0,
-            target_size: 0, target_atime: 0, target_mtime: 0,
-            target_ctime: 0, target_links: 0,
+            size: 0,
+            atime: 0,
+            mtime: 0,
+            ctime: 0,
+            links: 0,
+            mode: 0,
+            uid: 0,
+            gid: 0,
+            dev: 0,
+            ino: 0,
+            target_size: 0,
+            target_atime: 0,
+            target_mtime: 0,
+            target_ctime: 0,
+            target_links: 0,
             sort_strings: Vec::new(),
         };
-        if (statted & 1) != 0 {                                              // c:447
+        if (statted & 1) != 0 {
+            // c:447
             use std::os::unix::fs::MetadataExt;
             if let Some(b) = buf.as_ref() {
-                entry.size = b.size();                                       // c:448 buf.st_size
-                entry.atime = b.atime();                                     // c:449
-                entry.mtime = b.mtime();                                     // c:450
-                entry.ctime = b.ctime();                                     // c:451
-                entry.links = b.nlink();                                     // c:452
+                entry.size = b.size(); // c:448 buf.st_size
+                entry.atime = b.atime(); // c:449
+                entry.mtime = b.mtime(); // c:450
+                entry.ctime = b.ctime(); // c:451
+                entry.links = b.nlink(); // c:452
             }
         }
-        if (statted & 2) != 0 {                                              // c:463
+        if (statted & 2) != 0 {
+            // c:463
             use std::os::unix::fs::MetadataExt;
             if let Some(b) = buf2.as_ref() {
-                entry.target_size = b.size();                                // c:464
-                entry.target_atime = b.atime();                              // c:465
-                entry.target_mtime = b.mtime();                              // c:466
-                entry.target_ctime = b.ctime();                              // c:467
-                entry.target_links = b.nlink();                              // c:468
+                entry.target_size = b.size(); // c:464
+                entry.target_atime = b.atime(); // c:465
+                entry.target_mtime = b.mtime(); // c:466
+                entry.target_ctime = b.ctime(); // c:467
+                entry.target_links = b.nlink(); // c:468
             }
         }
         // c:479 — `matchptr++;`
@@ -478,16 +517,17 @@ pub fn insert(s: &str, checked: i32) {                                       // 
         // for pushing `entry` onto `globdata.matches`; this `insert`
         // entry hands the prepared `gmatch` back via a return-channel
         // when the file-static result list lands. For now consume it.
-        let _ = entry;                                                       // c:479
+        let _ = entry; // c:479
 
-        if inserts_local.is_none() {                                         // c:487
-            break;                                                           // c:488
+        if inserts_local.is_none() {
+            // c:487
+            break; // c:488
         }
         let _ = &mut cur_news;
     }
 
-    let _ = (inserts_idx, buf, buf2);                                        // suppress warnings
-    crate::ported::signals::unqueue_signals();                               // c:490
+    let _ = (inserts_idx, buf, buf2); // suppress warnings
+    crate::ported::signals::unqueue_signals(); // c:490
 }
 
 /// Top-level glob walker dispatching by pattern component.
@@ -500,28 +540,29 @@ pub fn insert(s: &str, checked: i32) {                                       // 
 /// `fs::read_dir(absolute_path)` strings instead — no chdir,
 /// no error path. Faithful port is deferred (see
 /// docs/PORT_CHECKLIST.md glob.rs entry).
-fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) { // c:500 partial port
-        if components.is_empty() {
-            return;
-        }
+fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) {
+    // c:500 partial port
+    if components.is_empty() {
+        return;
+    }
 
-        let base_path = if state.pathbuf.is_empty() {
-            ".".to_string()
-        } else {
-            state.pathbuf.clone()
-        };
+    let base_path = if state.pathbuf.is_empty() {
+        ".".to_string()
+    } else {
+        state.pathbuf.clone()
+    };
 
-        match &components[0] {
-            PatternComponent::Pattern(pat) => {
-                scan_pattern(state, &base_path, pat, &components[1..], depth);
-            }
-            PatternComponent::Recursive { follow_links } => {
-                // Match zero directories first
-                scanner(state, &components[1..], depth);
-                // Then recurse into subdirectories
-                scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
-            }
+    match &components[0] {
+        PatternComponent::Pattern(pat) => {
+            scan_pattern(state, &base_path, pat, &components[1..], depth);
         }
+        PatternComponent::Recursive { follow_links } => {
+            // Match zero directories first
+            scanner(state, &components[1..], depth);
+            // Then recurse into subdirectories
+            scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
+        }
+    }
 }
 
 // turn a string into a Complist struct:  this has path components          // c:787
@@ -529,7 +570,8 @@ fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) 
 /// C: `static Complist parsecomplist(char *instr)` — parse a multi-
 ///   segment glob path (`/foo/.../bar`) into a Complist.
 #[allow(unused_variables)]
-pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {                  // c:710
+pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {
+    // c:710
     // c:710-789 — splits on `/` and `**`/`***`, calls patcompile per
     // segment with PAT_FILE|PAT_NOGLD. Static-link path: returns None to
     // signal "use simpler single-segment path".
@@ -539,15 +581,17 @@ pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {                  // c
 /// Port of `parsepat(char *str)` from Src/glob.c:791.
 /// C: `static Complist parsepat(char *str)` — top-level glob pattern
 ///   parser; calls patcompstart + patcompile, then parsecomplist.
-pub fn parsepat(str: &str) -> Option<Vec<String>> {                         // c:791
+pub fn parsepat(str: &str) -> Option<Vec<String>> {
+    // c:791
     // c:791-820 — patcompstart() + patcompile + parsecomplist(str).
-    parsecomplist(str)                                                      // c:817
+    parsecomplist(str) // c:817
 }
 
 /// Parse qualifier (from glob.c qgetnum)
 /// Parse a numeric glob-qualifier argument.
 /// Port of `qgetnum(char **s)` from Src/glob.c:827.
-pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
+pub fn qgetnum(s: &str) -> Option<(i64, &str)> {
+    // c:827
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
         return None;
@@ -614,10 +658,22 @@ pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
     let mut who = 0u32;
     while let Some(&c) = chars.peek() {
         match c {
-            'u' => { who |= 0o4700; chars.next(); }
-            'g' => { who |= 0o2070; chars.next(); }
-            'o' => { who |= 0o1007; chars.next(); }
-            'a' => { who |= 0o7777; chars.next(); }
+            'u' => {
+                who |= 0o4700;
+                chars.next();
+            }
+            'g' => {
+                who |= 0o2070;
+                chars.next();
+            }
+            'o' => {
+                who |= 0o1007;
+                chars.next();
+            }
+            'a' => {
+                who |= 0o7777;
+                chars.next();
+            }
             _ => break,
         }
     }
@@ -638,12 +694,30 @@ pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
     let mut perm = 0u32;
     while let Some(&c) = chars.peek() {
         match c {
-            'r' => { perm |= 0o444; chars.next(); }
-            'w' => { perm |= 0o222; chars.next(); }
-            'x' => { perm |= 0o111; chars.next(); }
-            'X' => { perm |= 0o111; chars.next(); } // Conditional execute
-            's' => { perm |= 0o6000; chars.next(); }
-            't' => { perm |= 0o1000; chars.next(); }
+            'r' => {
+                perm |= 0o444;
+                chars.next();
+            }
+            'w' => {
+                perm |= 0o222;
+                chars.next();
+            }
+            'x' => {
+                perm |= 0o111;
+                chars.next();
+            }
+            'X' => {
+                perm |= 0o111;
+                chars.next();
+            } // Conditional execute
+            's' => {
+                perm |= 0o6000;
+                chars.next();
+            }
+            't' => {
+                perm |= 0o1000;
+                chars.next();
+            }
             _ => break,
         }
     }
@@ -671,42 +745,91 @@ pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
 ///                       (GS__SIZE / GS__ATIME / …)
 ///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
 /// WARNING: param names don't match C — Rust=(b, specs, numeric_sort) vs C=(a, b)
-pub fn gmatchcmp(                                                            // c:936
-                                                                             a: &gmatch,
-                                                                             b: &gmatch,
-                                                                             specs: &[i32],
-                                                                             numeric_sort: bool,
+pub fn gmatchcmp(
+    // c:936
+    a: &gmatch,
+    b: &gmatch,
+    specs: &[i32],
+    numeric_sort: bool,
 ) -> Ordering {
-    for &tp in specs {                                                       // c:943
-        let key = tp & !GS_DESC;                                             // c:944 s->tp & ~GS_DESC
+    for &tp in specs {
+        // c:943
+        let key = tp & !GS_DESC; // c:944 s->tp & ~GS_DESC
         let follow = (key & GS_LINKED) != 0;
         let key_unshifted = if follow { key >> GS_SHIFT } else { key };
-        let cmp = if key_unshifted == GS_NAME {                              // c:945
-            zstrcmp(&a.name, &b.name,
-                    if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
-        } else if key_unshifted == GS_DEPTH {                                // c:949
-            a.path.components().count().cmp(&b.path.components().count())
-        } else if key_unshifted == GS_SIZE {                                 // c:985
-            if follow { a.target_size.cmp(&b.target_size) } else { a.size.cmp(&b.size) }
-        } else if key_unshifted == GS_ATIME {                                // c:988
-            if follow { b.target_atime.cmp(&a.target_atime) } else { b.atime.cmp(&a.atime) }
-        } else if key_unshifted == GS_MTIME {                                // c:995
-            if follow { b.target_mtime.cmp(&a.target_mtime) } else { b.mtime.cmp(&a.mtime) }
+        let cmp = if key_unshifted == GS_NAME {
+            // c:945
+            zstrcmp(
+                &a.name,
+                &b.name,
+                if numeric_sort {
+                    crate::zsh_h::SORTIT_NUMERICALLY as u32
+                } else {
+                    0
+                },
+            )
+        } else if key_unshifted == GS_DEPTH {
+            // c:949
+            a.path
+                .components()
+                .count()
+                .cmp(&b.path.components().count())
+        } else if key_unshifted == GS_SIZE {
+            // c:985
+            if follow {
+                a.target_size.cmp(&b.target_size)
+            } else {
+                a.size.cmp(&b.size)
+            }
+        } else if key_unshifted == GS_ATIME {
+            // c:988
+            if follow {
+                b.target_atime.cmp(&a.target_atime)
+            } else {
+                b.atime.cmp(&a.atime)
+            }
+        } else if key_unshifted == GS_MTIME {
+            // c:995
+            if follow {
+                b.target_mtime.cmp(&a.target_mtime)
+            } else {
+                b.mtime.cmp(&a.mtime)
+            }
         } else if key_unshifted == GS_CTIME {
-            if follow { b.target_ctime.cmp(&a.target_ctime) } else { b.ctime.cmp(&a.ctime) }
+            if follow {
+                b.target_ctime.cmp(&a.target_ctime)
+            } else {
+                b.ctime.cmp(&a.ctime)
+            }
         } else if key_unshifted == GS_LINKS {
-            if follow { b.target_links.cmp(&a.target_links) } else { b.links.cmp(&a.links) }
-        } else if key_unshifted == GS_EXEC {                                 // c:974
+            if follow {
+                b.target_links.cmp(&a.target_links)
+            } else {
+                b.links.cmp(&a.links)
+            }
+        } else if key_unshifted == GS_EXEC {
+            // c:974
             let idx = ((key as u32) >> 16) as usize;
             let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
             let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-            crate::ported::sort::zstrcmp(asx, bsx,
-                if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
+            crate::ported::sort::zstrcmp(
+                asx,
+                bsx,
+                if numeric_sort {
+                    crate::zsh_h::SORTIT_NUMERICALLY as u32
+                } else {
+                    0
+                },
+            )
         } else {
-            Ordering::Equal                                                  // GS_NONE / unknown
+            Ordering::Equal // GS_NONE / unknown
         };
         if cmp != Ordering::Equal {
-            return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
+            return if (tp & GS_DESC) != 0 {
+                cmp.reverse()
+            } else {
+                cmp
+            };
         }
     }
     Ordering::Equal
@@ -720,7 +843,6 @@ pub fn gmatchcmp(                                                            // 
 // in place and returns int; this Rust version returned `Vec<Redirect>`
 // and operated on the duplicate Redirect type. Port `xpandredir`
 // freshly against `parse::Redirect` when an actual caller appears.
-
 
 // ============================================================================
 // Exec string for sorting (from glob.c glob_exec_string)
@@ -753,14 +875,17 @@ pub fn gmatchcmp(                                                            // 
 /// emulate C's `*sp = tt + plus;` pointer advance via slice
 /// indexing.
 /// WARNING: param names don't match C — Rust=(s, plus) vs C=(sp)
-pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> { // c:1085
-    if plus_form {                                                            // c:1090
+pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
+    // c:1085
+    if plus_form {
+        // c:1090
         // c:1092 — `tt = itype_end(s, IIDENT, 0);`
         // c:1093-1097 — `if (tt == s) { zerr("missing identifier after `+'"); return NULL; }`
         let tt = crate::ported::utils::itype_end(s, false);
-        if tt == 0 {                                                          // c:1093
-            crate::ported::utils::zerr("missing identifier after `+'");       // c:1095
-            return None;                                                      // c:1096
+        if tt == 0 {
+            // c:1093
+            crate::ported::utils::zerr("missing identifier after `+'"); // c:1095
+            return None; // c:1096
         }
         // c:1109 — `sdata = dupstring(s + plus);` (plus=0 here).
         // c:1113 — `*sp = tt + plus;` → advance offset is `tt`.
@@ -774,8 +899,8 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> { /
             Some((_del, content, rest)) => {
                 // c:1100-1104 — `if (!*tt) { zerr("missing end of string"); return NULL; }`
                 if rest.is_empty() && content.is_empty() {
-                    crate::ported::utils::zerr("missing end of string");      // c:1102
-                    return None;                                              // c:1103
+                    crate::ported::utils::zerr("missing end of string"); // c:1102
+                    return None; // c:1103
                 }
                 // c:1109-1115 — `sdata = dupstring(s + plus); ... *sp = tt + plus;`.
                 // Advance offset: bytes consumed of `s` = s.len() - rest.len().
@@ -783,7 +908,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> { /
                 Some((content, advance))
             }
             None => {
-                crate::ported::utils::zerr("missing end of string");          // c:1102
+                crate::ported::utils::zerr("missing end of string"); // c:1102
                 None
             }
         }
@@ -794,11 +919,13 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> { /
 /// C: `static void insert_glob_match(LinkList list, LinkNode next,
 ///     char *data)` — insert `data` into `list` at position `next`,
 ///     respecting `gf_pre_words`/`gf_post_words` injection.
-pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // c:1125
+pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {
+    // c:1125
     // c:1125-1155 — for each gf_pre_words entry, insertlinknode; then
     // insertlinknode(list, next, data); then gf_post_words.
-    if next <= list.len() {                                                  // c:1140
-        list.insert(next, data.to_string());                                 // c:1158
+    if next <= list.len() {
+        // c:1140
+        list.insert(next, data.to_string()); // c:1158
     } else {
         list.push(data.to_string());
     }
@@ -810,12 +937,17 @@ pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // 
 ///   Sets `*sp` to the qualifier start position. Returns 0 if not a
 ///   qualifier, non-zero if it is.
 /// WARNING: param names don't match C — Rust=(str, sl, _nobareglob) vs C=(str, sl, nobareglob, sp)
-pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // c:1158
-                     sp: &mut Option<usize>) -> i32 {
+pub fn checkglobqual(
+    str: &str,
+    sl: i32,
+    _nobareglob: i32, // c:1158
+    sp: &mut Option<usize>,
+) -> i32 {
     // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
     let bytes = str.as_bytes();
     let sl = sl as usize;
-    if sl == 0 || bytes[sl - 1] != b')' {                                    // c:1164
+    if sl == 0 || bytes[sl - 1] != b')' {
+        // c:1164
         return 0;
     }
     // c:1167-1212 — walk backwards counting parens to find matching `(`.
@@ -829,13 +961,13 @@ pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // 
                 paren -= 1;
                 if paren == 0 {
                     *sp = Some(i);
-                    return 1;                                                // c:1209
+                    return 1; // c:1209
                 }
             }
             _ => {}
         }
     }
-    0                                                                        // c:1212
+    0 // c:1212
 }
 
 /// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214.
@@ -849,8 +981,11 @@ pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // 
 /// downstream prefork pass sees one LinkNode per file. Mirrors the
 /// `insert_glob_match` walk at glob.c:1125.
 #[allow(unused_variables)]
-pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c:1214
-    if np >= list.len() { return; }
+pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
+    // c:1214
+    if np >= list.len() {
+        return;
+    }
     let pattern = list[np].clone();
     let matches = glob_path(&pattern);
     if matches.is_empty() {
@@ -872,7 +1007,8 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c
 /// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
 /// `c`/`l`/`s`/`p`/etc.).
 /// Port of `file_type(mode_t filemode)` from Src/glob.c:2018.
-pub fn file_type(filemode: u32) -> char {                                        // c:2018
+pub fn file_type(filemode: u32) -> char {
+    // c:2018
     let fmt = filemode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
         '#'
@@ -905,7 +1041,8 @@ pub fn file_type(filemode: u32) -> char {                                       
 /// Check whether a string has brace-expansion `{a,b}` content.
 /// Port of `hasbraces(char *str)` from Src/glob.c:2042.
 /// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(str)
-pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
+pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
+    // c:2042
     let mut depth = 0;
     let mut has_comma = false;
     let mut has_dotdot = false;
@@ -1002,7 +1139,8 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
 /// Port of `xpandbraces(LinkList list, LinkNode *np)` from Src/glob.c:2276 — same
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
 /// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(list, np)
-pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
+pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
+    // c:2276
     if !hasbraces(s, brace_ccl) {
         return vec![s.to_string()];
     }
@@ -1044,11 +1182,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // 
                     }
                 }
                 ',' if depth == 1 => comma_positions.push(i - start - 1),
-                '.' if depth == 1
-                    && i + 1 < len
-                    && chars[i + 1] == '.'
-                    && dotdot_pos.is_none() =>
-                {
+                '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' && dotdot_pos.is_none() => {
                     dotdot_pos = Some(i - start - 1);
                 }
                 _ => {}
@@ -1080,7 +1214,8 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // 
 /// Port of `matchpat(char *a, char *b)` from Src/glob.c:2514 — same
 /// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
 /// WARNING: param names don't match C — Rust=(pattern, text, extended, case_sensitive) vs C=(a, b)
-pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
+pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
+    // c:2514
     let pat = if case_sensitive {
         pattern.to_string()
     } else {
@@ -1147,12 +1282,13 @@ pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
 /// out-pointer); compgetmatch/igetmatch hold the real prepare +
 /// match-and-replace logic.
 pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
-    let (prep_pat, prep_fl) = match compgetmatch(pat) {                      // c:2713
+    let (prep_pat, prep_fl) = match compgetmatch(pat) {
+        // c:2713
         Some(t) => t,
-        None => return sp.to_string(),                                       // c:2713 return 1
+        None => return sp.to_string(), // c:2713 return 1
     };
     let mut buf = sp.to_string();
-    igetmatch(&mut buf, &prep_pat, prep_fl | fl, n, replstr);                // c:2715
+    igetmatch(&mut buf, &prep_pat, prep_fl | fl, n, replstr); // c:2715
     buf
 }
 
@@ -1186,17 +1322,23 @@ pub fn getmatcharr(
 /// position pairs; the Rust port currently lacks a repllistp out-
 /// channel on `igetmatch`, so this entry mirrors the C structure
 /// and returns the igetmatch status.
-pub fn getmatchlist(sp: &mut String, p: &str) -> i32 {                        // c:2749
-    use crate::ported::zsh_h::{SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_SUBSTR};   // c:2761
-    igetmatch(sp, p, SUB_LONG | SUB_GLOBAL | SUB_SUBSTR | SUB_LIST,           // c:2761
-              0, None)                                                        // c:2762
+pub fn getmatchlist(sp: &mut String, p: &str) -> i32 {
+    // c:2749
+    use crate::ported::zsh_h::{SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_SUBSTR}; // c:2761
+    igetmatch(
+        sp,
+        p,
+        SUB_LONG | SUB_GLOBAL | SUB_SUBSTR | SUB_LIST, // c:2761
+        0,
+        None,
+    ) // c:2762
 }
 
 /// File-static `static int in_expandredir = 0;` from `Src/glob.c:1206`
 /// — set during the `globlist` call inside `xpandredir` so the glob
 /// pipeline knows the result feeds a redirection (suppresses the
 /// "no matches" warning in the caller's normal flow).
-pub static IN_EXPANDREDIR: std::sync::atomic::AtomicI32 =                    // c:1206
+pub static IN_EXPANDREDIR: std::sync::atomic::AtomicI32 = // c:1206
     std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `int xpandredir(struct redir *fn, LinkList redirtab)`
@@ -1208,21 +1350,29 @@ pub static IN_EXPANDREDIR: std::sync::atomic::AtomicI32 =                    // 
 /// to `redirtab`. Returns 1 if multios produced multiple entries, 0
 /// otherwise.
 /// WARNING: param names don't match C — Rust=(fn_, redirtab) vs C=(fn, redirtab)
-pub fn xpandredir(fn_: &mut crate::ported::zsh_h::redir,                    // c:2150
-                  redirtab: &mut Vec<crate::ported::zsh_h::redir>) -> i32 {
-    use crate::ported::zsh_h::{REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_CLOSE, REDIR_ERRWRITE, IS_DASH, isset, MULTIOS, PREFORK_SINGLE};
+pub fn xpandredir(
+    fn_: &mut crate::ported::zsh_h::redir, // c:2150
+    redirtab: &mut Vec<crate::ported::zsh_h::redir>,
+) -> i32 {
+    use crate::ported::zsh_h::{
+        isset, IS_DASH, MULTIOS, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN,
+        REDIR_MERGEOUT,
+    };
     use std::sync::atomic::Ordering::SeqCst;
-    let mut ret = 0;                                                         // c:2156
-    let name = match fn_.name.as_deref() {                                   // c:2160 init_list1(fake, fn->name)
+    let mut ret = 0; // c:2156
+    let name = match fn_.name.as_deref() {
+        // c:2160 init_list1(fake, fn->name)
         Some(n) => n.to_string(),
         None => return 0,
     };
     let mut fake: crate::ported::subst::LinkList = crate::ported::linklist::LinkList::new();
-    fake.push_back(name);                                                    // c:2160
+    fake.push_back(name); // c:2160
     let mut rf = 0i32;
-    crate::ported::subst::prefork(&mut fake,                                 // c:2162 prefork
+    crate::ported::subst::prefork(
+        &mut fake, // c:2162 prefork
         if isset(MULTIOS) { 0 } else { PREFORK_SINGLE },
-        &mut rf);
+        &mut rf,
+    );
     // c:2164 — `if (!errflag && isset(MULTIOS))`. C uses LOGICAL NOT
     // on `errflag` (an `int`), so the condition is "errflag is zero".
     // The previous Rust port wrote `!errflag.load(...) != 0` which is
@@ -1232,62 +1382,79 @@ pub fn xpandredir(fn_: &mut crate::ported::zsh_h::redir,                    // c
     // globlist call ran even when errflag was set, papering over
     // the abort path that C uses to bail early on prior errors.
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) == 0
-        && isset(MULTIOS) {                                                  // c:2164
-        IN_EXPANDREDIR.store(1, SeqCst);                                     // c:2165
-        crate::ported::subst::globlist(&mut fake, 0);                        // c:2166
-        IN_EXPANDREDIR.store(0, SeqCst);                                     // c:2167
+        && isset(MULTIOS)
+    {
+        // c:2164
+        IN_EXPANDREDIR.store(1, SeqCst); // c:2165
+        crate::ported::subst::globlist(&mut fake, 0); // c:2166
+        IN_EXPANDREDIR.store(0, SeqCst); // c:2167
     }
-    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 { return 0; }                     // c:2169
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+        return 0;
+    } // c:2169
     let names: Vec<String> = fake.iter().cloned().collect();
-    if names.len() == 1 {                                                    // c:2171 nonempty(&fake) && !nextnode(firstnode)
-        let s = crate::lex::untokenize(&names[0]);                           // c:2174 untokenize(s)
-        fn_.name = Some(s.clone());                                          // c:2173 fn->name = s
-        if fn_.typ == REDIR_MERGEIN || fn_.typ == REDIR_MERGEOUT {           // c:2175
+    if names.len() == 1 {
+        // c:2171 nonempty(&fake) && !nextnode(firstnode)
+        let s = crate::lex::untokenize(&names[0]); // c:2174 untokenize(s)
+        fn_.name = Some(s.clone()); // c:2173 fn->name = s
+        if fn_.typ == REDIR_MERGEIN || fn_.typ == REDIR_MERGEOUT {
+            // c:2175
             let bytes = s.as_bytes();
-            if bytes.len() == 1 && IS_DASH(bytes[0] as char) {               // c:2176-2177 IS_DASH(s[0]) && !s[1]
+            if bytes.len() == 1 && IS_DASH(bytes[0] as char) {
+                // c:2176-2177 IS_DASH(s[0]) && !s[1]
                 fn_.typ = REDIR_CLOSE;
-            } else if bytes.len() == 1 && bytes[0] == b'p' {                 // c:2178 s[0]=='p' && !s[1]
+            } else if bytes.len() == 1 && bytes[0] == b'p' {
+                // c:2178 s[0]=='p' && !s[1]
                 fn_.fd2 = -2;
             } else {
                 let mut i = 0;
-                while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }  // c:2181 idigit
-                if i == bytes.len() && i > 0 {                               // c:2183 !*s && s > fn->name
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                } // c:2181 idigit
+                if i == bytes.len() && i > 0 {
+                    // c:2183 !*s && s > fn->name
                     fn_.fd2 = crate::ported::utils::zstrtol(&s, 10).0 as i32; // c:2184 zstrtol(.., 10)
-                } else if fn_.typ == REDIR_MERGEIN {                         // c:2185
-                    crate::ported::utils::zerr("file number expected");      // c:2186
+                } else if fn_.typ == REDIR_MERGEIN {
+                    // c:2185
+                    crate::ported::utils::zerr("file number expected"); // c:2186
                 } else {
-                    fn_.typ = REDIR_ERRWRITE;                                // c:2188
+                    fn_.typ = REDIR_ERRWRITE; // c:2188
                 }
             }
         }
-    } else if fn_.typ == REDIR_MERGEIN {                                     // c:2192
-        crate::ported::utils::zerr("file number expected");                  // c:2193
+    } else if fn_.typ == REDIR_MERGEIN {
+        // c:2192
+        crate::ported::utils::zerr("file number expected"); // c:2193
     } else {
-        if fn_.typ == REDIR_MERGEOUT { fn_.typ = REDIR_ERRWRITE; }           // c:2195
-        for nam in names {                                                   // c:2196 while ((nam = ugetnode(&fake)))
-            let mut ff = fn_.clone();                                        // c:2199-2200 zhalloc + *ff = *fn
-            ff.name = Some(nam);                                             // c:2201 ff->name = nam
-            redirtab.push(ff);                                               // c:2202 addlinknode(redirtab, ff)
-            ret = 1;                                                         // c:2203
+        if fn_.typ == REDIR_MERGEOUT {
+            fn_.typ = REDIR_ERRWRITE;
+        } // c:2195
+        for nam in names {
+            // c:2196 while ((nam = ugetnode(&fake)))
+            let mut ff = fn_.clone(); // c:2199-2200 zhalloc + *ff = *fn
+            ff.name = Some(nam); // c:2201 ff->name = nam
+            redirtab.push(ff); // c:2202 addlinknode(redirtab, ff)
+            ret = 1; // c:2203
         }
     }
-    ret                                                                      // c:2206
+    ret // c:2206
 }
 
 /// Port of `freerepldata(void *ptr)` from Src/glob.c:2766.
 /// C: `static void freerepldata(void *ptr)` →
 ///   `zfree(ptr, sizeof(struct repldata));`
 #[allow(unused_variables)]
-pub fn freerepldata(ptr: *mut std::ffi::c_void) {                           // c:2766
-    // Rust drop covers the equivalent.
+pub fn freerepldata(ptr: *mut std::ffi::c_void) { // c:2766
+                                                  // Rust drop covers the equivalent.
 }
 
 /// Port of `freematchlist(LinkList repllist)` from Src/glob.c:2773.
 /// C: `void freematchlist(LinkList repllist)` →
 ///   `freelinklist(repllist, freerepldata);`
-pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
+pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {
+    // c:2773
     if let Some(l) = repllist {
-        l.clear();                                                           // c:2776
+        l.clear(); // c:2776
     }
 }
 
@@ -1315,8 +1482,13 @@ pub fn set_pat_end(p: &str, null_me: usize) -> String {
 ///     matcher; modifies `*sp` in place, optionally collects match
 ///     positions into `*repllistp`.
 /// WARNING: param names don't match C — Rust=(sp, p, fl, n, replstr) vs C=(sp, p, fl, n, replstr, repllistp)
-pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // c:2832
-                 replstr: Option<&str>) -> i32 {
+pub fn igetmatch(
+    sp: &mut String,
+    p: &str,
+    fl: i32,
+    _n: i32, // c:2832
+    replstr: Option<&str>,
+) -> i32 {
     use crate::ported::zsh_h::{SUB_ALL, SUB_LIST, SUB_MATCH, SUB_REST, SUB_SUBSTR};
 
     // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-
@@ -1332,30 +1504,36 @@ pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // 
     let len = chars.len();
 
     // c:2887-2898 — SUB_ALL: entire-string match flag.
-    if (fl & SUB_ALL) != 0 {                                                  // c:2887
-        let i = matchpat(p, sp, true, true);                                  // c:2888 pattrylen
-        if !i {                                                               // c:2889
+    if (fl & SUB_ALL) != 0 {
+        // c:2887
+        let i = matchpat(p, sp, true, true); // c:2888 pattrylen
+        if !i {
+            // c:2889
             // c:2890-2893 — no match: clear replstr.
-            if (fl & SUB_MATCH) != 0 {                                        // c:2895
+            if (fl & SUB_MATCH) != 0 {
+                // c:2895
                 *sp = String::new();
-                return 0;                                                     // c:2896
+                return 0; // c:2896
             }
-            return 1;                                                         // c:2897
+            return 1; // c:2897
         }
-        if let Some(r) = replstr {                                            // c:2894 get_match_ret
+        if let Some(r) = replstr {
+            // c:2894 get_match_ret
             *sp = r.to_string();
         }
-        if sp.is_empty() && (fl & SUB_REST) != 0 && i {                       // c:2895
-            return 0;                                                         // c:2896
+        if sp.is_empty() && (fl & SUB_REST) != 0 && i {
+            // c:2895
+            return 0; // c:2896
         }
-        return 1;                                                             // c:2897
+        return 1; // c:2897
     }
 
     if len == 0 {
         return 1;
     }
     // c:2998-3041 — SUB_LIST: collect all match offset pairs.
-    if (fl & SUB_LIST) != 0 {                                                 // c:2998
+    if (fl & SUB_LIST) != 0 {
+        // c:2998
         // Walk all substrings; collect (start, end) pairs the caller
         // can read via subsequent `getmatchlist` invocations. Without
         // a `repllistp` out-channel through the Rust signature, we
@@ -1363,21 +1541,32 @@ pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // 
         // collection point is the caller-supplied LinkList that the
         // C body populates at c:3000+. Defer until the out-vec lands.
         let mut found = false;
-        for start in 0..len {                                                 // c:3008
-            for end in (start + 1)..=len {                                    // c:3009
+        for start in 0..len {
+            // c:3008
+            for end in (start + 1)..=len {
+                // c:3009
                 let s2: String = chars[start..end].iter().collect();
-                if matchpat(p, &s2, true, true) {                             // c:3010
+                if matchpat(p, &s2, true, true) {
+                    // c:3010
                     found = true;
-                    if shortest { break; }                                    // c:3011 SUB_LONG vs short
+                    if shortest {
+                        break;
+                    } // c:3011 SUB_LONG vs short
                 }
             }
-            if !substr_mode { break; }
+            if !substr_mode {
+                break;
+            }
         }
         return if found { 0 } else { 1 };
     }
 
     let (match_start, match_end) = if anchored_start && anchored_end {
-        if matchpat(p, sp, true, true) { (0, len) } else { return 1; }
+        if matchpat(p, sp, true, true) {
+            (0, len)
+        } else {
+            return 1;
+        }
     } else if anchored_start {
         let mut best_end = 0;
         for end in 1..=len {
@@ -1393,7 +1582,11 @@ pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // 
                 best_end = end;
             }
         }
-        if best_end > 0 { (0, best_end) } else { return 1; }
+        if best_end > 0 {
+            (0, best_end)
+        } else {
+            return 1;
+        }
     } else if anchored_end {
         let mut best_start = len;
         for start in (0..len).rev() {
@@ -1409,7 +1602,11 @@ pub fn igetmatch(sp: &mut String, p: &str, fl: i32, _n: i32,                 // 
                 best_start = start;
             }
         }
-        if best_start < len { (best_start, len) } else { return 1; }
+        if best_start < len {
+            (best_start, len)
+        } else {
+            return 1;
+        }
     } else {
         for start in 0..len {
             for end in (start + 1)..=len {
@@ -1454,19 +1651,22 @@ const ZTOKENS: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
 
 /// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
 /// `Src/glob.c:3548`. One-line C delegation: `zshtokenize(s, 0)`.
-pub fn tokenize(s: &mut String) {                                            // c:3548
-    zshtokenize(s, 0);                                                       // c:3552
+pub fn tokenize(s: &mut String) {
+    // c:3548
+    zshtokenize(s, 0); // c:3552
 }
 
 /// Tokenize for shell — port of `shtokenize(char *s)` from
 /// `Src/glob.c:3563`. Builds flags from SHGLOB option then delegates
 /// to `zshtokenize`.
-pub fn shtokenize(s: &mut String) {                                          // c:3563
-    let mut flags = crate::ported::zsh_h::ZSHTOK_SUBST;                      // c:3567
-    if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHGLOB) {           // c:3568
-        flags |= crate::ported::zsh_h::ZSHTOK_SHGLOB;                        // c:3569
+pub fn shtokenize(s: &mut String) {
+    // c:3563
+    let mut flags = crate::ported::zsh_h::ZSHTOK_SUBST; // c:3567
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHGLOB) {
+        // c:3568
+        flags |= crate::ported::zsh_h::ZSHTOK_SHGLOB; // c:3569
     }
-    zshtokenize(s, flags);                                                   // c:3570
+    zshtokenize(s, flags); // c:3570
 }
 
 /// Port of `zshtokenize(char *s, int flags)` from `Src/glob.c:3575`.
@@ -1474,14 +1674,17 @@ pub fn shtokenize(s: &mut String) {                                          // 
 /// byte token from the `ZTOKENS` table; respects ZSHTOK_SUBST (use
 /// Bnullkeep for escaped tokens) and ZSHTOK_SHGLOB (don't tokenize
 /// `<` / `(` / `|` / `)`).
-pub fn zshtokenize(s: &mut String, flags: i32) {                             // c:3575
-    use crate::ported::zsh_h::{Bnull, Bnullkeep, Inang, Outang,
-        ZSHTOK_SUBST, ZSHTOK_SHGLOB, META};
+pub fn zshtokenize(s: &mut String, flags: i32) {
+    // c:3575
+    use crate::ported::zsh_h::{
+        Bnull, Bnullkeep, Inang, Outang, META, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
+    };
     let ztokens: Vec<char> = ZTOKENS.chars().collect();
     let mut chars: Vec<char> = s.chars().collect();
-    let mut bslash = false;                                                  // c:3578
+    let mut bslash = false; // c:3578
     let mut i = 0;
-    while i < chars.len() {                                                  // c:3580 for (; *s; s++)
+    while i < chars.len() {
+        // c:3580 for (; *s; s++)
         let c = chars[i];
         match c {
             x if x == META => {                                              // c:3583 case Meta
@@ -1558,7 +1761,7 @@ pub fn zshtokenize(s: &mut String, flags: i32) {                             // 
             }
             _ => {}
         }
-        bslash = false;                                                       // c:3646
+        bslash = false; // c:3646
         i += 1;
     }
     *s = chars.into_iter().collect();
@@ -1586,36 +1789,40 @@ pub fn zshtokenize(s: &mut String, flags: i32) {                             // 
 ///   - Didn't strip Snull/Dnull/Bnull/Nularg — those inulls
 ///     stayed in the output, polluting downstream processing.
 ///   - Didn't emit Nularg sentinel for empty post-strip strings.
-pub fn remnulargs(s: &mut String) {                                          // c:3649
+pub fn remnulargs(s: &mut String) {
+    // c:3649
     use crate::ported::zsh_h::{Bnull, Bnullkeep, Dnull, Nularg, Snull};
-    if s.is_empty() {                                                         // c:3654
+    if s.is_empty() {
+        // c:3654
         return;
     }
     // c:3656 `inull(c)` predicate: Snull / Dnull / Bnull / Bnullkeep / Nularg.
-    let is_inull = |c: char| {
-        c == Snull || c == Dnull || c == Bnull
-            || c == Bnullkeep || c == Nularg
-    };
+    let is_inull =
+        |c: char| c == Snull || c == Dnull || c == Bnull || c == Bnullkeep || c == Nularg;
     let src: Vec<char> = s.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let mut i = 0usize;
     // c:3656 — SCAN phase: copy chars, skip standalone Bnullkeep.
     while i < src.len() {
         let c = src[i];
-        if c == Bnullkeep {                                                   // c:3657 continue
+        if c == Bnullkeep {
+            // c:3657 continue
             i += 1;
             continue;
         }
-        if is_inull(c) {                                                      // c:3663 inull(c)
+        if is_inull(c) {
+            // c:3663 inull(c)
             // c:3664+ — COPY phase: walk the rest, fold Bnullkeep
             // to `\\`, strip other inulls.
             i += 1;
             while i < src.len() {
                 let d = src[i];
-                if d == Bnullkeep {                                           // c:3666
-                    out.push('\\');                                           // c:3667
-                } else if !is_inull(d) {                                      // c:3668
-                    out.push(d);                                              // c:3669
+                if d == Bnullkeep {
+                    // c:3666
+                    out.push('\\'); // c:3667
+                } else if !is_inull(d) {
+                    // c:3668
+                    out.push(d); // c:3669
                 }
                 i += 1;
             }
@@ -1636,116 +1843,138 @@ pub fn remnulargs(s: &mut String) {                                          // 
 /// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
 ///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
 #[allow(unused_variables)]
-pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 { // c:3688
-    (buf.st_dev as i64 == dv) as i32                                          // c:3697
+pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 {
+    // c:3688
+    (buf.st_dev as i64 == dv) as i32 // c:3697
 }
 
 /// Port of `qualnlink(UNUSED(char *name), struct stat *buf, off_t ct, UNUSED(char *dummy))` from Src/glob.c:3697.
 /// C: ternary on `g_range`: < / > / == against `st_nlink`.
 #[allow(unused_variables)]
-pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 { // c:3697
+pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 {
+    // c:3697
     let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
-    let nl = buf.st_nlink as i64;                                            // c:3708
-    if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
+    let nl = buf.st_nlink as i64; // c:3708
+    if g < 0 {
+        (nl < ct) as i32
+    } else if g > 0 {
+        (nl > ct) as i32
+    } else {
+        (nl == ct) as i32
+    }
 }
 
 /// Port of `qualuid(UNUSED(char *name), struct stat *buf, off_t uid, UNUSED(char *dummy))` from Src/glob.c:3708.
 /// C: `return buf->st_uid == uid;`
 #[allow(unused_variables)]
-pub fn qualuid(name: &str, buf: &libc::stat, uid: i64, dummy: &str) -> i32 { // c:3708
-    (buf.st_uid as i64 == uid) as i32                                        // c:3717
+pub fn qualuid(name: &str, buf: &libc::stat, uid: i64, dummy: &str) -> i32 {
+    // c:3708
+    (buf.st_uid as i64 == uid) as i32 // c:3717
 }
 
 /// Port of `qualgid(UNUSED(char *name), struct stat *buf, off_t gid, UNUSED(char *dummy))` from Src/glob.c:3717.
 /// C: `return buf->st_gid == gid;`
 #[allow(unused_variables)]
-pub fn qualgid(name: &str, buf: &libc::stat, gid: i64, dummy: &str) -> i32 { // c:3717
-    (buf.st_gid as i64 == gid) as i32                                        // c:3726
+pub fn qualgid(name: &str, buf: &libc::stat, gid: i64, dummy: &str) -> i32 {
+    // c:3717
+    (buf.st_gid as i64 == gid) as i32 // c:3726
 }
 
 /// Port of `qualisdev(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3726.
 /// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualisdev(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3726
+pub fn qualisdev(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3726
     let m = buf.st_mode as u32 & libc::S_IFMT as u32;
-    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3735
+    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32 // c:3735
 }
 
 /// Port of `qualisblk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3735.
 /// C: `return S_ISBLK(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualisblk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3735
+pub fn qualisblk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3735
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3744
 }
 
 /// Port of `qualischr(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3744.
 /// C: `return S_ISCHR(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualischr(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3744
+pub fn qualischr(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3744
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3753
 }
 
 /// Port of `qualisdir(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3753.
 /// C: `return S_ISDIR(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualisdir(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3753
+pub fn qualisdir(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3753
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3762
 }
 
 /// Port of `qualisfifo(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3762.
 /// C: `return S_ISFIFO(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualisfifo(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3762
+pub fn qualisfifo(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3762
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3771
 }
 
 /// Port of `qualislnk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3771.
 /// C: `return S_ISLNK(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualislnk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3771
+pub fn qualislnk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3771
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3780
 }
 
 /// Port of `qualisreg(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3780.
 /// C: `return S_ISREG(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualisreg(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3780
+pub fn qualisreg(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3780
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3789
 }
 
 /// Port of `qualissock(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3789.
 /// C: `return S_ISSOCK(buf->st_mode);`
 #[allow(unused_variables)]
-pub fn qualissock(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3789
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3798
+pub fn qualissock(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 {
+    // c:3789
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32
+    // c:3798
 }
 
 /// Port of `qualflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3798.
 /// C: `return mode_to_octal(buf->st_mode) & mod;`
 #[allow(unused_variables)]
 /// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
-pub fn qualflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3798
-    (mode_to_octal(buf.st_mode as u32) as i64 & r#mod) as i32                 // c:3807
+pub fn qualflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 {
+    // c:3798
+    (mode_to_octal(buf.st_mode as u32) as i64 & r#mod) as i32 // c:3807
 }
 
 /// Port of `qualmodeflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3807.
 /// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
 #[allow(unused_variables)]
 /// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
-pub fn qualmodeflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3807
-    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3818
+pub fn qualmodeflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 {
+    // c:3807
+    let v = mode_to_octal(buf.st_mode as u32) as i64; // c:3818
     let y = r#mod & 0o7777;
     let n = r#mod >> 12;
-    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3818
+    (((v & y) == y) && (v & n) == 0) as i32 // c:3818
 }
 
 /// Port of `qualiscom(UNUSED(char *name), struct stat *buf, UNUSED(off_t mod), UNUSED(char *dummy))` from Src/glob.c:3818.
 /// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
 #[allow(unused_variables)]
-pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3818
+pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 {
+    // c:3818
     let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
     let s_ixugo: u32 = (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u32;
-    (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
+    (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32 // c:3820
 }
 
 /// Parse size modifier (from glob.c qualsize)
@@ -1771,7 +2000,8 @@ pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
 /// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
 /// Port of the time-conversion arms inside `qgetnum()`
 /// (Src/glob.c:3872).
-pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:3872
+pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
+    // c:3872
     let (mut num, rest) = qgetnum(s)?;
 
     match units {
@@ -1820,52 +2050,54 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c
 /// `errflag`/`lastval` per c:3924-3925, mask any parse-time
 /// ERRFLAG_ERROR while preserving ERRFLAG_INT (user interrupt).
 /// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
-pub fn qualsheval(filename: &str, expr: &str) -> bool {                       // c:3907
+pub fn qualsheval(filename: &str, expr: &str) -> bool {
+    // c:3907
     use std::sync::atomic::Ordering;
     // c:3912 — save errflag + lastval.
     let saved_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:3912
     let saved_lastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3912
-    // c:3915 — `unsetparam("reply");`
-    crate::ported::params::unsetparam("reply");                               // c:3915
-    // c:3916 — `setsparam("REPLY", ztrdup(name));`. Set in the
-    // canonical paramtab so the evaluated expression sees `$REPLY`.
-    crate::ported::params::setsparam("REPLY", filename);                      // c:3916
-    // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
-    // current ShellExecutor for in-shell evaluation. Falls back to
-    // a fresh executor if no ExecutorContext is active.
+                                                                                 // c:3915 — `unsetparam("reply");`
+    crate::ported::params::unsetparam("reply"); // c:3915
+                                                // c:3916 — `setsparam("REPLY", ztrdup(name));`. Set in the
+                                                // canonical paramtab so the evaluated expression sees `$REPLY`.
+    crate::ported::params::setsparam("REPLY", filename); // c:3916
+                                                         // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
+                                                         // current ShellExecutor for in-shell evaluation. Falls back to
+                                                         // a fresh executor if no ExecutorContext is active.
     let mut __exec = crate::vm_helper::ShellExecutor::new();
     let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
-    let rc = __exec.execute_script(expr).unwrap_or(1);                        // c:3919
-    let ret = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);        // c:3921 ret = lastval
+    let rc = __exec.execute_script(expr).unwrap_or(1); // c:3919
+    let ret = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
     let _ = rc;
     // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore
     // pre-call errflag plus any interrupt bit set during eval.
     let post_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     crate::ported::utils::errflag.store(
         saved_errflag | (post_errflag & crate::ported::zsh_h::ERRFLAG_INT),
-        Ordering::Relaxed);                                                    // c:3924
-    // c:3925 — `lastval = lv;`. Restore pre-call lastval.
-    crate::ported::builtin::LASTVAL.store(saved_lastval, Ordering::Relaxed);   // c:3925
-    // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
+        Ordering::Relaxed,
+    ); // c:3924
+       // c:3925 — `lastval = lv;`. Restore pre-call lastval.
+    crate::ported::builtin::LASTVAL.store(saved_lastval, Ordering::Relaxed); // c:3925
+                                                                             // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
     ret == 0
 }
 
 /// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
 /// C: opendir(name) and check if any non-`.`/`..` entries exist.
-pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i32 { // c:3948
+pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i32 {
+    // c:3948
     // c:3948 — `if (!S_ISDIR(buf->st_mode)) return 0;`
-    if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {  // c:3950
+    if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {
+        // c:3950
         return 0;
     }
     // c:3953-3964 — opendir + readdir loop, skip "." and ".." entries.
     match std::fs::read_dir(name) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .any(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
-                s != "." && s != ".."
-            }) as i32,
+        Ok(entries) => entries.filter_map(|e| e.ok()).any(|e| {
+            let n = e.file_name();
+            let s = n.to_string_lossy();
+            s != "." && s != ".."
+        }) as i32,
         Err(_) => 0,
     }
 }
@@ -1899,15 +2131,15 @@ pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i3
 /// `sort_matches`, `glob_emit_path`) consult.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GlobOptSnapshot {
-    pub bareglobqual:    bool,
-    pub braceccl:        bool,
-    pub caseglob:        bool,
-    pub extendedglob:    bool,
-    pub globdots:        bool,
-    pub globstarshort:   bool,
-    pub listtypes:       bool,
-    pub markdirs:        bool,
-    pub nullglob:        bool,
+    pub bareglobqual: bool,
+    pub braceccl: bool,
+    pub caseglob: bool,
+    pub extendedglob: bool,
+    pub globdots: bool,
+    pub globstarshort: bool,
+    pub listtypes: bool,
+    pub markdirs: bool,
+    pub nullglob: bool,
     pub numericglobsort: bool,
 }
 
@@ -2061,7 +2293,8 @@ pub enum qualifier {
 /// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
 /// adds to it.
 #[allow(non_camel_case_types)]
-pub struct qualifier_set {                                                   // c:138
+pub struct qualifier_set {
+    // c:138
     pub qualifiers: Vec<qualifier>,
     pub alternatives: Vec<Vec<qualifier>>,
     pub negated: bool,
@@ -2071,7 +2304,7 @@ pub struct qualifier_set {                                                   // 
     /// `GS_DEPTH` / `GS_EXEC` / `GS_SIZE` / `GS_ATIME` / `GS_MTIME` /
     /// `GS_CTIME` / `GS_LINKS` (or their `<< GS_SHIFT` follow-link
     /// variants), OR'd with `GS_DESC` for reverse direction.
-    pub sorts: Vec<i32>,                                                     // c:155 struct globsort.tp[]
+    pub sorts: Vec<i32>, // c:155 struct globsort.tp[]
     pub first: Option<i32>,
     pub last: Option<i32>,
     pub colon_mods: Option<String>,
@@ -2117,15 +2350,15 @@ pub fn enter_glob_scope() -> GlobOptsGuard {
 pub fn glob_isset(opt: i32) -> bool {
     GLOB_OPTS_TLS.with_borrow(|g| match g {
         Some(snap) => match opt {
-            x if x == BAREGLOBQUAL    => snap.bareglobqual,
-            x if x == BRACECCL        => snap.braceccl,
-            x if x == CASEGLOB        => snap.caseglob,
-            x if x == EXTENDEDGLOB    => snap.extendedglob,
-            x if x == GLOBDOTS        => snap.globdots,
-            x if x == GLOBSTARSHORT   => snap.globstarshort,
-            x if x == LISTTYPES       => snap.listtypes,
-            x if x == MARKDIRS        => snap.markdirs,
-            x if x == NULLGLOB        => snap.nullglob,
+            x if x == BAREGLOBQUAL => snap.bareglobqual,
+            x if x == BRACECCL => snap.braceccl,
+            x if x == CASEGLOB => snap.caseglob,
+            x if x == EXTENDEDGLOB => snap.extendedglob,
+            x if x == GLOBDOTS => snap.globdots,
+            x if x == GLOBSTARSHORT => snap.globstarshort,
+            x if x == LISTTYPES => snap.listtypes,
+            x if x == MARKDIRS => snap.markdirs,
+            x if x == NULLGLOB => snap.nullglob,
             x if x == NUMERICGLOBSORT => snap.numericglobsort,
             _ => isset(opt),
         },
@@ -2150,106 +2383,113 @@ pub fn glob_isset(opt: i32) -> bool {
 /// here orchestrates qualifier parsing, brace expansion (which C
 /// does separately in `xpandbraces`), and the Rust scanner
 /// trio (`scanner`/`scan_pattern`/`scan_recursive`).
-pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // RUST-ONLY
-        // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
-        // runs during substitution before glob — patterns reaching glob()
-        // are already brace-free in the production path (vm_helper handles
-        // it). For direct programmatic callers of glob_with_options, run
-        // the brace pass here so `GlobOptions.brace_ccl` is actually
-        // consulted: with brace_ccl set, `{a-mnop}` expands to a..m,n,o,p
-        // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
-        // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
-        // concatenate matches.
-        let brace_ccl = glob_isset(crate::ported::zsh_h::BRACECCL);
-        if hasbraces(pattern, brace_ccl) {
-            let mut all = Vec::new();
-            for variant in xpandbraces(pattern, brace_ccl) {
-                all.extend(globdata_glob(state, &variant));
-            }
-            return all;
+pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
+    // RUST-ONLY
+    // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
+    // runs during substitution before glob — patterns reaching glob()
+    // are already brace-free in the production path (vm_helper handles
+    // it). For direct programmatic callers of glob_with_options, run
+    // the brace pass here so `GlobOptions.brace_ccl` is actually
+    // consulted: with brace_ccl set, `{a-mnop}` expands to a..m,n,o,p
+    // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
+    // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
+    // concatenate matches.
+    let brace_ccl = glob_isset(crate::ported::zsh_h::BRACECCL);
+    if hasbraces(pattern, brace_ccl) {
+        let mut all = Vec::new();
+        for variant in xpandbraces(pattern, brace_ccl) {
+            all.extend(globdata_glob(state, &variant));
+        }
+        return all;
+    }
+
+    state.matches.clear();
+    state.pathbuf.clear();
+    state.pathpos = 0;
+
+    // Parse qualifiers first so a bare-qualifier pattern like `dir(/)`
+    // (no wildcard, just a stat-based filter) still enters the expansion
+    // path. Without this, `haswilds("dir(/)")` returns false and the
+    // pattern echoes back unfiltered, which defeats the whole point of
+    // qualifiers.
+    let (pat, quals) = parse_qualifiers(pattern);
+    state.qualifiers = quals;
+
+    // Now check wildcards on the qualifier-stripped pattern. A pure
+    // literal with a qualifier (`name(.)`) still needs to enter the
+    // scanner so the qualifier filter can run against the literal name.
+    if !haswilds(&pat) && state.qualifiers.is_none() {
+        return vec![pattern.to_string()];
+    }
+
+    // Parse the pattern into components
+    if let Some(complist) = parse_pattern(&pat) {
+        // Handle absolute vs relative paths
+        if pat.starts_with('/') {
+            state.pathbuf.push('/');
+            state.pathpos = 1;
         }
 
-        state.matches.clear();
-        state.pathbuf.clear();
-        state.pathpos = 0;
+        // Do the actual globbing
+        scanner(state, &complist, 0);
+    }
 
-        // Parse qualifiers first so a bare-qualifier pattern like `dir(/)`
-        // (no wildcard, just a stat-based filter) still enters the expansion
-        // path. Without this, `haswilds("dir(/)")` returns false and the
-        // pattern echoes back unfiltered, which defeats the whole point of
-        // qualifiers.
-        let (pat, quals) = parse_qualifiers(pattern);
-        state.qualifiers = quals;
+    // Sort results
+    sort_matches(state);
 
-        // Now check wildcards on the qualifier-stripped pattern. A pure
-        // literal with a qualifier (`name(.)`) still needs to enter the
-        // scanner so the qualifier filter can run against the literal name.
-        if !haswilds(&pat) && state.qualifiers.is_none() {
-            return vec![pattern.to_string()];
-        }
+    // Apply subscript selection
+    apply_selection(state);
 
-        // Parse the pattern into components
-        if let Some(complist) = parse_pattern(&pat) {
-            // Handle absolute vs relative paths
-            if pat.starts_with('/') {
-                state.pathbuf.push('/');
-                state.pathpos = 1;
-            }
-
-            // Do the actual globbing
-            scanner(state, &complist, 0);
-        }
-
-        // Sort results
-        sort_matches(state);
-
-        // Apply subscript selection
-        apply_selection(state);
-
-        // Extract filenames. Mark-dirs / list-types come from EITHER
-        // the canonical global option store OR the parsed `(M)`/`(T)`
-        // qualifier on this glob. Direct port of zsh/Src/glob.c:355,372
-        // — output marker emission consults the per-glob `gf_markdirs`
-        // / `gf_listtypes` flags which the qualifier parser at
-        // glob.c:1557-1566 sets.
-        let mark_dirs = glob_isset(crate::ported::zsh_h::MARKDIRS)
-            || state.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
-        let list_types = glob_isset(crate::ported::zsh_h::LISTTYPES)
-            || state.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
-        let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
-        let mut results: Vec<String> = state
-            .matches
-            .iter()
-            .map(|m| {
-                let mut s = glob_emit_path(&m.path);
-                if mark_dirs || list_types {
-                    if let Ok(meta) = fs::symlink_metadata(&m.path) {
-                        let ch = file_type(meta.mode());
-                        if list_types || (mark_dirs && ch == '/') {
-                            s.push(ch);
-                        }
+    // Extract filenames. Mark-dirs / list-types come from EITHER
+    // the canonical global option store OR the parsed `(M)`/`(T)`
+    // qualifier on this glob. Direct port of zsh/Src/glob.c:355,372
+    // — output marker emission consults the per-glob `gf_markdirs`
+    // / `gf_listtypes` flags which the qualifier parser at
+    // glob.c:1557-1566 sets.
+    let mark_dirs = glob_isset(crate::ported::zsh_h::MARKDIRS)
+        || state
+            .qualifiers
+            .as_ref()
+            .map(|q| q.mark_dirs)
+            .unwrap_or(false);
+    let list_types = glob_isset(crate::ported::zsh_h::LISTTYPES)
+        || state
+            .qualifiers
+            .as_ref()
+            .map(|q| q.list_types)
+            .unwrap_or(false);
+    let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
+    let mut results: Vec<String> = state
+        .matches
+        .iter()
+        .map(|m| {
+            let mut s = glob_emit_path(&m.path);
+            if mark_dirs || list_types {
+                if let Ok(meta) = fs::symlink_metadata(&m.path) {
+                    let ch = file_type(meta.mode());
+                    if list_types || (mark_dirs && ch == '/') {
+                        s.push(ch);
                     }
                 }
-                // Apply colon modifiers AFTER mark/list-type appendage —
-                // zsh applies them last in glob.c:432 modify() per emitted
-                // node, so `(M:t)` would mark THEN tail (effectively just
-                // tail since the slash is gone). Faithful order.
-                if let Some(ref m) = colon_mods {
-                    s = apply_colon_modifiers(&s, m);
-                }
-                s
-            })
-            .collect();
+            }
+            // Apply colon modifiers AFTER mark/list-type appendage —
+            // zsh applies them last in glob.c:432 modify() per emitted
+            // node, so `(M:t)` would mark THEN tail (effectively just
+            // tail since the slash is gone). Faithful order.
+            if let Some(ref m) = colon_mods {
+                s = apply_colon_modifiers(&s, m);
+            }
+            s
+        })
+        .collect();
 
-        // Handle no matches
-        if results.is_empty()
-            && !glob_isset(crate::ported::zsh_h::NULLGLOB)
-        {
-            results.push(pattern.to_string());
-        }
-
-        results
+    // Handle no matches
+    if results.is_empty() && !glob_isset(crate::ported::zsh_h::NULLGLOB) {
+        results.push(pattern.to_string());
     }
+
+    results
+}
 
 // `sort_matches_by_type` deleted — dead code (no callers anywhere
 // in the tree). The sort path lives in `GlobMatch::compare` which
@@ -2259,7 +2499,6 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
 /// File qualifier test functions (from glob.c qual* functions)
 pub mod qualifiers {
     use std::os::unix::fs::MetadataExt;
-    use std::os::unix::fs::PermissionsExt;
 
     pub fn is_regular(path: &str) -> bool {
         std::fs::metadata(path)
@@ -2416,439 +2655,514 @@ pub struct imatchdata {
 /// **RUST-ONLY** — C glob.c handles qualifier parsing inline in
 /// `parsepat` (c:791) as it builds the Complist. Move to that
 /// shape when porting parsepat for real.
-fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {       // RUST-ONLY
-        if !pattern.ends_with(')') {
-            return (pattern.to_string(), None);
-        }
+fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
+    // RUST-ONLY
+    if !pattern.ends_with(')') {
+        return (pattern.to_string(), None);
+    }
 
-        // Find matching open paren
-        let bytes = pattern.as_bytes();
-        let mut depth = 0;
-        let mut qual_start = None;
+    // Find matching open paren
+    let bytes = pattern.as_bytes();
+    let mut depth = 0;
+    let mut qual_start = None;
 
-        for i in (0..bytes.len()).rev() {
-            match bytes[i] {
-                b')' => depth += 1,
-                b'(' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        qual_start = Some(i);
-                        break;
-                    }
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    qual_start = Some(i);
+                    break;
                 }
-                _ => {}
             }
+            _ => {}
         }
+    }
 
-        let start = match qual_start {
-            Some(s) => s,
-            None => return (pattern.to_string(), None),
-        };
+    let start = match qual_start {
+        Some(s) => s,
+        None => return (pattern.to_string(), None),
+    };
 
-        // Check for (#q...) explicit qualifier syntax
-        let qual_str = &pattern[start + 1..pattern.len() - 1];
-        let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
-            (true, after)
-        } else if glob_isset(crate::ported::zsh_h::BAREGLOBQUAL) {
-            (false, qual_str)
-        } else {
-            return (pattern.to_string(), None);
-        };
+    // Check for (#q...) explicit qualifier syntax
+    let qual_str = &pattern[start + 1..pattern.len() - 1];
+    let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
+        (true, after)
+    } else if glob_isset(crate::ported::zsh_h::BAREGLOBQUAL) {
+        (false, qual_str)
+    } else {
+        return (pattern.to_string(), None);
+    };
 
-        // Don't parse as qualifiers if it contains | or ~ (alternatives/exclusions)
-        if !is_explicit && (qual_content.contains('|') || qual_content.contains('~')) {
-            return (pattern.to_string(), None);
-        }
+    // Don't parse as qualifiers if it contains | or ~ (alternatives/exclusions)
+    if !is_explicit && (qual_content.contains('|') || qual_content.contains('~')) {
+        return (pattern.to_string(), None);
+    }
 
-        // Parse the qualifiers
-        let qs = parse_qualifier_string(qual_content);
-        (pattern[..start].to_string(), Some(qs))
+    // Parse the qualifiers
+    let qs = parse_qualifier_string(qual_content);
+    (pattern[..start].to_string(), Some(qs))
 }
 
 /// Parse the body of a `(...)` qualifier block into a qualifier_set.
 /// **RUST-ONLY** — see header on `parse_qualifiers`.
-fn parse_qualifier_string(s: &str) -> qualifier_set {                         // RUST-ONLY
-        let mut qs = qualifier_set::default();
-        let mut chars = s.chars().peekable();
-        let mut negated = false;
-        let mut follow = false;
+fn parse_qualifier_string(s: &str) -> qualifier_set {
+    // RUST-ONLY
+    let mut qs = qualifier_set::default();
+    let mut chars = s.chars().peekable();
+    let mut negated = false;
+    let mut follow = false;
 
-        while let Some(c) = chars.next() {
-            match c {
-                '^' => negated = !negated,
-                '-' => follow = !follow,
-                ',' => {
-                    // Start new alternative
-                    if !qs.qualifiers.is_empty() {
-                        qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
-                    }
-                    negated = false;
-                    follow = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '^' => negated = !negated,
+            '-' => follow = !follow,
+            ',' => {
+                // Start new alternative
+                if !qs.qualifiers.is_empty() {
+                    qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
                 }
-                ':' => {
-                    // Colon modifiers - rest of string
-                    let rest: String = chars.collect();
-                    qs.colon_mods = Some(format!(":{}", rest));
-                    break;
-                }
-                // File type qualifiers
-                '/' => qs.qualifiers.push(qualifier::IsDirectory),
-                '.' => qs.qualifiers.push(qualifier::IsRegular),
-                '@' => qs.qualifiers.push(qualifier::IsSymlink),
-                '=' => qs.qualifiers.push(qualifier::IsSocket),
-                'p' => qs.qualifiers.push(qualifier::IsFifo),
-                '%' => match chars.peek() {
-                    Some('b') => {
-                        chars.next();
-                        qs.qualifiers.push(qualifier::IsBlockDev);
-                    }
-                    Some('c') => {
-                        chars.next();
-                        qs.qualifiers.push(qualifier::IsCharDev);
-                    }
-                    _ => qs.qualifiers.push(qualifier::IsDevice),
-                },
-                '*' => qs.qualifiers.push(qualifier::IsExecutable),
-                // Permission qualifiers
-                'r' => qs.qualifiers.push(qualifier::Readable),
-                'w' => qs.qualifiers.push(qualifier::Writable),
-                'x' => qs.qualifiers.push(qualifier::Executable),
-                'R' => qs.qualifiers.push(qualifier::WorldReadable),
-                'W' => qs.qualifiers.push(qualifier::WorldWritable),
-                'X' => qs.qualifiers.push(qualifier::WorldExecutable),
-                'A' => qs.qualifiers.push(qualifier::GroupReadable),
-                'I' => qs.qualifiers.push(qualifier::GroupWritable),
-                'E' => qs.qualifiers.push(qualifier::GroupExecutable),
-                's' => qs.qualifiers.push(qualifier::Setuid),
-                'S' => qs.qualifiers.push(qualifier::Setgid),
-                't' => qs.qualifiers.push(qualifier::Sticky),
-                // Ownership
-                'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
-                'G' => qs.qualifiers.push(qualifier::OwnedByEgid),
-                'u' => {
-                    let uid = parse_uid_gid(&mut chars);
-                    qs.qualifiers.push(qualifier::OwnedByUid(uid));
-                }
-                'g' => {
-                    let gid = parse_uid_gid(&mut chars);
-                    qs.qualifiers.push(qualifier::OwnedByGid(gid));
-                }
-                // Size
-                'L' => {
-                    let (unit, op, val) = parse_size_spec(&mut chars);
-                    qs.qualifiers.push(qualifier::Size {
-                        value: val,
-                        unit,
-                        op,
-                    });
-                }
-                // Link count
-                'l' => {
-                    let (op, val) = parse_range_spec(&mut chars);
-                    qs.qualifiers.push(qualifier::Links { value: val, op });
-                }
-                // Times
-                'a' => {
-                    let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(qualifier::Atime {
-                        value: val as i64,
-                        unit,
-                        op,
-                    });
-                }
-                'm' => {
-                    let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(qualifier::Mtime {
-                        value: val as i64,
-                        unit,
-                        op,
-                    });
-                }
-                'c' => {
-                    let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(qualifier::Ctime {
-                        value: val as i64,
-                        unit,
-                        op,
-                    });
-                }
-                // Sort qualifier — `o<key>` ascending / `O<key>`
-                // descending. Mirrors the parser arm in zsh's glob.c
-                // that builds `struct globsort` entries (tp = GS_* OR
-                // GS_DESC, optionally shifted by GS_SHIFT for the
-                // follow-links variant).
-                'o' | 'O' => {
-                    let desc = c == 'O';
-                    if let Some(&sc) = chars.peek() {
-                        let key: i32 = match sc {
-                            'n' => { chars.next(); GS_NAME }
-                            'L' => { chars.next(); GS_SIZE }
-                            'l' => { chars.next(); GS_LINKS }
-                            'a' => { chars.next(); GS_ATIME }
-                            'm' => { chars.next(); GS_MTIME }
-                            'c' => { chars.next(); GS_CTIME }
-                            'd' => { chars.next(); GS_DEPTH }
-                            'N' => { chars.next(); GS_NONE }
-                            _   => GS_NAME,
-                        };
-                        let shifted = if follow && (key & GS_NORMAL) != 0 {
-                            key << GS_SHIFT
-                        } else { key };
-                        let tp = shifted | (if desc { GS_DESC } else { 0 });
-                        qs.sorts.push(tp);
-                    }
-                }
-                // Flags
-                'N' => { /* nullglob handled elsewhere */ }
-                'D' => { /* dotglob handled elsewhere */ }
-                'n' => { /* numsort handled elsewhere */ }
-                // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
-                //   case 'M': gf_markdirs = !(sense & 1);  break;
-                //   case 'T': gf_listtypes = !(sense & 1); break;
-                // `sense & 1` = the `^`-toggle bit. zshrs's parser tracks
-                // `negated`; mirror by `!negated`. Read at output-emit
-                // time to mark dirs / list types like coreutils ls -F.
-                'M' => qs.mark_dirs = !negated,
-                'T' => qs.list_types = !negated,
-                'F' => qs.qualifiers.push(qualifier::NonEmptyDir),
-                // Subscript
-                '[' => {
-                    let (first, last) = parse_subscript(&mut chars);
-                    qs.first = first;
-                    qs.last = last;
-                }
-                _ => {}
+                negated = false;
+                follow = false;
             }
+            ':' => {
+                // Colon modifiers - rest of string
+                let rest: String = chars.collect();
+                qs.colon_mods = Some(format!(":{}", rest));
+                break;
+            }
+            // File type qualifiers
+            '/' => qs.qualifiers.push(qualifier::IsDirectory),
+            '.' => qs.qualifiers.push(qualifier::IsRegular),
+            '@' => qs.qualifiers.push(qualifier::IsSymlink),
+            '=' => qs.qualifiers.push(qualifier::IsSocket),
+            'p' => qs.qualifiers.push(qualifier::IsFifo),
+            '%' => match chars.peek() {
+                Some('b') => {
+                    chars.next();
+                    qs.qualifiers.push(qualifier::IsBlockDev);
+                }
+                Some('c') => {
+                    chars.next();
+                    qs.qualifiers.push(qualifier::IsCharDev);
+                }
+                _ => qs.qualifiers.push(qualifier::IsDevice),
+            },
+            '*' => qs.qualifiers.push(qualifier::IsExecutable),
+            // Permission qualifiers
+            'r' => qs.qualifiers.push(qualifier::Readable),
+            'w' => qs.qualifiers.push(qualifier::Writable),
+            'x' => qs.qualifiers.push(qualifier::Executable),
+            'R' => qs.qualifiers.push(qualifier::WorldReadable),
+            'W' => qs.qualifiers.push(qualifier::WorldWritable),
+            'X' => qs.qualifiers.push(qualifier::WorldExecutable),
+            'A' => qs.qualifiers.push(qualifier::GroupReadable),
+            'I' => qs.qualifiers.push(qualifier::GroupWritable),
+            'E' => qs.qualifiers.push(qualifier::GroupExecutable),
+            's' => qs.qualifiers.push(qualifier::Setuid),
+            'S' => qs.qualifiers.push(qualifier::Setgid),
+            't' => qs.qualifiers.push(qualifier::Sticky),
+            // Ownership
+            'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
+            'G' => qs.qualifiers.push(qualifier::OwnedByEgid),
+            'u' => {
+                let uid = parse_uid_gid(&mut chars);
+                qs.qualifiers.push(qualifier::OwnedByUid(uid));
+            }
+            'g' => {
+                let gid = parse_uid_gid(&mut chars);
+                qs.qualifiers.push(qualifier::OwnedByGid(gid));
+            }
+            // Size
+            'L' => {
+                let (unit, op, val) = parse_size_spec(&mut chars);
+                qs.qualifiers.push(qualifier::Size {
+                    value: val,
+                    unit,
+                    op,
+                });
+            }
+            // Link count
+            'l' => {
+                let (op, val) = parse_range_spec(&mut chars);
+                qs.qualifiers.push(qualifier::Links { value: val, op });
+            }
+            // Times
+            'a' => {
+                let (unit, op, val) = schedgetfn(&mut chars);
+                qs.qualifiers.push(qualifier::Atime {
+                    value: val as i64,
+                    unit,
+                    op,
+                });
+            }
+            'm' => {
+                let (unit, op, val) = schedgetfn(&mut chars);
+                qs.qualifiers.push(qualifier::Mtime {
+                    value: val as i64,
+                    unit,
+                    op,
+                });
+            }
+            'c' => {
+                let (unit, op, val) = schedgetfn(&mut chars);
+                qs.qualifiers.push(qualifier::Ctime {
+                    value: val as i64,
+                    unit,
+                    op,
+                });
+            }
+            // Sort qualifier — `o<key>` ascending / `O<key>`
+            // descending. Mirrors the parser arm in zsh's glob.c
+            // that builds `struct globsort` entries (tp = GS_* OR
+            // GS_DESC, optionally shifted by GS_SHIFT for the
+            // follow-links variant).
+            'o' | 'O' => {
+                let desc = c == 'O';
+                if let Some(&sc) = chars.peek() {
+                    let key: i32 = match sc {
+                        'n' => {
+                            chars.next();
+                            GS_NAME
+                        }
+                        'L' => {
+                            chars.next();
+                            GS_SIZE
+                        }
+                        'l' => {
+                            chars.next();
+                            GS_LINKS
+                        }
+                        'a' => {
+                            chars.next();
+                            GS_ATIME
+                        }
+                        'm' => {
+                            chars.next();
+                            GS_MTIME
+                        }
+                        'c' => {
+                            chars.next();
+                            GS_CTIME
+                        }
+                        'd' => {
+                            chars.next();
+                            GS_DEPTH
+                        }
+                        'N' => {
+                            chars.next();
+                            GS_NONE
+                        }
+                        _ => GS_NAME,
+                    };
+                    let shifted = if follow && (key & GS_NORMAL) != 0 {
+                        key << GS_SHIFT
+                    } else {
+                        key
+                    };
+                    let tp = shifted | (if desc { GS_DESC } else { 0 });
+                    qs.sorts.push(tp);
+                }
+            }
+            // Flags
+            'N' => { /* nullglob handled elsewhere */ }
+            'D' => { /* dotglob handled elsewhere */ }
+            'n' => { /* numsort handled elsewhere */ }
+            // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
+            //   case 'M': gf_markdirs = !(sense & 1);  break;
+            //   case 'T': gf_listtypes = !(sense & 1); break;
+            // `sense & 1` = the `^`-toggle bit. zshrs's parser tracks
+            // `negated`; mirror by `!negated`. Read at output-emit
+            // time to mark dirs / list types like coreutils ls -F.
+            'M' => qs.mark_dirs = !negated,
+            'T' => qs.list_types = !negated,
+            'F' => qs.qualifiers.push(qualifier::NonEmptyDir),
+            // Subscript
+            '[' => {
+                let (first, last) = parse_subscript(&mut chars);
+                qs.first = first;
+                qs.last = last;
+            }
+            _ => {}
         }
+    }
 
-        if !qs.qualifiers.is_empty() {
-            qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
-        }
+    if !qs.qualifiers.is_empty() {
+        qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
+    }
 
-        qs.negated = negated;
-        qs.follow_links = follow;
-        qs
+    qs.negated = negated;
+    qs.follow_links = follow;
+    qs
 }
 
 /// Parse a numeric uid/gid from a qualifier char stream.
 /// **RUST-ONLY** — C parses these inline in parsepat.
-fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {  // RUST-ONLY
-        // Check for numeric or delimited string
-        if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-            let mut num = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() {
-                    num.push(c);
-                    chars.next();
-                } else {
-                    break;
-                }
+fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {
+    // RUST-ONLY
+    // Check for numeric or delimited string
+    if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        let mut num = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                num.push(c);
+                chars.next();
+            } else {
+                break;
             }
-            num.parse().unwrap_or(0)
-        } else {
-            // Delimited name - skip for now
-            0
         }
+        num.parse().unwrap_or(0)
+    } else {
+        // Delimited name - skip for now
+        0
+    }
 }
 
 /// Parse the unit/op/value tail of an `(L...)` size qualifier.
 /// **RUST-ONLY** — C parses inline in parsepat; the size-unit
 /// constants are `TT_BYTES`/`TT_KILOBYTES`/… at glob.c:128-133.
-fn parse_size_spec(                                                          // RUST-ONLY
+fn parse_size_spec(
+    // RUST-ONLY
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> (i32, char, u64) {
-        let unit: i32 = match chars.peek() {
-            Some('p') | Some('P') => { chars.next(); TT_POSIX_BLOCKS }
-            Some('k') | Some('K') => { chars.next(); TT_KILOBYTES }
-            Some('m') | Some('M') => { chars.next(); TT_MEGABYTES }
-            Some('g') | Some('G') => { chars.next(); TT_GIGABYTES }
-            Some('t') | Some('T') => { chars.next(); TT_TERABYTES }
-            _ => TT_BYTES,
-        };
-        let (op, val) = parse_range_spec(chars);
-        (unit, op, val)
+    let unit: i32 = match chars.peek() {
+        Some('p') | Some('P') => {
+            chars.next();
+            TT_POSIX_BLOCKS
+        }
+        Some('k') | Some('K') => {
+            chars.next();
+            TT_KILOBYTES
+        }
+        Some('m') | Some('M') => {
+            chars.next();
+            TT_MEGABYTES
+        }
+        Some('g') | Some('G') => {
+            chars.next();
+            TT_GIGABYTES
+        }
+        Some('t') | Some('T') => {
+            chars.next();
+            TT_TERABYTES
+        }
+        _ => TT_BYTES,
+    };
+    let (op, val) = parse_range_spec(chars);
+    (unit, op, val)
 }
 
 /// Parse the unit/op/value tail of an `(a/m/c...)` time qualifier.
 /// **RUST-ONLY** — C parses inline in parsepat; time-unit constants
 /// are `TT_SECONDS`/`TT_MINS`/… at glob.c:121-126.
-fn schedgetfn(                                                               // RUST-ONLY (clashes with sched.c:341 name, unrelated fn)
+fn schedgetfn(
+    // RUST-ONLY (clashes with sched.c:341 name, unrelated fn)
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> (i32, char, u64) {
-        let unit: i32 = match chars.peek() {
-            Some('s') => { chars.next(); TT_SECONDS }
-            Some('m') => { chars.next(); TT_MINS }
-            Some('h') => { chars.next(); TT_HOURS }
-            Some('d') => { chars.next(); TT_DAYS }
-            Some('w') => { chars.next(); TT_WEEKS }
-            Some('M') => { chars.next(); TT_MONTHS }
-            _ => TT_DAYS,
-        };
-        let (op, val) = parse_range_spec(chars);
-        (unit, op, val)
+    let unit: i32 = match chars.peek() {
+        Some('s') => {
+            chars.next();
+            TT_SECONDS
+        }
+        Some('m') => {
+            chars.next();
+            TT_MINS
+        }
+        Some('h') => {
+            chars.next();
+            TT_HOURS
+        }
+        Some('d') => {
+            chars.next();
+            TT_DAYS
+        }
+        Some('w') => {
+            chars.next();
+            TT_WEEKS
+        }
+        Some('M') => {
+            chars.next();
+            TT_MONTHS
+        }
+        _ => TT_DAYS,
+    };
+    let (op, val) = parse_range_spec(chars);
+    (unit, op, val)
 }
 
 /// Parse `[+-]?NUMBER` operator+value tail. Mirrors C qgetnum
 /// (glob.c:827) which returns the int value; here we return the
 /// operator char along with the value since callers need both.
-fn parse_range_spec(chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, u64) { // RUST-ONLY
-        // C's qgetnum at glob.c:827 returns the operator char inline.
-        // `+N` = greater, `-N` = less, bare digits = equal.
-        let op: char = match chars.peek() {
-            Some('+') => { chars.next(); '>' }
-            Some('-') => { chars.next(); '<' }
-            _ => '=',
-        };
-        let mut num = String::new();
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() { num.push(c); chars.next(); } else { break; }
+fn parse_range_spec(chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, u64) {
+    // RUST-ONLY
+    // C's qgetnum at glob.c:827 returns the operator char inline.
+    // `+N` = greater, `-N` = less, bare digits = equal.
+    let op: char = match chars.peek() {
+        Some('+') => {
+            chars.next();
+            '>'
         }
-        let val = num.parse().unwrap_or(0);
-        (op, val)
+        Some('-') => {
+            chars.next();
+            '<'
+        }
+        _ => '=',
+    };
+    let mut num = String::new();
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            num.push(c);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    let val = num.parse().unwrap_or(0);
+    (op, val)
 }
 
 /// Parse `[FIRST,LAST]` subscript range. **RUST-ONLY**.
-fn parse_subscript(                                                          // RUST-ONLY
+fn parse_subscript(
+    // RUST-ONLY
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> (Option<i32>, Option<i32>) {
-        let mut first_str = String::new();
-        let mut last_str = String::new();
-        let mut in_last = false;
+    let mut first_str = String::new();
+    let mut last_str = String::new();
+    let mut in_last = false;
 
-        while let Some(&c) = chars.peek() {
-            chars.next();
-            if c == ']' {
-                break;
-            } else if c == ',' {
-                in_last = true;
-            } else if in_last {
-                last_str.push(c);
-            } else {
-                first_str.push(c);
-            }
-        }
-
-        let first = first_str.parse().ok();
-        let last = if in_last {
-            last_str.parse().ok()
+    while let Some(&c) = chars.peek() {
+        chars.next();
+        if c == ']' {
+            break;
+        } else if c == ',' {
+            in_last = true;
+        } else if in_last {
+            last_str.push(c);
         } else {
-            first
-        };
-        (first, last)
+            first_str.push(c);
+        }
+    }
+
+    let first = first_str.parse().ok();
+    let last = if in_last {
+        last_str.parse().ok()
+    } else {
+        first
+    };
+    (first, last)
 }
 
 /// Tokenize a glob pattern into `PatternComponent`s.
 /// **RUST-ONLY** — C uses `parsecomplist` (glob.c:710) which emits
 /// a `struct complist` linked list; this Rust port builds a Vec
 /// of `PatternComponent` enum variants instead.
-fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // RUST-ONLY
-        let mut components = Vec::new();
-        let mut current = String::new();
-        let mut chars = pattern.chars().peekable();
-        let mut in_bracket = false;
+fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
+    // RUST-ONLY
+    let mut components = Vec::new();
+    let mut current = String::new();
+    let mut chars = pattern.chars().peekable();
+    let mut in_bracket = false;
 
-        // Skip leading slash for absolute paths
-        if chars.peek() == Some(&'/') {
-            chars.next();
-        }
+    // Skip leading slash for absolute paths
+    if chars.peek() == Some(&'/') {
+        chars.next();
+    }
 
-        while let Some(c) = chars.next() {
-            match c {
-                '/' if !in_bracket => {
+    while let Some(c) = chars.next() {
+        match c {
+            '/' if !in_bracket => {
+                if !current.is_empty() {
+                    components.push(PatternComponent::Pattern(current.clone()));
+                    current.clear();
+                }
+            }
+            '[' => {
+                in_bracket = true;
+                current.push(c);
+            }
+            ']' => {
+                in_bracket = false;
+                current.push(c);
+            }
+            '*' if !in_bracket && chars.peek() == Some(&'*') => {
+                chars.next();
+                // Check for ***
+                let follow = chars.peek() == Some(&'*');
+                if follow {
+                    chars.next();
+                }
+                // Direct port of zsh/Src/glob.c:717-742 parsecomplist:
+                // `**` is recursive ONLY when followed by `/` (or `***/`,
+                // or when GLOBSTARSHORT is set). Without those, it should
+                // collapse to a literal `*` + `*` pair (which the matcher
+                // treats as a single `*` since `**` ≡ `*` for non-recursive
+                // contexts in zsh). The glob_star_short option flips the
+                // strict gate off so bare `**` recurses without `/`.
+                let has_slash = chars.peek() == Some(&'/');
+                let recursive =
+                    has_slash || follow || glob_isset(crate::ported::zsh_h::GLOBSTARSHORT);
+                if has_slash {
+                    chars.next();
+                }
+                if recursive {
                     if !current.is_empty() {
                         components.push(PatternComponent::Pattern(current.clone()));
                         current.clear();
                     }
-                }
-                '[' => {
-                    in_bracket = true;
-                    current.push(c);
-                }
-                ']' => {
-                    in_bracket = false;
-                    current.push(c);
-                }
-                '*' if !in_bracket && chars.peek() == Some(&'*') => {
-                    chars.next();
-                    // Check for ***
-                    let follow = chars.peek() == Some(&'*');
-                    if follow {
-                        chars.next();
-                    }
-                    // Direct port of zsh/Src/glob.c:717-742 parsecomplist:
-                    // `**` is recursive ONLY when followed by `/` (or `***/`,
-                    // or when GLOBSTARSHORT is set). Without those, it should
-                    // collapse to a literal `*` + `*` pair (which the matcher
-                    // treats as a single `*` since `**` ≡ `*` for non-recursive
-                    // contexts in zsh). The glob_star_short option flips the
-                    // strict gate off so bare `**` recurses without `/`.
-                    let has_slash = chars.peek() == Some(&'/');
-                    let recursive = has_slash || follow
-                        || glob_isset(crate::ported::zsh_h::GLOBSTARSHORT);
-                    if has_slash {
-                        chars.next();
-                    }
-                    if recursive {
-                        if !current.is_empty() {
-                            components.push(PatternComponent::Pattern(current.clone()));
-                            current.clear();
-                        }
-                        components.push(PatternComponent::Recursive {
-                            follow_links: follow,
-                        });
-                        // GLOBSTARSHORT semantics — zsh/Src/glob.c:727-730
-                        // `instr += ((shortglob ? 1 : 3) + follow);` leaves
-                        // ONE `*` in place when entering the recursive path
-                        // without a `/` separator, so `**.c` ≡ `**/*.c` and
-                        // `**foo` ≡ `**/*foo`. Without this prepend, the
-                        // remaining segment was parsed literally — `**.stk`
-                        // became [Recursive, Pattern(".stk")], which only
-                        // matched files literally named `.stk`. Gate on
-                        // `!has_slash && !follow` since `**/X` and `***/X`
-                        // already consumed their separator and don't need
-                        // the glue star.
-                        if !has_slash
-                            && !follow
-                            && chars.peek().is_some()
-                            && chars.peek() != Some(&'/')
-                        {
-                            current.push('*');
-                        }
-                    } else {
-                        // Strict zsh: `**foo` (no slash, no shortglob) is
-                        // a literal pair of stars in the same path component.
-                        // Two `*` collapse to one in zsh pattern semantics.
+                    components.push(PatternComponent::Recursive {
+                        follow_links: follow,
+                    });
+                    // GLOBSTARSHORT semantics — zsh/Src/glob.c:727-730
+                    // `instr += ((shortglob ? 1 : 3) + follow);` leaves
+                    // ONE `*` in place when entering the recursive path
+                    // without a `/` separator, so `**.c` ≡ `**/*.c` and
+                    // `**foo` ≡ `**/*foo`. Without this prepend, the
+                    // remaining segment was parsed literally — `**.stk`
+                    // became [Recursive, Pattern(".stk")], which only
+                    // matched files literally named `.stk`. Gate on
+                    // `!has_slash && !follow` since `**/X` and `***/X`
+                    // already consumed their separator and don't need
+                    // the glue star.
+                    if !has_slash && !follow && chars.peek().is_some() && chars.peek() != Some(&'/')
+                    {
                         current.push('*');
                     }
+                } else {
+                    // Strict zsh: `**foo` (no slash, no shortglob) is
+                    // a literal pair of stars in the same path component.
+                    // Two `*` collapse to one in zsh pattern semantics.
+                    current.push('*');
                 }
-                _ => current.push(c),
             }
+            _ => current.push(c),
         }
+    }
 
-        if !current.is_empty() {
-            components.push(PatternComponent::Pattern(current));
-        }
+    if !current.is_empty() {
+        components.push(PatternComponent::Pattern(current));
+    }
 
-        // Trailing `**` (or `**/`) with no following pattern — without an
-        // implicit `*`, the scanner walks the tree but emits nothing, since
-        // `Pattern` components are what produce match output. zshrs synthesis
-        // direction (per CLAUDE.md): absorb good ideas from other shells. Both
-        // zsh-strict (`**` ≡ `*` top-level) and bash-globstar (`**` ≡ `**/*`
-        // recursive) are reasonable; we pick the bash-globstar interpretation
-        // because `**` empty-handed should mean "everything", and `*` already
-        // exists for the top-level case. A user wanting top-level only writes
-        // `*`, never `**`. This makes `**(/)` ≡ "every directory recursively"
-        // and `**(.)` ≡ "every file recursively" — the readings users reach
-        // for first.
-        if let Some(PatternComponent::Recursive { .. }) = components.last() {
-            components.push(PatternComponent::Pattern("*".to_string()));
-        }
+    // Trailing `**` (or `**/`) with no following pattern — without an
+    // implicit `*`, the scanner walks the tree but emits nothing, since
+    // `Pattern` components are what produce match output. zshrs synthesis
+    // direction (per CLAUDE.md): absorb good ideas from other shells. Both
+    // zsh-strict (`**` ≡ `*` top-level) and bash-globstar (`**` ≡ `**/*`
+    // recursive) are reasonable; we pick the bash-globstar interpretation
+    // because `**` empty-handed should mean "everything", and `*` already
+    // exists for the top-level case. A user wanting top-level only writes
+    // `*`, never `**`. This makes `**(/)` ≡ "every directory recursively"
+    // and `**(.)` ≡ "every file recursively" — the readings users reach
+    // for first.
+    if let Some(PatternComponent::Recursive { .. }) = components.last() {
+        components.push(PatternComponent::Pattern("*".to_string()));
+    }
 
-        if components.is_empty() {
-            None
-        } else {
-            Some(components)
-        }
+    if components.is_empty() {
+        None
+    } else {
+        Some(components)
+    }
 }
 
 /// One-component scanner — match `pattern` against entries in `base`.
@@ -2860,9 +3174,16 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // 
 ///   - the accumulated path would exceed PATH_MAX and `lchdir` fails (c:539-541)
 ///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
 ///   - `restoredir` fails at the end of the walk (c:696-697)
-fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) { // c:580
-    let pbcwdsav = state.pathbufcwd;                                         // c:504
-    let mut ds = init_dirsav();                                              // c:510
+fn scan_pattern(
+    state: &mut globdata,
+    base: &str,
+    pattern: &str,
+    rest: &[PatternComponent],
+    depth: usize,
+) {
+    // c:580
+    let pbcwdsav = state.pathbufcwd; // c:504
+    let mut ds = init_dirsav(); // c:510
     let path_max = crate::ported::zsh_system_h::PATH_MAX;
 
     let dir = match fs::read_dir(base) {
@@ -2892,21 +3213,31 @@ fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[Pattern
                 // variants.
                 if check_qualifiers(state, &path) {
                     if let Ok(meta) = fs::symlink_metadata(&path) {
-                        let name = path.file_name()
+                        let name = path
+                            .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
                         let (tsize, tatime, tmtime, tctime, tlinks) =
                             if meta.file_type().is_symlink() {
                                 if let Ok(tm) = fs::metadata(&path) {
-                                    (tm.size(), tm.atime(), tm.mtime(),
-                                     tm.ctime(), tm.nlink())
+                                    (tm.size(), tm.atime(), tm.mtime(), tm.ctime(), tm.nlink())
                                 } else {
-                                    (meta.size(), meta.atime(), meta.mtime(),
-                                     meta.ctime(), meta.nlink())
+                                    (
+                                        meta.size(),
+                                        meta.atime(),
+                                        meta.mtime(),
+                                        meta.ctime(),
+                                        meta.nlink(),
+                                    )
                                 }
                             } else {
-                                (meta.size(), meta.atime(), meta.mtime(),
-                                 meta.ctime(), meta.nlink())
+                                (
+                                    meta.size(),
+                                    meta.atime(),
+                                    meta.mtime(),
+                                    meta.ctime(),
+                                    meta.nlink(),
+                                )
                             };
                         state.matches.push(gmatch {
                             name,
@@ -2928,7 +3259,7 @@ fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[Pattern
                             target_links: tlinks,
                             sort_strings: Vec::new(),
                         });
-                        state.matchct += 1;                                  // c:gd_matchct++
+                        state.matchct += 1; // c:gd_matchct++
                     }
                 }
             } else {
@@ -2938,12 +3269,10 @@ fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[Pattern
                 if pbcwdsav == state.pathbufcwd
                     && name.len() + state.pathpos - state.pathbufcwd as usize >= path_max
                 {
-                    let cwd_anchor = state.pathbuf
-                        .get(state.pathbufcwd as usize..)
-                        .unwrap_or("");
+                    let cwd_anchor = state.pathbuf.get(state.pathbufcwd as usize..).unwrap_or("");
                     match lchdir(cwd_anchor) {
                         Ok(()) => {
-                            state.pathbufcwd = state.pathpos as i32;         // c:612
+                            state.pathbufcwd = state.pathpos as i32; // c:612
                         }
                         Err(_) => {
                             // c:608-610 — `zerr("current directory lost
@@ -2973,306 +3302,320 @@ fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[Pattern
     // c:695-702 — restore cwd if we lchdir'd partway through this walk.
     if pbcwdsav < state.pathbufcwd {
         if restoredir(&mut ds) != 0 {
-            zerr("current directory lost during glob");                      // c:697
+            zerr("current directory lost during glob"); // c:697
         }
-        state.pathbufcwd = pbcwdsav;                                         // c:701
+        state.pathbufcwd = pbcwdsav; // c:701
     }
-    let _ = (depth, base);                                                   // suppress unused warnings
+    let _ = (depth, base); // suppress unused warnings
 }
 
 /// Recursive `**`-style descent matching `rest` from every
 /// descendant directory of `base`.
 /// **RUST-ONLY** — C handles recursion via the `closure` bit on
 /// each `struct complist` node, not via a separate function.
-fn scan_recursive(                                                           // RUST-ONLY
+fn scan_recursive(
+    // RUST-ONLY
     state: &mut globdata,
     base: &str,
     rest: &[PatternComponent],
     follow_links: bool,
     depth: usize,
 ) {
-        let dir = match fs::read_dir(base) {
-            Ok(d) => d,
-            Err(_) => return,
+    let dir = match fs::read_dir(base) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    for entry in dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files (bash `dotglob` aliases to zsh
+        // `globdots` per OPT_ALIAS entry at options.c:270).
+        if !glob_isset(GLOBDOTS) && name.starts_with('.') {
+            continue;
+        }
+
+        let path = entry.path();
+        let is_dir = if follow_links {
+            path.is_dir()
+        } else {
+            entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
         };
 
-        for entry in dir.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            // Skip hidden files (bash `dotglob` aliases to zsh
-            // `globdots` per OPT_ALIAS entry at options.c:270).
-            if !glob_isset(GLOBDOTS) && name.starts_with('.') {
-                continue;
+        if is_dir {
+            let old_pos = state.pathbuf.len();
+            if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
+                state.pathbuf.push('/');
             }
+            state.pathbuf.push_str(&name);
 
-            let path = entry.path();
-            let is_dir = if follow_links {
-                path.is_dir()
-            } else {
-                entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
-            };
+            // Try matching rest from this directory
+            scanner(state, rest, depth + 1);
 
-            if is_dir {
-                let old_pos = state.pathbuf.len();
-                if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
-                    state.pathbuf.push('/');
-                }
-                state.pathbuf.push_str(&name);
+            // Continue recursing
+            let next_base = state.pathbuf.clone();
+            scan_recursive(state, &next_base, rest, follow_links, depth + 1);
 
-                // Try matching rest from this directory
-                scanner(state, rest, depth + 1);
-
-                // Continue recursing
-                let next_base = state.pathbuf.clone();
-                scan_recursive(state, &next_base, rest, follow_links, depth + 1);
-
-                state.pathbuf.truncate(old_pos);
-            }
+            state.pathbuf.truncate(old_pos);
         }
+    }
 }
 
 /// Drive the OR-of-AND qualifier filter against `path`. **RUST-ONLY**
 /// — C glob.c does qualifier eval inline inside `insert()` (c:381+).
-fn check_qualifiers(state: &globdata, path: &Path) -> bool {                 // RUST-ONLY
-        let qs = match &state.qualifiers {
-            Some(q) => q,
-            None => return true,
-        };
+fn check_qualifiers(state: &globdata, path: &Path) -> bool {
+    // RUST-ONLY
+    let qs = match &state.qualifiers {
+        Some(q) => q,
+        None => return true,
+    };
 
-        if qs.alternatives.is_empty() {
-            return true;
+    if qs.alternatives.is_empty() {
+        return true;
+    }
+
+    let meta = match if qs.follow_links {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    } {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    // Check each alternative (OR)
+    for alt in &qs.alternatives {
+        if check_qualifier_list(alt, path, &meta) {
+            return !qs.negated;
         }
+    }
 
-        let meta = match if qs.follow_links {
-            fs::metadata(path)
-        } else {
-            fs::symlink_metadata(path)
-        } {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-
-        // Check each alternative (OR)
-        for alt in &qs.alternatives {
-            if check_qualifier_list(alt, path, &meta) {
-                return !qs.negated;
-            }
-        }
-
-        qs.negated
+    qs.negated
 }
 
 /// AND-chain of qualifiers — all must match. **RUST-ONLY**.
-fn check_qualifier_list(quals: &[qualifier], path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
-        for q in quals {
-            if !check_single_qualifier(q, path, meta) {
-                return false;
-            }
+fn check_qualifier_list(quals: &[qualifier], path: &Path, meta: &Metadata) -> bool {
+    // RUST-ONLY
+    for q in quals {
+        if !check_single_qualifier(q, path, meta) {
+            return false;
         }
-        true
+    }
+    true
 }
 
 /// One qualifier check against (path, meta). **RUST-ONLY** — mirrors
 /// the inline qualifier dispatch C does in `insert()` (glob.c:381+).
-fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
-        let mode = meta.mode();
-        let ft = meta.file_type();
+fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> bool {
+    // RUST-ONLY
+    let mode = meta.mode();
+    let ft = meta.file_type();
 
-        match qual {
-            qualifier::IsRegular => ft.is_file(),
-            qualifier::IsDirectory => ft.is_dir(),
-            qualifier::IsSymlink => ft.is_symlink(),
-            qualifier::IsSocket => mode & libc::S_IFMT as u32 == libc::S_IFSOCK as u32,
-            qualifier::IsFifo => mode & libc::S_IFMT as u32 == libc::S_IFIFO as u32,
-            qualifier::IsBlockDev => mode & libc::S_IFMT as u32 == libc::S_IFBLK as u32,
-            qualifier::IsCharDev => mode & libc::S_IFMT as u32 == libc::S_IFCHR as u32,
-            qualifier::IsDevice => {
-                let fmt = mode & libc::S_IFMT as u32;
-                fmt == libc::S_IFBLK as u32 || fmt == libc::S_IFCHR as u32
-            }
-            qualifier::IsExecutable => ft.is_file() && (mode & 0o111 != 0),
-            qualifier::Readable => mode & 0o400 != 0,
-            qualifier::Writable => mode & 0o200 != 0,
-            qualifier::Executable => mode & 0o100 != 0,
-            qualifier::WorldReadable => mode & 0o004 != 0,
-            qualifier::WorldWritable => mode & 0o002 != 0,
-            qualifier::WorldExecutable => mode & 0o001 != 0,
-            qualifier::GroupReadable => mode & 0o040 != 0,
-            qualifier::GroupWritable => mode & 0o020 != 0,
-            qualifier::GroupExecutable => mode & 0o010 != 0,
-            qualifier::Setuid => mode & libc::S_ISUID as u32 != 0,
-            qualifier::Setgid => mode & libc::S_ISGID as u32 != 0,
-            qualifier::Sticky => mode & libc::S_ISVTX as u32 != 0,
-            qualifier::OwnedByEuid => meta.uid() == unsafe { libc::geteuid() },
-            qualifier::OwnedByEgid => meta.gid() == unsafe { libc::getegid() },
-            qualifier::OwnedByUid(uid) => meta.uid() == *uid,
-            qualifier::OwnedByGid(gid) => meta.gid() == *gid,
-            qualifier::Size { value, unit, op } => {
-                // Inline cmp + scale — mirrors glob.c qualsize at c:1054.
-                let cmp = |a: u64, b: u64| match *op {
-                    '<' => a <  b,
-                    '>' => a >  b,
-                    _   => a == b,
-                };
-                let size = meta.size();
-                let scaled = match *unit {
-                    u if u == TT_BYTES        => size,
-                    u if u == TT_POSIX_BLOCKS => size.div_ceil(512),
-                    u if u == TT_KILOBYTES    => size.div_ceil(1024),
-                    u if u == TT_MEGABYTES    => size.div_ceil(1048576),
-                    u if u == TT_GIGABYTES    => size.div_ceil(1073741824),
-                    u if u == TT_TERABYTES    => size.div_ceil(1099511627776),
-                    _ => size,
-                };
-                cmp(scaled, *value)
-            }
-            qualifier::Links { value, op } => {
-                let cmp = |a: u64, b: u64| match *op {
-                    '<' => a <  b,
-                    '>' => a >  b,
-                    _   => a == b,
-                };
-                cmp(meta.nlink(), *value)
-            }
-            qualifier::Atime { value, unit, op } => {
-                // Inline time-unit scaling — Src/glob.c:872 qualtime.
-                let cmp = |a: i64, b: i64| match *op {
-                    '<' => a <  b,
-                    '>' => a >  b,
-                    _   => a == b,
-                };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
-                          .as_secs() as i64;
-                let diff = now - meta.atime();
-                let scaled = match *unit {
-                    u if u == TT_SECONDS => diff,
-                    u if u == TT_MINS    => diff / 60,
-                    u if u == TT_HOURS   => diff / 3600,
-                    u if u == TT_DAYS    => diff / 86400,
-                    u if u == TT_WEEKS   => diff / 604800,
-                    u if u == TT_MONTHS  => diff / 2592000,
-                    _ => diff,
-                };
-                cmp(scaled, *value)
-            }
-            qualifier::Mtime { value, unit, op } => {
-                let cmp = |a: i64, b: i64| match *op {
-                    '<' => a <  b,
-                    '>' => a >  b,
-                    _   => a == b,
-                };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
-                          .as_secs() as i64;
-                let diff = now - meta.mtime();
-                let scaled = match *unit {
-                    u if u == TT_SECONDS => diff,
-                    u if u == TT_MINS    => diff / 60,
-                    u if u == TT_HOURS   => diff / 3600,
-                    u if u == TT_DAYS    => diff / 86400,
-                    u if u == TT_WEEKS   => diff / 604800,
-                    u if u == TT_MONTHS  => diff / 2592000,
-                    _ => diff,
-                };
-                cmp(scaled, *value)
-            }
-            qualifier::Ctime { value, unit, op } => {
-                let cmp = |a: i64, b: i64| match *op {
-                    '<' => a <  b,
-                    '>' => a >  b,
-                    _   => a == b,
-                };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
-                          .as_secs() as i64;
-                let diff = now - meta.ctime();
-                let scaled = match *unit {
-                    u if u == TT_SECONDS => diff,
-                    u if u == TT_MINS    => diff / 60,
-                    u if u == TT_HOURS   => diff / 3600,
-                    u if u == TT_DAYS    => diff / 86400,
-                    u if u == TT_WEEKS   => diff / 604800,
-                    u if u == TT_MONTHS  => diff / 2592000,
-                    _ => diff,
-                };
-                cmp(scaled, *value)
-            }
-            qualifier::Mode { yes, no } => {
-                let m = mode & 0o7777;
-                (m & yes) == *yes && (m & no) == 0
-            }
-            qualifier::Device(dev) => meta.dev() == *dev,
-            qualifier::NonEmptyDir => {
-                if !ft.is_dir() {
-                    return false;
-                }
-                if let Ok(mut entries) = fs::read_dir(path) {
-                    entries.any(|e| {
-                        e.ok()
-                            .map(|e| {
-                                let name = e.file_name();
-                                name != "." && name != ".."
-                            })
-                            .unwrap_or(false)
-                    })
-                } else {
-                    false
-                }
-            }
-            qualifier::Eval(_) => true, // Would need shell integration
+    match qual {
+        qualifier::IsRegular => ft.is_file(),
+        qualifier::IsDirectory => ft.is_dir(),
+        qualifier::IsSymlink => ft.is_symlink(),
+        qualifier::IsSocket => mode & libc::S_IFMT as u32 == libc::S_IFSOCK as u32,
+        qualifier::IsFifo => mode & libc::S_IFMT as u32 == libc::S_IFIFO as u32,
+        qualifier::IsBlockDev => mode & libc::S_IFMT as u32 == libc::S_IFBLK as u32,
+        qualifier::IsCharDev => mode & libc::S_IFMT as u32 == libc::S_IFCHR as u32,
+        qualifier::IsDevice => {
+            let fmt = mode & libc::S_IFMT as u32;
+            fmt == libc::S_IFBLK as u32 || fmt == libc::S_IFCHR as u32
         }
+        qualifier::IsExecutable => ft.is_file() && (mode & 0o111 != 0),
+        qualifier::Readable => mode & 0o400 != 0,
+        qualifier::Writable => mode & 0o200 != 0,
+        qualifier::Executable => mode & 0o100 != 0,
+        qualifier::WorldReadable => mode & 0o004 != 0,
+        qualifier::WorldWritable => mode & 0o002 != 0,
+        qualifier::WorldExecutable => mode & 0o001 != 0,
+        qualifier::GroupReadable => mode & 0o040 != 0,
+        qualifier::GroupWritable => mode & 0o020 != 0,
+        qualifier::GroupExecutable => mode & 0o010 != 0,
+        qualifier::Setuid => mode & libc::S_ISUID as u32 != 0,
+        qualifier::Setgid => mode & libc::S_ISGID as u32 != 0,
+        qualifier::Sticky => mode & libc::S_ISVTX as u32 != 0,
+        qualifier::OwnedByEuid => meta.uid() == unsafe { libc::geteuid() },
+        qualifier::OwnedByEgid => meta.gid() == unsafe { libc::getegid() },
+        qualifier::OwnedByUid(uid) => meta.uid() == *uid,
+        qualifier::OwnedByGid(gid) => meta.gid() == *gid,
+        qualifier::Size { value, unit, op } => {
+            // Inline cmp + scale — mirrors glob.c qualsize at c:1054.
+            let cmp = |a: u64, b: u64| match *op {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            };
+            let size = meta.size();
+            let scaled = match *unit {
+                u if u == TT_BYTES => size,
+                u if u == TT_POSIX_BLOCKS => size.div_ceil(512),
+                u if u == TT_KILOBYTES => size.div_ceil(1024),
+                u if u == TT_MEGABYTES => size.div_ceil(1048576),
+                u if u == TT_GIGABYTES => size.div_ceil(1073741824),
+                u if u == TT_TERABYTES => size.div_ceil(1099511627776),
+                _ => size,
+            };
+            cmp(scaled, *value)
+        }
+        qualifier::Links { value, op } => {
+            let cmp = |a: u64, b: u64| match *op {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            };
+            cmp(meta.nlink(), *value)
+        }
+        qualifier::Atime { value, unit, op } => {
+            // Inline time-unit scaling — Src/glob.c:872 qualtime.
+            let cmp = |a: i64, b: i64| match *op {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let diff = now - meta.atime();
+            let scaled = match *unit {
+                u if u == TT_SECONDS => diff,
+                u if u == TT_MINS => diff / 60,
+                u if u == TT_HOURS => diff / 3600,
+                u if u == TT_DAYS => diff / 86400,
+                u if u == TT_WEEKS => diff / 604800,
+                u if u == TT_MONTHS => diff / 2592000,
+                _ => diff,
+            };
+            cmp(scaled, *value)
+        }
+        qualifier::Mtime { value, unit, op } => {
+            let cmp = |a: i64, b: i64| match *op {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let diff = now - meta.mtime();
+            let scaled = match *unit {
+                u if u == TT_SECONDS => diff,
+                u if u == TT_MINS => diff / 60,
+                u if u == TT_HOURS => diff / 3600,
+                u if u == TT_DAYS => diff / 86400,
+                u if u == TT_WEEKS => diff / 604800,
+                u if u == TT_MONTHS => diff / 2592000,
+                _ => diff,
+            };
+            cmp(scaled, *value)
+        }
+        qualifier::Ctime { value, unit, op } => {
+            let cmp = |a: i64, b: i64| match *op {
+                '<' => a < b,
+                '>' => a > b,
+                _ => a == b,
+            };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let diff = now - meta.ctime();
+            let scaled = match *unit {
+                u if u == TT_SECONDS => diff,
+                u if u == TT_MINS => diff / 60,
+                u if u == TT_HOURS => diff / 3600,
+                u if u == TT_DAYS => diff / 86400,
+                u if u == TT_WEEKS => diff / 604800,
+                u if u == TT_MONTHS => diff / 2592000,
+                _ => diff,
+            };
+            cmp(scaled, *value)
+        }
+        qualifier::Mode { yes, no } => {
+            let m = mode & 0o7777;
+            (m & yes) == *yes && (m & no) == 0
+        }
+        qualifier::Device(dev) => meta.dev() == *dev,
+        qualifier::NonEmptyDir => {
+            if !ft.is_dir() {
+                return false;
+            }
+            if let Ok(mut entries) = fs::read_dir(path) {
+                entries.any(|e| {
+                    e.ok()
+                        .map(|e| {
+                            let name = e.file_name();
+                            name != "." && name != ".."
+                        })
+                        .unwrap_or(false)
+                })
+            } else {
+                false
+            }
+        }
+        qualifier::Eval(_) => true, // Would need shell integration
+    }
 }
 
 /// Sort the per-state matches per the qualifier `o`/`O` keys.
 /// **RUST-ONLY** — C does this inline at the end of `scanner()`
 /// (glob.c:1700ish, qsort with `gmatchcmp` comparator).
-fn sort_matches(state: &mut globdata) {                                      // RUST-ONLY
-        // Default sort is GS_NAME ascending (c:204 gf_sortlist
-        // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
-        let specs: Vec<i32> = state
-            .qualifiers
-            .as_ref()
-            .map(|q| q.sorts.clone())
-            .unwrap_or_else(|| vec![GS_NAME]);
+fn sort_matches(state: &mut globdata) {
+    // RUST-ONLY
+    // Default sort is GS_NAME ascending (c:204 gf_sortlist
+    // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
+    let specs: Vec<i32> = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.sorts.clone())
+        .unwrap_or_else(|| vec![GS_NAME]);
 
-        // GS_NONE marker — caller wants no sort at all.
-        if specs.iter().any(|&tp| (tp & GS_NONE) != 0) {
-            return;
-        }
+    // GS_NONE marker — caller wants no sort at all.
+    if specs.iter().any(|&tp| (tp & GS_NONE) != 0) {
+        return;
+    }
 
-        let numeric = glob_isset(NUMERICGLOBSORT);
-        state.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
+    let numeric = glob_isset(NUMERICGLOBSORT);
+    state
+        .matches
+        .sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
 }
 
 /// Apply `[FIRST,LAST]` qualifier subscript on the match list.
 /// **RUST-ONLY** — C uses `gd_pre_first` / `gd_first` index tracking
 /// during scanner emit; here we slice after the full walk.
-fn apply_selection(state: &mut globdata) {                                   // RUST-ONLY
-        let (first, last) = match &state.qualifiers {
-            Some(q) => (q.first, q.last),
-            None => return,
-        };
+fn apply_selection(state: &mut globdata) {
+    // RUST-ONLY
+    let (first, last) = match &state.qualifiers {
+        Some(q) => (q.first, q.last),
+        None => return,
+    };
 
-        let len = state.matches.len() as i32;
-        if len == 0 {
-            return;
-        }
+    let len = state.matches.len() as i32;
+    if len == 0 {
+        return;
+    }
 
-        let start = match first {
-            Some(f) if f < 0 => (len + f).max(0) as usize,
-            Some(f) => (f - 1).max(0) as usize,
-            None => 0,
-        };
+    let start = match first {
+        Some(f) if f < 0 => (len + f).max(0) as usize,
+        Some(f) => (f - 1).max(0) as usize,
+        None => 0,
+    };
 
-        let end = match last {
-            Some(l) if l < 0 => (len + l + 1).max(0) as usize,
-            Some(l) => l.min(len) as usize,
-            None => len as usize,
-        };
+    let end = match last {
+        Some(l) if l < 0 => (len + l + 1).max(0) as usize,
+        Some(l) => l.min(len) as usize,
+        None => len as usize,
+    };
 
-        if start < end && start < state.matches.len() {
-            state.matches = state.matches[start..end.min(state.matches.len())].to_vec();
-        } else {
-            state.matches.clear();
-        }
+    if start < end && start < state.matches.len() {
+        state.matches = state.matches[start..end.min(state.matches.len())].to_vec();
+    } else {
+        state.matches.clear();
+    }
 }
 
 /// Check if string has glob wildcards
@@ -3280,7 +3623,8 @@ fn apply_selection(state: &mut globdata) {                                   // 
 /// Port of the `haswilds()` macro inline in Src/glob.c —
 /// short-circuits `zglob()` so plain literal paths skip the
 /// scanner.
-pub fn haswilds(s: &str) -> bool {                                          // c:4306
+pub fn haswilds(s: &str) -> bool {
+    // c:4306
     let mut in_bracket = false;
     let mut escape = false;
 
@@ -3323,7 +3667,7 @@ mod gs_tt_tests {
     fn gs_normal_covers_all_size_keys() {
         let _g = crate::test_util::global_state_lock();
         // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
-        assert!(GS_NORMAL & GS_SIZE  != 0);
+        assert!(GS_NORMAL & GS_SIZE != 0);
         assert!(GS_NORMAL & GS_ATIME != 0);
         assert!(GS_NORMAL & GS_MTIME != 0);
         assert!(GS_NORMAL & GS_CTIME != 0);
@@ -3334,11 +3678,11 @@ mod gs_tt_tests {
     fn tt_namespaces_share_indices() {
         let _g = crate::test_util::global_state_lock();
         // c:121-126 vs c:128-133 — TT_DAYS == TT_BYTES == 0, etc.
-        assert_eq!(TT_DAYS,    TT_BYTES);
-        assert_eq!(TT_HOURS,   TT_POSIX_BLOCKS);
-        assert_eq!(TT_MINS,    TT_KILOBYTES);
-        assert_eq!(TT_WEEKS,   TT_MEGABYTES);
-        assert_eq!(TT_MONTHS,  TT_GIGABYTES);
+        assert_eq!(TT_DAYS, TT_BYTES);
+        assert_eq!(TT_HOURS, TT_POSIX_BLOCKS);
+        assert_eq!(TT_MINS, TT_KILOBYTES);
+        assert_eq!(TT_WEEKS, TT_MEGABYTES);
+        assert_eq!(TT_MONTHS, TT_GIGABYTES);
         assert_eq!(TT_SECONDS, TT_TERABYTES);
     }
 
@@ -3348,8 +3692,6 @@ mod gs_tt_tests {
         assert_eq!(MAX_SORTS, 12);
     }
 }
-
-
 
 /// Recursive `*` / `?` / `[...]` glob matcher. Port of `patmatch()`
 /// from Src/pattern.c:2694 — the C source's main matching engine
@@ -4148,7 +4490,8 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// directly from the canonical global option store via
 /// `crate::ported::options::opt_state_get` — same path C uses via
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
-pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
+pub fn glob(pattern: &str) -> Vec<String> {
+    // c:1214
     // Race fix: snapshot every glob-relevant option into TLS for the
     // duration of this call so concurrent setopt/unsetopt on other
     // threads can't corrupt our qualifier parse / nullglob fallback /
@@ -4179,7 +4522,8 @@ pub fn is_symlink(path: &str) -> bool {
 /// Edit-distance helper for `setopt CORRECT` glob fallback.
 /// Port of the `spdist()`-driven correction inside
 /// `findcmd()` (Src/exec.c) when adapted for glob targets.
-pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize { // c:4624
+pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
+    // c:4624
     let Ok(entries) = std::fs::read_dir(dir) else {
         return usize::MAX;
     };
@@ -4405,17 +4749,18 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
 /// `bareglobqual` / `braceccl` / `markdirs` / `numericglobsort` /
 /// `globdots` from the canonical option store (`opt_state_get`) so
 /// behavior tracks `setopt …` toggles without needing an executor.
-pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
+pub fn glob_path(pattern: &str) -> Vec<String> {
+    // c:1214
     // Race fix: same TLS-snapshot guard glob() uses, so glob_path
     // callers see a coherent option set for the duration of this call.
     let _glob_scope = enter_glob_scope();
     let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
     // Read option state directly — matches C's per-callsite
     // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
-    let null_glob     = opt("nullglob",       false);
-    let extended_glob = opt("extendedglob",   false);
-    let no_glob_dots  = !(opt("dotglob",      false) || opt("globdots", false));
-    let case_glob     = opt("caseglob",       true)  && !opt("nocaseglob", false);
+    let null_glob = opt("nullglob", false);
+    let extended_glob = opt("extendedglob", false);
+    let no_glob_dots = !(opt("dotglob", false) || opt("globdots", false));
+    let case_glob = opt("caseglob", true) && !opt("nocaseglob", false);
 
     // c:1230 — `(a|b|c)` top-level alternation pre-pass.
     if let Some(alternatives) = expand_glob_alternation(pattern) {
@@ -4468,8 +4813,12 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
                 }
             }
             out.sort();
-            if !out.is_empty() { return out; }
-            if null_glob { return Vec::new(); }
+            if !out.is_empty() {
+                return out;
+            }
+            if null_glob {
+                return Vec::new();
+            }
             return vec![pattern.to_string()];
         }
         // c:155 — top-level `~` exclusion.
@@ -4502,8 +4851,12 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
                         && !matchpat(&rhs, p, true, case_glob)
                 })
                 .collect();
-            if !filtered.is_empty() { return filtered; }
-            if null_glob { return Vec::new(); }
+            if !filtered.is_empty() {
+                return filtered;
+            }
+            if null_glob {
+                return Vec::new();
+            }
             return vec![pattern.to_string()];
         }
     }
@@ -4519,8 +4872,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
 
 // `g_range` from Src/glob.c — qualifier-comparison direction
 // (-1 = less than, 0 = equal, 1 = greater than).
-pub static G_RANGE: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+pub static G_RANGE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `mode_to_octal` lives at `crate::ported::utils::mode_to_octal`
 // (port of `Src/utils.c:7634` — 12 bit-by-bit POSIX permission
@@ -4534,7 +4886,6 @@ fn mode_to_octal(mode: u32) -> u32 {
 mod tests {
     use super::*;
     use std::fs::{self, File};
-    use std::io::Write;
     use tempfile::TempDir;
 
     fn setup_test_dir() -> TempDir {
@@ -4625,7 +4976,7 @@ mod tests {
         let mut state = globdata::new();
         let results = globdata_glob(&mut state, &pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
-        opt_state_set("globdots", false);  // reset for other tests
+        opt_state_set("globdots", false); // reset for other tests
     }
 
     #[test]
@@ -4656,31 +5007,60 @@ mod tests {
     #[test]
     fn file_type_every_branch_matches_c_dispatch() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(file_type(libc::S_IFBLK as u32),  '#',
-            "c:2020 — S_ISBLK → '#'");
-        assert_eq!(file_type(libc::S_IFCHR as u32),  '%',
-            "c:2022 — S_ISCHR → '%'");
-        assert_eq!(file_type(libc::S_IFDIR as u32),  '/',
-            "c:2024 — S_ISDIR → '/'");
-        assert_eq!(file_type(libc::S_IFIFO as u32),  '|',
-            "c:2026 — S_ISFIFO → '|'");
-        assert_eq!(file_type(libc::S_IFLNK as u32),  '@',
-            "c:2028 — S_ISLNK → '@'");
+        assert_eq!(
+            file_type(libc::S_IFBLK as u32),
+            '#',
+            "c:2020 — S_ISBLK → '#'"
+        );
+        assert_eq!(
+            file_type(libc::S_IFCHR as u32),
+            '%',
+            "c:2022 — S_ISCHR → '%'"
+        );
+        assert_eq!(
+            file_type(libc::S_IFDIR as u32),
+            '/',
+            "c:2024 — S_ISDIR → '/'"
+        );
+        assert_eq!(
+            file_type(libc::S_IFIFO as u32),
+            '|',
+            "c:2026 — S_ISFIFO → '|'"
+        );
+        assert_eq!(
+            file_type(libc::S_IFLNK as u32),
+            '@',
+            "c:2028 — S_ISLNK → '@'"
+        );
         // Regular file: ' ' if not executable, '*' if executable (any bit in S_IXUGO).
-        assert_eq!(file_type(libc::S_IFREG as u32),  ' ',
-            "c:2030 — non-executable regular file → ' '");
+        assert_eq!(
+            file_type(libc::S_IFREG as u32),
+            ' ',
+            "c:2030 — non-executable regular file → ' '"
+        );
         // Each individual exec bit triggers '*'.
-        assert_eq!(file_type(libc::S_IFREG as u32 | 0o100), '*',
-            "c:2030 — S_IXUSR alone is enough");
-        assert_eq!(file_type(libc::S_IFREG as u32 | 0o010), '*',
-            "c:2030 — S_IXGRP alone is enough");
-        assert_eq!(file_type(libc::S_IFREG as u32 | 0o001), '*',
-            "c:2030 — S_IXOTH alone is enough");
-        assert_eq!(file_type(libc::S_IFSOCK as u32), '=',
-            "c:2033 — S_ISSOCK → '='");
+        assert_eq!(
+            file_type(libc::S_IFREG as u32 | 0o100),
+            '*',
+            "c:2030 — S_IXUSR alone is enough"
+        );
+        assert_eq!(
+            file_type(libc::S_IFREG as u32 | 0o010),
+            '*',
+            "c:2030 — S_IXGRP alone is enough"
+        );
+        assert_eq!(
+            file_type(libc::S_IFREG as u32 | 0o001),
+            '*',
+            "c:2030 — S_IXOTH alone is enough"
+        );
+        assert_eq!(
+            file_type(libc::S_IFSOCK as u32),
+            '=',
+            "c:2033 — S_ISSOCK → '='"
+        );
         // Catch-all for unknown S_IFMT — bare 0 returns '?'.
-        assert_eq!(file_type(0), '?',
-            "c:2035 — unknown st_mode → '?'");
+        assert_eq!(file_type(0), '?', "c:2035 — unknown st_mode → '?'");
     }
 
     #[test]
@@ -4710,14 +5090,18 @@ mod tests {
         // Live store says bareglobqual=true; enter scope captures that.
         opt_state_set("bareglobqual", true);
         let _scope = enter_glob_scope();
-        assert!(glob_isset(BAREGLOBQUAL),
-            "TLS snapshot reads bareglobqual=true at scope entry");
+        assert!(
+            glob_isset(BAREGLOBQUAL),
+            "TLS snapshot reads bareglobqual=true at scope entry"
+        );
 
         // Simulate a concurrent thread flipping the live store.
         opt_state_set("bareglobqual", false);
-        assert!(glob_isset(BAREGLOBQUAL),
+        assert!(
+            glob_isset(BAREGLOBQUAL),
             "TLS snapshot must still report bareglobqual=true \
-             even though live store now reads false");
+             even though live store now reads false"
+        );
 
         // Restore.
         match saved {
@@ -4741,8 +5125,10 @@ mod tests {
         }
         // Outside scope: flip live store, read should follow live.
         opt_state_set("nullglob", false);
-        assert!(!glob_isset(NULLGLOB),
-            "post-scope: glob_isset falls back to live store");
+        assert!(
+            !glob_isset(NULLGLOB),
+            "post-scope: glob_isset falls back to live store"
+        );
 
         match saved {
             Some(v) => opt_state_set("nullglob", v),
@@ -4766,11 +5152,12 @@ mod tests {
             let _inner = enter_glob_scope();
             // Live store flip while nested.
             opt_state_set("extendedglob", false);
-            assert!(glob_isset(EXTENDEDGLOB),
-                "inner observes outer snapshot");
+            assert!(glob_isset(EXTENDEDGLOB), "inner observes outer snapshot");
         } // inner drops — outer snapshot still active.
-        assert!(glob_isset(EXTENDEDGLOB),
-            "outer snapshot survives inner drop");
+        assert!(
+            glob_isset(EXTENDEDGLOB),
+            "outer snapshot survives inner drop"
+        );
 
         match saved {
             Some(v) => opt_state_set("extendedglob", v),
@@ -4789,15 +5176,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
-            typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
+            typ: REDIR_WRITE,
+            flags: 0,
+            fd1: 1,
+            fd2: -1,
             name: Some("/tmp/zshrs_test_out".to_string()),
-            varid: None, here_terminator: None, munged_here_terminator: None,
+            varid: None,
+            here_terminator: None,
+            munged_here_terminator: None,
         };
         let mut tab: Vec<redir> = Vec::new();
         let r = xpandredir(&mut fn_, &mut tab);
         assert_eq!(r, 0, "literal filename → single match → ret=0");
-        assert_eq!(fn_.name.as_deref(), Some("/tmp/zshrs_test_out"),
-            "literal name must round-trip through prefork unchanged");
+        assert_eq!(
+            fn_.name.as_deref(),
+            Some("/tmp/zshrs_test_out"),
+            "literal name must round-trip through prefork unchanged"
+        );
         assert!(tab.is_empty(), "no multi-match → redirtab not appended");
     }
 
@@ -4808,15 +5203,23 @@ mod tests {
     #[test]
     fn xpandredir_dash_merge_collapses_to_close() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{redir, REDIR_MERGEOUT, REDIR_CLOSE};
+        use crate::ported::zsh_h::{redir, REDIR_CLOSE, REDIR_MERGEOUT};
         let mut fn_ = redir {
-            typ: REDIR_MERGEOUT, flags: 0, fd1: 1, fd2: -1,
+            typ: REDIR_MERGEOUT,
+            flags: 0,
+            fd1: 1,
+            fd2: -1,
             name: Some("-".to_string()),
-            varid: None, here_terminator: None, munged_here_terminator: None,
+            varid: None,
+            here_terminator: None,
+            munged_here_terminator: None,
         };
         let mut tab: Vec<redir> = Vec::new();
         let _ = xpandredir(&mut fn_, &mut tab);
-        assert_eq!(fn_.typ, REDIR_CLOSE, "`>&-` must rewrite typ to REDIR_CLOSE");
+        assert_eq!(
+            fn_.typ, REDIR_CLOSE,
+            "`>&-` must rewrite typ to REDIR_CLOSE"
+        );
     }
 
     /// c:2150 — empty `fn.name` should return 0 cleanly. Catches a
@@ -4826,9 +5229,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{redir, REDIR_WRITE};
         let mut fn_ = redir {
-            typ: REDIR_WRITE, flags: 0, fd1: 1, fd2: -1,
+            typ: REDIR_WRITE,
+            flags: 0,
+            fd1: 1,
+            fd2: -1,
             name: None,
-            varid: None, here_terminator: None, munged_here_terminator: None,
+            varid: None,
+            here_terminator: None,
+            munged_here_terminator: None,
         };
         let mut tab: Vec<redir> = Vec::new();
         assert_eq!(xpandredir(&mut fn_, &mut tab), 0);
@@ -4851,7 +5259,7 @@ mod tests {
     #[test]
     fn haswilds_respects_backslash_escape() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*.txt"),    "bare * is wild");
+        assert!(haswilds("*.txt"), "bare * is wild");
         assert!(!haswilds(r"\*.txt"), "escaped \\* is literal — NOT wild");
         assert!(!haswilds(r"\?.txt"), "escaped \\? is literal — NOT wild");
     }
@@ -4863,8 +5271,8 @@ mod tests {
     #[test]
     fn haswilds_open_bracket_alone_is_a_wildcard() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("[abc]"),  "char-class is wild");
-        assert!(haswilds("foo["),   "even unterminated [ is wild");
+        assert!(haswilds("[abc]"), "char-class is wild");
+        assert!(haswilds("foo["), "even unterminated [ is wild");
     }
 
     /// c:4306 — wildcard chars `*` `?` inside an OPEN bracket-context
@@ -4899,9 +5307,9 @@ mod tests {
     #[test]
     fn haswilds_extended_glob_chars_recognised() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("foo#bar"),  "# is extglob wild");
-        assert!(haswilds("foo^bar"),  "^ is extglob wild");
-        assert!(haswilds("~/file"),   "~ is extglob wild");
+        assert!(haswilds("foo#bar"), "# is extglob wild");
+        assert!(haswilds("foo^bar"), "^ is extglob wild");
+        assert!(haswilds("~/file"), "~ is extglob wild");
     }
 
     /// c:2514 — `matchpat` returns true for exact match. Sanity check
@@ -4921,9 +5329,11 @@ mod tests {
     #[test]
     fn matchpat_case_insensitive_when_flag_clear() {
         let _g = crate::test_util::global_state_lock();
-        assert!(matchpat("hello", "HELLO", false, false),
-            "case-insensitive match must succeed across cases");
-        assert!(matchpat("FoO",   "foo",   false, false));
+        assert!(
+            matchpat("hello", "HELLO", false, false),
+            "case-insensitive match must succeed across cases"
+        );
+        assert!(matchpat("FoO", "foo", false, false));
     }
 
     /// c:2514 — case-sensitive (default) MUST reject case-different
@@ -4931,8 +5341,10 @@ mod tests {
     #[test]
     fn matchpat_case_sensitive_rejects_case_different() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!matchpat("hello", "HELLO", false, true),
-            "case-sensitive default must reject HELLO != hello");
+        assert!(
+            !matchpat("hello", "HELLO", false, true),
+            "case-sensitive default must reject HELLO != hello"
+        );
     }
 
     /// c:2780 — `set_pat_start` returns the suffix from `offs` onward.
@@ -4942,9 +5354,9 @@ mod tests {
     #[test]
     fn set_pat_start_handles_out_of_range_safely() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(set_pat_start("hello", 0),     "hello");
-        assert_eq!(set_pat_start("hello", 100),   "hello");
-        assert_eq!(set_pat_start("hello", 2),     "llo");
+        assert_eq!(set_pat_start("hello", 0), "hello");
+        assert_eq!(set_pat_start("hello", 100), "hello");
+        assert_eq!(set_pat_start("hello", 2), "llo");
     }
 
     /// c:2797 — `set_pat_end` returns the prefix up to `null_me`.
@@ -4954,9 +5366,9 @@ mod tests {
     #[test]
     fn set_pat_end_handles_out_of_range_safely() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(set_pat_end("hello", 100),     "hello");
-        assert_eq!(set_pat_end("hello", 3),       "hel");
-        assert_eq!(set_pat_end("hello", 0),       "");
+        assert_eq!(set_pat_end("hello", 100), "hello");
+        assert_eq!(set_pat_end("hello", 3), "hel");
+        assert_eq!(set_pat_end("hello", 0), "");
     }
 
     /// c:2773 — `freematchlist(None)` is a no-op (matches C's
@@ -4989,19 +5401,29 @@ mod tests {
     fn hasbraces_matched_pair_with_comma_or_dotdot() {
         let _g = crate::test_util::global_state_lock();
         // Matched + comma → true.
-        assert!(hasbraces("a{b,c}d", false),
-            "c:2127 — lbrace + comma + rbrace is a brace expansion");
+        assert!(
+            hasbraces("a{b,c}d", false),
+            "c:2127 — lbrace + comma + rbrace is a brace expansion"
+        );
         // Matched + dotdot → true.
-        assert!(hasbraces("file{1..3}.txt", false),
-            "c:2082 — N..M range is a brace expansion");
+        assert!(
+            hasbraces("file{1..3}.txt", false),
+            "c:2082 — N..M range is a brace expansion"
+        );
         // Matched WITHOUT comma/dotdot → false (it's a literal).
-        assert!(!hasbraces("{abc}", false),
-            "literal braces are NOT a brace expansion without comma or dotdot");
+        assert!(
+            !hasbraces("{abc}", false),
+            "literal braces are NOT a brace expansion without comma or dotdot"
+        );
         // Unmatched → false.
-        assert!(!hasbraces("{abc", false),
-            "lone lbrace without matching rbrace is not brace expansion");
-        assert!(!hasbraces("abc}", false),
-            "lone rbrace is not brace expansion");
+        assert!(
+            !hasbraces("{abc", false),
+            "lone lbrace without matching rbrace is not brace expansion"
+        );
+        assert!(
+            !hasbraces("abc}", false),
+            "lone rbrace is not brace expansion"
+        );
         // No braces → false.
         assert!(!hasbraces("plain", false));
         assert!(!hasbraces("", false));
@@ -5015,16 +5437,24 @@ mod tests {
     fn hasbraces_brace_ccl_makes_any_pair_match() {
         let _g = crate::test_util::global_state_lock();
         // c:2049 — BRACECCL: non-empty pair is enough.
-        assert!(hasbraces("{abc}", true),
-            "c:2049 — BRACECCL: non-empty pair is char-class set");
-        assert!(hasbraces("x{q}y", true),
-            "c:2049 — single-char pair counts under BRACECCL");
+        assert!(
+            hasbraces("{abc}", true),
+            "c:2049 — BRACECCL: non-empty pair is char-class set"
+        );
+        assert!(
+            hasbraces("x{q}y", true),
+            "c:2049 — single-char pair counts under BRACECCL"
+        );
         // Empty pair shouldn't trigger.
-        assert!(!hasbraces("{}", true),
-            "empty pair still not a brace expansion even under BRACECCL");
+        assert!(
+            !hasbraces("{}", true),
+            "empty pair still not a brace expansion even under BRACECCL"
+        );
         // Without BRACECCL, plain literal-letter pair is NOT a brace expansion.
-        assert!(!hasbraces("{abc}", false),
-            "c:2049 — BRACECCL off → plain literal pair stays literal");
+        assert!(
+            !hasbraces("{abc}", false),
+            "c:2049 — BRACECCL off → plain literal pair stays literal"
+        );
     }
 
     /// `Src/glob.c:2042-2142` — depth tracking: comma/dotdot count
@@ -5034,8 +5464,10 @@ mod tests {
     #[test]
     fn hasbraces_depth_1_check_for_comma_dotdot() {
         let _g = crate::test_util::global_state_lock();
-        assert!(hasbraces("a{1,2}b{3,4}c", false),
-            "two independent top-level pairs, first one matches at depth 1");
+        assert!(
+            hasbraces("a{1,2}b{3,4}c", false),
+            "two independent top-level pairs, first one matches at depth 1"
+        );
     }
 
     /// Pin: `remnulargs` per `Src/glob.c:3649-3679`:
@@ -5056,32 +5488,40 @@ mod tests {
         // Plain ASCII unchanged (no inulls).
         let mut s = "hello".to_string();
         remnulargs(&mut s);
-        assert_eq!(s, "hello",
-            "c:3654 — no inull bytes leaves string unchanged");
+        assert_eq!(
+            s, "hello",
+            "c:3654 — no inull bytes leaves string unchanged"
+        );
 
         // Snull-triggered copy: Snull stripped, rest kept.
         let mut s = format!("ab{}cd", Snull);
         remnulargs(&mut s);
-        assert_eq!(s, "abcd",
-            "c:3663 — Snull triggers copy; itself stripped, rest kept");
+        assert_eq!(
+            s, "abcd",
+            "c:3663 — Snull triggers copy; itself stripped, rest kept"
+        );
 
         // Bnullkeep AFTER Snull trigger → '\\' (active backslash).
         let mut s = format!("ab{}c{}d", Snull, Bnullkeep);
         remnulargs(&mut s);
-        assert_eq!(s, "abc\\d",
-            "c:3666 — Bnullkeep in copy phase becomes literal '\\\\'");
+        assert_eq!(
+            s, "abc\\d",
+            "c:3666 — Bnullkeep in copy phase becomes literal '\\\\'"
+        );
 
         // Other inulls (Bnull, Dnull) stripped in copy phase.
         let mut s = format!("a{}b{}c{}d", Snull, Bnull, Dnull);
         remnulargs(&mut s);
-        assert_eq!(s, "abcd",
-            "c:3668 — Bnull/Dnull stripped in copy phase");
+        assert_eq!(s, "abcd", "c:3668 — Bnull/Dnull stripped in copy phase");
 
         // Empty post-strip → Nularg.
         let mut s = format!("{}", Snull);
         remnulargs(&mut s);
-        assert_eq!(s, format!("{}", Nularg),
-            "c:3674 — empty result replaced by Nularg sentinel");
+        assert_eq!(
+            s,
+            format!("{}", Nularg),
+            "c:3674 — empty result replaced by Nularg sentinel"
+        );
     }
 
     /// `Src/glob.c:1085-1117` — `glob_exec_string` is a PARSER, not
@@ -5099,13 +5539,17 @@ mod tests {
         let r = glob_exec_string("myfunc rest", true);
         assert!(r.is_some(), "c:1092 — identifier parse should succeed");
         let (ident, _adv) = r.unwrap();
-        assert_eq!(ident, "myfunc",
-            "c:1092 — itype_end stops at first non-IIDENT char");
+        assert_eq!(
+            ident, "myfunc",
+            "c:1092 — itype_end stops at first non-IIDENT char"
+        );
 
         // Plus form with no identifier (immediate non-ident) — error.
         let r = glob_exec_string(" leading-space", true);
-        assert!(r.is_none(),
-            "c:1093-1096 — empty identifier emits zerr + returns None");
+        assert!(
+            r.is_none(),
+            "c:1093-1096 — empty identifier emits zerr + returns None"
+        );
     }
 
     /// `Src/glob.c:3907-3943` — `qualsheval(name, _, _, expr)` sets
@@ -5123,25 +5567,33 @@ mod tests {
     #[test]
     fn qualsheval_restores_errflag_and_lastval() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
-        use crate::ported::utils::errflag;
         use crate::ported::builtin::LASTVAL;
+        use crate::ported::utils::errflag;
+        use std::sync::atomic::Ordering;
         // Seed errflag and lastval with distinctive values.
         errflag.store(0, Ordering::Relaxed);
         LASTVAL.store(42, Ordering::Relaxed);
         // Even if the expr mutates these via the executor, c:3924-3925
         // restore them after.
-        let _ = qualsheval("/tmp/file", ":");  // no-op expr
-        // c:3924 — errflag restored.
-        assert_eq!(errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR, 0,
-            "c:3924 — qualsheval must restore errflag (no ERRFLAG_ERROR leak)");
+        let _ = qualsheval("/tmp/file", ":"); // no-op expr
+                                              // c:3924 — errflag restored.
+        assert_eq!(
+            errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR,
+            0,
+            "c:3924 — qualsheval must restore errflag (no ERRFLAG_ERROR leak)"
+        );
         // c:3925 — lastval restored.
-        assert_eq!(LASTVAL.load(Ordering::Relaxed), 42,
-            "c:3925 — qualsheval must restore lastval to pre-call value");
+        assert_eq!(
+            LASTVAL.load(Ordering::Relaxed),
+            42,
+            "c:3925 — qualsheval must restore lastval to pre-call value"
+        );
         // c:3916 — $REPLY visible in paramtab.
-        assert_eq!(crate::ported::params::getsparam("REPLY"),
+        assert_eq!(
+            crate::ported::params::getsparam("REPLY"),
             Some("/tmp/file".to_string()),
-            "c:3916 — qualsheval must set $REPLY to filename");
+            "c:3916 — qualsheval must set $REPLY to filename"
+        );
     }
 
     /// `Src/glob.c:2164` — `if (!errflag && isset(MULTIOS))` is the
@@ -5157,20 +5609,24 @@ mod tests {
     #[test]
     fn xpandredir_errflag_check_uses_logical_zero() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
         use crate::ported::utils::errflag;
+        use std::sync::atomic::Ordering;
         // Mirror the in-port logic with the canonical zero-check.
         let saved = errflag.load(Ordering::Relaxed);
         // c:2164 — errflag==0 path: branch should fire.
         errflag.store(0, Ordering::Relaxed);
         let zero_enters = errflag.load(Ordering::Relaxed) == 0;
-        assert!(zero_enters,
-            "c:2164 — errflag==0 enters the branch (the canonical sense)");
+        assert!(
+            zero_enters,
+            "c:2164 — errflag==0 enters the branch (the canonical sense)"
+        );
         // c:2164 — errflag!=0 path: branch should skip.
         errflag.store(1, Ordering::Relaxed);
         let nonzero_skips = errflag.load(Ordering::Relaxed) == 0;
-        assert!(!nonzero_skips,
-            "c:2164 — errflag!=0 skips the branch (regression of bitwise-NOT bug fix)");
+        assert!(
+            !nonzero_skips,
+            "c:2164 — errflag!=0 skips the branch (regression of bitwise-NOT bug fix)"
+        );
         errflag.store(saved, Ordering::Relaxed);
     }
 }

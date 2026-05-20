@@ -24,7 +24,6 @@
 #![allow(clippy::needless_return)]
 
 use crate::utils::zwarnnam;
-use std::cell::UnsafeCell;
 
 /// Port of `setresgid(gid_t rgid, gid_t egid, gid_t sgid)` from Src/openssh_bsd_setres_id.c:70.
 ///
@@ -51,20 +50,29 @@ pub unsafe fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t)
     if have_native_setregid() && !broken_setregid() {
         if libc::setregid(rgid, egid) < 0 {
             saved_errno = errno_get();
-            zwarnnam("setregid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
+            zwarnnam(
+                "setregid",
+                &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)),
+            );
             errno_set(saved_errno);
             ret = -1;
         }
     } else {
         if libc::setegid(egid) < 0 {
             saved_errno = errno_get();
-            zwarnnam("setegid", &format!("to gid {}: {}", egid as i64, errno_str(saved_errno)));
+            zwarnnam(
+                "setegid",
+                &format!("to gid {}: {}", egid as i64, errno_str(saved_errno)),
+            );
             errno_set(saved_errno);
             ret = -1;
         }
         if libc::setgid(rgid) < 0 {
             saved_errno = errno_get();
-            zwarnnam("setgid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
+            zwarnnam(
+                "setgid",
+                &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)),
+            );
             errno_set(saved_errno);
             ret = -1;
         }
@@ -96,7 +104,10 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
     if have_native_setreuid() && !broken_setreuid() {
         if libc::setreuid(ruid, euid) < 0 {
             saved_errno = errno_get();
-            zwarnnam("setreuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
+            zwarnnam(
+                "setreuid",
+                &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)),
+            );
             errno_set(saved_errno);
             ret = -1;
         }
@@ -104,14 +115,20 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
         if !seteuid_breaks_setuid() {
             if libc::seteuid(euid) < 0 {
                 saved_errno = errno_get();
-                zwarnnam("seteuid", &format!("to uid {}: {}", euid as i64, errno_str(saved_errno)));
+                zwarnnam(
+                    "seteuid",
+                    &format!("to uid {}: {}", euid as i64, errno_str(saved_errno)),
+                );
                 errno_set(saved_errno);
                 ret = -1;
             }
         }
         if libc::setuid(ruid) < 0 {
             saved_errno = errno_get();
-            zwarnnam("setuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
+            zwarnnam(
+                "setuid",
+                &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)),
+            );
             errno_set(saved_errno);
             ret = -1;
         }
@@ -177,9 +194,18 @@ fn errno_set(e: libc::c_int) {
     unsafe {
         let p: *mut libc::c_int = {
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            { libc::__errno_location() }
-            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"))]
-            { libc::__error() }
+            {
+                libc::__errno_location()
+            }
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "freebsd",
+                target_os = "dragonfly"
+            ))]
+            {
+                libc::__error()
+            }
             #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
             {
                 extern "C" {
@@ -285,8 +311,11 @@ mod tests {
             let me = libc::getgid();
             let r = setresgid(me, me, me);
             assert_eq!(r, 0);
-            assert_eq!(errno_get(), libc::EILSEQ,
-                "no-op short-circuit must not reset errno on success");
+            assert_eq!(
+                errno_get(),
+                libc::EILSEQ,
+                "no-op short-circuit must not reset errno on success"
+            );
         }
     }
 
@@ -320,11 +349,16 @@ mod tests {
         unsafe {
             let me = libc::getuid();
             // Skip on root since seteuid(other) would succeed.
-            if me == 0 { return; }
+            if me == 0 {
+                return;
+            }
             let r = setresuid(me, 0, me);
             assert_eq!(r, -1, "non-root cannot seteuid(0)");
-            assert_ne!(errno_get(), libc::ENOSYS,
-                "ENOSYS is reserved for the c:91 ruid!=suid pre-check");
+            assert_ne!(
+                errno_get(),
+                libc::ENOSYS,
+                "ENOSYS is reserved for the c:91 ruid!=suid pre-check"
+            );
         }
     }
 
@@ -348,7 +382,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let s = errno_str(libc::EINVAL);
         let l = s.to_lowercase();
-        assert!(l.contains("invalid") || l.contains("argument") || l.contains("inval"),
-            "errno_str(EINVAL) = {:?} — must contain readable text", s);
+        assert!(
+            l.contains("invalid") || l.contains("argument") || l.contains("inval"),
+            "errno_str(EINVAL) = {:?} — must contain readable text",
+            s
+        );
     }
 }

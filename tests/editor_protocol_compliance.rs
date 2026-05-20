@@ -48,11 +48,19 @@ impl Lsp {
     fn spawn_uninit() -> Self {
         let mut child = Command::new(zshrs_binary())
             .arg("--lsp")
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
-            .spawn().expect("spawn");
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Self { child, stdin, stdout, next_id: 1 }
+        Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
     }
 
     fn spawn() -> Self {
@@ -76,7 +84,9 @@ impl Lsp {
         loop {
             let v = self.recv().expect("EOF");
             if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
-                if let Some(e) = v.get("error") { panic!("error: {}", e); }
+                if let Some(e) = v.get("error") {
+                    panic!("error: {}", e);
+                }
                 return v["result"].clone();
             }
         }
@@ -102,8 +112,12 @@ impl Lsp {
         loop {
             let mut line = String::new();
             let n = self.stdout.read_line(&mut line).ok()?;
-            if n == 0 { return None; }
-            if line == "\r\n" || line == "\n" { break; }
+            if n == 0 {
+                return None;
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
             if let Some(r) = line.strip_prefix("Content-Length:") {
                 len = r.trim().parse().ok();
             }
@@ -129,13 +143,19 @@ impl Dap {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let child = Command::new(zshrs_binary())
-            .arg("--dap").arg(format!("127.0.0.1:{}", port))
-            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-            .spawn().expect("spawn");
+            .arg("--dap")
+            .arg(format!("127.0.0.1:{}", port))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
         listener.set_nonblocking(false).ok();
         let deadline = Instant::now() + Duration::from_secs(5);
         let sock = loop {
-            if Instant::now() > deadline { panic!("connect-back timeout"); }
+            if Instant::now() > deadline {
+                panic!("connect-back timeout");
+            }
             match listener.accept() {
                 Ok((s, _)) => break s,
                 Err(_) => std::thread::sleep(Duration::from_millis(50)),
@@ -143,7 +163,12 @@ impl Dap {
         };
         sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
         let reader = BufReader::new(sock.try_clone().unwrap());
-        let mut d = Self { child, sock, reader, seq: 1 };
+        let mut d = Self {
+            child,
+            sock,
+            reader,
+            seq: 1,
+        };
         let _ = d.request("initialize", json!({}));
         let _ = d.wait_event("initialized", Duration::from_secs(2));
         d
@@ -187,8 +212,12 @@ impl Dap {
         loop {
             let mut line = String::new();
             let n = self.reader.read_line(&mut line).ok()?;
-            if n == 0 { return None; }
-            if line == "\r\n" || line == "\n" { break; }
+            if n == 0 {
+                return None;
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
             if let Some(r) = line.strip_prefix("Content-Length:") {
                 len = r.trim().parse().ok();
             }
@@ -207,11 +236,17 @@ fn lsp_shutdown_then_exit_terminates_process_within_timeout() {
     let mut lsp = Lsp::spawn();
     // Spec: `shutdown` returns success, then `exit` causes the server to exit.
     let r = lsp.request("shutdown", json!({}));
-    assert!(r.is_null(), "shutdown should return null result, got: {}", r);
+    assert!(
+        r.is_null(),
+        "shutdown should return null result, got: {}",
+        r
+    );
     lsp.notify("exit", json!({}));
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        if let Ok(Some(_)) = lsp.child.try_wait() { return; }
+        if let Ok(Some(_)) = lsp.child.try_wait() {
+            return;
+        }
         if Instant::now() > deadline {
             let _ = lsp.child.kill();
             panic!("LSP server did not exit within 3s after exit notification");
@@ -251,20 +286,28 @@ fn lsp_unknown_method_returns_method_not_found() {
 fn lsp_documenthighlight_marks_every_occurrence() {
     let mut lsp = Lsp::spawn();
     let text = "function f { :; }\nf\nf 1\nfoo f\n";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": "file:///h.zsh", "languageId": "zshrs",
-                          "version": 1, "text": text },
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": "file:///h.zsh", "languageId": "zshrs",
+                              "version": 1, "text": text },
+        }),
+    );
     lsp.drain_briefly();
-    let r = lsp.request("textDocument/documentHighlight", json!({
-        "textDocument": { "uri": "file:///h.zsh" },
-        "position": { "line": 1, "character": 0 },
-    }));
+    let r = lsp.request(
+        "textDocument/documentHighlight",
+        json!({
+            "textDocument": { "uri": "file:///h.zsh" },
+            "position": { "line": 1, "character": 0 },
+        }),
+    );
     let arr = r.as_array().expect("array");
     // 4 occurrences of bare token `f`: decl + 2 calls + the `f` after `foo `.
     // Word-boundary rule excludes the inner `f` of `function`.
     assert_eq!(arr.len(), 4, "expected 4 highlights, got: {:?}", arr);
-    for h in arr { assert_eq!(h["kind"], json!(1)); } // text
+    for h in arr {
+        assert_eq!(h["kind"], json!(1));
+    } // text
     let _ = lsp.request("shutdown", json!({}));
     lsp.notify("exit", json!({}));
     let _ = lsp.child.wait();
@@ -274,14 +317,20 @@ fn lsp_documenthighlight_marks_every_occurrence() {
 fn lsp_didsave_republishes_diagnostics_for_current_buffer() {
     let mut lsp = Lsp::spawn();
     let uri = "file:///s.zsh";
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": uri, "languageId": "zshrs", "version": 1,
-                          "text": "function bad {\n  echo no close\n" },
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": uri, "languageId": "zshrs", "version": 1,
+                              "text": "function bad {\n  echo no close\n" },
+        }),
+    );
     // Drain the post-open diagnostic
     lsp.drain_briefly();
     // didSave should re-publish — even though we sent no content changes.
-    lsp.notify("textDocument/didSave", json!({ "textDocument": { "uri": uri } }));
+    lsp.notify(
+        "textDocument/didSave",
+        json!({ "textDocument": { "uri": uri } }),
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut got_non_empty = false;
     while Instant::now() < deadline {
@@ -310,9 +359,12 @@ fn lsp_multidoc_state_is_isolated_per_uri() {
         ("file:///b.zsh", "function beta {}\n"),
         ("file:///c.zsh", "function gamma {}\n"),
     ] {
-        lsp.notify("textDocument/didOpen", json!({
-            "textDocument": { "uri": uri, "languageId": "zshrs", "version": 1, "text": text },
-        }));
+        lsp.notify(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": { "uri": uri, "languageId": "zshrs", "version": 1, "text": text },
+            }),
+        );
     }
     lsp.drain_briefly();
     // documentSymbol on each must return only its OWN function
@@ -321,18 +373,35 @@ fn lsp_multidoc_state_is_isolated_per_uri() {
         ("file:///b.zsh", "beta"),
         ("file:///c.zsh", "gamma"),
     ] {
-        let r = lsp.request("textDocument/documentSymbol", json!({
-            "textDocument": { "uri": uri }
-        }));
-        let names: Vec<&str> = r.as_array().unwrap().iter()
-            .filter_map(|s| s["name"].as_str()).collect();
-        assert!(names.contains(&wanted), "{}: missing {}: {:?}", uri, wanted, names);
+        let r = lsp.request(
+            "textDocument/documentSymbol",
+            json!({
+                "textDocument": { "uri": uri }
+            }),
+        );
+        let names: Vec<&str> = r
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s["name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&wanted),
+            "{}: missing {}: {:?}",
+            uri,
+            wanted,
+            names
+        );
         // Cross-leak check
         for other in ["alpha", "beta", "gamma"] {
             if other != wanted {
-                assert!(!names.contains(&other),
+                assert!(
+                    !names.contains(&other),
                     "doc {} leaked symbol {} from another doc: {:?}",
-                    uri, other, names);
+                    uri,
+                    other,
+                    names
+                );
             }
         }
     }
@@ -344,24 +413,36 @@ fn lsp_multidoc_state_is_isolated_per_uri() {
 #[test]
 fn lsp_empty_document_doesnt_crash() {
     let mut lsp = Lsp::spawn();
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": "file:///empty.zsh", "languageId": "zshrs",
-                          "version": 1, "text": "" },
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": "file:///empty.zsh", "languageId": "zshrs",
+                              "version": 1, "text": "" },
+        }),
+    );
     lsp.drain_briefly();
     // All endpoints should return empty / null without panicking
-    let sym = lsp.request("textDocument/documentSymbol", json!({
-        "textDocument": { "uri": "file:///empty.zsh" }
-    }));
+    let sym = lsp.request(
+        "textDocument/documentSymbol",
+        json!({
+            "textDocument": { "uri": "file:///empty.zsh" }
+        }),
+    );
     assert!(sym.as_array().map(|a| a.is_empty()).unwrap_or(false));
-    let hov = lsp.request("textDocument/hover", json!({
-        "textDocument": { "uri": "file:///empty.zsh" },
-        "position": { "line": 0, "character": 0 },
-    }));
+    let hov = lsp.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": "file:///empty.zsh" },
+            "position": { "line": 0, "character": 0 },
+        }),
+    );
     assert!(hov.is_null());
-    let fold = lsp.request("textDocument/foldingRange", json!({
-        "textDocument": { "uri": "file:///empty.zsh" }
-    }));
+    let fold = lsp.request(
+        "textDocument/foldingRange",
+        json!({
+            "textDocument": { "uri": "file:///empty.zsh" }
+        }),
+    );
     assert!(fold.as_array().map(|a| a.is_empty()).unwrap_or(false));
     let _ = lsp.request("shutdown", json!({}));
     lsp.notify("exit", json!({}));
@@ -371,26 +452,35 @@ fn lsp_empty_document_doesnt_crash() {
 #[test]
 fn lsp_completion_with_no_prefix_returns_all_known_categories() {
     let mut lsp = Lsp::spawn();
-    lsp.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": "file:///all.zsh", "languageId": "zshrs",
-                          "version": 1, "text": "" },
-    }));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": "file:///all.zsh", "languageId": "zshrs",
+                              "version": 1, "text": "" },
+        }),
+    );
     lsp.drain_briefly();
-    let r = lsp.request("textDocument/completion", json!({
-        "textDocument": { "uri": "file:///all.zsh" },
-        "position": { "line": 0, "character": 0 },
-    }));
+    let r = lsp.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": "file:///all.zsh" },
+            "position": { "line": 0, "character": 0 },
+        }),
+    );
     let items = r["items"].as_array().expect("items");
     let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
     // Must contain at least one of each category
     assert!(labels.contains(&"if"), "no keyword `if`");
     assert!(labels.contains(&"cd"), "no builtin `cd`");
-    assert!(labels.contains(&"EXTENDED_GLOB"), "no option `EXTENDED_GLOB`");
+    assert!(
+        labels.contains(&"EXTENDED_GLOB"),
+        "no option `EXTENDED_GLOB`"
+    );
     // LSP completion-item-kind 14 = Keyword; 3 = Function/builtin; 21 = Constant
-    let kinds: std::collections::HashSet<u64> = items.iter()
-        .filter_map(|i| i["kind"].as_u64()).collect();
+    let kinds: std::collections::HashSet<u64> =
+        items.iter().filter_map(|i| i["kind"].as_u64()).collect();
     assert!(kinds.contains(&14), "no Keyword kind in items");
-    assert!(kinds.contains(&3),  "no Function/builtin kind in items");
+    assert!(kinds.contains(&3), "no Function/builtin kind in items");
     assert!(kinds.contains(&21), "no Constant/option kind in items");
     let _ = lsp.request("shutdown", json!({}));
     lsp.notify("exit", json!({}));
@@ -422,13 +512,17 @@ fn dap_disconnect_kills_the_launched_child_program() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let path = tmp.path().to_path_buf();
     std::fs::write(&path, "sleep 30\n").unwrap();
-    let _ = dap.request("launch", json!({
-        "program": path.to_string_lossy(),
-        "args": [],
-        "cwd": std::env::temp_dir().to_string_lossy(),
-    }));
+    let _ = dap.request(
+        "launch",
+        json!({
+            "program": path.to_string_lossy(),
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
     // Wait for the child to actually start (we need its PID via `process` event)
-    let proc_event = dap.wait_event("process", Duration::from_secs(3))
+    let proc_event = dap
+        .wait_event("process", Duration::from_secs(3))
         .expect("no `process` event");
     let _adapter_pid = proc_event["systemProcessId"].as_u64();
     // Disconnect with terminateDebuggee
@@ -438,7 +532,9 @@ fn dap_disconnect_kills_the_launched_child_program() {
     // process kill. Wait for that.
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if let Ok(Some(_)) = dap.child.try_wait() { return; }
+        if let Ok(Some(_)) = dap.child.try_wait() {
+            return;
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
     let _ = dap.child.kill();
@@ -450,15 +546,21 @@ fn dap_launch_with_nonexistent_program_emits_terminated_promptly() {
     let mut dap = Dap::spawn();
     // launch may succeed (the adapter just spawns Command), then the
     // child errors out immediately and we see `terminated`.
-    let res = dap.request("launch", json!({
-        "program": "/__definitely_does_not_exist__/x.zsh",
-        "args": [],
-        "cwd": std::env::temp_dir().to_string_lossy(),
-    }));
+    let res = dap.request(
+        "launch",
+        json!({
+            "program": "/__definitely_does_not_exist__/x.zsh",
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
     // `launch` itself returns success; the failure surfaces as `terminated`.
     let _ = res;
     let term = dap.wait_event("terminated", Duration::from_secs(6));
-    assert!(term.is_some(), "no `terminated` event after bad-program launch");
+    assert!(
+        term.is_some(),
+        "no `terminated` event after bad-program launch"
+    );
     let _ = dap.request("disconnect", json!({}));
 }
 
@@ -472,11 +574,17 @@ fn dap_initialize_advertises_unsupported_features_as_false() {
     // Now drive a second `initialize` purely as a property check on the
     // already-running adapter. (zshrs --dap is permissive and re-acks.)
     let body = dap.request("initialize", json!({}));
-    for f in ["supportsConditionalBreakpoints", "supportsHitConditionalBreakpoints",
-              "supportsFunctionBreakpoints", "supportsStepBack", "supportsSetVariable",
-              "supportsRestartFrame", "supportsCompletionsRequest",
-              "supportsExceptionInfoRequest", "supportsModulesRequest"]
-    {
+    for f in [
+        "supportsConditionalBreakpoints",
+        "supportsHitConditionalBreakpoints",
+        "supportsFunctionBreakpoints",
+        "supportsStepBack",
+        "supportsSetVariable",
+        "supportsRestartFrame",
+        "supportsCompletionsRequest",
+        "supportsExceptionInfoRequest",
+        "supportsModulesRequest",
+    ] {
         assert_eq!(body[f], json!(false), "{} should be advertised as false", f);
     }
     let _ = dap.request("disconnect", json!({}));
@@ -487,15 +595,22 @@ fn dap_initialize_advertises_unsupported_features_as_false() {
 #[test]
 fn dump_reflection_every_entry_value_is_a_string() {
     let out = Command::new(zshrs_binary())
-        .arg("--dump-reflection").output().expect("spawn");
+        .arg("--dump-reflection")
+        .output()
+        .expect("spawn");
     assert!(out.status.success());
     let v: Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let obj = v.as_object().expect("top-level object");
     for (cat, val) in obj {
         let m = val.as_object().expect(cat);
         for (name, tag) in m {
-            assert!(tag.is_string(),
-                "category {}, entry {}: value not a string: {}", cat, name, tag);
+            assert!(
+                tag.is_string(),
+                "category {}, entry {}: value not a string: {}",
+                cat,
+                name,
+                tag
+            );
         }
     }
 }
@@ -507,7 +622,9 @@ fn dump_reflection_has_no_duplicate_names_across_categories() {
     // Strykelang collapses these via the %all bucket; for zshrs we just
     // enforce no overlap.
     let out = Command::new(zshrs_binary())
-        .arg("--dump-reflection").output().expect("spawn");
+        .arg("--dump-reflection")
+        .output()
+        .expect("spawn");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     let mut where_seen: std::collections::HashMap<String, String> = Default::default();
     for (cat, m) in v.as_object().unwrap() {
@@ -516,7 +633,10 @@ fn dump_reflection_has_no_duplicate_names_across_categories() {
                 // `time` is allowed in both keywords and builtins per zsh
                 // history (it's a reserved word AND there's an external
                 // command of the same name). Exempt the known duplicates.
-                let allowed = matches!(name.as_str(), "time" | ":" | "." | "[" | "[[" | "]]" | "true" | "false");
+                let allowed = matches!(
+                    name.as_str(),
+                    "time" | ":" | "." | "[" | "[[" | "]]" | "true" | "false"
+                );
                 if !allowed {
                     panic!("name `{}` appears in both `{}` and `{}`", name, prev, cat);
                 }

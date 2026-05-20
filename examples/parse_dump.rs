@@ -15,16 +15,37 @@ use std::fmt::Write;
 use zsh::zsh_h::{wc_code, wc_data, wordcode};
 
 const WCNAMES: &[&str] = &[
-    "WC_END",     "WC_LIST",    "WC_SUBLIST", "WC_PIPE",    "WC_REDIR",
-    "WC_ASSIGN",  "WC_SIMPLE",  "WC_TYPESET", "WC_SUBSH",   "WC_CURSH",
-    "WC_TIMED",   "WC_FUNCDEF", "WC_FOR",     "WC_SELECT",  "WC_WHILE",
-    "WC_REPEAT",  "WC_CASE",    "WC_IF",      "WC_COND",    "WC_ARITH",
-    "WC_AUTOFN",  "WC_TRY",
+    "WC_END",
+    "WC_LIST",
+    "WC_SUBLIST",
+    "WC_PIPE",
+    "WC_REDIR",
+    "WC_ASSIGN",
+    "WC_SIMPLE",
+    "WC_TYPESET",
+    "WC_SUBSH",
+    "WC_CURSH",
+    "WC_TIMED",
+    "WC_FUNCDEF",
+    "WC_FOR",
+    "WC_SELECT",
+    "WC_WHILE",
+    "WC_REPEAT",
+    "WC_CASE",
+    "WC_IF",
+    "WC_COND",
+    "WC_ARITH",
+    "WC_AUTOFN",
+    "WC_TRY",
 ];
 
 fn wc_name(kind: wordcode) -> &'static str {
     let i = kind as usize;
-    if i < WCNAMES.len() { WCNAMES[i] } else { "WC_?" }
+    if i < WCNAMES.len() {
+        WCNAMES[i]
+    } else {
+        "WC_?"
+    }
 }
 
 fn esc(out: &mut String, s: &str) {
@@ -45,8 +66,7 @@ fn esc(out: &mut String, s: &str) {
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: parse_dump FILE");
-    let src = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {}", path, e));
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path, e));
 
     zsh::lex::lex_init(&src);
     use zsh::tokens::ENDINPUT;

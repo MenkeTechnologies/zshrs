@@ -120,8 +120,6 @@ pub fn lex_context_restore(ls: &mut lex_stack) {
     LEX_TOKLINENO.set(ls.toklineno as u64);
 }
 
-
-
 /// Main lexer entry point — fetch the next token. Direct port of
 /// zsh/Src/lex.c:266 `zshlex`. Loop body matches the C source
 /// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
@@ -177,9 +175,7 @@ pub fn zshlex() {
     // into the parallel AST-glue `LEX_HEREDOCS` Vec.
     if tok() == NEWLIN || tok() == ENDINPUT {
         // c:279 — `while (hdocs)`
-        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(
-            |h| h.take(),
-        ) {
+        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(|h| h.take()) {
             // c:280 — `struct heredocs *next = hdocs->next;`
             let next: Option<Box<crate::ported::zsh_h::heredocs>> = node.next.take();
             // c:281 — `char *doc, *munged_term;`
@@ -664,31 +660,37 @@ fn cmd_or_math_sub() -> i32 {
 /// while (n--) hungetc(tbuf[n]);
 /// return ret;
 /// ```
-pub fn isnumglob() -> bool {                                                  // c:581 (Src/lex.c)
+pub fn isnumglob() -> bool {
+    // c:581 (Src/lex.c)
     // c:583 — `int c, ec = '-', ret = 0;`. `ec` is the expected
     // non-digit char: starts at `-`, flips to `>` after the dash.
-    let mut ec: char = '-';                                                   // c:583
-    let mut ret = false;                                                      // c:583
-    // c:585 — char buffer for the rewind at c:606-607.
+    let mut ec: char = '-'; // c:583
+    let mut ret = false; // c:583
+                         // c:585 — char buffer for the rewind at c:606-607.
     let mut buf: Vec<char> = Vec::new();
 
-    loop {                                                                    // c:587
-        let cn = hgetc();                                                     // c:588
-        if LEX_LEXSTOP.get() {                                                // c:589
-            LEX_LEXSTOP.set(false);                                           // c:590
-            break;                                                            // c:591
+    loop {
+        // c:587
+        let cn = hgetc(); // c:588
+        if LEX_LEXSTOP.get() {
+            // c:589
+            LEX_LEXSTOP.set(false); // c:590
+            break; // c:591
         }
         let Some(cn) = cn else { break };
-        buf.push(cn);                                                         // c:593
-        if !cn.is_ascii_digit() {                                             // c:594 !idigit(c)
-            if cn != ec {                                                     // c:595
-                break;                                                        // c:596
+        buf.push(cn); // c:593
+        if !cn.is_ascii_digit() {
+            // c:594 !idigit(c)
+            if cn != ec {
+                // c:595
+                break; // c:596
             }
-            if ec == '>' {                                                    // c:597
-                ret = true;                                                   // c:598
-                break;                                                        // c:599
+            if ec == '>' {
+                // c:597
+                ret = true; // c:598
+                break; // c:599
             }
-            ec = '>';                                                         // c:601
+            ec = '>'; // c:601
         }
     }
     // c:606-607 — `while (n--) hungetc(tbuf[n]);` — rewind in
@@ -696,7 +698,7 @@ pub fn isnumglob() -> bool {                                                  //
     while let Some(ch) = buf.pop() {
         hungetc(ch);
     }
-    ret                                                                       // c:609
+    ret // c:609
 }
 
 // SPECCHARS / PATCHARS — port of `Src/zsh.h:228, 232`. Use
@@ -835,7 +837,9 @@ impl lexbufstate {
             .chars()
             .next()
             .map(|ch| byte_idx + ch.len_utf8());
-        let Some(old_byte_end) = old_byte_end else { return };
+        let Some(old_byte_end) = old_byte_end else {
+            return;
+        };
         let mut new_bytes = [0u8; 4];
         let new_str = c.encode_utf8(&mut new_bytes);
         if new_str.len() == old_byte_end - byte_idx {
@@ -992,8 +996,7 @@ fn gettok() -> lextok {
     // c:627-628 — `if ((lexflags & LEXFLAGS_ZLE) && !(inbufflags
     // & INP_ALIAS)) wordbeg = inbufct - (qbang && c == bangchar);`
     // ZLE word-begin tracking; consumed by `gotword` (c:1882).
-    let qbang_at_bang =
-        crate::ported::hist::qbang.load(std::sync::atomic::Ordering::SeqCst)
+    let qbang_at_bang = crate::ported::hist::qbang.load(std::sync::atomic::Ordering::SeqCst)
         && c as i32 == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
     let qbang_adj: i32 = if qbang_at_bang { 1 } else { 0 };
     if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
@@ -1351,13 +1354,18 @@ fn gettok() -> lextok {
                     if let Some(d) = d {
                         hungetc(d);
                     }
-                    if isnumglob() {                                          // c:860
+                    if isnumglob() {
+                        // c:860
                         // c:861 — `goto unpeekfd;` — restore peekfd
                         // and fall through to gettokstr at LX1 break.
-                        if peekfd != -1 {                                     // c:832
-                            hungetc(c);                                       // c:833
-                            return gettokstr(((b'0' as i32) + peekfd) as u8   // c:834
-                                as char, false);
+                        if peekfd != -1 {
+                            // c:832
+                            hungetc(c); // c:833
+                            return gettokstr(
+                                ((b'0' as i32) + peekfd) as u8   // c:834
+                                as char,
+                                false,
+                            );
                         }
                         LEX_LEXSTOP.set(false);
                         return gettokstr(c, false);
@@ -1887,14 +1895,16 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 // sub) && e == '(') { add(Inang); skipcomm(); c =
                 // Outpar; break; }`. `<(...)` process-sub only when
                 // outside brace_param/sub — inside, `<` stays literal.
-                let e = hgetc();                                              // c:1190
-                if !(in_brace_param > 0 || sub) && e == Some('(') {           // c:1191
-                    add(Inang);                                               // c:1192
-                    if skipcomm().is_err() {                                  // c:1193
+                let e = hgetc(); // c:1190
+                if !(in_brace_param > 0 || sub) && e == Some('(') {
+                    // c:1191
+                    add(Inang); // c:1192
+                    if skipcomm().is_err() {
+                        // c:1193
                         peek = LEXERR;
                         break;
                     }
-                    add(Outpar);                                              // c:1197 c=Outpar
+                    add(Outpar); // c:1197 c=Outpar
                 } else {
                     // c:1200 — `hungetc(e);`.
                     if let Some(e) = e {
@@ -1908,30 +1918,33 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // so isnumglob still fires below — but cond /
                         // case patterns stay raw.
                         add(c);
-                    } else if isnumglob() {                                   // c:1201
+                    } else if isnumglob() {
+                        // c:1201
                         // c:1202-1206 — emit Inang…Outang markers.
-                        add(Inang);                                           // c:1202
-                        while let Some(ch) = hgetc() {                        // c:1203
+                        add(Inang); // c:1202
+                        while let Some(ch) = hgetc() {
+                            // c:1203
                             if ch == '>' {
                                 break;
                             }
-                            add(ch);                                          // c:1204
+                            add(ch); // c:1204
                         }
-                        add(Outang);                                          // c:1205
+                        add(Outang); // c:1205
                     } else {
                         // c:1208 — `lexstop = 0;`.
-                        LEX_LEXSTOP.set(false);                               // c:1208
-                        // c:1209-1210 — `if (in_brace_param || sub) break;`
-                        // exits the C switch and falls to the
-                        // post-switch `add(c)`. In Rust the LX2_INANG
-                        // arm doesn't fall to a shared add — add `<`
-                        // explicitly here so it lands in the token
-                        // buffer. Inside `${...}` and `$(...)` /
-                        // backticks, bare `<` is literal — required
-                        // for patterns like `${arr[@]:#<no-data>}`
-                        // (zinit.zsh:2507) which excludes elements
-                        // matching the literal `<no-data>`.
-                        if in_brace_param > 0 || sub {                        // c:1209
+                        LEX_LEXSTOP.set(false); // c:1208
+                                                // c:1209-1210 — `if (in_brace_param || sub) break;`
+                                                // exits the C switch and falls to the
+                                                // post-switch `add(c)`. In Rust the LX2_INANG
+                                                // arm doesn't fall to a shared add — add `<`
+                                                // explicitly here so it lands in the token
+                                                // buffer. Inside `${...}` and `$(...)` /
+                                                // backticks, bare `<` is literal — required
+                                                // for patterns like `${arr[@]:#<no-data>}`
+                                                // (zinit.zsh:2507) which excludes elements
+                                                // matching the literal `<no-data>`.
+                        if in_brace_param > 0 || sub {
+                            // c:1209
                             add(c);
                         } else {
                             // c:1211 — `goto brk;` outside brace_param/sub
@@ -2526,22 +2539,25 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
 /// }
 /// return err;
 /// ```
-pub fn parsestr(s: &str) -> Result<String, String> {                          // c:1694
-    match parsestrnoerr(s) {                                                  // c:1698
+pub fn parsestr(s: &str) -> Result<String, String> {
+    // c:1694
+    match parsestrnoerr(s) {
+        // c:1698
         Ok(result) => Ok(result),
         Err(msg) => {
-            let untok = untokenize(s);                                        // c:1699
+            let untok = untokenize(s); // c:1699
             let _ = untok;
-            let ef = crate::ported::utils::errflag                            // c:1700
+            let ef = crate::ported::utils::errflag // c:1700
                 .load(std::sync::atomic::Ordering::Relaxed);
-            if (ef & crate::ported::zsh_h::ERRFLAG_INT) == 0 {                // c:1700
+            if (ef & crate::ported::zsh_h::ERRFLAG_INT) == 0 {
+                // c:1700
                 // c:1701-1704 — `if (err > 32 && err < 127)` switches between
                 // "parse error near `%c'" and bare "parse error". The
                 // Err(msg) string carries the diagnostic already formatted
                 // by dquote_parse / gettokstr; emit it via zerr to match
                 // C's stderr behaviour.
-                crate::ported::utils::zerr(&msg);                             // c:1702/1704
-                set_tok(LEXERR);                                              // c:1705
+                crate::ported::utils::zerr(&msg); // c:1702/1704
+                set_tok(LEXERR); // c:1705
             }
             Err(msg)
         }
@@ -2572,9 +2588,9 @@ pub fn parsestr(s: &str) -> Result<String, String> {                          //
 /// they do during a normal command parse. Returns the tokenized
 /// string on success.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
-    let untok = untokenize(s);                                                // c:1716 `untokenize(*s);`
-    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());     // c:1717
-    // c:1715 `zcontext_save();`
+    let untok = untokenize(s); // c:1716 `untokenize(*s);`
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len()); // c:1717
+                                                                          // c:1715 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
     crate::ported::input::inpush(&dup, 0, None);
@@ -2598,9 +2614,10 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     // c:1727 `inpop();`
     crate::ported::input::inpop();
     // c:1730 — DPUTS(cmdsp, "BUG: parsestr: cmdstack not empty.")
-    crate::DPUTS!(                                                            // c:1730
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1730
-        "BUG: parsestr: cmdstack not empty."                                 // c:1730
+    crate::DPUTS!(
+        // c:1730
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1730
+        "BUG: parsestr: cmdstack not empty."                              // c:1730
     );
     // c:1729 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
@@ -2636,7 +2653,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
         return None;
     }
     let l = s.len();
-    let untok = untokenize(s);                                                // c:1749 `untokenize(t = dupstring_wlen(s, l));`
+    let untok = untokenize(s); // c:1749 `untokenize(t = dupstring_wlen(s, l));`
     let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
     // c:1748 `zcontext_save();`
     crate::ported::context::zcontext_save();
@@ -2655,15 +2672,16 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     let parse_err = dquote_parse(endchar, false).is_err();
     let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
     // c:1771 — DPUTS(toklen > l, "Bad length for parsed subscript")
-    crate::DPUTS!(toklen > l, "Bad length for parsed subscript");            // c:1771
-    // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
-    // `zcontext_restore();`
+    crate::DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
+                                                                  // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
+                                                                  // `zcontext_restore();`
     crate::ported::hist::strinend();
     crate::ported::input::inpop();
     // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
-    crate::DPUTS!(                                                            // c:1785
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1785
-        "BUG: parse_subscript: cmdstack not empty."                          // c:1785
+    crate::DPUTS!(
+        // c:1785
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
+        "BUG: parse_subscript: cmdstack not empty."                       // c:1785
     );
     crate::ported::context::zcontext_restore();
     if parse_err {
@@ -2688,20 +2706,21 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// need to know the exact stop position, but nothing in zshrs's
 /// expansion layer uses that yet.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
-    use std::sync::atomic::Ordering;
-    use crate::ported::zsh_h::{Nularg, ERRFLAG_INT};
     use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::{Nularg, ERRFLAG_INT};
+    use std::sync::atomic::Ordering;
     // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`. C nulstring
     // is `{Nularg, 0}` (0xa1, NUL) — defined in Src/subst.c:36. A
     // single-Nularg input is the empty-arg sentinel and returns
     // success without parsing. The previous Rust port missed the
     // nulstring check so a Nularg-only input would attempt re-lex,
     // surfacing a spurious parse error.
-    if s.is_empty() || s == Nularg.to_string() {                              // c:1802
+    if s.is_empty() || s == Nularg.to_string() {
+        // c:1802
         return Ok(String::new());
     }
     let l = s.len();
-    let untok = untokenize(s);                                                // c:1804
+    let untok = untokenize(s); // c:1804
     let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
     // c:1803 `zcontext_save();`
     crate::ported::context::zcontext_save();
@@ -2725,16 +2744,17 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     // c:1813 — `err = errflag;`. Snapshot PRE-strinend errflag so we
     // can restore it post-zcontext_restore (parse-time errflag bits
     // must not leak to the caller).
-    let err = errflag.load(Ordering::Relaxed);                                // c:1813
+    let err = errflag.load(Ordering::Relaxed); // c:1813
     let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
     // c:1814 `strinend();`
     crate::ported::hist::strinend();
     // c:1815 `inpop();`
     crate::ported::input::inpop();
     // c:1816 — DPUTS(cmdsp, "BUG: parse_subst_string: cmdstack not empty.")
-    crate::DPUTS!(                                                            // c:1816
-        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1816 cmdsp != 0
-        "BUG: parse_subst_string: cmdstack not empty."                       // c:1816
+    crate::DPUTS!(
+        // c:1816
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1816 cmdsp != 0
+        "BUG: parse_subst_string: cmdstack not empty."                    // c:1816
     );
     // c:1817 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
@@ -2743,9 +2763,10 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     // (user interrupt must survive). The previous Rust port skipped
     // this restore — parse-time ERRFLAG_ERROR bits leaked to callers,
     // causing the next exec-engine check to abort on a stale flag.
-    let post_err = errflag.load(Ordering::Relaxed);                           // c:1819
-    errflag.store(err | (post_err & ERRFLAG_INT), Ordering::Relaxed);         // c:1819
-    if ctok == LEXERR {                                                       // c:1820
+    let post_err = errflag.load(Ordering::Relaxed); // c:1819
+    errflag.store(err | (post_err & ERRFLAG_INT), Ordering::Relaxed); // c:1819
+    if ctok == LEXERR {
+        // c:1820
         // Diagnostic already emitted via zerr at the failure site.
         return Err("parse error".to_string());
     }
@@ -3236,18 +3257,14 @@ fn skipcomm() -> Result<(), ()> {
     if outer_was_recording {
         // Nested: propagate the existing raw buffers.
         new_tokstr_init = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
-        let (p, s, l) = LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-            (b.ptr.take(), b.siz, b.len)
-        });
+        let (p, s, l) = LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
         new_lexbuf_init_ptr = p;
         new_lexbuf_init_siz = s;
         new_lexbuf_init_len = l;
     } else {
         // Top-level: seed raw with current tokstr/lexbuf.
         new_tokstr_init = tokstr();
-        let (p, s, l) = LEX_LEXBUF.with_borrow(|b| {
-            (b.ptr.clone(), b.siz, b.len)
-        });
+        let (p, s, l) = LEX_LEXBUF.with_borrow(|b| (b.ptr.clone(), b.siz, b.len));
         new_lexbuf_init_ptr = p;
         new_lexbuf_init_siz = s;
         new_lexbuf_init_len = l;
@@ -3260,13 +3277,21 @@ fn skipcomm() -> Result<(), ()> {
     set_tokstr(new_tokstr_init);
     LEX_LEXBUF.with_borrow_mut(|b| {
         b.ptr = new_lexbuf_init_ptr.clone();
-        b.siz = if new_lexbuf_init_siz == 0 { 256 } else { new_lexbuf_init_siz };
+        b.siz = if new_lexbuf_init_siz == 0 {
+            256
+        } else {
+            new_lexbuf_init_siz
+        };
         b.len = new_lexbuf_init_len;
     });
     LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = tokstr());
     LEX_LEXBUF_RAW.with_borrow_mut(|b| {
         b.ptr = new_lexbuf_init_ptr;
-        b.siz = if new_lexbuf_init_siz == 0 { 256 } else { new_lexbuf_init_siz };
+        b.siz = if new_lexbuf_init_siz == 0 {
+            256
+        } else {
+            new_lexbuf_init_siz
+        };
         b.len = new_lexbuf_init_len;
     });
     LEX_LEX_ADD_RAW.set(new_lex_add_raw);
@@ -3321,7 +3346,9 @@ fn skipcomm() -> Result<(), ()> {
             cmdpop();
         }
     }
-    let _guard = SkipcommGuard { outer_was_recording };
+    let _guard = SkipcommGuard {
+        outer_was_recording,
+    };
 
     let mut pct = 1;
     let mut start = true;
@@ -3876,7 +3903,8 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         let cu = c as u32;
-        if (0x84..=0xa1).contains(&cu) {                                       // c:52 (Src/ztype.h) ITOK range
+        if (0x84..=0xa1).contains(&cu) {
+            // c:52 (Src/ztype.h) ITOK range
             match c {
                 c if c == Pound => result.push('#'),
                 c if c == Stringg => result.push('$'),
@@ -4176,10 +4204,10 @@ pub fn untokenize(s: &str) -> String {
 ///     `$''` lexing would falsely report "no token").
 /// Route through the canonical `ztype_h::itok` so future ITOK
 /// changes propagate automatically (typtab is a runtime table).
-pub fn has_token(s: &str) -> bool {                                           // c:2282 (Src/utils.c)
+pub fn has_token(s: &str) -> bool {
+    // c:2282 (Src/utils.c)
     s.bytes().any(crate::ported::ztype_h::itok)
 }
-
 
 #[cfg(test)]
 mod tokens_tests {
@@ -4216,7 +4244,6 @@ mod tokens_tests {
         assert!(!IS_REDIROP(STRING_LEX));
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -4455,9 +4482,9 @@ mod tests {
     #[test]
     fn untokenize_passes_plain_string_through() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(untokenize("hello"),      "hello");
-        assert_eq!(untokenize(""),           "");
-        assert_eq!(untokenize("a/b/c"),      "a/b/c");
+        assert_eq!(untokenize("hello"), "hello");
+        assert_eq!(untokenize(""), "");
+        assert_eq!(untokenize("a/b/c"), "a/b/c");
     }
 
     /// `Src/exec.c:2079-2106` — `untokenize(s)` walks the string and
@@ -4478,14 +4505,18 @@ mod tests {
         // strip or replace it (the literal byte must NOT survive).
         let with_pound = format!("a{}b", crate::ported::zsh_h::Pound);
         let cleaned = untokenize(&with_pound);
-        assert!(!cleaned.contains(crate::ported::zsh_h::Pound),
-            "Pound (\\u{{84}}) sentinel must be replaced (got {cleaned:?})");
+        assert!(
+            !cleaned.contains(crate::ported::zsh_h::Pound),
+            "Pound (\\u{{84}}) sentinel must be replaced (got {cleaned:?})"
+        );
         // Marker = \u{a2} per zsh.h:224. NOT in ITOK range. C's
         // untokenize doesn't touch it — passes through verbatim.
         let with_marker = format!("x{}y", crate::ported::zsh_h::Marker);
         let cleaned = untokenize(&with_marker);
-        assert!(cleaned.contains(crate::ported::zsh_h::Marker),
-            "Marker (\\u{{a2}}) is NOT ITOK; must pass through untokenize verbatim");
+        assert!(
+            cleaned.contains(crate::ported::zsh_h::Marker),
+            "Marker (\\u{{a2}}) is NOT ITOK; must pass through untokenize verbatim"
+        );
     }
 
     /// `Src/utils.c:4198-4201` — ITOK range is Pound..Nularg
@@ -4507,14 +4538,18 @@ mod tests {
         // META (\u{83}) is IMETA-only, NOT ITOK. Must pass through.
         let with_meta = format!("a{}b", '\u{83}');
         let cleaned = untokenize(&with_meta);
-        assert!(cleaned.contains('\u{83}'),
-            "c:4197 — META (\\u{{83}}) is IMETA-only, never ITOK");
+        assert!(
+            cleaned.contains('\u{83}'),
+            "c:4197 — META (\\u{{83}}) is IMETA-only, never ITOK"
+        );
         // Nularg (\u{a1}) IS ITOK. C's untokenize SKIPS it (no
         // replacement char per c:2089 `if (c != Nularg)`).
         let with_nularg = format!("a{}b", crate::ported::zsh_h::Nularg);
         let cleaned = untokenize(&with_nularg);
-        assert!(!cleaned.contains(crate::ported::zsh_h::Nularg),
-            "c:2089 — Nularg (\\u{{a1}}) must be DROPPED by untokenize");
+        assert!(
+            !cleaned.contains(crate::ported::zsh_h::Nularg),
+            "c:2089 — Nularg (\\u{{a1}}) must be DROPPED by untokenize"
+        );
     }
 
     /// `untokenize_preserve_quotes` keeps quote sentinels (Bnull/Snull)
@@ -4523,8 +4558,8 @@ mod tests {
     #[test]
     fn untokenize_preserve_quotes_plain_input_unchanged() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(untokenize_preserve_quotes("foo"),  "foo");
-        assert_eq!(untokenize_preserve_quotes(""),     "");
+        assert_eq!(untokenize_preserve_quotes("foo"), "foo");
+        assert_eq!(untokenize_preserve_quotes(""), "");
     }
 
     /// `set_toklineno` + `toklineno` round-trip. The token-line
@@ -4569,9 +4604,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Tests drive the streaming port via lex_init → isnumglob,
         // matching C's hgetc/hungetc model exactly.
-        lex_init("1-10>");  assert!(isnumglob(), "<1-10> shape recognised");
-        lex_init("0-100>"); assert!(isnumglob());
-        lex_init("9-9>");   assert!(isnumglob(), "single-value range");
+        lex_init("1-10>");
+        assert!(isnumglob(), "<1-10> shape recognised");
+        lex_init("0-100>");
+        assert!(isnumglob());
+        lex_init("9-9>");
+        assert!(isnumglob(), "single-value range");
     }
 
     /// `isnumglob` rejects malformed shapes: missing closing `>`,
@@ -4580,11 +4618,16 @@ mod tests {
     #[test]
     fn isnumglob_rejects_malformed_shapes() {
         let _g = crate::test_util::global_state_lock();
-        lex_init("1-10");  assert!(!isnumglob(), "missing closing > → not numglob");
-        lex_init("1-");    assert!(!isnumglob(), "no closing");
-        lex_init("abc>");  assert!(!isnumglob(), "non-digit content");
-        lex_init(">");     assert!(!isnumglob(), "bare close");
-        lex_init("");      assert!(!isnumglob(), "empty input");
+        lex_init("1-10");
+        assert!(!isnumglob(), "missing closing > → not numglob");
+        lex_init("1-");
+        assert!(!isnumglob(), "no closing");
+        lex_init("abc>");
+        assert!(!isnumglob(), "non-digit content");
+        lex_init(">");
+        assert!(!isnumglob(), "bare close");
+        lex_init("");
+        assert!(!isnumglob(), "empty input");
     }
 
     /// `Src/lex.c:606-607` — `while (n--) hungetc(tbuf[n]);` —
@@ -4617,8 +4660,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:577 — `[0-9]*-[0-9]*>` allows ZERO digits on either side.
         lex_init("->");
-        assert!(isnumglob(),
-            "c:577 — `<->` is the minimum valid numglob (both runs empty)");
+        assert!(
+            isnumglob(),
+            "c:577 — `<->` is the minimum valid numglob (both runs empty)"
+        );
         lex_init("-10>");
         assert!(isnumglob(), "c:577 — left run can be empty");
         lex_init("1->");
@@ -4635,11 +4680,12 @@ mod tests {
         // c:597-602 — after seeing the first `-`, ec becomes `>`.
         // Next non-digit must be `>` or the loop breaks.
         lex_init("1-2-3>");
-        assert!(!isnumglob(),
-            "c:597-602 — second `-` breaks the state machine");
+        assert!(
+            !isnumglob(),
+            "c:597-602 — second `-` breaks the state machine"
+        );
         lex_init("1--2>");
-        assert!(!isnumglob(),
-            "c:597-602 — `--` not valid in numglob");
+        assert!(!isnumglob(), "c:597-602 — `--` not valid in numglob");
     }
 
     /// `Src/lex.c:1802` — `parse_subst_string` returns 0 (success,
@@ -4654,12 +4700,13 @@ mod tests {
         // Clear errflag so other tests don't poison the assertion.
         crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         // c:1802 — empty input is a no-op success.
-        assert!(parse_subst_string("").is_ok(),
-            "c:1802 — empty input → Ok");
+        assert!(parse_subst_string("").is_ok(), "c:1802 — empty input → Ok");
         // c:1802 — nulstring (a single Nularg char) is a no-op success.
         let nul = crate::ported::zsh_h::Nularg.to_string();
-        assert!(parse_subst_string(&nul).is_ok(),
-            "c:1802 — nulstring sentinel → Ok (was Err on previous port)");
+        assert!(
+            parse_subst_string(&nul).is_ok(),
+            "c:1802 — nulstring sentinel → Ok (was Err on previous port)"
+        );
     }
 
     /// `Src/lex.c:1819` — `parse_subst_string` MUST restore the
@@ -4673,13 +4720,16 @@ mod tests {
     #[test]
     fn parse_subst_string_restores_errflag_after_parse() {
         let _g = crate::test_util::global_state_lock();
-        use std::sync::atomic::Ordering;
-        use crate::ported::zsh_h::ERRFLAG_ERROR;
         use crate::ported::utils::errflag;
+        use crate::ported::zsh_h::ERRFLAG_ERROR;
+        use std::sync::atomic::Ordering;
         // Pre-call: errflag clear. Post-call on simple input: still clear.
         errflag.store(0, Ordering::Relaxed);
         let _ = parse_subst_string("foo");
-        assert_eq!(errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR, 0,
-            "c:1819 — parse-time errflag must NOT leak; clean input keeps errflag clear");
+        assert_eq!(
+            errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR,
+            0,
+            "c:1819 — parse-time errflag must NOT leak; clean input keeps errflag clear"
+        );
     }
 }

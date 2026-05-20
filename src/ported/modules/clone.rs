@@ -12,9 +12,9 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
 use crate::ported::zsh_h::{module, options};
@@ -34,7 +34,8 @@ use std::os::unix::io::RawFd;
 /// ```
 #[cfg(unix)]
 #[allow(unused_variables)]
-pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:44
+pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
+    // c:44
 
     // c:46 — `int ttyfd, pid, cttyfd;`
     let ttyfd: RawFd;
@@ -66,13 +67,18 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
 
     // c:49 — `ttyfd = open(*args, O_RDWR|O_NOCTTY);`
     ttyfd = unsafe { libc::open(tty_c.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
-    if ttyfd < 0 {                                                       // c:50
-        zwarnnam(nam, &format!("{}: {}", arg0, std::io::Error::last_os_error())); // c:51
-        return 1;                                                        // c:52
+    if ttyfd < 0 {
+        // c:50
+        zwarnnam(
+            nam,
+            &format!("{}: {}", arg0, std::io::Error::last_os_error()),
+        ); // c:51
+        return 1; // c:52
     }
     // c:54 — `pid = fork();`
     pid = unsafe { libc::fork() };
-    if pid == 0 {                                                        // c:55 if (!pid)
+    if pid == 0 {
+        // c:55 if (!pid)
         // c:56 — clearjobtab(0); clear the inherited JOBTAB so the
         // child starts fresh. Inlined lock+clear matches the C
         // clearjobtab loop body (Src/jobs.c:1780).
@@ -90,14 +96,17 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
         if unsafe { libc::setsid() } != mypid {
             zwarnnam(
                 nam,
-                &format!("failed to create new session: {}", std::io::Error::last_os_error()), // c:61
+                &format!(
+                    "failed to create new session: {}",
+                    std::io::Error::last_os_error()
+                ), // c:61
             );
         }
         // c:67-69 — dup2(ttyfd, 0/1/2);
         unsafe {
-            libc::dup2(ttyfd, 0);                                        // c:67
-            libc::dup2(ttyfd, 1);                                        // c:68
-            libc::dup2(ttyfd, 2);                                        // c:69
+            libc::dup2(ttyfd, 0); // c:67
+            libc::dup2(ttyfd, 1); // c:68
+            libc::dup2(ttyfd, 2); // c:69
         }
         // c:70-71 — if (ttyfd > 2) close(ttyfd);
         if ttyfd > 2 {
@@ -110,49 +119,64 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
         // exec, and `bin_clone` does not exec a new program. No-op
         // matches the C behaviour for the static-link path.
         // c:73-74 — close(coprocin); close(coprocout);
-        unsafe { libc::close(coprocin.load(Ordering::Relaxed)) };        // c:73
-        unsafe { libc::close(coprocout.load(Ordering::Relaxed)) };       // c:74
-        /* Acquire a controlling terminal */                             // c:75
-        // c:76 — cttyfd = open(*args, O_RDWR);
+        unsafe { libc::close(coprocin.load(Ordering::Relaxed)) }; // c:73
+        unsafe { libc::close(coprocout.load(Ordering::Relaxed)) }; // c:74
+                                                                   /* Acquire a controlling terminal */                             // c:75
+                                                                   // c:76 — cttyfd = open(*args, O_RDWR);
         cttyfd = unsafe { libc::open(tty_c.as_ptr(), libc::O_RDWR) };
-        if cttyfd == -1 {                                                // c:77
+        if cttyfd == -1 {
+            // c:77
             zwarnnam(nam, &format!("{}", std::io::Error::last_os_error())); // c:78
-        } else {                                                         // c:79
+        } else {
+            // c:79
             // c:81 — ioctl(cttyfd, TIOCSCTTY, 0);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             unsafe {
                 libc::ioctl(cttyfd, libc::TIOCSCTTY as _, 0);
             }
-            unsafe { libc::close(cttyfd) };                              // c:83
+            unsafe { libc::close(cttyfd) }; // c:83
         }
-        /* check if we acquired the tty successfully */                  // c:85
+        /* check if we acquired the tty successfully */
+        // c:85
         // c:86 — cttyfd = open("/dev/tty", O_RDWR);
         let dev_tty = b"/dev/tty\0".as_ptr() as *const libc::c_char;
         let cttyfd2 = unsafe { libc::open(dev_tty, libc::O_RDWR) };
-        if cttyfd2 == -1 {                                               // c:87
-            zwarnnam(                                                     // c:88
+        if cttyfd2 == -1 {
+            // c:87
+            zwarnnam(
+                // c:88
                 nam,
-                &format!("could not make {} my controlling tty, job control disabled", arg0),
+                &format!(
+                    "could not make {} my controlling tty, job control disabled",
+                    arg0
+                ),
             );
-        } else {                                                         // c:90
-            unsafe { libc::close(cttyfd2) };                             // c:91
+        } else {
+            // c:90
+            unsafe { libc::close(cttyfd2) }; // c:91
         }
 
         /* Clear mygrp so that acquire_pgrp() gets the new process group.
-         * (acquire_pgrp() is called from init_io()) */                  // c:93-94
-        mypgrp.store(0, Ordering::Relaxed);                              // c:95 mypgrp = 0;
-        crate::ported::init::init_io(None);                              // c:96 init_io(NULL);
+         * (acquire_pgrp() is called from init_io()) */
+        // c:93-94
+        mypgrp.store(0, Ordering::Relaxed); // c:95 mypgrp = 0;
+        crate::ported::init::init_io(None); // c:96 init_io(NULL);
         let tty_name = ttystrname.lock().unwrap().clone();
-        crate::ported::params::setsparam("TTY", &tty_name);              // c:97 setsparam("TTY", ztrdup(ttystrname));
-    } else {                                                             // c:99
-        unsafe { libc::close(ttyfd) };                                   // c:100
+        crate::ported::params::setsparam("TTY", &tty_name); // c:97 setsparam("TTY", ztrdup(ttystrname));
+    } else {
+        // c:99
+        unsafe { libc::close(ttyfd) }; // c:100
     }
-    if pid < 0 {                                                         // c:101
-        zerrnam(nam, &format!("fork failed: {}", std::io::Error::last_os_error())); // c:102
-        return 1;                                                        // c:103
+    if pid < 0 {
+        // c:101
+        zerrnam(
+            nam,
+            &format!("fork failed: {}", std::io::Error::last_os_error()),
+        ); // c:102
+        return 1; // c:103
     }
-    lastpid.store(pid as i32, Ordering::Relaxed);                        // c:105 lastpid = pid;
-    0                                                                    // c:106
+    lastpid.store(pid as i32, Ordering::Relaxed); // c:105 lastpid = pid;
+    0 // c:106
 }
 
 /// Port of `bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/clone.c:44`.
@@ -168,15 +192,12 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
 // static struct features module_features                             c:113
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (clone.c:109):
 // `BUILTIN("clone", 0, bin_clone, 1, 1, 0, NULL, NULL)`.
-
 
 // `module_features` — port of `static struct features module_features`
 // from clone.c:113. Uses canonical slice-based `module::Features`,
 // fed into `module::featuresarray`/`handlefeatures` from module.c.
-
 
 // `Module` instance synthesized for the canonical featuresarray/
 // handlefeatures API (which takes `&Module` to read `m->node.nam`).
@@ -189,39 +210,45 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/clone.c:123`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:123
-    0                                                                    // c:138
+pub fn setup_(m: *const module) -> i32 {
+    // c:123
+    0 // c:138
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/clone.c:130`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:130
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:130
     *features = featuresarray(m, module_features());
-    0                                                                    // c:145
+    0 // c:145
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/clone.c:138`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:138
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:138
     handlefeatures(m, module_features(), enables) // c:152
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/clone.c:145`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:145
-    0                                                                    // c:159
+pub fn boot_(m: *const module) -> i32 {
+    // c:145
+    0 // c:159
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/clone.c:152`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:152
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:152
     setfeatureenables(m, module_features(), None) // c:159
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/clone.c:159`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:159
-    0                                                                    // c:159
+pub fn finish_(m: *const module) -> i32 {
+    // c:159
+    0 // c:159
 }
 
 // =====================================================================
@@ -250,12 +277,9 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 // Tests
 // =====================================================================
 
-
-
 use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -289,11 +313,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -324,17 +344,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -343,7 +365,12 @@ mod tests {
     use crate::ported::zsh_h::MAX_OPS;
 
     fn empty_ops() -> options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     #[test]
@@ -402,7 +429,10 @@ mod tests {
         let mut enables: Option<Vec<i32>> = None;
         enables_(std::ptr::null(), &mut enables);
         let e = enables.expect("must return Some");
-        assert!(!e.is_empty(), "enables vec must contain ≥1 entry for the b:clone feature");
+        assert!(
+            !e.is_empty(),
+            "enables vec must contain ≥1 entry for the b:clone feature"
+        );
     }
 
     /// c:44-50 — `bin_clone` with >1 positional argument must reject
@@ -417,7 +447,8 @@ mod tests {
         let rc = bin_clone(
             "clone",
             &["/nonexistent1".to_string(), "/nonexistent2".to_string()],
-            &ops, 0,
+            &ops,
+            0,
         );
         assert_eq!(rc, 1, "more than 1 arg must be rejected");
     }
@@ -432,10 +463,16 @@ mod tests {
         let mut feats: Vec<String> = Vec::new();
         features_(std::ptr::null(), &mut feats);
         let f = &feats[0];
-        assert!(f.starts_with("b:"),
-            "feature {} must use 'b:' prefix per zsh module spec", f);
-        assert_eq!(&f[2..], "clone",
-            "feature 'b:<name>' suffix must be 'clone'");
+        assert!(
+            f.starts_with("b:"),
+            "feature {} must use 'b:' prefix per zsh module spec",
+            f
+        );
+        assert_eq!(
+            &f[2..],
+            "clone",
+            "feature 'b:<name>' suffix must be 'clone'"
+        );
     }
 
     /// c:123-159 — module-lifecycle stubs accept a null `*const

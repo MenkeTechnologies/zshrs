@@ -25,17 +25,17 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstring;
-use crate::ported::ztype_h::INAMESPC;
 use crate::ported::zsh_h::{
-    eprog, funcwrap, module, param, EMULATE_KSH, EMULATION,
-    PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET,
+    eprog, funcwrap, module, param, EMULATE_KSH, EMULATION, PM_LOCAL, PM_NAMEREF, PM_READONLY,
+    PM_UNSET,
 };
-use crate::ported::zsh_h::{PM_NAMEREF as PMN, PARAMDEF};
+use crate::ported::zsh_h::{PARAMDEF, PM_NAMEREF as PMN};
+use crate::ported::ztype_h::INAMESPC;
 
 // =====================================================================
 // /* Implementing "namespace" requires creating a new keword.  Hrm. */ c:34
@@ -55,15 +55,15 @@ use crate::ported::zsh_h::{PM_NAMEREF as PMN, PARAMDEF};
 
 /// Port of `edcharsetfn(Param pm, char *x)` from `Src/Modules/ksh93.c:47`.
 #[allow(unused_variables)]
-pub fn edcharsetfn(pm: *mut param, x: *mut libc::c_char) {           // c:47
-    /*
-     * To make this work like ksh, we must intercept $KEYS before the widget
-     * is looked up, so that changing the key sequence causes a different
-     * widget to be substituted.  Somewhat similar to "bindkey -s".
-     *
-     * Ksh93 adds SIGKEYBD to the trap list for this purpose.
-     */                                                                 // c:49-55
-    /* ; */                                                             // c:56
+pub fn edcharsetfn(pm: *mut param, x: *mut libc::c_char) { // c:47
+                                                           /*
+                                                            * To make this work like ksh, we must intercept $KEYS before the widget
+                                                            * is looked up, so that changing the key sequence causes a different
+                                                            * widget to be substituted.  Somewhat similar to "bindkey -s".
+                                                            *
+                                                            * Ksh93 adds SIGKEYBD to the trap list for this purpose.
+                                                            */                                                                 // c:49-55
+                                                           /* ; */                                                             // c:56
 }
 
 // =====================================================================
@@ -77,9 +77,12 @@ pub fn edcharsetfn(pm: *mut param, x: *mut libc::c_char) {           // c:47
 /// static char **
 /// matchgetfn(Param pm)
 /// ```
-pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
+pub fn matchgetfn(pm: *mut param) -> Vec<String> {
+    // c:60
     // c:60 — `char **zsh_match = getaparam("match");`
-    let zsh_match: Vec<String> = crate::ported::params::paramtab().read().ok()
+    let zsh_match: Vec<String> = crate::ported::params::paramtab()
+        .read()
+        .ok()
         .and_then(|t| t.get("match").and_then(|p| p.u_arr.clone()))
         .unwrap_or_default();
     /*
@@ -88,56 +91,76 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
      *
      * When we have a 0th element (ksharrays), it is $MATCH.  Elements
      * 1st and larger mirror the $match array.
-     */                                                                 // c:64-69
+     */
+    // c:64-69
     // c:71-72 — `if (pm->u.arr) freearray(pm->u.arr);`
     if !pm.is_null() {
-        unsafe { (*pm).u_arr = None; }                                  // c:71-72 freearray
+        unsafe {
+            (*pm).u_arr = None;
+        } // c:71-72 freearray
     }
-    if !zsh_match.is_empty() {                                          // c:73
-        if crate::ported::zsh_h::isset(KSHARRAYS) {                                           // c:74
+    if !zsh_match.is_empty() {
+        // c:73
+        if crate::ported::zsh_h::isset(KSHARRAYS) {
+            // c:74
             // c:75-80 — char **ap = zalloc(...); pm->u.arr = ap;
             //           *ap++ = ztrdup(getsparam("MATCH"));
             //           while (*zsh_match) *ap = ztrdup(*zsh_match++);
-            let match_str: String = crate::ported::params::paramtab().read().ok()
+            let match_str: String = crate::ported::params::paramtab()
+                .read()
+                .ok()
                 .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
                 .unwrap_or_default();
             let mut ap: Vec<String> = Vec::with_capacity(zsh_match.len() + 1);
-            ap.push(crate::ported::string::ztrdup(&match_str));          // c:78
-            for s in &zsh_match {                                       // c:79-80
+            ap.push(crate::ported::string::ztrdup(&match_str)); // c:78
+            for s in &zsh_match {
+                // c:79-80
                 ap.push(crate::ported::string::ztrdup(s));
             }
             if !pm.is_null() {
-                unsafe { (*pm).u_arr = Some(ap.clone()); }
+                unsafe {
+                    (*pm).u_arr = Some(ap.clone());
+                }
             }
             // c:88 — `return arrgetfn(pm);` — arrgetfn (params.c) reads
             // pm->u.arr we just set, so return the same vec.
             ap
         } else {
             // c:81-82 — pm->u.arr = zarrdup(zsh_match);
-            let dup: Vec<String> = zsh_match.iter()
+            let dup: Vec<String> = zsh_match
+                .iter()
                 .map(|s| crate::ported::string::ztrdup(s))
                 .collect();
             if !pm.is_null() {
-                unsafe { (*pm).u_arr = Some(dup.clone()); }
+                unsafe {
+                    (*pm).u_arr = Some(dup.clone());
+                }
             }
-            dup                                                          // c:88 arrgetfn(pm)
+            dup // c:88 arrgetfn(pm)
         }
-    } else if crate::ported::zsh_h::isset(KSHARRAYS) {                                        // c:83
+    } else if crate::ported::zsh_h::isset(KSHARRAYS) {
+        // c:83
         // c:84 — pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));
-        let match_str: String = crate::ported::params::paramtab().read().ok()
+        let match_str: String = crate::ported::params::paramtab()
+            .read()
+            .ok()
             .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
             .unwrap_or_default();
         let one = vec![crate::ported::string::ztrdup(&match_str)];
         if !pm.is_null() {
-            unsafe { (*pm).u_arr = Some(one.clone()); }
+            unsafe {
+                (*pm).u_arr = Some(one.clone());
+            }
         }
-        one                                                              // c:88 arrgetfn(pm)
+        one // c:88 arrgetfn(pm)
     } else {
         // c:86 — pm->u.arr = NULL;
         if !pm.is_null() {
-            unsafe { (*pm).u_arr = None; }
+            unsafe {
+                (*pm).u_arr = None;
+            }
         }
-        Vec::new()                                                       // c:88 arrgetfn(pm) → NULL
+        Vec::new() // c:88 arrgetfn(pm) → NULL
     }
 }
 
@@ -164,19 +187,19 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
 
 /// Port of `static char sh_unsetval[2];` from `ksh93.c:105`.
 /// /* Dummy to treat as NULL */
-pub static sh_unsetval: [u8; 2] = [0, 0];                              // c:105
+pub static sh_unsetval: [u8; 2] = [0, 0]; // c:105
 
 /// Port of `static char *sh_name = sh_unsetval;` from `ksh93.c:106`.
-pub static sh_name: Mutex<String> = Mutex::new(String::new());          // c:106
+pub static sh_name: Mutex<String> = Mutex::new(String::new()); // c:106
 
 /// Port of `static char *sh_subscript = sh_unsetval;` from `ksh93.c:107`.
-pub static sh_subscript: Mutex<String> = Mutex::new(String::new());     // c:107
+pub static sh_subscript: Mutex<String> = Mutex::new(String::new()); // c:107
 
 /// Port of `static char *sh_edchar = sh_unsetval;` from `ksh93.c:108`.
-pub static sh_edchar: Mutex<String> = Mutex::new(String::new());        // c:108
+pub static sh_edchar: Mutex<String> = Mutex::new(String::new()); // c:108
 
 /// Port of `static char sh_edmode[2];` from `ksh93.c:109`.
-pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]);              // c:109
+pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]); // c:109
 
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
 ///
@@ -186,7 +209,8 @@ pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]);              // c:109
 /// ksh93_wrapper(Eprog prog, FuncWrap w, char *name)
 /// ```
 #[allow(unused_variables)]
-pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_char) -> i32 { // c:143
+pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_char) -> i32 {
+    // c:143
     // c:143 — `Funcstack f;`
     let mut f: *const crate::ported::zsh_h::funcstack;
     // c:146 — `Param pm;`
@@ -195,17 +219,25 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
     // funcstack is the global from Src/exec.c:340; stub holds NULL so
     // funcstack->prev is always NULL → branch picks 0.
     let mut num: i64 = if (*funcstack.lock().unwrap()) != 0 {
-        crate::ported::params::paramtab().read().ok()
-            .and_then(|t| t.get(".sh.level")
-                .and_then(|p| p.u_str.as_ref().and_then(|s| s.parse::<i64>().ok())))
+        crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(".sh.level")
+                    .and_then(|p| p.u_str.as_ref().and_then(|s| s.parse::<i64>().ok()))
+            })
             .unwrap_or(0)
-    } else { 0 };
+    } else {
+        0
+    };
 
-    if !EMULATION(EMULATE_KSH) {                                        // c:149
-        return 1;                                                       // c:150
+    if !EMULATION(EMULATE_KSH) {
+        // c:149
+        return 1; // c:150
     }
 
-    if num == 0 {                                                       // c:152
+    if num == 0 {
+        // c:152
         // c:153 — for (f = funcstack; f; f = f->prev, num++);
         f = (*funcstack.lock().unwrap()) as *const crate::ported::zsh_h::funcstack;
         while !f.is_null() {
@@ -213,73 +245,111 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
             f = std::ptr::null_mut();
             num += 1;
         }
-    } else {                                                            // c:154
-        num += 1;                                                       // c:155
+    } else {
+        // c:154
+        num += 1; // c:155
     }
 
-    queue_signals();                                                    // c:157
-    locallevel.fetch_add(1, Ordering::SeqCst);                          // c:158 ++locallevel;
-    /* Make these local */                                              // c:158 trailing comment
+    queue_signals(); // c:157
+    locallevel.fetch_add(1, Ordering::SeqCst); // c:158 ++locallevel;
+                                               /* Make these local */                                              // c:158 trailing comment
 
     // c:160-165 — .sh.command setup
     pm = crate::ported::params::createparam(".sh.command", LOCAL_NAMEREF as i32)
-        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+        .map(Box::into_raw)
+        .unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
-        unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:161 pm->level = locallevel;
-                                                                         //       /* Why is this necessary? */
-        /* Force scoping by assignent hack */                           // c:162
+        unsafe {
+            (*pm).level = locallevel.load(Ordering::Relaxed);
+        } // c:161 pm->level = locallevel;
+          //       /* Why is this necessary? */
+          /* Force scoping by assignent hack */                           // c:162
         crate::ported::params::setloopvar(".sh.command", "ZSH_DEBUG_CMD"); // c:163
-        unsafe { (*pm).node.flags |= PM_READONLY as i32; }              // c:164
+        unsafe {
+            (*pm).node.flags |= PM_READONLY as i32;
+        } // c:164
     }
-    /* .sh.edchar is in partab and below */                             // c:166
+    /* .sh.edchar is in partab and below */
+    // c:166
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         pm = crate::ported::params::createparam(".sh.edcol", LOCAL_NAMEREF as i32) // c:167
-            .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+            .map(Box::into_raw)
+            .unwrap_or(std::ptr::null_mut());
         if !pm.is_null() {
-            unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:168
-            crate::ported::params::setloopvar(".sh.edcol", "CURSOR");   // c:169
-            unsafe { (*pm).node.flags |= (PM_NAMEREF | PM_READONLY) as i32; } // c:170
+            unsafe {
+                (*pm).level = locallevel.load(Ordering::Relaxed);
+            } // c:168
+            crate::ported::params::setloopvar(".sh.edcol", "CURSOR"); // c:169
+            unsafe {
+                (*pm).node.flags |= (PM_NAMEREF | PM_READONLY) as i32;
+            } // c:170
         }
     }
-    /* .sh.edmode is in partab and below */                             // c:172
+    /* .sh.edmode is in partab and below */
+    // c:172
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         pm = crate::ported::params::createparam(".sh.edtext", LOCAL_NAMEREF as i32) // c:173
-            .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+            .map(Box::into_raw)
+            .unwrap_or(std::ptr::null_mut());
         if !pm.is_null() {
-            unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:174
-            crate::ported::params::setloopvar(".sh.edtext", "BUFFER");  // c:175
-            unsafe { (*pm).node.flags |= PM_READONLY as i32; }          // c:176
+            unsafe {
+                (*pm).level = locallevel.load(Ordering::Relaxed);
+            } // c:174
+            crate::ported::params::setloopvar(".sh.edtext", "BUFFER"); // c:175
+            unsafe {
+                (*pm).node.flags |= PM_READONLY as i32;
+            } // c:176
         }
     }
 
-    pm = crate::ported::params::createparam(".sh.fun",                  // c:179
-            (PM_LOCAL | PM_UNSET) as i32)
-        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+    pm = crate::ported::params::createparam(
+        ".sh.fun", // c:179
+        (PM_LOCAL | PM_UNSET) as i32,
+    )
+    .map(Box::into_raw)
+    .unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
-        unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:180
+        unsafe {
+            (*pm).level = locallevel.load(Ordering::Relaxed);
+        } // c:180
         let name_str: String = if name.is_null() {
             String::new()
         } else {
-            unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe {
+                std::ffi::CStr::from_ptr(name)
+                    .to_string_lossy()
+                    .into_owned()
+            }
         };
-        crate::ported::params::setsparam(".sh.fun",                     // c:181
-            &crate::ported::string::ztrdup(&name_str));
-        unsafe { (*pm).node.flags |= PM_READONLY as i32; }              // c:182
+        crate::ported::params::setsparam(
+            ".sh.fun", // c:181
+            &crate::ported::string::ztrdup(&name_str),
+        );
+        unsafe {
+            (*pm).node.flags |= PM_READONLY as i32;
+        } // c:182
     }
-    pm = crate::ported::params::createparam(".sh.level",                // c:184
-            (PM_LOCAL | PM_UNSET) as i32)
-        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+    pm = crate::ported::params::createparam(
+        ".sh.level", // c:184
+        (PM_LOCAL | PM_UNSET) as i32,
+    )
+    .map(Box::into_raw)
+    .unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
-        unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:185
-        crate::ported::params::setiparam(".sh.level", num);             // c:186
+        unsafe {
+            (*pm).level = locallevel.load(Ordering::Relaxed);
+        } // c:185
+        crate::ported::params::setiparam(".sh.level", num); // c:186
     }
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {                                          // c:188
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
+        // c:188
         // c:189-190 — extern mod_import_variable char *curkeymapname / *varedarg;
         // (extern declarations are at the locals-block level in C; ours
         // are file-level statics below.)
         /* bindkey -v forces VIMODE so this test is as good as any */   // c:191
         let curkmap = curkeymapname.lock().unwrap().clone();
-        if !curkmap.is_empty() && crate::ported::zsh_h::isset(VIMODE) && curkmap == "main" {  // c:192-193
+        if !curkmap.is_empty() && crate::ported::zsh_h::isset(VIMODE) && curkmap == "main" {
+            // c:192-193
             // c:194 — strcpy(sh_edmode, "\033");
             let mut em = sh_edmode.lock().unwrap();
             em[0] = 0o33;
@@ -293,13 +363,16 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
         // c:197-198 — if (sh_edchar == sh_unsetval) sh_edchar = dupstring(getsparam("KEYS"));
         let edch_unset = sh_edchar.lock().unwrap().is_empty();
         if edch_unset {
-            let keys: String = crate::ported::params::paramtab().read().ok()
+            let keys: String = crate::ported::params::paramtab()
+                .read()
+                .ok()
                 .and_then(|t| t.get("KEYS").and_then(|p| p.u_str.clone()))
                 .unwrap_or_default();
             *sh_edchar.lock().unwrap() = dupstring(&keys);
         }
         let varedarg_val = varedarg.lock().unwrap().clone();
-        if !varedarg_val.is_empty() {                                   // c:199
+        if !varedarg_val.is_empty() {
+            // c:199
             // c:200 — char *ie = itype_end((sh_name = dupstring(varedarg)), INAMESPC, 0);
             *sh_name.lock().unwrap() = dupstring(&varedarg_val);
             let nm = sh_name.lock().unwrap().clone();
@@ -320,28 +393,40 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
                 }
                 k
             };
-            if ie_off < nm.len() {                                      // c:201 if (ie && *ie)
+            if ie_off < nm.len() {
+                // c:201 if (ie && *ie)
                 // c:202 — *ie++ = '\0';
                 let head = &nm[..ie_off];
                 let tail = &nm[ie_off + 1..]; // skip the bracket char
                 *sh_name.lock().unwrap() = head.to_string();
-                /* Assume bin_vared has validated subscript */          // c:203
+                /* Assume bin_vared has validated subscript */
+                // c:203
                 // c:204 — sh_subscript = dupstring(ie);
                 *sh_subscript.lock().unwrap() = dupstring(tail);
                 // c:205-206 — ie = sh_subscript + strlen(sh_subscript); *--ie = '\0';
                 let mut sub = sh_subscript.lock().unwrap();
-                if sub.ends_with(']') { sub.pop(); }
+                if sub.ends_with(']') {
+                    sub.pop();
+                }
             } else {
                 // c:208 — sh_subscript = sh_unsetval;
                 sh_subscript.lock().unwrap().clear();
             }
-            pm = crate::ported::params::createparam(".sh.value",        // c:209
-                    LOCAL_NAMEREF as i32)
-                .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
+            pm = crate::ported::params::createparam(
+                ".sh.value", // c:209
+                LOCAL_NAMEREF as i32,
+            )
+            .map(Box::into_raw)
+            .unwrap_or(std::ptr::null_mut());
             if !pm.is_null() {
-                unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:210
-                crate::ported::params::setloopvar(".sh.value", "BUFFER"); /* Hack */ // c:211
-                unsafe { (*pm).node.flags |= PM_READONLY as i32; }      // c:212
+                unsafe {
+                    (*pm).level = locallevel.load(Ordering::Relaxed);
+                } // c:210
+                crate::ported::params::setloopvar(".sh.value", "BUFFER"); /* Hack */
+                // c:211
+                unsafe {
+                    (*pm).node.flags |= PM_READONLY as i32;
+                } // c:212
             }
         } else {
             // c:215 — sh_name = sh_subscript = sh_unsetval;
@@ -362,10 +447,10 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
          * - special handling of .sh.value in math
          */
     }
-    locallevel.fetch_sub(1, Ordering::SeqCst);                          // c:224 --locallevel;
-    unqueue_signals();                                                  // c:225
+    locallevel.fetch_sub(1, Ordering::SeqCst); // c:224 --locallevel;
+    unqueue_signals(); // c:225
 
-    1                                                                   // c:227
+    1 // c:227
 }
 
 // =====================================================================
@@ -387,7 +472,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
 /// `LOCAL_NAMEREF` — `#define LOCAL_NAMEREF (PM_LOCAL|PM_UNSET|PM_NAMEREF)`
 /// from `Src/Modules/ksh93.c:143`.
 #[allow(dead_code)]
-const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:143
+const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF; // c:143
 
 // =====================================================================
 // static struct funcwrap wrapper[]                                   c:230
@@ -402,21 +487,24 @@ const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:143
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/ksh93.c:236`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:236
+pub fn setup_(m: *const module) -> i32 {
+    // c:236
     // C body c:238-239 — `return 0`. Faithful empty-body port.
     0
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/ksh93.c:243`.
 /// C body c:245-247 — `*features = featuresarray(m, &module_features); return 0`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:243
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:243
     *features = featuresarray(m, module_features());
-    0                                                                        // c:258
+    0 // c:258
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/ksh93.c:251`.
 /// C body c:253-254 — `return handlefeatures(m, &module_features, enables)`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:251
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:251
     handlefeatures(m, module_features(), enables) // c:258
 }
 
@@ -446,35 +534,53 @@ pub fn boot_(m: *const module) -> i32 {
 /// ```
 pub fn cleanup_(m: *const module) -> i32 {
     // c:267 — `struct paramdef *p;`
-    let mut p: usize;                                                    // c:267 (index over partab)
-    // c:269 — deletewrapper(m, wrapper); zshrs's fusevm wrapper
-    // machinery is a no-op (see boot_ note).
+    let mut p: usize; // c:267 (index over partab)
+                      // c:269 — deletewrapper(m, wrapper); zshrs's fusevm wrapper
+                      // machinery is a no-op (see boot_ note).
 
     // c:116-131 — `static struct paramdef partab[]` inlined here
     // because Rust statics can't hold String-typed paramdef.name.
     let partab: [crate::ported::zsh_h::paramdef; 9] = [
-        PARAMDEF(".sh.edchar",    (PM_SCALAR | PM_SPECIAL) as i32, 0, 0),                  // c:117
-        PARAMDEF(".sh.edmode",    (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:119
-        PARAMDEF(".sh.file",      (PMN | PM_READONLY) as i32, 0, 0),                       // c:121
-        PARAMDEF(".sh.lineno",    (PMN | PM_READONLY) as i32, 0, 0),                       // c:122
-        PARAMDEF(".sh.match",     (PM_ARRAY | PM_READONLY) as i32, 0, 0),                  // c:123
-        PARAMDEF(".sh.name",      (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:124
-        PARAMDEF(".sh.subscript", (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:126
-        PARAMDEF(".sh.subshell",  (PMN | PM_READONLY) as i32, 0, 0),                       // c:128
-        PARAMDEF(".sh.version",   (PMN | PM_READONLY) as i32, 0, 0),                       // c:130
+        PARAMDEF(".sh.edchar", (PM_SCALAR | PM_SPECIAL) as i32, 0, 0), // c:117
+        PARAMDEF(
+            ".sh.edmode",
+            (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32,
+            0,
+            0,
+        ), // c:119
+        PARAMDEF(".sh.file", (PMN | PM_READONLY) as i32, 0, 0),        // c:121
+        PARAMDEF(".sh.lineno", (PMN | PM_READONLY) as i32, 0, 0),      // c:122
+        PARAMDEF(".sh.match", (PM_ARRAY | PM_READONLY) as i32, 0, 0),  // c:123
+        PARAMDEF(
+            ".sh.name",
+            (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32,
+            0,
+            0,
+        ), // c:124
+        PARAMDEF(
+            ".sh.subscript",
+            (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32,
+            0,
+            0,
+        ), // c:126
+        PARAMDEF(".sh.subshell", (PMN | PM_READONLY) as i32, 0, 0),    // c:128
+        PARAMDEF(".sh.version", (PMN | PM_READONLY) as i32, 0, 0),     // c:130
     ];
 
-    /* Clean up namerefs, otherwise deleteparamdef() is confused */     // c:271
+    /* Clean up namerefs, otherwise deleteparamdef() is confused */
+    // c:271
     // c:272-277 — `for (p = partab; p < partab + ARRSZ; ++p) { ... }`
     p = 0;
-    while p < partab.len() {                                             // c:272
+    while p < partab.len() {
+        // c:272
         let entry = &partab[p];
-        if (entry.flags as u32 & PM_NAMEREF) != 0 {                      // c:273
+        if (entry.flags as u32 & PM_NAMEREF) != 0 {
+            // c:273
             // c:274-276 — `HashNode hn = gethashnode2(paramtab, p->name);`
             // `if (hn) hn->flags &= ~PM_NAMEREF;`
             if let Ok(mut t) = crate::ported::params::paramtab().write() {
                 if let Some(pm) = t.get_mut(&entry.name) {
-                    pm.node.flags &= !(PM_NAMEREF as i32);              // c:276
+                    pm.node.flags &= !(PM_NAMEREF as i32); // c:276
                 }
             }
         }
@@ -483,12 +589,12 @@ pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None) // c:279
 }
 
-
 use crate::ported::zsh_h::features as features_t;
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:284
+pub fn finish_(m: *const module) -> i32 {
+    // c:284
     // C body c:286-287 — `return 0`. Faithful empty-body port; the
     //                    ksh93 wrapper unregisters in cleanup_ via
     //                    deletewrapper.
@@ -496,7 +602,6 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 }
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local descriptor stub mirroring the C bintab + partab.
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
@@ -542,11 +647,7 @@ const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -585,13 +686,11 @@ static funcstack: Mutex<usize> = Mutex::new(0);
 // `isset(X)` macro (zsh.h:1455) routes through `OPTS_LIVE` via
 // `crate::ported::zsh_h::isset`.
 const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
-const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
+const VIMODE: i32 = crate::ported::zsh_h::VIMODE;
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`
 // (zsh_h.rs:732), already accessible via `(*pm).u_arr`.
-
-
 
 // Suppress "unused" for the AtomicI64 import; we don't use it directly
 // (locallevel is AtomicI32 to match C `int` for that field).
@@ -622,17 +721,19 @@ const _: AtomicI64 = AtomicI64::new(0);
 
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,                // bintab: nameref (ksh93.c)
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 9,                // partab: .sh.edchar/edmode/file/lineno/match/name/subscript/subshell/version
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1, // bintab: nameref (ksh93.c)
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 9, // partab: .sh.edchar/edmode/file/lineno/match/name/subscript/subshell/version
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -645,11 +746,7 @@ mod tests {
     fn ksh93_wrapper_returns_one_when_not_emulate_ksh() {
         let _g = crate::test_util::global_state_lock();
         emulation.store(0, Ordering::SeqCst);
-        let rc = ksh93_wrapper(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-        );
+        let rc = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         assert_eq!(rc, 1);
     }
 
@@ -663,11 +760,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved = emulation.load(Ordering::SeqCst);
         emulation.store(EMULATE_KSH, Ordering::SeqCst);
-        let rc = ksh93_wrapper(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-        );
+        let rc = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         assert_eq!(rc, 1);
         // c:158 ++locallevel + c:224 --locallevel must net to 0.
         assert_eq!(locallevel.load(Ordering::SeqCst), 0);
@@ -737,17 +830,36 @@ mod tests {
     #[test]
     fn matchgetfn_with_param_no_array_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        use crate::ported::zsh_h::{param, hashnode};
+        use crate::ported::zsh_h::{hashnode, param};
         let mut pm = param {
-            node: hashnode { next: None, nam: "match".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            node: hashnode {
+                next: None,
+                nam: "match".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
             u_hash: None,
-            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         };
         let v = matchgetfn(&mut pm as *mut _);
-        assert!(v.is_empty(),
-            "param without array data must produce empty result");
+        assert!(
+            v.is_empty(),
+            "param without array data must produce empty result"
+        );
     }
 
     /// c:158 — `LOCAL_NAMEREF` must include the three component flags
@@ -759,8 +871,8 @@ mod tests {
         let expected = PM_LOCAL | PM_UNSET | PM_NAMEREF;
         assert_eq!(LOCAL_NAMEREF, expected);
         // Subtracting each in turn yields the other two
-        assert_eq!(LOCAL_NAMEREF & !PM_LOCAL,   PM_UNSET | PM_NAMEREF);
-        assert_eq!(LOCAL_NAMEREF & !PM_UNSET,   PM_LOCAL | PM_NAMEREF);
+        assert_eq!(LOCAL_NAMEREF & !PM_LOCAL, PM_UNSET | PM_NAMEREF);
+        assert_eq!(LOCAL_NAMEREF & !PM_UNSET, PM_LOCAL | PM_NAMEREF);
         assert_eq!(LOCAL_NAMEREF & !PM_NAMEREF, PM_LOCAL | PM_UNSET);
     }
 
@@ -771,8 +883,11 @@ mod tests {
     #[test]
     fn sh_unsetval_is_two_zero_bytes() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(sh_unsetval, [0u8, 0u8],
-            "sh_unsetval must be the C-canonical [0,0] sentinel");
+        assert_eq!(
+            sh_unsetval,
+            [0u8, 0u8],
+            "sh_unsetval must be the C-canonical [0,0] sentinel"
+        );
     }
 
     /// c:60 — `matchgetfn` with a null pointer must NOT dereference.

@@ -208,7 +208,9 @@ mod rlimits_builtin {
         // Both should report `unlimit` exists as a builtin.
         assert!(
             z.stdout.contains("unlimit") && r.stdout.contains("unlimit"),
-            "z={:?} r={:?}", z.stdout, r.stdout
+            "z={:?} r={:?}",
+            z.stdout,
+            r.stdout
         );
     }
 

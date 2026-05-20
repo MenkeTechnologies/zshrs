@@ -230,7 +230,9 @@ fn cmd_call(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 }
 
 fn cmd_cache(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd cache <put|get|del|list|stats> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd cache <put|get|del|list|stats> ...")?;
     match sub.as_str() {
         "put" => {
             if rest.len() < 4 {
@@ -288,7 +290,9 @@ fn parse_job_id(s: Option<&String>, sub: &str) -> Result<u64, String> {
 }
 
 fn cmd_job(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd job <submit|status|output|list|kill|wait> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd job <submit|status|output|list|kill|wait> ...")?;
     match sub.as_str() {
         "submit" => {
             let cmd_start = if rest.get(1).map(String::as_str) == Some("--") {
@@ -342,11 +346,15 @@ fn cmd_job(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 }
 
 fn cmd_lock(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd lock <acquire|try|release|list> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd lock <acquire|try|release|list> ...")?;
     let pid = std::process::id();
     match sub.as_str() {
         "acquire" => {
-            let name = rest.get(1).ok_or("usage: zd lock acquire NAME [--timeout SECS]")?;
+            let name = rest
+                .get(1)
+                .ok_or("usage: zd lock acquire NAME [--timeout SECS]")?;
             let mut body = json!({"name": name, "pid": pid});
             if let Some(pos) = rest.iter().position(|a| a == "--timeout") {
                 let secs: u64 = rest
@@ -394,7 +402,9 @@ fn cmd_watch(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 }
 
 fn cmd_defs(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd defs <query|kinds|emit|diff> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd defs <query|kinds|emit|diff> ...")?;
     match sub.as_str() {
         "kinds" => t.post("definitions_kinds", json!({})),
         "query" => {
@@ -493,10 +503,14 @@ fn cmd_defs(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
 }
 
 fn cmd_snapshot(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd snapshot <save|list|load|diff> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd snapshot <save|list|load|diff> ...")?;
     match sub.as_str() {
         "save" => {
-            let tag = rest.get(1).ok_or("usage: zd snapshot save TAG [--notes N]")?;
+            let tag = rest
+                .get(1)
+                .ok_or("usage: zd snapshot save TAG [--notes N]")?;
             let mut body = json!({"tag": tag});
             if let Some(pos) = rest.iter().position(|a| a == "--notes") {
                 body["notes"] = json!(rest.get(pos + 1).ok_or("--notes requires VALUE")?);
@@ -542,10 +556,14 @@ fn cmd_config(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
 }
 
 fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd artifact <put|get|list|gc> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd artifact <put|get|list|gc> ...")?;
     match sub.as_str() {
         "put" => {
-            let name = rest.get(1).ok_or("usage: zd artifact put NAME (VALUE|--file PATH)")?;
+            let name = rest
+                .get(1)
+                .ok_or("usage: zd artifact put NAME (VALUE|--file PATH)")?;
             if let Some(pos) = rest.iter().position(|a| a == "--file") {
                 let path = rest.get(pos + 1).ok_or("--file requires PATH")?;
                 let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
@@ -605,7 +623,9 @@ fn cmd_artifact(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
 }
 
 fn cmd_schedule(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
-    let sub = rest.first().ok_or("usage: zd schedule <add|add-once|list|remove> ...")?;
+    let sub = rest
+        .first()
+        .ok_or("usage: zd schedule <add|add-once|list|remove> ...")?;
     match sub.as_str() {
         "add" => {
             if rest.len() < 4 {
@@ -627,9 +647,7 @@ fn cmd_schedule(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
             if rest.len() < 4 {
                 return Err("usage: zd schedule add-once UNIX_SECS -- CMD [ARGS...]".into());
             }
-            let when: i64 = rest[1]
-                .parse()
-                .map_err(|e| format!("UNIX_SECS: {e}"))?;
+            let when: i64 = rest[1].parse().map_err(|e| format!("UNIX_SECS: {e}"))?;
             let cmd_start = if rest.get(2).map(String::as_str) == Some("--") {
                 3
             } else {
@@ -680,11 +698,11 @@ fn cmd_export(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
     let parsed: Value = serde_json::from_str(&response)
         .map_err(|e| format!("export response: {e}\nbody: {response}"))?;
     if let Some(b64) = parsed.get("body_base64").and_then(Value::as_str) {
-        let bytes = base64_decode(b64)
-            .map_err(|e| format!("decode body_base64: {e}"))?;
+        let bytes = base64_decode(b64).map_err(|e| format!("decode body_base64: {e}"))?;
         use std::io::Write;
         let mut out = std::io::stdout().lock();
-        out.write_all(&bytes).map_err(|e| format!("write stdout: {e}"))?;
+        out.write_all(&bytes)
+            .map_err(|e| format!("write stdout: {e}"))?;
         out.flush().ok();
         std::process::exit(0);
     }
@@ -782,8 +800,7 @@ fn cmd_doctor(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
 // daemon-server build; it's needed only by artifact put/get and the
 // stdlib gives us enough). 6-bit lookup table.
 
-const BASE64_ALPHABET: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -809,10 +826,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 
 fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let bytes: Vec<u8> = s
-        .bytes()
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
+    let bytes: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
     let mut buf = [0u8; 4];
     let mut bi = 0;
     let mut padded = 0;

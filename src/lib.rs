@@ -51,17 +51,28 @@ pub mod test_util;
 // `src/ported/`. New code should prefer `crate::ported::<name>`.
 pub use ported::*;
 
-#[path = "extensions/aot.rs"] pub mod aot;
-#[path = "extensions/arith_compiler.rs"] pub mod arith_compiler;
-#[path = "extensions/autoload_cache.rs"] pub mod autoload_cache;
-#[path = "extensions/script_cache.rs"] pub mod script_cache;
-#[path = "extensions/compile_zsh.rs"] pub mod compile_zsh;
-#[path = "extensions/completion.rs"] pub mod completion;
-#[path = "extensions/bash_complete.rs"] pub mod bash_complete;
-#[path = "extensions/config.rs"] pub mod config;
-#[path = "extensions/canonical_apply.rs"] pub mod canonical_apply;
-#[path = "extensions/overlay_snapshot.rs"] pub mod overlay_snapshot;
-#[path = "extensions/daemon_presence.rs"] pub mod daemon_presence;
+#[path = "extensions/aot.rs"]
+pub mod aot;
+#[path = "extensions/arith_compiler.rs"]
+pub mod arith_compiler;
+#[path = "extensions/autoload_cache.rs"]
+pub mod autoload_cache;
+#[path = "extensions/bash_complete.rs"]
+pub mod bash_complete;
+#[path = "extensions/canonical_apply.rs"]
+pub mod canonical_apply;
+#[path = "extensions/compile_zsh.rs"]
+pub mod compile_zsh;
+#[path = "extensions/completion.rs"]
+pub mod completion;
+#[path = "extensions/config.rs"]
+pub mod config;
+#[path = "extensions/daemon_presence.rs"]
+pub mod daemon_presence;
+#[path = "extensions/overlay_snapshot.rs"]
+pub mod overlay_snapshot;
+#[path = "extensions/script_cache.rs"]
+pub mod script_cache;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in vm_helper) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
@@ -91,15 +102,24 @@ pub mod daemon {
         }
     }
 }
-#[path = "extensions/ext_builtins.rs"] pub mod ext_builtins;
-#[path = "extensions/func_body_fmt.rs"] pub mod func_body_fmt;
-#[path = "extensions/fds.rs"] pub mod fds;
-#[path = "extensions/fish_features.rs"] pub mod fish_features;
-#[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;
-#[path = "extensions/dumpers.rs"] pub mod dumpers;
-#[path = "extensions/lsp.rs"] pub mod lsp;
-#[path = "extensions/lsp_symbols.rs"] pub mod lsp_symbols;
-#[path = "extensions/dap.rs"] pub mod dap;
+#[path = "extensions/ast_sexp.rs"]
+pub mod ast_sexp;
+#[path = "extensions/dap.rs"]
+pub mod dap;
+#[path = "extensions/dumpers.rs"]
+pub mod dumpers;
+#[path = "extensions/ext_builtins.rs"]
+pub mod ext_builtins;
+#[path = "extensions/fds.rs"]
+pub mod fds;
+#[path = "extensions/fish_features.rs"]
+pub mod fish_features;
+#[path = "extensions/func_body_fmt.rs"]
+pub mod func_body_fmt;
+#[path = "extensions/lsp.rs"]
+pub mod lsp;
+#[path = "extensions/lsp_symbols.rs"]
+pub mod lsp_symbols;
 // Lexer + parser live in `src/ported/lex.rs` and `src/ported/parse.rs`.
 // Re-export the modules so existing call sites (`zsh::lex::…`,
 // `zsh::parse::…`, `zsh::tokens::…`) keep resolving.
@@ -110,14 +130,19 @@ pub mod daemon {
 pub use ported::lex;
 pub use ported::lex as tokens;
 pub use ported::parse;
-#[path = "extensions/history.rs"] pub mod history;
-#[path = "extensions/heredoc_ast.rs"] pub mod heredoc_ast;
-#[path = "extensions/zsh_ast.rs"] pub mod zsh_ast;
-#[path = "extensions/log.rs"] pub mod log;
+#[path = "extensions/heredoc_ast.rs"]
+pub mod heredoc_ast;
+#[path = "extensions/history.rs"]
+pub mod history;
+#[path = "extensions/log.rs"]
+pub mod log;
+#[path = "extensions/zsh_ast.rs"]
+pub mod zsh_ast;
 // Backwards-compat flat re-exports — call sites that still write
 // `crate::datetime::…`, `crate::stat::…`, etc. resolve to the
 // `crate::modules::<modname>` ports without churn. New code should
 // reach for `crate::modules::<modname>` directly.
+pub use builtins::sched;
 pub use modules::attr;
 pub use modules::cap;
 pub use modules::clone;
@@ -139,7 +164,6 @@ pub use modules::pcre;
 pub use modules::random;
 pub use modules::random_real;
 pub use modules::regex as regex_module;
-pub use builtins::sched;
 pub use modules::socket;
 pub use modules::stat;
 pub use modules::system;
@@ -152,22 +176,31 @@ pub use modules::zprof;
 pub use modules::zpty;
 pub use modules::zselect;
 pub use modules::zutil;
-#[path = "extensions/plugin_cache.rs"] pub mod plugin_cache;
-#[path = "extensions/recorder.rs"] pub mod recorder_ext;
-#[path = "extensions/intercepts.rs"] pub mod intercepts;
-#[path = "extensions/compinit_bg.rs"] pub mod compinit_bg;
-pub mod fusevm_disasm;
+#[path = "extensions/compinit_bg.rs"]
+pub mod compinit_bg;
 pub mod fusevm_bridge;
+pub mod fusevm_disasm;
+#[path = "extensions/intercepts.rs"]
+pub mod intercepts;
+#[path = "extensions/plugin_cache.rs"]
+pub mod plugin_cache;
+#[path = "extensions/recorder.rs"]
+pub mod recorder_ext;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
 #[cfg(feature = "recorder")]
 pub mod recorder;
-#[path = "extensions/regex_mod.rs"] pub mod regex_mod;
-#[path = "extensions/stringsort.rs"] pub mod stringsort;
-#[path = "extensions/worker.rs"] pub mod worker;
-#[path = "extensions/zwc.rs"] pub mod zwc;
-#[path = "extensions/zwc_decode.rs"] pub mod zwc_decode;
+#[path = "extensions/regex_mod.rs"]
+pub mod regex_mod;
+#[path = "extensions/stringsort.rs"]
+pub mod stringsort;
+#[path = "extensions/worker.rs"]
+pub mod worker;
+#[path = "extensions/zwc.rs"]
+pub mod zwc;
+#[path = "extensions/zwc_decode.rs"]
+pub mod zwc_decode;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
 pub use builtins::rlimits;
 
@@ -176,7 +209,6 @@ pub use builtins::rlimits;
 // zshrs runs fusevm instead (see src/fusevm_bridge.rs).
 pub mod vm_helper;
 
-pub use vm_helper::ShellExecutor;
 pub use fish_features::{
     autosuggest_from_history,
     colorize_line,
@@ -208,6 +240,7 @@ pub use fish_features::{
     ValidationStatus,
 };
 pub use tokens::lextok;
+pub use vm_helper::ShellExecutor;
 
 // ── Stryke integration hook ──
 // The fat binary registers a handler for @ prefix dispatch.

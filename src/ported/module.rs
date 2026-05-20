@@ -13,13 +13,13 @@
 //! uses to interact with module features (builtins, conditions, parameters,
 //! hooks, and math functions).
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::mathfunc;
-use crate::zsh_h::module;
 use crate::ported::zsh_h::OPT_ISSET;
+use crate::zsh_h::module;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 /// Free module node (from module.c freemodulenode)
 /// Free a module table entry.
@@ -71,8 +71,9 @@ pub fn newmoduletable() -> modulestab {
 /// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// setup hook of the module subsystem itself.
 #[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
-    0                                                                    // c:306
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:306
+    0 // c:306
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/module.c:313`.
@@ -86,9 +87,10 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
 /// }
 /// ```
 #[allow(unused_variables)]
-pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:313
+pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+    // c:313
     /* There are lots and lots of features, but they're not handled here. */ // c:313-318
-    1                                                                    // c:319
+    1 // c:319
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/module.c:324`.
@@ -96,8 +98,9 @@ pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<Stri
 /// C body: `enables_(UNUSED(Module m), UNUSED(int **enables)) { return 1; }`
 /// — the module subsystem itself doesn't manage feature enables.
 #[allow(unused_variables)]
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:324
-    1                                                                    // c:324
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:324
+    1 // c:324
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/module.c:331`.
@@ -105,8 +108,9 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
 /// C body: `boot_(UNUSED(Module m)) { return 0; }` — the no-op
 /// boot hook of the module subsystem itself.
 #[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
-    0                                                                    // c:331
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:331
+    0 // c:331
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/module.c:338`.
@@ -114,8 +118,9 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
 /// C body: `cleanup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// cleanup hook of the module subsystem itself.
 #[allow(unused_variables)]
-pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
-    0                                                                    // c:338
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:338
+    0 // c:338
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/module.c:345`.
@@ -123,8 +128,9 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
 /// C body: `finish_(UNUSED(Module m)) { return 0; }` —
 /// the no-op finish hook for the module subsystem itself.
 #[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
-    0                                                                    // c:345
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:345
+    0 // c:345
 }
 
 // This registers a builtin module.                                        // c:359
@@ -134,7 +140,8 @@ pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
 /// a slot in the global `modulestab` and seeds its lifecycle
 /// callbacks.
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(n, setup, features, enables, boot, cleanup, finish)
-pub fn register_module(table: &mut modulestab, name: &str) -> bool {       // c:359
+pub fn register_module(table: &mut modulestab, name: &str) -> bool {
+    // c:359
     if table.modules.contains_key(name) {
         return false;
     }
@@ -178,13 +185,17 @@ pub fn register_module(table: &mut modulestab, name: &str) -> bool {       // c:
 /// calls check the immutable table for the clash gate; the BINF_ADDED
 /// flag-set on the input record is what callers observe (matching the
 /// C in-place mutation that `addbuiltins` then propagates).
-pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {           // c:524
+pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {
+    // c:524
     use crate::ported::zsh_h::BINF_ADDED;
     let tab = crate::ported::builtin::createbuiltintable();
-    if let Some(existing) = tab.get(&b.node.nam) {                           // c:526 getnode2
-        if (existing.node.flags & BINF_ADDED as i32) != 0 { return 1; }      // c:527 clash
+    if let Some(existing) = tab.get(&b.node.nam) {
+        // c:526 getnode2
+        if (existing.node.flags & BINF_ADDED as i32) != 0 {
+            return 1;
+        } // c:527 clash
     }
-    b.node.flags |= BINF_ADDED as i32;                                       // c:531 b->node.flags |= BINF_ADDED
+    b.node.flags |= BINF_ADDED as i32; // c:531 b->node.flags |= BINF_ADDED
     0
 }
 
@@ -192,18 +203,25 @@ pub fn addbuiltin(b: &mut crate::ported::zsh_h::builtin) -> i32 {           // c
 /// `Src/module.c:544`. Walks the slice; for each entry not already
 /// flagged BINF_ADDED, calls `addbuiltin`. Returns 0 if all succeeded,
 /// 1 if any clashed. zwarnnam emitted on each clash matches C.
-pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32 { // c:544
+pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32 {
+    // c:544
     use crate::ported::zsh_h::BINF_ADDED;
-    let mut ret = 0;                                                         // c:548
-    for b in binl.iter_mut() {                                               // c:550 for(n = 0; n < size; n++)
-        if (b.node.flags & BINF_ADDED as i32) != 0 { continue; }             // c:553
-        if addbuiltin(b) != 0 {                                              // c:555
-            crate::ported::utils::zwarnnam(nam,                              // c:556 zwarnnam(nam, "name clash...")
-                &format!("name clash when adding builtin `{}'", b.node.nam));
+    let mut ret = 0; // c:548
+    for b in binl.iter_mut() {
+        // c:550 for(n = 0; n < size; n++)
+        if (b.node.flags & BINF_ADDED as i32) != 0 {
+            continue;
+        } // c:553
+        if addbuiltin(b) != 0 {
+            // c:555
+            crate::ported::utils::zwarnnam(
+                nam, // c:556 zwarnnam(nam, "name clash...")
+                &format!("name clash when adding builtin `{}'", b.node.nam),
+            );
             ret = 1;
         }
     }
-    ret                                                                      // c:563
+    ret // c:563
 }
 
 /// Port of `Hookdef gethookdef(const char *n)` from `Src/module.c:849`.
@@ -218,17 +236,20 @@ pub fn addbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin]) -> i32
 ///     return NULL;
 /// }
 /// ```
-pub fn gethookdef(n: &str) -> *mut crate::ported::zsh_h::hookdef {           // c:849
-    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst);           // c:852 p = hooktab
-    while !p.is_null() {                                                     // c:853
+pub fn gethookdef(n: &str) -> *mut crate::ported::zsh_h::hookdef {
+    // c:849
+    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst); // c:852 p = hooktab
+    while !p.is_null() {
+        // c:853
         unsafe {
-            if (*p).name == n {                                              // c:854 !strcmp
-                return p;                                                    // c:855
+            if (*p).name == n {
+                // c:854 !strcmp
+                return p; // c:855
             }
-            p = (*p).next;                                                   // c:853 p = p->next
+            p = (*p).next; // c:853 p = p->next
         }
     }
-    std::ptr::null_mut()                                                     // c:856
+    std::ptr::null_mut() // c:856
 }
 
 /// Port of `int addhookdef(Hookdef h)` from `Src/module.c:864`.
@@ -243,14 +264,17 @@ pub fn gethookdef(n: &str) -> *mut crate::ported::zsh_h::hookdef {           // 
 ///     return 0;
 /// }
 /// ```
-pub fn addhookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {            // c:864
+pub fn addhookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {
+    // c:864
     unsafe {
-        if !gethookdef(&(*h).name).is_null() {                               // c:866
-            return 1;                                                        // c:867
+        if !gethookdef(&(*h).name).is_null() {
+            // c:866
+            return 1; // c:867
         }
-        (*h).next = hooktab.load(std::sync::atomic::Ordering::SeqCst);       // c:869 h->next = hooktab
-        hooktab.store(h, std::sync::atomic::Ordering::SeqCst);               // c:870 hooktab = h
-        if (*h).funcs.is_null() {                                            // c:871 h->funcs = znewlinklist()
+        (*h).next = hooktab.load(std::sync::atomic::Ordering::SeqCst); // c:869 h->next = hooktab
+        hooktab.store(h, std::sync::atomic::Ordering::SeqCst); // c:870 hooktab = h
+        if (*h).funcs.is_null() {
+            // c:871 h->funcs = znewlinklist()
             (*h).funcs = Box::into_raw(Box::new(crate::ported::zsh_h::linklist {
                 first: None,
                 last: None,
@@ -258,7 +282,7 @@ pub fn addhookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {            // 
             }));
         }
     }
-    0                                                                        // c:873
+    0 // c:873
 }
 
 /// Port of `int addhookdefs(Module m, Hookdef h, int size)` from
@@ -278,30 +302,37 @@ pub fn addhookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {            // 
 ///     return ret;
 /// }
 /// ```
-pub fn addhookdefs(                                                          // c:883
+pub fn addhookdefs(
+    // c:883
     m: *const crate::ported::zsh_h::module,
     mut h: *mut crate::ported::zsh_h::hookdef,
     mut size: i32,
 ) -> i32 {
-    let mut ret: i32 = 0;                                                    // c:885
-    while size > 0 {                                                         // c:887 size--
-        if addhookdef(h) != 0 {                                              // c:888
-            let nam: String = if m.is_null() {                               // c:889 m ? m->node.nam : NULL
+    let mut ret: i32 = 0; // c:885
+    while size > 0 {
+        // c:887 size--
+        if addhookdef(h) != 0 {
+            // c:888
+            let nam: String = if m.is_null() {
+                // c:889 m ? m->node.nam : NULL
                 String::new()
             } else {
                 unsafe { (*m).node.nam.clone() }
             };
             let hook_name = unsafe { (*h).name.clone() };
-            crate::ported::utils::zwarnnam(                                  // c:889 zwarnnam
+            crate::ported::utils::zwarnnam(
+                // c:889 zwarnnam
                 &nam,
                 &format!("name clash when adding hook `{}'", hook_name),
             );
-            ret = 1;                                                         // c:891
+            ret = 1; // c:891
         }
-        unsafe { h = h.add(1); }                                             // c:893 h++
-        size -= 1;                                                           // c:887
+        unsafe {
+            h = h.add(1);
+        } // c:893 h++
+        size -= 1; // c:887
     }
-    ret                                                                      // c:894
+    ret // c:894
 }
 
 /// Port of `int deletehookdef(Hookdef h)` from `Src/module.c:902`.
@@ -317,46 +348,58 @@ pub fn addhookdefs(                                                          // 
 ///     return 0;
 /// }
 /// ```
-pub fn deletehookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {         // c:902
-    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst);           // c:906 p = hooktab
-    let mut q: *mut crate::ported::zsh_h::hookdef = std::ptr::null_mut();    // c:906 q = NULL
-    while !p.is_null() && p != h {                                           // c:907
-        q = p;                                                               // c:907 q = p
-        unsafe { p = (*p).next; }                                            // c:907 p = p->next
+pub fn deletehookdef(h: *mut crate::ported::zsh_h::hookdef) -> i32 {
+    // c:902
+    let mut p = hooktab.load(std::sync::atomic::Ordering::SeqCst); // c:906 p = hooktab
+    let mut q: *mut crate::ported::zsh_h::hookdef = std::ptr::null_mut(); // c:906 q = NULL
+    while !p.is_null() && p != h {
+        // c:907
+        q = p; // c:907 q = p
+        unsafe {
+            p = (*p).next;
+        } // c:907 p = p->next
     }
-    if p.is_null() {                                                         // c:909
-        return 1;                                                            // c:910
+    if p.is_null() {
+        // c:909
+        return 1; // c:910
     }
     unsafe {
-        if !q.is_null() {                                                    // c:912
-            (*q).next = (*p).next;                                           // c:913 q->next = p->next
+        if !q.is_null() {
+            // c:912
+            (*q).next = (*p).next; // c:913 q->next = p->next
         } else {
-            hooktab.store((*p).next, std::sync::atomic::Ordering::SeqCst);   // c:915 hooktab = p->next
+            hooktab.store((*p).next, std::sync::atomic::Ordering::SeqCst); // c:915 hooktab = p->next
         }
-        if !(*p).funcs.is_null() {                                           // c:916 freelinklist(p->funcs, NULL)
+        if !(*p).funcs.is_null() {
+            // c:916 freelinklist(p->funcs, NULL)
             drop(Box::from_raw((*p).funcs));
             (*p).funcs = std::ptr::null_mut();
         }
     }
-    0                                                                        // c:917
+    0 // c:917
 }
 
 /// Port of `int deletehookdefs(Module m, Hookdef h, int size)` from
 /// `Src/module.c:923`. `m` is unused per `UNUSED(Module m)` in C.
-pub fn deletehookdefs(                                                       // c:923
+pub fn deletehookdefs(
+    // c:923
     _m: *const crate::ported::zsh_h::module,
     mut h: *mut crate::ported::zsh_h::hookdef,
     mut size: i32,
 ) -> i32 {
-    let mut ret: i32 = 0;                                                    // c:925
-    while size > 0 {                                                         // c:927 size--
-        if deletehookdef(h) != 0 {                                           // c:928
-            ret = 1;                                                         // c:929
+    let mut ret: i32 = 0; // c:925
+    while size > 0 {
+        // c:927 size--
+        if deletehookdef(h) != 0 {
+            // c:928
+            ret = 1; // c:929
         }
-        unsafe { h = h.add(1); }                                             // c:930 h++
-        size -= 1;                                                           // c:927
+        unsafe {
+            h = h.add(1);
+        } // c:930 h++
+        size -= 1; // c:927
     }
-    ret                                                                      // c:931
+    ret // c:931
 }
 
 /// Port of `int addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
@@ -368,7 +411,8 @@ pub fn deletehookdefs(                                                       // 
 ///     return 0;
 /// }
 /// ```
-pub fn addhookdeffunc(                                                       // c:939
+pub fn addhookdeffunc(
+    // c:939
     h: *mut crate::ported::zsh_h::hookdef,
     f: crate::ported::zsh_h::Hookfn,
 ) -> i32 {
@@ -402,7 +446,7 @@ pub fn addhookdeffunc(                                                       // 
             tail.next = Some(new_node);
         }
     }
-    0                                                                        // c:943
+    0 // c:943
 }
 
 /// Port of `int addhookfunc(char *n, Hookfn f)` from `Src/module.c:948`.
@@ -415,15 +459,17 @@ pub fn addhookdeffunc(                                                       // 
 ///     return 1;
 /// }
 /// ```
-pub fn addhookfunc(                                                          // c:948
+pub fn addhookfunc(
+    // c:948
     n: &str,
     f: crate::ported::zsh_h::Hookfn,
 ) -> i32 {
-    let h = gethookdef(n);                                                   // c:950 h = gethookdef(n)
-    if !h.is_null() {                                                        // c:951
-        return addhookdeffunc(h, f);                                         // c:952
+    let h = gethookdef(n); // c:950 h = gethookdef(n)
+    if !h.is_null() {
+        // c:951
+        return addhookdeffunc(h, f); // c:952
     }
-    1                                                                        // c:953
+    1 // c:953
 }
 
 /// Port of `int deletehookdeffunc(Hookdef h, Hookfn f)` from
@@ -441,7 +487,8 @@ pub fn addhookfunc(                                                          // 
 ///     return 1;
 /// }
 /// ```
-pub fn deletehookdeffunc(                                                    // c:961
+pub fn deletehookdeffunc(
+    // c:961
     h: *mut crate::ported::zsh_h::hookdef,
     f: crate::ported::zsh_h::Hookfn,
 ) -> i32 {
@@ -455,11 +502,12 @@ pub fn deletehookdeffunc(                                                    // 
         let mut prev: &mut Option<Box<crate::ported::zsh_h::linknode>> = &mut funcs.first;
         loop {
             match prev {
-                None => return 1,                                            // c:971
-                Some(node) if node.dat == f_val => {                         // c:966 f == getdata(p)
-                    let next = node.next.take();                             // c:967 remnode
+                None => return 1, // c:971
+                Some(node) if node.dat == f_val => {
+                    // c:966 f == getdata(p)
+                    let next = node.next.take(); // c:967 remnode
                     *prev = next;
-                    return 0;                                                // c:968
+                    return 0; // c:968
                 }
                 Some(_) => {
                     // c:965 incnode(p) — advance.
@@ -481,15 +529,17 @@ pub fn deletehookdeffunc(                                                    // 
 ///     return 1;
 /// }
 /// ```
-pub fn deletehookfunc(                                                       // c:977
+pub fn deletehookfunc(
+    // c:977
     n: &str,
     f: crate::ported::zsh_h::Hookfn,
 ) -> i32 {
-    let h = gethookdef(n);                                                   // c:979 h = gethookdef(n)
-    if !h.is_null() {                                                        // c:980
-        return deletehookdeffunc(h, f);                                      // c:981
+    let h = gethookdef(n); // c:979 h = gethookdef(n)
+    if !h.is_null() {
+        // c:980
+        return deletehookdeffunc(h, f); // c:981
     }
-    1                                                                        // c:982
+    1 // c:982
 }
 
 /// Port of `int runhookdef(Hookdef h, void *d)` from `Src/module.c:990`.
@@ -510,34 +560,40 @@ pub fn deletehookfunc(                                                       // 
 ///         return ((Hookfn) getdata(lastnode(h->funcs)))(h, d);
 /// }
 /// ```
-pub fn runhookdef(                                                           // c:990
+pub fn runhookdef(
+    // c:990
     h: *mut crate::ported::zsh_h::hookdef,
     d: *mut std::ffi::c_void,
 ) -> i32 {
     unsafe {
         let funcs_ptr = (*h).funcs;
         let funcs_empty = funcs_ptr.is_null() || (*funcs_ptr).first.is_none(); // c:992 empty()
-        if funcs_empty {                                                     // c:992
-            if let Some(def) = (*h).def {                                    // c:993 if (h->def)
-                return def(h, d);                                            // c:994 return h->def(h,d)
+        if funcs_empty {
+            // c:992
+            if let Some(def) = (*h).def {
+                // c:993 if (h->def)
+                return def(h, d); // c:994 return h->def(h,d)
             }
-            return 0;                                                        // c:995
+            return 0; // c:995
         }
-        if (*h).flags & crate::ported::zsh_h::HOOKF_ALL != 0 {                // c:996 h->flags & HOOKF_ALL
-            let mut node = (*funcs_ptr).first.as_ref();                      // c:999 firstnode
-            while let Some(n) = node {                                       // c:999 ; p ;
-                let fn_ptr: crate::ported::zsh_h::Hookfn =
-                    std::mem::transmute(n.dat);                              // c:1000 (Hookfn) getdata(p)
-                let r = fn_ptr(h, d);                                        // c:1000 (...)(h, d)
-                if r != 0 {                                                  // c:1000 if ((r = ...))
-                    return r;                                                // c:1001
+        if (*h).flags & crate::ported::zsh_h::HOOKF_ALL != 0 {
+            // c:996 h->flags & HOOKF_ALL
+            let mut node = (*funcs_ptr).first.as_ref(); // c:999 firstnode
+            while let Some(n) = node {
+                // c:999 ; p ;
+                let fn_ptr: crate::ported::zsh_h::Hookfn = std::mem::transmute(n.dat); // c:1000 (Hookfn) getdata(p)
+                let r = fn_ptr(h, d); // c:1000 (...)(h, d)
+                if r != 0 {
+                    // c:1000 if ((r = ...))
+                    return r; // c:1001
                 }
-                node = n.next.as_ref();                                      // c:999 incnode
+                node = n.next.as_ref(); // c:999 incnode
             }
-            if let Some(def) = (*h).def {                                    // c:1002 if (h->def)
-                return def(h, d);                                            // c:1003 return h->def(h, d)
+            if let Some(def) = (*h).def {
+                // c:1002 if (h->def)
+                return def(h, d); // c:1003 return h->def(h, d)
             }
-            return 0;                                                        // c:1004
+            return 0; // c:1004
         }
         // c:1006 — last fn only.
         let mut tail = (*funcs_ptr).first.as_ref().expect("non-empty");
@@ -545,7 +601,7 @@ pub fn runhookdef(                                                           // 
             tail = next;
         }
         let fn_ptr: crate::ported::zsh_h::Hookfn = std::mem::transmute(tail.dat);
-        fn_ptr(h, d)                                                         // c:1006
+        fn_ptr(h, d) // c:1006
     }
 }
 
@@ -581,11 +637,14 @@ pub fn runhookdef(                                                           // 
 /// (free to add). If present and not autoloadable → 1 (warn) or
 /// 2 (skip warning under `-i`). If present + autoload-marked →
 /// unset the existing entry and return 0.
-pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                         // c:1026
+pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {
+    // c:1026
     use crate::ported::zsh_h::PM_AUTOLOAD;
     // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
     let pm_clone = {
-        let tab = crate::ported::params::paramtab().read().expect("paramtab poisoned");
+        let tab = crate::ported::params::paramtab()
+            .read()
+            .expect("paramtab poisoned");
         tab.get(nam).cloned()
     };
     let mut pm = match pm_clone {
@@ -669,94 +728,111 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                         // 
 ///     return 0;
 /// }
 /// ```
-pub fn addparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {          // c:1061
+pub fn addparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {
+    // c:1061
     use crate::ported::zsh_h::{
-        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
-        PM_SCALAR, PM_TIED, PM_TYPE,
+        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_SCALAR, PM_TIED,
+        PM_TYPE,
     };
 
     // c:1065 — `if (checkaddparam(d->name, 0)) return 1;`
-    if checkaddparam(&d.name, 0) != 0 {                                      // c:1065
-        return 1;                                                            // c:1066
+    if checkaddparam(&d.name, 0) != 0 {
+        // c:1065
+        return 1; // c:1066
     }
 
     // c:1068-1075 — either createspecialhash (hash params with getnfn)
     // or createparam, falling back to gethashnode on collision.
-    let pm_opt: Option<crate::ported::zsh_h::Param> = if d.getnfn.is_some() {  // c:1068
+    let pm_opt: Option<crate::ported::zsh_h::Param> = if d.getnfn.is_some() {
+        // c:1068
         // c:1069-1071 — createspecialhash(d->name, d->getnfn, d->scantfn, d->flags)
         // The Rust createspecialhash takes (name, flags) only; the
         // getnfn/scantfn fields aren't yet wired through the typed
         // Rust API. Pass flags and let the param be created.
-        crate::ported::params::createspecialhash(&d.name, d.flags)           // c:1069
-    } else {                                                                 // c:1072
-        match crate::ported::params::createparam(&d.name, d.flags) {        // c:1073
+        crate::ported::params::createspecialhash(&d.name, d.flags) // c:1069
+    } else {
+        // c:1072
+        match crate::ported::params::createparam(&d.name, d.flags) {
+            // c:1073
             Some(p) => Some(p),
             None => {
                 // c:1074 — fall back to paramtab->getnode(paramtab, d->name)
                 let tab = crate::ported::params::paramtab().read().ok();
-                tab.and_then(|t| t.get(&d.name).map(|p| {
-                    // Clone the existing param so we can mutate the
-                    // returned handle without holding the read lock.
-                    let mut clone = p.clone();
-                    clone.level = 0;
-                    Box::new(*clone)
-                }))
+                tab.and_then(|t| {
+                    t.get(&d.name).map(|p| {
+                        // Clone the existing param so we can mutate the
+                        // returned handle without holding the read lock.
+                        let mut clone = p.clone();
+                        clone.level = 0;
+                        Box::new(*clone)
+                    })
+                })
             }
         }
     };
-    let mut pm = match pm_opt {                                              // c:1074-1075
+    let mut pm = match pm_opt {
+        // c:1074-1075
         Some(p) => p,
         None => return 1,
     };
 
     // c:1077-1078 — `d->pm = pm; pm->level = 0;`
-    pm.level = 0;                                                            // c:1078
+    pm.level = 0; // c:1078
 
     // c:1079-1080 — `if (d->var) pm->u.data = d->var;`
-    if d.var != 0 {                                                          // c:1079
-        // pm.u.data is a raw `void *` slot — not yet exposed on the
-        // Rust param mirror. Carry the assignment as a comment.
-        // pm.u.data = d->var as *mut _;                                     // c:1080
+    if d.var != 0 { // c:1079
+         // pm.u.data is a raw `void *` slot — not yet exposed on the
+         // Rust param mirror. Carry the assignment as a comment.
+         // pm.u.data = d->var as *mut _;                                     // c:1080
     }
 
-    if d.var != 0 || d.gsu != 0 {                                            // c:1081
-        let t = PM_TYPE(pm.node.flags as u32);                               // c:1086
+    if d.var != 0 || d.gsu != 0 {
+        // c:1081
+        let t = PM_TYPE(pm.node.flags as u32); // c:1086
         let pmflags = pm.node.flags as u32;
-        if t == PM_SCALAR || t == PM_NAMEREF {                               // c:1087/1091
-            if t == PM_SCALAR && (pmflags & PM_TIED) != 0 {                  // c:1088
+        if t == PM_SCALAR || t == PM_NAMEREF {
+            // c:1087/1091
+            if t == PM_SCALAR && (pmflags & PM_TIED) != 0 {
+                // c:1088
                 let lower = crate::ported::hist::casemodify(
                     &pm.node.nam,
                     crate::ported::zsh_h::CASMOD_LOWER,
                 );
-                pm.ename = Some(crate::ported::mem::ztrdup(&lower));         // c:1089
+                pm.ename = Some(crate::ported::mem::ztrdup(&lower)); // c:1089
             }
             // c:1092 pm->gsu.s = d->gsu ? d->gsu : &varscalar_gsu;
             // gsu vtable wireup is opaque (function pointers via usize);
             // the Rust param dispatch reads directly from typed accessors.
-            let _ = d.gsu;                                                   // c:1092
-        } else if t == PM_INTEGER {                                          // c:1095
-            let _ = d.gsu;                                                   // c:1096
-        } else if t == PM_FFLOAT || t == PM_EFLOAT {                         // c:1099-1100
-            let _ = d.gsu;                                                   // c:1101
-        } else if t == PM_ARRAY {                                            // c:1104
-            if (pmflags & PM_TIED) != 0 {                                    // c:1105
+            let _ = d.gsu; // c:1092
+        } else if t == PM_INTEGER {
+            // c:1095
+            let _ = d.gsu; // c:1096
+        } else if t == PM_FFLOAT || t == PM_EFLOAT {
+            // c:1099-1100
+            let _ = d.gsu; // c:1101
+        } else if t == PM_ARRAY {
+            // c:1104
+            if (pmflags & PM_TIED) != 0 {
+                // c:1105
                 let upper = crate::ported::hist::casemodify(
                     &pm.node.nam,
                     crate::ported::zsh_h::CASMOD_UPPER,
                 );
-                pm.ename = Some(crate::ported::mem::ztrdup(&upper));         // c:1106
+                pm.ename = Some(crate::ported::mem::ztrdup(&upper)); // c:1106
             }
-            let _ = d.gsu;                                                   // c:1107
-        } else if t == PM_HASHED {                                           // c:1110
-            let _ = d.gsu;                                                   // c:1112-1113
-        } else {                                                             // c:1116
-            crate::ported::params::unsetparam_pm(&mut pm, 0, 1);             // c:1117
-            return 1;                                                        // c:1118
+            let _ = d.gsu; // c:1107
+        } else if t == PM_HASHED {
+            // c:1110
+            let _ = d.gsu; // c:1112-1113
+        } else {
+            // c:1116
+            crate::ported::params::unsetparam_pm(&mut pm, 0, 1); // c:1117
+            return 1; // c:1118
         }
     }
 
-    d.pm = Some(pm);                                                         // c:1077 d->pm = pm
-    0                                                                        // c:1122
+    d.pm = Some(pm); // c:1077 d->pm = pm
+    0 // c:1122
 }
 
 /// Port of `int deleteparamdef(Paramdef d)` from `Src/module.c:1128`.
@@ -789,7 +865,8 @@ pub fn addparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {          // 
 ///     return 0;
 /// }
 /// ```
-pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {       // c:1128
+pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {
+    // c:1128
     use crate::ported::zsh_h::{PM_READONLY, PM_REMOVABLE};
 
     // c:1131 — `Param pm = (Param) paramtab->getnode(paramtab, d->name);`
@@ -798,7 +875,7 @@ pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {       // 
         match tab {
             Ok(t) => match t.get(&d.name) {
                 Some(p) => p.clone(),
-                None => return 1,                                            // c:1133-1134
+                None => return 1, // c:1133-1134
             },
             Err(_) => return 1,
         }
@@ -811,20 +888,25 @@ pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {       // 
     // paramtab; the typed paramtab dispatches the latest binding
     // directly. Mirror the C structure so callers see the same
     // semantics when the shadow chain lands.
-    if let Some(expected) = d.pm.as_ref() {                                  // c:1135
-        if !std::ptr::eq(pm.as_ref(), expected.as_ref()) {                   // c:1135 pm != d->pm
+    if let Some(expected) = d.pm.as_ref() {
+        // c:1135
+        if !std::ptr::eq(pm.as_ref(), expected.as_ref()) {
+            // c:1135 pm != d->pm
             // c:1141-1145 — walk pm->old looking for d->pm.
-            let mut searchpm = pm.old.clone();                               // c:1142
+            let mut searchpm = pm.old.clone(); // c:1142
             let mut found = false;
-            while let Some(s) = searchpm {                                   // c:1142
-                if std::ptr::eq(s.as_ref(), expected.as_ref()) {             // c:1144
-                    found = true;                                            // c:1145
+            while let Some(s) = searchpm {
+                // c:1142
+                if std::ptr::eq(s.as_ref(), expected.as_ref()) {
+                    // c:1144
+                    found = true; // c:1145
                     break;
                 }
-                searchpm = s.old.clone();                                    // c:1143
+                searchpm = s.old.clone(); // c:1143
             }
-            if !found {                                                      // c:1147
-                return 1;                                                    // c:1148
+            if !found {
+                // c:1147
+                return 1; // c:1148
             }
             // c:1150-1153 — splice searchpm out of the chain and
             // re-add it under its node.nam. Without the shadow chain
@@ -834,10 +916,10 @@ pub fn deleteparamdef(d: &mut crate::ported::zsh_h::paramdef) -> i32 {       // 
     }
 
     // c:1157 — `pm->node.flags = (pm->node.flags & ~PM_READONLY) | PM_REMOVABLE;`
-    pm.node.flags = (pm.node.flags & !(PM_READONLY as i32)) | (PM_REMOVABLE as i32);  // c:1157
-    crate::ported::params::unsetparam_pm(&mut pm, 0, 1);                     // c:1158
-    d.pm = None;                                                             // c:1159 d->pm = NULL
-    0                                                                        // c:1160
+    pm.node.flags = (pm.node.flags & !(PM_READONLY as i32)) | (PM_REMOVABLE as i32); // c:1157
+    crate::ported::params::unsetparam_pm(&mut pm, 0, 1); // c:1158
+    d.pm = None; // c:1159 d->pm = NULL
+    0 // c:1160
 }
 
 // `pub struct Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
@@ -903,7 +985,12 @@ impl modulestab {
             (
                 "zsh/system",
                 &[
-                    "bin_sysread", "bin_syswrite", "bin_sysopen", "bin_sysseek", "bin_syserror", "zsystem",
+                    "bin_sysread",
+                    "bin_syswrite",
+                    "bin_sysopen",
+                    "bin_sysseek",
+                    "bin_syserror",
+                    "zsystem",
                 ][..],
             ),
             ("zsh/termcap", &["echotc"][..]),
@@ -954,57 +1041,63 @@ impl modulestab {
     /// all modules are statically linked, so dlopen path is skipped
     /// and we operate on the static registry.
     /// WARNING: param names don't match C — Rust=(name) vs C=(name, enablesarr, silent)
-    pub fn load_module(&mut self, name: &str) -> bool {                      // c:2206
+    pub fn load_module(&mut self, name: &str) -> bool {
+        // c:2206
         use crate::ported::zsh_h::{
-            MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED,
-            MOD_SETUP, MOD_UNLOAD,
+            MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD,
         };
         // c:2213 — modname_ok(name)
-        if modname_ok(name) == 0 {                                           // c:2213
+        if modname_ok(name) == 0 {
+            // c:2213
             // c:2214-2215 — zerr if !silent
-            return false;                                                    // c:2216 return 1 → false
+            return false; // c:2216 return 1 → false
         }
-        crate::ported::signals::queue_signals();                             // c:2223
-        // c:2224 — find_module(name, FINDMOD_ALIASP, &name)
+        crate::ported::signals::queue_signals(); // c:2223
+                                                 // c:2224 — find_module(name, FINDMOD_ALIASP, &name)
         let exists = self.modules.contains_key(name);
-        if !exists {                                                         // c:2224 !find_module
+        if !exists {
+            // c:2224 !find_module
             // c:2225-2229 — module_linked + do_load_module: zshrs has
             // no DSO loader; only statically linked modules exist.
-            crate::ported::signals::unqueue_signals();                       // c:2227
-            return false;                                                    // c:2228 return 1
+            crate::ported::signals::unqueue_signals(); // c:2227
+            return false; // c:2228 return 1
         }
         // c:2254 — flags & MOD_SETUP: already in setup, return 0.
         if let Some(m) = self.modules.get(name) {
-            if (m.node.flags & MOD_SETUP) != 0 {                             // c:2254
-                crate::ported::signals::unqueue_signals();                   // c:2255
-                return true;                                                 // c:2256 return 0
+            if (m.node.flags & MOD_SETUP) != 0 {
+                // c:2254
+                crate::ported::signals::unqueue_signals(); // c:2255
+                return true; // c:2256 return 0
             }
         }
         if let Some(m) = self.modules.get_mut(name) {
-            if (m.node.flags & MOD_UNLOAD) != 0 {                            // c:2258
-                m.node.flags &= !MOD_UNLOAD;                                 // c:2259
-            } else if (m.node.flags & MOD_LINKED) != 0 {                     // c:2260
-                crate::ported::signals::unqueue_signals();                   // c:2261
-                return true;                                                 // c:2262 return 0
+            if (m.node.flags & MOD_UNLOAD) != 0 {
+                // c:2258
+                m.node.flags &= !MOD_UNLOAD; // c:2259
+            } else if (m.node.flags & MOD_LINKED) != 0 {
+                // c:2260
+                crate::ported::signals::unqueue_signals(); // c:2261
+                return true; // c:2262 return 0
             }
-            if (m.node.flags & MOD_BUSY) != 0 {                              // c:2264
-                crate::ported::signals::unqueue_signals();                   // c:2265
-                return false;                                                // c:2267 return 1
+            if (m.node.flags & MOD_BUSY) != 0 {
+                // c:2264
+                crate::ported::signals::unqueue_signals(); // c:2265
+                return false; // c:2267 return 1
             }
-            m.node.flags |= MOD_BUSY;                                        // c:2269
-            // c:2274-2282 — recurse into m->deps (omitted: per-module
-            // deps tracker lives in the Linkedmod records in C).
-            m.node.flags &= !MOD_BUSY;                                       // c:2283
-            // c:2284-2309 — !m->u.handle path: load + setup_module
-            m.node.flags |= MOD_LINKED;                                      // c:2296 MOD_LINKED for linked
-            m.node.flags |= MOD_INIT_S;                                      // c:2308
-            m.node.flags |= MOD_SETUP;                                       // c:2310
-            // c:2311 — do_boot_module(m, enablesarr, silent)
-            m.node.flags |= MOD_INIT_B;                                      // c:2322
-            m.node.flags &= !MOD_SETUP;                                      // c:2323
+            m.node.flags |= MOD_BUSY; // c:2269
+                                      // c:2274-2282 — recurse into m->deps (omitted: per-module
+                                      // deps tracker lives in the Linkedmod records in C).
+            m.node.flags &= !MOD_BUSY; // c:2283
+                                       // c:2284-2309 — !m->u.handle path: load + setup_module
+            m.node.flags |= MOD_LINKED; // c:2296 MOD_LINKED for linked
+            m.node.flags |= MOD_INIT_S; // c:2308
+            m.node.flags |= MOD_SETUP; // c:2310
+                                       // c:2311 — do_boot_module(m, enablesarr, silent)
+            m.node.flags |= MOD_INIT_B; // c:2322
+            m.node.flags &= !MOD_SETUP; // c:2323
         }
-        crate::ported::signals::unqueue_signals();                           // c:2324
-        true                                                                 // c:2325 return bootret (0)
+        crate::ported::signals::unqueue_signals(); // c:2324
+        true // c:2325 return bootret (0)
     }
 
     // Backend handler for zmodload -u                                       // c:2813
@@ -1017,10 +1110,9 @@ impl modulestab {
     /// on `MOD_LINKED`. Finally walk `m->deps` and unload modules
     /// that were tagged `MOD_UNLOAD` when the last dependent dies.
     /// WARNING: param names don't match C — Rust=(name) vs C=(m)
-    pub fn unload_module(&mut self, name: &str) -> bool {                    // c:2817
-        use crate::ported::zsh_h::{
-            MOD_ALIAS, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_UNLOAD,
-        };
+    pub fn unload_module(&mut self, name: &str) -> bool {
+        // c:2817
+        use crate::ported::zsh_h::{MOD_ALIAS, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_UNLOAD};
         // c:2824 — resolve alias chain (skipped: no per-module alias
         // tracking in the static registry).
         let _ = MOD_ALIAS;
@@ -1038,10 +1130,10 @@ impl modulestab {
             // C path would `delete_module(m)` after finish; we set
             // MOD_UNLOAD as the static-link analog.
             let _ = MOD_LINKED;
-            m.node.flags |= MOD_UNLOAD;                                      // c:2890 delete_module analog
-            true                                                             // c:2904 return 0
+            m.node.flags |= MOD_UNLOAD; // c:2890 delete_module analog
+            true // c:2904 return 0
         } else {
-            false                                                            // c:2826-2827 !m → return 1
+            false // c:2826-2827 !m → return 1
         }
     }
 
@@ -1075,7 +1167,7 @@ impl modulestab {
     // ------- Builtin management (from module.c addbuiltin/deletebuiltin) -------
 
     /// Register a builtin (from module.c addbuiltin)
-/// Port of `addbuiltin(Builtin b)` from `Src/module.c:409`.
+    /// Port of `addbuiltin(Builtin b)` from `Src/module.c:409`.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(b)
     ///
     /// In C, this inserts the builtin into the canonical `builtintab`
@@ -1083,15 +1175,15 @@ impl modulestab {
     /// Rust-only invention that has been deleted; this method now just
     /// confirms the module exists. The real builtin registration lives
     /// in `cmd.rs::BUILTINTAB`.
-    pub fn addbuiltin(&mut self, _name: &str, _module: &str) {              // c:409
+    pub fn addbuiltin(&mut self, _name: &str, _module: &str) { // c:409
     }
 
     /// Unregister a builtin (from module.c deletebuiltin)
-/// Port of `deletebuiltin(const char *nam)` from `Src/module.c:449`.
+    /// Port of `deletebuiltin(const char *nam)` from `Src/module.c:449`.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(nam)
-    pub fn deletebuiltin(&mut self, _name: &str, _module: &str) {           // c:449
-        // See addbuiltin: deletion happens against the canonical
-        // `BUILTINTAB`, not against a per-module ledger.
+    pub fn deletebuiltin(&mut self, _name: &str, _module: &str) { // c:449
+                                                                  // See addbuiltin: deletion happens against the canonical
+                                                                  // `BUILTINTAB`, not against a per-module ledger.
     }
 
     /// Register autoloading builtin.
@@ -1102,28 +1194,31 @@ impl modulestab {
     /// allocated node is freed; success returns 0, conflict returns 1
     /// unless `FEAT_IGNORE` masks it.
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, bnam, flags)
-    pub fn add_autobin(&mut self, name: &str, module: &str, flags: i32) -> i32 { // c:426
-        use crate::ported::zsh_h::BINF_AUTOALL;
+    pub fn add_autobin(&mut self, name: &str, module: &str, flags: i32) -> i32 {
+        // c:426
         use crate::ported::module::{FEAT_AUTOALL, FEAT_IGNORE};
+        use crate::ported::zsh_h::BINF_AUTOALL;
         // c:431 — bn = zshcalloc(sizeof(*bn))
-        let mut node_flags: i32 = 0;                                         // c:431-432 fresh Builtin
-        if (flags & FEAT_AUTOALL as i32) != 0 {                              // c:434
-            node_flags |= BINF_AUTOALL as i32;                               // c:435
+        let mut node_flags: i32 = 0; // c:431-432 fresh Builtin
+        if (flags & FEAT_AUTOALL as i32) != 0 {
+            // c:434
+            node_flags |= BINF_AUTOALL as i32; // c:435
         }
-        let _ = node_flags;                                                  // would-be bn->node.flags
-        // c:436 — addbuiltin(bn). Rust ledger is keyed on name; insert
-        // returns the prior mapping if any (the "conflict" case).
-        let prior = self.autoload_builtins.insert(
-            name.to_string(),
-            module.to_string(),
-        );
-        if prior.is_some() {                                                 // c:436 ret != 0
+        let _ = node_flags; // would-be bn->node.flags
+                            // c:436 — addbuiltin(bn). Rust ledger is keyed on name; insert
+                            // returns the prior mapping if any (the "conflict" case).
+        let prior = self
+            .autoload_builtins
+            .insert(name.to_string(), module.to_string());
+        if prior.is_some() {
+            // c:436 ret != 0
             // c:437 — builtintab->freenode(&bn->node) (we dropped insert val)
-            if (flags & FEAT_IGNORE as i32) == 0 {                           // c:438
-                return 1;                                                    // c:439
+            if (flags & FEAT_IGNORE as i32) == 0 {
+                // c:438
+                return 1; // c:439
             }
         }
-        0                                                                    // c:441
+        0 // c:441
     }
 
     // Remove an autoloaded added by add_autobin                             // c:464
@@ -1153,32 +1248,36 @@ impl modulestab {
     ///   * else if name is in `autoload_builtins` → remove it, return 0.
     ///   * else → not present → return 2 (or 0 with FEAT_IGNORE).
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(module, bnam, flags)
-    pub fn del_autobin(&mut self, name: &str, flags: i32) -> i32 {          // c:464
+    pub fn del_autobin(&mut self, name: &str, flags: i32) -> i32 {
+        // c:464
         use crate::ported::module::FEAT_IGNORE;
         // c:466 — `builtintab->getnode2(builtintab, bnam)`.
         let bn = crate::ported::builtin::createbuiltintable().get(name);
-        if bn.is_none() {                                                    // c:467
+        if bn.is_none() {
+            // c:467
             // c:468-469 — `if(!(flags & FEAT_IGNORE)) return 2;`
             // Static-linked entries always count as the builtintab — but
             // a name that's neither there nor in autoload IS "no such".
             if !self.autoload_builtins.contains_key(name) {
-                if (flags & FEAT_IGNORE as i32) == 0 {                       // c:468
-                    return 2;                                                // c:469
+                if (flags & FEAT_IGNORE as i32) == 0 {
+                    // c:468
+                    return 2; // c:469
                 }
                 return 0;
             }
             // c:475 — `deletebuiltin(bnam);` Rust path: drop autoload entry.
-            self.autoload_builtins.remove(name);                             // c:475
-            return 0;                                                        // c:477
+            self.autoload_builtins.remove(name); // c:475
+            return 0; // c:477
         }
         // c:470-473 — `if (bn->node.flags & BINF_ADDED) { if (!FEAT_IGNORE)
         //               return 3; }` else deletebuiltin. zshrs's
         // `builtintab` is static-linked so every entry there is
         // semantically BINF_ADDED — can't unload a built-in builtin.
-        if (flags & FEAT_IGNORE as i32) == 0 {                               // c:471
-            return 3;                                                        // c:472
+        if (flags & FEAT_IGNORE as i32) == 0 {
+            // c:471
+            return 3; // c:472
         }
-        0                                                                    // c:477
+        0 // c:477
     }
 
     /// Set/clear a slice of builtins per `e[]` mask.
@@ -1189,42 +1288,49 @@ impl modulestab {
     /// `BINF_ADDED`). Warnings on clash/already-deleted; returns 1 if
     /// any op failed.
     /// WARNING: param names don't match C — Rust=(module, names, e) vs C=(nam, binl, size, e)
-    pub fn setbuiltins(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 { // c:501
+    pub fn setbuiltins(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 {
+        // c:501
         use crate::ported::zsh_h::BINF_ADDED;
-        let mut ret: i32 = 0;                                                // c:503
-        for (n, name) in names.iter().enumerate() {                          // c:505
-            let enable = e.map(|arr| arr.get(n).copied().unwrap_or(0))       // c:507 *e++
+        let mut ret: i32 = 0; // c:503
+        for (n, name) in names.iter().enumerate() {
+            // c:505
+            let enable = e
+                .map(|arr| arr.get(n).copied().unwrap_or(0)) // c:507 *e++
                 .unwrap_or(1);
-            let already_added = self.added_builtins.contains_key(*name);     // c:508 b->flags & BINF_ADDED
+            let already_added = self.added_builtins.contains_key(*name); // c:508 b->flags & BINF_ADDED
             if enable != 0 {
-                if already_added { continue; }                               // c:508-509
-                // c:510 — addbuiltin(b); ledger insert acts as success.
+                if already_added {
+                    continue;
+                } // c:508-509
+                  // c:510 — addbuiltin(b); ledger insert acts as success.
                 self.addbuiltin(name, module);
-                self.added_builtins.insert(name.to_string(), BINF_ADDED);    // c:515 BINF_ADDED
+                self.added_builtins.insert(name.to_string(), BINF_ADDED); // c:515 BINF_ADDED
             } else {
-                if !already_added { continue; }                              // c:518-519
-                // c:520 — deletebuiltin(b->node.nam)
-                self.added_builtins.remove(*name);                           // c:524 clear BINF_ADDED
+                if !already_added {
+                    continue;
+                } // c:518-519
+                  // c:520 — deletebuiltin(b->node.nam)
+                self.added_builtins.remove(*name); // c:524 clear BINF_ADDED
             }
             let _ = ret;
         }
-        ret                                                                  // c:528
+        ret // c:528
     }
 
     // ------- Condition management (from module.c addconddef/deleteconddef) -------
 
     /// Register a condition (from module.c addconddef)
-/// Port of `addconddef(Conddef c)` from `Src/module.c:703`.
+    /// Port of `addconddef(Conddef c)` from `Src/module.c:703`.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(c)
     ///
     /// Like `addbuiltin`, C inserts into the canonical `condtab` table
     /// (Src/cond.c). The per-module feature ledger has been deleted; the
     /// real registration lives in `cond.rs::CONDTAB`.
-    pub fn addconddef(&mut self, _name: &str, _module: &str) {              // c:703
+    pub fn addconddef(&mut self, _name: &str, _module: &str) { // c:703
     }
 
     /// Unregister a condition (from module.c deleteconddef)
-/// Port of `deleteconddef(Conddef c)` from `Src/module.c:724`.
+    /// Port of `deleteconddef(Conddef c)` from `Src/module.c:724`.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(c)
     pub fn deleteconddef(&mut self, _name: &str, _module: &str) {
         // See addconddef: deletion happens against the canonical
@@ -1232,7 +1338,7 @@ impl modulestab {
     }
 
     /// Get condition definition (from module.c getconddef)
-/// Port of `getconddef(int inf, const char *name, int autol)` from `Src/module.c:648`.
+    /// Port of `getconddef(int inf, const char *name, int autol)` from `Src/module.c:648`.
     /// WARNING: param names don't match C — Rust=(name) vs C=(inf, name, autol)
     ///
     /// Returns the autoload mapping if any. C consults the canonical
@@ -1250,32 +1356,36 @@ impl modulestab {
     /// `addconddef(c)`. On addconddef failure (already exists) the
     /// node is freed; returns 1 unless `FEAT_IGNORE`.
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, cnam, flags)
-    pub fn add_autocond(&mut self, name: &str, module: &str, flags: i32) -> i32 { // c:792
+    pub fn add_autocond(&mut self, name: &str, module: &str, flags: i32) -> i32 {
+        // c:792
         use crate::ported::module::{FEAT_AUTOALL, FEAT_IGNORE, FEAT_INFIX};
         use crate::ported::zsh_h::{CONDF_AUTOALL, CONDF_INFIX};
         // c:796 — c = zalloc(sizeof(*c))
-        let mut cflags: i32 = if (flags & FEAT_INFIX) != 0 {                 // c:799
+        let mut cflags: i32 = if (flags & FEAT_INFIX) != 0 {
+            // c:799
             CONDF_INFIX
         } else {
             0
         };
-        if (flags & FEAT_AUTOALL) != 0 {                                     // c:800
-            cflags |= CONDF_AUTOALL;                                         // c:801
+        if (flags & FEAT_AUTOALL) != 0 {
+            // c:800
+            cflags |= CONDF_AUTOALL; // c:801
         }
-        let _ = cflags;                                                      // c->flags
-        // c:804 — addconddef(c). Rust ledger: insert into
-        // autoload_conditions; conflict if key already present.
-        let prior = self.autoload_conditions.insert(
-            name.to_string(),
-            module.to_string(),
-        );
-        if prior.is_some() {                                                 // c:804 addconddef != 0
+        let _ = cflags; // c->flags
+                        // c:804 — addconddef(c). Rust ledger: insert into
+                        // autoload_conditions; conflict if key already present.
+        let prior = self
+            .autoload_conditions
+            .insert(name.to_string(), module.to_string());
+        if prior.is_some() {
+            // c:804 addconddef != 0
             // c:805-807 — zsfree(name/module); zfree(c)
-            if (flags & FEAT_IGNORE) == 0 {                                  // c:809
-                return 1;                                                    // c:810
+            if (flags & FEAT_IGNORE) == 0 {
+                // c:809
+                return 1; // c:810
             }
         }
-        0                                                                    // c:812
+        0 // c:812
     }
 
     /// Port of `static int del_autocond(const char *modnam, const char *cnam,
@@ -1294,22 +1404,25 @@ impl modulestab {
     /// 2 = "no such condition", 3 = "registered condition (CONDF_ADDED) —
     /// can't unload", 0 = success. FEAT_IGNORE masks both error returns.
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, cnam, flags)
-    pub fn del_autocond(&mut self, name: &str, flags: i32) -> i32 {         // c:819
+    pub fn del_autocond(&mut self, name: &str, flags: i32) -> i32 {
+        // c:819
         use crate::ported::module::FEAT_IGNORE;
         // c:821 — `getconddef((flags & FEAT_INFIX) ? 1 : 0, cnam, 0);`.
         // The Rust ledger holds only the autoload entry; the live
         // CONDF_ADDED registry isn't separately materialised, so any
         // entry we find is the autoload form (analog of !CONDF_ADDED).
-        if self.autoload_conditions.contains_key(name) {                     // c:823
+        if self.autoload_conditions.contains_key(name) {
+            // c:823
             // c:831-832 — `deleteconddef(cd);` Rust drop autoload entry.
-            self.autoload_conditions.remove(name);                           // c:832
-            return 0;                                                        // c:834
+            self.autoload_conditions.remove(name); // c:832
+            return 0; // c:834
         }
         // c:823-826 — `if (!cd) { if (!(flags & FEAT_IGNORE)) return 2; }`.
-        if (flags & FEAT_IGNORE as i32) == 0 {                               // c:824
-            return 2;                                                        // c:825
+        if (flags & FEAT_IGNORE as i32) == 0 {
+            // c:824
+            return 2; // c:825
         }
-        0                                                                    // c:834
+        0 // c:834
     }
 
     // ------- Hook management lives in the file-static free fns above ------
@@ -1337,23 +1450,26 @@ impl modulestab {
     /// non-null, remove via `deleteparamdef(d)`. Warnings on
     /// error/already-deleted; returns 1 if any op failed.
     /// WARNING: param names don't match C — Rust=(module, names, e) vs C=(nam, d, size, e)
-    pub fn setparamdefs(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 { // c:1170
-        let mut ret: i32 = 0;                                                // c:1172
-        for (n, name) in names.iter().enumerate() {                          // c:1174 while (size--)
-            let enable = e.map(|arr| arr.get(n).copied().unwrap_or(0))       // c:1175 *e++
+    pub fn setparamdefs(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 {
+        // c:1170
+        let mut ret: i32 = 0; // c:1172
+        for (n, name) in names.iter().enumerate() {
+            // c:1174 while (size--)
+            let enable = e
+                .map(|arr| arr.get(n).copied().unwrap_or(0)) // c:1175 *e++
                 .unwrap_or(1);
-            let already = self.autoload_params.contains_key(*name);          // c:1176 d->pm
+            let already = self.autoload_params.contains_key(*name); // c:1176 d->pm
             if enable != 0 {
-                if already {                                                 // c:1176-1179
+                if already {
+                    // c:1176-1179
                     continue;
                 }
                 // c:1180 — addparamdef(d)
-                self.autoload_params.insert(
-                    name.to_string(),
-                    module.to_string(),
-                );
+                self.autoload_params
+                    .insert(name.to_string(), module.to_string());
             } else {
-                if !already {                                                // c:1185-1188
+                if !already {
+                    // c:1185-1188
                     continue;
                 }
                 // c:1189 — deleteparamdef(d)
@@ -1361,7 +1477,7 @@ impl modulestab {
             }
             let _ = ret;
         }
-        ret                                                                  // c:1196
+        ret // c:1196
     }
 
     /// Register autoloading parameter.
@@ -1372,31 +1488,34 @@ impl modulestab {
     /// (+ `PM_AUTOALL` if `FEAT_AUTOALL`). `queue_signals`/`noerrs=2`
     /// bracket so the setsparam doesn't echo errors out.
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, pnam, flags)
-    pub fn add_autoparam(&mut self, name: &str, module: &str, flags: i32) -> i32 { // c:1202
+    pub fn add_autoparam(&mut self, name: &str, module: &str, flags: i32) -> i32 {
+        // c:1202
         use crate::ported::module::FEAT_AUTOALL;
         let _ret: i32;
         // c:1207 noerrs = 2; queue_signals(); checkaddparam clash check
-        crate::ported::signals::queue_signals();                             // c:1209
-        // checkaddparam returns 0 ok, 1 hard-fail (already-printed
-        // message), 2 soft-fail with `-i`. Rust ledger: presence in
-        // `autoload_params` is the clash signal.
-        let exists = self.autoload_params.contains_key(name);                // c:1210
+        crate::ported::signals::queue_signals(); // c:1209
+                                                 // checkaddparam returns 0 ok, 1 hard-fail (already-printed
+                                                 // message), 2 soft-fail with `-i`. Rust ledger: presence in
+                                                 // `autoload_params` is the clash signal.
+        let exists = self.autoload_params.contains_key(name); // c:1210
         if exists {
-            crate::ported::signals::unqueue_signals();                       // c:1211
-            // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
+            crate::ported::signals::unqueue_signals(); // c:1211
+                                                       // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
             if (flags & crate::ported::module::FEAT_IGNORE) != 0 {
-                return 0;                                                    // c:1219 ret==2 → 0
+                return 0; // c:1219 ret==2 → 0
             }
-            return -1;                                                       // c:1219 ret==1 → -1
+            return -1; // c:1219 ret==1 → -1
         }
         // c:1222-1227 — noerrs=2; setsparam; PM_AUTOLOAD (+PM_AUTOALL if FEAT_AUTOALL)
-        self.autoload_params.insert(name.to_string(), module.to_string());   // c:1223 setsparam
-        let _ = crate::ported::zsh_h::PM_AUTOLOAD;                           // c:1224 pm->flags |= PM_AUTOLOAD
-        if (flags & FEAT_AUTOALL) != 0 {                                     // c:1225
-            let _ = crate::ported::zsh_h::PM_AUTOALL;                        // c:1226
+        self.autoload_params
+            .insert(name.to_string(), module.to_string()); // c:1223 setsparam
+        let _ = crate::ported::zsh_h::PM_AUTOLOAD; // c:1224 pm->flags |= PM_AUTOLOAD
+        if (flags & FEAT_AUTOALL) != 0 {
+            // c:1225
+            let _ = crate::ported::zsh_h::PM_AUTOALL; // c:1226
         }
-        crate::ported::signals::unqueue_signals();                           // c:1231
-        0                                                                    // c:1227,1233 ret=0
+        crate::ported::signals::unqueue_signals(); // c:1231
+        0 // c:1227,1233 ret=0
     }
 
     /// Port of `static int del_autoparam(const char *modnam, const char *pnam,
@@ -1415,44 +1534,50 @@ impl modulestab {
     /// 2 = "no such param", 3 = "real param (not autoload) — can't
     /// unload", 0 = success. FEAT_IGNORE masks both error returns.
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, pnam, flags)
-    pub fn del_autoparam(&mut self, name: &str, flags: i32) -> i32 {        // c:1240
+    pub fn del_autoparam(&mut self, name: &str, flags: i32) -> i32 {
+        // c:1240
         use crate::ported::module::FEAT_IGNORE;
         use crate::ported::zsh_h::PM_AUTOLOAD;
         // c:1242 — `gethashnode2(paramtab, pnam)`. Rust paramtab lookup.
-        let pm_flags = crate::ported::params::paramtab().read().ok()
+        let pm_flags = crate::ported::params::paramtab()
+            .read()
+            .ok()
             .and_then(|t| t.get(name).map(|p| p.node.flags));
         match pm_flags {
-            None => {                                                        // c:1244 if (!pm)
+            None => {
+                // c:1244 if (!pm)
                 // c:1245-1246 — `if (!(flags & FEAT_IGNORE)) return 2;`
                 // Also check autoload_params: a name only in the autoload
                 // ledger (no live Param entry yet) is the same as "not
                 // present" from C's perspective.
                 if !self.autoload_params.contains_key(name) {
                     if (flags & FEAT_IGNORE as i32) == 0 {
-                        return 2;                                            // c:1246
+                        return 2; // c:1246
                     }
                     return 0;
                 }
                 // Cleanup the autoload ledger entry.
                 self.autoload_params.remove(name);
-                0                                                            // c:1254
+                0 // c:1254
             }
-            Some(f) if (f as u32 & PM_AUTOLOAD) == 0 => {                    // c:1247
+            Some(f) if (f as u32 & PM_AUTOLOAD) == 0 => {
+                // c:1247
                 // c:1248-1249 — real param, not just autoload → return 3.
-                if (flags & FEAT_IGNORE as i32) == 0 {                       // c:1248
-                    return 3;                                                // c:1249
+                if (flags & FEAT_IGNORE as i32) == 0 {
+                    // c:1248
+                    return 3; // c:1249
                 }
-                0                                                            // c:1254
+                0 // c:1254
             }
             Some(_) => {
                 // c:1252 — `unsetparam_pm(pm, 0, 1);` — the param is
                 // marked PM_AUTOLOAD so just removing it from paramtab
                 // (the Rust analog of unsetparam_pm) is the right move.
                 if let Ok(mut t) = crate::ported::params::paramtab().write() {
-                    t.remove(name);                                          // c:1252
+                    t.remove(name); // c:1252
                 }
                 self.autoload_params.remove(name);
-                0                                                            // c:1254
+                0 // c:1254
             }
         }
     }
@@ -1492,7 +1617,7 @@ impl modulestab {
     }
 
     /// Check if a module is linked (statically compiled) (from module.c module_linked)
-/// Port of `module_linked(char const *name)` from `Src/module.c:385`.
+    /// Port of `module_linked(char const *name)` from `Src/module.c:385`.
     pub fn module_linked(&self, name: &str) -> bool {
         self.modules.contains_key(name)
     }
@@ -1508,7 +1633,7 @@ impl modulestab {
     }
 
     /// Ensure a module's feature is available
-/// Port of `ensurefeature(const char *modname, const char *prefix, const char *feature)` from `Src/module.c:3415`.
+    /// Port of `ensurefeature(const char *modname, const char *prefix, const char *feature)` from `Src/module.c:3415`.
     /// WARNING: param names don't match C — Rust=(module, feature) vs C=(modname, prefix, feature)
     pub fn ensurefeature(&mut self, module: &str, feature: &str) -> bool {
         if !self.is_loaded(module) {
@@ -1556,16 +1681,19 @@ pub trait ModuleLifecycle {
 /// Rust port returns `Some(module_name)` on hit, `None` on miss.
 /// Honors the autoload flag by triggering `ensurefeature` when set.
 /// WARNING: param names don't match C — Rust=(table, name, autol) vs C=(name, autol)
-pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<String> { // c:1283
-    if let Some(module) = table.autoload_mathfuncs.get(name).cloned() {  // c:1283-1288
-        if autol != 0 {                                                  // c:1289
+pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<String> {
+    // c:1283
+    if let Some(module) = table.autoload_mathfuncs.get(name).cloned() {
+        // c:1283-1288
+        if autol != 0 {
+            // c:1289
             // c:1295 — ensurefeature(n, "f:", ...)
             let _ = ensurefeature(table, &module, "f:", Some(name));
             return table.autoload_mathfuncs.get(name).cloned();
         }
-        return Some(module);                                              // c:1303
+        return Some(module); // c:1303
     }
-    None                                                                 // c:1306
+    None // c:1306
 }
 
 /// Port of `add_automathfunc(const char *module, const char *fnam, int flags)` from `Src/module.c:1410`.
@@ -1588,16 +1716,21 @@ pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<Str
 ///
 /// Registers `fnam` as an autoloadable math function provided by `module`.
 /// WARNING: param names don't match C — Rust=(table, module, fnam, flags) vs C=(module, fnam, flags)
-pub fn add_automathfunc(table: &mut modulestab, module: &str, fnam: &str, flags: i32) -> i32 { // c:1410
+pub fn add_automathfunc(table: &mut modulestab, module: &str, fnam: &str, flags: i32) -> i32 {
+    // c:1410
     // c:1410-1418 — alloc + populate MathFunc
-    if table.autoload_mathfuncs.contains_key(fnam) {                     // c:1420 addmathfunc clash
-        if (flags & FEAT_IGNORE) == 0 {                                  // c:1425
-            return 1;                                                     // c:1426
+    if table.autoload_mathfuncs.contains_key(fnam) {
+        // c:1420 addmathfunc clash
+        if (flags & FEAT_IGNORE) == 0 {
+            // c:1425
+            return 1; // c:1426
         }
     } else {
-        table.autoload_mathfuncs.insert(fnam.to_string(), module.to_string());
+        table
+            .autoload_mathfuncs
+            .insert(fnam.to_string(), module.to_string());
     }
-    0                                                                    // c:1429
+    0 // c:1429
 }
 
 /// Port of `del_automathfunc(UNUSED(const char *modnam), const char *fnam, int flags)` from `Src/module.c:1436`.
@@ -1618,16 +1751,19 @@ pub fn add_automathfunc(table: &mut modulestab, module: &str, fnam: &str, flags:
 ///
 /// Removes `fnam` from the autoloadable math-function registry.
 /// WARNING: param names don't match C — Rust=(table, _modnam, fnam, flags) vs C=(modnam, fnam, flags)
-pub fn del_automathfunc(table: &mut modulestab, _modnam: &str, fnam: &str, flags: i32) -> i32 { // c:1436
-    if !table.autoload_mathfuncs.contains_key(fnam) {                    // c:1436 if (!f)
-        if (flags & FEAT_IGNORE) == 0 {                                  // c:1441
-            return 2;                                                     // c:1442
+pub fn del_automathfunc(table: &mut modulestab, _modnam: &str, fnam: &str, flags: i32) -> i32 {
+    // c:1436
+    if !table.autoload_mathfuncs.contains_key(fnam) {
+        // c:1436 if (!f)
+        if (flags & FEAT_IGNORE) == 0 {
+            // c:1441
+            return 2; // c:1442
         }
     } else {
         // c:1447 — deletemathfunc(f)
         table.autoload_mathfuncs.remove(fnam);
     }
-    0                                                                    // c:1449
+    0 // c:1449
 }
 
 /// Port of `load_and_bind(const char *fn)` from `Src/module.c:1468`.
@@ -1640,8 +1776,9 @@ pub fn del_automathfunc(table: &mut modulestab, _modnam: &str, fnam: &str, flags
 /// Static-link path: dlopen/dlsym aren't used since modules are
 /// linked at compile time. Returns 0 (NULL handle).
 /// WARNING: param names don't match C — Rust=(_fn_path) vs C=(fn)
-pub fn load_and_bind(_fn_path: &str) -> usize {                          // c:1468
-    0                                                                    // c:1492 NULL
+pub fn load_and_bind(_fn_path: &str) -> usize {
+    // c:1468
+    0 // c:1492 NULL
 }
 
 // `handlefeatures` deleted — Rust-only port that took the
@@ -1669,8 +1806,9 @@ pub fn load_and_bind(_fn_path: &str) -> usize {                          // c:14
 /// HP-UX-specific dlsym wrapper around `shl_findsym(3)`. Static-link
 /// path: never invoked since zshrs doesn't dlopen modules.
 #[allow(unused_variables)]
-pub fn hpux_dlsym(handle: usize, name: &str) -> usize {                // c:1530
-    0                                                                    // c:1530 NULL
+pub fn hpux_dlsym(handle: usize, name: &str) -> usize {
+    // c:1530
+    0 // c:1530 NULL
 }
 
 /// Port of `try_load_module(char const *name)` from `Src/module.c:1583`.
@@ -1679,8 +1817,13 @@ pub fn hpux_dlsym(handle: usize, name: &str) -> usize {                // c:1530
 /// `dlopen`. Static-link path: a module is "loadable" iff it's in
 /// our static `ModuleTable.modules` map.
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(name)
-pub fn try_load_module(table: &modulestab, name: &str) -> i32 {         // c:1583
-    if table.modules.contains_key(name) { 1 } else { 0 }
+pub fn try_load_module(table: &modulestab, name: &str) -> i32 {
+    // c:1583
+    if table.modules.contains_key(name) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Port of `do_load_module(char const *name, int silent)` from `Src/module.c:1610`.
@@ -1702,14 +1845,16 @@ pub fn try_load_module(table: &modulestab, name: &str) -> i32 {         // c:158
 /// success / 1 on failure. zshrs's static-link path: `try_load_module`
 /// always succeeds for built-in modules. Returns 1 + zwarn on miss.
 /// WARNING: param names don't match C — Rust=(table, name, silent) vs C=(name, silent)
-pub fn do_load_module(table: &mut modulestab, name: &str, silent: i32) -> i32 { // c:1610
+pub fn do_load_module(table: &mut modulestab, name: &str, silent: i32) -> i32 {
+    // c:1610
     // c:1610 — ret = try_load_module(name);
     let ret = try_load_module(table, name);
-    if ret == 0 && silent == 0 {                                          // c:1615
+    if ret == 0 && silent == 0 {
+        // c:1615
         // c:1618-1621 — zwarn("failed to load module ...")
         crate::ported::utils::zwarn(&format!("failed to load module: {}", name));
     }
-    ret                                                                   // c:1624
+    ret // c:1624
 }
 
 /// Port of `find_module(const char *name, int flags, const char **namep)` from `Src/module.c:1659`.
@@ -1740,17 +1885,22 @@ pub fn do_load_module(table: &mut modulestab, name: &str, silent: i32) -> i32 { 
 /// whether an entry was created. C's `Module` return becomes
 /// `Option<String>` of the canonical name.
 /// WARNING: param names don't match C — Rust=(table, name, flags) vs C=(name, flags, namep)
-pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<String> { // c:1659
+pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<String> {
+    // c:1659
     // c:1659 — m = modulestab->getnode2(modulestab, name);
     let mut cur_name = name.to_string();
     let mut depth = 0;
     loop {
-        if depth > 64 { return None; } // alias-cycle guard
+        if depth > 64 {
+            return None;
+        } // alias-cycle guard
         depth += 1;
         match table.modules.get(&cur_name) {
             Some(m) => {
                 // c:1665 — if ((flags & FINDMOD_ALIASP) && (m->node.flags & MOD_ALIAS))
-                if (flags & FINDMOD_ALIASP) != 0 && (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0 {
+                if (flags & FINDMOD_ALIASP) != 0
+                    && (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0
+                {
                     // c:1668 — return find_module(m->u.alias, flags, namep);
                     if let Some(target) = m.alias.clone() {
                         cur_name = target;
@@ -1767,7 +1917,9 @@ pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<Str
                     return None;
                 }
                 // c:1676-1677 — m = zshcalloc(...); addnode(name, m);
-                table.modules.insert(cur_name.clone(), module::new(&cur_name));
+                table
+                    .modules
+                    .insert(cur_name.clone(), module::new(&cur_name));
                 return Some(cur_name);
             }
         }
@@ -1787,12 +1939,12 @@ pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<Str
 /// Removes a module from the live `modulestab` and frees its node.
 /// Rust port operates on the `ModuleTable` `modules` HashMap.
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(m)
-pub fn delete_module(table: &mut modulestab, name: &str) -> i32 {       // c:1687
-    table.modules.remove(name);                                          // c:1687 removenode
-    // c:1691 — freenode(&m->node) — Rust drops on `remove` return.
+pub fn delete_module(table: &mut modulestab, name: &str) -> i32 {
+    // c:1687
+    table.modules.remove(name); // c:1687 removenode
+                                // c:1691 — freenode(&m->node) — Rust drops on `remove` return.
     0
 }
-
 
 /// Port of `module_loaded(const char *name)` from `Src/module.c:1703`.
 ///
@@ -1812,10 +1964,12 @@ pub fn delete_module(table: &mut modulestab, name: &str) -> i32 {       // c:168
 /// registered in the live `ModuleTable`. The `MOD_UNLOAD` flag check
 /// is skipped because static-link modules cannot be unloaded.
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(name)
-pub fn module_loaded(table: &modulestab, name: &str) -> i32 {           // c:1703
+pub fn module_loaded(table: &modulestab, name: &str) -> i32 {
+    // c:1703
     // c:1703 — find_module(name, FINDMOD_ALIASP, NULL)
-    if table.modules.contains_key(name) {                                // m && m->u.handle
-        1                                                                 // c:1709 (loaded, not unloading)
+    if table.modules.contains_key(name) {
+        // m && m->u.handle
+        1 // c:1709 (loaded, not unloading)
     } else {
         0
     }
@@ -1827,8 +1981,9 @@ pub fn module_loaded(table: &modulestab, name: &str) -> i32 {           // c:170
 /// Op-code 0 = setup. AIX-only path that multiplexes all six module
 /// hooks through one symbol; static-link path skips it entirely.
 #[allow(unused_variables)]
-pub fn dyn_setup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1726
-    0                                                                    // c:1726
+pub fn dyn_setup_module(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:1726
+    0 // c:1726
 }
 
 /// Port of `dyn_features_module(Module m, char ***features)` from `Src/module.c:1733`.
@@ -1836,8 +1991,12 @@ pub fn dyn_setup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:17
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(4, m, features);`
 /// Op-code 4 = features.
 #[allow(unused_variables)]
-pub fn dyn_features_module(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:1733
-    0                                                                    // c:1733
+pub fn dyn_features_module(
+    m: *const crate::ported::zsh_h::module,
+    features: &mut Vec<String>,
+) -> i32 {
+    // c:1733
+    0 // c:1733
 }
 
 /// Port of `dyn_enables_module(Module m, int **enables)` from `Src/module.c:1740`.
@@ -1845,8 +2004,12 @@ pub fn dyn_features_module(m: *const crate::ported::zsh_h::module, features: &mu
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(5, m, enables);`
 /// Op-code 5 = enables.
 #[allow(unused_variables)]
-pub fn dyn_enables_module(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:1740
-    0                                                                    // c:1733
+pub fn dyn_enables_module(
+    m: *const crate::ported::zsh_h::module,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    // c:1740
+    0 // c:1733
 }
 
 /// Port of `dyn_boot_module(Module m)` from `Src/module.c:1747`.
@@ -1855,8 +2018,9 @@ pub fn dyn_enables_module(m: *const crate::ported::zsh_h::module, enables: &mut 
 /// Calls the dynamic module's exported entry-point with op-code 1
 /// (boot). Static-link path: opcode dispatch unused, returns 0.
 #[allow(unused_variables)]
-pub fn dyn_boot_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1747
-    0                                                                    // c:1754
+pub fn dyn_boot_module(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:1747
+    0 // c:1754
 }
 
 /// Port of `dyn_cleanup_module(Module m)` from `Src/module.c:1754`.
@@ -1864,8 +2028,9 @@ pub fn dyn_boot_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:174
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(2, m, NULL);`
 /// Op-code 2 = cleanup.
 #[allow(unused_variables)]
-pub fn dyn_cleanup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1754
-    0                                                                    // c:1740
+pub fn dyn_cleanup_module(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:1754
+    0 // c:1740
 }
 
 /// Port of `static int dyn_finish_module(Module m)` from
@@ -1877,10 +2042,11 @@ pub fn dyn_cleanup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:
 /// path defers all DSO entry calls; the no-op return preserves
 /// caller semantics (0 = success).
 #[allow(unused_variables)]
-pub fn dyn_finish_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1766
+pub fn dyn_finish_module(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:1766
     // c:1768 — ((int (*)(int,Module,void*)) m->u.handle)(3, m, NULL).
     // Static modules: no handle, opcode 3 (finish) is a no-op.
-    0                                                                    // c:1768 success
+    0 // c:1768 success
 }
 
 /// Port of `module_func(Module m, const char *name)` from `Src/module.c:1770`.
@@ -1910,8 +2076,9 @@ pub fn dyn_finish_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1
 ///
 /// Static-link path: dlsym not used; returns 0 (NULL handle).
 #[allow(unused_variables)]
-pub fn module_func(m: &module, name: &str) -> usize {                  // c:1770
-    0                                                                    // c:1794 NULL
+pub fn module_func(m: &module, name: &str) -> usize {
+    // c:1770
+    0 // c:1794 NULL
 }
 
 /// Port of `setup_module(Module m)` from `Src/module.c:1884`.
@@ -1924,8 +2091,9 @@ pub fn module_func(m: &module, name: &str) -> usize {                  // c:1770
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn setup_module(_table: &mut modulestab, _name: &str) -> i32 {      // c:1884
-    0                                                                    // c:1884 (setup)(m)
+pub fn setup_module(_table: &mut modulestab, _name: &str) -> i32 {
+    // c:1884
+    0 // c:1884 (setup)(m)
 }
 
 /// Port of `features_module(Module m, char ***features)` from `Src/module.c:1892`.
@@ -1939,8 +2107,9 @@ pub fn setup_module(_table: &mut modulestab, _name: &str) -> i32 {      // c:188
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(_table, _name, _features) vs C=(m, features)
-pub fn features_module(_table: &mut modulestab, _name: &str, _features: &mut Vec<String>) -> i32 { // c:1892
-    0                                                                    // c:1892 (features)(m,features)
+pub fn features_module(_table: &mut modulestab, _name: &str, _features: &mut Vec<String>) -> i32 {
+    // c:1892
+    0 // c:1892 (features)(m,features)
 }
 
 /// Port of `enables_module(Module m, int **enables)` from `Src/module.c:1901`.
@@ -1954,8 +2123,13 @@ pub fn features_module(_table: &mut modulestab, _name: &str, _features: &mut Vec
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(_table, _name, _enables) vs C=(m, enables)
-pub fn enables_module(_table: &mut modulestab, _name: &str, _enables: &mut Option<Vec<i32>>) -> i32 { // c:1901
-    0                                                                    // c:1901 (enables)(m,enables)
+pub fn enables_module(
+    _table: &mut modulestab,
+    _name: &str,
+    _enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    // c:1901
+    0 // c:1901 (enables)(m,enables)
 }
 
 /// Port of `boot_module(Module m)` from `Src/module.c:1910`.
@@ -1973,8 +2147,9 @@ pub fn enables_module(_table: &mut modulestab, _name: &str, _enables: &mut Optio
 /// the modules-table feature lookup (see `register_module` /
 /// `enable_module`); both branches collapse to 0 success.
 /// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn boot_module(_table: &mut modulestab, _name: &str) -> i32 {       // c:1910
-    0                                                                    // c:1910 (boot)(m) success
+pub fn boot_module(_table: &mut modulestab, _name: &str) -> i32 {
+    // c:1910
+    0 // c:1910 (boot)(m) success
 }
 
 /// Port of `cleanup_module(Module m)` from `Src/module.c:1918`.
@@ -1987,8 +2162,9 @@ pub fn boot_module(_table: &mut modulestab, _name: &str) -> i32 {       // c:191
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn cleanup_module(_table: &mut modulestab, _name: &str) -> i32 {    // c:1918
-    0                                                                    // c:1918 (cleanup)(m) success
+pub fn cleanup_module(_table: &mut modulestab, _name: &str) -> i32 {
+    // c:1918
+    0 // c:1918 (cleanup)(m) success
 }
 
 /// Port of `finish_module(Module m)` from `Src/module.c:1926`.
@@ -2001,8 +2177,9 @@ pub fn cleanup_module(_table: &mut modulestab, _name: &str) -> i32 {    // c:191
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn finish_module(_table: &mut modulestab, _name: &str) -> i32 {     // c:1926
-    0                                                                    // c:1926 (finish)(m) success
+pub fn finish_module(_table: &mut modulestab, _name: &str) -> i32 {
+    // c:1926
+    0 // c:1926 (finish)(m) success
 }
 
 /// Port of `do_module_features(Module m, Feature_enables enablesarr, int flags)` from `Src/module.c:1998`.
@@ -2015,23 +2192,26 @@ pub fn finish_module(_table: &mut modulestab, _name: &str) -> i32 {     // c:192
 /// feature the module doesn't actually export.
 ///
 /// Returns 0 on full success, 1 if any feature couldn't be enabled.
-pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i32 { // c:1998
-    let mut features: Vec<String> = Vec::new();                          // c:1998
-    let mut ret: i32 = 0;                                                // c:2001
+pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i32 {
+    // c:1998
+    let mut features: Vec<String> = Vec::new(); // c:1998
+    let mut ret: i32 = 0; // c:2001
 
     // c:2003 — `if (features_module(m, &features) == 0)` — fetch features.
     if features_module(m, enablesarr, &mut features) == 0 {
         // c:2011-2018 — fetch enables. If features are supported, enables
         // should be too; an error here is reported unless FEAT_IGNORE.
         let mut enables: Option<Vec<i32>> = None;
-        if enables_module(m, enablesarr, &mut enables) != 0 {              // c:2012
-            if (flags & FEAT_IGNORE) == 0 {                              // c:2014
+        if enables_module(m, enablesarr, &mut enables) != 0 {
+            // c:2012
+            if (flags & FEAT_IGNORE) == 0 {
+                // c:2014
                 crate::ported::utils::zwarn(&format!(
-                    "error getting enabled features for module `{}'",   // c:2015
+                    "error getting enabled features for module `{}'", // c:2015
                     enablesarr,
                 ));
             }
-            return 1;                                                    // c:2017
+            return 1; // c:2017
         }
 
         // c:2020 — `if ((flags & FEAT_CHECKAUTO) && m->autoloads)`
@@ -2045,11 +2225,14 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
                 None => return ret,
             };
             // c:2027-2074 — walk autoloads, cancel mismatches.
-            for al in &autoloads {                                       // c:2028
+            for al in &autoloads {
+                // c:2028
                 // c:2032-2034 — `for (ptr = features; *ptr; ptr++) if (!strcmp(al, *ptr)) break;`
                 let found = features.iter().any(|f| f == al);
-                if !found {                                              // c:2035
-                    if (flags & FEAT_IGNORE) == 0 {                      // c:2037
+                if !found {
+                    // c:2035
+                    if (flags & FEAT_IGNORE) == 0 {
+                        // c:2037
                         crate::ported::utils::zwarn(&format!(
                             "module `{}' has no such feature: `{}': autoload cancelled", // c:2038-2040
                             enablesarr, al,
@@ -2062,7 +2245,7 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
             }
         }
     }
-    ret                                                                  // c:2120 (approx)
+    ret // c:2120 (approx)
 }
 
 /// Port of `deletemathfunc(MathFunc f)` from `Src/module.c:1342`.
@@ -2105,20 +2288,24 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
 ///     return ret;
 /// }
 /// ```
-pub fn do_boot_module(m: &mut modulestab, enablesarr: &str, silent: i32) -> i32 { // c:2139
-    let flags = if silent != 0 {                                          // c:2139
+pub fn do_boot_module(m: &mut modulestab, enablesarr: &str, silent: i32) -> i32 {
+    // c:2139
+    let flags = if silent != 0 {
+        // c:2139
         FEAT_IGNORE | FEAT_CHECKAUTO
     } else {
-        FEAT_CHECKAUTO                                                    // c:2143
+        FEAT_CHECKAUTO // c:2143
     };
-    let ret = do_module_features(m, enablesarr, flags);                     // c:2141
-    if ret == 1 {                                                         // c:2145
-        return 1;                                                         // c:2146
+    let ret = do_module_features(m, enablesarr, flags); // c:2141
+    if ret == 1 {
+        // c:2145
+        return 1; // c:2146
     }
-    if boot_module(m, enablesarr) != 0 {                                    // c:2148
-        return 1;                                                         // c:2149
+    if boot_module(m, enablesarr) != 0 {
+        // c:2148
+        return 1; // c:2149
     }
-    ret                                                                   // c:2150
+    ret // c:2150
 }
 
 /// Port of `do_cleanup_module(Module m)` from `Src/module.c:2159`.
@@ -2132,10 +2319,12 @@ pub fn do_boot_module(m: &mut modulestab, enablesarr: &str, silent: i32) -> i32 
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(m)
-pub fn do_cleanup_module(table: &mut modulestab, name: &str) -> i32 {   // c:2159
+pub fn do_cleanup_module(table: &mut modulestab, name: &str) -> i32 {
+    // c:2159
     // Check the module is registered, then dispatch to cleanup_module.
-    if table.modules.contains_key(name) {                                 // c:2162 m->u.linked
-        cleanup_module(table, name)                                       // c:2163 cleanup_module(m)
+    if table.modules.contains_key(name) {
+        // c:2162 m->u.linked
+        cleanup_module(table, name) // c:2163 cleanup_module(m)
     } else {
         0
     }
@@ -2158,7 +2347,8 @@ pub fn do_cleanup_module(table: &mut modulestab, name: &str) -> i32 {   // c:215
 ///     return 0;
 /// }
 /// ```
-pub fn modname_ok(p: &str) -> i32 {                                       // c:2173
+pub fn modname_ok(p: &str) -> i32 {
+    // c:2173
     let bytes = p.as_bytes();
     let mut i: usize = 0;
     loop {
@@ -2168,15 +2358,22 @@ pub fn modname_ok(p: &str) -> i32 {                                       // c:2
             let b = bytes[i];
             // Inline IIDENT check — alphanumeric or underscore. Mirrors
             // utils.c:itype_end stepping for the IIDENT bit.
-            if b.is_ascii_alphanumeric() || b == b'_' { i += 1; } else { break; }
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                i += 1;
+            } else {
+                break;
+            }
         }
-        if i >= bytes.len() {                                            // c:2177 if (!*p)
-            return 1;                                                    // c:2178
+        if i >= bytes.len() {
+            // c:2177 if (!*p)
+            return 1; // c:2178
         }
-        if bytes[i] != b'/' { break; }                                   // c:2179 while(*p++ == '/')
+        if bytes[i] != b'/' {
+            break;
+        } // c:2179 while(*p++ == '/')
         i += 1;
     }
-    0                                                                    // c:2180
+    0 // c:2180
 }
 
 /// Port of `removemathfunc(MathFunc previous, MathFunc current)` from `Src/module.c:1267`.
@@ -2244,7 +2441,8 @@ pub fn require_module(table: &mut modulestab, modname: &str, _features: Option<&
 /// Records that module `name` depends on module `from`. Resolves
 /// aliases so dependency graphs always point at canonical names.
 /// WARNING: param names don't match C — Rust=(table, name, from) vs C=(name, from)
-pub fn add_dep(table: &mut modulestab, name: &str, from: &str) -> i32 { // c:2369
+pub fn add_dep(table: &mut modulestab, name: &str, from: &str) -> i32 {
+    // c:2369
     // c:2369 — m = find_module(name, FINDMOD_ALIASP|FINDMOD_CREATE, &name)
     let canon = match find_module(table, name, FINDMOD_ALIASP | FINDMOD_CREATE) {
         Some(n) => n,
@@ -2252,9 +2450,12 @@ pub fn add_dep(table: &mut modulestab, name: &str, from: &str) -> i32 { // c:236
     };
     if let Some(m) = table.modules.get_mut(&canon) {
         // c:2389-2391 — walk deps, skip if `from` already present.
-        let deps = m.deps.get_or_insert_with(crate::ported::linklist::LinkList::new);
-        if !deps.iter().any(|d| d == from) {                              // c:2392 if (!node)
-            deps.push_back(from.to_string());                             // c:2393 zaddlinknode
+        let deps = m
+            .deps
+            .get_or_insert_with(crate::ported::linklist::LinkList::new);
+        if !deps.iter().any(|d| d == from) {
+            // c:2392 if (!node)
+            deps.push_back(from.to_string()); // c:2393 zaddlinknode
         }
     }
     0
@@ -2294,31 +2495,37 @@ pub fn add_dep(table: &mut modulestab, name: &str, from: &str) -> i32 { // c:236
 /// vs short form (`NAME (MOD)`). Skips already-registered builtins
 /// (BINF_ADDED set).
 /// WARNING: param names don't match C — Rust=(name, optstr, flags, printflags) vs C=(hn, printflags)
-pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // c:2403
-    if (flags & BINF_ADDED) != 0 {                                       // c:2403
-        return;                                                          // c:2408
+pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) {
+    // c:2403
+    if (flags & BINF_ADDED) != 0 {
+        // c:2403
+        return; // c:2408
     }
-    if (printflags & crate::ported::zsh_h::PRINT_LIST) != 0 {            // c:2409
+    if (printflags & crate::ported::zsh_h::PRINT_LIST) != 0 {
+        // c:2409
         // c:2410-2417 — long form `zmodload -ab MOD NAME`
         print!("zmodload -ab ");
-        if optstr.starts_with('-') {                                     // c:2411
-            print!("-- ");                                                // c:2412
+        if optstr.starts_with('-') {
+            // c:2411
+            print!("-- "); // c:2412
         }
-        print!("{}", optstr);                                             // c:2413 quotedzputs
-        if name != optstr {                                               // c:2414
-            print!(" ");                                                  // c:2415
-            print!("{}", name);                                           // c:2416
+        print!("{}", optstr); // c:2413 quotedzputs
+        if name != optstr {
+            // c:2414
+            print!(" "); // c:2415
+            print!("{}", name); // c:2416
         }
     } else {
         // c:2419-2424 — short form `NAME (MOD)`
-        print!("{}", name);                                               // c:2419
-        if name != optstr {                                               // c:2420
-            print!(" (");                                                 // c:2421
-            print!("{}", optstr);                                         // c:2422
-            print!(")");                                                  // c:2423
+        print!("{}", name); // c:2419
+        if name != optstr {
+            // c:2420
+            print!(" ("); // c:2421
+            print!("{}", optstr); // c:2422
+            print!(")"); // c:2423
         }
     }
-    println!();                                                          // c:2426
+    println!(); // c:2426
 }
 
 /// Direct port of `bin_zmodload(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/module.c:2440`.
@@ -2331,83 +2538,101 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // 
 ///   default   → bin_zmodload_load     (c:2971)
 ///   -A/-R     → bin_zmodload_alias    (c:2515)
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zmodload(nam: &str, args: &[String],                              // c:2440
-                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zmodload(
+    nam: &str,
+    args: &[String], // c:2440
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     let mut table = MODULESTAB.lock().unwrap();
     let table = &mut *table;
 
     let ops_bcpf = OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'c')              // c:2443
                 || OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'f');
-    let ops_au   = OPT_ISSET(ops, b'a') || OPT_ISSET(ops, b'u');             // c:2445
-    let mut ret: i32;                                                        // c:2446
+    let ops_au = OPT_ISSET(ops, b'a') || OPT_ISSET(ops, b'u'); // c:2445
+    let mut ret: i32; // c:2446
 
-    if ops_bcpf && !ops_au {                                                 // c:2451
-        zwarnnam(nam, "-b, -c, -f, and -p must be combined with -a or -u");  // c:2452
-        return 1;                                                            // c:2453
+    if ops_bcpf && !ops_au {
+        // c:2451
+        zwarnnam(nam, "-b, -c, -f, and -p must be combined with -a or -u"); // c:2452
+        return 1; // c:2453
     }
-    if OPT_ISSET(ops, b'F') && (ops_bcpf || OPT_ISSET(ops, b'u')) {          // c:2455
-        zwarnnam(nam, "-b, -c, -f, -p and -u cannot be combined with -F");   // c:2456
-        return 1;                                                            // c:2457
+    if OPT_ISSET(ops, b'F') && (ops_bcpf || OPT_ISSET(ops, b'u')) {
+        // c:2455
+        zwarnnam(nam, "-b, -c, -f, -p and -u cannot be combined with -F"); // c:2456
+        return 1; // c:2457
     }
-    if OPT_ISSET(ops, b'A') || OPT_ISSET(ops, b'R') {                        // c:2459
+    if OPT_ISSET(ops, b'A') || OPT_ISSET(ops, b'R') {
+        // c:2459
         if ops_bcpf || ops_au || OPT_ISSET(ops, b'd')                        // c:2460
            || (OPT_ISSET(ops, b'R') && OPT_ISSET(ops, b'e'))
         {
-            zwarnnam(nam, "illegal flags combined with -A or -R");           // c:2462
-            return 1;                                                        // c:2463
+            zwarnnam(nam, "illegal flags combined with -A or -R"); // c:2462
+            return 1; // c:2463
         }
-        if !OPT_ISSET(ops, b'e') {                                           // c:2465
-            return bin_zmodload_alias(table, nam, args, ops);                // c:2466
+        if !OPT_ISSET(ops, b'e') {
+            // c:2465
+            return bin_zmodload_alias(table, nam, args, ops); // c:2466
         }
     }
-    if OPT_ISSET(ops, b'd') && OPT_ISSET(ops, b'a') {                        // c:2468
-        zwarnnam(nam, "-d cannot be combined with -a");                      // c:2469
-        return 1;                                                            // c:2470
+    if OPT_ISSET(ops, b'd') && OPT_ISSET(ops, b'a') {
+        // c:2468
+        zwarnnam(nam, "-d cannot be combined with -a"); // c:2469
+        return 1; // c:2470
     }
-    if OPT_ISSET(ops, b'u') && args.is_empty() {                             // c:2472
-        zwarnnam(nam, "what do you want to unload?");                        // c:2473
-        return 1;                                                            // c:2474
+    if OPT_ISSET(ops, b'u') && args.is_empty() {
+        // c:2472
+        zwarnnam(nam, "what do you want to unload?"); // c:2473
+        return 1; // c:2474
     }
-    if OPT_ISSET(ops, b'e') && (OPT_ISSET(ops, b'I') || OPT_ISSET(ops, b'L') // c:2476
+    if OPT_ISSET(ops, b'e')
+        && (OPT_ISSET(ops, b'I') || OPT_ISSET(ops, b'L') // c:2476
         || (OPT_ISSET(ops, b'a') && !OPT_ISSET(ops, b'F'))
         || OPT_ISSET(ops, b'd') || OPT_ISSET(ops, b'i')
         || OPT_ISSET(ops, b'u'))
     {
-        zwarnnam(nam, "-e cannot be combined with other options");           // c:2480
-        return 1;                                                            // c:2482
+        zwarnnam(nam, "-e cannot be combined with other options"); // c:2480
+        return 1; // c:2482
     }
     // c:2484 — `for (fp = fonly; *fp; fp++)` — `l` and `P` only with `-F`.
-    for fp in [b'l', b'P'] {                                                 // c:2484
-        if OPT_ISSET(ops, fp) && !OPT_ISSET(ops, b'F') {                     // c:2485
+    for fp in [b'l', b'P'] {
+        // c:2484
+        if OPT_ISSET(ops, fp) && !OPT_ISSET(ops, b'F') {
+            // c:2485
             zwarnnam(nam, &format!("-{} is only allowed with -F", fp as char)); // c:2486
-            return 1;                                                        // c:2487
+            return 1; // c:2487
         }
     }
-    crate::ported::mem::queue_signals();                                     // c:2490
-    if OPT_ISSET(ops, b'F') {                                                // c:2491
-        ret = bin_zmodload_features(table, nam, args, ops);                  // c:2492
-    } else if OPT_ISSET(ops, b'e') {                                         // c:2493
-        ret = bin_zmodload_exist(table, nam, args, ops);                     // c:2494
-    } else if OPT_ISSET(ops, b'd') {                                         // c:2495
-        ret = bin_zmodload_dep(table, nam, args, ops);                       // c:2496
+    crate::ported::mem::queue_signals(); // c:2490
+    if OPT_ISSET(ops, b'F') {
+        // c:2491
+        ret = bin_zmodload_features(table, nam, args, ops); // c:2492
+    } else if OPT_ISSET(ops, b'e') {
+        // c:2493
+        ret = bin_zmodload_exist(table, nam, args, ops); // c:2494
+    } else if OPT_ISSET(ops, b'd') {
+        // c:2495
+        ret = bin_zmodload_dep(table, nam, args, ops); // c:2496
     } else {
         let autoopts = (OPT_ISSET(ops, b'b') as i32)                         // c:2497
                      + (OPT_ISSET(ops, b'c') as i32)
                      + (OPT_ISSET(ops, b'p') as i32)
                      + (OPT_ISSET(ops, b'f') as i32);
-        if autoopts != 0 || OPT_ISSET(ops, b'a') {                           // c:2497-2499
-            if autoopts > 1 {                                                // c:2502
-                zwarnnam(nam, "use only one of -b, -c, or -p");              // c:2503
-                ret = 1;                                                     // c:2504
+        if autoopts != 0 || OPT_ISSET(ops, b'a') {
+            // c:2497-2499
+            if autoopts > 1 {
+                // c:2502
+                zwarnnam(nam, "use only one of -b, -c, or -p"); // c:2503
+                ret = 1; // c:2504
             } else {
-                ret = bin_zmodload_auto(table, nam, args, ops);              // c:2506
+                ret = bin_zmodload_auto(table, nam, args, ops); // c:2506
             }
         } else {
-            ret = bin_zmodload_load(table, nam, args, ops);                  // c:2508
+            ret = bin_zmodload_load(table, nam, args, ops); // c:2508
         }
     }
-    crate::ported::mem::unqueue_signals();                                   // c:2515
-    ret                                                                      // c:2515
+    crate::ported::mem::unqueue_signals(); // c:2515
+    ret // c:2515
 }
 
 /// Port of `bin_zmodload_alias(char *nam, char **args, Options ops)` from `Src/module.c:2515`.
@@ -2418,7 +2643,13 @@ pub fn bin_zmodload(nam: &str, args: &[String],                              // 
 /// - `name=target`: install/replace alias `name` pointing at `target`.
 ///   Detects self-cycles before committing.
 /// WARNING: param names don't match C — Rust=(table, nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2515
+pub fn bin_zmodload_alias(
+    table: &mut modulestab,
+    nam: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:2515
     /*
      * TODO: while it would be too nasty to have aliases, as opposed
      * to real loadable modules, with dependencies --- just what would
@@ -2435,9 +2666,10 @@ pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], op
 
     // c:2532-2541 — no args: list aliases
     if args.is_empty() {
-        if crate::ported::zsh_h::OPT_ISSET(ops, b'R') {                  // c:2533
+        if crate::ported::zsh_h::OPT_ISSET(ops, b'R') {
+            // c:2533
             crate::ported::utils::zwarnnam(nam, "no module alias to remove"); // c:2534
-            return 1;                                                     // c:2535
+            return 1; // c:2535
         }
         // c:2537-2539 — scanhashtable filtered by MOD_ALIAS, printnode
         for (name, m) in &table.modules {
@@ -2449,62 +2681,78 @@ pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], op
                 }
             }
         }
-        return 0;                                                         // c:2540
+        return 0; // c:2540
     }
 
     // c:2543 — for each arg, parse name=alias and dispatch.
     for arg in args {
         // c:2544-2547 — split at '='
         let (lhs, aliasname): (&str, Option<&str>) = match arg.find('=') {
-            Some(eq) => (&arg[..eq], Some(&arg[eq+1..])),
+            Some(eq) => (&arg[..eq], Some(&arg[eq + 1..])),
             None => (arg.as_str(), None),
         };
         // c:2548 — modname_ok check on the LHS
-        if modname_ok(lhs) == 0 {                                         // c:2548
+        if modname_ok(lhs) == 0 {
+            // c:2548
             crate::ported::utils::zwarnnam(nam, &format!("invalid module name `{}'", lhs)); // c:2549
-            return 1;                                                     // c:2550
+            return 1; // c:2550
         }
-        if crate::ported::zsh_h::OPT_ISSET(ops, b'R') {                  // c:2552
+        if crate::ported::zsh_h::OPT_ISSET(ops, b'R') {
+            // c:2552
             // -R: remove alias path.
-            if aliasname.is_some() {                                      // c:2553
-                crate::ported::utils::zwarnnam(nam,
-                    &format!("bad syntax for removing module alias: {}", lhs)); // c:2554
-                return 1;                                                 // c:2556
+            if aliasname.is_some() {
+                // c:2553
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!("bad syntax for removing module alias: {}", lhs),
+                ); // c:2554
+                return 1; // c:2556
             }
             // c:2558 — find_module(lhs, 0, NULL)
             match table.modules.get(lhs) {
                 Some(m) => {
-                    if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) == 0 { // c:2560
-                        crate::ported::utils::zwarnnam(nam,
-                            &format!("module is not an alias: {}", lhs)); // c:2561
-                        return 1;                                         // c:2562
+                    if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) == 0 {
+                        // c:2560
+                        crate::ported::utils::zwarnnam(
+                            nam,
+                            &format!("module is not an alias: {}", lhs),
+                        ); // c:2561
+                        return 1; // c:2562
                     }
-                    table.modules.remove(lhs);                            // c:2564 delete_module
+                    table.modules.remove(lhs); // c:2564 delete_module
                 }
                 None => {
-                    crate::ported::utils::zwarnnam(nam,
-                        &format!("no such module alias: {}", lhs));       // c:2566
-                    return 1;                                             // c:2567
+                    crate::ported::utils::zwarnnam(nam, &format!("no such module alias: {}", lhs)); // c:2566
+                    return 1; // c:2567
                 }
             }
         } else {
             // No -R: install/replace alias OR list one.
-            if let Some(target) = aliasname {                             // c:2570
-                if modname_ok(target) == 0 {                              // c:2572
-                    crate::ported::utils::zwarnnam(nam,
-                        &format!("invalid module name `{}'", target));    // c:2573
-                    return 1;                                             // c:2574
+            if let Some(target) = aliasname {
+                // c:2570
+                if modname_ok(target) == 0 {
+                    // c:2572
+                    crate::ported::utils::zwarnnam(
+                        nam,
+                        &format!("invalid module name `{}'", target),
+                    ); // c:2573
+                    return 1; // c:2574
                 }
                 // c:2576-2584 — cycle detection: walk alias chain
                 let mut mname = target;
                 let mut depth = 0;
                 loop {
-                    if depth > 256 { break; }
+                    if depth > 256 {
+                        break;
+                    }
                     depth += 1;
-                    if mname == lhs {                                     // c:2577
-                        crate::ported::utils::zwarnnam(nam,
-                            &format!("module alias would refer to itself: {}", lhs)); // c:2578
-                        return 1;                                         // c:2580
+                    if mname == lhs {
+                        // c:2577
+                        crate::ported::utils::zwarnnam(
+                            nam,
+                            &format!("module alias would refer to itself: {}", lhs),
+                        ); // c:2578
+                        return 1; // c:2580
                     }
                     match table.modules.get(mname) {
                         Some(m) if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0 => {
@@ -2515,17 +2763,20 @@ pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], op
                 }
                 // c:2585-2596 — install or replace
                 if let Some(m) = table.modules.get_mut(lhs) {
-                    if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) == 0 { // c:2587
-                        crate::ported::utils::zwarnnam(nam,
-                            &format!("module is not an alias: {}", lhs)); // c:2588
-                        return 1;                                         // c:2589
+                    if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) == 0 {
+                        // c:2587
+                        crate::ported::utils::zwarnnam(
+                            nam,
+                            &format!("module is not an alias: {}", lhs),
+                        ); // c:2588
+                        return 1; // c:2589
                     }
-                    m.alias = Some(target.to_string());                   // c:2591/2597
+                    m.alias = Some(target.to_string()); // c:2591/2597
                 } else {
-                    let mut m = module::new(lhs);                         // c:2593 zshcalloc
-                    m.node.flags = crate::ported::zsh_h::MOD_ALIAS;            // c:2594
-                    m.alias = Some(target.to_string());                   // c:2597
-                    table.modules.insert(lhs.to_string(), m);             // c:2595
+                    let mut m = module::new(lhs); // c:2593 zshcalloc
+                    m.node.flags = crate::ported::zsh_h::MOD_ALIAS; // c:2594
+                    m.alias = Some(target.to_string()); // c:2597
+                    table.modules.insert(lhs.to_string(), m); // c:2595
                 }
             } else {
                 // c:2599-2611 — list one alias
@@ -2538,20 +2789,24 @@ pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], op
                         }
                     }
                     Some(_) => {
-                        crate::ported::utils::zwarnnam(nam,
-                            &format!("module is not an alias: {}", lhs)); // c:2605
-                        return 1;                                         // c:2606
+                        crate::ported::utils::zwarnnam(
+                            nam,
+                            &format!("module is not an alias: {}", lhs),
+                        ); // c:2605
+                        return 1; // c:2606
                     }
                     None => {
-                        crate::ported::utils::zwarnnam(nam,
-                            &format!("no such module alias: {}", lhs));   // c:2609
-                        return 1;                                         // c:2610
+                        crate::ported::utils::zwarnnam(
+                            nam,
+                            &format!("no such module alias: {}", lhs),
+                        ); // c:2609
+                        return 1; // c:2610
                     }
                 }
             }
         }
     }
-    0                                                                    // c:2616
+    0 // c:2616
 }
 
 /// Port of `bin_zmodload_exist(UNUSED(char *nam), char **args, Options ops)` from `Src/module.c:2623`.
@@ -2583,24 +2838,35 @@ pub fn bin_zmodload_alias(table: &mut modulestab, nam: &str, args: &[String], op
 /// named modules exist (or if no args, after listing); 1 if any
 /// named module is missing/unloading.
 /// WARNING: param names don't match C — Rust=(table, _nam, args, _ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_exist(table: &mut modulestab, _nam: &str, args: &[String], _ops: &crate::ported::zsh_h::options) -> i32 { // c:2623
-    if args.is_empty() {                                                  // c:2623
+pub fn bin_zmodload_exist(
+    table: &mut modulestab,
+    _nam: &str,
+    args: &[String],
+    _ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:2623
+    if args.is_empty() {
+        // c:2623
         // c:2628-2630 — scanhashtable + printnode listing.
         // Static-link path: dump the modules registry.
         for (name, _) in &table.modules {
             println!("{}", name);
         }
-        return 0;                                                         // c:2631
+        return 0; // c:2631
     }
     // c:2633-2640 — for each arg, test existence.
     let mut ret: i32 = 0;
-    for arg in args {                                                     // c:2635
-        if ret != 0 { break; }
-        if find_module(table, arg, FINDMOD_ALIASP).is_none() {            // c:2636
-            ret = 1;                                                      // c:2639
+    for arg in args {
+        // c:2635
+        if ret != 0 {
+            break;
+        }
+        if find_module(table, arg, FINDMOD_ALIASP).is_none() {
+            // c:2636
+            ret = 1; // c:2639
         }
     }
-    ret                                                                   // c:2641
+    ret // c:2641
 }
 
 /// Port of `bin_zmodload_dep(UNUSED(char *nam), char **args, Options ops)` from `Src/module.c:2649`.
@@ -2611,24 +2877,34 @@ pub fn bin_zmodload_exist(table: &mut modulestab, _nam: &str, args: &[String], _
 /// - no args lists all dependencies.
 /// - `target dep1 ...` adds each dep to target's dependency list.
 /// WARNING: param names don't match C — Rust=(table, _nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2649
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {                      // c:2649
+pub fn bin_zmodload_dep(
+    table: &mut modulestab,
+    _nam: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:2649
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {
+        // c:2649
         // c:2654 — const char *tnam = *args++;
-        if args.is_empty() { return 0; }
+        if args.is_empty() {
+            return 0;
+        }
         let tnam = &args[0];
         let rest = &args[1..];
         // c:2655 — find_module(tnam, FINDMOD_ALIASP, &tnam)
         let canon = match find_module(table, tnam, FINDMOD_ALIASP) {
             Some(n) => n,
-            None => return 0,                                             // c:2657
+            None => return 0, // c:2657
         };
         if let Some(m) = table.modules.get_mut(&canon) {
-            if let Some(deps) = m.deps.as_mut() {                         // c:2658
+            if let Some(deps) = m.deps.as_mut() {
+                // c:2658
                 if !rest.is_empty() {
                     // c:2659-2667 — remove specific deps
                     for to_remove in rest {
                         if let Some(pos) = deps.iter().position(|d| d == to_remove) {
-                            deps.delete_node(pos);                        // c:2664 remnode
+                            deps.delete_node(pos); // c:2664 remnode
                         }
                     }
                 } else {
@@ -2642,7 +2918,7 @@ pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops
                 table.modules.remove(&canon);
             }
         }
-        return 0;                                                         // c:2680
+        return 0; // c:2680
     }
     // c:2681 — list-mode or add-mode
     if args.len() < 2 {
@@ -2660,7 +2936,7 @@ pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops
     // Add deps: args[0] is target, args[1..] are deps to add.
     let target = &args[0];
     for dep in &args[1..] {
-        add_dep(table, target, dep);                                      // dispatch to add_dep
+        add_dep(table, target, dep); // dispatch to add_dep
     }
     0
 }
@@ -2685,9 +2961,12 @@ pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops
 /// takes a `(name, module, flags)` triple instead of a HashNode ptr
 /// since zshrs's autoload-params live in `ModuleTable.autoload_params`.
 /// WARNING: param names don't match C — Rust=(name, module, flags, lon) vs C=(hn, lon)
-pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:2710
-    if (flags & crate::ported::zsh_h::PM_AUTOLOAD) != 0 {                // c:2710
-        if lon != 0 {                                                     // c:2715
+pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) {
+    // c:2710
+    if (flags & crate::ported::zsh_h::PM_AUTOLOAD) != 0 {
+        // c:2710
+        if lon != 0 {
+            // c:2715
             // c:2716 — printf("zmodload -ap %s %s\n", pm->u.str, pm->node.nam);
             println!("zmodload -ap {} {}", module, name);
         } else {
@@ -2711,29 +2990,46 @@ pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:27
 /// module name (just `-a`), runs the listing scan via `autoloadscan`
 /// or its conddef/param/mathfn equivalents.
 /// WARNING: param names don't match C — Rust=(table, _nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_auto(table: &mut modulestab, _nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2726
-    let fchar: char;                                                      // c:2726
-    let _flags: i32 = if crate::ported::zsh_h::OPT_ISSET(ops, b'i') { FEAT_IGNORE } else { 0 }; // c:2728
+pub fn bin_zmodload_auto(
+    table: &mut modulestab,
+    _nam: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:2726
+    let fchar: char; // c:2726
+    let _flags: i32 = if crate::ported::zsh_h::OPT_ISSET(ops, b'i') {
+        FEAT_IGNORE
+    } else {
+        0
+    }; // c:2728
 
     // c:2731-2773 — conditions branch (-c)
     if crate::ported::zsh_h::OPT_ISSET(ops, b'c') {
-        fchar = if crate::ported::zsh_h::OPT_ISSET(ops, b'I') { 'C' } else { 'c' };
+        fchar = if crate::ported::zsh_h::OPT_ISSET(ops, b'I') {
+            'C'
+        } else {
+            'c'
+        };
         let _ = fchar;
-        if args.is_empty() {                                              // c:2732
+        if args.is_empty() {
+            // c:2732
             // List all autoloadable conditions
             for (name, module) in &table.autoload_conditions {
                 println!("{} {}", module, name);
             }
             return 0;
         }
-    } else if crate::ported::zsh_h::OPT_ISSET(ops, b'p') {               // c:2774 — params branch
+    } else if crate::ported::zsh_h::OPT_ISSET(ops, b'p') {
+        // c:2774 — params branch
         if args.is_empty() {
             for (name, module) in &table.autoload_params {
                 println!("{} {}", module, name);
             }
             return 0;
         }
-    } else if crate::ported::zsh_h::OPT_ISSET(ops, b'f') {               // mathfns branch
+    } else if crate::ported::zsh_h::OPT_ISSET(ops, b'f') {
+        // mathfns branch
         if args.is_empty() {
             for (name, module) in &table.autoload_mathfuncs {
                 println!("{} {}", module, name);
@@ -2744,18 +3040,26 @@ pub fn bin_zmodload_auto(table: &mut modulestab, _nam: &str, args: &[String], op
         // Default: builtins branch
         if args.is_empty() {
             for (name, module) in &table.autoload_builtins {
-                autoloadscan(name, module, 0,
+                autoloadscan(
+                    name,
+                    module,
+                    0,
                     if crate::ported::zsh_h::OPT_ISSET(ops, b'L') {
                         crate::ported::zsh_h::PRINT_LIST
-                    } else { 0 });
+                    } else {
+                        0
+                    },
+                );
             }
             return 0;
         }
     }
 
     // Register-mode: args[0] = module, args[1..] = names to autoload
-    if args.len() < 2 { return 1; }
-    let modnam = &args[0];                                                // c:2729 modnam = *args
+    if args.len() < 2 {
+        return 1;
+    }
+    let modnam = &args[0]; // c:2729 modnam = *args
     for nm in &args[1..] {
         if crate::ported::zsh_h::OPT_ISSET(ops, b'p') {
             table.autoload_params.insert(nm.clone(), modnam.clone());
@@ -2767,7 +3071,7 @@ pub fn bin_zmodload_auto(table: &mut modulestab, _nam: &str, args: &[String], op
             table.autoload_builtins.insert(nm.clone(), modnam.clone());
         }
     }
-    0                                                                    // c:2805
+    0 // c:2805
 }
 
 /// Port of `unload_named_module(char *modname, char *nam, int silent)` from Src/module.c:2924. zshrs links
@@ -2812,27 +3116,42 @@ pub fn unload_named_module(table: &mut modulestab, name: &str, _nam: &str, _sile
 ///
 /// `zmodload [-u] [args]`: load, unload, or list modules.
 /// WARNING: param names don't match C — Rust=(table, nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2971
+pub fn bin_zmodload_load(
+    table: &mut modulestab,
+    nam: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:2971
     let mut ret: i32 = 0;
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {                      // c:2974
+    if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {
+        // c:2974
         // c:2976-2979 — unload loop
         for arg in args {
-            if unload_named_module(table, arg, nam, crate::ported::zsh_h::OPT_ISSET(ops, b'i') as i32) != 0 {
+            if unload_named_module(
+                table,
+                arg,
+                nam,
+                crate::ported::zsh_h::OPT_ISSET(ops, b'i') as i32,
+            ) != 0
+            {
                 ret = 1;
             }
         }
-        return ret;                                                       // c:2980
-    } else if args.is_empty() {                                           // c:2981
+        return ret; // c:2980
+    } else if args.is_empty() {
+        // c:2981
         // c:2983-2985 — list modules
         for (name, _m) in &table.modules {
             println!("{}", name);
         }
-        return 0;                                                         // c:2986
+        return 0; // c:2986
     } else {
         // c:2989-2992 — load loop
         for arg in args {
-            let tmpret = require_module(table, arg, None);                // c:2990
-            if tmpret != 0 && ret != 1 {                                  // c:2991
+            let tmpret = require_module(table, arg, None); // c:2990
+            if tmpret != 0 && ret != 1 {
+                // c:2991
                 ret = tmpret;
             }
         }
@@ -2853,25 +3172,37 @@ pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops
 /// - default: `+feature` enables, `-feature` disables, then calls
 ///   `do_module_features` to apply.
 /// WARNING: param names don't match C — Rust=(table, nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_features(table: &mut modulestab, nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:3003
-    let modname = args.first();                                          // c:3003
-    let rest_args = if args.is_empty() { &args[..] } else { &args[1..] };
+pub fn bin_zmodload_features(
+    table: &mut modulestab,
+    nam: &str,
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+) -> i32 {
+    // c:3003
+    let modname = args.first(); // c:3003
+    let rest_args = if args.is_empty() {
+        &args[..]
+    } else {
+        &args[1..]
+    };
 
     // c:3010-3024 — no-module-name listing branch
     if modname.is_none() {
-        if crate::ported::zsh_h::OPT_ISSET(ops, b'L') {                  // c:3012
-            if crate::ported::zsh_h::OPT_ISSET(ops, b'P') {              // c:3014
+        if crate::ported::zsh_h::OPT_ISSET(ops, b'L') {
+            // c:3012
+            if crate::ported::zsh_h::OPT_ISSET(ops, b'P') {
+                // c:3014
                 crate::ported::utils::zwarnnam(nam, "-P is only allowed with a module name"); // c:3015
-                return 1;                                                 // c:3016
+                return 1; // c:3016
             }
             // c:3022-3023 — scanhashtable + printnode
             for (name, _m) in &table.modules {
                 println!("zmodload -F {}", name);
             }
-            return 0;                                                     // c:3024
+            return 0; // c:3024
         }
         crate::ported::utils::zwarnnam(nam, "-F requires a module name"); // c:3028
-        return 1;                                                         // c:3029
+        return 1; // c:3029
     }
 
     let modname = modname.unwrap();
@@ -2892,7 +3223,7 @@ pub fn bin_zmodload_features(table: &mut modulestab, nam: &str, args: &[String],
     if !feats.is_empty() {
         autofeatures(table, nam, Some(modname), &feats, 0, 0);
     }
-    do_module_features(table, modname, FEAT_CHECKAUTO);                  // c:3122
+    do_module_features(table, modname, FEAT_CHECKAUTO); // c:3122
     0
 }
 
@@ -2915,14 +3246,20 @@ pub fn bin_zmodload_features(table: &mut modulestab, nam: &str, args: &[String],
 /// }
 /// ```
 /// WARNING: param names don't match C — Rust=(table, modname, prefix, feature) vs C=(modname, prefix, feature)
-pub fn ensurefeature(table: &mut modulestab, modname: &str, prefix: &str, feature: Option<&str>) -> i32 { // c:3415
+pub fn ensurefeature(
+    table: &mut modulestab,
+    modname: &str,
+    prefix: &str,
+    feature: Option<&str>,
+) -> i32 {
+    // c:3415
     match feature {
-        None => require_module(table, modname, None),                    // c:3420-3421
+        None => require_module(table, modname, None), // c:3420-3421
         Some(f) => {
             // c:3422-3428 — build single-element features[2] array.
-            let combined = crate::ported::string::dyncat(prefix, f);     // c:3422
+            let combined = crate::ported::string::dyncat(prefix, f); // c:3422
             let arr = vec![combined];
-            require_module(table, modname, Some(&arr))                   // c:3428
+            require_module(table, modname, Some(&arr)) // c:3428
         }
     }
 }
@@ -2960,15 +3297,22 @@ pub fn ensurefeature(table: &mut modulestab, modname: &str, prefix: &str, featur
 /// matching `table.autoload_*` map. Honors `+`/`-` prefix for
 /// add/remove, and the type prefix or `prefchar` arg for routing.
 /// WARNING: param names don't match C — Rust=(table, _cmdnam, module, features, prefchar, defflags) vs C=(cmdnam, module, features, prefchar, defflags)
-pub fn autofeatures(table: &mut modulestab, _cmdnam: &str, module: Option<&str>,
-                    features: &[String], prefchar: u8, defflags: i32) -> i32 { // c:3437
+pub fn autofeatures(
+    table: &mut modulestab,
+    _cmdnam: &str,
+    module: Option<&str>,
+    features: &[String],
+    prefchar: u8,
+    defflags: i32,
+) -> i32 {
+    // c:3437
     let mut ret: i32 = 0;
     let _ = defflags;
 
     for feature in features {
         let mut s = feature.as_str();
-        let mut add: bool = true;                                         // c:3466 add = 1
-        // c:3461-3491 — parse `+`/`-` add/remove prefix.
+        let mut add: bool = true; // c:3466 add = 1
+                                  // c:3461-3491 — parse `+`/`-` add/remove prefix.
         if let Some(rest) = s.strip_prefix('-') {
             add = false;
             s = rest;
@@ -2977,40 +3321,72 @@ pub fn autofeatures(table: &mut modulestab, _cmdnam: &str, module: Option<&str>,
             s = rest;
         }
 
-        let (fchar, fnam): (u8, &str) = if prefchar != 0 {                // c:3461
-            (prefchar, s)                                                 // c:3467-3468
+        let (fchar, fnam): (u8, &str) = if prefchar != 0 {
+            // c:3461
+            (prefchar, s) // c:3467-3468
         } else {
             // c:3491-3520 — parse `b:`/`c:`/`C:`/`p:`/`f:` type prefix.
             let bytes = s.as_bytes();
             if bytes.len() >= 2 && bytes[1] == b':' {
                 (bytes[0], &s[2..])
             } else {
-                (b'b', s)  // default: builtin
+                (b'b', s) // default: builtin
             }
         };
 
         let modname = match module {
             Some(m) => m,
-            None => { ret = 1; continue; }
+            None => {
+                ret = 1;
+                continue;
+            }
         };
 
         if add {
             // Insert into the matching autoload map.
             match fchar {
-                b'b' => { table.autoload_builtins.insert(fnam.to_string(), modname.to_string()); }
-                b'c' | b'C' => { table.autoload_conditions.insert(fnam.to_string(), modname.to_string()); }
-                b'p' => { table.autoload_params.insert(fnam.to_string(), modname.to_string()); }
-                b'f' => { table.autoload_mathfuncs.insert(fnam.to_string(), modname.to_string()); }
-                _ => { ret = 1; }
+                b'b' => {
+                    table
+                        .autoload_builtins
+                        .insert(fnam.to_string(), modname.to_string());
+                }
+                b'c' | b'C' => {
+                    table
+                        .autoload_conditions
+                        .insert(fnam.to_string(), modname.to_string());
+                }
+                b'p' => {
+                    table
+                        .autoload_params
+                        .insert(fnam.to_string(), modname.to_string());
+                }
+                b'f' => {
+                    table
+                        .autoload_mathfuncs
+                        .insert(fnam.to_string(), modname.to_string());
+                }
+                _ => {
+                    ret = 1;
+                }
             }
         } else {
             // Remove from the matching autoload map.
             match fchar {
-                b'b' => { table.autoload_builtins.remove(fnam); }
-                b'c' | b'C' => { table.autoload_conditions.remove(fnam); }
-                b'p' => { table.autoload_params.remove(fnam); }
-                b'f' => { table.autoload_mathfuncs.remove(fnam); }
-                _ => { ret = 1; }
+                b'b' => {
+                    table.autoload_builtins.remove(fnam);
+                }
+                b'c' | b'C' => {
+                    table.autoload_conditions.remove(fnam);
+                }
+                b'p' => {
+                    table.autoload_params.remove(fnam);
+                }
+                b'f' => {
+                    table.autoload_mathfuncs.remove(fnam);
+                }
+                _ => {
+                    ret = 1;
+                }
             }
         }
     }
@@ -3026,83 +3402,119 @@ pub fn autofeatures(table: &mut modulestab, _cmdnam: &str, module: Option<&str>,
 /// Rust port stores entries in a `Vec` — the call sites only ever
 /// walk linearly and erase by name, so the linked-list shape buys
 /// nothing in safe Rust.
-pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> =                       // c:1258
+pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> = // c:1258
     Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Port of `int setconddefs(char const *nam, Conddef c, int size, int *e)`
 /// from `Src/module.c:754`. Bulk add/delete of condition definitions:
 /// the parallel `e[]` array selects per-entry add (`e[i] != 0`) vs delete
 /// (`e[i] == 0`). Returns 1 if any individual op clashed, 0 if all clean.
-pub fn setconddefs(nam: &str,                                                // c:754
-                   c: &mut [crate::ported::zsh_h::conddef],
-                   e: Option<&[i32]>) -> i32 {
+pub fn setconddefs(
+    nam: &str, // c:754
+    c: &mut [crate::ported::zsh_h::conddef],
+    e: Option<&[i32]>,
+) -> i32 {
     use crate::ported::zsh_h::CONDF_ADDED;
-    let mut ret = 0;                                                         // c:758
-    for (i, entry) in c.iter_mut().enumerate() {                             // c:760 while (size--)
-        let want_add = e.map(|es| es[i] != 0).unwrap_or(true);               // c:761 if (e && *e++)
+    let mut ret = 0; // c:758
+    for (i, entry) in c.iter_mut().enumerate() {
+        // c:760 while (size--)
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(true); // c:761 if (e && *e++)
         if want_add {
-            if (entry.flags & CONDF_ADDED) != 0 { continue; }                // c:763 already added
+            if (entry.flags & CONDF_ADDED) != 0 {
+                continue;
+            } // c:763 already added
             let dup = crate::ported::zsh_h::conddef {
-                next: None, name: entry.name.clone(), flags: entry.flags,
-                handler: entry.handler, min: entry.min, max: entry.max,
-                condid: entry.condid, module: entry.module.clone(),
+                next: None,
+                name: entry.name.clone(),
+                flags: entry.flags,
+                handler: entry.handler,
+                min: entry.min,
+                max: entry.max,
+                condid: entry.condid,
+                module: entry.module.clone(),
             };
-            if addconddef(dup) != 0 {                                        // c:768 addconddef
-                crate::ported::utils::zwarnnam(nam,                          // c:769 zwarnnam
-                    &format!("name clash when adding condition `{}'", entry.name));
+            if addconddef(dup) != 0 {
+                // c:768 addconddef
+                crate::ported::utils::zwarnnam(
+                    nam, // c:769 zwarnnam
+                    &format!("name clash when adding condition `{}'", entry.name),
+                );
                 ret = 1;
             } else {
-                entry.flags |= CONDF_ADDED;                                  // c:773
+                entry.flags |= CONDF_ADDED; // c:773
             }
         } else {
-            if (entry.flags & CONDF_ADDED) == 0 { continue; }                // c:776
-            if deleteconddef(entry) != 0 {                                   // c:780 deleteconddef
-                crate::ported::utils::zwarnnam(nam,                          // c:781
-                    &format!("condition `{}' already deleted", entry.name));
+            if (entry.flags & CONDF_ADDED) == 0 {
+                continue;
+            } // c:776
+            if deleteconddef(entry) != 0 {
+                // c:780 deleteconddef
+                crate::ported::utils::zwarnnam(
+                    nam, // c:781
+                    &format!("condition `{}' already deleted", entry.name),
+                );
                 ret = 1;
             } else {
-                entry.flags &= !CONDF_ADDED;                                 // c:785
+                entry.flags &= !CONDF_ADDED; // c:785
             }
         }
     }
-    ret                                                                      // c:790
+    ret // c:790
 }
 
 /// Port of `int setmathfuncs(char const *nam, MathFunc f, int size, int *e)`
 /// from `Src/module.c:1374`. Bulk add/delete of math-function definitions
 /// via the parallel `e[]` selector array (same shape as setconddefs).
-pub fn setmathfuncs(nam: &str,                                               // c:1374
-                    f: &mut [crate::ported::zsh_h::mathfunc],
-                    e: Option<&[i32]>) -> i32 {
+pub fn setmathfuncs(
+    nam: &str, // c:1374
+    f: &mut [crate::ported::zsh_h::mathfunc],
+    e: Option<&[i32]>,
+) -> i32 {
     use crate::ported::zsh_h::MFF_ADDED;
-    let mut ret = 0;                                                         // c:1378
-    for (i, entry) in f.iter_mut().enumerate() {                             // c:1380 while (size--)
-        let want_add = e.map(|es| es[i] != 0).unwrap_or(true);               // c:1381
+    let mut ret = 0; // c:1378
+    for (i, entry) in f.iter_mut().enumerate() {
+        // c:1380 while (size--)
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(true); // c:1381
         if want_add {
-            if (entry.flags & MFF_ADDED) != 0 { continue; }                  // c:1383
+            if (entry.flags & MFF_ADDED) != 0 {
+                continue;
+            } // c:1383
             let dup = crate::ported::zsh_h::mathfunc {
-                next: None, name: entry.name.clone(), flags: entry.flags,
-                nfunc: entry.nfunc, sfunc: entry.sfunc,
-                module: entry.module.clone(), minargs: entry.minargs,
-                maxargs: entry.maxargs, funcid: entry.funcid,
+                next: None,
+                name: entry.name.clone(),
+                flags: entry.flags,
+                nfunc: entry.nfunc,
+                sfunc: entry.sfunc,
+                module: entry.module.clone(),
+                minargs: entry.minargs,
+                maxargs: entry.maxargs,
+                funcid: entry.funcid,
             };
-            if addmathfunc(dup) != 0 {                                       // c:1388 addmathfunc
-                crate::ported::utils::zwarnnam(nam,                          // c:1389
-                    &format!("name clash when adding math function `{}'", entry.name));
+            if addmathfunc(dup) != 0 {
+                // c:1388 addmathfunc
+                crate::ported::utils::zwarnnam(
+                    nam, // c:1389
+                    &format!("name clash when adding math function `{}'", entry.name),
+                );
                 ret = 1;
             } else {
-                entry.flags |= MFF_ADDED;                                    // c:1393
+                entry.flags |= MFF_ADDED; // c:1393
             }
         } else {
-            if (entry.flags & MFF_ADDED) == 0 { continue; }                  // c:1396
-            if deletemathfunc(entry) != 0 {                                  // c:1400 deletemathfunc
-                crate::ported::utils::zwarnnam(nam,                          // c:1401
-                    &format!("math function `{}' already deleted", entry.name));
+            if (entry.flags & MFF_ADDED) == 0 {
+                continue;
+            } // c:1396
+            if deletemathfunc(entry) != 0 {
+                // c:1400 deletemathfunc
+                crate::ported::utils::zwarnnam(
+                    nam, // c:1401
+                    &format!("math function `{}' already deleted", entry.name),
+                );
                 ret = 1;
             }
         }
     }
-    ret                                                                      // c:1407
+    ret // c:1407
 }
 
 /// Port of file-static `Conddef condtab;` from `Src/cond.c:21` — the
@@ -3111,23 +3523,30 @@ pub fn setmathfuncs(nam: &str,                                               // 
 /// runtime walks `condtab` looking for the matching name+infix flag at
 /// each `[[` evaluation. Rust port stores entries in a `Vec` (linear
 /// add/remove + walk; same observable behaviour as C linked list).
-pub static CONDTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> =        // c:cond.c:21
+pub static CONDTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> = // c:cond.c:21
     Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Port of `int deleteconddef(Conddef c)` from `Src/module.c:724`.
 /// Removes condition definition `c` from `condtab`. Returns 0 on
 /// success, -1 on miss. C also frees the autoloaded entry's name +
 /// module; Rust drop subsumes that.
-pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {            // c:724
+pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {
+    // c:724
     use crate::ported::zsh_h::CONDF_INFIX;
     let mut tab = CONDTAB.lock().unwrap();
     // c:728 — `for (p = condtab, q = NULL; p && p != c; ...)`. C uses
     // pointer identity; the Rust analog is name+infix-flag equality
     // (the natural key — `[[ -z STR ]]` and `STR == VAL` share neither).
     let infix = c.flags & CONDF_INFIX;
-    match tab.iter().position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix) {
-        Some(i) => { tab.remove(i); 0 }                                      // c:733-738 unlink + free
-        None => -1,                                                          // c:743 not found
+    match tab
+        .iter()
+        .position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix)
+    {
+        Some(i) => {
+            tab.remove(i);
+            0
+        } // c:733-738 unlink + free
+        None => -1, // c:743 not found
     }
 }
 
@@ -3135,22 +3554,26 @@ pub fn deleteconddef(c: &crate::ported::zsh_h::conddef) -> i32 {            // c
 /// CONDTAB for a clash on (name, infix-flag); replaces autoloadable
 /// entries via deleteconddef; otherwise prepends. Returns 0 on add,
 /// 1 on clash (existing entry already added).
-pub fn addconddef(c: crate::ported::zsh_h::conddef) -> i32 {                 // c:703
-    use crate::ported::zsh_h::{CONDF_INFIX, CONDF_ADDED};
+pub fn addconddef(c: crate::ported::zsh_h::conddef) -> i32 {
+    // c:703
+    use crate::ported::zsh_h::{CONDF_ADDED, CONDF_INFIX};
     let infix = c.flags & CONDF_INFIX;
     let clash_idx = {
         let tab = CONDTAB.lock().unwrap();
-        tab.iter().position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix) // c:705 getconddef
+        tab.iter()
+            .position(|p| p.name == c.name && (p.flags & CONDF_INFIX) == infix) // c:705 getconddef
     };
     if let Some(i) = clash_idx {
         let (autoload, added) = {
             let tab = CONDTAB.lock().unwrap();
             (tab[i].module.is_some(), (tab[i].flags & CONDF_ADDED) != 0)
         };
-        if !autoload || added { return 1; }                                  // c:708 already added
-        CONDTAB.lock().unwrap().remove(i);                                   // c:711 deleteconddef
+        if !autoload || added {
+            return 1;
+        } // c:708 already added
+        CONDTAB.lock().unwrap().remove(i); // c:711 deleteconddef
     }
-    CONDTAB.lock().unwrap().insert(0, c);                                    // c:713-714 c->next = condtab; condtab = c
+    CONDTAB.lock().unwrap().insert(0, c); // c:713-714 c->next = condtab; condtab = c
     0
 }
 
@@ -3159,28 +3582,36 @@ pub fn addconddef(c: crate::ported::zsh_h::conddef) -> i32 {                 // 
 /// wrapper callbacks via `addwrapper(FuncWrap)` and the runtime fires
 /// them around `runshfunc()`. The Rust port stores entries in a `Vec`
 /// (linear add/remove + iterate; same observable behaviour).
-pub static WRAPPERS: Lazy<Mutex<Vec<crate::ported::zsh_h::funcwrap>>> =      // c:567
+pub static WRAPPERS: Lazy<Mutex<Vec<crate::ported::zsh_h::funcwrap>>> = // c:567
     Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Port of `addmathfunc(MathFunc f)` from `Src/module.c:1313`.
 /// Returns 0 on add, 1 on clash (existing entry not autoloadable).
 /// Replaces autoloadable entries via `removemathfunc`.
-pub fn addmathfunc(f: crate::ported::zsh_h::mathfunc) -> i32 {              // c:1313
+pub fn addmathfunc(f: crate::ported::zsh_h::mathfunc) -> i32 {
+    // c:1313
     use crate::ported::zsh_h::{MFF_ADDED, MFF_USERFUNC};
-    if (f.flags & MFF_ADDED) != 0 { return 1; }                              // c:1318
+    if (f.flags & MFF_ADDED) != 0 {
+        return 1;
+    } // c:1318
     let mut tab = MATHFUNCS.lock().unwrap();
     let mut found_idx: Option<usize> = None;
-    for (i, p) in tab.iter().enumerate() {                                   // c:1321
-        if p.name == f.name {                                                // c:1322
-            if p.module.is_some() && (p.flags & MFF_USERFUNC) == 0 {         // c:1323
-                found_idx = Some(i);                                         // c:1327 removemathfunc + replace
+    for (i, p) in tab.iter().enumerate() {
+        // c:1321
+        if p.name == f.name {
+            // c:1322
+            if p.module.is_some() && (p.flags & MFF_USERFUNC) == 0 {
+                // c:1323
+                found_idx = Some(i); // c:1327 removemathfunc + replace
                 break;
             }
-            return 1;                                                        // c:1330
+            return 1; // c:1330
         }
     }
-    if let Some(i) = found_idx { tab.remove(i); }                            // c:1327
-    tab.insert(0, f);                                                        // c:1334-1335 f->next = mathfuncs; mathfuncs = f
+    if let Some(i) = found_idx {
+        tab.remove(i);
+    } // c:1327
+    tab.insert(0, f); // c:1334-1335 f->next = mathfuncs; mathfuncs = f
     0
 }
 
@@ -3188,10 +3619,12 @@ pub fn addmathfunc(f: crate::ported::zsh_h::mathfunc) -> i32 {              // c
 /// `Src/module.c:1267`. Removes the named entry from MATHFUNCS and
 /// drops it (Rust drop subsumes C's zsfree/zfree ladder).
 /// WARNING: param names don't match C — Rust=(name) vs C=(previous, current)
-pub fn removemathfunc(name: &str) {                                          // c:1267
+pub fn removemathfunc(name: &str) {
+    // c:1267
     let mut tab = MATHFUNCS.lock().unwrap();
-    if let Some(i) = tab.iter().position(|m| m.name == name) {               // c:1270 walk
-        tab.remove(i);                                                       // c:1273-1274 unlink + zfree
+    if let Some(i) = tab.iter().position(|m| m.name == name) {
+        // c:1270 walk
+        tab.remove(i); // c:1273-1274 unlink + zfree
     }
 }
 
@@ -3199,15 +3632,22 @@ pub fn removemathfunc(name: &str) {                                          // 
 /// Removes f from MATHFUNCS; for unloaded/user-defined entries clears
 /// the MFF_ADDED flag instead of dropping the node (C: `f->flags &=
 /// ~MFF_ADDED` when f->module is null).
-pub fn deletemathfunc(f: &crate::ported::zsh_h::mathfunc) -> i32 {          // c:1342
+pub fn deletemathfunc(f: &crate::ported::zsh_h::mathfunc) -> i32 {
+    // c:1342
     let mut tab = MATHFUNCS.lock().unwrap();
-    match tab.iter().position(|m| m.name == f.name) {                        // c:1346
+    match tab.iter().position(|m| m.name == f.name) {
+        // c:1346
         Some(i) => {
-            if tab[i].module.is_some() { tab.remove(i); }                    // c:1352-1354 zsfree+zfree
-            else { tab[i].flags &= !crate::ported::zsh_h::MFF_ADDED; }       // c:1357 ~MFF_ADDED
+            if tab[i].module.is_some() {
+                tab.remove(i);
+            }
+            // c:1352-1354 zsfree+zfree
+            else {
+                tab[i].flags &= !crate::ported::zsh_h::MFF_ADDED;
+            } // c:1357 ~MFF_ADDED
             0
         }
-        None => -1,                                                          // c:1361
+        None => -1, // c:1361
     }
 }
 
@@ -3215,33 +3655,40 @@ pub fn deletemathfunc(f: &crate::ported::zsh_h::mathfunc) -> i32 {          // c
 /// Returns 0 on add, 1 on clash. Walks WRAPPERS for an existing entry
 /// with the same handler; appends if absent and sets WRAPF_ADDED on
 /// the input record.
-pub fn addwrapper(_m: &str, w: crate::ported::zsh_h::funcwrap) -> i32 {     // c:577
+pub fn addwrapper(_m: &str, w: crate::ported::zsh_h::funcwrap) -> i32 {
+    // c:577
     let mut tab = WRAPPERS.lock().unwrap();
-    if tab.iter().any(|x| match (x.handler, w.handler) {                     // c:585 walk
+    if tab.iter().any(|x| match (x.handler, w.handler) {
+        // c:585 walk
         (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
         (None, None) => true,
         _ => false,
     }) {
-        return 1;                                                            // c:587 clash
+        return 1; // c:587 clash
     }
-    let mut entry = w;                                                       // c:589 w->flags |= WRAPF_ADDED
+    let mut entry = w; // c:589 w->flags |= WRAPF_ADDED
     entry.flags |= 1; // WRAPF_ADDED — c:zsh.h:1369
-    tab.push(entry);                                                         // c:592 *p = w
+    tab.push(entry); // c:592 *p = w
     0
 }
 
 /// Port of `deletewrapper(Module m, FuncWrap w)` from `Src/module.c:609`.
 /// Removes entry with the same handler from WRAPPERS. Returns 0 on
 /// success, 1 on miss.
-pub fn deletewrapper(_m: &str, w: &crate::ported::zsh_h::funcwrap) -> i32 { // c:609
+pub fn deletewrapper(_m: &str, w: &crate::ported::zsh_h::funcwrap) -> i32 {
+    // c:609
     let mut tab = WRAPPERS.lock().unwrap();
-    match tab.iter().position(|x| match (x.handler, w.handler) {             // c:617 walk
+    match tab.iter().position(|x| match (x.handler, w.handler) {
+        // c:617 walk
         (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
         (None, None) => true,
         _ => false,
     }) {
-        Some(i) => { tab.remove(i); 0 }                                      // c:622 unlink
-        None => 1,                                                           // c:624 not found
+        Some(i) => {
+            tab.remove(i);
+            0
+        } // c:622 unlink
+        None => 1, // c:624 not found
     }
 }
 
@@ -3257,30 +3704,39 @@ pub fn deletewrapper(_m: &str, w: &crate::ported::zsh_h::funcwrap) -> i32 { // c
 /// each carry a `featuresarray` shim that delegates to this
 /// canonical free fn once the modules table is wired through.
 /// WARNING: param names don't match C — Rust=(_m, bn, cd, mf, pd, n_abstract) vs C=(m, f)
-pub fn featuresarray(                                                        // c:3284
+pub fn featuresarray(
+    // c:3284
     _m: *const crate::ported::zsh_h::module,
-    bn: &[crate::ported::zsh_h::builtin],                                    // c:3289 f->bn_list
-    cd: &[crate::ported::zsh_h::conddef],                                    // c:3290 f->cd_list
-    mf: &[crate::ported::zsh_h::mathfunc],                                   // c:3291 f->mf_list
-    pd: &[crate::ported::zsh_h::paramdef],                                   // c:3292 f->pd_list
-    n_abstract: i32,                                                         // c:3288 f->n_abstract
+    bn: &[crate::ported::zsh_h::builtin],  // c:3289 f->bn_list
+    cd: &[crate::ported::zsh_h::conddef],  // c:3290 f->cd_list
+    mf: &[crate::ported::zsh_h::mathfunc], // c:3291 f->mf_list
+    pd: &[crate::ported::zsh_h::paramdef], // c:3292 f->pd_list
+    n_abstract: i32,                       // c:3288 f->n_abstract
 ) -> Vec<String> {
     use crate::ported::zsh_h::CONDF_INFIX;
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3288
         + n_abstract.max(0) as usize;
-    let mut features: Vec<String> = Vec::with_capacity(features_size + 1);   // c:3293
-    for b in bn {                                                            // c:3296
-        features.push(format!("b:{}", b.node.nam));                          // c:3297
+    let mut features: Vec<String> = Vec::with_capacity(features_size + 1); // c:3293
+    for b in bn {
+        // c:3296
+        features.push(format!("b:{}", b.node.nam)); // c:3297
     }
-    for c in cd {                                                            // c:3298
-        let prefix = if (c.flags & CONDF_INFIX) != 0 { "C:" } else { "c:" }; // c:3299
-        features.push(format!("{}{}", prefix, c.name));                      // c:3299-3300
+    for c in cd {
+        // c:3298
+        let prefix = if (c.flags & CONDF_INFIX) != 0 {
+            "C:"
+        } else {
+            "c:"
+        }; // c:3299
+        features.push(format!("{}{}", prefix, c.name)); // c:3299-3300
     }
-    for m in mf {                                                            // c:3303
-        features.push(format!("f:{}", m.name));                              // c:3304
+    for m in mf {
+        // c:3303
+        features.push(format!("f:{}", m.name)); // c:3304
     }
-    for p in pd {                                                            // c:3305
-        features.push(format!("p:{}", p.name));                              // c:3306
+    for p in pd {
+        // c:3305
+        features.push(format!("p:{}", p.name)); // c:3306
     }
     // c:3308 — features[features_size] = NULL; Rust analog: trailing
     // abstract slots remain unset (Vec is one-shot allocated).
@@ -3297,34 +3753,44 @@ pub fn featuresarray(                                                        // 
 /// module shims in `src/ported/modules/*.rs` delegate to this
 /// canonical free fn once the modules table is wired through.
 /// WARNING: param names don't match C — Rust=(_m, bn, cd, mf, pd, n_abstract) vs C=(m, f)
-pub fn getfeatureenables(                                                    // c:3319
+pub fn getfeatureenables(
+    // c:3319
     _m: *const crate::ported::zsh_h::module,
-    bn: &[crate::ported::zsh_h::builtin],                                    // c:3324
-    cd: &[crate::ported::zsh_h::conddef],                                    // c:3325
-    mf: &[crate::ported::zsh_h::mathfunc],                                   // c:3326
-    pd: &[crate::ported::zsh_h::paramdef],                                   // c:3327
-    n_abstract: i32,                                                         // c:3323
+    bn: &[crate::ported::zsh_h::builtin],  // c:3324
+    cd: &[crate::ported::zsh_h::conddef],  // c:3325
+    mf: &[crate::ported::zsh_h::mathfunc], // c:3326
+    pd: &[crate::ported::zsh_h::paramdef], // c:3327
+    n_abstract: i32,                       // c:3323
 ) -> Vec<i32> {
     use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, MFF_ADDED};
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3323
         + n_abstract.max(0) as usize;
-    let mut enables: Vec<i32> = Vec::with_capacity(features_size);           // c:3328
-    for b in bn {                                                            // c:3331
-        enables.push(if (b.node.flags & BINF_ADDED as i32) != 0 { 1 } else { 0 });
+    let mut enables: Vec<i32> = Vec::with_capacity(features_size); // c:3328
+    for b in bn {
+        // c:3331
+        enables.push(if (b.node.flags & BINF_ADDED as i32) != 0 {
+            1
+        } else {
+            0
+        });
     }
-    for c in cd {                                                            // c:3333
+    for c in cd {
+        // c:3333
         enables.push(if (c.flags & CONDF_ADDED) != 0 { 1 } else { 0 });
     }
-    for m in mf {                                                            // c:3335
+    for m in mf {
+        // c:3335
         enables.push(if (m.flags & MFF_ADDED) != 0 { 1 } else { 0 });
     }
-    for p in pd {                                                            // c:3337
+    for p in pd {
+        // c:3337
         enables.push(if p.pm.is_some() { 1 } else { 0 });
     }
-    for _ in 0..n_abstract.max(0) {                                          // c:3323 n_abstract slots
+    for _ in 0..n_abstract.max(0) {
+        // c:3323 n_abstract slots
         enables.push(0);
     }
-    enables                                                                  // c:3340
+    enables // c:3340
 }
 
 /// Port of `Hookdef hooktab;` from `Src/module.c:843` — the file-static
@@ -3343,7 +3809,7 @@ pub static hooktab: std::sync::atomic::AtomicPtr<crate::ported::zsh_h::hookdef> 
 /// global mirrors that — bin_zmodload_handler reaches for it so
 /// the canonical `bin_zmodload` can be wired into BUILTINS via
 /// HandlerFunc without an extra table-arg.
-pub static MODULESTAB: Lazy<Mutex<modulestab>> =                            // c:zmodload.c:32
+pub static MODULESTAB: Lazy<Mutex<modulestab>> = // c:zmodload.c:32
     Lazy::new(|| Mutex::new(modulestab::new()));
 
 // `FeatureType` enum + `ModuleFeature` struct + `ModuleState` enum
@@ -3367,11 +3833,11 @@ pub static MODULESTAB: Lazy<Mutex<modulestab>> =                            // c
 
 /// Feature-type index passed to `features_()` (`Src/module.c:313+`).
 /// C ships bare ints; Rust adds names for readability.
-pub const FEATURE_TYPE_BUILTIN: i32   = 0;
+pub const FEATURE_TYPE_BUILTIN: i32 = 0;
 pub const FEATURE_TYPE_CONDITION: i32 = 1;
 pub const FEATURE_TYPE_PARAMETER: i32 = 2;
-pub const FEATURE_TYPE_MATHFUNC: i32  = 3;
-pub const FEATURE_TYPE_HOOK: i32      = 4;
+pub const FEATURE_TYPE_MATHFUNC: i32 = 3;
+pub const FEATURE_TYPE_HOOK: i32 = 4;
 /// Module table (from module.c module hash table)
 #[derive(Debug, Default)]
 /// Table of registered modules.
@@ -3429,9 +3895,7 @@ pub struct modulestab {
 // The drift caught earlier in this series was the HIST_* values
 // where hist.rs declared `1<<N` bit positions but zsh_h.rs had the
 // canonical C values — different bits. Avoid the same hazard here.
-pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_INFIX, CONDF_ADDED, MFF_ADDED};
-
-
+pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
@@ -3458,23 +3922,23 @@ pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_INFIX, CONDF_ADDED, MFF_ADDED};
 /// `FEAT_IGNORE` — bit in the `flags` arg to add_/del_-automathfunc
 /// and friends. Port of `enum { FEAT_IGNORE = 0x0001 }` from
 /// `Src/module.c:62`. /* `-i` option: ignore redefinition errors. */
-pub const FEAT_IGNORE: i32 = 0x0001;                                     // c:62
+pub const FEAT_IGNORE: i32 = 0x0001; // c:62
 
 /// `FEAT_INFIX` — bit indicating a condition is infix-style. Port of
 /// `enum { FEAT_INFIX = 0x0002 }` from `Src/module.c:64`.
-pub const FEAT_INFIX: i32 = 0x0002;                                      // c:64
+pub const FEAT_INFIX: i32 = 0x0002; // c:64
 
 /// `FEAT_AUTOALL` — `zmodload -a` enable-all-features. Port of
 /// `enum { FEAT_AUTOALL = 0x0004 }` from `Src/module.c:69`.
-pub const FEAT_AUTOALL: i32 = 0x0004;                                    // c:69
+pub const FEAT_AUTOALL: i32 = 0x0004; // c:69
 
 /// `FEAT_REMOVE` — bit indicating feature removal pass. Port of
 /// `enum { FEAT_REMOVE = 0x0008 }` from `Src/module.c:76`.
-pub const FEAT_REMOVE: i32 = 0x0008;                                     // c:76
+pub const FEAT_REMOVE: i32 = 0x0008; // c:76
 
 /// `FEAT_CHECKAUTO` — verify autoloads are actually provided. Port of
 /// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
-pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
+pub const FEAT_CHECKAUTO: i32 = 0x0010; // c:81
 
 // `featuresarray` deleted — Rust-only port that took the deleted
 // `Module` / `Features` PascalCase structs. C
@@ -3490,12 +3954,12 @@ pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
 /// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
 /// /* Resolve any aliases to the underlying module. */
-pub const FINDMOD_ALIASP: i32 = 0x0001;                                  // c:110
+pub const FINDMOD_ALIASP: i32 = 0x0001; // c:110
 
 /// `FINDMOD_CREATE` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_CREATE = 0x0002 }` from `Src/module.c:115`.
 /// /* Create an element for the module in the list if not found. */
-pub const FINDMOD_CREATE: i32 = 0x0002;                                  // c:115
+pub const FINDMOD_CREATE: i32 = 0x0002; // c:115
 
 #[cfg(test)]
 mod tests {
@@ -3594,10 +4058,19 @@ mod tests {
 
     fn mk_mf(name: &str, autoload: bool) -> crate::ported::zsh_h::mathfunc {
         crate::ported::zsh_h::mathfunc {
-            next: None, name: name.to_string(), flags: 0,
-            nfunc: None, sfunc: None,
-            module: if autoload { Some("zsh/test".to_string()) } else { None },
-            minargs: 0, maxargs: 0, funcid: 0,
+            next: None,
+            name: name.to_string(),
+            flags: 0,
+            nfunc: None,
+            sfunc: None,
+            module: if autoload {
+                Some("zsh/test".to_string())
+            } else {
+                None
+            },
+            minargs: 0,
+            maxargs: 0,
+            funcid: 0,
         }
     }
 
@@ -3623,10 +4096,17 @@ mod tests {
         let auto = mk_mf("zshrs_test_replace", true);
         let real = mk_mf("zshrs_test_replace", false);
         assert_eq!(addmathfunc(auto), 0);
-        assert_eq!(addmathfunc(real), 0, "autoloadable entry must be replaceable");
+        assert_eq!(
+            addmathfunc(real),
+            0,
+            "autoloadable entry must be replaceable"
+        );
         let tab = MATHFUNCS.lock().unwrap();
         let entry = tab.iter().find(|m| m.name == "zshrs_test_replace").unwrap();
-        assert!(entry.module.is_none(), "after replace, module should be None");
+        assert!(
+            entry.module.is_none(),
+            "after replace, module should be None"
+        );
         drop(tab);
         removemathfunc("zshrs_test_replace");
     }
@@ -3636,9 +4116,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let f = mk_mf("zshrs_test_remove", false);
         assert_eq!(addmathfunc(f), 0);
-        assert!(MATHFUNCS.lock().unwrap().iter().any(|m| m.name == "zshrs_test_remove"));
+        assert!(MATHFUNCS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.name == "zshrs_test_remove"));
         removemathfunc("zshrs_test_remove");
-        assert!(!MATHFUNCS.lock().unwrap().iter().any(|m| m.name == "zshrs_test_remove"));
+        assert!(!MATHFUNCS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.name == "zshrs_test_remove"));
     }
 
     #[test]
@@ -3657,10 +4145,17 @@ mod tests {
         // a user-defined mathfunc, flipping MFF_ADDED on, then deleting.
         let mut f = mk_mf("zshrs_test_clear_flag", false);
         f.flags = crate::ported::zsh_h::MFF_ADDED;
-        assert_eq!(addmathfunc(f), 1, "MFF_ADDED set → addmathfunc clashes at c:1318");
+        assert_eq!(
+            addmathfunc(f),
+            1,
+            "MFF_ADDED set → addmathfunc clashes at c:1318"
+        );
         // Now seed it manually with module=None and MFF_ADDED so deletemathfunc
         // exercises the clear-flag branch.
-        MATHFUNCS.lock().unwrap().insert(0, mk_mf("zshrs_test_clear_flag2", false));
+        MATHFUNCS
+            .lock()
+            .unwrap()
+            .insert(0, mk_mf("zshrs_test_clear_flag2", false));
         let mut f2 = mk_mf("zshrs_test_clear_flag2", false);
         f2.flags = crate::ported::zsh_h::MFF_ADDED;
         // f2 is the lookup probe; by name it matches the seeded entry.
@@ -3679,10 +4174,22 @@ mod tests {
 
     fn mk_cd(name: &str, infix: bool, autoload: bool) -> crate::ported::zsh_h::conddef {
         crate::ported::zsh_h::conddef {
-            next: None, name: name.to_string(),
-            flags: if infix { crate::ported::zsh_h::CONDF_INFIX } else { 0 },
-            handler: None, min: 0, max: 0, condid: 0,
-            module: if autoload { Some("zsh/cond".to_string()) } else { None },
+            next: None,
+            name: name.to_string(),
+            flags: if infix {
+                crate::ported::zsh_h::CONDF_INFIX
+            } else {
+                0
+            },
+            handler: None,
+            min: 0,
+            max: 0,
+            condid: 0,
+            module: if autoload {
+                Some("zsh/cond".to_string())
+            } else {
+                None
+            },
         }
     }
 
@@ -3713,12 +4220,16 @@ mod tests {
         // an infix-form `==` share neither name nor flag, so adding both
         // names with different infix bits should both succeed.
         let prefix = mk_cd("zshrs_test_cond_dual", false, false);
-        let infix  = mk_cd("zshrs_test_cond_dual", true,  false);
+        let infix = mk_cd("zshrs_test_cond_dual", true, false);
         assert_eq!(addconddef(prefix), 0);
-        assert_eq!(addconddef(infix), 0, "infix variant must not clash with prefix variant");
+        assert_eq!(
+            addconddef(infix),
+            0,
+            "infix variant must not clash with prefix variant"
+        );
         // Cleanup both
         let _ = deleteconddef(&mk_cd("zshrs_test_cond_dual", false, false));
-        let _ = deleteconddef(&mk_cd("zshrs_test_cond_dual", true,  false));
+        let _ = deleteconddef(&mk_cd("zshrs_test_cond_dual", true, false));
     }
 
     // ===== Tests for `setconddefs` / `setmathfuncs` bulk dispatch.
@@ -3748,9 +4259,17 @@ mod tests {
 
     fn mk_b(nam: &str) -> crate::ported::zsh_h::builtin {
         crate::ported::zsh_h::builtin {
-            node: crate::ported::zsh_h::hashnode { next: None, nam: nam.to_string(), flags: 0 },
-            handlerfunc: None, minargs: 0, maxargs: 0, funcid: 0,
-            optstr: None, defopts: None,
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: nam.to_string(),
+                flags: 0,
+            },
+            handlerfunc: None,
+            minargs: 0,
+            maxargs: 0,
+            funcid: 0,
+            optstr: None,
+            defopts: None,
         }
     }
 
@@ -3789,7 +4308,8 @@ mod tests {
 
     fn mk_w() -> crate::ported::zsh_h::funcwrap {
         crate::ported::zsh_h::funcwrap {
-            next: None, flags: 0,
+            next: None,
+            flags: 0,
             handler: Some(|_prog, _w, _name| 0),
             module: None,
         }
@@ -3833,12 +4353,9 @@ mod tests {
     // Real Rust fns matching the `Hookfn` shape. Used as test handlers
     // that bump a per-test atomic counter when invoked, proving
     // `runhookdef` actually dispatches the registered fn pointers.
-    static H1_CALLS: std::sync::atomic::AtomicI32 =
-        std::sync::atomic::AtomicI32::new(0);
-    static H2_CALLS: std::sync::atomic::AtomicI32 =
-        std::sync::atomic::AtomicI32::new(0);
-    static H1_RETVAL: std::sync::atomic::AtomicI32 =
-        std::sync::atomic::AtomicI32::new(0);
+    static H1_CALLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static H2_CALLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static H1_RETVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
     fn h1(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
         H1_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -3870,12 +4387,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Unique name to avoid colliding with other tests' registrations.
         let h = leak_hookdef("zshrs_test_get_hook", crate::ported::zsh_h::HOOKF_ALL);
-        unsafe { assert!(gethookdef(&(*h).name).is_null()); }
+        unsafe {
+            assert!(gethookdef(&(*h).name).is_null());
+        }
         assert_eq!(addhookdef(h), 0);
-        unsafe { assert_eq!(gethookdef(&(*h).name), h); }
+        unsafe {
+            assert_eq!(gethookdef(&(*h).name), h);
+        }
         // Cleanup so the chain doesn't leak into other tests.
         assert_eq!(deletehookdef(h), 0);
-        unsafe { drop(Box::from_raw(h)); }
+        unsafe {
+            drop(Box::from_raw(h));
+        }
     }
 
     /// `addhookdef` rejects a name already present in `hooktab`
@@ -3905,7 +4428,9 @@ mod tests {
         assert_eq!(addhookdef(h), 0);
         assert_eq!(deletehookdef(h), 0, "spliced out → 0");
         assert_eq!(deletehookdef(h), 1, "second delete misses → 1");
-        unsafe { drop(Box::from_raw(h)); }
+        unsafe {
+            drop(Box::from_raw(h));
+        }
     }
 
     /// `runhookdef` dispatches every registered Hookfn under `HOOKF_ALL`
@@ -3942,7 +4467,9 @@ mod tests {
 
         // Cleanup.
         assert_eq!(deletehookdef(h), 0);
-        unsafe { drop(Box::from_raw(h)); }
+        unsafe {
+            drop(Box::from_raw(h));
+        }
     }
 
     /// `runhookdef` calls only the LAST registered Hookfn when
@@ -3972,7 +4499,9 @@ mod tests {
         );
 
         assert_eq!(deletehookdef(h), 0);
-        unsafe { drop(Box::from_raw(h)); }
+        unsafe {
+            drop(Box::from_raw(h));
+        }
     }
 
     /// `deletehookdeffunc` removes a single Hookfn from the chain
@@ -3998,7 +4527,9 @@ mod tests {
         assert_eq!(H2_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         assert_eq!(deletehookdef(h), 0);
-        unsafe { drop(Box::from_raw(h)); }
+        unsafe {
+            drop(Box::from_raw(h));
+        }
     }
 
     /// `addhookfunc` / `deletehookfunc` return 1 when no hookdef with
@@ -4036,13 +4567,15 @@ mod tests {
             Box::into_raw(arr) as *mut crate::ported::zsh_h::hookdef;
         assert_eq!(addhookdefs(std::ptr::null(), base, 2), 0);
         assert_eq!(gethookdef("zshrs_test_arr_0"), base);
-        unsafe { assert_eq!(gethookdef("zshrs_test_arr_1"), base.add(1)); }
+        unsafe {
+            assert_eq!(gethookdef("zshrs_test_arr_1"), base.add(1));
+        }
         // Cleanup. Splice out then re-take ownership of the boxed array.
         unsafe {
             assert_eq!(deletehookdef(base), 0);
             assert_eq!(deletehookdef(base.add(1)), 0);
             drop(Box::from_raw(
-                base as *mut [crate::ported::zsh_h::hookdef; 2]
+                base as *mut [crate::ported::zsh_h::hookdef; 2],
             ));
         }
     }
@@ -4060,11 +4593,11 @@ mod modname_tests {
     #[test]
     fn modname_ok_accepts_canonical_zsh_module_paths() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modname_ok("zsh"),           1);
-        assert_eq!(modname_ok("zsh/datetime"),  1);
-        assert_eq!(modname_ok("zsh/zle"),       1);
-        assert_eq!(modname_ok("foo_bar"),       1);
-        assert_eq!(modname_ok("foo123"),        1);
+        assert_eq!(modname_ok("zsh"), 1);
+        assert_eq!(modname_ok("zsh/datetime"), 1);
+        assert_eq!(modname_ok("zsh/zle"), 1);
+        assert_eq!(modname_ok("foo_bar"), 1);
+        assert_eq!(modname_ok("foo123"), 1);
     }
 
     /// c:2179 — non-identifier chars (excluding `/`) MUST cause
@@ -4073,10 +4606,10 @@ mod modname_tests {
     #[test]
     fn modname_ok_rejects_special_chars() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modname_ok("zsh space"),  0);
-        assert_eq!(modname_ok("zsh-bad"),    0, "hyphen is not IIDENT");
-        assert_eq!(modname_ok("zsh.foo"),    0, "dot is not IIDENT");
-        assert_eq!(modname_ok("$foo"),       0);
+        assert_eq!(modname_ok("zsh space"), 0);
+        assert_eq!(modname_ok("zsh-bad"), 0, "hyphen is not IIDENT");
+        assert_eq!(modname_ok("zsh.foo"), 0, "dot is not IIDENT");
+        assert_eq!(modname_ok("$foo"), 0);
     }
 
     /// c:2177 — `if (!*p) return 1` runs at the START of the loop;
@@ -4125,11 +4658,13 @@ mod modname_tests {
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         // Seed an autoload entry not in the static builtintab.
-        t.autoload_builtins.insert("zshrs_test_autobin_x".to_string(),
-                                   "mymod".to_string());
+        t.autoload_builtins
+            .insert("zshrs_test_autobin_x".to_string(), "mymod".to_string());
         assert_eq!(t.del_autobin("zshrs_test_autobin_x", 0), 0);
-        assert!(!t.autoload_builtins.contains_key("zshrs_test_autobin_x"),
-            "successful del must remove ledger entry");
+        assert!(
+            !t.autoload_builtins.contains_key("zshrs_test_autobin_x"),
+            "successful del must remove ledger entry"
+        );
         // Second call → now "no such" → 2.
         assert_eq!(t.del_autobin("zshrs_test_autobin_x", 0), 2);
         assert_eq!(t.del_autobin("zshrs_test_autobin_x", FEAT_IGNORE), 0);
@@ -4146,8 +4681,8 @@ mod modname_tests {
         assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 2);
         assert_eq!(t.del_autocond("zshrs_test_cond_x", FEAT_IGNORE), 0);
         // Seed and delete.
-        t.autoload_conditions.insert("zshrs_test_cond_x".to_string(),
-                                     "mymod".to_string());
+        t.autoload_conditions
+            .insert("zshrs_test_cond_x".to_string(), "mymod".to_string());
         assert_eq!(t.del_autocond("zshrs_test_cond_x", 0), 0);
         assert!(!t.autoload_conditions.contains_key("zshrs_test_cond_x"));
     }
@@ -4161,7 +4696,10 @@ mod modname_tests {
         use crate::ported::module::FEAT_IGNORE;
         let mut t = modulestab::new();
         assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", 0), 2);
-        assert_eq!(t.del_autoparam("zshrs_test_param_x_unknown", FEAT_IGNORE), 0);
+        assert_eq!(
+            t.del_autoparam("zshrs_test_param_x_unknown", FEAT_IGNORE),
+            0
+        );
     }
 
     // `deletehookdef_returns_one_when_missing_zero_on_success` deleted —

@@ -20,20 +20,24 @@
 //! at compile time into typed expansion ops (`Op::ExpandParam`,
 //! `Op::Glob`, `Op::TildeExpand`, `Op::CmdSubst`, etc.).
 
+use crate::parse::CaseTerm;
+use crate::parse::ForList;
+use crate::parse::ZshCond;
 use crate::parse::{
     SublistOp, ZshAssign, ZshAssignValue, ZshCommand, ZshList, ZshPipe, ZshProgram, ZshSimple,
     ZshSublist,
 };
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use crate::ported::zsh_h::{
+    REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW,
+    REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT,
+    REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
+};
+use fusevm::op::file_test;
 use fusevm::op::Op;
 use fusevm::{ChunkBuilder, Value};
 use std::collections::HashMap;
-use crate::ported::zsh_h::{REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW};
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use std::sync::atomic::Ordering;
-use crate::parse::ForList;
-use crate::parse::CaseTerm;
-use crate::parse::ZshCond;
-use fusevm::op::file_test;
 
 /// AST → fusevm bytecode compiler.
 /// zshrs-original. Closest C analog is `bld_eprog()` from\n/// Src/parse.c:547 which emits wordcode for `.zwc` files; the\n/// difference is that this compiler emits typed VM ops the JIT can\n/// then specialize, rather than wordcode the runtime walks.
@@ -126,8 +130,10 @@ impl ZshCompiler {
         if self.errexit_suppress_depth > 0 {
             return;
         }
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ERREXIT_CHECK, 0), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ERREXIT_CHECK, 0),
+            0,
+        );
         self.builder.emit(Op::Pop, 0);
     }
 
@@ -201,8 +207,7 @@ impl ZshCompiler {
         // to the body (matches zsh's `lineno = 1` reset on
         // function entry at Src/init.c:1588).
         let raw_line = list.sublist.pipe.lineno;
-        let rel_line =
-            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend;
+        let rel_line = raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend;
         self.builder.emit(Op::LoadInt(rel_line as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
@@ -370,8 +375,10 @@ impl ZshCompiler {
                 // length (`${s:0:-2}` truncates from end).
                 self.builder
                     .emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING, 3), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING, 3),
+                    0,
+                );
             }
             ParamModifierKind::SubstringExpr {
                 offset_expr,
@@ -444,20 +451,26 @@ impl ZshCompiler {
                     self.dq_context_depth as i64
                 };
                 self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_REPLACE, 5), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_REPLACE, 5),
+                    0,
+                );
             }
             ParamModifierKind::Length => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1),
+                    0,
+                );
             }
             ParamModifierKind::FilterRemoveMatching { pattern } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FILTER, 2), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FILTER, 2),
+                    0,
+                );
             }
         }
     }
@@ -626,8 +639,10 @@ impl ZshCompiler {
                     let chunk = sub.builder.build();
                     let sub_idx = self.builder.add_sub_chunk(chunk);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 1), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 1),
+                        0,
+                    );
                     self.builder.emit(Op::SetStatus, 0);
                 } else {
                     // Bare `time` — print zero stats and exit 0.
@@ -672,8 +687,7 @@ impl ZshCompiler {
         // emit a BEGIN/END_INLINE_ENV pair around the command run so
         // SET_VAR can stash and restore each name's prior state.
         // Direct port of zsh's addvars()-list scoping in execute_simple.
-        let has_inline_env_scope =
-            !simple.assigns.is_empty() && !simple.words.is_empty();
+        let has_inline_env_scope = !simple.assigns.is_empty() && !simple.words.is_empty();
         if has_inline_env_scope {
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 0),
@@ -695,8 +709,10 @@ impl ZshCompiler {
             // C's `fputc('\n', xtrerr); fflush(xtrerr);` at
             // Src/exec.c:3398 (the assignment-only return path
             // through execcmd_exec).
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_NEWLINE, 0), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_NEWLINE, 0),
+                0,
+            );
             self.builder.emit(Op::Pop, 0);
             return;
         }
@@ -871,8 +887,10 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.continue_patches[idx].push(j);
             } else {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_CONTINUE, 0), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_CONTINUE, 0),
+                    0,
+                );
                 self.builder.emit(Op::Pop, 0);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -892,10 +910,8 @@ impl ZshCompiler {
         // ordinary cmds in this context — the walk doesn't depend on
         // the wordcode distinction past `getnode2` (c:3035), and the
         // static BUILTINS table doesn't model an enabled/disabled bit.
-        let dispatch = crate::ported::exec::execcmd_exec(
-            &simple.words,
-            crate::ported::zsh_h::WC_SIMPLE,
-        );
+        let dispatch =
+            crate::ported::exec::execcmd_exec(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
         let precmd_skip = dispatch.precmd_skip;
 
         // Builtin or function or external. Push args first (post-strip).
@@ -919,8 +935,10 @@ impl ZshCompiler {
         // (trace_argc - 1) of them so the modifier-victim slot is
         // accounted for as the new cmd name.
         let trace_argc = (simple.words.len() - precmd_skip) as u8;
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc),
+            0,
+        );
         self.builder.emit(Op::Pop, 0);
 
         // `shopt` is bash-only; zsh has no such builtin. Force external lookup
@@ -944,9 +962,7 @@ impl ZshCompiler {
         // strips at line 891 above; mirror for builtin_id lookup
         // so `builtin false` runs `false` (returning 1) instead of
         // falling through to BUILTIN_BUILTIN no-op.
-        let dispatch_first_raw: &str = if precmd_skip > 0
-            && precmd_skip < simple.words.len()
-        {
+        let dispatch_first_raw: &str = if precmd_skip > 0 && precmd_skip < simple.words.len() {
             &simple.words[precmd_skip]
         } else {
             first
@@ -969,8 +985,10 @@ impl ZshCompiler {
             // `return`/`exit` short-circuit. Drain cmd_stack so the
             // pushes from enclosing if/then/for/etc. don't leak past
             // the function's return target.
-            if first == "return" || first == "exit"
-                || first_clean == "return" || first_clean == "exit"
+            if first == "return"
+                || first == "exit"
+                || first_clean == "return"
+                || first_clean == "exit"
             {
                 self.emit_cmd_stack_drain();
                 let j = self.builder.emit(Op::Jump(0), 0);
@@ -1010,13 +1028,8 @@ impl ZshCompiler {
     fn compile_redir(&mut self, redir: &crate::parse::ZshRedir) {
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
-            REDIR_READ
-            | REDIR_HEREDOC
-            | REDIR_HEREDOCDASH
-            | REDIR_HERESTR
-            | REDIR_READWRITE
-            | REDIR_MERGEIN
-            | REDIR_INPIPE => 0,
+            REDIR_READ | REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR | REDIR_READWRITE
+            | REDIR_MERGEIN | REDIR_INPIPE => 0,
             _ => 1,
         };
         let fd = if redir.fd >= 0 {
@@ -1108,8 +1121,10 @@ impl ZshCompiler {
             let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
             self.builder.emit(Op::LoadConst(vid_const), 0);
             self.builder.emit(Op::LoadInt(op_byte as i64), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPEN_NAMED_FD, 3), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_OPEN_NAMED_FD, 3),
+                0,
+            );
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
@@ -1217,8 +1232,10 @@ impl ZshCompiler {
                 // where the C body emits `printprompt4()` (gated by
                 // doneps4) then `fprintf("%s=", name);
                 // quotedzputs(val); fputc(' ');` per-assignment.
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2),
+                    0,
+                );
                 self.builder.emit(Op::Pop, 0);
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
@@ -1549,9 +1566,9 @@ impl ZshCompiler {
                 } else {
                     &value_chars[..]
                 };
-                let needs_runtime = inner_chars.iter().any(|c| {
-                    matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}')
-                });
+                let needs_runtime = inner_chars
+                    .iter()
+                    .any(|c| matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'));
                 if prefix_is_ident && value_is_whole_dq && !needs_runtime {
                     let inner: String = inner_chars.iter().collect();
                     let inner = crate::lex::untokenize(&inner);
@@ -1739,8 +1756,10 @@ impl ZshCompiler {
                 // join an in-stack Array without a dedicated op.)
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1),
+                    0,
+                );
             }
             return;
         }
@@ -1842,13 +1861,14 @@ impl ZshCompiler {
             // handling for `@`/`*`/`argv` in the chklen branch.
             // Without this, the bare-name fast path missed `@`/`*`
             // and the fallback emitted `0`.
-            let is_special_positional =
-                bare_name == "@" || bare_name == "*" || bare_name == "argv";
+            let is_special_positional = bare_name == "@" || bare_name == "*" || bare_name == "argv";
             if is_ident || is_positional || is_special_positional {
                 let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1),
+                    0,
+                );
                 return;
             }
         }
@@ -1907,10 +1927,14 @@ impl ZshCompiler {
                 (true, rest)
             };
             let valid = !name_part.is_empty()
-                && name_part.chars().next()
+                && name_part
+                    .chars()
+                    .next()
                     .map(|c| c == '_' || c.is_ascii_alphabetic())
                     .unwrap_or(false)
-                && name_part.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                && name_part
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric());
             if valid {
                 let idx = self.builder.add_constant(Value::str(name_part));
                 self.builder.emit(Op::LoadConst(idx), 0);
@@ -2008,22 +2032,32 @@ impl ZshCompiler {
             if let Some(rest) = inner.strip_prefix('~') {
                 // Double-tilde — no-op flag, just emit bare name.
                 let valid = !rest.is_empty()
-                    && rest.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && rest
+                        .chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
                     && rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
                 if valid {
                     let idx = self.builder.add_constant(Value::str(rest));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    self.builder.emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                     return;
                 }
             } else {
                 let valid = !inner.is_empty()
-                    && inner.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && inner
+                        .chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
                     && inner.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
                 if valid {
                     let idx = self.builder.add_constant(Value::str(inner));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    self.builder.emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                     // Apply glob expansion to the resulting scalar.
                     // BUILTIN_GLOB_EXPAND pops a string, runs
                     // expand_glob (filesystem matching), pushes
@@ -2053,7 +2087,11 @@ impl ZshCompiler {
                 .or_else(|| inner.strip_suffix("[*]"))
                 .unwrap_or(inner);
             let valid = !bare.is_empty()
-                && bare.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && bare
+                    .chars()
+                    .next()
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
                 && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
             if valid {
                 let idx = self.builder.add_constant(Value::str(bare));
@@ -2262,14 +2300,13 @@ impl ZshCompiler {
                 // matching keys with space and lost array shape (zinit
                 // hook ordering pattern `${(@on)m[(I)pat]}`).
                 if flags.contains('@')
-                    && flags.chars().any(|c| matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
-                    && (key.starts_with("(I)")
-                        || key.starts_with("(R)")
-                        || key.starts_with("(K)"))
+                    && flags
+                        .chars()
+                        .any(|c| matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
+                    && (key.starts_with("(I)") || key.starts_with("(R)") || key.starts_with("(K)"))
                 {
-                    if let Some(inner) = untoked
-                        .strip_prefix("${")
-                        .and_then(|s| s.strip_suffix('}'))
+                    if let Some(inner) =
+                        untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
@@ -2312,13 +2349,15 @@ impl ZshCompiler {
                 // string as a NEW parameter name and fail. Skip the
                 // wrap.
                 let key_starts_with_idx_flag = key.starts_with('(')
-                    && key.find(')').map(|p| {
-                        key[1..p].chars().any(|c| matches!(c, 'I' | 'i'))
-                    }).unwrap_or(false);
+                    && key
+                        .find(')')
+                        .map(|p| key[1..p].chars().any(|c| matches!(c, 'I' | 'i')))
+                        .unwrap_or(false);
                 let key_starts_with_value_flag = key.starts_with('(')
-                    && key.find(')').map(|p| {
-                        key[1..p].chars().any(|c| matches!(c, 'R' | 'r'))
-                    }).unwrap_or(false);
+                    && key
+                        .find(')')
+                        .map(|p| key[1..p].chars().any(|c| matches!(c, 'R' | 'r')))
+                        .unwrap_or(false);
                 // `(k)NAME[(I)pat]` / `(k)NAME[(i)pat]` / `(v)NAME[(R)pat]`
                 // / `(v)NAME[(r)pat]` — outer flag matches what the
                 // subscript-flag returns. zsh treats this combo as a
@@ -2417,8 +2456,7 @@ impl ZshCompiler {
         // (including the special `\(#e)` / `\(#s)` anchor cases).
         // Without this, `${(M)arr:#*\\(#e)}` falls through to the
         // EXPAND_TEXT bridge which scalar-flattens.
-        let try_bridge_array = !has_bnull
-            || (untoked.starts_with("${(") && untoked.contains(":#"));
+        let try_bridge_array = !has_bnull || (untoked.starts_with("${(") && untoked.contains(":#"));
         if try_bridge_array {
             if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
                 if let Some(close) = matching_paren_close(inner) {
@@ -2434,8 +2472,7 @@ impl ZshCompiler {
                     //      (##, %%, /, etc.) on `NAME[@]` go through
                     //      their own per-element fast path that
                     //      already preserves shape.
-                    let has_at_filter = after_flags.contains("[@]")
-                        && after_flags.contains(":#");
+                    let has_at_filter = after_flags.contains("[@]") && after_flags.contains(":#");
                     // (M) / (R) filter on a `:#` operator — keeps
                     // matching elements (M) or first-match index (R).
                     // For arrays this MUST return array shape so the
@@ -2446,9 +2483,9 @@ impl ZshCompiler {
                     // array. Direct port of zsh's aval thread through
                     // paramsubst — Src/subst.c handles the (M)+:# combo
                     // by walking aval per element.
-                    let has_filter_with_match_flag =
-                        (flag_chain.contains('M') || flag_chain.contains('R'))
-                            && after_flags.contains(":#");
+                    let has_filter_with_match_flag = (flag_chain.contains('M')
+                        || flag_chain.contains('R'))
+                        && after_flags.contains(":#");
                     // `(@)` with a `[(I)...]` / `[(R)...]` subscript —
                     // assoc-array key-pattern lookup that returns
                     // multiple matches. zinit's hook ordering pattern
@@ -2456,16 +2493,14 @@ impl ZshCompiler {
                     // and sorts them. Must return array shape so each
                     // key emerges as a separate word. Without this,
                     // the keys joined with space.
-                    let at_with_index_subscript =
-                        flag_chain.contains('@')
-                            && (after_flags.contains("[(I)")
-                                || after_flags.contains("[(R)")
-                                || after_flags.contains("[(K)"));
-                    let need_array =
-                        (flag_chain.contains('@') && after_flags.contains("${"))
-                            || has_at_filter
-                            || has_filter_with_match_flag
-                            || at_with_index_subscript;
+                    let at_with_index_subscript = flag_chain.contains('@')
+                        && (after_flags.contains("[(I)")
+                            || after_flags.contains("[(R)")
+                            || after_flags.contains("[(K)"));
+                    let need_array = (flag_chain.contains('@') && after_flags.contains("${"))
+                        || has_at_filter
+                        || has_filter_with_match_flag
+                        || at_with_index_subscript;
                     if need_array {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
@@ -2620,8 +2655,10 @@ impl ZshCompiler {
             if let Some(inner) = strip_cmd_subst(&preserved_for_cmdsub) {
                 let idx = self.builder.add_constant(Value::str(inner));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_SUBST_TEXT, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_CMD_SUBST_TEXT, 1),
+                    0,
+                );
                 // Word-split the result on IFS when the surrounding
                 // word is unquoted. zsh: `f $(echo a b c)` passes
                 // three args; `f "$(echo a b c)"` passes one. The
@@ -2759,8 +2796,10 @@ impl ZshCompiler {
                 if needs_brace && !parent_is_dq {
                     // Brace-expand the assembled scalar. Pops Value::Str,
                     // runs xpandbraces, pushes Value::Array.
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0),
+                        0,
+                    );
                 }
                 if needs_glob && !parent_is_dq {
                     // Glob-expand the assembled scalar at runtime. The
@@ -2826,8 +2865,10 @@ impl ZshCompiler {
             && (preserved_str.contains('{') || preserved_str.contains('\u{87}'))
             && self.dq_context_depth == 0
         {
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0),
+                0,
+            );
         }
     }
 
@@ -3051,8 +3092,10 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(body_idx as i64), 0);
 
         let argc = (words.len() + 2) as u8;
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_SELECT, argc), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_SELECT, argc),
+            0,
+        );
         self.builder.emit(Op::SetStatus, 0);
     }
 
@@ -3063,8 +3106,10 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
         // Then flatten + iterate, same shape as compile_for_words' tail.
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, 1), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, 1),
+            0,
+        );
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let len_slot = self.next_slot;
@@ -3093,7 +3138,9 @@ impl ZshCompiler {
         // xtrace: emit `name=value\n` per iteration. Direct port of
         // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
         let assign_prefix = format!("{}=", var);
-        let prefix_const = self.builder.add_constant(Value::str(assign_prefix.as_str()));
+        let prefix_const = self
+            .builder
+            .add_constant(Value::str(assign_prefix.as_str()));
         self.builder.emit(Op::LoadConst(prefix_const), 0);
         let var_const2 = self.builder.add_constant(Value::str(var));
         self.builder.emit(Op::LoadConst(var_const2), 0);
@@ -3217,7 +3264,9 @@ impl ZshCompiler {
             //   }
             // XTRACE_LINE no-ops when -x is off, so cheap unconditionally.
             let assign_prefix = format!("{}=", name);
-            let prefix_const = self.builder.add_constant(Value::str(assign_prefix.as_str()));
+            let prefix_const = self
+                .builder
+                .add_constant(Value::str(assign_prefix.as_str()));
             self.builder.emit(Op::LoadConst(prefix_const), 0);
             let name_const2 = self.builder.add_constant(Value::str(*name));
             self.builder.emit(Op::LoadConst(name_const2), 0);
@@ -3557,7 +3606,9 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(body_const), 0);
             let source_const = self.builder.add_constant(Value::str(source_text.as_str()));
             self.builder.emit(Op::LoadConst(source_const), 0);
-            let anchor_const = self.builder.add_constant(Value::str(line_base_str.as_str()));
+            let anchor_const = self
+                .builder
+                .add_constant(Value::str(line_base_str.as_str()));
             self.builder.emit(Op::LoadConst(anchor_const), 0);
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_REGISTER_COMPILED_FN, 4),
@@ -3789,8 +3840,8 @@ impl ZshCompiler {
                     // wrapping in DQ markers makes compile_word_str's
                     // markup-strip skip the Snull pair and the regex
                     // engine sees the meta bytes verbatim.
-                    let already_sq_wrapped = right.starts_with('\u{9d}')
-                        && right.ends_with('\u{9d}');
+                    let already_sq_wrapped =
+                        right.starts_with('\u{9d}') && right.ends_with('\u{9d}');
                     let dq_wrapped = if right.starts_with('\u{9e}') || already_sq_wrapped {
                         right.clone()
                     } else {
@@ -3838,15 +3889,13 @@ impl ZshCompiler {
                 // these cases, mirroring the difference between
                 // `[[ x == "$pat" ]]` (literal) and `[[ x == $pat ]]`
                 // (pattern). Skip for `=~` (regex), file tests, etc.
-                let rhs_is_pure_dq = right.starts_with('\u{9e}')
-                    && right.ends_with('\u{9e}')
-                    && {
-                        // No unquoted glob meta outside the DQ wrap.
-                        // The DQ pair brackets the whole word — count
-                        // Dnull markers; if exactly 2, the whole word
-                        // is one DQ span.
-                        right.chars().filter(|&c| c == '\u{9e}').count() == 2
-                    };
+                let rhs_is_pure_dq = right.starts_with('\u{9e}') && right.ends_with('\u{9e}') && {
+                    // No unquoted glob meta outside the DQ wrap.
+                    // The DQ pair brackets the whole word — count
+                    // Dnull markers; if exactly 2, the whole word
+                    // is one DQ span.
+                    right.chars().filter(|&c| c == '\u{9e}').count() == 2
+                };
                 if is_pattern_op && op_clean != "=~" && rhs_is_pure_dq {
                     if op_clean == "!=" {
                         self.builder.emit(Op::StrEq, 0);
@@ -3923,14 +3972,18 @@ impl ZshCompiler {
             }
             "-O" => {
                 // Owned by effective UID.
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_USER, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_USER, 1),
+                    0,
+                );
                 return;
             }
             "-G" => {
                 // Owned by effective GID.
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_GROUP, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_OWNED_BY_GROUP, 1),
+                    0,
+                );
                 return;
             }
             "-N" => {
@@ -4388,7 +4441,9 @@ fn is_splice_expansion(s: &str) -> bool {
                 .or_else(|| rest.strip_suffix("[*]"))
                 .unwrap_or(rest);
             if !bare.is_empty()
-                && bare.chars().next()
+                && bare
+                    .chars()
+                    .next()
                     .map(|c| c == '_' || c.is_ascii_alphabetic())
                     .unwrap_or(false)
                 && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
@@ -4551,11 +4606,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         // is consistent within a word — accept any of the three
         // as the close.
         let mut j = i + 1;
-        while j < chars.len()
-            && chars[j] != '`'
-            && chars[j] != '\u{93}'
-            && chars[j] != '\u{99}'
-        {
+        while j < chars.len() && chars[j] != '`' && chars[j] != '\u{93}' && chars[j] != '\u{99}' {
             j += 1;
         }
         return (j + 1).min(chars.len());
@@ -4927,7 +4978,8 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if first == b'+' && bytes.len() > 1 {
         let rest = &inner[1..];
         // Identifier OR identifier with `[…]` subscript.
-        let name_part: String = rest.chars()
+        let name_part: String = rest
+            .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '@' || *c == '*')
             .collect();
         if !name_part.is_empty() {
@@ -4936,7 +4988,10 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // resolve subscript/magic-assoc + emit "1"/"0".
             return Some(ParamModifier {
                 name: rest.to_string(),
-                kind: ParamModifierKind::DefaultFamily { op: 8, rhs: String::new() },
+                kind: ParamModifierKind::DefaultFamily {
+                    op: 8,
+                    rhs: String::new(),
+                },
             });
         }
     }
@@ -6078,12 +6133,7 @@ fn unquoted(s: &str, target: char) -> bool {
             prev = c;
             continue;
         }
-        if c == target
-            && prev != '\x00'
-            && prev != '\u{9f}'
-            && !inside_sq
-            && !inside_dq
-        {
+        if c == target && prev != '\x00' && prev != '\u{9f}' && !inside_sq && !inside_dq {
             return true;
         }
         prev = c;

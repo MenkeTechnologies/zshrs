@@ -32,17 +32,12 @@ const C_ROOT: &str = "src/zsh/Src";
 
 /// Files exempt from the 1:1 file-existence rule. These are pure
 /// organizational / build-system files with no behavior of their own.
-const EXEMPT_FILE_STEMS: &[&str] = &[
-    "lib", "main", "mod",
-];
+const EXEMPT_FILE_STEMS: &[&str] = &["lib", "main", "mod"];
 
 /// Top-level src/ files that historically have no direct C counterpart
 /// (build glue, top-level entry, etc.). Add NOTHING new here without
 /// maintainer sign-off — this list is meant to shrink over time.
-const EXEMPT_FILE_PATHS: &[&str] = &[
-    "src/lib.rs",
-    "src/zle_main",
-];
+const EXEMPT_FILE_PATHS: &[&str] = &["src/lib.rs", "src/zle_main"];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -269,10 +264,7 @@ fn every_top_level_fn_cites_its_c_source() {
                 if let Some(caps) = fn_re.captures(line) {
                     let name = &caps["name"];
                     // Skip standard exemptions.
-                    if name == "main"
-                        || name.starts_with("test_")
-                        || name.starts_with("bench_")
-                    {
+                    if name == "main" || name.starts_with("test_") || name.starts_with("bench_") {
                         // fall through to brace tracking
                     } else if !has_port_citation(&lines, i, &cite_re) {
                         missing.push(format!(

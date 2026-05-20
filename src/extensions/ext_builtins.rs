@@ -14,34 +14,33 @@
 
 #![allow(unused_imports)]
 
-use std::env;
+use crate::parse::Redirect;
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::vm_helper::*;
-use crate::parse::Redirect;
 use crate::ported::zsh_h::PM_UNDEFINED;
-use std::process::{Command, Stdio};
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-use std::sync::atomic::Ordering;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::collections::VecDeque;
-use std::fs::OpenOptions;
-use std::path::Component::*;
 use rand::seq::SliceRandom;
-use std::path::Path;
+use rand::Rng;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::env;
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::collections::BTreeMap;
-use sha2::{Digest, Sha256};
-use std::net::ToSocketAddrs;
-use std::time::{SystemTime, UNIX_EPOCH};
-use rand::Rng;
-use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::fs::PermissionsExt;
+use std::fs::OpenOptions;
 use std::io::Read as IoRead;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::ToSocketAddrs;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Component::*;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 impl ShellExecutor {
-
     /// caller - display call stack (bash)
     /// caller [N] — bash builtin returning the location of the
     /// current frame N. With no arg or N=0: 'LINE FUNC' (or just
@@ -157,9 +156,13 @@ impl ShellExecutor {
                 green("missing")
             },
         );
-        println!("  hash table:  {} entries",
-            crate::ported::hashtable::cmdnamtab_lock().read()
-                .map(|t| t.len()).unwrap_or(0));
+        println!(
+            "  hash table:  {} entries",
+            crate::ported::hashtable::cmdnamtab_lock()
+                .read()
+                .map(|t| t.len())
+                .unwrap_or(0)
+        );
         println!();
 
         // --- FPATH ---
@@ -172,8 +175,13 @@ impl ShellExecutor {
         }
         println!("  functions:   {} loaded", self.function_names().len());
         // Count canonical shfunctab entries with PM_UNDEFINED set.
-        let autoload_count = crate::ported::hashtable::shfunctab_lock().read()
-            .map(|t| t.iter().filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0).count())
+        let autoload_count = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| {
+                t.iter()
+                    .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
+                    .count()
+            })
             .unwrap_or(0);
         println!("  autoload:    {} pending", autoload_count);
         println!();
@@ -328,21 +336,58 @@ impl ShellExecutor {
         // --- Shell State ---
         println!("{}", bold("Shell State"));
         println!("  aliases:     {}", self.alias_entries().len());
-        println!("  global:      {} aliases", self.global_alias_entries().len());
-        println!("  suffix:      {} aliases", self.suffix_alias_entries().len());
-        println!("  variables:   {}", crate::ported::params::paramtab().read().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
-        println!("  arrays:      {}", crate::ported::params::paramtab().read().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
-        println!("  assoc:       {}", crate::ported::params::paramtab_hashed_storage().lock().map(|m| m.len()).unwrap_or(0));
+        println!(
+            "  global:      {} aliases",
+            self.global_alias_entries().len()
+        );
+        println!(
+            "  suffix:      {} aliases",
+            self.suffix_alias_entries().len()
+        );
+        println!(
+            "  variables:   {}",
+            crate::ported::params::paramtab()
+                .read()
+                .map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count())
+                .unwrap_or(0)
+        );
+        println!(
+            "  arrays:      {}",
+            crate::ported::params::paramtab()
+                .read()
+                .map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count())
+                .unwrap_or(0)
+        );
+        println!(
+            "  assoc:       {}",
+            crate::ported::params::paramtab_hashed_storage()
+                .lock()
+                .map(|m| m.len())
+                .unwrap_or(0)
+        );
         println!(
             "  options:     {} set",
-            crate::ported::options::opt_state_snapshot().iter().filter(|(_, v)| **v).count()
+            crate::ported::options::opt_state_snapshot()
+                .iter()
+                .filter(|(_, v)| **v)
+                .count()
         );
         println!("  traps:       {} active", self.traps.len());
         // Count entries across all `<hook>_functions` arrays in paramtab.
-        let hook_count: usize = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"]
-            .iter()
-            .map(|h| self.array(&format!("{}_functions", h)).map_or(0, |a| a.len()))
-            .sum();
+        let hook_count: usize = [
+            "chpwd",
+            "precmd",
+            "preexec",
+            "periodic",
+            "zshexit",
+            "zshaddhistory",
+        ]
+        .iter()
+        .map(|h| {
+            self.array(&format!("{}_functions", h))
+                .map_or(0, |a| a.len())
+        })
+        .sum();
         println!("  hooks:       {} registered", hook_count);
         println!();
 
@@ -704,8 +749,12 @@ impl ShellExecutor {
             // Route through bin_zprof -c so the C-faithful clear path
             // resets CALLS/NCALLS/ARCS/NARCS uniformly (zprof.c:141-147).
             {
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
+                let mut ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 ops.ind[b'c' as usize] = 1;
                 crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
             };
@@ -721,10 +770,14 @@ impl ShellExecutor {
                 println!("{}", dim("no profile data"));
             } else {
                 {
-                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                    argscount: 0, argsalloc: 0 };
-                crate::zprof::bin_zprof("profile", &[], &ops, 0);
-            };
+                    let ops = options {
+                        ind: [0u8; MAX_OPS],
+                        args: Vec::new(),
+                        argscount: 0,
+                        argsalloc: 0,
+                    };
+                    crate::zprof::bin_zprof("profile", &[], &ops, 0);
+                };
             }
             return 0;
         }
@@ -755,11 +808,15 @@ impl ShellExecutor {
         // Reset zprof state through the C-faithful -c path so the
         // module-level CALLS/NCALLS/ARCS/NARCS tables start fresh.
         {
-                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                        argscount: 0, argsalloc: 0 };
-                ops.ind[b'c' as usize] = 1;
-                crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
+            let mut ops = options {
+                ind: [0u8; MAX_OPS],
+                args: Vec::new(),
+                argscount: 0,
+                argsalloc: 0,
             };
+            ops.ind[b'c' as usize] = 1;
+            crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
+        };
 
         let t0 = std::time::Instant::now();
         let result = self.execute_script(&code);
@@ -793,8 +850,12 @@ impl ShellExecutor {
         if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             println!("{}", bold("function breakdown"));
             {
-                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                    argscount: 0, argsalloc: 0 };
+                let ops = options {
+                    ind: [0u8; MAX_OPS],
+                    args: Vec::new(),
+                    argscount: 0,
+                    argsalloc: 0,
+                };
                 crate::zprof::bin_zprof("profile", &[], &ops, 0);
             };
         }
@@ -2029,7 +2090,6 @@ impl ShellExecutor {
             _ => 1,
         }
     }
-
 }
 
 /// promptinit autoload — seeds `$prompt_themes` array + default
@@ -2039,19 +2099,30 @@ pub(crate) fn promptinit(_args: &[String]) -> i32 {
     crate::ported::params::setaparam(
         "prompt_themes",
         vec![
-            "adam1".to_string(), "adam2".to_string(), "bart".to_string(),
-            "bigfade".to_string(), "clint".to_string(), "default".to_string(),
-            "elite".to_string(), "elite2".to_string(), "fade".to_string(),
-            "fire".to_string(), "minimal".to_string(), "off".to_string(),
-            "oliver".to_string(), "pws".to_string(), "redhat".to_string(),
-            "restore".to_string(), "suse".to_string(), "walters".to_string(),
+            "adam1".to_string(),
+            "adam2".to_string(),
+            "bart".to_string(),
+            "bigfade".to_string(),
+            "clint".to_string(),
+            "default".to_string(),
+            "elite".to_string(),
+            "elite2".to_string(),
+            "fade".to_string(),
+            "fire".to_string(),
+            "minimal".to_string(),
+            "off".to_string(),
+            "oliver".to_string(),
+            "pws".to_string(),
+            "redhat".to_string(),
+            "restore".to_string(),
+            "suse".to_string(),
+            "walters".to_string(),
             "zefram".to_string(),
         ],
     );
     crate::ported::params::setsparam("prompt_theme", "default");
     0
 }
-
 
 /// prompt autoload — switches to a prompt theme. Free function
 /// per "no Rust state mirrors". Reads/writes paramtab directly;
@@ -2076,7 +2147,9 @@ pub(crate) fn prompt(args: &[String]) -> i32 {
             if let Ok(tab) = crate::ported::params::paramtab().read() {
                 if let Some(pm) = tab.get("prompt_themes") {
                     if let Some(themes) = &pm.u_arr {
-                        for t in themes { println!("  {}", t); }
+                        for t in themes {
+                            println!("  {}", t);
+                        }
                     }
                 }
             }
@@ -2103,7 +2176,6 @@ pub(crate) fn prompt(args: &[String]) -> i32 {
 }
 
 impl ShellExecutor {
-
     pub(crate) fn builtin_cat(&self, args: &[String]) -> i32 {
         // coreutils cat(1) port: adds -E (show $ at line end),
         // -T (show TAB as ^I), -A (= -vET), -b (number nonempty),
@@ -2246,7 +2318,11 @@ impl ShellExecutor {
                         io::copy(&mut handle, &mut stdout)?;
                     } else {
                         let mut f = std::fs::File::open(file).inspect_err(|e| {
-                            eprintln!("cat: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                            eprintln!(
+                                "cat: {}: {}",
+                                file,
+                                crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                            );
                         })?;
                         io::copy(&mut f, &mut stdout)?;
                     }
@@ -2257,7 +2333,11 @@ impl ShellExecutor {
                     Box::new(BufReader::new(io::stdin()))
                 } else {
                     let f = std::fs::File::open(file).inspect_err(|e| {
-                        eprintln!("cat: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                        eprintln!(
+                            "cat: {}: {}",
+                            file,
+                            crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                        );
                     })?;
                     Box::new(BufReader::new(f))
                 };
@@ -2295,7 +2375,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_head(&self, args: &[String]) -> i32 {
-
         // -n N: keep first N lines. -n -N: keep all BUT the last N
         // lines (coreutils extension). Negative is encoded by a
         // 'skip_last' tail count.
@@ -2414,7 +2493,11 @@ impl ShellExecutor {
                     match std::fs::File::open(file) {
                         Ok(f) => Box::new(f),
                         Err(e) => {
-                            eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                            eprintln!(
+                                "head: {}: {}",
+                                file,
+                                crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                            );
                             return 1;
                         }
                     }
@@ -2434,7 +2517,11 @@ impl ShellExecutor {
                     match std::fs::File::open(file) {
                         Ok(f) => Box::new(f),
                         Err(e) => {
-                            eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                            eprintln!(
+                                "head: {}: {}",
+                                file,
+                                crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                            );
                             return 1;
                         }
                     }
@@ -2458,7 +2545,11 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                        eprintln!(
+                            "head: {}: {}",
+                            file,
+                            crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                        );
                         return 1;
                     }
                 }
@@ -2487,7 +2578,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_tail(&self, args: &[String]) -> i32 {
-
         let mut lines = 10usize;
         // Some(N) when -c N was given — switches to byte-count mode.
         let mut bytes: Option<usize> = None;
@@ -2599,7 +2689,11 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("tail: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                        eprintln!(
+                            "tail: {}: {}",
+                            file,
+                            crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                        );
                         return 1;
                     }
                 }
@@ -2653,7 +2747,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_wc(&self, args: &[String]) -> i32 {
-
         let mut count_lines = false;
         let mut count_words = false;
         let mut count_bytes = false;
@@ -2718,7 +2811,11 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("wc: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
+                        eprintln!(
+                            "wc: {}: {}",
+                            file,
+                            crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0))
+                        );
                         return 1;
                     }
                 }
@@ -3452,7 +3549,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_find(&self, args: &[String]) -> i32 {
-
         let mut paths: Vec<&str> = Vec::new();
         let mut name_pattern: Option<&str> = None;
         let mut type_filter: Option<char> = None;
@@ -3555,7 +3651,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_uniq(&self, args: &[String]) -> i32 {
-
         let mut count = false;
         let mut repeated = false;
         let mut unique_only = false;
@@ -3892,7 +3987,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_tr(&self, args: &[String]) -> i32 {
-
         if args.is_empty() {
             eprintln!("tr: missing operand");
             return 1;
@@ -7468,7 +7562,9 @@ impl ShellExecutor {
 // `rlimits.c` itself.
 // =====================================================================
 
-use crate::ported::builtins::rlimits::{bin_limit as rl_bin_limit, bin_ulimit as rl_bin_ulimit, bin_unlimit as rl_bin_unlimit};
+use crate::ported::builtins::rlimits::{
+    bin_limit as rl_bin_limit, bin_ulimit as rl_bin_ulimit, bin_unlimit as rl_bin_unlimit,
+};
 use crate::ported::builtins::sched::bin_sched as sc_bin_sched;
 use crate::ported::modules::clone::bin_clone as cl_bin_clone;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -7495,7 +7591,12 @@ impl ShellExecutor {
     /// dispatcher-filled `ops`. The bridge passes a zero-init
     /// `options` to match.
     pub(crate) fn bin_ulimit(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         rl_bin_ulimit("ulimit", args, &ops, 0)
     }
 
@@ -7504,7 +7605,12 @@ impl ShellExecutor {
     /// `-N`/`-o`/`--` flags inline and ignores the dispatcher-filled
     /// `ops`. The bridge passes a zero-init `options` to match.
     pub(crate) fn bin_sched(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         sc_bin_sched("sched", args, &ops, 0)
     }
 
@@ -7512,7 +7618,12 @@ impl ShellExecutor {
     /// option-string (clone.c:110) — `bin_clone` ignores `ops`/`func`.
     /// The bridge passes a zero-init `options` to match.
     pub(crate) fn bin_clone(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         cl_bin_clone("clone", args, &ops, 0)
     }
 }
@@ -7525,16 +7636,28 @@ impl ShellExecutor {
 // and the residual argv. This is the dispatcher slice C does inside
 // `Src/builtin.c:parseopts`.
 fn build_short_opts(args: &[String], allowed: &[u8]) -> (options, Vec<String>) {
-    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+    let mut ops = options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
     let mut i: usize = 0;
     while i < args.len() {
         let a = args[i].as_bytes();
-        if a.len() < 2 || a[0] != b'-' || a == b"--" { break; }
+        if a.len() < 2 || a[0] != b'-' || a == b"--" {
+            break;
+        }
         let mut ok = true;
         for &c in &a[1..] {
-            if !allowed.contains(&c) { ok = false; break; }
+            if !allowed.contains(&c) {
+                ok = false;
+                break;
+            }
         }
-        if !ok { break; }
+        if !ok {
+            break;
+        }
         for &c in &a[1..] {
             ops.ind[c as usize] = 1;
         }
@@ -7548,7 +7671,6 @@ fn build_short_opts(args: &[String], allowed: &[u8]) -> (options, Vec<String>) {
 // these zshrs-specific builtins / autoload-style helpers don't
 // need executor state, so they live as free fns.
 // ─────────────────────────────────────────────────────────
-
 
 /// readarray/mapfile - read lines into array (bash)
 pub(crate) fn readarray(args: &[String]) -> i32 {
@@ -7676,17 +7798,14 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
     0
 }
 
-
-
 pub(crate) fn shopt(args: &[String]) -> i32 {
     if args.is_empty() {
         // List all shell options. Sorted by name so output is
         // deterministic across runs (was HashMap-iteration-order
         // → flickered between runs and broke `shopt | diff`).
-        let opts_snapshot: Vec<(String, bool)> =
-            crate::ported::options::opt_state_snapshot()
-                .into_iter()
-                .collect();
+        let opts_snapshot: Vec<(String, bool)> = crate::ported::options::opt_state_snapshot()
+            .into_iter()
+            .collect();
         let mut sorted = opts_snapshot;
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
         for (opt, val) in &sorted {
@@ -7733,7 +7852,6 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     0
 }
 
-
 /// `nocorrect CMD ARGS...` — disable spelling correction for CMD
 /// then dispatch the rest. In `-fc` / non-interactive contexts
 /// spelling correction is already off, so this reduces to plain
@@ -7755,7 +7873,6 @@ pub(crate) fn nocorrect(args: &[String], _redirects: &[Redirect]) -> i32 {
     // not as a builtin call.
     0
 }
-
 
 /// zsleep - sleep with fractional seconds
 pub(crate) fn zsleep(args: &[String]) -> i32 {
@@ -7792,7 +7909,6 @@ pub(crate) fn zsleep(args: &[String]) -> i32 {
     std::thread::sleep(std::time::Duration::from_secs_f64(capped));
     0
 }
-
 
 /// cp - copy files
 /// Port from zsh/Src/Modules/files.c recursive copy functionality
@@ -7939,7 +8055,6 @@ pub(crate) fn cp_impl(args: &[String]) -> i32 {
     cp_status
 }
 
-
 /// zln/zmv/zcp - file operations (zsh/files module)
 pub(crate) fn zfiles(cmd: &str, args: &[String]) -> i32 {
     let mut force = false;
@@ -8021,7 +8136,6 @@ pub(crate) fn zfiles(cmd: &str, args: &[String]) -> i32 {
     0
 }
 
-
 /// coproc - manage coprocesses
 pub(crate) fn coproc(args: &[String]) -> i32 {
     // Basic coproc implementation
@@ -8050,7 +8164,6 @@ pub(crate) fn coproc(args: &[String]) -> i32 {
         }
     }
 }
-
 
 /// zmv / zcp / zln — pattern-based rename. Native Rust port of
 /// the autoloaded zsh function. Glob the source pattern (with
@@ -8324,7 +8437,6 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     status
 }
 
-
 /// zcalc — basic non-interactive calculator. zsh's autoloaded
 /// zcalc is interactive (REPL); we support the `-e EXPR` form
 /// which evaluates a single expression and prints the result.
@@ -8363,10 +8475,7 @@ mod add_zsh_hook_tests {
     fn add_zsh_hook_registers_function_in_paramtab_array() {
         let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
-        let rc = exec.builtin_add_zsh_hook(&[
-            "chpwd".to_string(),
-            "my_fn".to_string(),
-        ]);
+        let rc = exec.builtin_add_zsh_hook(&["chpwd".to_string(), "my_fn".to_string()]);
         assert_eq!(rc, 0);
         assert_eq!(
             exec.array("chpwd_functions").unwrap(),
@@ -8452,27 +8561,21 @@ mod add_zsh_hook_tests {
         let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
         let rc_no_args = exec.builtin_add_zsh_hook(&[]);
-        let rc_one_arg =
-            exec.builtin_add_zsh_hook(&["zshaddhistory".to_string()]);
+        let rc_one_arg = exec.builtin_add_zsh_hook(&["zshaddhistory".to_string()]);
         assert_eq!(rc_no_args, 1);
         assert_eq!(rc_one_arg, 1);
         // Error path must not populate the array.
-        assert!(exec.array("zshaddhistory_functions").is_none()
-            || exec
-                .array("zshaddhistory_functions")
-                .unwrap()
-                .is_empty());
+        assert!(
+            exec.array("zshaddhistory_functions").is_none()
+                || exec.array("zshaddhistory_functions").unwrap().is_empty()
+        );
     }
 
     #[test]
     fn add_zsh_hook_d_rejects_too_few_args() {
         let _g = crate::test_util::global_state_lock();
         let mut exec = ShellExecutor::new();
-        let rc = exec.builtin_add_zsh_hook(&[
-            "-d".to_string(),
-            "chpwd".to_string(),
-        ]);
+        let rc = exec.builtin_add_zsh_hook(&["-d".to_string(), "chpwd".to_string()]);
         assert_eq!(rc, 1);
     }
 }
-

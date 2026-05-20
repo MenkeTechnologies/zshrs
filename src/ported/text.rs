@@ -5,28 +5,29 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::{lex, DPUTS};
 use crate::parse;
 use crate::ported::linklist::LinkList;
 use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::utils::{has_token, quotestring};
 use crate::ported::zsh_h;
 use crate::ported::zsh_h::{
-    redir, wordcode, estate, Eprog, EC_NODUP, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
-    COND_STREQ, COND_STRDEQ, COND_STRNEQ, IS_READFD, JOBTEXTSIZE, META, REDIRF_FROM_HEREDOC,
-    REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW,
-    REDIR_CLOSE, REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
-    REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE,
-    WC_ARITH, WC_ASSIGN, WC_AUTOFN, WC_CASE, WC_CASE_AND, WC_CASE_OR, WC_COND, WC_COUNT, WC_CURSH, WC_END,
-    WC_FOR, WC_FUNCDEF, WC_IF, WC_IF_ELIF, WC_LIST, WC_PIPE, WC_PIPE_END, WC_PIPE_MID, WC_REPEAT,
-    WC_REDIR, WC_SELECT, WC_SELECT_LIST, WC_SIMPLE, WC_SUBLIST, WC_SUBLIST_SKIP, WC_SUBSH, WC_TIMED,
-    WC_TIMED_PIPE, WC_TRY, WC_TYPESET, WC_WHILE, WC_ASSIGN_ARRAY, WC_CASE_SKIP, WC_CASE_TYPE,
-    WC_COND_SKIP, WC_COND_TYPE, WC_CURSH_SKIP, WC_FOR_COND, WC_FOR_LIST, WC_FOR_TYPE,
-    WC_FUNCDEF_SKIP, WC_IF_SKIP, WC_IF_TYPE, WC_LIST_TYPE, WC_PIPE_TYPE, WC_SELECT_TYPE,
-    WC_SIMPLE_ARGC, WC_SUBLIST_COPROC, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_NOT,
-    WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_SUBSH_SKIP, WC_TIMED_TYPE, WC_TYPESET_ARGC,
-    WC_WHILE_TYPE, WC_WHILE_UNTIL, wc_code,
+    estate, redir, wc_code, wordcode, Eprog, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
+    COND_STRDEQ, COND_STREQ, COND_STRNEQ, EC_NODUP, IS_READFD, JOBTEXTSIZE, META,
+    REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_CLOSE, REDIR_ERRAPP, REDIR_ERRAPPNOW,
+    REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN,
+    REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
+    WC_ARITH, WC_ASSIGN, WC_ASSIGN_ARRAY, WC_AUTOFN, WC_CASE, WC_CASE_AND, WC_CASE_OR,
+    WC_CASE_SKIP, WC_CASE_TYPE, WC_COND, WC_COND_SKIP, WC_COND_TYPE, WC_COUNT, WC_CURSH,
+    WC_CURSH_SKIP, WC_END, WC_FOR, WC_FOR_COND, WC_FOR_LIST, WC_FOR_TYPE, WC_FUNCDEF,
+    WC_FUNCDEF_SKIP, WC_IF, WC_IF_ELIF, WC_IF_SKIP, WC_IF_TYPE, WC_LIST, WC_LIST_TYPE, WC_PIPE,
+    WC_PIPE_END, WC_PIPE_MID, WC_PIPE_TYPE, WC_REDIR, WC_REPEAT, WC_SELECT, WC_SELECT_LIST,
+    WC_SELECT_TYPE, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_COPROC, WC_SUBLIST_END,
+    WC_SUBLIST_FLAGS, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_SKIP,
+    WC_SUBLIST_TYPE, WC_SUBSH, WC_SUBSH_SKIP, WC_TIMED, WC_TIMED_PIPE, WC_TIMED_TYPE, WC_TRY,
+    WC_TYPESET, WC_TYPESET_ARGC, WC_WHILE, WC_WHILE_TYPE, WC_WHILE_UNTIL, Z_ASYNC, Z_DISOWN, Z_END,
+    Z_SIMPLE,
 };
+use crate::{lex, DPUTS};
 
 /// Port of `is_cond_binary_op(const char *str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(str: &str) -> i32 {
@@ -377,7 +378,11 @@ pub fn gettext2(state: &mut estate) {
                     }
                     tstack.push(tstack {
                         code,
-                        pop: if WC_SUBLIST_TYPE(code) == WC_SUBLIST_END { 1 } else { 0 },
+                        pop: if WC_SUBLIST_TYPE(code) == WC_SUBLIST_END {
+                            1
+                        } else {
+                            0
+                        },
                         u: tstack_u::None,
                     });
                     stack = pre;
@@ -400,11 +405,7 @@ pub fn gettext2(state: &mut estate) {
                             0
                         };
                         if (WC_SUBLIST_FLAGS(fr.code) as i32 & WC_SUBLIST_NOT as i32) != 0 {
-                            let sk = if WC_SUBLIST_SKIP(fr.code) == 0 {
-                                1
-                            } else {
-                                0
-                            };
+                            let sk = if WC_SUBLIST_SKIP(fr.code) == 0 { 1 } else { 0 };
                             let p = state.pc;
                             let pipe_chk = if p < state.prog.prog.len() {
                                 wc_code(state.prog.prog[p])
@@ -412,14 +413,16 @@ pub fn gettext2(state: &mut estate) {
                                 WC_COUNT
                             };
                             let not_simple_pipe =
-                                (WC_SUBLIST_FLAGS(fr.code) as i32 & WC_SUBLIST_SIMPLE as i32)
-                                    == 0
+                                (WC_SUBLIST_FLAGS(fr.code) as i32 & WC_SUBLIST_SIMPLE as i32) == 0
                                     && pipe_chk != WC_PIPE;
-                            taddstr(if sk != 0 || not_simple_pipe { "!" } else { "! " });
+                            taddstr(if sk != 0 || not_simple_pipe {
+                                "!"
+                            } else {
+                                "! "
+                            });
                             stack = sk;
                         }
-                        if (WC_SUBLIST_FLAGS(fr.code) as i32 & WC_SUBLIST_COPROC as i32) != 0
-                        {
+                        if (WC_SUBLIST_FLAGS(fr.code) as i32 & WC_SUBLIST_COPROC as i32) != 0 {
                             taddstr("coproc ");
                         }
                     } else {
@@ -443,7 +446,11 @@ pub fn gettext2(state: &mut estate) {
                 if !s_active && spopped.is_none() {
                     tstack.push(tstack {
                         code,
-                        pop: if WC_PIPE_TYPE(code) == WC_PIPE_END { 1 } else { 0 },
+                        pop: if WC_PIPE_TYPE(code) == WC_PIPE_END {
+                            1
+                        } else {
+                            0
+                        },
                         u: tstack_u::None,
                     });
                     if WC_PIPE_TYPE(code) == WC_PIPE_MID {
@@ -1115,7 +1122,10 @@ pub fn gettext2(state: &mut estate) {
                                     }
                                     taddstr(" "); // c:949
                                     taddstr(&ecgetstr(state, EC_NODUP, None)); // c:950
-                                    if ctype == COND_STREQ || ctype == COND_STRDEQ || ctype == COND_STRNEQ {
+                                    if ctype == COND_STREQ
+                                        || ctype == COND_STRDEQ
+                                        || ctype == COND_STRNEQ
+                                    {
                                         state.pc += 1; // c:951-954
                                     }
                                 } else {
@@ -1187,7 +1197,7 @@ pub fn gettext2(state: &mut estate) {
             }
             _ => {
                 // c:1010 — DPUTS(1, "unknown word code in gettext2()")
-                crate::DPUTS!(true, "unknown word code in gettext2()");      // c:1010
+                crate::DPUTS!(true, "unknown word code in gettext2()"); // c:1010
                 return;
             }
         }
@@ -1217,7 +1227,7 @@ pub fn getredirs(redirs: &LinkList<redir>) {
                     // `% 10` which silently mapped fd 10 → '0',
                     // fd 11 → '1', etc., diverging from the C
                     // representation that callers rely on.
-                    taddchr(b'0' as i32 + f.fd1);                              // c:1054
+                    taddchr(b'0' as i32 + f.fd1); // c:1054
                 }
                 if f.typ == REDIR_HERESTR && (f.flags & REDIRF_FROM_HEREDOC) != 0 {
                     if tnewlins.with(|c| *c.borrow()) {
@@ -1263,12 +1273,14 @@ pub fn getredirs(redirs: &LinkList<redir>) {
             // c:1106-1110 — REDIR_CLOSE arm. DPUTS asserts it's a BUG
             // for the textual writer to ever see this; if reached, emit
             // the canonical `N>&-` text anyway.
-            t if t == REDIR_CLOSE => {                                        // c:1106
-                crate::DPUTS!(true, "BUG: CLOSE in getredirs()");            // c:1107
-                taddchr(b'0' as i32 + f.fd1);                                 // c:1108
-                taddstr(">&- ");                                              // c:1109
+            t if t == REDIR_CLOSE => {
+                // c:1106
+                crate::DPUTS!(true, "BUG: CLOSE in getredirs()"); // c:1107
+                taddchr(b'0' as i32 + f.fd1); // c:1108
+                taddstr(">&- "); // c:1109
             }
-            _ => {                                                            // c:1111 default
+            _ => {
+                // c:1111 default
                 crate::DPUTS!(true, "BUG: unknown redirection in getredirs()"); // c:1112
             }
         }
@@ -1325,8 +1337,7 @@ enum tstack_u {
 // release-build semantics).
 const FSTR: [&str; 18] = [
     ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<<", "<&", ">&",
-    ">&-",
-    "<", ">",
+    ">&-", "<", ">",
 ];
 
 /// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
@@ -1394,7 +1405,9 @@ mod tests {
     #[test]
     fn is_cond_binary_op_recognises_canonical_operators() {
         let _g = crate::test_util::global_state_lock();
-        for op in ["=", "==", "!=", "<", ">", "-eq", "-ne", "-lt", "-le", "-gt", "-ge"] {
+        for op in [
+            "=", "==", "!=", "<", ">", "-eq", "-ne", "-lt", "-le", "-gt", "-ge",
+        ] {
             assert_eq!(is_cond_binary_op(op), 1, "{op:?} must be recognised");
         }
     }
@@ -1404,7 +1417,11 @@ mod tests {
     fn is_cond_binary_op_rejects_unknown_operators() {
         let _g = crate::test_util::global_state_lock();
         for op in ["?", "@", "", " ", "==="] {
-            assert_eq!(is_cond_binary_op(op), 0, "{op:?} must NOT be recognised as binary");
+            assert_eq!(
+                is_cond_binary_op(op),
+                0,
+                "{op:?} must NOT be recognised as binary"
+            );
         }
     }
 
@@ -1420,17 +1437,20 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:48-51 — verbatim list. Order is the contract.
         let expected = [
-            "=", "==", "!=", "<", ">",
-            "-nt", "-ot", "-ef",
-            "-eq", "-ne", "-lt", "-gt", "-le", "-ge",
-            "=~",
+            "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le",
+            "-ge", "=~",
         ];
-        assert_eq!(COND_BINARY_OPS.len(), expected.len(),
-            "c:48-51 — table must have exactly 15 ops (excluding the NULL sentinel)");
+        assert_eq!(
+            COND_BINARY_OPS.len(),
+            expected.len(),
+            "c:48-51 — table must have exactly 15 ops (excluding the NULL sentinel)"
+        );
         for (i, &op) in expected.iter().enumerate() {
-            assert_eq!(COND_BINARY_OPS[i], op,
+            assert_eq!(
+                COND_BINARY_OPS[i], op,
                 "c:48-51 — position {} must be {:?}, got {:?}",
-                i, op, COND_BINARY_OPS[i]);
+                i, op, COND_BINARY_OPS[i]
+            );
         }
     }
 
@@ -1441,8 +1461,12 @@ mod tests {
     fn is_cond_binary_op_accepts_file_test_and_regex_ops() {
         let _g = crate::test_util::global_state_lock();
         for op in ["-nt", "-ot", "-ef", "=~"] {
-            assert_eq!(is_cond_binary_op(op), 1,
-                "c:63 — strcmp match must accept {:?}", op);
+            assert_eq!(
+                is_cond_binary_op(op),
+                1,
+                "c:63 — strcmp match must accept {:?}",
+                op
+            );
         }
     }
 
@@ -1484,39 +1508,48 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:1024-1026 — verbatim list (NULL at position 15 → ">&-" placeholder).
         let expected = [
-            ">",   // REDIR_WRITE       = 0
-            ">|",  // REDIR_WRITENOW    = 1
-            ">>",  // REDIR_APP         = 2
-            ">>|", // REDIR_APPNOW      = 3
-            "&>",  // REDIR_ERRWRITE    = 4
-            "&>|", // REDIR_ERRWRITENOW = 5
-            "&>>", // REDIR_ERRAPP      = 6
-            "&>>|",// REDIR_ERRAPPNOW   = 7
-            "<>",  // REDIR_READWRITE   = 8
-            "<",   // REDIR_READ        = 9
-            "<<",  // REDIR_HEREDOC     = 10
-            "<<-", // REDIR_HEREDOCDASH = 11
-            "<<<", // REDIR_HERESTR     = 12 — c:1025 third `<` is load-bearing
-            "<&",  // REDIR_MERGEIN     = 13
-            ">&",  // REDIR_MERGEOUT    = 14
-            ">&-", // REDIR_CLOSE       = 15 — NULL in C; placeholder here
-            "<",   // REDIR_INPIPE      = 16
-            ">",   // REDIR_OUTPIPE     = 17
+            ">",    // REDIR_WRITE       = 0
+            ">|",   // REDIR_WRITENOW    = 1
+            ">>",   // REDIR_APP         = 2
+            ">>|",  // REDIR_APPNOW      = 3
+            "&>",   // REDIR_ERRWRITE    = 4
+            "&>|",  // REDIR_ERRWRITENOW = 5
+            "&>>",  // REDIR_ERRAPP      = 6
+            "&>>|", // REDIR_ERRAPPNOW   = 7
+            "<>",   // REDIR_READWRITE   = 8
+            "<",    // REDIR_READ        = 9
+            "<<",   // REDIR_HEREDOC     = 10
+            "<<-",  // REDIR_HEREDOCDASH = 11
+            "<<<",  // REDIR_HERESTR     = 12 — c:1025 third `<` is load-bearing
+            "<&",   // REDIR_MERGEIN     = 13
+            ">&",   // REDIR_MERGEOUT    = 14
+            ">&-",  // REDIR_CLOSE       = 15 — NULL in C; placeholder here
+            "<",    // REDIR_INPIPE      = 16
+            ">",    // REDIR_OUTPIPE     = 17
         ];
-        assert_eq!(FSTR.len(), expected.len(),
-            "c:1022 — fstr[] must have exactly 18 slots");
+        assert_eq!(
+            FSTR.len(),
+            expected.len(),
+            "c:1022 — fstr[] must have exactly 18 slots"
+        );
         for (i, &want) in expected.iter().enumerate() {
-            assert_eq!(FSTR[i], want,
+            assert_eq!(
+                FSTR[i], want,
                 "c:1024-1026 — FSTR[{}] must be {:?}, got {:?}",
-                i, want, FSTR[i]);
+                i, want, FSTR[i]
+            );
         }
         // Pin the herestring slot specifically — that was the
         // typo'd cell.
-        assert_eq!(FSTR[REDIR_HERESTR as usize], "<<<",
-            "c:1025 — REDIR_HERESTR (12) must render as `<<<`");
+        assert_eq!(
+            FSTR[REDIR_HERESTR as usize], "<<<",
+            "c:1025 — REDIR_HERESTR (12) must render as `<<<`"
+        );
         // Pin the heredoc slot too — it shares fstr's 10 cell.
-        assert_eq!(FSTR[REDIR_HEREDOC as usize], "<<",
-            "c:1024 — REDIR_HEREDOC (10) must render as `<<`");
+        assert_eq!(
+            FSTR[REDIR_HEREDOC as usize], "<<",
+            "c:1024 — REDIR_HEREDOC (10) must render as `<<`"
+        );
     }
 
     /// Pin: `Src/text.c:1054` — `taddchr('0' + f->fd1);` adds a
@@ -1539,16 +1572,27 @@ mod tests {
         // For fd1 in 0..=9 it produces an ASCII digit.
         for fd in 0..=9i32 {
             let expected = (b'0' as i32 + fd) as u8;
-            assert_eq!(expected, b'0' + fd as u8,
-                "c:1054 — fd {} must produce byte {}", fd, expected);
+            assert_eq!(
+                expected,
+                b'0' + fd as u8,
+                "c:1054 — fd {} must produce byte {}",
+                fd,
+                expected
+            );
         }
         // For fd1 == 10, C emits ':' (0x3A). The previous Rust
         // port produced '0' (0x30) — divergent.
-        assert_eq!((b'0' as i32 + 10) as u8, b':',
-            "c:1054 — fd 10 emits ':' (0x3A) byte verbatim, not '0' (modulo)");
+        assert_eq!(
+            (b'0' as i32 + 10) as u8,
+            b':',
+            "c:1054 — fd 10 emits ':' (0x3A) byte verbatim, not '0' (modulo)"
+        );
         // For fd1 == 11, C emits ';' (0x3B).
-        assert_eq!((b'0' as i32 + 11) as u8, b';',
-            "c:1054 — fd 11 emits ';' (0x3B), not '1'");
+        assert_eq!(
+            (b'0' as i32 + 11) as u8,
+            b';',
+            "c:1054 — fd 11 emits ';' (0x3B), not '1'"
+        );
     }
 
     /// c:48-51 — `cond_binary_ops` table MUST NOT contain duplicates.
@@ -1559,8 +1603,11 @@ mod tests {
     fn cond_binary_ops_has_no_duplicates() {
         let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = COND_BINARY_OPS.iter().copied().collect();
-        assert_eq!(unique.len(), COND_BINARY_OPS.len(),
-            "duplicate entry in COND_BINARY_OPS");
+        assert_eq!(
+            unique.len(),
+            COND_BINARY_OPS.len(),
+            "duplicate entry in COND_BINARY_OPS"
+        );
     }
 
     /// c:48-51 — Every op in `cond_binary_ops` must be a recognised
@@ -1570,8 +1617,12 @@ mod tests {
     fn every_cond_binary_op_round_trips() {
         let _g = crate::test_util::global_state_lock();
         for &op in COND_BINARY_OPS {
-            assert_eq!(is_cond_binary_op(op), 1,
-                "{:?} is in COND_BINARY_OPS but is_cond_binary_op rejects it", op);
+            assert_eq!(
+                is_cond_binary_op(op),
+                1,
+                "{:?} is in COND_BINARY_OPS but is_cond_binary_op rejects it",
+                op
+            );
         }
     }
 
@@ -1607,8 +1658,7 @@ mod tests {
         // Reset to default
         TEXT_EXPAND_TABS.store(0, Ordering::Relaxed);
         let v = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
-        assert_eq!(v, 0,
-            "TEXT_EXPAND_TABS default must be 0 (literal tabs)");
+        assert_eq!(v, 0, "TEXT_EXPAND_TABS default must be 0 (literal tabs)");
     }
 
     /// c:1332 — `zoutputtab` with `TEXT_EXPAND_TABS = 8` emits 8
@@ -1621,8 +1671,11 @@ mod tests {
         TEXT_EXPAND_TABS.store(8, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());
         zoutputtab(&mut c).unwrap();
-        assert_eq!(c.into_inner(), b"        ",
-            "TEXT_EXPAND_TABS=8 must emit 8 spaces");
+        assert_eq!(
+            c.into_inner(),
+            b"        ",
+            "TEXT_EXPAND_TABS=8 must emit 8 spaces"
+        );
         TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
     }
 
@@ -1649,8 +1702,10 @@ mod tests {
         TEXT_EXPAND_TABS.store(-1, Ordering::Relaxed);
         let mut c = Cursor::new(Vec::new());
         zoutputtab(&mut c).unwrap();
-        assert!(c.into_inner().is_empty(),
-            "negative TEXT_EXPAND_TABS must emit nothing");
+        assert!(
+            c.into_inner().is_empty(),
+            "negative TEXT_EXPAND_TABS must emit nothing"
+        );
         TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
     }
 }

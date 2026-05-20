@@ -57,7 +57,10 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
     }
 
     let pattern = format!("{}/**.stk", root.display());
-    let mut got = { set_opts(); zsh::glob::glob(&pattern) };
+    let mut got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
     got.sort();
 
     let normalize = |p: &Path| p.canonicalize().unwrap().to_string_lossy().to_string();
@@ -97,7 +100,10 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
 fn globstarshort_double_star_dot_rs_finds_project_sources() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let pattern = format!("{}/src/**.rs", manifest_dir);
-    let got = { set_opts(); zsh::glob::glob(&pattern) };
+    let got = {
+        set_opts();
+        zsh::glob::glob(&pattern)
+    };
 
     assert!(
         !got.is_empty(),

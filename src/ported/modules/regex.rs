@@ -19,7 +19,7 @@
 /// `ZREGEX_EXTENDED` from `Src/Modules/regex.c:36`.
 /// `#define ZREGEX_EXTENDED 0`. The id passed to
 /// `zcond_regex_match` for the only currently-supported flavour.
-pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
+pub const ZREGEX_EXTENDED: i32 = 0; // c:36
 
 /// Port of static helper `zregex_regerrwarn()` from
 /// `Src/Modules/regex.c:40`. C wraps libc `regerror(3)` to format
@@ -30,8 +30,9 @@ pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
 /// already-formatted error string.
 ///
 /// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
-pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
-    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:40
+pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {
+    // c:40
+    crate::ported::utils::zwarnnam(prefix, err_msg); // c:40
 }
 
 /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
@@ -47,27 +48,29 @@ pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
 /// `a` is the cond-op argv: `a[0]` is the LHS string, `a[1]` is
 /// the RHS pattern (matching C's `cond_str(a, 0, 0)` /
 /// `cond_str(a, 1, 0)` reads at regex.c:62-63).
-pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // c:54
+pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
+    // c:54
     if a.len() < 2 {
         return 0;
     }
-    let lhstr = a[0];                                                    // c:62 cond_str(a,0,0)
-    let rhre = a[1];                                                     // c:63 cond_str(a,1,0)
-    let mut return_value: i32 = 0;                                       // c:65
+    let lhstr = a[0]; // c:62 cond_str(a,0,0)
+    let rhre = a[1]; // c:63 cond_str(a,1,0)
+    let mut return_value: i32 = 0; // c:65
 
     // c:73-77 — switch(id). Only ZREGEX_EXTENDED is defined.
     if id != ZREGEX_EXTENDED {
         // c:199 — DPUTS(1, "bad regex option"); goto CLEAN_BASEMETA;
-        crate::DPUTS!(true, "bad regex option");                              // c:199
-        return 0;                                                             // c:200
+        crate::DPUTS!(true, "bad regex option"); // c:199
+        return 0; // c:200
     }
 
     // c:74-76 — flag computation. POSIX REG_EXTENDED is implicit
     // in Rust's regex crate (RE2 syntax is extended-by-default);
     // CASEMATCH off → REG_ICASE → wrap with `(?i)`.
     let casematch = crate::ported::zsh_h::isset(crate::ported::options::optlookup("casematch"));
-    let pat_for_compile = if !casematch {                                // c:75
-        format!("(?i){}", rhre)                                          // c:76 REG_ICASE
+    let pat_for_compile = if !casematch {
+        // c:75
+        format!("(?i){}", rhre) // c:76 REG_ICASE
     } else {
         rhre.to_string()
     };
@@ -75,41 +78,45 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
     // c:78 — regcomp(&re, rhre, rcflags).
     let re = match regex::Regex::new(&pat_for_compile) {
         Ok(r) => r,
-        Err(_) => {                                                      // c:79-81
+        Err(_) => {
+            // c:79-81
             zregex_regerrwarn("-regex-match", "failed to compile regex");
-            return 0;                                                    // c:81 break;
+            return 0; // c:81 break;
         }
     };
 
     // c:92 — regexec.
     let captures = match re.captures(lhstr) {
         Some(c) => c,
-        None => return 0,                                                // c:93-94 REG_NOMATCH
+        None => return 0, // c:93-94 REG_NOMATCH
     };
 
-    return_value = 1;                                                    // c:96
-    let nsub = re.captures_len() - 1;                                    // re_nsub: # of paren groups
+    return_value = 1; // c:96
+    let nsub = re.captures_len() - 1; // re_nsub: # of paren groups
     let bashre = crate::ported::zsh_h::isset(crate::ported::options::optlookup("bashrematch"));
     let ksharr = crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"));
 
     // c:97-103 — start/nelem branch on BASHREMATCH.
     let (start, nelem) = if bashre {
-        (0usize, nsub + 1)                                               // c:99-100
+        (0usize, nsub + 1) // c:99-100
     } else {
-        (1usize, nsub)                                                   // c:102-103
+        (1usize, nsub) // c:102-103
     };
 
     // c:108-112 — build arr (the $match / $BASH_REMATCH array).
     let mut arr: Vec<String> = Vec::with_capacity(nelem);
-    for n in start..=nsub {                                              // c:109
-        if let Some(m) = captures.get(n) {                               // c:110
-            arr.push(m.as_str().to_string());                            // c:110 metafy
+    for n in start..=nsub {
+        // c:109
+        if let Some(m) = captures.get(n) {
+            // c:110
+            arr.push(m.as_str().to_string()); // c:110 metafy
         } else {
             arr.push(String::new());
         }
     }
 
-    if bashre {                                                          // c:115
+    if bashre {
+        // c:115
         // c:116 — `assignaparam("BASH_REMATCH", arr, 0);`
         crate::ported::params::setsparam("BASH_REMATCH", &arr.join(":"));
         return return_value;
@@ -117,8 +124,8 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
 
     // c:119-121 — assignsparam("MATCH", full-match-text).
     let m0 = captures.get(0).expect("regex matched but no group 0");
-    let full = m0.as_str().to_string();                                  // c:120 metafy
-    crate::ported::params::setsparam("MATCH", &full);            // c:121 assignsparam
+    let full = m0.as_str().to_string(); // c:120 metafy
+    crate::ported::params::setsparam("MATCH", &full); // c:121 assignsparam
 
     // c:124-135 — char-offset MBEGIN. C walks the pre-match bytes
     // counting MB_CHARLEN-stepped characters; Rust collapses to
@@ -126,47 +133,50 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
     // String::chars() handles UTF-8 boundaries natively.
     let so = m0.start();
     let eo = m0.end();
-    let mbegin_chars = lhstr[..so].chars().count() as i64;               // c:128-133
-    let kshoff: i64 = if ksharr { 0 } else { 1 };                        // c:134 !isset(KSHARRAYS)
-    let mbegin = mbegin_chars + kshoff;                                  // c:134
-    crate::ported::params::setiparam("MBEGIN", mbegin);          // c:134 assigniparam
+    let mbegin_chars = lhstr[..so].chars().count() as i64; // c:128-133
+    let kshoff: i64 = if ksharr { 0 } else { 1 }; // c:134 !isset(KSHARRAYS)
+    let mbegin = mbegin_chars + kshoff; // c:134
+    crate::ported::params::setiparam("MBEGIN", mbegin); // c:134 assigniparam
 
     // c:138-145 — MEND.
     let match_chars = lhstr[so..eo].chars().count() as i64;
     let mend_total = mbegin_chars + match_chars;
-    let mend = mend_total + kshoff - 1;                                  // c:145
-    crate::ported::params::setiparam("MEND", mend);              // c:145 assigniparam
+    let mend = mend_total + kshoff - 1; // c:145
+    crate::ported::params::setiparam("MEND", mend); // c:145 assigniparam
 
     // c:147-180 — populate $match[], $mbegin[], $mend[] subgroup
     // arrays.
-    if nelem > 0 {                                                       // c:147
+    if nelem > 0 {
+        // c:147
         let mut mbegin_arr: Vec<String> = Vec::with_capacity(nelem);
         let mut mend_arr: Vec<String> = Vec::with_capacity(nelem);
-        for n in 0..nelem {                                              // c:152
+        for n in 0..nelem {
+            // c:152
             let cap_idx = start + n;
-            match captures.get(cap_idx) {                                // c:158
+            match captures.get(cap_idx) {
+                // c:158
                 Some(m) => {
                     let beg_chars = lhstr[..m.start()].chars().count() as i64;
                     let len_chars = lhstr[m.start()..m.end()].chars().count() as i64;
-                    mbegin_arr.push((beg_chars + kshoff).to_string());   // c:172
-                    mend_arr.push((beg_chars + len_chars + kshoff - 1).to_string()); // c:178
+                    mbegin_arr.push((beg_chars + kshoff).to_string()); // c:172
+                    mend_arr.push((beg_chars + len_chars + kshoff - 1).to_string());
+                    // c:178
                 }
-                None => {                                                // c:159-162 — unparticipated group
+                None => {
+                    // c:159-162 — unparticipated group
                     mbegin_arr.push("-1".to_string());
                     mend_arr.push("-1".to_string());
                 }
             }
         }
         // c:182-184 — `setaparam("match"/"mbegin"/"mend", ...);`
-        crate::ported::params::setsparam("match",  &arr.join(":"));
+        crate::ported::params::setsparam("match", &arr.join(":"));
         crate::ported::params::setsparam("mbegin", &mbegin_arr.join(":"));
-        crate::ported::params::setsparam("mend",   &mend_arr.join(":"));
+        crate::ported::params::setsparam("mend", &mend_arr.join(":"));
     }
 
-    return_value                                                         // c:200
+    return_value // c:200
 }
-
-
 
 // =====================================================================
 // static struct features module_features                            c:217 (regex.c)
@@ -176,15 +186,13 @@ use crate::ported::zsh_h::module;
 
 // `cotab` — port of `static struct conddef cotab[]` (regex.c).
 
-
 // `module_features` — port of `static struct features module_features`
 // from regex.c:217.
 
-
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/regex.c:229`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:229
+pub fn setup_(m: *const module) -> i32 {
+    // c:229
     // C body c:231-232 — `return 0`. Faithful empty-body port.
     0
 }
@@ -202,7 +210,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/regex.c:251`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:251
+pub fn boot_(m: *const module) -> i32 {
+    // c:251
     // C body c:253-254 — `return 0`. Faithful empty-body port; the
     //                    regex-match condition registers via cd_list.
     0
@@ -215,7 +224,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/regex.c:265`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:265
+pub fn finish_(m: *const module) -> i32 {
+    // c:265
     // C body c:267-268 — `return 0`. Faithful empty-body port.
     0
 }
@@ -224,7 +234,6 @@ use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -258,11 +267,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -293,17 +298,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 0,
-        cd_list: None,
-        cd_size: 1,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 0,
+            cd_list: None,
+            cd_size: 1,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -339,10 +346,7 @@ mod tests {
     #[test]
     fn invalid_pattern_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zcond_regex_match(&["anything", "["], ZREGEX_EXTENDED),
-            0
-        );
+        assert_eq!(zcond_regex_match(&["anything", "["], ZREGEX_EXTENDED), 0);
     }
 
     #[test]
@@ -375,7 +379,10 @@ mod tests {
         crate::ported::options::opt_state_set("casematch", true);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
         crate::ported::options::opt_state_set("casematch", saved);
-        assert_eq!(r, 0, "casematch=true → case-sensitive → HELLO vs hello must NOT match");
+        assert_eq!(
+            r, 0,
+            "casematch=true → case-sensitive → HELLO vs hello must NOT match"
+        );
     }
 
     /// c:74-76 — same flag, opposite branch. With `casematch=false`
@@ -390,7 +397,10 @@ mod tests {
         crate::ported::options::opt_state_set("casematch", false);
         let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
         crate::ported::options::opt_state_set("casematch", saved);
-        assert_eq!(r, 1, "casematch=false → case-insensitive → HELLO matches hello");
+        assert_eq!(
+            r, 1,
+            "casematch=false → case-insensitive → HELLO matches hello"
+        );
     }
 
     /// c:54 — `zcond_regex_match` returns 1 when the pattern matches.
@@ -425,9 +435,18 @@ mod tests {
     #[test]
     fn alternation_matches_either_branch() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zcond_regex_match(&["xterm",  "xterm|screen"], ZREGEX_EXTENDED), 1);
-        assert_eq!(zcond_regex_match(&["screen", "xterm|screen"], ZREGEX_EXTENDED), 1);
-        assert_eq!(zcond_regex_match(&["bash",   "xterm|screen"], ZREGEX_EXTENDED), 0);
+        assert_eq!(
+            zcond_regex_match(&["xterm", "xterm|screen"], ZREGEX_EXTENDED),
+            1
+        );
+        assert_eq!(
+            zcond_regex_match(&["screen", "xterm|screen"], ZREGEX_EXTENDED),
+            1
+        );
+        assert_eq!(
+            zcond_regex_match(&["bash", "xterm|screen"], ZREGEX_EXTENDED),
+            0
+        );
     }
 
     /// c:54 — `.` matches any single char (POSIX).

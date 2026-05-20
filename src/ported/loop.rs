@@ -15,8 +15,8 @@
 //! This module provides the loop state management and helper functions
 //! that support the executor's loop implementation.
 
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write;
+use std::sync::atomic::AtomicI32;
 
 // ===========================================================
 // C `Src/loop.c` — wordcode VM helpers for control flow.
@@ -63,7 +63,8 @@ use std::io::Write;
 /// Architectural canonical: tree-walker replaced by fusevm bytecode;
 /// pinned by tests/tree_walker_absent.rs.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
+pub fn execfor(_do_exec: i32) -> i32 {
+    // c:50
     unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
 }
 
@@ -87,17 +88,15 @@ pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
 /// Depth-counter for active `always {}` blocks; bumped at try entry
 /// (`exectry`), decremented at exit. `dotrapargs` (`signals.c:1215`)
 /// reads it to decide whether a trap's `errflag` propagates.
-pub static try_tryflag: std::sync::atomic::AtomicI64 =
-    std::sync::atomic::AtomicI64::new(0);                                    // c:731
-
-
+pub static try_tryflag: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0); // c:731
 
 /// Port of `execselect(Estate state, UNUSED(int do_exec))` from
 /// Src/loop.c:217. Architectural canonical: tree-walker replaced
 /// by fusevm bytecode. `selectlist(items, start)` IS ported above
 /// as a callable helper. WARNING: param names don't match C —
 /// Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
+pub fn execselect(_do_exec: i32) -> i32 {
+    // c:217
     unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
 }
 
@@ -128,52 +127,59 @@ pub fn execselect(_do_exec: i32) -> i32 {                                // c:21
 /// columns automatically when `columns == 0`, mirroring the C
 /// source's terminal-width auto-detection.
 /// WARNING: param names don't match C — Rust=(items, start) vs C=(l, start)
-pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
+pub fn selectlist(items: &[&str], start: usize) -> usize {
+    // c:347
     let mut stderr = std::io::stderr().lock();
 
     // c:351 — zleentry(ZLE_CMD_TRASH); — flush ZLE redraw state.
     // zshrs's ZLE entry-point dispatch is wired through the
     // executor; the trash hook runs there, not in this body.
 
-    let ct = items.len();                                                // c:362 ap - arr
-    if ct == 0 {                                                         // guard against empty list
+    let ct = items.len(); // c:362 ap - arr
+    if ct == 0 {
+        // guard against empty list
         return 0;
     }
-    let mut longest: usize = 1;                                          // c:350
-    for ap in items {                                                    // c:354 for (ap = arr; *ap; ap++)
+    let mut longest: usize = 1; // c:350
+    for ap in items {
+        // c:354 for (ap = arr; *ap; ap++)
         // C uses MB_METASTRWIDTH for visible width (combining-char
         // aware). Rust port uses chars().count() — adequate for
         // standard ASCII / non-combining content.
-        let aplen = ap.chars().count();                                  // c:359 unmetafy width
-        if aplen > longest {                                             // c:362
-            longest = aplen;                                             // c:363
+        let aplen = ap.chars().count(); // c:359 unmetafy width
+        if aplen > longest {
+            // c:362
+            longest = aplen; // c:363
         }
     }
-    longest += 1;                                                        // c:365 +1 for ") "
-    let mut t0 = ct;                                                     // c:366
-    while t0 != 0 {                                                      // c:367
-        t0 /= 10;                                                        // c:368
-        longest += 1;                                                    // c:368 (+1 per digit)
+    longest += 1; // c:365 +1 for ") "
+    let mut t0 = ct; // c:366
+    while t0 != 0 {
+        // c:367
+        t0 /= 10; // c:368
+        longest += 1; // c:368 (+1 per digit)
     }
 
-    let zterm_columns = crate::ported::utils::adjustcolumns();           // c:zterm_columns
-    let zterm_lines   = crate::ported::utils::adjustlines();
+    let zterm_columns = crate::ported::utils::adjustcolumns(); // c:zterm_columns
+    let zterm_lines = crate::ported::utils::adjustlines();
     let mut fct: usize = (zterm_columns.saturating_sub(1)) / (longest + 3); // c:371
     let fw: usize;
-    if fct == 0 {                                                        // c:372
-        fct = 1;                                                         // c:373
-        fw = 0;                                                          // (unused when fct==1)
+    if fct == 0 {
+        // c:372
+        fct = 1; // c:373
+        fw = 0; // (unused when fct==1)
     } else {
-        fw = (zterm_columns - 1) / fct;                                  // c:375
+        fw = (zterm_columns - 1) / fct; // c:375
     }
-    let colsz = (ct + fct - 1) / fct;                                    // c:377
+    let colsz = (ct + fct - 1) / fct; // c:377
 
     // c:379 — for (t1 = start; t1 != colsz && t1 - start < zterm_lines - 2; t1++)
     let mut t1 = start;
     let max_lines = zterm_lines.saturating_sub(2);
     while t1 != colsz && (t1 - start) < max_lines {
-        let mut idx = t1;                                                // c:381 ap = arr + t1
-        loop {                                                           // c:383 do {
+        let mut idx = t1; // c:381 ap = arr + t1
+        loop {
+            // c:383 do {
             let entry = items[idx];
             // c:385 — t2 = MB_METASTRWIDTH(*ap) + 2;
             let mut t2 = entry.chars().count() + 2;
@@ -182,12 +188,14 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
             let _ = write!(stderr, "{}) {}", t3, entry);
             // c:393 — while (t3) t2++, t3 /= 10;
             let mut digits = t3;
-            while digits != 0 {                                          // c:393
+            while digits != 0 {
+                // c:393
                 t2 += 1;
                 digits /= 10;
             }
             // c:396 — for (; t2 < fw; t2++) fputc(' ', stderr);
-            while t2 < fw {                                              // c:396
+            while t2 < fw {
+                // c:396
                 let _ = stderr.write_all(b" ");
                 t2 += 1;
             }
@@ -196,47 +204,64 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
             while t0 != 0 && idx + 1 < ct {
                 t0 -= 1;
                 idx += 1;
-                if t0 == 0 { break; }
+                if t0 == 0 {
+                    break;
+                }
             }
-            if idx + 1 >= ct { break; }                                  // c:401 while (*ap);
+            if idx + 1 >= ct {
+                break;
+            } // c:401 while (*ap);
         }
-        let _ = stderr.write_all(b"\n");                                 // c:401 fputc('\n', stderr);
+        let _ = stderr.write_all(b"\n"); // c:401 fputc('\n', stderr);
         t1 += 1;
     }
 
-    let _ = stderr.flush();                                              // c:413 fflush(stderr);
+    let _ = stderr.flush(); // c:413 fflush(stderr);
 
-    if t1 < colsz { t1 } else { 0 }                                      // c:415 return
+    if t1 < colsz {
+        t1
+    } else {
+        0
+    } // c:415 return
 }
 
 /// Port of `execwhile(Estate state, UNUSED(int do_exec))` from `Src/loop.c:413`.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execwhile(_do_exec: i32) -> i32 {                                 // c:413
-    unreachable!("execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs")
+pub fn execwhile(_do_exec: i32) -> i32 {
+    // c:413
+    unreachable!(
+        "execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs"
+    )
 }
 
 /// Port of `execrepeat(Estate state, UNUSED(int do_exec))` from `Src/loop.c:499`.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execrepeat(_do_exec: i32) -> i32 {                                // c:499
+pub fn execrepeat(_do_exec: i32) -> i32 {
+    // c:499
     unreachable!("execrepeat: tree-walker disabled — fusevm lowers `repeat` in compile_zsh.rs")
 }
 
 /// Port of `execif(Estate state, int do_exec)` from `Src/loop.c:553`.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execif(_do_exec: i32) -> i32 {                                    // c:553
-    unreachable!("execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs")
+pub fn execif(_do_exec: i32) -> i32 {
+    // c:553
+    unreachable!(
+        "execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs"
+    )
 }
 
 /// Port of `execcase(Estate state, int do_exec)` from Src/loop.c:600.
 /// Architectural canonical: tree-walker replaced by fusevm bytecode.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execcase(_do_exec: i32) -> i32 {                                  // c:600
+pub fn execcase(_do_exec: i32) -> i32 {
+    // c:600
     unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")
 }
 
 /// Port of `exectry(Estate state, int do_exec)` from `Src/loop.c:735`.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
+pub fn exectry(_do_exec: i32) -> i32 {
+    // c:735
     unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
 }
 
@@ -280,25 +305,39 @@ mod tests {
     /// tree-walker exec doesn't slip in silently.
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execfor_panics_with_tree_walker_disabled()    { let _ = execfor(0); }
+    fn execfor_panics_with_tree_walker_disabled() {
+        let _ = execfor(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execwhile_panics_with_tree_walker_disabled()  { let _ = execwhile(0); }
+    fn execwhile_panics_with_tree_walker_disabled() {
+        let _ = execwhile(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execrepeat_panics_with_tree_walker_disabled() { let _ = execrepeat(0); }
+    fn execrepeat_panics_with_tree_walker_disabled() {
+        let _ = execrepeat(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execif_panics_with_tree_walker_disabled()     { let _ = execif(0); }
+    fn execif_panics_with_tree_walker_disabled() {
+        let _ = execif(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execcase_panics_with_tree_walker_disabled()   { let _ = execcase(0); }
+    fn execcase_panics_with_tree_walker_disabled() {
+        let _ = execcase(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn exectry_panics_with_tree_walker_disabled()    { let _ = exectry(0); }
+    fn exectry_panics_with_tree_walker_disabled() {
+        let _ = exectry(0);
+    }
     #[test]
     #[should_panic(expected = "tree-walker disabled")]
-    fn execselect_panics_with_tree_walker_disabled() { let _ = execselect(0); }
+    fn execselect_panics_with_tree_walker_disabled() {
+        let _ = execselect(0);
+    }
 
     /// Empty list to selectlist: nothing to draw, returns 0.
     #[test]

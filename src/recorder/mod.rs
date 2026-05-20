@@ -299,8 +299,11 @@ pub fn is_enabled() -> bool {
 /// the executor in scope. Mirrors src/extensions/recorder.rs at
 /// line 62 — same source-of-truth, different binding.
 pub fn recorder_ctx_global() -> RecordCtx {
-    let line = std::env::var("LINENO").ok().and_then(|s| s.parse::<u32>().ok());
-    let file = std::env::var("ZSH_SCRIPT").ok()
+    let line = std::env::var("LINENO")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let file = std::env::var("ZSH_SCRIPT")
+        .ok()
         .or_else(|| std::env::var("ZSH_ARGZERO").ok())
         .or_else(|| std::env::var("0").ok());
     // funcstack is an array param exposed as a colon-joined env var via
@@ -315,7 +318,11 @@ pub fn recorder_ctx_global() -> RecordCtx {
             Some(parts.join(" > "))
         }
     });
-    RecordCtx { file, line, fn_chain }
+    RecordCtx {
+        file,
+        line,
+        fn_chain,
+    }
 }
 
 #[inline]
@@ -822,14 +829,7 @@ pub fn emit_zmodload(module: &str, flags: &str, ctx: RecordCtx) {
     );
 }
 pub fn emit_setopt(opt: &str, ctx: RecordCtx) {
-    emit(
-        DefKind::Setopt,
-        opt,
-        None,
-        ctx.file,
-        ctx.line,
-        ctx.fn_chain,
-    );
+    emit(DefKind::Setopt, opt, None, ctx.file, ctx.line, ctx.fn_chain);
 }
 pub fn emit_unsetopt(opt: &str, ctx: RecordCtx) {
     emit(
@@ -882,14 +882,7 @@ pub fn emit_unalias(name: &str, ctx: RecordCtx) {
     );
 }
 pub fn emit_unset(name: &str, ctx: RecordCtx) {
-    emit(
-        DefKind::Unset,
-        name,
-        None,
-        ctx.file,
-        ctx.line,
-        ctx.fn_chain,
-    );
+    emit(DefKind::Unset, name, None, ctx.file, ctx.line, ctx.fn_chain);
 }
 pub fn emit_zle(widget: &str, func: Option<&str>, ctx: RecordCtx) {
     emit(

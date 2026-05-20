@@ -10,8 +10,9 @@ use std::path::PathBuf;
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:37
-    0                                                                    // c:44
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:37
+    0 // c:44
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/newuser.c:44`. C body is
@@ -19,27 +20,34 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:37
 /// (no builtins, no ZLE widgets, no params); the non-zero return
 /// signals "no feature table" to the loader.
 #[allow(unused_variables)]
-pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:44
-    1                                                                    // c:51
+pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+    // c:44
+    1 // c:51
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/newuser.c:51`. C body is
 /// `return 0;` — no per-feature enables to manage.
 #[allow(unused_variables)]
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:51
-    0                                                                    // c:58
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:51
+    0 // c:58
 }
 
 /// Port of static helper `check_dotfile()` from
 /// `Src/Modules/newuser.c:58`. Returns 0 (file accessible) or
 /// non-zero (errno via `access(2) F_OK`). The C body composes
 /// `dotdir/fname` and calls `access(F_OK)`.
-pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
-    let mut p = PathBuf::from(dotdir);                                   // c:58-61
-    p.push(fname);                                                       // c:60-61
-    // C: `access(buf, F_OK)` returns 0 if accessible, -1 with errno
-    // set otherwise. Rust's `Path::exists` collapses both into bool.
-    if p.exists() { 0 } else { -1 }                                      // c:62
+pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {
+    // c:58
+    let mut p = PathBuf::from(dotdir); // c:58-61
+    p.push(fname); // c:60-61
+                   // C: `access(buf, F_OK)` returns 0 if accessible, -1 with errno
+                   // set otherwise. Rust's `Path::exists` collapses both into bool.
+    if p.exists() {
+        0
+    } else {
+        -1
+    } // c:62
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/newuser.c:68`.
@@ -78,16 +86,17 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
 /// }
 /// ```
 #[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:4
     // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`. paramtab read.
-    let mut dotdir: String = crate::ported::params::getsparam("ZDOTDIR")
-        .unwrap_or_default();
+    let mut dotdir: String = crate::ported::params::getsparam("ZDOTDIR").unwrap_or_default();
 
     // c:71-78 — `const char *spaths[] = { SITESCRIPT_DIR, SCRIPT_DIR, 0 };`
     // The C source resolves these from configure-time defines; the Rust
     // port reads them from the matching env vars (with reasonable
     // fallbacks) since zshrs doesn't have configure.
-    let spaths: Vec<String> = std::env::var("ZSH_SITESCRIPT_DIR").ok()
+    let spaths: Vec<String> = std::env::var("ZSH_SITESCRIPT_DIR")
+        .ok()
         .into_iter()
         .chain(std::env::var("ZSH_SCRIPT_DIR").ok())
         .chain(std::iter::once("/etc/zsh".to_string()))
@@ -95,7 +104,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
 
     // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
     if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
-        return 0;                                                         // c:82
+        return 0; // c:82
     }
 
     // c:84-88 — `if (!dotdir) { dotdir = home; if (!dotdir) return 0; }`.
@@ -105,10 +114,10 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     // which diverges when the shell has updated HOME via paramtab
     // but hasn't yet exported the change. Route through getsparam.
     if dotdir.is_empty() {
-        dotdir = crate::ported::params::getsparam("HOME")                // c:85
+        dotdir = crate::ported::params::getsparam("HOME") // c:85
             .unwrap_or_default();
         if dotdir.is_empty() {
-            return 0;                                                     // c:87
+            return 0; // c:87
         }
     }
 
@@ -116,33 +125,39 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     if check_dotfile(&dotdir, ".zshenv")   == 0 ||                       // c:90
        check_dotfile(&dotdir, ".zprofile") == 0 ||                       // c:91
        check_dotfile(&dotdir, ".zshrc")    == 0 ||                       // c:92
-       check_dotfile(&dotdir, ".zlogin")   == 0 {                        // c:93
-        return 0;                                                         // c:94
+       check_dotfile(&dotdir, ".zlogin")   == 0
+    {
+        // c:93
+        return 0; // c:94
     }
 
     // c:96-102 — try to source `<spath>/newuser` from each system path.
-    for sp in &spaths {                                                   // c:96
-        let buf = format!("{}/newuser", sp);                              // c:98
-        if crate::ported::init::source(&buf) != SOURCE_NOT_FOUND {        // c:100
-            break;                                                        // c:101
+    for sp in &spaths {
+        // c:96
+        let buf = format!("{}/newuser", sp); // c:98
+        if crate::ported::init::source(&buf) != SOURCE_NOT_FOUND {
+            // c:100
+            break; // c:101
         }
     }
 
-    0                                                                    // c:104
+    0 // c:104
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:109
-    0                                                                    // c:116
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:109
+    0 // c:116
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/newuser.c:116`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
-    0                                                                    // c:116
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // c:116
+    0 // c:116
 }
 
 // `SOURCE_NOT_FOUND` is the C `source.c` return code for a missing
@@ -163,7 +178,10 @@ mod tests {
         let tmp = std::env::temp_dir();
         let p = tmp.join("zshrs_test_dotfile_exists");
         fs::write(&p, "").expect("write tmp");
-        assert_eq!(check_dotfile(tmp.to_str().unwrap(), "zshrs_test_dotfile_exists"), 0);
+        assert_eq!(
+            check_dotfile(tmp.to_str().unwrap(), "zshrs_test_dotfile_exists"),
+            0
+        );
         let _ = fs::remove_file(&p);
     }
 
@@ -172,15 +190,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let tmp = std::env::temp_dir();
         // Use a name guaranteed not to exist.
-        assert_eq!(check_dotfile(tmp.to_str().unwrap(), "zshrs_test_definitely_nothere_xyz"), -1);
+        assert_eq!(
+            check_dotfile(tmp.to_str().unwrap(), "zshrs_test_definitely_nothere_xyz"),
+            -1
+        );
     }
 
     /// Module entry points all return 0 per `Src/Modules/newuser.c:37-116`.
     #[test]
     fn module_entry_points_return_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(setup_(std::ptr::null()),   0);
+        assert_eq!(setup_(std::ptr::null()), 0);
         assert_eq!(cleanup_(std::ptr::null()), 0);
-        assert_eq!(finish_(std::ptr::null()),  0);
+        assert_eq!(finish_(std::ptr::null()), 0);
     }
 }

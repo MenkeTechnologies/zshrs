@@ -594,9 +594,7 @@ fn attach_filetail(id: u64, mut client: Client) -> i32 {
                 if matches!(st, "exited" | "killed" | "failed" | "cancelled") {
                     terminal_seen = true;
                     final_state = st.to_string();
-                    final_exit = job
-                        .and_then(|j| j.get("exit_code"))
-                        .and_then(Value::as_i64);
+                    final_exit = job.and_then(|j| j.get("exit_code")).and_then(Value::as_i64);
                     grace_drain_until =
                         Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
                 }
@@ -680,10 +678,7 @@ fn attach_pty(id: u64, mut client: Client) -> i32 {
                 return 1;
             }
         };
-        let _ = sizer.call(
-            "job_resize",
-            json!({"id": id, "rows": rows, "cols": cols}),
-        );
+        let _ = sizer.call("job_resize", json!({"id": id, "rows": rows, "cols": cols}));
     }
     eprintln!("[zjob {} attached — Ctrl-] to detach]", id);
 
@@ -819,10 +814,7 @@ fn stdin_pump(
             return 0;
         }
         let b64 = base64_encode_local(chunk);
-        if let Err(e) = client.call(
-            "job_input",
-            json!({"id": id, "bytes_b64": b64}),
-        ) {
+        if let Err(e) = client.call("job_input", json!({"id": id, "bytes_b64": b64})) {
             eprintln!("\r\nzjob: attach: job_input: {e}");
             return 1;
         }
@@ -880,8 +872,7 @@ impl Drop for TermiosGuard {
 // need a new crate dep. Mirrors daemon/jobs.rs::base64_encode +
 // daemon/ops.rs::base64_decode. RFC 4648 alphabet, padded.
 
-const B64_ALPHABET: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode_local(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

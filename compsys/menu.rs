@@ -160,9 +160,7 @@ impl MenuColors {
 
                 // Check if it's a glob pattern (starts with = for completion match)
                 if let Some(pat) = key.strip_prefix('=') {
-                    patterns
-                        .patterns
-                        .push((pat.to_string(), color.to_string()));
+                    patterns.patterns.push((pat.to_string(), color.to_string()));
                     continue;
                 }
 

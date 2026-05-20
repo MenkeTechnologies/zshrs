@@ -84,8 +84,8 @@ impl DaemonHttp {
         // Single-directory rule: daemon.toml lives in $ZSHRS_HOME
         // alongside everything else (rkyv shards, sockets, log).
         std::fs::create_dir_all(zshrs_home.path()).expect("mk zshrs home");
-        let mut f = std::fs::File::create(zshrs_home.path().join("daemon.toml"))
-            .expect("create toml");
+        let mut f =
+            std::fs::File::create(zshrs_home.path().join("daemon.toml")).expect("create toml");
         write!(f, "[http]\nlisten = \"127.0.0.1:{port}\"\n").unwrap();
         if let Some(tok) = token {
             write!(f, "\n[http.tokens]\ntest-tok = \"{tok}\"\n").unwrap();
@@ -120,7 +120,10 @@ impl DaemonHttp {
     fn wait_ready(&self) {
         let start = Instant::now();
         while start.elapsed() < SPAWN_GRACE {
-            if let Ok(resp) = ureq::get(&self.url("/health")).timeout(Duration::from_millis(200)).call() {
+            if let Ok(resp) = ureq::get(&self.url("/health"))
+                .timeout(Duration::from_millis(200))
+                .call()
+            {
                 if resp.status() == 200 {
                     return;
                 }
@@ -450,10 +453,8 @@ fn definitions_federation_keeps_per_shell_rows_distinct() {
     let body: serde_json::Value = r.into_json().unwrap();
     let recs = body["records"].as_array().unwrap();
     assert_eq!(recs.len(), 2, "expected both shells' ll rows: {body}");
-    let shells: std::collections::HashSet<&str> = recs
-        .iter()
-        .filter_map(|r| r["shell_id"].as_str())
-        .collect();
+    let shells: std::collections::HashSet<&str> =
+        recs.iter().filter_map(|r| r["shell_id"].as_str()).collect();
     assert!(shells.contains("bash"), "missing bash row: {body}");
     assert!(shells.contains("zshrs"), "missing zshrs row: {body}");
 
@@ -475,7 +476,9 @@ fn definitions_federation_keeps_per_shell_rows_distinct() {
     let body: serde_json::Value = r.into_json().unwrap();
     let changed = body["changed"].as_array().unwrap();
     assert!(
-        changed.iter().any(|c| c["name"] == "ll" && c["from"] == "ls -al" && c["to"] == "ls -alh"),
+        changed
+            .iter()
+            .any(|c| c["name"] == "ll" && c["from"] == "ls -al" && c["to"] == "ls -alh"),
         "expected ll changed entry: {body}"
     );
     let removed = body["removed"].as_array().unwrap();
@@ -712,7 +715,12 @@ scopes = ["*.read"]
 "#;
     let d = DaemonHttp::spawn_with_extra_toml(None, extra);
 
-    for op in ["cache_stats", "definitions_kinds", "snapshot_list", "lock_list"] {
+    for op in [
+        "cache_stats",
+        "definitions_kinds",
+        "snapshot_list",
+        "lock_list",
+    ] {
         let r = ureq::post(&d.url(&format!("/op/{op}")))
             .set("Authorization", "Bearer dash-secret")
             .set("Content-Type", "application/json")

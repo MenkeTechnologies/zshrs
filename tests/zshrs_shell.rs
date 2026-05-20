@@ -38,7 +38,12 @@ fn tempdir_for_test() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path = format!("{}/zshrs-test-{}-{}", base.trim_end_matches('/'), pid, nanos);
+    let path = format!(
+        "{}/zshrs-test-{}-{}",
+        base.trim_end_matches('/'),
+        pid,
+        nanos
+    );
     std::fs::create_dir_all(&path).expect("failed to create tempdir");
     path
 }
@@ -517,36 +522,32 @@ fn test_subscript_flag_n_picks_nth_match() {
     // (n.2.r) picks the 2nd match. Verified empirically:
     // /bin/zsh -c 'arr=(foo bar foo baz); print "${arr[(n.2.r)foo]}"' → "foo"
     // /bin/zsh -c 'arr=(foo bar foo baz); print "${arr[(n.2.i)foo]}"' → "3"
-    let (_, output, _) = run_zshrs(
-        r#"arr=(foo bar foo baz); print "[${arr[(n.2.r)foo]}]:[${arr[(n.2.i)foo]}]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"arr=(foo bar foo baz); print "[${arr[(n.2.r)foo]}]:[${arr[(n.2.i)foo]}]""#);
     assert_eq!(output.trim(), "[foo]:[3]", "got: {output:?}");
 }
 
 #[test]
 fn test_subscript_flag_b_starts_from_offset() {
     // (b.3.r) starts search from idx 3 (parsed-1).
-    let (_, output, _) = run_zshrs(
-        r#"arr=(foo bar foo baz); print "[${arr[(b.3.r)foo]}]:[${arr[(b.3.i)foo]}]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"arr=(foo bar foo baz); print "[${arr[(b.3.r)foo]}]:[${arr[(b.3.i)foo]}]""#);
     assert_eq!(output.trim(), "[foo]:[3]", "got: {output:?}");
 }
 
 #[test]
 fn test_subscript_flag_b_out_of_bounds_returns_len_plus_one_for_i() {
     // (b.99.i) on 4-element arr returns 5 (len+1) per c:1746.
-    let (_, output, _) = run_zshrs(
-        r#"arr=(foo bar foo baz); print "[${arr[(b.99.r)foo]}]:[${arr[(b.99.i)foo]}]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"arr=(foo bar foo baz); print "[${arr[(b.99.r)foo]}]:[${arr[(b.99.i)foo]}]""#);
     assert_eq!(output.trim(), "[]:[5]", "got: {output:?}");
 }
 
 #[test]
 fn test_subscript_flag_hash_neg_num_xor_semantics() {
     // r+neg → R semantics (all matches); R+neg → r (single match).
-    let (_, output, _) = run_zshrs(
-        r#"typeset -A h=(a 1 b 1 c 2); print "[${h[(n.-1.r)1]}]:[${h[(n.-1.R)1]}]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h=(a 1 b 1 c 2); print "[${h[(n.-1.r)1]}]:[${h[(n.-1.R)1]}]""#);
     assert_eq!(output.trim(), "[1 1]:[1]", "got: {output:?}");
 }
 
@@ -578,7 +579,8 @@ fn test_subscript_flag_scalar_r_returns_first_char_of_match() {
     // C params.c:1798-1980 char-search returns the CHAR at the match
     // position, not the full substring. Verified empirically:
     //   /bin/zsh -c 's="barfooxyz"; print "${s[(r)foo]}"' → "f"
-    let (_, output, _) = run_zshrs(r#"s="barfooxyz"; print "[${s[(r)foo]}]:[${s[(re)foo]}]:[${s[(i)foo]}]""#);
+    let (_, output, _) =
+        run_zshrs(r#"s="barfooxyz"; print "[${s[(r)foo]}]:[${s[(re)foo]}]:[${s[(i)foo]}]""#);
     assert_eq!(output.trim(), "[f]:[f]:[4]", "got: {output:?}");
 }
 
@@ -588,8 +590,7 @@ fn test_subscript_flag_e_alone_no_search() {
     // array search loop when a direction flag (r/R/i/I/k/K) is set.
     // `(e)foo` without a direction flag does NOT match. Verified
     // /bin/zsh -c 'arr=(foo bar); print "[${arr[(e)foo]}]"'  → []
-    let (_, output, _) =
-        run_zshrs(r#"arr=(foo bar); print "[${arr[(e)foo]}]:[${arr[(re)foo]}]""#);
+    let (_, output, _) = run_zshrs(r#"arr=(foo bar); print "[${arr[(e)foo]}]:[${arr[(re)foo]}]""#);
     assert_eq!(output.trim(), "[]:[foo]", "got: {output:?}");
 }
 
@@ -886,7 +887,8 @@ fn test_subscript_parity_param_modifier_pattern_strip() {
         print "4:[${filename%cmd*}]"
         "#,
     );
-    let expected = "1:[cmd.txt]\n2:[/usr/local/bin]\n3:[usr/local/bin/cmd.txt]\n4:[/usr/local/bin/]";
+    let expected =
+        "1:[cmd.txt]\n2:[/usr/local/bin]\n3:[usr/local/bin/cmd.txt]\n4:[/usr/local/bin/]";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -952,7 +954,8 @@ EOF
 cat <<<"hello there"
 "#,
     );
-    let expected = "line one\nline two\nn is 42\nindented but stripped\n$n stays literal\nhello there";
+    let expected =
+        "line one\nline two\nn is 42\nindented but stripped\n$n stays literal\nhello there";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -960,9 +963,7 @@ cat <<<"hello there"
 fn test_subscript_parity_process_substitution() {
     // `<(cmd)` process substitution — feeds command output as a path
     // suitable for `cat` etc.
-    let (_, output, _) = run_zshrs_parity(
-        r#"cat <(echo proc-sub-test)"#,
-    );
+    let (_, output, _) = run_zshrs_parity(r#"cat <(echo proc-sub-test)"#);
     assert_eq!(output.trim(), "proc-sub-test", "got: {output:?}");
 }
 
@@ -990,7 +991,8 @@ fn test_subscript_parity_control_flow() {
         fn; print "out: ${lx-unset}"
         "#,
     );
-    let expected = "a b c \n1 2 3 \nw0 w1 w2 \nu0 u1 u2 \nfoomatch\nzmatch\nhi world\nin: 42\nout: unset";
+    let expected =
+        "a b c \n1 2 3 \nw0 w1 w2 \nu0 u1 u2 \nfoomatch\nzmatch\nhi world\nin: 42\nout: unset";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -1040,7 +1042,11 @@ fn test_subscript_parity_trap_user_signal() {
         print "after"
         "#,
     );
-    assert_eq!(output.trim(), "before\nusr1-caught\nafter", "got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "before\nusr1-caught\nafter",
+        "got: {output:?}"
+    );
 }
 
 #[test]
@@ -1193,7 +1199,8 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
         print
         "#,
     );
-    let expected = "1:prefix-glob\n2:txt\n3:double\napple: starts-a\nbanana: other\ncherry: other\n1 2 4";
+    let expected =
+        "1:prefix-glob\n2:txt\n3:double\napple: starts-a\nbanana: other\ncherry: other\n1 2 4";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -1241,9 +1248,8 @@ fn test_subscript_parity_redirect_error_skips_non_print_builtins() {
     // read, eval, set, builtin_builtin — not just print/echo.
     // Verified: `cd /etc > /etc/passwd && S || F` also returns F
     // (the cd builtin's success doesn't overwrite the failure).
-    let (_, output, stderr) = run_zshrs_parity(
-        r#"cd /etc > /etc/passwd && echo SUCCESS || echo FAIL"#,
-    );
+    let (_, output, stderr) =
+        run_zshrs_parity(r#"cd /etc > /etc/passwd && echo SUCCESS || echo FAIL"#);
     assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
     assert!(stderr.contains("permission denied"), "stderr: {stderr:?}");
 }
@@ -1258,9 +1264,8 @@ fn test_subscript_parity_redirect_error_skips_command() {
     //   /bin/zsh -c 'echo x > /etc/passwd && echo S || echo F'
     //   zsh:1: permission denied: /etc/passwd
     //   F
-    let (_, output, stderr) = run_zshrs_parity(
-        r#"echo x > /etc/passwd && echo SUCCESS || echo FAIL"#,
-    );
+    let (_, output, stderr) =
+        run_zshrs_parity(r#"echo x > /etc/passwd && echo SUCCESS || echo FAIL"#);
     assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
     assert!(
         stderr.contains("permission denied"),
@@ -1268,9 +1273,8 @@ fn test_subscript_parity_redirect_error_skips_command() {
     );
 
     // No-such-directory variant
-    let (_, output, stderr) = run_zshrs_parity(
-        r#"echo x > /no/such/dir/f && echo SUCCESS || echo FAIL"#,
-    );
+    let (_, output, stderr) =
+        run_zshrs_parity(r#"echo x > /no/such/dir/f && echo SUCCESS || echo FAIL"#);
     assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
     assert!(
         stderr.contains("no such file or directory"),
@@ -1649,7 +1653,8 @@ fn test_subscript_parity_typeset_attribute_print() {
         typeset -p const
         "#,
     );
-    let expected = "typeset -i n=42\ntypeset -A m=( [k]=v )\ntypeset -F f=3.140\ntypeset -ar const=( a b c )";
+    let expected =
+        "typeset -i n=42\ntypeset -A m=( [k]=v )\ntypeset -F f=3.140\ntypeset -ar const=( a b c )";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
@@ -4165,7 +4170,10 @@ fn test_xtrace_uses_ps4() {
     // /opt/homebrew/bin/zsh).
     let (_, _, stderr) = run_zshrs("PS4='+ '; set -x; true");
     assert!(stderr.contains("+ "), "stderr: {stderr:?}");
-    assert!(stderr.contains("true"), "stderr should contain command: {stderr:?}");
+    assert!(
+        stderr.contains("true"),
+        "stderr should contain command: {stderr:?}"
+    );
 }
 
 #[test]

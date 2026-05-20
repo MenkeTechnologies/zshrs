@@ -379,7 +379,6 @@ pub fn urls(receiver: &mut CompletionReceiver, prefix: &str) -> bool {
         .strip_prefix("https://")
         .or_else(|| prefix.strip_prefix("http://"))
     {
-
         // Get hosts and filter
         let home = std::env::var("HOME").unwrap_or_default();
         let known_hosts = Path::new(&home).join(".ssh/known_hosts");

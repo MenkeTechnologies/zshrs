@@ -10,6 +10,10 @@
 
 use std::collections::HashMap;
 
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
 /// Format a widget's type label as `$widgets[name]` would show it.
 /// Port of `widgetstr(Widget w)` from Src/Zle/zleparameter.c. The C source
 /// emits "builtin" for `iwidgets.list` entries, "user:fnname" for
@@ -22,31 +26,28 @@ use std::collections::HashMap;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_refresh::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
+use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
 
-pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String { // c:37
+pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
+    // c:37
     if is_completion {
         format!("completion:{}", name)
     } else if is_user {
@@ -64,7 +65,8 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String { // 
 /// the static built-in slice with the user + completion widget maps
 /// and emit the same per-entry type label widgetstr() produces.
 /// WARNING: param names don't match C — Rust=(user_widgets, completion_widgets) vs C=(ht, name)
-pub fn getpmwidgets(                                                         // c:59
+pub fn getpmwidgets(
+    // c:59
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
     completion_widgets: &HashMap<String, String>,
@@ -93,7 +95,8 @@ pub fn getpmwidgets(                                                         // 
 /// invokes the parameter-scan callback on each entry instead of
 /// allocating the full hash.
 /// WARNING: param names don't match C — Rust=(user_widgets, completion_widgets, callback) vs C=(ht, func, flags)
-pub fn scanpmwidgets<F>(                                                     // c:81
+pub fn scanpmwidgets<F>(
+    // c:81
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
     completion_widgets: &HashMap<String, String>,
@@ -119,55 +122,60 @@ pub fn scanpmwidgets<F>(                                                     // 
 /// `createkeymapnamtab`); we surface the host-supplied slice
 /// directly since our keymap registry already exposes a Vec view.
 /// WARNING: param names don't match C — Rust=(keymaps) vs C=(pm)
-pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {                       // c:105
+pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {
+    // c:105
     keymaps.iter().map(|s| s.to_string()).collect()
 }
-
-
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:147`. C body
 /// is `return 0;` (UNUSED `Module m`).
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn setup_() -> i32 {                                                 // c:147
-    0                                                                    // c:154
+pub fn setup_() -> i32 {
+    // c:147
+    0 // c:154
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Zle/zleparameter.c:154`. C body
 /// is `*features = featuresarray(m, &module_features); return 0;`.
 /// Static-link path: 0.
 /// WARNING: param names don't match C — Rust=() vs C=(m, features)
-pub fn features_() -> i32 {                                              // c:154
-    0                                                                    // c:162
+pub fn features_() -> i32 {
+    // c:154
+    0 // c:162
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Zle/zleparameter.c:162`. C body
 /// is `return handlefeatures(m, &module_features, enables);`.
 /// Static-link path: 0.
 /// WARNING: param names don't match C — Rust=() vs C=(m, enables)
-pub fn enables_() -> i32 {                                               // c:162
-    0                                                                    // c:169
+pub fn enables_() -> i32 {
+    // c:162
+    0 // c:169
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:169`. C body is
 /// `return 0;` (UNUSED `Module m`).
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn boot_() -> i32 {                                                  // c:169
-    0                                                                    // c:176
+pub fn boot_() -> i32 {
+    // c:169
+    0 // c:176
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:176`. C body
 /// is `return setfeatureenables(m, &module_features, NULL);`.
 /// Static-link path: 0.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn cleanup_() -> i32 {                                               // c:176
-    0                                                                    // c:183
+pub fn cleanup_() -> i32 {
+    // c:176
+    0 // c:183
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:183`. C body
 /// is `return 0;` (UNUSED `Module m`).
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn finish_() -> i32 {                                                // c:183
-    0                                                                    // c:183
+pub fn finish_() -> i32 {
+    // c:183
+    0 // c:183
 }
 
 /// Default builtin widget names for the $widgets parameter
@@ -408,8 +416,11 @@ mod tests {
     fn widgetstr_completion_wins_over_user_when_both_true() {
         let _g = crate::test_util::global_state_lock();
         let s = widgetstr("foo", true, true);
-        assert!(s.starts_with("completion:"),
-            "is_completion must dominate is_user, got: {}", s);
+        assert!(
+            s.starts_with("completion:"),
+            "is_completion must dominate is_user, got: {}",
+            s
+        );
     }
 
     /// c:59 — `getpmwidgets` should NOT silently de-dup. If a user
@@ -426,8 +437,11 @@ mod tests {
         let comp = HashMap::new();
         let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
         // "accept-line" should be the user entry, NOT "builtin"
-        assert_eq!(widgets.get("accept-line"), Some(&"user:my-fn".to_string()),
-            "user widget must override builtin of same name");
+        assert_eq!(
+            widgets.get("accept-line"),
+            Some(&"user:my-fn".to_string()),
+            "user widget must override builtin of same name"
+        );
         // "backward-char" stays builtin (no user entry)
         assert_eq!(widgets.get("backward-char"), Some(&"builtin".to_string()));
     }
@@ -480,8 +494,11 @@ mod tests {
     fn builtin_widgets_has_no_duplicates() {
         let _g = crate::test_util::global_state_lock();
         let unique: std::collections::HashSet<_> = BUILTIN_WIDGETS.iter().copied().collect();
-        assert_eq!(unique.len(), BUILTIN_WIDGETS.len(),
-            "duplicate widget name in BUILTIN_WIDGETS — would corrupt $widgets");
+        assert_eq!(
+            unique.len(),
+            BUILTIN_WIDGETS.len(),
+            "duplicate widget name in BUILTIN_WIDGETS — would corrupt $widgets"
+        );
     }
 
     /// `BUILTIN_WIDGETS` entries must follow the `lowercase-with-
@@ -494,11 +511,18 @@ mod tests {
         for w in BUILTIN_WIDGETS {
             assert!(!w.is_empty(), "empty widget name");
             for c in w.chars() {
-                assert!(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-',
-                    "widget {:?} has non-kebab-case char {:?}", w, c);
+                assert!(
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-',
+                    "widget {:?} has non-kebab-case char {:?}",
+                    w,
+                    c
+                );
             }
-            assert!(!w.starts_with('-'),
-                "widget {:?} starts with '-' — would parse as a flag", w);
+            assert!(
+                !w.starts_with('-'),
+                "widget {:?} starts with '-' — would parse as a flag",
+                w
+            );
             assert!(!w.ends_with('-'), "widget {:?} ends with '-'", w);
         }
     }
@@ -511,8 +535,11 @@ mod tests {
     fn default_keymaps_includes_required_names() {
         let _g = crate::test_util::global_state_lock();
         for required in ["emacs", "viins", "vicmd", "main"] {
-            assert!(DEFAULT_KEYMAPS.contains(&required),
-                "DEFAULT_KEYMAPS missing required name: {}", required);
+            assert!(
+                DEFAULT_KEYMAPS.contains(&required),
+                "DEFAULT_KEYMAPS missing required name: {}",
+                required
+            );
         }
     }
 

@@ -40,9 +40,7 @@ impl FuncBodyFmt {
                     }
                     current.push(c);
                 }
-                ';' | '\n'
-                    if !in_squote && !in_dquote && depth_paren == 0 && depth_brace == 0 =>
-                {
+                ';' | '\n' if !in_squote && !in_dquote && depth_paren == 0 && depth_brace == 0 => {
                     let t = current.trim().to_string();
                     if !t.is_empty() {
                         lines.push(t);
@@ -82,31 +80,19 @@ mod tests {
 
     #[test]
     fn semicolon_splits_top_level() {
-        assert_eq!(
-            FuncBodyFmt::render("echo a; echo b"),
-            "echo a\n\techo b"
-        );
+        assert_eq!(FuncBodyFmt::render("echo a; echo b"), "echo a\n\techo b");
     }
 
     #[test]
     fn newline_splits_top_level() {
-        assert_eq!(
-            FuncBodyFmt::render("echo a\necho b"),
-            "echo a\n\techo b"
-        );
+        assert_eq!(FuncBodyFmt::render("echo a\necho b"), "echo a\n\techo b");
     }
 
     #[test]
     fn empty_segments_are_dropped() {
         // `;;` between two real statements should collapse cleanly.
-        assert_eq!(
-            FuncBodyFmt::render("echo a;;echo b"),
-            "echo a\n\techo b"
-        );
-        assert_eq!(
-            FuncBodyFmt::render(";echo a;"),
-            "echo a"
-        );
+        assert_eq!(FuncBodyFmt::render("echo a;;echo b"), "echo a\n\techo b");
+        assert_eq!(FuncBodyFmt::render(";echo a;"), "echo a");
     }
 
     #[test]
@@ -178,18 +164,11 @@ mod tests {
 
     #[test]
     fn three_statements_split_correctly() {
-        assert_eq!(
-            FuncBodyFmt::render("a;b;c"),
-            "a\n\tb\n\tc"
-        );
+        assert_eq!(FuncBodyFmt::render("a;b;c"), "a\n\tb\n\tc");
     }
 
     #[test]
     fn mixed_semicolon_and_newline() {
-        assert_eq!(
-            FuncBodyFmt::render("a;b\nc;d"),
-            "a\n\tb\n\tc\n\td"
-        );
+        assert_eq!(FuncBodyFmt::render("a;b\nc;d"), "a\n\tb\n\tc\n\td");
     }
 }
-

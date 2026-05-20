@@ -49,35 +49,27 @@ pub const DEFAULT_TMPPREFIX: &str = "/tmp/zsh";
 
 // Define to 1 if you want to use dynamically loaded modules on AIX.
 // /* #undef AIXDYNAMIC */
-
 /// Define to 1 if the isprint() function is broken under UTF-8 locale.
 pub const BROKEN_ISPRINT: i32 = 1;
 
 // Define to 1 if kill(pid, 0) doesn't return ESRCH, ie BeOS R4.51.
 // /* #undef BROKEN_KILL_ESRCH */
-
 // Define to 1 if sigsuspend() is broken
 // /* #undef BROKEN_POSIX_SIGSUSPEND */
-
 // Define to 1 if tcsetpgrp() doesn't work, ie BeOS R4.51.
 // /* #undef BROKEN_TCSETPGRP */
-
 // Define to 1 if you use BSD style signal handling (and can block signals).
 //
 // /* #undef BSD_SIGNALS */
-
 /// Undefine if you don't want local features. By default this is defined.
 pub const CONFIG_LOCALE: i32 = 1;
 
 // Define to a custom value for the ZSH_PATCHLEVEL parameter
 // /* #undef CUSTOM_PATCHLEVEL */
-
 // Define to 1 if using 'alloca.c'.
 // /* #undef C_ALLOCA */
-
 // Define to 1 if you want to debug zsh.
 // /* #undef DEBUG */
-
 /// The default path; used when running commands with command -p
 pub const DEFAULT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
@@ -87,10 +79,8 @@ pub const DEFAULT_READNULLCMD: &str = "more";
 // Define to 1 if you want to avoid calling functions that will require
 // dynamic NSS modules.
 // /* #undef DISABLE_DYNAMIC_NSS */
-
 // Define to 1 if an underscore has to be prepended to dlsym() argument.
 // /* #undef DLSYM_NEEDS_UNDERSCORE */
-
 /// The extension used for dynamically loaded modules.
 pub const DL_EXT: &str = "so";
 
@@ -102,7 +92,6 @@ pub const DYNAMIC_NAME_CLASH_OK: i32 = 1;
 
 // Define to 1 if you want use unicode9 character widths.
 // /* #undef ENABLE_UNICODE9 */
-
 /// Define to 1 if getcwd() calls malloc to allocate memory.
 pub const GETCWD_CALLS_MALLOC: i32 = 1;
 
@@ -111,7 +100,6 @@ pub const GETPGRP_VOID: i32 = 1;
 
 // Define to 1 if getpwnam() is faked, ie BeOS R4.51.
 // /* #undef GETPWNAM_FAKED */
-
 /// The global file to source whenever zsh is run as a login shell; if
 /// undefined, don't source anything
 pub const GLOBAL_ZLOGIN: &str = "/etc/zlogin";
@@ -134,7 +122,6 @@ pub const GLOBAL_ZSHRC: &str = "/etc/zshrc";
 
 // Define if TIOCGWINSZ is defined in sys/ioctl.h but not in termios.h.
 // /* #undef GWINSZ_IN_SYS_IOCTL */
-
 /// Define to 1 if you have 'alloca', as a function or macro.
 pub const HAVE_ALLOCA: i32 = 1;
 
@@ -146,7 +133,6 @@ pub const HAVE_ARC4RANDOM_BUF: i32 = 1;
 
 // Define to 1 if you have the <bind/netdb.h> header file.
 // /* #undef HAVE_BIND_NETDB_H */
-
 /// Define if you have the termcap boolcodes symbol.
 pub const HAVE_BOOLCODES: i32 = 1;
 
@@ -161,10 +147,8 @@ pub const HAVE_BRK_PROTO: i32 = 1;
 
 // Define to 1 if you have the 'canonicalize_file_name' function.
 // /* #undef HAVE_CANONICALIZE_FILE_NAME */
-
 // Define to 1 if you have the 'cap_get_proc' function.
 // /* #undef HAVE_CAP_GET_PROC */
-
 /// Define to 1 if you have the 'clock_gettime' function.
 pub const HAVE_CLOCK_GETTIME: i32 = 1;
 
@@ -173,7 +157,6 @@ pub const HAVE_CURSES_H: i32 = 1;
 
 // Define to 1 if you have the 'cygwin_conv_path' function.
 // /* #undef HAVE_CYGWIN_CONV_PATH */
-
 /// Define to 1 if you have the 'difftime' function.
 pub const HAVE_DIFFTIME: i32 = 1;
 
@@ -198,7 +181,6 @@ pub const HAVE_DLSYM: i32 = 1;
 
 // Define to 1 if you have the <dl.h> header file.
 // /* #undef HAVE_DL_H */
-
 /// Define to 1 if you have the 'endutxent' function.
 pub const HAVE_ENDUTXENT: i32 = 1;
 
@@ -210,7 +192,6 @@ pub const HAVE_ERRNO_H: i32 = 1;
 
 // Define to 1 if you have the 'faccessx' function.
 // /* #undef HAVE_FACCESSX */
-
 /// Define to 1 if you have the 'fchdir' function.
 pub const HAVE_FCHDIR: i32 = 1;
 
@@ -243,10 +224,8 @@ pub const HAVE_FTRUNCATE: i32 = 1;
 
 // Define to 1 if you have the <gdbm.h> header file.
 // /* #undef HAVE_GDBM_H */
-
 // Define to 1 if you have the 'gdbm_open' function.
 // /* #undef HAVE_GDBM_OPEN */
-
 /// Define to 1 if you have the 'getcchar' function.
 pub const HAVE_GETCCHAR: i32 = 1;
 
@@ -288,7 +267,6 @@ pub const HAVE_GETPWUID: i32 = 1;
 
 // Define to 1 if you have the 'getrandom' function.
 // /* #undef HAVE_GETRANDOM */
-
 /// Define to 1 if you have the 'getrlimit' function.
 pub const HAVE_GETRLIMIT: i32 = 1;
 
@@ -300,7 +278,6 @@ pub const HAVE_GETTIMEOFDAY: i32 = 1;
 
 // Define to 1 if you have the 'getutent' function.
 // /* #undef HAVE_GETUTENT */
-
 /// Define to 1 if you have the 'getutxent' function.
 pub const HAVE_GETUTXENT: i32 = 1;
 
@@ -366,7 +343,6 @@ pub const HAVE_LCHOWN: i32 = 1;
 
 // Define to 1 if you have the 'cap' library (-lcap).
 // /* #undef HAVE_LIBCAP */
-
 /// Define to 1 if you have the <libc.h> header file.
 pub const HAVE_LIBC_H: i32 = 1;
 
@@ -375,16 +351,13 @@ pub const HAVE_LIBDL: i32 = 1;
 
 // Define to 1 if you have the 'gdbm' library (-lgdbm).
 // /* #undef HAVE_LIBGDBM */
-
 /// Define to 1 if you have the 'm' library (-lm).
 pub const HAVE_LIBM: i32 = 1;
 
 // Define to 1 if you have the 'rt' library (-lrt).
 // /* #undef HAVE_LIBRT */
-
 // Define to 1 if you have the 'socket' library (-lsocket).
 // /* #undef HAVE_LIBSOCKET */
-
 /// Define to 1 if you have the <limits.h> header file.
 pub const HAVE_LIMITS_H: i32 = 1;
 
@@ -393,13 +366,10 @@ pub const HAVE_LINK: i32 = 1;
 
 // Define to 1 if you have the 'load' function.
 // /* #undef HAVE_LOAD */
-
 // Define to 1 if you have the 'loadbind' function.
 // /* #undef HAVE_LOADBIND */
-
 // Define to 1 if you have the 'loadquery' function.
 // /* #undef HAVE_LOADQUERY */
-
 /// Define to 1 if you have the <locale.h> header file.
 pub const HAVE_LOCALE_H: i32 = 1;
 
@@ -444,22 +414,17 @@ pub const HAVE_NANOSLEEP: i32 = 1;
 
 // Define to 1 if you have the <ncursesw/ncurses.h> header file.
 // /* #undef HAVE_NCURSESW_NCURSES_H */
-
 // Define to 1 if you have the <ncursesw/term.h> header file.
 // /* #undef HAVE_NCURSESW_TERM_H */
-
 /// Define to 1 if you have the <ncurses.h> header file.
 pub const HAVE_NCURSES_H: i32 = 1;
 
 // Define to 1 if you have the <ncurses/ncurses.h> header file.
 // /* #undef HAVE_NCURSES_NCURSES_H */
-
 // Define to 1 if you have the <ncurses/term.h> header file.
 // /* #undef HAVE_NCURSES_TERM_H */
-
 // Define to 1 if you have the <ndir.h> header file, and it defines 'DIR'.
 // /* #undef HAVE_NDIR_H */
-
 /// Define to 1 if you have the <netinet/in_systm.h> header file.
 pub const HAVE_NETINET_IN_SYSTM_H: i32 = 1;
 
@@ -468,7 +433,6 @@ pub const HAVE_NICE: i32 = 1;
 
 // Define to 1 if you have the 'nis_list' function.
 // /* #undef HAVE_NIS_LIST */
-
 /// Define to 1 if you have the 'nl_langinfo' function.
 pub const HAVE_NL_LANGINFO: i32 = 1;
 
@@ -492,10 +456,8 @@ pub const HAVE_PATHCONF: i32 = 1;
 
 // Define to 1 if you have the 'pcre2_compile_8' function.
 // /* #undef HAVE_PCRE2_COMPILE_8 */
-
 // Define to 1 if you have the <pcre2.h> header file.
 // /* #undef HAVE_PCRE2_H */
-
 /// Define to 1 if you have the 'poll' function.
 pub const HAVE_POLL: i32 = 1;
 
@@ -507,7 +469,6 @@ pub const HAVE_POSIX_OPENPT: i32 = 1;
 
 // Define to 1 if the system supports `prctl' to change process name
 // /* #undef HAVE_PRCTL */
-
 /// Define to 1 if you have the 'ptsname' function.
 pub const HAVE_PTSNAME: i32 = 1;
 
@@ -540,28 +501,22 @@ pub const HAVE_RESIZE_TERM: i32 = 1;
 
 // Define to 1 if RLIMIT_AIO_MEM is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_AIO_MEM */
-
 // Define to 1 if RLIMIT_AIO_OPS is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_AIO_OPS */
-
 /// Define to 1 if RLIMIT_AS is present (whether or not as a macro).
 pub const HAVE_RLIMIT_AS: i32 = 1;
 
 // Define to 1 if RLIMIT_KQUEUES is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_KQUEUES */
-
 // Define to 1 if RLIMIT_LOCKS is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_LOCKS */
-
 /// Define to 1 if RLIMIT_MEMLOCK is present (whether or not as a macro).
 pub const HAVE_RLIMIT_MEMLOCK: i32 = 1;
 
 // Define to 1 if RLIMIT_MSGQUEUE is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_MSGQUEUE */
-
 // Define to 1 if RLIMIT_NICE is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_NICE */
-
 /// Define to 1 if RLIMIT_NOFILE is present (whether or not as a macro).
 pub const HAVE_RLIMIT_NOFILE: i32 = 1;
 
@@ -570,43 +525,31 @@ pub const HAVE_RLIMIT_NPROC: i32 = 1;
 
 // Define to 1 if RLIMIT_NPTS is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_NPTS */
-
 // Define to 1 if RLIMIT_NTHR is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_NTHR */
-
 // Define to 1 if RLIMIT_POSIXLOCKS is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_POSIXLOCKS */
-
 // Define to 1 if RLIMIT_PTHREAD is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_PTHREAD */
-
 /// Define to 1 if RLIMIT_RSS is present (whether or not as a macro).
 pub const HAVE_RLIMIT_RSS: i32 = 1;
 
 // Define to 1 if RLIMIT_RTPRIO is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_RTPRIO */
-
 // Define to 1 if RLIMIT_RTTIME is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_RTTIME */
-
 // Define to 1 if RLIMIT_SBSIZE is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_SBSIZE */
-
 // Define to 1 if RLIMIT_SIGPENDING is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_SIGPENDING */
-
 // Define to 1 if RLIMIT_SWAP is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_SWAP */
-
 // Define to 1 if RLIMIT_TCACHE is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_TCACHE */
-
 // Define to 1 if RLIMIT_UMTXP is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_UMTXP */
-
 // Define to 1 if RLIMIT_VMEM is present (whether or not as a macro).
 // /* #undef HAVE_RLIMIT_VMEM */
-
 /// Define to 1 if you have the 'sbrk' function.
 pub const HAVE_SBRK: i32 = 1;
 
@@ -645,16 +588,13 @@ pub const HAVE_SETPGRP: i32 = 1;
 
 // Define to 1 if the system supports `setproctitle' to change process name
 // /* #undef HAVE_SETPROCTITLE */
-
 /// Define to 1 if you have the 'setregid' function.
 pub const HAVE_SETREGID: i32 = 1;
 
 // Define to 1 if you have the 'setresgid' function.
 // /* #undef HAVE_SETRESGID */
-
 // Define to 1 if you have the 'setresuid' function.
 // /* #undef HAVE_SETRESUID */
-
 /// Define to 1 if you have the 'setreuid' function.
 pub const HAVE_SETREUID: i32 = 1;
 
@@ -672,13 +612,10 @@ pub const HAVE_SETUTXENT: i32 = 1;
 
 // Define to 1 if you have the 'shl_findsym' function.
 // /* #undef HAVE_SHL_FINDSYM */
-
 // Define to 1 if you have the 'shl_load' function.
 // /* #undef HAVE_SHL_LOAD */
-
 // Define to 1 if you have the 'shl_unload' function.
 // /* #undef HAVE_SHL_UNLOAD */
-
 /// Define to 1 if you have the 'sigaction' function.
 pub const HAVE_SIGACTION: i32 = 1;
 
@@ -696,7 +633,6 @@ pub const HAVE_SIGPROCMASK: i32 = 1;
 
 // Define to 1 if you have the 'sigqueue' function.
 // /* #undef HAVE_SIGQUEUE */
-
 /// Define to 1 if you have the 'sigrelse' function.
 pub const HAVE_SIGRELSE: i32 = 1;
 
@@ -705,7 +641,6 @@ pub const HAVE_SIGSETMASK: i32 = 1;
 
 // Define to 1 if you have the 'srand_deterministic' function.
 // /* #undef HAVE_SRAND_DETERMINISTIC */
-
 /// Define to 1 if you have the <stdarg.h> header file.
 pub const HAVE_STDARG_H: i32 = 1;
 
@@ -754,16 +689,13 @@ pub const HAVE_STRTOUL: i32 = 1;
 
 // Define if your system's struct direct has a member named d_ino.
 // /* #undef HAVE_STRUCT_DIRECT_D_INO */
-
 // Define if your system's struct direct has a member named d_stat.
 // /* #undef HAVE_STRUCT_DIRECT_D_STAT */
-
 /// Define if your system's struct dirent has a member named d_ino.
 pub const HAVE_STRUCT_DIRENT_D_INO: i32 = 1;
 
 // Define if your system's struct dirent has a member named d_stat.
 // /* #undef HAVE_STRUCT_DIRENT_D_STAT */
-
 /// Define to 1 if 'ru_idrss' is a member of 'struct rusage'.
 pub const HAVE_STRUCT_RUSAGE_RU_IDRSS: i32 = 1;
 
@@ -812,31 +744,25 @@ pub const HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID: i32 = 1;
 
 // Define to 1 if 'st_atimensec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
-
 /// Define to 1 if 'st_atimespec.tv_nsec' is a member of 'struct stat'.
 pub const HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC: i32 = 1;
 
 // Define to 1 if 'st_atim.tv_nsec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
-
 // Define to 1 if 'st_ctimensec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_CTIMENSEC */
-
 /// Define to 1 if 'st_ctimespec.tv_nsec' is a member of 'struct stat'.
 pub const HAVE_STRUCT_STAT_ST_CTIMESPEC_TV_NSEC: i32 = 1;
 
 // Define to 1 if 'st_ctim.tv_nsec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_CTIM_TV_NSEC */
-
 // Define to 1 if 'st_mtimensec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_MTIMENSEC */
-
 /// Define to 1 if 'st_mtimespec.tv_nsec' is a member of 'struct stat'.
 pub const HAVE_STRUCT_STAT_ST_MTIMESPEC_TV_NSEC: i32 = 1;
 
 // Define to 1 if 'st_mtim.tv_nsec' is a member of 'struct stat'.
 // /* #undef HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC */
-
 /// Define to 1 if struct timespec is defined by a system header
 pub const HAVE_STRUCT_TIMESPEC: i32 = 1;
 
@@ -857,13 +783,11 @@ pub const HAVE_STRUCT_UTMPX_UT_TV: i32 = 1;
 
 // Define if your system's struct utmpx has a member named ut_xtime.
 // /* #undef HAVE_STRUCT_UTMPX_UT_XTIME */
-
 /// Define if your system's struct utmp has a member named ut_host.
 pub const HAVE_STRUCT_UTMP_UT_HOST: i32 = 1;
 
 // Define to 1 if you have RFS superroot directory.
 // /* #undef HAVE_SUPERROOT */
-
 /// Define to 1 if you have the 'symlink' function.
 pub const HAVE_SYMLINK: i32 = 1;
 
@@ -872,11 +796,9 @@ pub const HAVE_SYSCONF: i32 = 1;
 
 // Define to 1 if you have the <sys/capability.h> header file.
 // /* #undef HAVE_SYS_CAPABILITY_H */
-
 // Define to 1 if you have the <sys/dir.h> header file, and it defines 'DIR'.
 //
 // /* #undef HAVE_SYS_DIR_H */
-
 /// Define to 1 if you have the <sys/filio.h> header file.
 pub const HAVE_SYS_FILIO_H: i32 = 1;
 
@@ -886,7 +808,6 @@ pub const HAVE_SYS_MMAN_H: i32 = 1;
 // Define to 1 if you have the <sys/ndir.h> header file, and it defines 'DIR'.
 //
 // /* #undef HAVE_SYS_NDIR_H */
-
 /// Define to 1 if you have the <sys/param.h> header file.
 pub const HAVE_SYS_PARAM_H: i32 = 1;
 
@@ -904,7 +825,6 @@ pub const HAVE_SYS_STAT_H: i32 = 1;
 
 // Define to 1 if you have the <sys/stropts.h> header file.
 // /* #undef HAVE_SYS_STROPTS_H */
-
 /// Define to 1 if you have the <sys/times.h> header file.
 pub const HAVE_SYS_TIMES_H: i32 = 1;
 
@@ -937,7 +857,6 @@ pub const HAVE_TERMIOS_H: i32 = 1;
 
 // Define to 1 if you have the <termio.h> header file.
 // /* #undef HAVE_TERMIO_H */
-
 /// Define to 1 if you have the <term.h> header file.
 pub const HAVE_TERM_H: i32 = 1;
 
@@ -970,7 +889,6 @@ pub const HAVE_UNISTD_H: i32 = 1;
 
 // Define to 1 if you have the 'unload' function.
 // /* #undef HAVE_UNLOAD */
-
 /// Define to 1 if you have the 'unlockpt' function.
 pub const HAVE_UNLOCKPT: i32 = 1;
 
@@ -988,7 +906,6 @@ pub const HAVE_UTMP_H: i32 = 1;
 
 // Define to 1 if you have the <varargs.h> header file.
 // /* #undef HAVE_VARARGS_H */
-
 /// Define to 1 if compiler supports variable-length arrays
 pub const HAVE_VARIABLE_LENGTH_ARRAYS: i32 = 1;
 
@@ -1015,13 +932,11 @@ pub const HAVE_WIN_WCH: i32 = 1;
 
 // Define to 1 if you have the 'xw' function.
 // /* #undef HAVE_XW */
-
 /// Define to 1 if you have the '_mktemp' function.
 pub const HAVE__MKTEMP: i32 = 1;
 
 // Define to 1 if you want to use dynamically loaded modules on HPUX 10.
 // /* #undef HPUX10DYNAMIC */
-
 /// Define as const if the declaration of iconv() needs const.
 pub const ICONV_CONST: bool = true;
 
@@ -1030,14 +945,12 @@ pub const ICONV_FROM_LIBICONV: i32 = 1;
 
 // Define to 1 if ino_t is 64 bit (for large file support).
 // /* #undef INO_T_IS_64_BIT */
-
 /// Define to 1 if we must include <sys/ioctl.h> to get a prototype for
 /// ioctl().
 pub const IOCTL_IN_SYS_IOCTL: i32 = 1;
 
 // Define to 1 if musl is being used as the C library
 // /* #undef LIBC_MUSL */
-
 /// Definitions used when a long is less than eight byte, to try to provide
 /// some support for eight byte operations. Note that ZSH_64_BIT_TYPE,
 /// OFF_T_IS_64_BIT, INO_T_IS_64_BIT do *not* get defined if long is already 64
@@ -1050,7 +963,6 @@ pub const MACHTYPE: &str = "arm";
 
 // Define for Maildir support
 // /* #undef MAILDIR_SUPPORT */
-
 /// Define for function depth limits
 pub const MAX_FUNCTION_DEPTH: i32 = 500;
 
@@ -1059,13 +971,10 @@ pub const MULTIBYTE_SUPPORT: i32 = 1;
 
 // Define to 1 if you have ospeed, but it is not defined in termcap.h
 // /* #undef MUST_DEFINE_OSPEED */
-
 // Define to 1 if you have no signal blocking at all (bummer).
 // /* #undef NO_SIGNAL_BLOCKING */
-
 // Define to 1 if off_t is 64 bit (for large file support)
 // /* #undef OFF_T_IS_64_BIT */
-
 /// Define to be the name of the operating system.
 pub const OSTYPE: &str = "darwin23.6.0";
 
@@ -1095,13 +1004,10 @@ pub const PATH_UTMPX_FILE: &str = "/var/run/utmpx";
 
 // Define to be location of utmp file.
 // /* #undef PATH_UTMP_FILE */
-
 // Define to be location of wtmpx file.
 // /* #undef PATH_WTMPX_FILE */
-
 // Define to be location of wtmp file.
 // /* #undef PATH_WTMP_FILE */
-
 /// Define to 1 if you use POSIX style signal handling.
 pub const POSIX_SIGNALS: i32 = 1;
 
@@ -1110,7 +1016,6 @@ pub const PRINTF_HAS_LLD: i32 = 1;
 
 // Define to the path of the symlink to the current executable file.
 // /* #undef PROC_SELF_EXE */
-
 /// Define if realpath() accepts NULL as its second argument.
 pub const REALPATH_ACCEPTS_NULL: i32 = 1;
 
@@ -1123,16 +1028,12 @@ pub const RLIMIT_RSS_IS_AS: i32 = 1;
 
 // Define to 1 if RLIMIT_VMEM and RLIMIT_AS both exist and are equal.
 // /* #undef RLIMIT_VMEM_IS_AS */
-
 // Define to 1 if RLIMIT_VMEM and RLIMIT_RSS both exist and are equal.
 // /* #undef RLIMIT_VMEM_IS_RSS */
-
 // Define to 1 if struct rlimit uses long long
 // /* #undef RLIM_T_IS_LONG_LONG */
-
 // Define to 1 if struct rlimit uses quad_t.
 // /* #undef RLIM_T_IS_QUAD_T */
-
 /// Define to 1 if struct rlimit uses unsigned.
 pub const RLIM_T_IS_UNSIGNED: i32 = 1;
 
@@ -1141,10 +1042,8 @@ pub const RU_MAXRSS_IS_IN_BYTES: i32 = 1;
 
 // Define to 1 if select() is defined in <sys/socket.h>, ie BeOS R4.51
 // /* #undef SELECT_IN_SYS_SOCKET_H */
-
 // Define to 1 if setenv removes a leading =
 // /* #undef SETENV_MANGLES_EQUAL */
-
 // If using the C implementation of alloca, define if you know the
 // direction of stack growth for your system; otherwise it will be
 // automatically deduced at runtime.
@@ -1152,10 +1051,8 @@ pub const RU_MAXRSS_IS_IN_BYTES: i32 = 1;
 // STACK_DIRECTION < 0 => grows toward lower addresses
 // STACK_DIRECTION = 0 => direction of growth unknown
 // /* #undef STACK_DIRECTION */
-
 // Define to 1 if the 'S_IS*' macros in <sys/stat.h> do not work properly.
 // /* #undef STAT_MACROS_BROKEN */
-
 /// Define to 1 if all of the C89 standard headers exist (not just the ones
 /// required in a freestanding environment). This macro is provided for
 /// backward compatibility; new code need not use it.
@@ -1164,7 +1061,6 @@ pub const STDC_HEADERS: i32 = 1;
 // Define to 1 if you use SYS style signal handling (and can block signals).
 //
 // /* #undef SYSV_SIGNALS */
-
 /// Define to 1 if tgetent() accepts NULL as a buffer.
 pub const TGETENT_ACCEPTS_NULL: i32 = 1;
 
@@ -1173,10 +1069,8 @@ pub const TGETENT_SUCCESS: i32 = 1;
 
 // Define if there is no prototype for the tgoto() terminal function.
 // /* #undef TGOTO_PROTO_MISSING */
-
 // Define if sys/time.h and sys/select.h cannot be both included.
 // /* #undef TIME_H_SELECT_H_CONFLICTS */
-
 /// Define to 1 if all the kit for using /dev/ptmx for ptys is available.
 pub const USE_DEV_PTMX: i32 = 1;
 
@@ -1185,38 +1079,30 @@ pub const USE_GETCWD: i32 = 1;
 
 // Define to 1 if h_errno is not defined by the system.
 // /* #undef USE_LOCAL_H_ERRNO */
-
 /// Define to 1 if lseek() can be used for SHIN.
 pub const USE_LSEEK: i32 = 1;
 
 // Define to 1 if you want to allocate stack memory e.g. with `alloca'.
 // /* #undef USE_STACK_ALLOCATION */
-
 /// Define to be a string corresponding the vendor of the machine.
 pub const VENDOR: &str = "apple";
 
 // Define if your should include sys/stream.h and sys/ptem.h.
 // /* #undef WINSIZE_IN_PTEM */
-
 /// Define if getxattr() etc. require additional MacOS-style arguments
 pub const XATTR_EXTRA_ARGS: i32 = 1;
 
 // Define to 1 if the zlong type uses 64-bit long int.
 // /* #undef ZLONG_IS_LONG_64 */
-
 // Define to 1 if the zlong type uses long long int.
 // /* #undef ZLONG_IS_LONG_LONG */
-
 // Define to a 64 bit integer type if there is one, but long is shorter.
 // /* #undef ZSH_64_BIT_TYPE */
-
 // Define to an unsigned variant of ZSH_64_BIT_TYPE if that is defined.
 // /* #undef ZSH_64_BIT_UTYPE */
-
 // Define to 1 if you want to get debugging information on internal hash
 // tables. This turns on the `hashinfo' builtin.
 // /* #undef ZSH_HASH_DEBUG */
-
 /// Define to 1 if some variant of a curses header can be included
 pub const ZSH_HAVE_CURSES_H: i32 = 1;
 
@@ -1225,25 +1111,18 @@ pub const ZSH_HAVE_TERM_H: i32 = 1;
 
 // Define to 1 if you want to turn on error checking for heap allocation.
 // /* #undef ZSH_HEAP_DEBUG */
-
 // Define to 1 if you want to use zsh's own memory allocation routines
 // /* #undef ZSH_MEM */
-
 // Define to 1 if you want to debug zsh memory allocation routines.
 // /* #undef ZSH_MEM_DEBUG */
-
 // Define to 1 if you want to turn on warnings of memory allocation errors
 // /* #undef ZSH_MEM_WARNING */
-
 // Define if _XOPEN_SOURCE_EXTENDED should not be defined to avoid clashes
 // /* #undef ZSH_NO_XOPEN */
-
 // Define to 1 if you want to turn on memory checking for free().
 // /* #undef ZSH_SECURE_FREE */
-
 // Define to 1 if you want to add code for valgrind to debug heap memory.
 // /* #undef ZSH_VALGRIND */
-
 /// Define to the base type of the third argument of accept
 /// (Rust port: type alias rather than const because the C
 /// macro expands to a typename.)
@@ -1251,47 +1130,32 @@ pub type ZSOCKLEN_T = libc::socklen_t;
 
 // Number of bits in a file offset, on hosts where this is settable.
 // /* #undef _FILE_OFFSET_BITS */
-
 // Define to 1 on platforms where this makes off_t a 64-bit type.
 // /* #undef _LARGE_FILES */
-
 // Number of bits in time_t, on hosts where this is settable.
 // /* #undef _TIME_BITS */
-
 // Define to 1 on platforms where this makes time_t a 64-bit type.
 // /* #undef __MINGW_USE_VC2005_COMPAT */
-
 // Define to empty if 'const' does not conform to ANSI C.
 // /* #undef const */
-
 // Define as 'int' if <sys/types.h> doesn't define.
 // /* #undef gid_t */
-
 // Define to `unsigned long' if <sys/types.h> doesn't define.
 // /* #undef ino_t */
-
 // Define to 'int' if <sys/types.h> does not define.
 // /* #undef mode_t */
-
 // Define to 'long int' if <sys/types.h> does not define.
 // /* #undef off_t */
-
 // Define as a signed integer type capable of holding a process identifier.
 // /* #undef pid_t */
-
 // Define to the type used in struct rlimit.
 // /* #undef rlim_t */
-
 // Define to `unsigned int' if <sys/types.h> or <signal.h> doesn't define
 // /* #undef sigset_t */
-
 // Define as 'unsigned int' if <stddef.h> doesn't define.
 // /* #undef size_t */
-
 // Define as 'int' if <sys/types.h> doesn't define.
 // /* #undef uid_t */
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1302,7 +1166,7 @@ mod tests {
     #[test]
     fn job_control_is_enabled() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(JOB_CONTROL,   1);
+        assert_eq!(JOB_CONTROL, 1);
         assert_eq!(USE_SUSPENDED, 1);
     }
 
@@ -1322,14 +1186,20 @@ mod tests {
     fn default_config_values_match_upstream_config_h() {
         let _g = crate::test_util::global_state_lock();
         // config.h:13 — DEFAULT_HISTSIZE 30.
-        assert_eq!(DEFAULT_HISTSIZE, 30,
-            "configure.ac:2978 / config.h:13 — DEFAULT_HISTSIZE = 30");
+        assert_eq!(
+            DEFAULT_HISTSIZE, 30,
+            "configure.ac:2978 / config.h:13 — DEFAULT_HISTSIZE = 30"
+        );
         // config.h:16 — DEFAULT_FCEDIT "vi".
-        assert_eq!(DEFAULT_FCEDIT, "vi",
-            "configure.ac:2981 / config.h:16 — DEFAULT_FCEDIT = \"vi\"");
+        assert_eq!(
+            DEFAULT_FCEDIT, "vi",
+            "configure.ac:2981 / config.h:16 — DEFAULT_FCEDIT = \"vi\""
+        );
         // config.h:19 — DEFAULT_TMPPREFIX "/tmp/zsh".
-        assert_eq!(DEFAULT_TMPPREFIX, "/tmp/zsh",
-            "configure.ac:2984 / config.h:19 — DEFAULT_TMPPREFIX = \"/tmp/zsh\"");
+        assert_eq!(
+            DEFAULT_TMPPREFIX, "/tmp/zsh",
+            "configure.ac:2984 / config.h:19 — DEFAULT_TMPPREFIX = \"/tmp/zsh\""
+        );
     }
 
     /// `config.h.in` — every `GLOBAL_*` rc path drives a `source` at
@@ -1347,11 +1217,18 @@ mod tests {
             ("GLOBAL_ZLOGIN", GLOBAL_ZLOGIN),
             ("GLOBAL_ZLOGOUT", GLOBAL_ZLOGOUT),
         ] {
-            assert!(path.starts_with("/etc/z"),
-                "{} = {:?} — must live under /etc/z* per zsh init convention", name, path);
-            assert!(!path.contains(".."),
+            assert!(
+                path.starts_with("/etc/z"),
+                "{} = {:?} — must live under /etc/z* per zsh init convention",
+                name,
+                path
+            );
+            assert!(
+                !path.contains(".."),
                 "{} = {:?} — path traversal in a startup-file path is a security risk",
-                name, path);
+                name,
+                path
+            );
         }
     }
 
@@ -1364,12 +1241,19 @@ mod tests {
     fn global_rc_paths_are_all_distinct() {
         let _g = crate::test_util::global_state_lock();
         let all = [
-            GLOBAL_ZSHENV, GLOBAL_ZPROFILE, GLOBAL_ZSHRC,
-            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHRC,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
         ];
         let unique: std::collections::HashSet<_> = all.iter().copied().collect();
-        assert_eq!(unique.len(), all.len(),
-            "duplicate startup-file path detected: {:?}", all);
+        assert_eq!(
+            unique.len(),
+            all.len(),
+            "duplicate startup-file path detected: {:?}",
+            all
+        );
     }
 
     /// `Src/exec.c::execcmd_exec` ultimately falls back to DEFAULT_PATH
@@ -1382,9 +1266,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(DEFAULT_PATH.contains("/bin"));
         assert!(DEFAULT_PATH.contains("/usr/bin"));
-        assert!(!DEFAULT_PATH.ends_with(':'),
+        assert!(
+            !DEFAULT_PATH.ends_with(':'),
             "trailing colon in DEFAULT_PATH = {:?} means cwd-on-PATH — security regression",
-            DEFAULT_PATH);
+            DEFAULT_PATH
+        );
         for seg in DEFAULT_PATH.split(':') {
             assert!(seg.starts_with('/'),
                 "DEFAULT_PATH segment {:?} is not absolute — relative paths in PATH are a security risk",
@@ -1399,13 +1285,21 @@ mod tests {
     #[test]
     fn dl_ext_is_nonempty_extension_stem() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!DL_EXT.is_empty(), "DL_EXT must be set so zmodload can find .so files");
-        assert!(!DL_EXT.starts_with('.'),
+        assert!(
+            !DL_EXT.is_empty(),
+            "DL_EXT must be set so zmodload can find .so files"
+        );
+        assert!(
+            !DL_EXT.starts_with('.'),
             "DL_EXT = {:?} starts with `.` — concatenation would produce `..so`",
-            DL_EXT);
+            DL_EXT
+        );
         // On Linux/macOS one of these matches; on neither it's a misconfig.
-        assert!(matches!(DL_EXT, "so" | "dylib" | "bundle"),
-            "DL_EXT = {:?} — unexpected dynamic-library extension", DL_EXT);
+        assert!(
+            matches!(DL_EXT, "so" | "dylib" | "bundle"),
+            "DL_EXT = {:?} — unexpected dynamic-library extension",
+            DL_EXT
+        );
     }
 
     /// `Src/jobs.c` consults DYNAMIC + DYNAMIC_NAME_CLASH_OK at compile
@@ -1417,8 +1311,10 @@ mod tests {
     fn dynamic_module_loading_is_enabled() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(DYNAMIC, 1, "DYNAMIC=0 disables zmodload entirely");
-        assert_eq!(DYNAMIC_NAME_CLASH_OK, 1,
-            "DYNAMIC_NAME_CLASH_OK=0 forbids the same fn name across modules");
+        assert_eq!(
+            DYNAMIC_NAME_CLASH_OK, 1,
+            "DYNAMIC_NAME_CLASH_OK=0 forbids the same fn name across modules"
+        );
     }
 
     /// HAVE_* sentinels gate `#ifdef`'d code paths in the C source.
@@ -1430,8 +1326,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // clock_gettime is required for $EPOCHSECONDS / $EPOCHREALTIME
         // (Src/Modules/datetime.c). Disabled = the param is empty.
-        assert_eq!(HAVE_CLOCK_GETTIME, 1,
-            "$EPOCHREALTIME relies on clock_gettime");
+        assert_eq!(
+            HAVE_CLOCK_GETTIME, 1,
+            "$EPOCHREALTIME relies on clock_gettime"
+        );
         // alloca() is on every platform zshrs targets (macOS aarch64 +
         // Linux x86_64/aarch64); disabled would break parser stack
         // expansion in Src/parse.c.
@@ -1449,8 +1347,10 @@ mod tests {
     #[test]
     fn cache_usernames_is_enabled_for_tilde_expansion_perf() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(CACHE_USERNAMES, 1,
-            "CACHE_USERNAMES drives ~user lookup table; 0 means fork-per-lookup");
+        assert_eq!(
+            CACHE_USERNAMES, 1,
+            "CACHE_USERNAMES drives ~user lookup table; 0 means fork-per-lookup"
+        );
     }
 
     /// `config.h:54 BROKEN_ISPRINT` is the historic workaround for
@@ -1471,11 +1371,15 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // We do NOT shell out to verify executability; just sanity-check
         // the name is a known editor stem (not "", "vim", or a path).
-        assert!(matches!(DEFAULT_FCEDIT, "vi" | "ed"),
+        assert!(
+            matches!(DEFAULT_FCEDIT, "vi" | "ed"),
             "DEFAULT_FCEDIT = {:?} — must be a POSIX-installed editor",
-            DEFAULT_FCEDIT);
-        assert!(!DEFAULT_FCEDIT.contains('/'),
-            "DEFAULT_FCEDIT must be PATH-resolved, not a fixed path");
+            DEFAULT_FCEDIT
+        );
+        assert!(
+            !DEFAULT_FCEDIT.contains('/'),
+            "DEFAULT_FCEDIT must be PATH-resolved, not a fixed path"
+        );
     }
 
     /// `config.h:45 DEFAULT_TMPPREFIX = "/tmp/zsh"`. Used by
@@ -1485,9 +1389,11 @@ mod tests {
     #[test]
     fn default_tmpprefix_is_absolute_under_tmp() {
         let _g = crate::test_util::global_state_lock();
-        assert!(DEFAULT_TMPPREFIX.starts_with("/tmp/"),
+        assert!(
+            DEFAULT_TMPPREFIX.starts_with("/tmp/"),
             "DEFAULT_TMPPREFIX = {:?} must live under /tmp so it inherits sticky-bit",
-            DEFAULT_TMPPREFIX);
+            DEFAULT_TMPPREFIX
+        );
     }
 
     /// `config.h:85 DEFAULT_READNULLCMD` is what `< file` (read with no
@@ -1496,8 +1402,10 @@ mod tests {
     #[test]
     fn default_readnullcmd_matches_upstream() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(DEFAULT_READNULLCMD, "more",
-            "config.h:85 — DEFAULT_READNULLCMD must remain `more` to match zsh");
+        assert_eq!(
+            DEFAULT_READNULLCMD, "more",
+            "config.h:85 — DEFAULT_READNULLCMD must remain `more` to match zsh"
+        );
     }
 
     /// `config.h:27 PASSWD_MAP` is the NIS map name when looking up
@@ -1517,8 +1425,10 @@ mod tests {
     #[test]
     fn config_locale_is_enabled() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(CONFIG_LOCALE, 1,
-            "CONFIG_LOCALE=0 silently disables every locale-aware code path");
+        assert_eq!(
+            CONFIG_LOCALE, 1,
+            "CONFIG_LOCALE=0 silently disables every locale-aware code path"
+        );
     }
 
     /// `GETCWD_CALLS_MALLOC` + `GETPGRP_VOID` are two
@@ -1529,9 +1439,13 @@ mod tests {
     #[test]
     fn getcwd_and_getpgrp_use_modern_signatures() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(GETCWD_CALLS_MALLOC, 1,
-            "GETCWD_CALLS_MALLOC=0 means we'd pass a buffer — POSIX requires the NULL-arg form");
-        assert_eq!(GETPGRP_VOID, 1,
-            "GETPGRP_VOID=0 means getpgrp(pid) — only ancient SysV uses that form");
+        assert_eq!(
+            GETCWD_CALLS_MALLOC, 1,
+            "GETCWD_CALLS_MALLOC=0 means we'd pass a buffer — POSIX requires the NULL-arg form"
+        );
+        assert_eq!(
+            GETPGRP_VOID, 1,
+            "GETPGRP_VOID=0 means getpgrp(pid) — only ancient SysV uses that form"
+        );
     }
 }

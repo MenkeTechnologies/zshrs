@@ -228,9 +228,9 @@ impl FsWatcher {
                 RecursiveMode::NonRecursive
             };
             if let Some(deb) = g.debouncer.as_mut() {
-                deb.watcher().watch(&canonical, mode).map_err(|e| {
-                    super::DaemonError::other(format!("fsnotify watch: {e}"))
-                })?;
+                deb.watcher()
+                    .watch(&canonical, mode)
+                    .map_err(|e| super::DaemonError::other(format!("fsnotify watch: {e}")))?;
             }
             g.registered.insert(canonical.clone(), wp);
         }

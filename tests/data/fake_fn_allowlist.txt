@@ -1489,6 +1489,96 @@ parse_inline_funcdef
 parse_loop_body
 prev_char_index
 prompt_width
+
+# math.rs — Rust-only accessors wrapping thread_local math VM state
+# (input/pos/yyval/stack/variables/error). zsh C reads/writes the
+# globals (mtok, yyval, lastval, errflag, etc.) directly from
+# Src/math.c; Rust needs accessor fns to encapsulate UnsafeCell /
+# Cell ownership across the bytecode JIT and tree-walker call sites.
+m_c_precedences
+m_c_precedences_set
+m_error_clear
+m_error_set
+m_error_set_force
+m_error_some
+m_error_take
+m_force_float
+m_force_float_set
+m_input_byte
+m_input_clone
+m_input_len
+m_input_set
+m_input_slice
+m_input_slice_from
+m_lastbase_set
+m_lastval
+m_lastval_set
+m_mtok
+m_mtok_set
+m_noeval
+m_noeval_dec
+m_noeval_inc
+m_noeval_set
+m_octal_zeroes
+m_octal_zeroes_set
+m_pid
+m_pid_set
+m_pos
+m_pos_add
+m_pos_set
+m_pos_sub
+m_prec
+m_prec_set
+m_stack_is_empty
+m_stack_len
+m_stack_pop
+m_stack_push
+m_stack_top_clone
+m_string_variables_clone
+m_string_variables_get
+m_string_variables_insert
+m_string_variables_remove
+m_string_variables_set
+m_tok_start
+m_tok_start_set
+m_unary
+m_unary_set
+m_variables_clone
+m_variables_get
+m_variables_insert
+m_variables_set
+m_yylval_clone
+m_yylval_set
+m_yyval
+m_yyval_set
+
+# zle_h.rs — Src/Zle/zle.h:42-151 defines these as C macros
+# (`#define ZS_memset wmemset`, `#define ZC_idigit iswdigit`, etc.).
+# They are NOT functions in upstream C, but Rust needs them as fns
+# because macros don't compose across the wide/narrow char split.
+# Citations live in src/ported/zle/zle_h.rs at the fn definitions.
+ZC_idigit
+ZS_memset
+ZS_strcpy
+ZS_strlen
+ZS_strncmp
+ZS_width
+
+# zle_word.rs — Src/Zle/zle_word.c uses ZC_iword / ZC_ialpha / etc.
+# macros from zle.h directly. Same macro-not-fn situation as ZS_*.
+zc_ialnum
+zc_ialpha
+zc_iblank
+zc_inblank
+zc_ipunct
+zc_iword
+
+# ztype_h.rs — Src/ztype.h:60-78 defines `iuser`/`icntrl` as macros
+# (`#define iuser(X) (typtab[STOUC(X)] & IUSER)`); Rust needs fns
+# because macros can't be exported across modules.
+icntrl
+iuser
+
 qipre_get
 qisuf_get
 read_fdhead

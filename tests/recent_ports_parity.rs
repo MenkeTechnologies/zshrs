@@ -715,10 +715,14 @@ echo second"#,
         assert_eq!(z.stdout, r.stdout);
         // Set-equal stderr lines (order-independent across forked
         // pipeline stages).
-        let z_lines: std::collections::HashSet<String> =
-            String::from_utf8_lossy(&z.stderr).lines().map(String::from).collect();
-        let r_lines: std::collections::HashSet<String> =
-            String::from_utf8_lossy(&r.stderr).lines().map(String::from).collect();
+        let z_lines: std::collections::HashSet<String> = String::from_utf8_lossy(&z.stderr)
+            .lines()
+            .map(String::from)
+            .collect();
+        let r_lines: std::collections::HashSet<String> = String::from_utf8_lossy(&r.stderr)
+            .lines()
+            .map(String::from)
+            .collect();
         assert_eq!(z_lines, r_lines, "pipeline trace lines differ");
     }
 

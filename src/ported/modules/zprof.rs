@@ -14,9 +14,9 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
+use crate::ported::zsh_h::OPT_ISSET;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::OPT_ISSET;
 
 // ---------------------------------------------------------------------------
 // Structs (port of c:36-64).
@@ -37,12 +37,13 @@ use crate::ported::zsh_h::OPT_ISSET;
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
-pub struct Pfunc {                                                       // c:38
-    pub name: String,                                                    // c:40
-    pub calls: i64,                                                      // c:41
-    pub time: f64,                                                       // c:42
-    pub self_time: f64,                                                  // c:43 — `self` is a Rust keyword
-    pub num: i64,                                                        // c:44
+pub struct Pfunc {
+    // c:38
+    pub name: String,   // c:40
+    pub calls: i64,     // c:41
+    pub time: f64,      // c:42
+    pub self_time: f64, // c:43 — `self` is a Rust keyword
+    pub num: i64,       // c:44
 }
 
 /// Port of `struct sfunc` from `Src/Modules/zprof.c:49`.
@@ -59,9 +60,10 @@ pub struct Pfunc {                                                       // c:38
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct Sfunc {                                                       // c:49
-    pub p: usize,                                                        // c:50 — index into CALLS
-    pub beg: f64,                                                        // c:52
+pub struct Sfunc {
+    // c:49
+    pub p: usize, // c:50 — index into CALLS
+    pub beg: f64, // c:52
 }
 
 /// Port of `struct parc` from `Src/Modules/zprof.c:57`.
@@ -79,12 +81,13 @@ pub struct Sfunc {                                                       // c:49
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
-pub struct Parc {                                                        // c:57
-    pub from: usize,                                                     // c:59 — index into CALLS
-    pub to: usize,                                                       // c:60 — index into CALLS
-    pub calls: i64,                                                      // c:61
-    pub time: f64,                                                       // c:62
-    pub self_time: f64,                                                  // c:63 — `self` is a Rust keyword
+pub struct Parc {
+    // c:57
+    pub from: usize,    // c:59 — index into CALLS
+    pub to: usize,      // c:60 — index into CALLS
+    pub calls: i64,     // c:61
+    pub time: f64,      // c:62
+    pub self_time: f64, // c:63 — `self` is a Rust keyword
 }
 
 // ---------------------------------------------------------------------------
@@ -97,15 +100,17 @@ pub struct Parc {                                                        // c:57
 /// `Pfunc` slots are dropped at scope-exit.
 ///
 /// C signature: `static void freepfuncs(Pfunc f)`.
-pub fn freepfuncs(f: &mut Vec<Pfunc>) {                                  // c:74
-    f.clear();                                                           // c:86-82 zsfree+zfree
+pub fn freepfuncs(f: &mut Vec<Pfunc>) {
+    // c:74
+    f.clear(); // c:86-82 zsfree+zfree
 }
 
 /// Port of `freeparcs(Parc a)` from `Src/Modules/zprof.c:86`.
 ///
 /// C signature: `static void freeparcs(Parc a)`.
-pub fn freeparcs(a: &mut Vec<Parc>) {                                    // c:86
-    a.clear();                                                           // c:97-93 zfree
+pub fn freeparcs(a: &mut Vec<Parc>) {
+    // c:86
+    a.clear(); // c:97-93 zfree
 }
 
 /// Port of `findpfunc(char *name)` from `Src/Modules/zprof.c:97`. Linear-scan
@@ -113,7 +118,8 @@ pub fn freeparcs(a: &mut Vec<Parc>) {                                    // c:86
 ///
 /// C signature: `static Pfunc findpfunc(char *name)`. Returns NULL on
 /// miss; Rust port returns `None`.
-pub fn findpfunc(name: &str) -> Option<usize> {                          // c:97
+pub fn findpfunc(name: &str) -> Option<usize> {
+    // c:97
     // c:109-103 — `for (f = calls; f; f = f->next) if (!strcmp(name, f->name)) return f;`
     let calls = CALLS.lock().unwrap();
     calls.iter().position(|f| f.name == name)
@@ -124,7 +130,8 @@ pub fn findpfunc(name: &str) -> Option<usize> {                          // c:97
 /// pair.
 ///
 /// C signature: `static Parc findparc(Pfunc f, Pfunc t)`.
-pub fn findparc(f: usize, t: usize) -> Option<usize> {               // c:109
+pub fn findparc(f: usize, t: usize) -> Option<usize> {
+    // c:109
     // c:109-115 — `for (a = arcs; a; a = a->next) if (a->f == f && a->t == t) return a;`
     let arcs = ARCS.lock().unwrap();
     arcs.iter().position(|a| a.from == f && a.to == t)
@@ -140,20 +147,29 @@ pub fn findparc(f: usize, t: usize) -> Option<usize> {               // c:109
 ///         ((*a)->self != (*b)->self));
 /// ```
 /// (i.e. -1 if a > b, 0 if equal, +1 if a < b — descending order.)
-pub fn cmpsfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:121
-    b.self_time.partial_cmp(&a.self_time).unwrap_or(std::cmp::Ordering::Equal)
+pub fn cmpsfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {
+    // c:121
+    b.self_time
+        .partial_cmp(&a.self_time)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// Port of `cmptfuncs(Pfunc *a, Pfunc *b)` from `Src/Modules/zprof.c:127`. Comparator
 /// for descending by total `time`.
-pub fn cmptfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:127
-    b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
+pub fn cmptfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {
+    // c:127
+    b.time
+        .partial_cmp(&a.time)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// Port of `cmpparcs(Parc *a, Parc *b)` from `Src/Modules/zprof.c:133`. Comparator
 /// for descending by arc `time`.
-pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:133
-    b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
+pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {
+    // c:133
+    b.time
+        .partial_cmp(&a.time)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 // ---------------------------------------------------------------------------
@@ -172,20 +188,24 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:13
 /// re-sort by total-time, print the c:184 per-function caller/callee
 /// blocks.
 /// WARNING: param names don't match C — Rust=(_nam, _args, _func) vs C=(nam, args, ops, func)
-pub fn bin_zprof(_nam: &str, _args: &[String],                               // c:139
-                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zprof(
+    _nam: &str,
+    _args: &[String], // c:139
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // c:140 — `if (OPT_ISSET(ops,'c'))`
     let opt_c = OPT_ISSET(ops, b'c');
 
     if opt_c {
         // c:141-147 — free both tables + reset counters.
         let mut calls = CALLS.lock().unwrap();
-        freepfuncs(&mut calls);                                          // c:142
-        NCALLS.store(0, Ordering::SeqCst);                               // c:144
+        freepfuncs(&mut calls); // c:142
+        NCALLS.store(0, Ordering::SeqCst); // c:144
         let mut arcs = ARCS.lock().unwrap();
-        freeparcs(&mut arcs);                                            // c:145
-        NARCS.store(0, Ordering::SeqCst);                                // c:147
-        return 0;                                                        // c:213
+        freeparcs(&mut arcs); // c:145
+        NARCS.store(0, Ordering::SeqCst); // c:147
+        return 0; // c:213
     }
 
     // c:149-211 — print path.
@@ -195,11 +215,11 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
     // c:149-163 — gather + total. C uses a VARARR Pfunc fs[ncalls+1]
     // and a VARARR Parc as[narcs+1] with NULL sentinels; Rust uses
     // index arrays. `total` is the sum of self-times across all funcs.
-    let mut fs: Vec<usize> = (0..calls.len()).collect();                 // c:149-159
-    let as_arcs: Vec<usize> = (0..arcs.len()).collect();                 // c:151-163
-    let mut total: f64 = 0.0;                                            // c:154
+    let mut fs: Vec<usize> = (0..calls.len()).collect(); // c:149-159
+    let as_arcs: Vec<usize> = (0..arcs.len()).collect(); // c:151-163
+    let mut total: f64 = 0.0; // c:154
     for &i in &fs {
-        total += calls[i].self_time;                                     // c:158 total += f->self;
+        total += calls[i].self_time; // c:158 total += f->self;
     }
 
     // c:165-166 — `qsort(fs, ncalls, sizeof(f), cmpsfuncs);`
@@ -215,22 +235,45 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
     drop(calls);
     {
         let mut calls_w = CALLS.lock().unwrap();
-        for (i, &idx) in fs.iter().enumerate() {                         // c:171
-            calls_w[idx].num = (i + 1) as i64;                           // c:173
+        for (i, &idx) in fs.iter().enumerate() {
+            // c:171
+            calls_w[idx].num = (i + 1) as i64; // c:173
         }
     }
     let calls = CALLS.lock().unwrap();
-    for &idx in &fs {                                                    // c:171 again, after num assignment
+    for &idx in &fs {
+        // c:171 again, after num assignment
         let f = &calls[idx];
-        let avg_t = if f.calls > 0 { f.time / f.calls as f64 } else { 0.0 };
-        let avg_s = if f.calls > 0 { f.self_time / f.calls as f64 } else { 0.0 };
-        let pct_t = if total != 0.0 { (f.time / total) * 100.0 } else { 0.0 };
-        let pct_s = if total != 0.0 { (f.self_time / total) * 100.0 } else { 0.0 };
+        let avg_t = if f.calls > 0 {
+            f.time / f.calls as f64
+        } else {
+            0.0
+        };
+        let avg_s = if f.calls > 0 {
+            f.self_time / f.calls as f64
+        } else {
+            0.0
+        };
+        let pct_t = if total != 0.0 {
+            (f.time / total) * 100.0
+        } else {
+            0.0
+        };
+        let pct_s = if total != 0.0 {
+            (f.self_time / total) * 100.0
+        } else {
+            0.0
+        };
         println!(
             "{:2}) {:4}       {:8.2} {:8.2}  {:6.2}%  {:8.2} {:8.2}  {:6.2}%  {}",
-            f.num, f.calls,                                              // c:172-179 printf
-            f.time, avg_t, pct_t,
-            f.self_time, avg_s, pct_s,
+            f.num,
+            f.calls, // c:172-179 printf
+            f.time,
+            avg_t,
+            pct_t,
+            f.self_time,
+            avg_s,
+            pct_s,
             f.name
         );
     }
@@ -240,67 +283,129 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
     fs_t.sort_by(|&a, &b| cmptfuncs(&calls[a], &calls[b]));
 
     // c:184-211 — per-function caller/callee blocks.
-    for &fp_idx in &fs_t {                                               // c:184
+    for &fp_idx in &fs_t {
+        // c:184
         println!();
-        println!("-----------------------------------------------------------------------------------");
+        println!(
+            "-----------------------------------------------------------------------------------"
+        );
         println!();
         let f = &calls[fp_idx];
 
         // c:186-194 — callers (arcs where to == fp).
-        for &ap in &as_arcs {                                            // c:186
+        for &ap in &as_arcs {
+            // c:186
             let a = &arcs[ap];
-            if a.to == fp_idx {                                          // c:187
-                let avg_t = if a.calls > 0 { a.time / a.calls as f64 } else { 0.0 };
-                let avg_s = if a.calls > 0 { a.self_time / a.calls as f64 } else { 0.0 };
-                let pct_t = if total != 0.0 { (a.time / total) * 100.0 } else { 0.0 };
+            if a.to == fp_idx {
+                // c:187
+                let avg_t = if a.calls > 0 {
+                    a.time / a.calls as f64
+                } else {
+                    0.0
+                };
+                let avg_s = if a.calls > 0 {
+                    a.self_time / a.calls as f64
+                } else {
+                    0.0
+                };
+                let pct_t = if total != 0.0 {
+                    (a.time / total) * 100.0
+                } else {
+                    0.0
+                };
                 let from_name = &calls[a.from].name;
                 let from_num = calls[a.from].num;
                 println!(
                     "    {:4}/{:<4}  {:8.2} {:8.2}  {:6.2}%  {:8.2} {:8.2}             {} [{}]",
-                    a.calls, f.calls,                                    // c:188-193 printf
-                    a.time, avg_t, pct_t,
-                    a.self_time, avg_s,
-                    from_name, from_num
+                    a.calls,
+                    f.calls, // c:188-193 printf
+                    a.time,
+                    avg_t,
+                    pct_t,
+                    a.self_time,
+                    avg_s,
+                    from_name,
+                    from_num
                 );
             }
         }
 
         // c:195-201 — the function's own row.
-        let avg_t = if f.calls > 0 { f.time / f.calls as f64 } else { 0.0 };
-        let avg_s = if f.calls > 0 { f.self_time / f.calls as f64 } else { 0.0 };
-        let pct_t = if total != 0.0 { (f.time / total) * 100.0 } else { 0.0 };
-        let pct_s = if total != 0.0 { (f.self_time / total) * 100.0 } else { 0.0 };
+        let avg_t = if f.calls > 0 {
+            f.time / f.calls as f64
+        } else {
+            0.0
+        };
+        let avg_s = if f.calls > 0 {
+            f.self_time / f.calls as f64
+        } else {
+            0.0
+        };
+        let pct_t = if total != 0.0 {
+            (f.time / total) * 100.0
+        } else {
+            0.0
+        };
+        let pct_s = if total != 0.0 {
+            (f.self_time / total) * 100.0
+        } else {
+            0.0
+        };
         println!(
             "{:2}) {:4}       {:8.2} {:8.2}  {:6.2}%  {:8.2} {:8.2}  {:6.2}%  {}",
-            f.num, f.calls,                                              // c:195-201 printf
-            f.time, avg_t, pct_t,
-            f.self_time, avg_s, pct_s,
+            f.num,
+            f.calls, // c:195-201 printf
+            f.time,
+            avg_t,
+            pct_t,
+            f.self_time,
+            avg_s,
+            pct_s,
             f.name
         );
 
         // c:202-210 — callees (arcs where from == fp), iterated in
         // reverse to match C's `for (ap = as + narcs - 1; ap >= as; ap--)`.
-        for &ap in as_arcs.iter().rev() {                                // c:202
+        for &ap in as_arcs.iter().rev() {
+            // c:202
             let a = &arcs[ap];
-            if a.from == fp_idx {                                        // c:203
-                let avg_t = if a.calls > 0 { a.time / a.calls as f64 } else { 0.0 };
-                let avg_s = if a.calls > 0 { a.self_time / a.calls as f64 } else { 0.0 };
-                let pct_t = if total != 0.0 { (a.time / total) * 100.0 } else { 0.0 };
+            if a.from == fp_idx {
+                // c:203
+                let avg_t = if a.calls > 0 {
+                    a.time / a.calls as f64
+                } else {
+                    0.0
+                };
+                let avg_s = if a.calls > 0 {
+                    a.self_time / a.calls as f64
+                } else {
+                    0.0
+                };
+                let pct_t = if total != 0.0 {
+                    (a.time / total) * 100.0
+                } else {
+                    0.0
+                };
                 let to_name = &calls[a.to].name;
                 let to_num = calls[a.to].num;
                 let to_calls = calls[a.to].calls;
                 println!(
                     "    {:4}/{:<4}  {:8.2} {:8.2}  {:6.2}%  {:8.2} {:8.2}             {} [{}]",
-                    a.calls, to_calls,                                   // c:204-209 printf
-                    a.time, avg_t, pct_t,
-                    a.self_time, avg_s,
-                    to_name, to_num
+                    a.calls,
+                    to_calls, // c:204-209 printf
+                    a.time,
+                    avg_t,
+                    pct_t,
+                    a.self_time,
+                    avg_s,
+                    to_name,
+                    to_num
                 );
             }
         }
     }
 
-    0                                                                    // c:217
+    0 // c:217
 }
 
 /// Port of `name_for_anonymous_function(char *name)` from `Src/Modules/zprof.c:217`.
@@ -308,24 +413,25 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
 /// `name [filename:lineno]` using the current `funcstack[0]` frame.
 ///
 /// C signature: `static char *name_for_anonymous_function(char *name)`.
-pub fn name_for_anonymous_function(name: &str) -> String {                    // c:217
+pub fn name_for_anonymous_function(name: &str) -> String {
+    // c:217
     // c:219 — char lineno[DIGBUFSIZE];
     // c:220 — char *parts[7];
     // c:222 — convbase(lineno, funcstack[0].flineno, 10);
     let stack = crate::ported::modules::parameter::FUNCSTACK
         .lock()
         .expect("FUNCSTACK poisoned");
-    let flineno = stack.first().map(|f| f.flineno).unwrap_or(0);              // c:222
+    let flineno = stack.first().map(|f| f.flineno).unwrap_or(0); // c:222
     let filename = stack
         .first()
         .and_then(|f| f.filename.clone())
-        .unwrap_or_default();                                                  // c:226
+        .unwrap_or_default(); // c:226
     drop(stack);
-    let lineno_str = format!("{}", flineno);                                  // c:222 convbase base=10
-    // c:224-230 — parts[] = { name, " [", filename, ":", lineno, "]", NULL };
-    // c:232 — return sepjoin(parts, "", 1);
+    let lineno_str = format!("{}", flineno); // c:222 convbase base=10
+                                             // c:224-230 — parts[] = { name, " [", filename, ":", lineno, "]", NULL };
+                                             // c:232 — return sepjoin(parts, "", 1);
     let parts = [name, " [", filename.as_str(), ":", lineno_str.as_str(), "]"];
-    parts.concat()                                                             // c:232
+    parts.concat() // c:232
 }
 
 /// Port of `zprof_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/zprof.c:236`. The
@@ -400,200 +506,230 @@ pub fn name_for_anonymous_function(name: &str) -> String {                    //
 /// }
 /// ```
 #[allow(non_snake_case)]
-pub fn zprof_wrapper(prog: *const crate::ported::zsh_h::eprog,              // c:236
-                     w: *const crate::ported::zsh_h::funcwrap,
-                     name: &str) -> i32 {
-    let mut active: i32 = 0;                                                 // c:238
-    let mut sf = Sfunc { p: 0, beg: 0.0 };                                   // c:239 struct sfunc sf
-    let mut f: Option<usize> = None;                                         // c:240 Pfunc f = NULL
-    let mut a: Option<usize> = None;                                         // c:241 Parc a = NULL
-    let mut prev: f64 = 0.0;                                                 // c:243 double prev = 0
+pub fn zprof_wrapper(
+    prog: *const crate::ported::zsh_h::eprog, // c:236
+    w: *const crate::ported::zsh_h::funcwrap,
+    name: &str,
+) -> i32 {
+    let mut active: i32 = 0; // c:238
+    let mut sf = Sfunc { p: 0, beg: 0.0 }; // c:239 struct sfunc sf
+    let mut f: Option<usize> = None; // c:240 Pfunc f = NULL
+    let mut a: Option<usize> = None; // c:241 Parc a = NULL
+    let mut prev: f64 = 0.0; // c:243 double prev = 0
 
     // c:246-250 — resolve display name for anonymous functions.
     // `is_anonymous_function_name(name)` is `!strcmp(name, "(anon)")`
     // per Src/exec.c:5303-5306. ANONYMOUS_FUNCTION_NAME = "(anon)".
-    let name_for_lookups: String = if name == "(anon)" {                     // c:246
+    let name_for_lookups: String = if name == "(anon)" {
+        // c:246
         // `name_for_anonymous_function(name)` reads funcstack[0]
         // internally (S1 rule — signature matches C).
-        name_for_anonymous_function(name)                                    // c:247
-    } else {                                                                 // c:248
-        name.to_string()                                                     // c:249
+        name_for_anonymous_function(name) // c:247
+    } else {
+        // c:248
+        name.to_string() // c:249
     };
 
-    if ZPROF_MODULE.load(Ordering::SeqCst) {                                 // c:252
-        active = 1;                                                          // c:253
-        f = findpfunc(&name_for_lookups);                                    // c:254
-        if f.is_none() {                                                     // c:254
+    if ZPROF_MODULE.load(Ordering::SeqCst) {
+        // c:252
+        active = 1; // c:253
+        f = findpfunc(&name_for_lookups); // c:254
+        if f.is_none() {
+            // c:254
             // c:255-261 — `f = zalloc(...); f->name = ztrdup(...); f->next = calls; calls = f; ncalls++;`
-            let new_pfunc = Pfunc {                                          // c:255
-                name: crate::ported::mem::ztrdup(&name_for_lookups),         // c:256
-                calls: 0,                                                    // c:257
-                time: 0.0,                                                   // c:258 self/time = 0
-                self_time: 0.0,                                              // c:258
+            let new_pfunc = Pfunc {
+                // c:255
+                name: crate::ported::mem::ztrdup(&name_for_lookups), // c:256
+                calls: 0,                                            // c:257
+                time: 0.0,                                           // c:258 self/time = 0
+                self_time: 0.0,                                      // c:258
                 num: 0,
             };
             let mut calls = CALLS.lock().unwrap();
-            f = Some(calls.len());                                           // c:260 head-insert in C; Rust appends
-            calls.push(new_pfunc);                                           // c:260
-            NCALLS.fetch_add(1, Ordering::SeqCst);                           // c:261
+            f = Some(calls.len()); // c:260 head-insert in C; Rust appends
+            calls.push(new_pfunc); // c:260
+            NCALLS.fetch_add(1, Ordering::SeqCst); // c:261
         }
         // c:263 — `if (stack)` — top-of-stack frame exists.
-        let stack_top: Option<Sfunc> = {                                     // c:263
+        let stack_top: Option<Sfunc> = {
+            // c:263
             let st = STACK.lock().unwrap();
             st.last().copied()
         };
-        if let Some(top) = stack_top {                                       // c:263
-            a = findparc(top.p, f.unwrap());                                 // c:264
-            if a.is_none() {                                                 // c:264
-                let new_parc = Parc {                                        // c:265
-                    from: top.p,                                             // c:266
-                    to: f.unwrap(),                                          // c:267
-                    calls: 0,                                                // c:268
-                    self_time: 0.0,                                          // c:269
-                    time: 0.0,                                               // c:269
+        if let Some(top) = stack_top {
+            // c:263
+            a = findparc(top.p, f.unwrap()); // c:264
+            if a.is_none() {
+                // c:264
+                let new_parc = Parc {
+                    // c:265
+                    from: top.p,    // c:266
+                    to: f.unwrap(), // c:267
+                    calls: 0,       // c:268
+                    self_time: 0.0, // c:269
+                    time: 0.0,      // c:269
                 };
                 let mut arcs = ARCS.lock().unwrap();
-                a = Some(arcs.len());                                        // c:271
-                arcs.push(new_parc);                                         // c:271
-                NARCS.fetch_add(1, Ordering::SeqCst);                        // c:272
+                a = Some(arcs.len()); // c:271
+                arcs.push(new_parc); // c:271
+                NARCS.fetch_add(1, Ordering::SeqCst); // c:272
             }
         }
         // c:275-277 — `sf.prev = stack; sf.p = f; stack = &sf;`
-        sf.p = f.unwrap();                                                   // c:276
-        STACK.lock().unwrap().push(sf);                                      // c:277 stack = &sf
+        sf.p = f.unwrap(); // c:276
+        STACK.lock().unwrap().push(sf); // c:277 stack = &sf
 
         // c:279 — `f->calls++;`
         {
             let mut calls = CALLS.lock().unwrap();
-            calls[f.unwrap()].calls += 1;                                    // c:279
+            calls[f.unwrap()].calls += 1; // c:279
         }
         // c:280-283 — read monotonic clock, compute prev (ms).
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };               // c:280
-        crate::ported::compat::zgettime_monotonic_if_available(&mut ts);     // c:281
-        sf.beg = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0;  // c:282-283
-        prev = sf.beg;                                                       // c:282
-        // Update the stack-top copy we just pushed.
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        }; // c:280
+        crate::ported::compat::zgettime_monotonic_if_available(&mut ts); // c:281
+        sf.beg = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0; // c:282-283
+        prev = sf.beg; // c:282
+                       // Update the stack-top copy we just pushed.
         let mut st = STACK.lock().unwrap();
-        if let Some(top) = st.last_mut() { top.beg = sf.beg; }
+        if let Some(top) = st.last_mut() {
+            top.beg = sf.beg;
+        }
     }
 
     // c:285 — `runshfunc(prog, w, name);`
     // runshfunc isn't yet ported as a free fn — the wrapped invocation
     // happens at the executor level (src/vm_helper::dispatch_function_call).
     // Keep the C call slot visible; live integration occurs there.
-    let _ = (prog, w);                                                       // c:285 runshfunc(prog, w, name)
+    let _ = (prog, w); // c:285 runshfunc(prog, w, name)
 
-    if active != 0 {                                                         // c:286
-        if ZPROF_MODULE.load(Ordering::SeqCst) {                             // c:287
-            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };           // c:288
+    if active != 0 {
+        // c:286
+        if ZPROF_MODULE.load(Ordering::SeqCst) {
+            // c:287
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }; // c:288
             crate::ported::compat::zgettime_monotonic_if_available(&mut ts); // c:289
-            let now = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0;  // c:291-292
+            let now = (ts.tv_sec as f64) * 1000.0 + (ts.tv_nsec as f64) / 1_000_000.0; // c:291-292
 
             // c:293 — `f->self += now - sf.beg;`
             {
                 let mut calls = CALLS.lock().unwrap();
                 if let Some(idx) = f {
-                    calls[idx].self_time += now - sf.beg;                    // c:293
+                    calls[idx].self_time += now - sf.beg; // c:293
                 }
             }
             // c:294 — recursion-detect: walk sf.prev looking for f.
-            let recursion: bool = {                                          // c:294
+            let recursion: bool = {
+                // c:294
                 let st = STACK.lock().unwrap();
                 let cur_f = f.unwrap();
                 // sf.prev = the frame underneath sf — walk it down.
                 st.iter().rev().skip(1).any(|fr| fr.p == cur_f)
             };
-            if !recursion {                                                  // c:295
+            if !recursion {
+                // c:295
                 let mut calls = CALLS.lock().unwrap();
                 if let Some(idx) = f {
-                    calls[idx].time += now - prev;                           // c:296
+                    calls[idx].time += now - prev; // c:296
                 }
             }
-            if let Some(arc_idx) = a {                                       // c:297
+            if let Some(arc_idx) = a {
+                // c:297
                 let mut arcs = ARCS.lock().unwrap();
-                arcs[arc_idx].calls += 1;                                    // c:298
-                arcs[arc_idx].self_time += now - sf.beg;                     // c:299
+                arcs[arc_idx].calls += 1; // c:298
+                arcs[arc_idx].self_time += now - sf.beg; // c:299
             }
             // c:301 — `stack = sf.prev;`
             {
                 let mut st = STACK.lock().unwrap();
-                st.pop();                                                    // c:301
+                st.pop(); // c:301
             }
             // c:303-307 — propagate elapsed up to caller frame.
             let mut st = STACK.lock().unwrap();
-            if let Some(top) = st.last_mut() {                               // c:303
-                top.beg += now - prev;                                       // c:304
-                if let Some(arc_idx) = a {                                   // c:305
+            if let Some(top) = st.last_mut() {
+                // c:303
+                top.beg += now - prev; // c:304
+                if let Some(arc_idx) = a {
+                    // c:305
                     drop(st);
                     let mut arcs = ARCS.lock().unwrap();
-                    arcs[arc_idx].time += now - prev;                        // c:306
+                    arcs[arc_idx].time += now - prev; // c:306
                 }
             }
-        } else {                                                             // c:308
+        } else {
+            // c:308
             // c:309 — `stack = sf.prev;`
             let mut st = STACK.lock().unwrap();
             st.pop();
         }
     }
-    0                                                                        // c:311
+    0 // c:311
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (zprof.c:309).
 
-
 // `module_features` — port of `static struct features module_features`
 // from zprof.c:323.
-
-
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zprof.c:332`.
 /// C body: `zprof_module = m; return 0;`
 #[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                // c:332
-    ZPROF_MODULE.store(true, Ordering::SeqCst);                          // c:340
-    0                                                                    // c:348
+pub fn setup_(m: *const module) -> i32 {
+    // c:332
+    ZPROF_MODULE.store(true, Ordering::SeqCst); // c:340
+    0 // c:348
 }
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zprof.c:340`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:340
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    // c:340
     *features = featuresarray(m, module_features());
-    0                                                                    // c:355
+    0 // c:355
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zprof.c:348`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:348
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:348
     handlefeatures(m, module_features(), enables) // c:355
 }
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zprof.c:355`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                 // c:355
+pub fn boot_(m: *const module) -> i32 {
+    // c:355
     let mut calls = CALLS.lock().unwrap();
-    calls.clear();                                                       // c:367
-    NCALLS.store(0, Ordering::SeqCst);                                   // c:367
+    calls.clear(); // c:367
+    NCALLS.store(0, Ordering::SeqCst); // c:367
     let mut arcs = ARCS.lock().unwrap();
-    arcs.clear();                                                        // c:367
-    NARCS.store(0, Ordering::SeqCst);                                    // c:367
-    STACK.lock().unwrap().clear();                                       // c:367
-    0                                                                    // c:367 addwrapper return
+    arcs.clear(); // c:367
+    NARCS.store(0, Ordering::SeqCst); // c:367
+    STACK.lock().unwrap().clear(); // c:367
+    0 // c:367 addwrapper return
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zprof.c:367`.
 /// C body: free pfuncs + parcs, deletewrapper, setfeatureenables.
-pub fn cleanup_(m: *const module) -> i32 {                              // c:367
+pub fn cleanup_(m: *const module) -> i32 {
+    // c:367
     let mut calls = CALLS.lock().unwrap();
-    freepfuncs(&mut calls);                                              // c:377
+    freepfuncs(&mut calls); // c:377
     let mut arcs = ARCS.lock().unwrap();
-    freeparcs(&mut arcs);                                                // c:377
+    freeparcs(&mut arcs); // c:377
     ZPROF_MODULE.store(false, Ordering::SeqCst);
     setfeatureenables(m, module_features(), None) // c:377
 }
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zprof.c:377`.
 #[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:377
+pub fn finish_(m: *const module) -> i32 {
+    // c:377
     // C body c:379-380 — `return 0`. Faithful empty-body port; the
     //                    profiling tables get freed by cleanup_ via
     //                    setfeatureenables/zprof_cleanup.
@@ -619,23 +755,23 @@ use crate::ported::zsh_h::module;
 /// Port of `static Pfunc calls;` from `Src/Modules/zprof.c:66`.
 /// Per-function aggregated table; the C linked list becomes a
 /// `Mutex<Vec<Pfunc>>` so `Pfunc *` becomes `usize` index.
-pub static CALLS: Mutex<Vec<Pfunc>> = Mutex::new(Vec::new());            // c:66
+pub static CALLS: Mutex<Vec<Pfunc>> = Mutex::new(Vec::new()); // c:66
 
 /// Port of `static int ncalls;` from `Src/Modules/zprof.c:67`. Always
 /// equals `CALLS.lock().len()` — kept as an explicit counter to
 /// match C's `ncalls++` increment pattern.
-pub static NCALLS: AtomicI32 = AtomicI32::new(0);                        // c:67
+pub static NCALLS: AtomicI32 = AtomicI32::new(0); // c:67
 
 /// Port of `static Parc arcs;` from `Src/Modules/zprof.c:68`.
-pub static ARCS: Mutex<Vec<Parc>> = Mutex::new(Vec::new());              // c:68
+pub static ARCS: Mutex<Vec<Parc>> = Mutex::new(Vec::new()); // c:68
 
 /// Port of `static int narcs;` from `Src/Modules/zprof.c:69`.
-pub static NARCS: AtomicI32 = AtomicI32::new(0);                         // c:69
+pub static NARCS: AtomicI32 = AtomicI32::new(0); // c:69
 
 /// Port of `static Sfunc stack;` from `Src/Modules/zprof.c:70`. The
 /// C linked stack becomes a `Mutex<Vec<Sfunc>>` (top of stack at
 /// `last()`).
-pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
+pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new()); // c:70
 
 /// Port of `static Module zprof_module;` from `Src/Modules/zprof.c:71`.
 /// C uses a `Module` (struct module *) pointer to track which module
@@ -646,14 +782,11 @@ pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
 /// static — `AtomicBool` captures the only state `zprof_wrapper`
 /// actually inspects (loaded vs. unloading), matching the C
 /// `MOD_UNLOAD` flag-check on the same pointer.
-pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:74
-
-
+pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false); // c:74
 
 use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -687,11 +820,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -722,17 +851,19 @@ fn setfeatureenables(
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,
+            bn_size: 1,
+            cd_list: None,
+            cd_size: 0,
+            mf_list: None,
+            mf_size: 0,
+            pd_list: None,
+            pd_size: 0,
+            n_abstract: 0,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -771,7 +902,10 @@ mod tests {
     #[test]
     fn freepfuncs_clears() {
         let _g = crate::test_util::global_state_lock();
-        let mut v = vec![Pfunc { name: "a".into(), ..Default::default() }];
+        let mut v = vec![Pfunc {
+            name: "a".into(),
+            ..Default::default()
+        }];
         freepfuncs(&mut v);
         assert!(v.is_empty());
     }
@@ -782,8 +916,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
-        CALLS.lock().unwrap().push(Pfunc { name: "alpha".into(), ..Default::default() });
-        CALLS.lock().unwrap().push(Pfunc { name: "beta".into(), ..Default::default() });
+        CALLS.lock().unwrap().push(Pfunc {
+            name: "alpha".into(),
+            ..Default::default()
+        });
+        CALLS.lock().unwrap().push(Pfunc {
+            name: "beta".into(),
+            ..Default::default()
+        });
         assert_eq!(findpfunc("alpha"), Some(0));
         assert_eq!(findpfunc("beta"), Some(1));
         assert_eq!(findpfunc("none"), None);
@@ -796,8 +936,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
-        ARCS.lock().unwrap().push(Parc { from: 0, to: 1, ..Default::default() });
-        ARCS.lock().unwrap().push(Parc { from: 0, to: 2, ..Default::default() });
+        ARCS.lock().unwrap().push(Parc {
+            from: 0,
+            to: 1,
+            ..Default::default()
+        });
+        ARCS.lock().unwrap().push(Parc {
+            from: 0,
+            to: 2,
+            ..Default::default()
+        });
         assert_eq!(findparc(0, 1), Some(0));
         assert_eq!(findparc(0, 2), Some(1));
         assert_eq!(findparc(1, 0), None);
@@ -808,8 +956,14 @@ mod tests {
     #[test]
     fn cmpsfuncs_descending() {
         let _g = crate::test_util::global_state_lock();
-        let a = Pfunc { self_time: 5.0, ..Default::default() };
-        let b = Pfunc { self_time: 10.0, ..Default::default() };
+        let a = Pfunc {
+            self_time: 5.0,
+            ..Default::default()
+        };
+        let b = Pfunc {
+            self_time: 10.0,
+            ..Default::default()
+        };
         // descending: b should come before a → cmp(a, b) = Greater
         assert_eq!(cmpsfuncs(&a, &b), std::cmp::Ordering::Greater);
         assert_eq!(cmpsfuncs(&b, &a), std::cmp::Ordering::Less);
@@ -821,14 +975,25 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
-        CALLS.lock().unwrap().push(Pfunc { name: "x".into(), ..Default::default() });
-        ARCS.lock().unwrap().push(Parc { from: 0, to: 0, ..Default::default() });
+        CALLS.lock().unwrap().push(Pfunc {
+            name: "x".into(),
+            ..Default::default()
+        });
+        ARCS.lock().unwrap().push(Parc {
+            from: 0,
+            to: 0,
+            ..Default::default()
+        });
         NCALLS.store(1, Ordering::SeqCst);
         NARCS.store(1, Ordering::SeqCst);
 
         use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         ops.ind[b'c' as usize] = 1;
         let r = bin_zprof("zprof", &["-c".to_string()], &ops, 0);
         assert_eq!(r, 0);
@@ -843,10 +1008,7 @@ mod tests {
     #[test]
     fn zprof_wrapper_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo"),
-            0,
-        );
+        assert_eq!(zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo"), 0,);
     }
 
     /// Verifies `name_for_anonymous_function` formats as
@@ -857,9 +1019,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Push a frame onto FUNCSTACK so the fn reads it.
         {
-            let mut stack = crate::ported::modules::parameter::FUNCSTACK
-                .lock()
-                .unwrap();
+            let mut stack = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
             stack.clear();
             stack.push(crate::ported::zsh_h::funcstack {
                 filename: Some("/tmp/foo.zsh".to_string()),
@@ -869,7 +1029,10 @@ mod tests {
         }
         let s = name_for_anonymous_function("anon");
         // Cleanup so subsequent tests aren't polluted.
-        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 
@@ -885,12 +1048,18 @@ mod tests {
     fn name_for_anonymous_function_empty_funcstack_defaults() {
         let _g = crate::test_util::global_state_lock();
         // Ensure stack is empty.
-        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
         // No panic on first().unwrap() — the fn uses Option chains.
         let s = std::panic::catch_unwind(|| name_for_anonymous_function("anon"))
             .expect("must not panic on empty funcstack");
-        assert_eq!(s, "anon [:0]",
-            "empty funcstack → empty filename + 0 lineno; got {:?}", s);
+        assert_eq!(
+            s, "anon [:0]",
+            "empty funcstack → empty filename + 0 lineno; got {:?}",
+            s
+        );
     }
 
     /// c:97 — `findpfunc` on an empty table returns None. A
@@ -912,8 +1081,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
-        CALLS.lock().unwrap().push(Pfunc { name: "alpha".into(), ..Default::default() });
-        CALLS.lock().unwrap().push(Pfunc { name: "beta".into(), ..Default::default() });
+        CALLS.lock().unwrap().push(Pfunc {
+            name: "alpha".into(),
+            ..Default::default()
+        });
+        CALLS.lock().unwrap().push(Pfunc {
+            name: "beta".into(),
+            ..Default::default()
+        });
         assert_eq!(findpfunc("alpha"), Some(0));
         assert_eq!(findpfunc("beta"), Some(1));
         assert!(findpfunc("gamma").is_none());
@@ -935,8 +1110,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TEST_LOCK.lock().unwrap();
         reset_state();
-        ARCS.lock().unwrap().push(Parc { from: 0, to: 1, ..Default::default() });
-        ARCS.lock().unwrap().push(Parc { from: 0, to: 2, ..Default::default() });
+        ARCS.lock().unwrap().push(Parc {
+            from: 0,
+            to: 1,
+            ..Default::default()
+        });
+        ARCS.lock().unwrap().push(Parc {
+            from: 0,
+            to: 2,
+            ..Default::default()
+        });
         assert_eq!(findparc(0, 1), Some(0));
         assert_eq!(findparc(0, 2), Some(1));
         assert!(findparc(0, 99).is_none());
@@ -951,8 +1134,16 @@ mod tests {
     #[test]
     fn cmpsfuncs_compares_by_self_time_descending() {
         let _g = crate::test_util::global_state_lock();
-        let high = Pfunc { name: "_".into(), self_time: 100.0, ..Default::default() };
-        let low  = Pfunc { name: "_".into(), self_time: 1.0,   ..Default::default() };
+        let high = Pfunc {
+            name: "_".into(),
+            self_time: 100.0,
+            ..Default::default()
+        };
+        let low = Pfunc {
+            name: "_".into(),
+            self_time: 1.0,
+            ..Default::default()
+        };
         // higher self_time sorts FIRST → Ordering::Less for (high, low)
         assert_eq!(cmpsfuncs(&high, &low), std::cmp::Ordering::Less);
         assert_eq!(cmpsfuncs(&low, &high), std::cmp::Ordering::Greater);
@@ -964,8 +1155,14 @@ mod tests {
     fn freepfuncs_empties_input_vec() {
         let _g = crate::test_util::global_state_lock();
         let mut v = vec![
-            Pfunc { name: "x".into(), ..Default::default() },
-            Pfunc { name: "y".into(), ..Default::default() },
+            Pfunc {
+                name: "x".into(),
+                ..Default::default()
+            },
+            Pfunc {
+                name: "y".into(),
+                ..Default::default()
+            },
         ];
         freepfuncs(&mut v);
         assert!(v.is_empty(), "freepfuncs must clear the input vec");
@@ -976,8 +1173,16 @@ mod tests {
     fn freeparcs_empties_input_vec() {
         let _g = crate::test_util::global_state_lock();
         let mut v = vec![
-            Parc { from: 0, to: 1, ..Default::default() },
-            Parc { from: 2, to: 3, ..Default::default() },
+            Parc {
+                from: 0,
+                to: 1,
+                ..Default::default()
+            },
+            Parc {
+                from: 2,
+                to: 3,
+                ..Default::default()
+            },
         ];
         freeparcs(&mut v);
         assert!(v.is_empty(), "freeparcs must clear the input vec");
@@ -993,13 +1198,25 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // `alpha` has high self_time but LOW cumulative time.
         // `beta`  has low self_time but HIGH cumulative time.
-        let alpha = Pfunc { name: "_".into(), self_time: 100.0, time: 1.0,   ..Default::default() };
-        let beta  = Pfunc { name: "_".into(), self_time: 1.0,   time: 100.0, ..Default::default() };
+        let alpha = Pfunc {
+            name: "_".into(),
+            self_time: 100.0,
+            time: 1.0,
+            ..Default::default()
+        };
+        let beta = Pfunc {
+            name: "_".into(),
+            self_time: 1.0,
+            time: 100.0,
+            ..Default::default()
+        };
         let by_self = cmpsfuncs(&alpha, &beta);
         let by_time = cmptfuncs(&alpha, &beta);
         // by_self: alpha has higher self_time → alpha sorts first → Less
         // by_time: beta has higher cumulative time → alpha sorts after → Greater
-        assert_ne!(by_self, by_time,
-            "cmpsfuncs (self_time) and cmptfuncs (time) must differ when fields disagree");
+        assert_ne!(
+            by_self, by_time,
+            "cmpsfuncs (self_time) and cmptfuncs (time) must differ when fields disagree"
+        );
     }
 }

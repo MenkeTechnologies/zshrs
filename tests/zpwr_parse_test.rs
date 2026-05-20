@@ -48,7 +48,11 @@ fn parse_file(path: &Path) -> Result<(), String> {
                     zsh::parse::parse_init(&content);
                     let _ = zsh::parse::parse();
                     let e = zsh::utils::errflag.load(Ordering::Relaxed);
-                    if e == 0 { Ok(()) } else { Err(format!("errflag={:#x}", e)) }
+                    if e == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!("errflag={:#x}", e))
+                    }
                 }));
             let _ = tx.send(result);
         })

@@ -103,22 +103,27 @@ impl DapServer {
 
             match cmd {
                 "initialize" => {
-                    self.respond(req_seq, cmd, true, json!({
-                        "supportsConfigurationDoneRequest": true,
-                        "supportsEvaluateForHovers": true,
-                        "supportsFunctionBreakpoints": false,
-                        "supportsConditionalBreakpoints": false,
-                        "supportsHitConditionalBreakpoints": false,
-                        "supportsStepBack": false,
-                        "supportsSetVariable": false,
-                        "supportsRestartFrame": false,
-                        "supportsGotoTargetsRequest": false,
-                        "supportsStepInTargetsRequest": false,
-                        "supportsCompletionsRequest": false,
-                        "supportsModulesRequest": false,
-                        "supportsTerminateRequest": true,
-                        "supportsExceptionInfoRequest": false,
-                    }))?;
+                    self.respond(
+                        req_seq,
+                        cmd,
+                        true,
+                        json!({
+                            "supportsConfigurationDoneRequest": true,
+                            "supportsEvaluateForHovers": true,
+                            "supportsFunctionBreakpoints": false,
+                            "supportsConditionalBreakpoints": false,
+                            "supportsHitConditionalBreakpoints": false,
+                            "supportsStepBack": false,
+                            "supportsSetVariable": false,
+                            "supportsRestartFrame": false,
+                            "supportsGotoTargetsRequest": false,
+                            "supportsStepInTargetsRequest": false,
+                            "supportsCompletionsRequest": false,
+                            "supportsModulesRequest": false,
+                            "supportsTerminateRequest": true,
+                            "supportsExceptionInfoRequest": false,
+                        }),
+                    )?;
                     // Emit `initialized` event so the client can send breakpoints
                     self.event("initialized", json!({}))?;
                 }
@@ -134,7 +139,9 @@ impl DapServer {
                             }
                         }
                     }
-                    if !path.is_empty() { self.breakpoints.insert(path, lines); }
+                    if !path.is_empty() {
+                        self.breakpoints.insert(path, lines);
+                    }
                     self.respond(req_seq, cmd, true, json!({ "breakpoints": verified }))?;
                 }
                 "setExceptionBreakpoints" => {
@@ -146,40 +153,63 @@ impl DapServer {
                 "launch" => {
                     self.program = args["program"].as_str().unwrap_or("").to_string();
                     self.cwd = args["cwd"].as_str().map(|s| s.to_string());
-                    self.args = args["args"].as_array().map(|a|
-                        a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-                    ).unwrap_or_default();
+                    self.args = args["args"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     self.respond(req_seq, cmd, true, json!({}))?;
-                    self.event("process", json!({
-                        "name": self.program,
-                        "systemProcessId": std::process::id(),
-                        "isLocalProcess": true,
-                        "startMethod": "launch",
-                    }))?;
+                    self.event(
+                        "process",
+                        json!({
+                            "name": self.program,
+                            "systemProcessId": std::process::id(),
+                            "isLocalProcess": true,
+                            "startMethod": "launch",
+                        }),
+                    )?;
                     self.event("thread", json!({ "reason": "started", "threadId": 1 }))?;
                     self.launch_program()?;
                 }
                 "threads" => {
-                    self.respond(req_seq, cmd, true, json!({
-                        "threads": [{ "id": 1, "name": "main" }],
-                    }))?;
+                    self.respond(
+                        req_seq,
+                        cmd,
+                        true,
+                        json!({
+                            "threads": [{ "id": 1, "name": "main" }],
+                        }),
+                    )?;
                 }
                 "stackTrace" => {
                     let frames = self.snapshot_frames();
-                    self.respond(req_seq, cmd, true, json!({
-                        "stackFrames": frames,
-                        "totalFrames": 1,
-                    }))?;
+                    self.respond(
+                        req_seq,
+                        cmd,
+                        true,
+                        json!({
+                            "stackFrames": frames,
+                            "totalFrames": 1,
+                        }),
+                    )?;
                 }
                 "scopes" => {
                     // One synthetic scope per frame: "Locals" (ref = 1)
-                    self.respond(req_seq, cmd, true, json!({
-                        "scopes": [{
-                            "name": "Locals",
-                            "variablesReference": 1,
-                            "expensive": false,
-                        }],
-                    }))?;
+                    self.respond(
+                        req_seq,
+                        cmd,
+                        true,
+                        json!({
+                            "scopes": [{
+                                "name": "Locals",
+                                "variablesReference": 1,
+                                "expensive": false,
+                            }],
+                        }),
+                    )?;
                 }
                 "variables" => {
                     let r = args["variablesReference"].as_u64().unwrap_or(1);
@@ -189,11 +219,16 @@ impl DapServer {
                 "evaluate" => {
                     let expr = args["expression"].as_str().unwrap_or("");
                     let (result, ty) = self.evaluate_expression(expr);
-                    self.respond(req_seq, cmd, true, json!({
-                        "result": result,
-                        "type": ty,
-                        "variablesReference": 0,
-                    }))?;
+                    self.respond(
+                        req_seq,
+                        cmd,
+                        true,
+                        json!({
+                            "result": result,
+                            "type": ty,
+                            "variablesReference": 0,
+                        }),
+                    )?;
                 }
                 "continue" | "next" | "stepIn" | "stepOut" => {
                     // v1: we don't pause execution in the child, so these are
@@ -203,11 +238,14 @@ impl DapServer {
                 }
                 "pause" => {
                     self.respond(req_seq, cmd, true, json!({}))?;
-                    self.event("stopped", json!({
-                        "reason": "pause",
-                        "threadId": 1,
-                        "allThreadsStopped": true,
-                    }))?;
+                    self.event(
+                        "stopped",
+                        json!({
+                            "reason": "pause",
+                            "threadId": 1,
+                            "allThreadsStopped": true,
+                        }),
+                    )?;
                 }
                 "disconnect" | "terminate" => {
                     self.respond(req_seq, cmd, true, json!({}))?;
@@ -235,8 +273,12 @@ impl DapServer {
         let exe = std::env::current_exe().unwrap_or_else(|_| "zshrs".into());
         let mut cmd = Command::new(&exe);
         cmd.arg(&self.program);
-        for a in &self.args { cmd.arg(a); }
-        if let Some(c) = &self.cwd { cmd.current_dir(c); }
+        for a in &self.args {
+            cmd.arg(a);
+        }
+        if let Some(c) = &self.cwd {
+            cmd.current_dir(c);
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         let mut child = cmd.spawn()?;
@@ -259,24 +301,22 @@ impl DapServer {
         // Watcher thread fires `terminated` when the child exits
         let writer_term = self.writer.try_clone()?;
         let seq_counter = AtomicUsize::new(0);
-        thread::spawn(move || {
-            loop {
-                {
-                    let mut guard = match child_arc.lock() {
-                        Ok(g) => g,
-                        Err(_) => return,
-                    };
-                    match guard.try_wait() {
-                        Ok(Some(_status)) => {
-                            let _ = send_event(&writer_term, &seq_counter, "terminated", json!({}));
-                            return;
-                        }
-                        Ok(None) => {}
-                        Err(_) => return,
+        thread::spawn(move || loop {
+            {
+                let mut guard = match child_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                match guard.try_wait() {
+                    Ok(Some(_status)) => {
+                        let _ = send_event(&writer_term, &seq_counter, "terminated", json!({}));
+                        return;
                     }
+                    Ok(None) => {}
+                    Err(_) => return,
                 }
-                thread::sleep(Duration::from_millis(100));
             }
+            thread::sleep(Duration::from_millis(100));
         });
         Ok(())
     }
@@ -304,7 +344,9 @@ impl DapServer {
                 "type": "scalar",
                 "variablesReference": 0,
             }));
-            if out.len() >= 200 { break; }
+            if out.len() >= 200 {
+                break;
+            }
         }
         out
     }
@@ -315,7 +357,9 @@ impl DapServer {
         let exe = std::env::current_exe().unwrap_or_else(|_| "zshrs".into());
         let mut cmd = Command::new(exe);
         cmd.arg("-c").arg(expr);
-        if let Some(c) = &self.cwd { cmd.current_dir(c); }
+        if let Some(c) = &self.cwd {
+            cmd.current_dir(c);
+        }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         match cmd.output() {
             Ok(o) => {
@@ -389,7 +433,10 @@ fn send_event(writer: &TcpStream, seq: &AtomicUsize, event: &str, body: Value) -
 }
 
 fn file_name(path: &str) -> String {
-    path.rsplit_once('/').map(|x| x.1).unwrap_or(path).to_string()
+    path.rsplit_once('/')
+        .map(|x| x.1)
+        .unwrap_or(path)
+        .to_string()
 }
 
 // ── Framing ──────────────────────────────────────────────────────────────
@@ -399,20 +446,25 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
     loop {
         let mut line = String::new();
         let n = reader.read_line(&mut line)?;
-        if n == 0 { return Ok(None); }
-        if line == "\r\n" || line == "\n" { break; }
+        if n == 0 {
+            return Ok(None);
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
         if let Some(rest) = line.strip_prefix("Content-Length:") {
-            content_length = Some(rest.trim().parse().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "bad Content-Length")
-            })?);
+            content_length =
+                Some(rest.trim().parse().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "bad Content-Length")
+                })?);
         }
     }
     let len = content_length
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length"))?;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
-    let v: Value = serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let v: Value =
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(v))
 }
 

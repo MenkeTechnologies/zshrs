@@ -154,10 +154,7 @@ pub async fn op_cache_get(state: &Arc<DaemonState>, args: Value) -> OpResult {
     if let Some(exp) = row.3 {
         if exp < now {
             // Expired — drop and report not-found.
-            let _ = conn.execute(
-                "DELETE FROM kv WHERE ns = ?1 AND k = ?2",
-                params![ns, key],
-            );
+            let _ = conn.execute("DELETE FROM kv WHERE ns = ?1 AND k = ?2", params![ns, key]);
             return Err(ErrPayload::new(
                 "no_such_file",
                 format!("ns={} key={} expired", ns, key),
@@ -186,10 +183,7 @@ pub async fn op_cache_del(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let key = key_arg(&args)?;
     let conn = open_db(state)?;
     let n = conn
-        .execute(
-            "DELETE FROM kv WHERE ns = ?1 AND k = ?2",
-            params![ns, key],
-        )
+        .execute("DELETE FROM kv WHERE ns = ?1 AND k = ?2", params![ns, key])
         .map_err(|e| ErrPayload::new("cache_del", e.to_string()))?;
     Ok(json!({ "ns": ns, "key": key, "deleted": n > 0 }))
 }

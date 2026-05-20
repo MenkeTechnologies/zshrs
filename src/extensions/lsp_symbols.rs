@@ -443,7 +443,11 @@ mod tests {
         // `echo` is not a user-defined function — it has no symbol in
         // the table, so `record_ref` should drop it entirely.
         let t = SymbolTable::build("echo hi\n").expect("parse ok");
-        assert!(t.refs.is_empty(), "no refs for unknown command: {:?}", t.refs);
+        assert!(
+            t.refs.is_empty(),
+            "no refs for unknown command: {:?}",
+            t.refs
+        );
     }
 
     #[test]

@@ -123,9 +123,9 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
         .route("/stream/definitions", get(handler_stream_definitions))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-        super::DaemonError::other(format!("[http] tcp bind {addr}: {e}"))
-    })?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| super::DaemonError::other(format!("[http] tcp bind {addr}: {e}")))?;
     tracing::info!(%addr, tokens = token_count, "http listener up");
 
     tokio::spawn(async move {
@@ -155,7 +155,10 @@ fn authorize<'a>(
     if secret.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    registry.lookup(secret).map(Some).ok_or(StatusCode::UNAUTHORIZED)
+    registry
+        .lookup(secret)
+        .map(Some)
+        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn handler_health(State(s): State<AppState>) -> impl IntoResponse {
@@ -384,7 +387,10 @@ async fn handler_metrics(State(s): State<AppState>) -> impl IntoResponse {
     let body = super::metrics::prometheus_text(&s.daemon);
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         body,
     )
 }
@@ -428,7 +434,11 @@ async fn handler_stream_watch(
             source_root: p.to_string(),
             kind: super::fsnotify::WatchKind::Generic,
         };
-        match s.daemon.fs_watcher.subscribe(wp, q.recursive.unwrap_or(false)) {
+        match s
+            .daemon
+            .fs_watcher
+            .subscribe(wp, q.recursive.unwrap_or(false))
+        {
             Ok(id) => Some(id),
             Err(e) => {
                 tracing::warn!(?e, "stream/watch: registration failed");
@@ -521,9 +531,7 @@ async fn handler_stream_events(
         // payload: { topic, data, scope, subscription_id } }.
         if let Frame::Event { event, payload } = frame {
             if event == "match" {
-                return Some(Ok(Event::default()
-                    .event("pub")
-                    .data(payload.to_string())));
+                return Some(Ok(Event::default().event("pub").data(payload.to_string())));
             }
         }
         None
@@ -603,15 +611,12 @@ where
         tx,
     );
     let state_for_drop = Arc::clone(state);
-    let stream = UnboundedReceiverStream::new(rx)
-        .filter_map(move |frame| {
-            let pair = pick(&frame);
-            pair.map(|(event_name, payload)| {
-                Ok(Event::default()
-                    .event(event_name)
-                    .data(payload.to_string()))
-            })
-        });
+    let stream = UnboundedReceiverStream::new(rx).filter_map(move |frame| {
+        let pair = pick(&frame);
+        pair.map(|(event_name, payload)| {
+            Ok(Event::default().event(event_name).data(payload.to_string()))
+        })
+    });
     SseGuardStream {
         inner: Box::pin(stream),
         state: state_for_drop,
@@ -744,14 +749,11 @@ async fn handler_op(
         }
         Err(err) => {
             let status = match err.code.as_str() {
-                "bad_args" | "bad_cron" | "bad_format" | "bad_pattern" => {
-                    StatusCode::BAD_REQUEST
-                }
+                "bad_args" | "bad_cron" | "bad_format" | "bad_pattern" => StatusCode::BAD_REQUEST,
                 "unauthorized" => StatusCode::UNAUTHORIZED,
-                "no_such_file"
-                | "no_such_kind"
-                | "no_such_function"
-                | "unknown_op" => StatusCode::NOT_FOUND,
+                "no_such_file" | "no_such_kind" | "no_such_function" | "unknown_op" => {
+                    StatusCode::NOT_FOUND
+                }
                 "busy" => StatusCode::CONFLICT,
                 "wrong_token" => StatusCode::FORBIDDEN,
                 "timeout" => StatusCode::REQUEST_TIMEOUT,

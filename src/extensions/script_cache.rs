@@ -271,13 +271,7 @@ impl ScriptCache {
                 let chunk_kb = e.chunk_blob.len() as f64 / 1024.0;
                 let cached_at: i64 = e.cached_at_secs.into();
                 let ts = format_local_ts(cached_at);
-                (
-                    k.as_str().to_string(),
-                    chunk_kb,
-                    v.clone(),
-                    ts,
-                    cached_at,
-                )
+                (k.as_str().to_string(), chunk_kb, v.clone(), ts, cached_at)
             })
             .collect();
         out.sort_by_key(|x| std::cmp::Reverse(x.4));
@@ -352,8 +346,7 @@ fn read_owned_shard(path: &Path) -> Option<ScriptShard> {
 }
 
 fn write_shard_atomic(path: &Path, shard: &ScriptShard) -> Result<(), String> {
-    let bytes = rkyv::to_bytes::<_, 4096>(shard)
-        .map_err(|e| format!("rkyv serialize: {}", e))?;
+    let bytes = rkyv::to_bytes::<_, 4096>(shard).map_err(|e| format!("rkyv serialize: {}", e))?;
 
     let parent = path.parent().expect("cache path has parent");
     let _ = std::fs::create_dir_all(parent);
@@ -493,7 +486,9 @@ mod tests {
         let path_str = script_path.to_string_lossy().to_string();
 
         let blob = vec![1u8, 2, 3, 4, 5];
-        cache.put(&path_str, mtime_s, mtime_ns, blob.clone()).unwrap();
+        cache
+            .put(&path_str, mtime_s, mtime_ns, blob.clone())
+            .unwrap();
 
         let loaded = cache.get(&path_str, mtime_s, mtime_ns).unwrap();
         assert_eq!(loaded, blob);
@@ -534,8 +529,12 @@ mod tests {
         let (m1s, m1n) = file_mtime(&p1).unwrap();
         let (m2s, m2n) = file_mtime(&p2).unwrap();
 
-        cache.put(&p1.to_string_lossy(), m1s, m1n, vec![1u8]).unwrap();
-        cache.put(&p2.to_string_lossy(), m2s, m2n, vec![2u8]).unwrap();
+        cache
+            .put(&p1.to_string_lossy(), m1s, m1n, vec![1u8])
+            .unwrap();
+        cache
+            .put(&p2.to_string_lossy(), m2s, m2n, vec![2u8])
+            .unwrap();
 
         let (count, _) = cache.stats();
         assert_eq!(count, 2);
@@ -563,7 +562,9 @@ mod tests {
         let script_path = dir.path().join("test.zsh");
         std::fs::write(&script_path, "echo hi").unwrap();
         let (mtime_s, mtime_ns) = file_mtime(&script_path).unwrap();
-        cache.put(&script_path.to_string_lossy(), mtime_s, mtime_ns, vec![7u8]).unwrap();
+        cache
+            .put(&script_path.to_string_lossy(), mtime_s, mtime_ns, vec![7u8])
+            .unwrap();
         assert!(cache_path.exists());
 
         cache.clear().unwrap();

@@ -17,13 +17,15 @@ use std::io::{self, Write};
 /// `memset` for REFRESH_ELEMENT slices.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(rc, len) vs C=(dst, rc, len)
-pub fn ZR_memset(                                                            // c:86
+pub fn ZR_memset(
+    // c:86
     dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
     rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
     len: usize,
 ) {
     let n = len.min(dst.len());
-    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
+    for slot in dst.iter_mut().take(n) {
+        // c:88-89 while (len--) *dst++ = rc
         *slot = rc;
     }
 }
@@ -78,11 +80,12 @@ impl TextAttr {
 /// pointer-walking copy as a single statement.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
-pub fn ZR_strcpy(                                                            // c:95
+pub fn ZR_strcpy(
+    // c:95
     dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
     src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 ) {
-    let n = src.iter().take_while(|e| e.chr != '\0').count() + 1;            // c:97 incl trailing NUL
+    let n = src.iter().take_while(|e| e.chr != '\0').count() + 1; // c:97 incl trailing NUL
     let n = n.min(src.len()).min(dst.len());
     dst[..n].copy_from_slice(&src[..n]);
 }
@@ -124,12 +127,14 @@ impl RefreshElement {
 /// Length of a NUL-terminated REFRESH_ELEMENT string.
 #[allow(non_snake_case)]
 /// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
-pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:102
-    let mut len = 0;                                                         // c:102 int len = 0
-    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
-        len += 1;                                                            // c:107 len++
+pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
+    // c:102
+    let mut len = 0; // c:102 int len = 0
+    while len < wstr.len() && wstr[len].chr != '\0' {
+        // c:106 while (wstr++->chr != ZWC('\0'))
+        len += 1; // c:107 len++
     }
-    len                                                                      // c:109 return len
+    len // c:109 return len
 }
 
 impl VideoBuffer {
@@ -209,16 +214,22 @@ impl VideoBuffer {
 #[allow(non_snake_case)]
 /// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:120`.
 /// WARNING: param names don't match C — Rust=(newwstr, len) vs C=(oldwstr, newwstr, len)
-pub fn ZR_strncmp(                                                           // c:120
+pub fn ZR_strncmp(
+    // c:120
     oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     len: usize,
 ) -> i32 {
     let mut i = 0;
-    while i < len {                                                          // c:123 while (len--)
+    while i < len {
+        // c:123 while (len--)
         if i >= oldwstr.len() || i >= newwstr.len() {
             // C reads past end via pointer; we bound it.
-            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
+            return if oldwstr.get(i) == newwstr.get(i) {
+                0
+            } else {
+                1
+            };
         }
         let o = oldwstr[i];
         let n = newwstr[i];
@@ -226,14 +237,15 @@ pub fn ZR_strncmp(                                                           // 
         let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
         let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
         if old_is_nul || new_is_nul {
-            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
+            return if o == n { 0 } else { 1 }; // c:126 !ZR_equal
         }
-        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
+        if o != n {
+            // c:127 if (!ZR_equal(...)) return 1
             return 1;
         }
-        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
+        i += 1; // c:129-130 oldwstr++; newwstr++
     }
-    0                                                                        // c:133 return 0
+    0 // c:133 return 0
 }
 
 impl RefreshState {
@@ -294,19 +306,25 @@ impl RefreshState {
         }
     }
 }
-use HighlightCategory as HC;
 use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
+use HighlightCategory as HC;
 
-    /// Main refresh function — redraws the line.
-    /// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
-    /// a full virtual-screen diff against the previous frame; this Rust
-    /// port renders the single line each call but adds three behaviors
-    /// the previous bare-buffer version was missing:
-    ///   * region-attribute overlay (zle_refresh.c `region_highlights[]`),
-    ///   * vi visual-mode auto-region (mirrors zle_refresh.c's check of
-    ///     `region_active` to paint mark..zlecs in standout),
-    ///   * RPS1 / right-prompt rendering at the right margin
-    ///     (zle_refresh.c `put_rpromptbuf` path).
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+/// Main refresh function — redraws the line.
+/// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
+/// a full virtual-screen diff against the previous frame; this Rust
+/// port renders the single line each call but adds three behaviors
+/// the previous bare-buffer version was missing:
+///   * region-attribute overlay (zle_refresh.c `region_highlights[]`),
+///   * vi visual-mode auto-region (mirrors zle_refresh.c's check of
+///     `region_active` to paint mark..zlecs in standout),
+///   * RPS1 / right-prompt rendering at the right margin
+///     (zle_refresh.c `put_rpromptbuf` path).
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
@@ -315,35 +333,29 @@ use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_hist::*;
-#[allow(unused_imports)]
 use crate::ported::zle::zle_move::*;
-#[allow(unused_imports)]
-use crate::ported::zle::zle_word::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_params::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_vi::*;
+use crate::ported::zle::zle_tricky::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_utils::*;
 #[allow(unused_imports)]
-use crate::ported::zle::zle_tricky::*;
+use crate::ported::zle::zle_vi::*;
 #[allow(unused_imports)]
-use crate::ported::zle::textobjects::*;
-#[allow(unused_imports)]
-use crate::ported::zle::deltochar::*;
+use crate::ported::zle::zle_word::*;
 
 /// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
-pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len();               // c:284
+pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len(); // c:284
 
 /// Port of `ZR_MID_ELLIPSIS1_SIZE` macro from `zle_refresh.c:295`.
-pub const ZR_MID_ELLIPSIS1_SIZE: usize = ZR_MID_ELLIPSIS1.len();             // c:295
+pub const ZR_MID_ELLIPSIS1_SIZE: usize = ZR_MID_ELLIPSIS1.len(); // c:295
 
 /// Port of `ZR_MID_ELLIPSIS2_SIZE` macro from `zle_refresh.c:302`.
-pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len();             // c:302
+pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len(); // c:302
 
 /// Port of `ZR_START_ELLIPSIS_SIZE` macro from `zle_refresh.c:312`.
-pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // c:312
+pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len(); // c:312
 
 /// Apply a `$zle_highlight` array to the manager.
 /// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
@@ -354,7 +366,6 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // 
 /// — direct ports of zle_refresh.c:395-402.
 /// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
 pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
-
     let mut seen = std::collections::HashSet::new();
     for entry in atrs {
         if entry.is_empty() {
@@ -411,7 +422,9 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
         manager.category_attrs.insert(HC::Region, default_standout);
     }
     if !seen.contains(&HC::Isearch) {
-        manager.category_attrs.insert(HC::Isearch, default_underline);
+        manager
+            .category_attrs
+            .insert(HC::Isearch, default_underline);
     }
     if !seen.contains(&HC::Suffix) {
         manager.category_attrs.insert(HC::Suffix, default_bold);
@@ -442,10 +455,10 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
 /// correct cross-language equivalent for this fn shape (the
 /// caller doesn't reach into the highlight buffer from this entry
 /// point; the live tick clears its buffer directly).
-pub fn zle_free_highlight() {                                                // c:415
-    // Rust ownership handles the equivalent free; explicit clear
-    // happens against the file-scope HIGHLIGHT static when
-    // invalidate fires.
+pub fn zle_free_highlight() { // c:415
+                              // Rust ownership handles the equivalent free; explicit clear
+                              // happens against the file-scope HIGHLIGHT static when
+                              // invalidate fires.
 }
 
 /// Port of `void tcoutclear(int cap)` from
@@ -459,29 +472,52 @@ pub fn zle_free_highlight() {                                                // 
 ///    applytextattributes(0);
 ///    tcout(cap);`
 /// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
-pub fn tcoutclear(to_end: bool) {                                            // c:607
+pub fn tcoutclear(to_end: bool) {
+    // c:607
     use std::sync::atomic::Ordering;
-    let bytes: &[u8] = if to_end { b"\x1b[J" } else { b"\x1b[2J" };          // c:611 tcout
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);             // c:611 shout
+    let bytes: &[u8] = if to_end { b"\x1b[J" } else { b"\x1b[2J" }; // c:611 tcout
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed); // c:611 shout
     let _ = crate::ported::utils::write_loop(if fd >= 0 { fd } else { 1 }, bytes);
 }
 
-    /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
-    /// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
-    /// encodes the char as UTF-8 bytes and writes to the shell-out
-    /// fd.
-    pub fn zwcputc(c: char) {
-        let mut buf = [0u8; 4];
-        let s = c.encode_utf8(&mut buf);
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
+/// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
+/// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
+/// encodes the char as UTF-8 bytes and writes to the shell-out
+/// fd.
+pub fn zwcputc(c: char) {
+    let mut buf = [0u8; 4];
+    let s = c.encode_utf8(&mut buf);
+    let _ = crate::ported::utils::write_loop(
+        {
+            use std::sync::atomic::Ordering;
+            let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if f >= 0 {
+                f
+            } else {
+                1
+            }
+        },
+        s.as_bytes(),
+    );
+}
 
-    /// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
-    /// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
-    /// shout)`. Rust writes the UTF-8 bytes to shout.
-    pub fn zwcwrite(s: &str) {
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
+/// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
+/// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
+/// shout)`. Rust writes the UTF-8 bytes to shout.
+pub fn zwcwrite(s: &str) {
+    let _ = crate::ported::utils::write_loop(
+        {
+            use std::sync::atomic::Ordering;
+            let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if f >= 0 {
+                f
+            } else {
+                1
+            }
+        },
+        s.as_bytes(),
+    );
+}
 
 // =====================================================================
 // `DEF_MWBUF_ALLOC` + `zr_*_ellipsis` tables — `Src/Zle/zle_refresh.c:697`
@@ -491,14 +527,15 @@ pub fn tcoutclear(to_end: bool) {                                            // 
 
 /// Port of `DEF_MWBUF_ALLOC` from `Src/Zle/zle_refresh.c:697`.
 /// Number of words to allocate in one go for the multiword buffers.
-pub const DEF_MWBUF_ALLOC: usize = 32;                                       // c:697
+pub const DEF_MWBUF_ALLOC: usize = 32; // c:697
 
 /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
 /// Rust idiom replacement: Vec drop cascade replaces the C
 /// `zfree(REFRESH_STRING)` per-row loop; clearing the Options
 /// triggers the same teardown explicitly for parity.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
+pub fn freevideo(state: &mut RefreshState) {
+    // c:freevideo
     // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
     // the row arrays. Rust drop cascade handles all freeing when
     // the VideoBuffer's Vecs go out of scope; explicitly clear them
@@ -512,7 +549,8 @@ pub fn freevideo(state: &mut RefreshState) {                                 // 
 /// the C `zrealloc(nbuf/obuf, (winh+1) * sizeof(...))` + memset-zero
 /// pair; geometry pulled from the canonical adjustcolumns/lines.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
+pub fn resetvideo(state: &mut RefreshState) {
+    // c:resetvideo
     // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
     // (winh+1) lines; cleared via memset.` zshrs uses
     // VideoBuffer::clear/resize for the same effect. Pull the new
@@ -526,33 +564,45 @@ pub fn resetvideo(state: &mut RefreshState) {                                // 
     state.need_full_redraw = true;
 }
 
-    /// Port of `void scrollwindow(int tline)` from
-    /// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
-    /// negative → scroll down (CSI T).
-    pub fn scrollwindow(lines: i32) {
-        let s = if lines > 0 {
-            format!("\x1b[{}S", lines)
-        } else if lines < 0 {
-            format!("\x1b[{}T", -lines)
-        } else {
-            return;
-        };
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
+/// Port of `void scrollwindow(int tline)` from
+/// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
+/// negative → scroll down (CSI T).
+pub fn scrollwindow(lines: i32) {
+    let s = if lines > 0 {
+        format!("\x1b[{}S", lines)
+    } else if lines < 0 {
+        format!("\x1b[{}T", -lines)
+    } else {
+        return;
+    };
+    let _ = crate::ported::utils::write_loop(
+        {
+            use std::sync::atomic::Ordering;
+            let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if f >= 0 {
+                f
+            } else {
+                1
+            }
+        },
+        s.as_bytes(),
+    );
+}
 
 /// Port of `nextline(Rparams rpms, int wrapped)` from Src/Zle/zle_refresh.c:842.
 /// Rust idiom replacement: RefreshState owns its row vec, so the
 /// C `ln++` + per-row reallocation collapses to a vln increment +
 /// vertical-overflow check; row allocation lives on VideoBuffer.
 #[allow(unused_variables)]
-pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:842
+pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {
+    // c:842
     // C body (c:842-873): advance rpms->ln++; check space against
     // winh; allocate new buffer row if needed; return 1 when display
     // is full (caller should stop emitting). zshrs uses RefreshState
     // for the cursor; this advances vln and signals overflow.
     rpms.vln += 1;
     if rpms.vln >= rpms.lines {
-        return 1;                                                            // out of vertical space
+        return 1; // out of vertical space
     }
     rpms.vcs = 0;
     0
@@ -562,7 +612,8 @@ pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:
 /// Rust idiom replacement: scroll-up is a vln decrement + vcs
 /// reset; the C `memmove(rows+1, rows, ...)` pair drops since the
 /// terminal emits the scroll itself via the wrap escape sequence.
-pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c:875
+pub fn snextline(rpms: &mut RefreshState) -> i32 {
+    // c:875
     // C body (c:875-919): scroll the on-screen display up one line
     // when the new line wraps past the bottom. zshrs decrements
     // vln so the next emit lands on the (now-cleared) bottom row.
@@ -586,8 +637,11 @@ pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c
 /// which is exactly the same observable state as a TXT_MULTIWORD
 /// flag plus mwbuf entry. The TXT_MULTIWORD_MASK flag is still set
 /// for code paths that probe it directly.
-pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // c:913
-                     _tptr: &[char], _ichars: usize) {
+pub fn addmultiword(
+    base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT, // c:913
+    _tptr: &[char],
+    _ichars: usize,
+) {
     // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
     // path that reads mwbuf knows to dereference. zshrs's
     // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
@@ -599,141 +653,150 @@ pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // 
 
 /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn bufswap(state: &mut RefreshState) {                                   // c:bufswap
+pub fn bufswap(state: &mut RefreshState) {
+    // c:bufswap
     // C body: swap nbuf and obuf pointers (with mwbuf shadow when
     // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
     std::mem::swap(&mut state.old_video, &mut state.new_video);
 }
 
-    pub fn zrefresh() {                                             // c:975
-        // c:975 — full repaint pipeline. C writes every byte through
-        //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
-        //          collects the rendered escape stream into a String
-        //          and writes it to SHTTY in one shot — matches C's
-        //          shout destination and reduces syscall count.
-        use std::fmt::Write as FmtWrite;
-        let mut handle = String::new();
+pub fn zrefresh() {
+    // c:975
+    // c:975 — full repaint pipeline. C writes every byte through
+    //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
+    //          collects the rendered escape stream into a String
+    //          and writes it to SHTTY in one shot — matches C's
+    //          shout destination and reduces syscall count.
+    use std::fmt::Write as FmtWrite;
+    let mut handle = String::new();
 
-        let (cols, _rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
+    let (cols, _rows) = (
+        crate::ported::utils::adjustcolumns(),
+        crate::ported::utils::adjustlines(),
+    );
 
-        let prompt = prompt().to_string();
-        let rprompt = rprompt().to_string();
-        let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let prompt = prompt().to_string();
+    let rprompt = rprompt().to_string();
+    let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
 
-        let prompt_width = countprompt(&prompt);
-        let rprompt_width = countprompt(&rprompt);
-        let buffer_before_cursor: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..cursor.min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
-            .iter()
-            .collect();
-        let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
+    let prompt_width = countprompt(&prompt);
+    let rprompt_width = countprompt(&rprompt);
+    let buffer_before_cursor: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()
+        [..cursor.min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
+        .iter()
+        .collect();
+    let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
 
-        // Horizontal scroll if the cursor approaches the right edge.
-        // Mirrors zle_refresh.c's `winw` clamp logic — without the full
-        // multi-line wrap path our single-line shell uses scroll instead.
-        let scroll_margin = 8;
-        let effective_cols = cols.saturating_sub(1);
-        let scroll_offset = if cursor_col >= effective_cols.saturating_sub(scroll_margin) {
-            cursor_col.saturating_sub(effective_cols / 2)
-        } else {
-            0
-        };
+    // Horizontal scroll if the cursor approaches the right edge.
+    // Mirrors zle_refresh.c's `winw` clamp logic — without the full
+    // multi-line wrap path our single-line shell uses scroll instead.
+    let scroll_margin = 8;
+    let effective_cols = cols.saturating_sub(1);
+    let scroll_offset = if cursor_col >= effective_cols.saturating_sub(scroll_margin) {
+        cursor_col.saturating_sub(effective_cols / 2)
+    } else {
+        0
+    };
 
-        // Compose the per-buffer-char attribute overlay before paint, so
-        // we don't have to re-walk the highlight list per char during write.
-        let attrs = compute_render_attrs();
+    // Compose the per-buffer-char attribute overlay before paint, so
+    // we don't have to re-walk the highlight list per char during write.
+    let attrs = compute_render_attrs();
 
-        let _ = write!(handle, "\r\x1b[K");
+    let _ = write!(handle, "\r\x1b[K");
 
-        // Prompt — drawn unless we've scrolled past it. Skip
-        // `scroll_offset` visible chars from the prompt (inlined
-        // from the deleted skip_chars helper) — ANSI escape
-        // sequences are skipped unconditionally so they don't
-        // count against width.
-        if scroll_offset < prompt_width {
-            let mut width = 0;
-            let mut byte_idx = 0;
-            let mut in_escape = false;
-            for (i, c) in prompt.char_indices() {
-                if width >= scroll_offset {
-                    byte_idx = i;
-                    break;
-                }
-                if in_escape {
-                    if c.is_ascii_alphabetic() {
-                        in_escape = false;
-                    }
-                } else if c == '\x1b' {
-                    in_escape = true;
-                } else {
-                    width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                }
-                byte_idx = i + c.len_utf8();
-            }
-            let _ = write!(handle, "{}", &prompt[byte_idx..]);
-        }
-
-        // Compute the visible byte/char range of the buffer after scroll.
-        let buffer_start = scroll_offset.saturating_sub(prompt_width);
-        // Width budget for buffer = total cols - prompt drawn - rprompt reserve.
-        let drawn_prompt_width = prompt_width.saturating_sub(scroll_offset);
-        let rprompt_reserve = if rprompt_width > 0 {
-            rprompt_width + 1
-        } else {
-            0
-        };
-        let buffer_budget = effective_cols
-            .saturating_sub(drawn_prompt_width)
-            .saturating_sub(rprompt_reserve);
-
-        // Walk the buffer chars from buffer_start, applying overlay attrs.
-        let mut current_attr: Option<TextAttr> = None;
-        let line_snapshot = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clone();
-        for (written, (idx, ch)) in line_snapshot
-            .iter()
-            .enumerate()
-            .skip(buffer_start)
-            .enumerate()
-        {
-            if written >= buffer_budget {
+    // Prompt — drawn unless we've scrolled past it. Skip
+    // `scroll_offset` visible chars from the prompt (inlined
+    // from the deleted skip_chars helper) — ANSI escape
+    // sequences are skipped unconditionally so they don't
+    // count against width.
+    if scroll_offset < prompt_width {
+        let mut width = 0;
+        let mut byte_idx = 0;
+        let mut in_escape = false;
+        for (i, c) in prompt.char_indices() {
+            if width >= scroll_offset {
+                byte_idx = i;
                 break;
             }
-            let want_attr = attrs.get(idx).and_then(|a| *a);
-            if want_attr != current_attr {
-                let _ = write!(handle, "\x1b[0m");
-                if let Some(a) = want_attr {
-                    let _ = write!(handle, "{}", a.to_ansi());
+            if in_escape {
+                if c.is_ascii_alphabetic() {
+                    in_escape = false;
                 }
-                current_attr = want_attr;
+            } else if c == '\x1b' {
+                in_escape = true;
+            } else {
+                width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             }
-            let _ = write!(handle, "{}", ch);
+            byte_idx = i + c.len_utf8();
         }
-        // Reset SGR before the rprompt / cursor jump.
-        if current_attr.is_some() {
-            let _ = write!(handle, "\x1b[0m");
-        }
-
-        // Right prompt — paint at the absolute right margin if there's
-        // room. Mirrors put_rpromptbuf in zle_refresh.c which writes RPS1
-        // at column (winw - rpromptw).
-        if rprompt_width > 0 && rprompt_width + 2 < effective_cols {
-            let rprompt_col = effective_cols.saturating_sub(rprompt_width);
-            let _ = write!(handle, "\r\x1b[{}C{}\x1b[0m", rprompt_col, rprompt);
-        }
-
-        // Cursor positioning (1-based column in ANSI).
-        let display_cursor_col = cursor_col.saturating_sub(scroll_offset);
-        let _ = write!(handle, "\r\x1b[{}C", display_cursor_col);
-
-        // c:1488 — `fwrite(out, ..., shout); fflush(shout);`. Single
-        //          write_loop emits the whole frame to SHTTY (stdout
-        //          fallback). Replaces the prior `stdout.lock()`
-        //          fake that wrote refresh output to stdout instead
-        //          of the controlling tty.
-        use std::sync::atomic::Ordering;
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
+        let _ = write!(handle, "{}", &prompt[byte_idx..]);
     }
+
+    // Compute the visible byte/char range of the buffer after scroll.
+    let buffer_start = scroll_offset.saturating_sub(prompt_width);
+    // Width budget for buffer = total cols - prompt drawn - rprompt reserve.
+    let drawn_prompt_width = prompt_width.saturating_sub(scroll_offset);
+    let rprompt_reserve = if rprompt_width > 0 {
+        rprompt_width + 1
+    } else {
+        0
+    };
+    let buffer_budget = effective_cols
+        .saturating_sub(drawn_prompt_width)
+        .saturating_sub(rprompt_reserve);
+
+    // Walk the buffer chars from buffer_start, applying overlay attrs.
+    let mut current_attr: Option<TextAttr> = None;
+    let line_snapshot = crate::ported::zle::zle_main::ZLELINE
+        .lock()
+        .unwrap()
+        .clone();
+    for (written, (idx, ch)) in line_snapshot
+        .iter()
+        .enumerate()
+        .skip(buffer_start)
+        .enumerate()
+    {
+        if written >= buffer_budget {
+            break;
+        }
+        let want_attr = attrs.get(idx).and_then(|a| *a);
+        if want_attr != current_attr {
+            let _ = write!(handle, "\x1b[0m");
+            if let Some(a) = want_attr {
+                let _ = write!(handle, "{}", a.to_ansi());
+            }
+            current_attr = want_attr;
+        }
+        let _ = write!(handle, "{}", ch);
+    }
+    // Reset SGR before the rprompt / cursor jump.
+    if current_attr.is_some() {
+        let _ = write!(handle, "\x1b[0m");
+    }
+
+    // Right prompt — paint at the absolute right margin if there's
+    // room. Mirrors put_rpromptbuf in zle_refresh.c which writes RPS1
+    // at column (winw - rpromptw).
+    if rprompt_width > 0 && rprompt_width + 2 < effective_cols {
+        let rprompt_col = effective_cols.saturating_sub(rprompt_width);
+        let _ = write!(handle, "\r\x1b[{}C{}\x1b[0m", rprompt_col, rprompt);
+    }
+
+    // Cursor positioning (1-based column in ANSI).
+    let display_cursor_col = cursor_col.saturating_sub(scroll_offset);
+    let _ = write!(handle, "\r\x1b[{}C", display_cursor_col);
+
+    // c:1488 — `fwrite(out, ..., shout); fflush(shout);`. Single
+    //          write_loop emits the whole frame to SHTTY (stdout
+    //          fallback). Replaces the prior `stdout.lock()`
+    //          fake that wrote refresh output to stdout instead
+    //          of the controlling tty.
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
+}
 
 impl HighlightManager {
     pub fn new() -> Self {
@@ -786,442 +849,533 @@ impl HighlightManager {
 /// ```
 /// Common-prefix length of two REFRESH_ELEMENT strings; stops at
 /// the first NUL chr in `olds` or first cell that differs in chr+atr.
-pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-               news: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
+pub fn wpfxlen(
+    olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    news: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+) -> usize {
     let mut i = 0;
-    while i < olds.len() && i < news.len()
-        && olds[i].chr != '\0' && olds[i] == news[i]
-    {
+    while i < olds.len() && i < news.len() && olds[i].chr != '\0' && olds[i] == news[i] {
         i += 1;
     }
     i
 }
 
-    /// Port of `static void refreshline(int ln)` from
-    /// `Src/Zle/zle_refresh.c:1749`. Repaints a single screen row at
-    /// `ln` from `nbuf[ln]` against `obuf[ln]`: handles `cleareol`,
-    /// auto-margin (`hasam`) edge cases, char-insert / char-delete
-    /// terminal capabilities (`TCDEL`/`TCINS`), and the
-    /// `MULTIBYTE_SUPPORT` `WEOF` width-padding cells.
-    ///
-    /// ```c
-    /// static void
-    /// refreshline(int ln)
-    /// {
-    ///     REFRESH_STRING nl, ol, p1;
-    ///     int ccs = 0, char_ins = 0, col_cleareol, i, j;
-    ///     int ins_last, nllen, ollen, rnllen;
-    ///     const REFRESH_ELEMENT zr_pad = { ZWC(' '), prompt_attr };
-    /// /* 0: setup */
-    ///     nl = nbuf[ln];
-    ///     rnllen = nllen = nl ? ZR_strlen(nl) : 0;
-    ///     if (ln < olnct && obuf[ln]) { ol = obuf[ln]; ollen = ZR_strlen(ol); }
-    ///     else { static REFRESH_ELEMENT nullchr = { ZWC('\0'), 0 };
-    ///            ol = &nullchr; ollen = 0; }
-    /// /* optimisation: clear-eol short-circuit */
-    ///     if (cleareol && !nllen && !(hasam && ln < nlnct - 1)
-    ///         && tccan(TCCLEAREOL)) { moveto(ln, 0); tcoutclear(TCCLEAREOL); return; }
-    /// /* 1: pad new buffer */
-    ///     if (cleareol || (!nllen && (ln != 0 || !put_rpmpt))
-    ///         || (ln == 0 && (put_rpmpt != oput_rpmpt))) { ... pad to winw ... }
-    ///     else if (ollen > nllen) { ... pad to ollen ... }
-    /// /* 2: clear-to-eol calculation */
-    ///     if (hasam && ln < nlnct - 1 && rnllen == winw) col_cleareol = -2;
-    ///     else { ... compute col_cleareol from TCCLEAREOL cost ... }
-    /// /* 2b: automargin niceness */
-    ///     if (hasam && vcs == winw) { ... advance vln/vcs ... }
-    ///     ins_last = 0;
-    /// /* 2c: prompt-line head skip */
-    ///     if (ln == 0 && lpromptw) { ... advance past prompt ... }
-    /// /* 3: main display loop */
-    ///     for (;;) { ... skip-match / insert-delete / fall-through ... }
-    /// }
-    /// ```
-    ///
-    /// Per PORT.md Rule 9 (function bodies port too) the structural
-    /// translation lives here even though the screen-output primitives
-    /// (`tccan`/`tc_inschars`/`tc_delchars`/`zputc`/`zwrite`/
-    /// `wpfxlen`/`tcinscost`/`tcdelcost`/`treplaceattrs`/
-    /// `applytextattributes`) and the `nbuf`/`obuf`/`vcs`/`vln`/
-    /// `winw`/`winh`/`zterm_lines`/`hasam`/`cleareol`/`put_rpmpt`/
-    /// `oput_rpmpt`/`olnct`/`prompt_attr` statics are not yet
-    /// surface-area in zshrs. Stubbed deps are flagged inline with
-    /// `// !!! STUB: needs <c-name> port at <Src/file.c:NNNN>`.
-    pub fn refreshline(ln: i32) {                                            // c:1749
-        use std::sync::atomic::Ordering;
+/// Port of `static void refreshline(int ln)` from
+/// `Src/Zle/zle_refresh.c:1749`. Repaints a single screen row at
+/// `ln` from `nbuf[ln]` against `obuf[ln]`: handles `cleareol`,
+/// auto-margin (`hasam`) edge cases, char-insert / char-delete
+/// terminal capabilities (`TCDEL`/`TCINS`), and the
+/// `MULTIBYTE_SUPPORT` `WEOF` width-padding cells.
+///
+/// ```c
+/// static void
+/// refreshline(int ln)
+/// {
+///     REFRESH_STRING nl, ol, p1;
+///     int ccs = 0, char_ins = 0, col_cleareol, i, j;
+///     int ins_last, nllen, ollen, rnllen;
+///     const REFRESH_ELEMENT zr_pad = { ZWC(' '), prompt_attr };
+/// /* 0: setup */
+///     nl = nbuf[ln];
+///     rnllen = nllen = nl ? ZR_strlen(nl) : 0;
+///     if (ln < olnct && obuf[ln]) { ol = obuf[ln]; ollen = ZR_strlen(ol); }
+///     else { static REFRESH_ELEMENT nullchr = { ZWC('\0'), 0 };
+///            ol = &nullchr; ollen = 0; }
+/// /* optimisation: clear-eol short-circuit */
+///     if (cleareol && !nllen && !(hasam && ln < nlnct - 1)
+///         && tccan(TCCLEAREOL)) { moveto(ln, 0); tcoutclear(TCCLEAREOL); return; }
+/// /* 1: pad new buffer */
+///     if (cleareol || (!nllen && (ln != 0 || !put_rpmpt))
+///         || (ln == 0 && (put_rpmpt != oput_rpmpt))) { ... pad to winw ... }
+///     else if (ollen > nllen) { ... pad to ollen ... }
+/// /* 2: clear-to-eol calculation */
+///     if (hasam && ln < nlnct - 1 && rnllen == winw) col_cleareol = -2;
+///     else { ... compute col_cleareol from TCCLEAREOL cost ... }
+/// /* 2b: automargin niceness */
+///     if (hasam && vcs == winw) { ... advance vln/vcs ... }
+///     ins_last = 0;
+/// /* 2c: prompt-line head skip */
+///     if (ln == 0 && lpromptw) { ... advance past prompt ... }
+/// /* 3: main display loop */
+///     for (;;) { ... skip-match / insert-delete / fall-through ... }
+/// }
+/// ```
+///
+/// Per PORT.md Rule 9 (function bodies port too) the structural
+/// translation lives here even though the screen-output primitives
+/// (`tccan`/`tc_inschars`/`tc_delchars`/`zputc`/`zwrite`/
+/// `wpfxlen`/`tcinscost`/`tcdelcost`/`treplaceattrs`/
+/// `applytextattributes`) and the `nbuf`/`obuf`/`vcs`/`vln`/
+/// `winw`/`winh`/`zterm_lines`/`hasam`/`cleareol`/`put_rpmpt`/
+/// `oput_rpmpt`/`olnct`/`prompt_attr` statics are not yet
+/// surface-area in zshrs. Stubbed deps are flagged inline with
+/// `// !!! STUB: needs <c-name> port at <Src/file.c:NNNN>`.
+pub fn refreshline(ln: i32) {
+    // c:1749
+    use std::sync::atomic::Ordering;
 
-        // c:1751 — REFRESH_STRING nl, ol, p1
-        // !!! STUB: nbuf / obuf statics — Src/Zle/zle_refresh.c not yet
-        // exposed as `pub static NBUF/OBUF: Mutex<Vec<REFRESH_STRING>>`.
-        // Treat row vectors as empty so the function exercises the
-        // null-buffer paths and degrades to "nothing to draw".
-        let mut nl: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new();   // c:1751 nl = nbuf[ln]
-        let mut ol: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new();   // c:1751 ol = obuf[ln]
-        let _p1: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new();      // c:1751 p1
-        let mut ccs: i32 = 0;                                                // c:1752 ccs = 0
-        let mut char_ins: i32 = 0;                                           // c:1753 char_ins = 0
-        let mut col_cleareol: i32;                                           // c:1754
-        let mut i: i32;                                                      // c:1755 tmp
-        let mut _j: i32 = 0;                                                 // c:1755 tmp
-        let mut ins_last: i32;                                               // c:1756
-        let mut nllen: i32;                                                  // c:1757
-        let ollen: i32;                                                      // c:1757
-        let rnllen: i32;                                                     // c:1758
-        let zr_pad = crate::ported::zle::zle_h::REFRESH_ELEMENT {            // c:1759
-            chr: ' ',
-            atr: 0,
-        };
+    // c:1751 — REFRESH_STRING nl, ol, p1
+    // !!! STUB: nbuf / obuf statics — Src/Zle/zle_refresh.c not yet
+    // exposed as `pub static NBUF/OBUF: Mutex<Vec<REFRESH_STRING>>`.
+    // Treat row vectors as empty so the function exercises the
+    // null-buffer paths and degrades to "nothing to draw".
+    let mut nl: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new(); // c:1751 nl = nbuf[ln]
+    let mut ol: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new(); // c:1751 ol = obuf[ln]
+    let _p1: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new(); // c:1751 p1
+    let mut ccs: i32 = 0; // c:1752 ccs = 0
+    let mut char_ins: i32 = 0; // c:1753 char_ins = 0
+    let mut col_cleareol: i32; // c:1754
+    let mut i: i32; // c:1755 tmp
+    let mut _j: i32 = 0; // c:1755 tmp
+    let mut ins_last: i32; // c:1756
+    let mut nllen: i32; // c:1757
+    let ollen: i32; // c:1757
+    let rnllen: i32; // c:1758
+    let zr_pad = crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        // c:1759
+        chr: ' ',
+        atr: 0,
+    };
 
-        // 0: setup                                                          // c:1761
-        // nl = nbuf[ln]; rnllen = nllen = nl ? ZR_strlen(nl) : 0;           // c:1762-1763
-        rnllen = nl.len() as i32;
-        nllen = rnllen;
-        // c:1764-1772 — `if (ln < olnct && obuf[ln]) { ol = obuf[ln]; ollen = ZR_strlen(ol); }`
-        // !!! STUB: olnct static — Src/Zle/zle_refresh.c. Treat obuf row
-        // as the static `nullchr = { '\0', 0 }` per c:1769.
-        let _olnct: i32 = 0;                                                 // c:1764
-        ollen = ol.len() as i32;                                             // c:1766 / c:1771
+    // 0: setup                                                          // c:1761
+    // nl = nbuf[ln]; rnllen = nllen = nl ? ZR_strlen(nl) : 0;           // c:1762-1763
+    rnllen = nl.len() as i32;
+    nllen = rnllen;
+    // c:1764-1772 — `if (ln < olnct && obuf[ln]) { ol = obuf[ln]; ollen = ZR_strlen(ol); }`
+    // !!! STUB: olnct static — Src/Zle/zle_refresh.c. Treat obuf row
+    // as the static `nullchr = { '\0', 0 }` per c:1769.
+    let _olnct: i32 = 0; // c:1764
+    ollen = ol.len() as i32; // c:1766 / c:1771
 
-        // optimisation: clear-eol short-circuit                             // c:1774-1775
-        // c:1776-1781 — `if (cleareol && !nllen && !(hasam && ln < nlnct-1)
-        //               && tccan(TCCLEAREOL)) { moveto(ln, 0);
-        //               tcoutclear(TCCLEAREOL); return; }`
-        let cleareol = CLEAREOL.load(Ordering::SeqCst) != 0;
-        let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst) != 0; // c:1776
-        let nlnct_v = NLNCT.load(Ordering::SeqCst);
-        if cleareol                                                          // c:1776
+    // optimisation: clear-eol short-circuit                             // c:1774-1775
+    // c:1776-1781 — `if (cleareol && !nllen && !(hasam && ln < nlnct-1)
+    //               && tccan(TCCLEAREOL)) { moveto(ln, 0);
+    //               tcoutclear(TCCLEAREOL); return; }`
+    let cleareol = CLEAREOL.load(Ordering::SeqCst) != 0;
+    let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst) != 0; // c:1776
+    let nlnct_v = NLNCT.load(Ordering::SeqCst);
+    if cleareol                                                          // c:1776
             && nllen == 0
             && !(hasam_v && ln < nlnct_v - 1)
-            && (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                       // c:1777
-        {
-            moveto(ln as usize, 0);                                          // c:1778
-            tcoutclear(true);                                                // c:1779
-            return;                                                          // c:1780
-        }
+            && (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)
+    /* tccan(TCCLEAREOL) per zsh.h:2682 */                       // c:1777
+    {
+        moveto(ln as usize, 0); // c:1778
+        tcoutclear(true); // c:1779
+        return; // c:1780
+    }
 
-        // 1: pad out new buffer with spaces                                 // c:1783-1784
-        let put_rpmpt = PUT_RPMPT.load(Ordering::SeqCst);
-        let oput_rpmpt = OPUT_RPMPT.load(Ordering::SeqCst);
-        let winw = crate::ported::zle::zle_refresh::WINW.load(Ordering::SeqCst);
-        if cleareol                                                          // c:1786
+    // 1: pad out new buffer with spaces                                 // c:1783-1784
+    let put_rpmpt = PUT_RPMPT.load(Ordering::SeqCst);
+    let oput_rpmpt = OPUT_RPMPT.load(Ordering::SeqCst);
+    let winw = crate::ported::zle::zle_refresh::WINW.load(Ordering::SeqCst);
+    if cleareol                                                          // c:1786
             || (nllen == 0 && (ln != 0 || put_rpmpt == 0))                   // c:1787
-            || (ln == 0 && put_rpmpt != oput_rpmpt)                          // c:1788
-        {
-            // !!! STUB: zhalloc — Rust uses Vec growth instead of arena alloc.
-            let mut padded: crate::ported::zle::zle_h::REFRESH_STRING =       // c:1789
+            || (ln == 0 && put_rpmpt != oput_rpmpt)
+    // c:1788
+    {
+        // !!! STUB: zhalloc — Rust uses Vec growth instead of arena alloc.
+        let mut padded: crate::ported::zle::zle_h::REFRESH_STRING =       // c:1789
                 Vec::with_capacity((winw + 2) as usize);
-            for el in nl.iter().take(nllen as usize) {                       // c:1790-1791 ZR_memcpy
-                padded.push(*el);
-            }
-            for _ in nllen..winw {                                           // c:1792 ZR_memset(.., zr_sp, ..)
-                padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 });
-            }
-            padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 });  // c:1793 p1[winw] = zr_zr
-            if nllen < winw {                                                // c:1794
-                padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 });  // c:1795
-            } else if let Some(extra) = nl.get((winw + 1) as usize).copied() {  // c:1796-1797
-                padded.push(extra);
-            }
-            // c:1798-1801 — if (ln && nbuf[ln]) memcpy back to nl, else nl = p1
-            if ln != 0 && !nl.is_empty() {                                   // c:1798
-                let copy_len = ((winw + 2) as usize).min(padded.len());      // c:1799
-                if nl.len() >= copy_len {
-                    for k in 0..copy_len { nl[k] = padded[k]; }
-                } else {
-                    nl = padded.clone();
+        for el in nl.iter().take(nllen as usize) {
+            // c:1790-1791 ZR_memcpy
+            padded.push(*el);
+        }
+        for _ in nllen..winw {
+            // c:1792 ZR_memset(.., zr_sp, ..)
+            padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 });
+        }
+        padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 }); // c:1793 p1[winw] = zr_zr
+        if nllen < winw {
+            // c:1794
+            padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 });
+        // c:1795
+        } else if let Some(extra) = nl.get((winw + 1) as usize).copied() {
+            // c:1796-1797
+            padded.push(extra);
+        }
+        // c:1798-1801 — if (ln && nbuf[ln]) memcpy back to nl, else nl = p1
+        if ln != 0 && !nl.is_empty() {
+            // c:1798
+            let copy_len = ((winw + 2) as usize).min(padded.len()); // c:1799
+            if nl.len() >= copy_len {
+                for k in 0..copy_len {
+                    nl[k] = padded[k];
                 }
-            } else {                                                         // c:1800
-                nl = padded;                                                 // c:1801
+            } else {
+                nl = padded.clone();
             }
-            nllen = winw;                                                    // c:1802
-        } else if ollen > nllen {                                            // c:1803
-            // c:1804-1809 — pad nl with zr_pad up to ollen.
-            let mut padded: crate::ported::zle::zle_h::REFRESH_STRING =       // c:1804
+        } else {
+            // c:1800
+            nl = padded; // c:1801
+        }
+        nllen = winw; // c:1802
+    } else if ollen > nllen {
+        // c:1803
+        // c:1804-1809 — pad nl with zr_pad up to ollen.
+        let mut padded: crate::ported::zle::zle_h::REFRESH_STRING =       // c:1804
                 Vec::with_capacity((ollen + 1) as usize);
-            for el in nl.iter().take(nllen as usize) {                       // c:1805
-                padded.push(*el);
-            }
-            for _ in nllen..ollen {                                          // c:1806
-                padded.push(zr_pad);
-            }
-            padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 });  // c:1807
-            nl = padded;                                                     // c:1808
-            nllen = ollen;                                                   // c:1809
+        for el in nl.iter().take(nllen as usize) {
+            // c:1805
+            padded.push(*el);
         }
+        for _ in nllen..ollen {
+            // c:1806
+            padded.push(zr_pad);
+        }
+        padded.push(crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '\0', atr: 0 }); // c:1807
+        nl = padded; // c:1808
+        nllen = ollen; // c:1809
+    }
 
-        // 2: clear-to-eol calculation                                       // c:1812-1815
-        if hasam_v && ln < nlnct_v - 1 && rnllen == winw {                   // c:1817
-            col_cleareol = -2;                                               // c:1818 evil — don't
-        } else {                                                             // c:1819
-            col_cleareol = -1;                                               // c:1820
-            if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                       // c:1821
+    // 2: clear-to-eol calculation                                       // c:1812-1815
+    if hasam_v && ln < nlnct_v - 1 && rnllen == winw {
+        // c:1817
+        col_cleareol = -2; // c:1818 evil — don't
+    } else {
+        // c:1819
+        col_cleareol = -1; // c:1820
+        if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                       // c:1821
                 && (nllen == winw || put_rpmpt != oput_rpmpt)
+        {
+            // c:1822-1832 — backward-scan to find trailing-space cutoff.
+            let a = nl.get((nllen - 1) as usize).map(|e| e.atr).unwrap_or(0); // c:1822
+            let mut i_loc = nllen; // c:1823
+            while i_loc > 0
+                && nl
+                    .get((i_loc - 1) as usize)
+                    .map(|e| e.chr == ' ' && e.atr == a)
+                    .unwrap_or(false)
             {
-                // c:1822-1832 — backward-scan to find trailing-space cutoff.
-                let a = nl.get((nllen - 1) as usize).map(|e| e.atr).unwrap_or(0);  // c:1822
-                let mut i_loc = nllen;                                       // c:1823
-                while i_loc > 0
-                    && nl.get((i_loc - 1) as usize).map(|e| e.chr == ' ' && e.atr == a).unwrap_or(false)
+                i_loc -= 1; // c:1823
+            }
+            if nllen == winw && i_loc < nllen {
+                // c:1825
+                col_cleareol = i_loc; // c:1826
+            } else {
+                // c:1827
+                let a = ol.get((ollen - 1) as usize).map(|e| e.atr).unwrap_or(0); // c:1828
+                let mut j_loc = ollen; // c:1829
+                while j_loc > 0
+                    && ol
+                        .get((j_loc - 1) as usize)
+                        .map(|e| e.chr == ' ' && e.atr == a)
+                        .unwrap_or(false)
                 {
-                    i_loc -= 1;                                              // c:1823
+                    j_loc -= 1; // c:1829
                 }
-                if nllen == winw && i_loc < nllen {                          // c:1825
-                    col_cleareol = i_loc;                                    // c:1826
-                } else {                                                     // c:1827
-                    let a = ol.get((ollen - 1) as usize).map(|e| e.atr).unwrap_or(0);  // c:1828
-                    let mut j_loc = ollen;                                   // c:1829
-                    while j_loc > 0
-                        && ol.get((j_loc - 1) as usize).map(|e| e.chr == ' ' && e.atr == a).unwrap_or(false)
-                    {
-                        j_loc -= 1;                                          // c:1829
-                    }
-                    // c:1831 — tclen[TCCLEAREOL] — termcap-cost lookup.
-                    // !!! STUB: tclen[] — Src/init.c:81. Treat as 1.
-                    let tclen_clear: i32 = 1;
-                    if j_loc > i_loc + tclen_clear {                         // c:1831
-                        col_cleareol = i_loc;                                // c:1832
-                    }
+                // c:1831 — tclen[TCCLEAREOL] — termcap-cost lookup.
+                // !!! STUB: tclen[] — Src/init.c:81. Treat as 1.
+                let tclen_clear: i32 = 1;
+                if j_loc > i_loc + tclen_clear {
+                    // c:1831
+                    col_cleareol = i_loc; // c:1832
                 }
             }
         }
+    }
 
-        // 2b: automargin niceness                                           // c:1837
-        let vcs = crate::ported::zle::zle_refresh::VCS.load(Ordering::SeqCst);
-        let mut vln = crate::ported::zle::zle_refresh::VLN.load(Ordering::SeqCst);
-        if hasam_v && vcs == winw {                                          // c:1839
-            // c:1840 — `if (nbuf[vln] && nbuf[vln][vcs + 1].chr == '\n')`
-            // !!! STUB: nbuf access — defer.
-            let next_is_nl = false;                                          // c:1840 stub
-            if next_is_nl {                                                  // c:1840
-                vln += 1;                                                    // c:1841
-                let new_vcs = 1;                                             // c:1841 vcs = 1
-                crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
-                crate::ported::zle::zle_refresh::VCS.store(new_vcs, Ordering::SeqCst);
-                // c:1842-1845 — zputc(nbuf[vln]) / zputc(&zr_sp)
-                if ln == vln {                                               // c:1846 better safe than sorry
-                    if !nl.is_empty() { nl.remove(0); }                      // c:1847 nl++
-                    if !ol.is_empty() && ol[0].chr != '\0' {                 // c:1848-1849
-                        ol.remove(0);                                        // c:1849 ol++
-                    }
-                    ccs = 1;                                                 // c:1850
+    // 2b: automargin niceness                                           // c:1837
+    let vcs = crate::ported::zle::zle_refresh::VCS.load(Ordering::SeqCst);
+    let mut vln = crate::ported::zle::zle_refresh::VLN.load(Ordering::SeqCst);
+    if hasam_v && vcs == winw {
+        // c:1839
+        // c:1840 — `if (nbuf[vln] && nbuf[vln][vcs + 1].chr == '\n')`
+        // !!! STUB: nbuf access — defer.
+        let next_is_nl = false; // c:1840 stub
+        if next_is_nl {
+            // c:1840
+            vln += 1; // c:1841
+            let new_vcs = 1; // c:1841 vcs = 1
+            crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
+            crate::ported::zle::zle_refresh::VCS.store(new_vcs, Ordering::SeqCst);
+            // c:1842-1845 — zputc(nbuf[vln]) / zputc(&zr_sp)
+            if ln == vln {
+                // c:1846 better safe than sorry
+                if !nl.is_empty() {
+                    nl.remove(0);
+                } // c:1847 nl++
+                if !ol.is_empty() && ol[0].chr != '\0' {
+                    // c:1848-1849
+                    ol.remove(0); // c:1849 ol++
                 }
-            } else {                                                         // c:1852
-                vln += 1;                                                    // c:1853 vln++, vcs = 0
-                crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
-                crate::ported::zle::zle_refresh::VCS.store(0, Ordering::SeqCst);
-                // c:1854 — zputc(&zr_nl)
+                ccs = 1; // c:1850
             }
+        } else {
+            // c:1852
+            vln += 1; // c:1853 vln++, vcs = 0
+            crate::ported::zle::zle_refresh::VLN.store(vln, Ordering::SeqCst);
+            crate::ported::zle::zle_refresh::VCS.store(0, Ordering::SeqCst);
+            // c:1854 — zputc(&zr_nl)
         }
-        ins_last = 0;                                                        // c:1857
+    }
+    ins_last = 0; // c:1857
 
-        // 2c: prompt-line head skip                                         // c:1859-1860
-        let lpromptw = crate::ported::zle::zle_refresh::LPROMPTW.load(Ordering::SeqCst);
-        if ln == 0 && lpromptw != 0 {                                        // c:1862
-            i = lpromptw - ccs;                                              // c:1863
-            let j_loc = ol.len() as i32;                                     // c:1864 j = ZR_strlen(ol)
-            // c:1865 — nl += i (skip i cells)
-            for _ in 0..i.min(nl.len() as i32) { nl.remove(0); }
-            // c:1866 — ol += (i > j ? j : i)
-            let ol_skip = if i > j_loc { j_loc } else { i };
-            for _ in 0..ol_skip.min(ol.len() as i32) { ol.remove(0); }
-            ccs = lpromptw;                                                  // c:1867
+    // 2c: prompt-line head skip                                         // c:1859-1860
+    let lpromptw = crate::ported::zle::zle_refresh::LPROMPTW.load(Ordering::SeqCst);
+    if ln == 0 && lpromptw != 0 {
+        // c:1862
+        i = lpromptw - ccs; // c:1863
+        let j_loc = ol.len() as i32; // c:1864 j = ZR_strlen(ol)
+                                     // c:1865 — nl += i (skip i cells)
+        for _ in 0..i.min(nl.len() as i32) {
+            nl.remove(0);
         }
+        // c:1866 — ol += (i > j ? j : i)
+        let ol_skip = if i > j_loc { j_loc } else { i };
+        for _ in 0..ol_skip.min(ol.len() as i32) {
+            ol.remove(0);
+        }
+        ccs = lpromptw; // c:1867
+    }
 
-        // c:1870-1880 — `while (nl->chr == WEOF) { nl++; ccs++; vcs++; ... }`
-        // MULTIBYTE_SUPPORT WEOF realignment. zshrs's REFRESH_CHAR is
-        // `char`; we don't carry a WEOF sentinel, so the loop is empty.
+    // c:1870-1880 — `while (nl->chr == WEOF) { nl++; ccs++; vcs++; ... }`
+    // MULTIBYTE_SUPPORT WEOF realignment. zshrs's REFRESH_CHAR is
+    // `char`; we don't carry a WEOF sentinel, so the loop is empty.
 
-        // 3: main display loop                                              // c:1882
-        loop {                                                               // c:1884
-            // c:1888 — `if (nl->chr && ol->chr && ZR_equal(ol[1], nl[1]))`
-            let nl_first = nl.first().copied();
-            let ol_first = ol.first().copied();
-            let nl_second = nl.get(1).copied();
-            let ol_second = ol.get(1).copied();
-            if nl_first.map(|e| e.chr != '\0').unwrap_or(false)              // c:1888
+    // 3: main display loop                                              // c:1882
+    loop {
+        // c:1884
+        // c:1888 — `if (nl->chr && ol->chr && ZR_equal(ol[1], nl[1]))`
+        let nl_first = nl.first().copied();
+        let ol_first = ol.first().copied();
+        let nl_second = nl.get(1).copied();
+        let ol_second = ol.get(1).copied();
+        if nl_first.map(|e| e.chr != '\0').unwrap_or(false)              // c:1888
                 && ol_first.map(|e| e.chr != '\0').unwrap_or(false)
                 && nl_second == ol_second
-            {
-                // c:1894 — skip past matching cells.
-                while !nl.is_empty()                                         // c:1894
+        {
+            // c:1894 — skip past matching cells.
+            while !nl.is_empty()                                         // c:1894
                     && nl[0].chr != '\0'
                     && !ol.is_empty()
                     && nl[0] == ol[0]
-                {
-                    nl.remove(0);                                            // c:1894
-                    ol.remove(0);
-                    ccs += 1;
-                }
-            }
-
-            // c:1906 — `if (!nl->chr)`
-            if nl.is_empty() || nl[0].chr == '\0' {                          // c:1906
-                if ccs == winw && hasam_v && char_ins > 0 && ins_last != 0   // c:1907
-                    && vcs != winw
-                {
-                    // c:1908-1913 — print the deferred last char.
-                    // !!! STUB: zputc — defer.
-                    crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
-                    return;                                                  // c:1913
-                }
-                if char_ins <= 0 || ccs >= winw {                            // c:1915
-                    return;                                                  // c:1916 written everything
-                }
-                if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                   // c:1917
-                    && (char_ins >= 1) /* tclen[TCCLEAREOL] stubbed to 1 */
-                    && col_cleareol != -2
-                {
-                    col_cleareol = 0;                                        // c:1920
-                }
-            }
-
-            moveto(ln as usize, ccs as usize);                               // c:1923
-
-            // c:1925-1929 — if we can finish via clear-to-eol, do so
-            if col_cleareol >= 0 && ccs >= col_cleareol {                    // c:1926
-                tcoutclear(true);                                            // c:1927 tcoutclear(TCCLEAREOL)
-                return;                                                      // c:1928
-            }
-
-            // c:1932-1942 — empty nl: pad with spaces or delete chars.
-            if nl.is_empty() || nl[0].chr == '\0' {                          // c:1932
-                let i_pad = if winw - ccs < char_ins {                       // c:1933
-                    winw - ccs
-                } else {
-                    char_ins
-                };
-                // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`
-                let can_del = (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
-                if can_del {
-                    // c:1935 — tc_delchars(i)
-                    // !!! STUB: tc_delchars — Src/Zle/zle_refresh.c.
-                } else {                                                     // c:1936
-                    crate::ported::zle::zle_refresh::VCS.store(vcs + i_pad, Ordering::SeqCst);  // c:1937
-                    // c:1938-1939 — for (i--; i > 0; ) zputc(&zr_pad)
-                    // !!! STUB: zputc — defer.
-                }
-                return;                                                      // c:1941
-            }
-
-            // c:1946 — `if (!ol->chr)`
-            if ol.is_empty() || ol[0].chr == '\0' {                          // c:1946
-                let i_remain = if col_cleareol >= 0 { col_cleareol } else { nllen };  // c:1947
-                let i_write = i_remain - vcs;                                // c:1948
-                if i_write > 0 {                                             // c:1949 (DPUTS guard)
-                    // c:1958 — zwrite(nl, i)
-                    // !!! STUB: zwrite — Src/Zle/zle_refresh.c.
-                    crate::ported::zle::zle_refresh::VCS.store(vcs + i_write, Ordering::SeqCst);  // c:1959
-                }
-                if col_cleareol >= 0 {                                       // c:1960
-                    tcoutclear(true);                                        // c:1961
-                }
-                return;                                                      // c:1962
-            }
-
-            // c:1965-1970 — insert/delete eligibility
-            let eligible = (ln != 0 || put_rpmpt == 0 || oput_rpmpt == 0)
-                && !nl.is_empty() && nl_second.map(|e| e.chr != '\0').unwrap_or(false)
-                && !ol.is_empty() && ol_second.map(|e| e.chr != '\0').unwrap_or(false)
-                && ol_second != nl_second;
-            if eligible {                                                    // c:1965
-                // c:1976-2006 — TCDEL try-block: find a series we can delete
-                if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ {                      // c:1976
-                    let mut i_try = 1i32;                                    // c:1978
-                    while (i_try as usize) < ol.len() && ol[i_try as usize].chr != '\0' {
-                        // c:1979 — `tcdelcost(i) < wpfxlen(ol + i, nl)`
-                        // !!! STUB: wpfxlen — Src/Zle/zle_refresh.c.
-                        let cheap_delete = false;                            // stub
-                        if cheap_delete {
-                            // c:1985-1990 — apply attributes, tc_delchars(i)
-                            // !!! STUB: treplaceattrs / applytextattributes /
-                            // tc_delchars — Src/Zle/zle_refresh.c.
-                            for _ in 0..i_try {
-                                if !ol.is_empty() { ol.remove(0); }          // c:1991 ol += i
-                            }
-                            char_ins -= i_try;                               // c:1992
-                            i_try = 0;                                       // c:2004
-                            break;
-                        }
-                        i_try += 1;
-                    }
-                    if i_try != 0 { continue; }                              // c:2003-2004
-                }
-
-                // c:2012-2060 — TCINS try-block: find chars to insert.
-                let zterm_lines = crate::ported::zle::zle_refresh::WINH.load(Ordering::SeqCst);
-                if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCINS as usize] != 0)  /* tccan(TCINS) per zsh.h:2682 */ && vln != zterm_lines - 1 {  // c:2012
-                    let mut i_try = 1i32;                                    // c:2014
-                    while (i_try as usize) < nl.len() && nl[i_try as usize].chr != '\0' {
-                        // c:2015 — `tcinscost(i) < wpfxlen(ol, nl + i)`
-                        // !!! STUB.
-                        let cheap_insert = false;                            // stub
-                        if cheap_insert {
-                            // c:2016-2018 — tc_inschars(i); zwrite(nl, i);
-                            for _ in 0..i_try {
-                                if !nl.is_empty() { nl.remove(0); }          // c:2018 nl += i
-                            }
-                            char_ins += i_try;                               // c:2025
-                            crate::ported::zle::zle_refresh::VCS.store(vcs + i_try, Ordering::SeqCst);
-                            ccs += i_try;                                    // c:2026
-                            // c:2031-2047 — truncate oldline if past right edge.
-                            let mut k = 0i32;
-                            while (k as usize) < ol.len()
-                                && ol[k as usize].chr != '\0'
-                                && k < winw - ccs
-                            {
-                                k += 1;                                      // c:2031-2032
-                            }
-                            if k >= winw - ccs && (k as usize) < ol.len() {  // c:2049
-                                ol[k as usize] = crate::ported::zle::zle_h::REFRESH_ELEMENT {
-                                    chr: '\0', atr: 0,                       // c:2050 ol[i] = zr_zr
-                                };
-                                ins_last = 1;                                // c:2051
-                            }
-                            i_try = 0;                                       // c:2054
-                            break;
-                        }
-                        i_try += 1;
-                    }
-                    if i_try != 0 { continue; }                              // c:2058-2059
-                }
-            }
-
-            // c:2065-2096 — fallback: dump one char and keep going
-            if !nl.is_empty() && nl[0].chr == '\0' {                         // c:2072
-                break;                                                       // c:2073
-            }
-            loop {                                                           // c:2074 do-while wrapper
-                // c:2076-2077 — treplaceattrs(nl->atr); applytextattributes(0)
-                // !!! STUB: treplaceattrs / applytextattributes —
-                // Src/Zle/zle_refresh.c.
-
-                // c:2084 — zputc(nl)
-                // !!! STUB: zputc — emits the char to SHTTY.
-
-                if !nl.is_empty() { nl.remove(0); }                          // c:2085 nl++
-                if !ol.is_empty() && ol[0].chr != '\0' {                     // c:2086-2087
-                    ol.remove(0);                                            // c:2087 ol++
-                }
-                ccs += 1;                                                    // c:2088
-                crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
-
-                // c:2094-2095 — WEOF do-while: zshrs has no WEOF sentinel.
-                break;
+            {
+                nl.remove(0); // c:1894
+                ol.remove(0);
+                ccs += 1;
             }
         }
 
-        let _ = (rnllen, ollen, ins_last, _olnct, _p1, _j);  // silence
+        // c:1906 — `if (!nl->chr)`
+        if nl.is_empty() || nl[0].chr == '\0' {
+            // c:1906
+            if ccs == winw && hasam_v && char_ins > 0 && ins_last != 0   // c:1907
+                    && vcs != winw
+            {
+                // c:1908-1913 — print the deferred last char.
+                // !!! STUB: zputc — defer.
+                crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
+                return; // c:1913
+            }
+            if char_ins <= 0 || ccs >= winw {
+                // c:1915
+                return; // c:1916 written everything
+            }
+            if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                   // c:1917
+                    && (char_ins >= 1) /* tclen[TCCLEAREOL] stubbed to 1 */
+                    && col_cleareol != -2
+            {
+                col_cleareol = 0; // c:1920
+            }
+        }
+
+        moveto(ln as usize, ccs as usize); // c:1923
+
+        // c:1925-1929 — if we can finish via clear-to-eol, do so
+        if col_cleareol >= 0 && ccs >= col_cleareol {
+            // c:1926
+            tcoutclear(true); // c:1927 tcoutclear(TCCLEAREOL)
+            return; // c:1928
+        }
+
+        // c:1932-1942 — empty nl: pad with spaces or delete chars.
+        if nl.is_empty() || nl[0].chr == '\0' {
+            // c:1932
+            let i_pad = if winw - ccs < char_ins {
+                // c:1933
+                winw - ccs
+            } else {
+                char_ins
+            };
+            // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`
+            let can_del = (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
+            if can_del {
+                // c:1935 — tc_delchars(i)
+                // !!! STUB: tc_delchars — Src/Zle/zle_refresh.c.
+            } else {
+                // c:1936
+                crate::ported::zle::zle_refresh::VCS.store(vcs + i_pad, Ordering::SeqCst);
+                // c:1937
+                // c:1938-1939 — for (i--; i > 0; ) zputc(&zr_pad)
+                // !!! STUB: zputc — defer.
+            }
+            return; // c:1941
+        }
+
+        // c:1946 — `if (!ol->chr)`
+        if ol.is_empty() || ol[0].chr == '\0' {
+            // c:1946
+            let i_remain = if col_cleareol >= 0 {
+                col_cleareol
+            } else {
+                nllen
+            }; // c:1947
+            let i_write = i_remain - vcs; // c:1948
+            if i_write > 0 {
+                // c:1949 (DPUTS guard)
+                // c:1958 — zwrite(nl, i)
+                // !!! STUB: zwrite — Src/Zle/zle_refresh.c.
+                crate::ported::zle::zle_refresh::VCS.store(vcs + i_write, Ordering::SeqCst);
+                // c:1959
+            }
+            if col_cleareol >= 0 {
+                // c:1960
+                tcoutclear(true); // c:1961
+            }
+            return; // c:1962
+        }
+
+        // c:1965-1970 — insert/delete eligibility
+        let eligible = (ln != 0 || put_rpmpt == 0 || oput_rpmpt == 0)
+            && !nl.is_empty()
+            && nl_second.map(|e| e.chr != '\0').unwrap_or(false)
+            && !ol.is_empty()
+            && ol_second.map(|e| e.chr != '\0').unwrap_or(false)
+            && ol_second != nl_second;
+        if eligible {
+            // c:1965
+            // c:1976-2006 — TCDEL try-block: find a series we can delete
+            if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize]
+                != 0)
+            /* tccan(TCDEL) per zsh.h:2682 */
+            {
+                // c:1976
+                let mut i_try = 1i32; // c:1978
+                while (i_try as usize) < ol.len() && ol[i_try as usize].chr != '\0' {
+                    // c:1979 — `tcdelcost(i) < wpfxlen(ol + i, nl)`
+                    // !!! STUB: wpfxlen — Src/Zle/zle_refresh.c.
+                    let cheap_delete = false; // stub
+                    if cheap_delete {
+                        // c:1985-1990 — apply attributes, tc_delchars(i)
+                        // !!! STUB: treplaceattrs / applytextattributes /
+                        // tc_delchars — Src/Zle/zle_refresh.c.
+                        for _ in 0..i_try {
+                            if !ol.is_empty() {
+                                ol.remove(0);
+                            } // c:1991 ol += i
+                        }
+                        char_ins -= i_try; // c:1992
+                        i_try = 0; // c:2004
+                        break;
+                    }
+                    i_try += 1;
+                }
+                if i_try != 0 {
+                    continue;
+                } // c:2003-2004
+            }
+
+            // c:2012-2060 — TCINS try-block: find chars to insert.
+            let zterm_lines = crate::ported::zle::zle_refresh::WINH.load(Ordering::SeqCst);
+            if (crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCINS as usize] != 0)  /* tccan(TCINS) per zsh.h:2682 */ && vln != zterm_lines - 1
+            {
+                // c:2012
+                let mut i_try = 1i32; // c:2014
+                while (i_try as usize) < nl.len() && nl[i_try as usize].chr != '\0' {
+                    // c:2015 — `tcinscost(i) < wpfxlen(ol, nl + i)`
+                    // !!! STUB.
+                    let cheap_insert = false; // stub
+                    if cheap_insert {
+                        // c:2016-2018 — tc_inschars(i); zwrite(nl, i);
+                        for _ in 0..i_try {
+                            if !nl.is_empty() {
+                                nl.remove(0);
+                            } // c:2018 nl += i
+                        }
+                        char_ins += i_try; // c:2025
+                        crate::ported::zle::zle_refresh::VCS.store(vcs + i_try, Ordering::SeqCst);
+                        ccs += i_try; // c:2026
+                                      // c:2031-2047 — truncate oldline if past right edge.
+                        let mut k = 0i32;
+                        while (k as usize) < ol.len()
+                            && ol[k as usize].chr != '\0'
+                            && k < winw - ccs
+                        {
+                            k += 1; // c:2031-2032
+                        }
+                        if k >= winw - ccs && (k as usize) < ol.len() {
+                            // c:2049
+                            ol[k as usize] = crate::ported::zle::zle_h::REFRESH_ELEMENT {
+                                chr: '\0',
+                                atr: 0, // c:2050 ol[i] = zr_zr
+                            };
+                            ins_last = 1; // c:2051
+                        }
+                        i_try = 0; // c:2054
+                        break;
+                    }
+                    i_try += 1;
+                }
+                if i_try != 0 {
+                    continue;
+                } // c:2058-2059
+            }
+        }
+
+        // c:2065-2096 — fallback: dump one char and keep going
+        if !nl.is_empty() && nl[0].chr == '\0' {
+            // c:2072
+            break; // c:2073
+        }
+        loop {
+            // c:2074 do-while wrapper
+            // c:2076-2077 — treplaceattrs(nl->atr); applytextattributes(0)
+            // !!! STUB: treplaceattrs / applytextattributes —
+            // Src/Zle/zle_refresh.c.
+
+            // c:2084 — zputc(nl)
+            // !!! STUB: zputc — emits the char to SHTTY.
+
+            if !nl.is_empty() {
+                nl.remove(0);
+            } // c:2085 nl++
+            if !ol.is_empty() && ol[0].chr != '\0' {
+                // c:2086-2087
+                ol.remove(0); // c:2087 ol++
+            }
+            ccs += 1; // c:2088
+            crate::ported::zle::zle_refresh::VCS.store(vcs + 1, Ordering::SeqCst);
+
+            // c:2094-2095 — WEOF do-while: zshrs has no WEOF sentinel.
+            break;
+        }
     }
 
-    /// Direct port of `void moveto(int ln, int cl)` from
-    /// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
-    /// strings to teleport the cursor; Rust emits the equivalent
-    /// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
-    /// `print!` fake.
-    pub fn moveto(row: usize, col: usize) {                       // c:2105
-        let s = format!("\x1b[{};{}H", row + 1, col + 1);
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-    }
+    let _ = (rnllen, ollen, ins_last, _olnct, _p1, _j); // silence
+}
+
+/// Direct port of `void moveto(int ln, int cl)` from
+/// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
+/// strings to teleport the cursor; Rust emits the equivalent
+/// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
+/// `print!` fake.
+pub fn moveto(row: usize, col: usize) {
+    // c:2105
+    let s = format!("\x1b[{};{}H", row + 1, col + 1);
+    let _ = crate::ported::utils::write_loop(
+        {
+            use std::sync::atomic::Ordering;
+            let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if f >= 0 {
+                f
+            } else {
+                1
+            }
+        },
+        s.as_bytes(),
+    );
+}
 
 /// Port of `void tcmultout(int cap, int multcap, int ct)` from
 /// `Src/Zle/zle_refresh.c:2163`. The C version tries the multi-arg
@@ -1230,40 +1384,65 @@ pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 /// Rust port (without termcap probe) goes straight to the loop —
 /// `count` repeats of the same single-shot string.
 /// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
-pub fn tcmultout(cap: &str, count: i32) {                                    // c:2163
+pub fn tcmultout(cap: &str, count: i32) {
+    // c:2163
     use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    for _ in 0..count {                                                      // c:2173 single-cap loop
+    for _ in 0..count {
+        // c:2173 single-cap loop
         let _ = crate::ported::utils::write_loop(out_fd, cap.as_bytes());
     }
 }
 
-    /// Port of `void tc_rightcurs(int ct)` from
-    /// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
-    pub fn tc_rightcurs(count: usize) {
-        if count > 0 {
-            let s = format!("\x1b[{}C", count);
-            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-        }
+/// Port of `void tc_rightcurs(int ct)` from
+/// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
+pub fn tc_rightcurs(count: usize) {
+    if count > 0 {
+        let s = format!("\x1b[{}C", count);
+        let _ = crate::ported::utils::write_loop(
+            {
+                use std::sync::atomic::Ordering;
+                let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+                if f >= 0 {
+                    f
+                } else {
+                    1
+                }
+            },
+            s.as_bytes(),
+        );
     }
+}
 
-    /// Port of `void tc_downcurs(int ct)` from
-    /// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
-    /// capability `ct` times; Rust emits the parametrised CSI B.
-    pub fn tc_downcurs(count: usize) {
-        if count > 0 {
-            let s = format!("\x1b[{}B", count);
-            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
-        }
+/// Port of `void tc_downcurs(int ct)` from
+/// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
+/// capability `ct` times; Rust emits the parametrised CSI B.
+pub fn tc_downcurs(count: usize) {
+    if count > 0 {
+        let s = format!("\x1b[{}B", count);
+        let _ = crate::ported::utils::write_loop(
+            {
+                use std::sync::atomic::Ordering;
+                let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+                if f >= 0 {
+                    f
+                } else {
+                    1
+                }
+            },
+            s.as_bytes(),
+        );
     }
+}
 
 /// Direct port of `int tcout_via_func(int cap, int arg, int (*outc)(int))`
 /// from `Src/Zle/zle_refresh.c:2291`. Looks up the user's `tcout` shell
 /// function via `getshfunc` and dispatches when defined; returns 0 if
 /// the function was found and called (caller skips the termcap output),
 /// 1 otherwise (caller emits the raw termcap escape).
-pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
+pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {
+    // c:tcout_via_func
     if crate::ported::utils::getshfunc("tcout").is_some() {
         // Function found; cap/arg would be passed via `$1`/`$2` in a
         // full port — here we just dispatch and let the user fn read
@@ -1273,8 +1452,6 @@ pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // 
     }
     1
 }
-
-
 
 /// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
 /// C looks up the termcap string via `tcstr[cap]` and writes it
@@ -1287,7 +1464,8 @@ pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // 
 /// non-interactive paths (tests, batch evaluation) where there's no
 /// dedicated shell-output fd yet.
 /// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
-pub fn tcout(cap: &str) {                                                    // c:2339
+pub fn tcout(cap: &str) {
+    // c:2339
     use std::sync::atomic::Ordering;
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if fd >= 0 {
@@ -1307,327 +1485,408 @@ pub fn tcout(cap: &str) {                                                    // 
 /// most common case; doesn't handle the rare termcap `%p1%d`
 /// parametrisation that `tgoto` handles).
 /// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
-pub fn tcoutarg(cap: &str, arg: i32) {                                       // c:2351
+pub fn tcoutarg(cap: &str, arg: i32) {
+    // c:2351
     use std::sync::atomic::Ordering;
     // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
     let s = cap.replace("%d", &arg.to_string());
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());          // c:2359
+    let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes()); // c:2359
 }
 
-    /// Direct port of `void clearscreen(UNUSED(char **args))` from
-    /// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
-    /// shell-output fd, then re-renders. Was a `print!` fake.
-    pub fn clearscreen() {                                          // c:2366
-        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, b"\x1b[2J\x1b[H");
-        zrefresh();
-    }
-
-    /// Direct port of `void redisplay(UNUSED(char **args))` from
-    /// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
-    /// returns; Rust just re-runs zrefresh which equivalently
-    /// repaints from current state.
-    pub fn redisplay() {                                            // c:2377
-        zrefresh();
-    }
-
-    /// Port of `static void singlerefresh(ZLE_STRING_T tmpline,
-    /// int tmpll, int tmpcs)` from `Src/Zle/zle_refresh.c:2397`.
-    /// Builds the single-line video buffer used by `read -e`,
-    /// `vared`, and predisplay-only refresh paths: pre-allocates
-    /// `vbuf` sized for tabs / control chars / wide chars, walks
-    /// `tmpline` translating each cell into one or more
-    /// REFRESH_ELEMENTs (with region-highlight overlay), windows
-    /// the result against `winw - hasam`, then commits to
-    /// `nbuf[0]`.
-    ///
-    /// ```c
-    /// static void
-    /// singlerefresh(ZLE_STRING_T tmpline, int tmpll, int tmpcs)
-    /// {
-    ///     REFRESH_STRING vbuf, vp, refreshop;
-    ///     int t0, vsiz, nvcs = 0, owinpos = winpos,
-    ///         owinprompt = winprompt;
-    ///     int width;
-    ///     nlnct = 1;
-    ///     for (vsiz = 1 + lpromptw, t0 = 0; t0 != tmpll; t0++) {
-    ///         if (tmpline[t0] == '\t') vsiz = (vsiz | 7) + 2;
-    ///         else if (WC_ISPRINT(tmpline[t0]) && (width = WCWIDTH(...)) > 0)
-    ///             { vsiz += width; ...combining... }
-    ///         else if (ZC_icntrl(...)) vsiz += 2;
-    ///         else vsiz += 10;
-    ///     }
-    ///     vbuf = zalloc(vsiz * sizeof(*vbuf));
-    ///     if (tmpcs < 0) tmpcs = 0;
-    ///     ZR_memset(vbuf, zr_sp, lpromptw);
-    ///     vp = vbuf + lpromptw;
-    ///     *vp = zr_zr;
-    ///     for (t0 = 0; t0 < tmpll; t0++) {
-    ///         /* compute base_attr from region_highlights overlay */
-    ///         /* compute all_attr = mixattrs(special_attr, special_mask, base_attr) */
-    ///         if (t0 == tmpcs) nvcs = vp - vbuf;
-    ///         /* emit cells per char class: \t, \n, printable wide,
-    ///            control, default */
-    ///     }
-    ///     if (t0 == tmpcs) nvcs = vp - vbuf;
-    ///     *vp = zr_zr;
-    ///     /* window selection */
-    ///     if (winpos == -1) winpos = 0;
-    ///     if ((winpos && nvcs < winpos + 1) || (nvcs > winpos + winw - 2))
-    ///         { winpos = nvcs - ((winw - hasam) / 2); if (winpos < 0) winpos = 0; }
-    ///     if (winpos) vbuf[winpos] = '<';
-    ///     if (ZR_strlen(vbuf + winpos) > winw - hasam)
-    ///         { vbuf[winpos + winw - hasam - 1] = '>';
-    ///           vbuf[winpos + winw - hasam] = zr_zr; }
-    ///     ZR_strcpy(nbuf[0], vbuf + winpos);
-    ///     zfree(vbuf, vsiz * sizeof(*vbuf));
-    ///     nvcs -= winpos;
-    ///     if (winpos < lpromptw) winprompt = lpromptw - winpos;
-    ///     else winprompt = 0;
-    ///     if (winpos != owinpos && winprompt)
-    ///         { singmoveto(0); ...output left-prompt fragment... }
-    ///     singmoveto(nvcs);
-    /// }
-    /// ```
-    ///
-    /// Per PORT.md Rule 9 — body executes against stubs for
-    /// `addmultiword`/`mixattrs`/`region_highlights`/`shout`/`fputc`/
-    /// `lpromptbuf`/`MB_METACHARLENCONV` / `WCWIDTH` / `IS_BASECHAR` /
-    /// `IS_COMBINING` primitives not yet ported. Stubs flagged
-    /// inline with `// !!! STUB: …`.
-    pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {     // c:2397
-        use std::sync::atomic::Ordering;
-        use crate::ported::zle::zle_h::REFRESH_ELEMENT;
-
-        // c:2399-2405 — declarations.
-        let mut vbuf: crate::ported::zle::zle_h::REFRESH_STRING;             // c:2399
-        let mut vp: usize;                                                   // c:2399 video pointer (index)
-        let _refreshop: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new();  // c:2400
-        let mut t0: i32;                                                     // c:2401
-        let mut vsiz: i32;                                                   // c:2402
-        let mut nvcs: i32 = 0;                                               // c:2403
-        // !!! STUB: winpos / winprompt statics — Src/Zle/zle_refresh.c:683-684.
-        // No `pub static WINPOS/WINPROMPT` ported yet; track locally.
-        let owinpos: i32 = -1;                                               // c:2404 winpos snapshot
-        let _owinprompt: i32 = 0;                                            // c:2405 winprompt snapshot
-        let mut width: i32 = 0;                                              // c:2407
-
-        NLNCT.store(1, Ordering::SeqCst);                                    // c:2410
-
-        // c:2411-2437 — measure required vbuf size.
-        let lpromptw = LPROMPTW.load(Ordering::SeqCst);
-        vsiz = 1 + lpromptw;                                                 // c:2412
-        t0 = 0;
-        while t0 != tmpll {                                                  // c:2412
-            let ch = *tmpline.get(t0 as usize).unwrap_or(&'\0');
-            if ch == '\t' {                                                  // c:2413
-                vsiz = (vsiz | 7) + 2;                                       // c:2414
-            } else if ch.is_alphanumeric() || ch.is_ascii_graphic() {        // c:2416 WC_ISPRINT
-                width = unicode_width::UnicodeWidthChar::width(ch)           // c:2416 WCWIDTH
-                    .unwrap_or(1) as i32;
-                if width > 0 {
-                    vsiz += width;                                           // c:2417
-                    // c:2418-2421 — combining-char absorption; skip combos.
-                    if crate::ported::zsh_h::isset(
-                        crate::ported::zsh_h::COMBININGCHARS,
-                    ) {
-                        while t0 < tmpll - 1 {                               // c:2419
-                            let next = *tmpline.get((t0 + 1) as usize).unwrap_or(&'\0');
-                            // !!! STUB: IS_COMBINING — Src/zsh.h:3370.
-                            let is_combining = unicode_width::UnicodeWidthChar::width(next)
-                                == Some(0);
-                            if !is_combining { break; }
-                            t0 += 1;                                         // c:2420
-                        }
-                    }
-                }
-            } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {            // c:2424 ZC_icntrl
-                if (ch as u32) <= 0xff {                                     // c:2426
-                    vsiz += 2;                                               // c:2429
-                }
-            } else {                                                         // c:2430
-                vsiz += 10;                                                  // c:2432 wide / non-printable
-            }
-            t0 += 1;
-        }
-
-        // c:2438 — `vbuf = zalloc(vsiz * sizeof(*vbuf));`
-        vbuf = vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }; vsiz as usize];   // c:2438
-
-        if tmpcs < 0 {                                                       // c:2440
-            tmpcs = 0;                                                       // c:2445
-        }
-
-        // c:2449 — `ZR_memset(vbuf, zr_sp, lpromptw);`
-        for k in 0..(lpromptw as usize).min(vbuf.len()) {                    // c:2449
-            vbuf[k] = REFRESH_ELEMENT { chr: ' ', atr: 0 };
-        }
-        vp = lpromptw as usize;                                              // c:2450 vp = vbuf + lpromptw
-        if vp < vbuf.len() {
-            vbuf[vp] = REFRESH_ELEMENT { chr: '\0', atr: 0 };                // c:2451 *vp = zr_zr
-        }
-
-        // c:2453-2563 — main translation loop.
-        t0 = 0;
-        while t0 < tmpll {                                                   // c:2453
-            // c:2454-2479 — region-highlight overlay.
-            // !!! STUB: region_highlights / n_region_highlights /
-            // default_attr / special_attr / special_mask / prompt_attr /
-            // predisplaylen / mixattrs — Src/Zle/zle_refresh.c.
-            let base_attr: u64 = 0;                                          // c:2455 mixattrs
-            let all_attr: u64 = 0;                                           // c:2480 mixattrs
-
-            if t0 == tmpcs {                                                 // c:2482
-                nvcs = vp as i32;                                            // c:2483 nvcs = vp - vbuf
-            }
-            let ch = *tmpline.get(t0 as usize).unwrap_or(&'\0');
-
-            if ch == '\t' {                                                  // c:2484
-                if vp < vbuf.len() {
-                    vbuf[vp] = REFRESH_ELEMENT { chr: ' ', atr: base_attr };
-                    vp += 1;                                                 // c:2485 *vp++ = zr_sp
-                }
-                while (vp & 7) != 0 && vp < vbuf.len() {                     // c:2485
-                    vbuf[vp] = REFRESH_ELEMENT { chr: ' ', atr: base_attr };
-                    vp += 1;                                                 // c:2486
-                }
-            } else if ch == '\n' {                                           // c:2487
-                if vp < vbuf.len() {
-                    vbuf[vp] = REFRESH_ELEMENT { chr: '\\', atr: all_attr }; // c:2488-2489
-                    vp += 1;                                                 // c:2490
-                }
-                if vp < vbuf.len() {
-                    vbuf[vp] = REFRESH_ELEMENT { chr: 'n', atr: all_attr };  // c:2491-2492
-                    vp += 1;                                                 // c:2493
-                }
-            } else if ch.is_ascii_graphic() || (ch.is_alphanumeric()) {      // c:2495 WC_ISPRINT
-                width = unicode_width::UnicodeWidthChar::width(ch)           // c:2496 WCWIDTH
-                    .unwrap_or(1) as i32;
-                if width > 0 {
-                    let ichars: i32 = 1;                                     // c:2497-2507 combining loop
-                    // !!! STUB: addmultiword — only invoked when ichars>1.
-                    if vp < vbuf.len() {
-                        vbuf[vp] = REFRESH_ELEMENT { chr: ch, atr: base_attr };  // c:2512
-                        vp += 1;                                             // c:2513
-                    }
-                    // c:2514-2518 — WEOF cells for wide-char width padding.
-                    let mut w = width - 1;
-                    while w > 0 {                                            // c:2514
-                        if vp < vbuf.len() {
-                            vbuf[vp] = REFRESH_ELEMENT { chr: '\0', atr: base_attr };  // c:2515 WEOF
-                            vp += 1;                                         // c:2517
-                        }
-                        w -= 1;
-                    }
-                    t0 += ichars - 1;                                        // c:2519
-                }
-            } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {            // c:2521 ZC_icntrl
-                if (ch as u32) <= 0xff {                                     // c:2523
-                    let t = ch as u32;                                       // c:2526
-                    if vp < vbuf.len() {
-                        vbuf[vp] = REFRESH_ELEMENT { chr: '^', atr: all_attr };  // c:2528-2529
-                        vp += 1;                                             // c:2530
-                    }
-                    let display: char = if (t & !0x80) > 31 {                // c:2531-2532
-                        '?'
-                    } else {
-                        ((t | 0x40) as u8) as char                           // c:2532 t | '@'
-                    };
-                    if vp < vbuf.len() {
-                        vbuf[vp] = REFRESH_ELEMENT { chr: display, atr: all_attr };
-                        vp += 1;                                             // c:2534
-                    }
-                }
-            } else {                                                         // c:2537 wide non-printable
-                // c:2538-2554 — emit `<%.04x>` or `<%.08x>` hex display.
-                let hex = if (ch as u32) > 0xFFFF {                          // c:2542
-                    format!("<{:08x}>", ch as u32)                           // c:2543
-                } else {                                                     // c:2544
-                    format!("<{:04x}>", ch as u32)                           // c:2545
-                };
-                for c in hex.chars() {                                       // c:2547
-                    if vp < vbuf.len() {
-                        vbuf[vp] = REFRESH_ELEMENT { chr: c, atr: all_attr };  // c:2549-2550
-                        vp += 1;                                             // c:2551
-                    }
-                }
-            }
-            t0 += 1;
-        }
-        if t0 == tmpcs {                                                     // c:2564
-            nvcs = vp as i32;                                                // c:2565
-        }
-        if vp < vbuf.len() {
-            vbuf[vp] = REFRESH_ELEMENT { chr: '\0', atr: 0 };                // c:2566 *vp = zr_zr
-        }
-
-        // c:2569-2587 — window selection.
-        // !!! STUB: winpos static — Src/Zle/zle_refresh.c:683. Local.
-        let mut winpos: i32 = -1;
-        let winw = WINW.load(Ordering::SeqCst);
-        let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst);
-        if winpos == -1 {                                                    // c:2569
-            winpos = 0;                                                      // c:2570
-        }
-        if (winpos != 0 && nvcs < winpos + 1)                                // c:2571
-            || (nvcs > winpos + winw - 2)
+/// Direct port of `void clearscreen(UNUSED(char **args))` from
+/// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
+/// shell-output fd, then re-renders. Was a `print!` fake.
+pub fn clearscreen() {
+    // c:2366
+    let _ = crate::ported::utils::write_loop(
         {
-            winpos = nvcs - ((winw - hasam_v) / 2);                          // c:2572
-            if winpos < 0 {                                                  // c:2572
-                winpos = 0;                                                  // c:2573
+            use std::sync::atomic::Ordering;
+            let f = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if f >= 0 {
+                f
+            } else {
+                1
             }
-        }
-        if winpos != 0 && (winpos as usize) < vbuf.len() {                   // c:2575
-            vbuf[winpos as usize] = REFRESH_ELEMENT { chr: '<', atr: 0 };    // c:2576-2577 line continues left
-        }
-        // c:2579-2583 — right-truncate if line continues
-        let suffix_start = winpos as usize;
-        let suffix_len = vbuf.iter().skip(suffix_start).take_while(|e| e.chr != '\0').count();
-        let max_visible = (winw - hasam_v) as usize;
-        if suffix_len > max_visible {                                        // c:2579
-            let trunc_pos = suffix_start + max_visible - 1;
-            if trunc_pos < vbuf.len() {
-                vbuf[trunc_pos] = REFRESH_ELEMENT { chr: '>', atr: 0 };      // c:2580-2581 line continues right
+        },
+        b"\x1b[2J\x1b[H",
+    );
+    zrefresh();
+}
+
+/// Direct port of `void redisplay(UNUSED(char **args))` from
+/// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
+/// returns; Rust just re-runs zrefresh which equivalently
+/// repaints from current state.
+pub fn redisplay() {
+    // c:2377
+    zrefresh();
+}
+
+/// Port of `static void singlerefresh(ZLE_STRING_T tmpline,
+/// int tmpll, int tmpcs)` from `Src/Zle/zle_refresh.c:2397`.
+/// Builds the single-line video buffer used by `read -e`,
+/// `vared`, and predisplay-only refresh paths: pre-allocates
+/// `vbuf` sized for tabs / control chars / wide chars, walks
+/// `tmpline` translating each cell into one or more
+/// REFRESH_ELEMENTs (with region-highlight overlay), windows
+/// the result against `winw - hasam`, then commits to
+/// `nbuf[0]`.
+///
+/// ```c
+/// static void
+/// singlerefresh(ZLE_STRING_T tmpline, int tmpll, int tmpcs)
+/// {
+///     REFRESH_STRING vbuf, vp, refreshop;
+///     int t0, vsiz, nvcs = 0, owinpos = winpos,
+///         owinprompt = winprompt;
+///     int width;
+///     nlnct = 1;
+///     for (vsiz = 1 + lpromptw, t0 = 0; t0 != tmpll; t0++) {
+///         if (tmpline[t0] == '\t') vsiz = (vsiz | 7) + 2;
+///         else if (WC_ISPRINT(tmpline[t0]) && (width = WCWIDTH(...)) > 0)
+///             { vsiz += width; ...combining... }
+///         else if (ZC_icntrl(...)) vsiz += 2;
+///         else vsiz += 10;
+///     }
+///     vbuf = zalloc(vsiz * sizeof(*vbuf));
+///     if (tmpcs < 0) tmpcs = 0;
+///     ZR_memset(vbuf, zr_sp, lpromptw);
+///     vp = vbuf + lpromptw;
+///     *vp = zr_zr;
+///     for (t0 = 0; t0 < tmpll; t0++) {
+///         /* compute base_attr from region_highlights overlay */
+///         /* compute all_attr = mixattrs(special_attr, special_mask, base_attr) */
+///         if (t0 == tmpcs) nvcs = vp - vbuf;
+///         /* emit cells per char class: \t, \n, printable wide,
+///            control, default */
+///     }
+///     if (t0 == tmpcs) nvcs = vp - vbuf;
+///     *vp = zr_zr;
+///     /* window selection */
+///     if (winpos == -1) winpos = 0;
+///     if ((winpos && nvcs < winpos + 1) || (nvcs > winpos + winw - 2))
+///         { winpos = nvcs - ((winw - hasam) / 2); if (winpos < 0) winpos = 0; }
+///     if (winpos) vbuf[winpos] = '<';
+///     if (ZR_strlen(vbuf + winpos) > winw - hasam)
+///         { vbuf[winpos + winw - hasam - 1] = '>';
+///           vbuf[winpos + winw - hasam] = zr_zr; }
+///     ZR_strcpy(nbuf[0], vbuf + winpos);
+///     zfree(vbuf, vsiz * sizeof(*vbuf));
+///     nvcs -= winpos;
+///     if (winpos < lpromptw) winprompt = lpromptw - winpos;
+///     else winprompt = 0;
+///     if (winpos != owinpos && winprompt)
+///         { singmoveto(0); ...output left-prompt fragment... }
+///     singmoveto(nvcs);
+/// }
+/// ```
+///
+/// Per PORT.md Rule 9 — body executes against stubs for
+/// `addmultiword`/`mixattrs`/`region_highlights`/`shout`/`fputc`/
+/// `lpromptbuf`/`MB_METACHARLENCONV` / `WCWIDTH` / `IS_BASECHAR` /
+/// `IS_COMBINING` primitives not yet ported. Stubs flagged
+/// inline with `// !!! STUB: …`.
+pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
+    // c:2397
+    use crate::ported::zle::zle_h::REFRESH_ELEMENT;
+    use std::sync::atomic::Ordering;
+
+    // c:2399-2405 — declarations.
+    let mut vbuf: crate::ported::zle::zle_h::REFRESH_STRING; // c:2399
+    let mut vp: usize; // c:2399 video pointer (index)
+    let _refreshop: crate::ported::zle::zle_h::REFRESH_STRING = Vec::new(); // c:2400
+    let mut t0: i32; // c:2401
+    let mut vsiz: i32; // c:2402
+    let mut nvcs: i32 = 0; // c:2403
+                           // !!! STUB: winpos / winprompt statics — Src/Zle/zle_refresh.c:683-684.
+                           // No `pub static WINPOS/WINPROMPT` ported yet; track locally.
+    let owinpos: i32 = -1; // c:2404 winpos snapshot
+    let _owinprompt: i32 = 0; // c:2405 winprompt snapshot
+    let mut width: i32 = 0; // c:2407
+
+    NLNCT.store(1, Ordering::SeqCst); // c:2410
+
+    // c:2411-2437 — measure required vbuf size.
+    let lpromptw = LPROMPTW.load(Ordering::SeqCst);
+    vsiz = 1 + lpromptw; // c:2412
+    t0 = 0;
+    while t0 != tmpll {
+        // c:2412
+        let ch = *tmpline.get(t0 as usize).unwrap_or(&'\0');
+        if ch == '\t' {
+            // c:2413
+            vsiz = (vsiz | 7) + 2; // c:2414
+        } else if ch.is_alphanumeric() || ch.is_ascii_graphic() {
+            // c:2416 WC_ISPRINT
+            width = unicode_width::UnicodeWidthChar::width(ch) // c:2416 WCWIDTH
+                .unwrap_or(1) as i32;
+            if width > 0 {
+                vsiz += width; // c:2417
+                               // c:2418-2421 — combining-char absorption; skip combos.
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::COMBININGCHARS) {
+                    while t0 < tmpll - 1 {
+                        // c:2419
+                        let next = *tmpline.get((t0 + 1) as usize).unwrap_or(&'\0');
+                        // !!! STUB: IS_COMBINING — Src/zsh.h:3370.
+                        let is_combining = unicode_width::UnicodeWidthChar::width(next) == Some(0);
+                        if !is_combining {
+                            break;
+                        }
+                        t0 += 1; // c:2420
+                    }
+                }
             }
-            if trunc_pos + 1 < vbuf.len() {
-                vbuf[trunc_pos + 1] = REFRESH_ELEMENT { chr: '\0', atr: 0 }; // c:2582
+        } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {
+            // c:2424 ZC_icntrl
+            if (ch as u32) <= 0xff {
+                // c:2426
+                vsiz += 2; // c:2429
             }
+        } else {
+            // c:2430
+            vsiz += 10; // c:2432 wide / non-printable
         }
-
-        // c:2584 — `ZR_strcpy(nbuf[0], vbuf + winpos);`
-        // !!! STUB: nbuf[] static — defer.
-
-        // c:2585 — zfree(vbuf, vsiz * sizeof(*vbuf)) — Rust drops on scope.
-        drop(vbuf);                                                          // c:2585
-        nvcs -= winpos;                                                      // c:2586
-
-        // c:2588-2594 — winprompt update.
-        let _winprompt: i32 = if winpos < lpromptw {                         // c:2588
-            lpromptw - winpos                                                // c:2590
-        } else {                                                             // c:2591
-            0                                                                // c:2593
-        };
-
-        // c:2595-2680 — re-emit left-prompt fragment if winpos changed.
-        // !!! STUB: lpromptbuf / Inpar / Outpar / convchar_t /
-        // MB_METACHARLENCONV / shout / fputc — Src/Zle/zle_refresh.c.
-        // The fragment-re-emit branch is the visible side-effect when
-        // the user scrolls horizontally past the visible prompt; defer
-        // until termcap-output primitives land.
-        if winpos != owinpos {                                               // c:2595
-            singmoveto(&mut crate::ported::zle::zle_refresh::RefreshState::new(), 0);  // c:2603
-        }
-
-        // c:2680 (function tail) — `singmoveto(nvcs);`
-        singmoveto(&mut crate::ported::zle::zle_refresh::RefreshState::new(), nvcs as usize);
-
-        let _ = (lpromptw, width);  // silence unused
+        t0 += 1;
     }
+
+    // c:2438 — `vbuf = zalloc(vsiz * sizeof(*vbuf));`
+    vbuf = vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }; vsiz as usize]; // c:2438
+
+    if tmpcs < 0 {
+        // c:2440
+        tmpcs = 0; // c:2445
+    }
+
+    // c:2449 — `ZR_memset(vbuf, zr_sp, lpromptw);`
+    for k in 0..(lpromptw as usize).min(vbuf.len()) {
+        // c:2449
+        vbuf[k] = REFRESH_ELEMENT { chr: ' ', atr: 0 };
+    }
+    vp = lpromptw as usize; // c:2450 vp = vbuf + lpromptw
+    if vp < vbuf.len() {
+        vbuf[vp] = REFRESH_ELEMENT { chr: '\0', atr: 0 }; // c:2451 *vp = zr_zr
+    }
+
+    // c:2453-2563 — main translation loop.
+    t0 = 0;
+    while t0 < tmpll {
+        // c:2453
+        // c:2454-2479 — region-highlight overlay.
+        // !!! STUB: region_highlights / n_region_highlights /
+        // default_attr / special_attr / special_mask / prompt_attr /
+        // predisplaylen / mixattrs — Src/Zle/zle_refresh.c.
+        let base_attr: u64 = 0; // c:2455 mixattrs
+        let all_attr: u64 = 0; // c:2480 mixattrs
+
+        if t0 == tmpcs {
+            // c:2482
+            nvcs = vp as i32; // c:2483 nvcs = vp - vbuf
+        }
+        let ch = *tmpline.get(t0 as usize).unwrap_or(&'\0');
+
+        if ch == '\t' {
+            // c:2484
+            if vp < vbuf.len() {
+                vbuf[vp] = REFRESH_ELEMENT {
+                    chr: ' ',
+                    atr: base_attr,
+                };
+                vp += 1; // c:2485 *vp++ = zr_sp
+            }
+            while (vp & 7) != 0 && vp < vbuf.len() {
+                // c:2485
+                vbuf[vp] = REFRESH_ELEMENT {
+                    chr: ' ',
+                    atr: base_attr,
+                };
+                vp += 1; // c:2486
+            }
+        } else if ch == '\n' {
+            // c:2487
+            if vp < vbuf.len() {
+                vbuf[vp] = REFRESH_ELEMENT {
+                    chr: '\\',
+                    atr: all_attr,
+                }; // c:2488-2489
+                vp += 1; // c:2490
+            }
+            if vp < vbuf.len() {
+                vbuf[vp] = REFRESH_ELEMENT {
+                    chr: 'n',
+                    atr: all_attr,
+                }; // c:2491-2492
+                vp += 1; // c:2493
+            }
+        } else if ch.is_ascii_graphic() || (ch.is_alphanumeric()) {
+            // c:2495 WC_ISPRINT
+            width = unicode_width::UnicodeWidthChar::width(ch) // c:2496 WCWIDTH
+                .unwrap_or(1) as i32;
+            if width > 0 {
+                let ichars: i32 = 1; // c:2497-2507 combining loop
+                                     // !!! STUB: addmultiword — only invoked when ichars>1.
+                if vp < vbuf.len() {
+                    vbuf[vp] = REFRESH_ELEMENT {
+                        chr: ch,
+                        atr: base_attr,
+                    }; // c:2512
+                    vp += 1; // c:2513
+                }
+                // c:2514-2518 — WEOF cells for wide-char width padding.
+                let mut w = width - 1;
+                while w > 0 {
+                    // c:2514
+                    if vp < vbuf.len() {
+                        vbuf[vp] = REFRESH_ELEMENT {
+                            chr: '\0',
+                            atr: base_attr,
+                        }; // c:2515 WEOF
+                        vp += 1; // c:2517
+                    }
+                    w -= 1;
+                }
+                t0 += ichars - 1; // c:2519
+            }
+        } else if (ch as u32) < 0x20 || (ch as u32) == 0x7F {
+            // c:2521 ZC_icntrl
+            if (ch as u32) <= 0xff {
+                // c:2523
+                let t = ch as u32; // c:2526
+                if vp < vbuf.len() {
+                    vbuf[vp] = REFRESH_ELEMENT {
+                        chr: '^',
+                        atr: all_attr,
+                    }; // c:2528-2529
+                    vp += 1; // c:2530
+                }
+                let display: char = if (t & !0x80) > 31 {
+                    // c:2531-2532
+                    '?'
+                } else {
+                    ((t | 0x40) as u8) as char // c:2532 t | '@'
+                };
+                if vp < vbuf.len() {
+                    vbuf[vp] = REFRESH_ELEMENT {
+                        chr: display,
+                        atr: all_attr,
+                    };
+                    vp += 1; // c:2534
+                }
+            }
+        } else {
+            // c:2537 wide non-printable
+            // c:2538-2554 — emit `<%.04x>` or `<%.08x>` hex display.
+            let hex = if (ch as u32) > 0xFFFF {
+                // c:2542
+                format!("<{:08x}>", ch as u32) // c:2543
+            } else {
+                // c:2544
+                format!("<{:04x}>", ch as u32) // c:2545
+            };
+            for c in hex.chars() {
+                // c:2547
+                if vp < vbuf.len() {
+                    vbuf[vp] = REFRESH_ELEMENT {
+                        chr: c,
+                        atr: all_attr,
+                    }; // c:2549-2550
+                    vp += 1; // c:2551
+                }
+            }
+        }
+        t0 += 1;
+    }
+    if t0 == tmpcs {
+        // c:2564
+        nvcs = vp as i32; // c:2565
+    }
+    if vp < vbuf.len() {
+        vbuf[vp] = REFRESH_ELEMENT { chr: '\0', atr: 0 }; // c:2566 *vp = zr_zr
+    }
+
+    // c:2569-2587 — window selection.
+    // !!! STUB: winpos static — Src/Zle/zle_refresh.c:683. Local.
+    let mut winpos: i32 = -1;
+    let winw = WINW.load(Ordering::SeqCst);
+    let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst);
+    if winpos == -1 {
+        // c:2569
+        winpos = 0; // c:2570
+    }
+    if (winpos != 0 && nvcs < winpos + 1)                                // c:2571
+            || (nvcs > winpos + winw - 2)
+    {
+        winpos = nvcs - ((winw - hasam_v) / 2); // c:2572
+        if winpos < 0 {
+            // c:2572
+            winpos = 0; // c:2573
+        }
+    }
+    if winpos != 0 && (winpos as usize) < vbuf.len() {
+        // c:2575
+        vbuf[winpos as usize] = REFRESH_ELEMENT { chr: '<', atr: 0 }; // c:2576-2577 line continues left
+    }
+    // c:2579-2583 — right-truncate if line continues
+    let suffix_start = winpos as usize;
+    let suffix_len = vbuf
+        .iter()
+        .skip(suffix_start)
+        .take_while(|e| e.chr != '\0')
+        .count();
+    let max_visible = (winw - hasam_v) as usize;
+    if suffix_len > max_visible {
+        // c:2579
+        let trunc_pos = suffix_start + max_visible - 1;
+        if trunc_pos < vbuf.len() {
+            vbuf[trunc_pos] = REFRESH_ELEMENT { chr: '>', atr: 0 }; // c:2580-2581 line continues right
+        }
+        if trunc_pos + 1 < vbuf.len() {
+            vbuf[trunc_pos + 1] = REFRESH_ELEMENT { chr: '\0', atr: 0 }; // c:2582
+        }
+    }
+
+    // c:2584 — `ZR_strcpy(nbuf[0], vbuf + winpos);`
+    // !!! STUB: nbuf[] static — defer.
+
+    // c:2585 — zfree(vbuf, vsiz * sizeof(*vbuf)) — Rust drops on scope.
+    drop(vbuf); // c:2585
+    nvcs -= winpos; // c:2586
+
+    // c:2588-2594 — winprompt update.
+    let _winprompt: i32 = if winpos < lpromptw {
+        // c:2588
+        lpromptw - winpos // c:2590
+    } else {
+        // c:2591
+        0 // c:2593
+    };
+
+    // c:2595-2680 — re-emit left-prompt fragment if winpos changed.
+    // !!! STUB: lpromptbuf / Inpar / Outpar / convchar_t /
+    // MB_METACHARLENCONV / shout / fputc — Src/Zle/zle_refresh.c.
+    // The fragment-re-emit branch is the visible side-effect when
+    // the user scrolls horizontally past the visible prompt; defer
+    // until termcap-output primitives land.
+    if winpos != owinpos {
+        // c:2595
+        singmoveto(&mut crate::ported::zle::zle_refresh::RefreshState::new(), 0);
+        // c:2603
+    }
+
+    // c:2680 (function tail) — `singmoveto(nvcs);`
+    singmoveto(
+        &mut crate::ported::zle::zle_refresh::RefreshState::new(),
+        nvcs as usize,
+    );
+
+    let _ = (lpromptw, width); // silence unused
+}
 
 /// Port of `singmoveto(int pos)` from Src/Zle/zle_refresh.c:2687.
 /// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
-pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
+pub fn singmoveto(state: &mut RefreshState, pos: usize) {
+    // c:singmoveto
     // C body: `singlemoveto()` issues termcap cursor-positioning to
     // `pos` on a single-line display. Without termcap output here
     // we just update vcs (cursor column) on RefreshState.
@@ -1644,18 +1903,18 @@ pub fn zle_refresh_boot() -> RefreshState {
 /// Module-unload cleanup: `freevideo()`, drop `region_highlights` if
 /// allocated (freeing memos via `free_region_highlights_memos()`,
 /// zeroing `n_region_highlights`), then `free_cursor_forms()`.
-pub fn zle_refresh_finish() {                                                // c:2720
-    let mut state = RefreshState::new();                                     // c:2722 freevideo file-statics
-    freevideo(&mut state);                                                   // c:2722
-    let mut rh = REGION_HIGHLIGHTS.lock().unwrap();                          // c:2724 if (region_highlights)
+pub fn zle_refresh_finish() {
+    // c:2720
+    let mut state = RefreshState::new(); // c:2722 freevideo file-statics
+    freevideo(&mut state); // c:2722
+    let mut rh = REGION_HIGHLIGHTS.lock().unwrap(); // c:2724 if (region_highlights)
     if !rh.is_empty() {
-        crate::ported::zle::zle_utils::free_region_highlights_memos();       // c:2726
-        rh.clear();                                                          // c:2727-2729 zfree + NULL
+        crate::ported::zle::zle_utils::free_region_highlights_memos(); // c:2726
+        rh.clear(); // c:2727-2729 zfree + NULL
     }
     drop(rh);
-    crate::ported::zle::termquery::free_cursor_forms();                      // c:2733
+    crate::ported::zle::termquery::free_cursor_forms(); // c:2733
 }
-
 
 // TextAttr / RefreshElement / VideoBuffer / RefreshState — Rust-side
 // aggregates over zsh's C flat-globals (`winw`/`winh`/`vcs`/`vln`/
@@ -1799,70 +2058,84 @@ pub struct HighlightManager {
     pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
 }
 
-    /// Build the per-character attribute overlay used by `zrefresh`.
-    /// One slot per char in `zleline`; `None` means "default attrs",
-    /// `Some(attr)` means apply `attr` for that cell.
-    ///
-    /// Port of the inner loop in `zrefresh()` (Src/Zle/zle_refresh.c) that
-    /// consults `region_highlights[]` for each visible cell. The vi
-    /// visual-mode region is synthesised from `region_active` + `mark`
-    /// here so `v` selects visibly without callers having to push a
-    /// region themselves — matching zle_refresh.c's auto-promotion of
-    /// `region_active` into a paintable highlight.
-    pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
-        let buf_len = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
-        let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
+/// Build the per-character attribute overlay used by `zrefresh`.
+/// One slot per char in `zleline`; `None` means "default attrs",
+/// `Some(attr)` means apply `attr` for that cell.
+///
+/// Port of the inner loop in `zrefresh()` (Src/Zle/zle_refresh.c) that
+/// consults `region_highlights[]` for each visible cell. The vi
+/// visual-mode region is synthesised from `region_active` + `mark`
+/// here so `v` selects visibly without callers having to push a
+/// region themselves — matching zle_refresh.c's auto-promotion of
+/// `region_active` into a paintable highlight.
+pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
+    let buf_len = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
+    let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
 
-        // Visual-region attr: prefer the user's `region:` setting from
-        // $zle_highlight (populated by zle_set_highlight); fall back to
-        // standout per zsh's default at zle_refresh.c:397.
-        let visual_attr = crate::ported::zle::zle_main::highlight().lock().unwrap()
-            .category_attrs
-            .get(&HighlightCategory::Region)
-            .copied()
-            .unwrap_or(TextAttr {
-                standout: true,
-                ..TextAttr::default()
-            });
+    // Visual-region attr: prefer the user's `region:` setting from
+    // $zle_highlight (populated by zle_set_highlight); fall back to
+    // standout per zsh's default at zle_refresh.c:397.
+    let visual_attr = crate::ported::zle::zle_main::highlight()
+        .lock()
+        .unwrap()
+        .category_attrs
+        .get(&HighlightCategory::Region)
+        .copied()
+        .unwrap_or(TextAttr {
+            standout: true,
+            ..TextAttr::default()
+        });
 
-        if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) != 0 {
-            let (lo, hi) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
-                (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
-            } else {
-                (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
-            };
-            let lo = lo.min(buf_len);
-            let hi = hi.min(buf_len);
-            for slot in attrs.iter_mut().take(hi).skip(lo) {
-                *slot = Some(visual_attr);
-            }
+    if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+        let (lo, hi) = if crate::ported::zle::zle_main::MARK
+            .load(std::sync::atomic::Ordering::SeqCst)
+            <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            (
+                crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+                crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        } else {
+            (
+                crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+                crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        };
+        let lo = lo.min(buf_len);
+        let hi = hi.min(buf_len);
+        for slot in attrs.iter_mut().take(hi).skip(lo) {
+            *slot = Some(visual_attr);
         }
-        for region in &crate::ported::zle::zle_main::highlight().lock().unwrap().regions {
-            let start = region.start.min(buf_len);
-            let end = region.end.min(buf_len);
-            for slot in attrs.iter_mut().take(end).skip(start) {
-                *slot = Some(region.attr);
-            }
+    }
+    for region in &crate::ported::zle::zle_main::highlight()
+        .lock()
+        .unwrap()
+        .regions
+    {
+        let start = region.start.min(buf_len);
+        let end = region.end.min(buf_len);
+        for slot in attrs.iter_mut().take(end).skip(start) {
+            *slot = Some(region.attr);
         }
-        attrs
     }
+    attrs
+}
 
-    /// Full screen refresh - clears and redraws everything.
-    pub fn full_refresh() -> io::Result<()> {
-        use std::sync::atomic::Ordering;
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        let out = if fd >= 0 { fd } else { 1 };
-        let _ = crate::ported::utils::write_loop(out, b"\x1b[2J\x1b[H");
-        zrefresh();
-        Ok(())
-    }
+/// Full screen refresh - clears and redraws everything.
+pub fn full_refresh() -> io::Result<()> {
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out, b"\x1b[2J\x1b[H");
+    zrefresh();
+    Ok(())
+}
 
-    /// Partial refresh (optimize for minimal updates).
-    pub fn partial_refresh() -> io::Result<()> {
-        zrefresh();
-        Ok(())
-    }
-
+/// Partial refresh (optimize for minimal updates).
+pub fn partial_refresh() -> io::Result<()> {
+    zrefresh();
+    Ok(())
+}
 
 /// Calculate visible width of a prompt string — port of `countprompt()`
 /// from Src/prompt.c:1140. The C function counts cells while skipping
@@ -1881,7 +2154,9 @@ fn countprompt(s: &str) -> usize {
                 chars.next();
                 while let Some(&nxt) = chars.peek() {
                     chars.next();
-                    if nxt.is_ascii_alphabetic() { break; }
+                    if nxt.is_ascii_alphabetic() {
+                        break;
+                    }
                 }
             }
             continue;
@@ -1964,7 +2239,8 @@ pub fn match_highlight(spec: &str) -> TextAttr {
 /// the derived `PartialEq` on `REFRESH_ELEMENT`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn ZR_equal(                                                             // c:74
+pub fn ZR_equal(
+    // c:74
     a: crate::ported::zle::zle_h::REFRESH_ELEMENT,
     b: crate::ported::zle::zle_h::REFRESH_ELEMENT,
 ) -> bool {
@@ -1976,7 +2252,8 @@ pub fn ZR_equal(                                                             // 
 /// Copy `l` REFRESH_ELEMENT slots from `src` to `dst`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn ZR_memcpy(                                                            // c:92
+pub fn ZR_memcpy(
+    // c:92
     dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
     src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     l: usize,
@@ -1987,41 +2264,84 @@ pub fn ZR_memcpy(                                                            // 
 /// Port of `zr_end_ellipsis[]` from `Src/Zle/zle_refresh.c:269-281`.
 /// "...>" rendered when a long line overflows past the right edge.
 /// TXT_ERROR is the standard zsh-error highlight (set in zsh_h::TXT_ERROR).
-pub static ZR_END_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:269
+pub static ZR_END_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
+    // c:269
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: 0 },
 ];
 
 /// Port of `zr_mid_ellipsis1[]` from `zle_refresh.c:287-294`.
 /// First half of " <.... ... >" mid-line cluster.
-pub static ZR_MID_ELLIPSIS1: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:287
+pub static ZR_MID_ELLIPSIS1: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
+    // c:287
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '<', atr: 0 },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
 ];
 
 /// Port of `zr_mid_ellipsis2[]` from `zle_refresh.c:298-301`.
 /// Trailing close of the mid-line ellipsis cluster.
-pub static ZR_MID_ELLIPSIS2: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:298
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: crate::ported::zsh_h::TXT_ERROR },
+pub static ZR_MID_ELLIPSIS2: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
+    // c:298
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '>',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
 ];
 
 /// Port of `zr_start_ellipsis[]` from `zle_refresh.c:305-311`.
 /// "><..." rendered when a line begins past the left edge.
-pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:305
+pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
+    // c:305
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: 0 },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
-    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT {
+        chr: '.',
+        atr: crate::ported::zsh_h::TXT_ERROR,
+    },
 ];
 
 /// Port of `tcinscost(X)` macro from `Src/Zle/zle_refresh.c:1724`.
@@ -2030,7 +2350,9 @@ pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
 /// terminal capability if available, else linear cost via single-insert.
 /// `tccan`/`tclen` are terminal-capability probes (Src/init.c globals);
 /// without them ported we approximate with the single-insert path.
-#[inline] pub fn tcinscost(x: i32) -> i32 {                                  // c:1724
+#[inline]
+pub fn tcinscost(x: i32) -> i32 {
+    // c:1724
     // Without tccan/tclen substrate: estimate single-char insert cost
     // as 1 unit per char.
     x.max(0)
@@ -2038,7 +2360,9 @@ pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
 
 /// Port of `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1725`.
 /// `#define tcdelcost(X) (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`.
-#[inline] pub fn tcdelcost(x: i32) -> i32 {                                  // c:1725
+#[inline]
+pub fn tcdelcost(x: i32) -> i32 {
+    // c:1725
     x.max(0)
 }
 
@@ -2046,25 +2370,29 @@ pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
 /// `(void) tcmultout(TCDEL, TCMULTDEL, (X))`. Emit `x` character-
 /// delete escapes via the multi-form helper. Without curses substrate
 /// it's a no-op.
-#[inline] pub fn tc_delchars(_x: i32) {                                      // c:1726
-    // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)`. The Rust port
-    // ZLE redraws full lines on every paint via `zrefresh()`
-    // rather than emitting per-character delete escapes; no-op.
+#[inline]
+pub fn tc_delchars(_x: i32) { // c:1726
+                              // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)`. The Rust port
+                              // ZLE redraws full lines on every paint via `zrefresh()`
+                              // rather than emitting per-character delete escapes; no-op.
 }
 
 /// Port of `tc_inschars(X)` macro from `Src/Zle/zle_refresh.c:1727`.
 /// `(void) tcmultout(TCINS, TCMULTINS, (X))`.
-#[inline] pub fn tc_inschars(_x: i32) {                                      // c:1727
+#[inline]
+pub fn tc_inschars(_x: i32) { // c:1727
 }
 
 /// Port of `tc_upcurs(X)` macro from `Src/Zle/zle_refresh.c:1728`.
 /// `(void) tcmultout(TCUP, TCMULTUP, (X))`.
-#[inline] pub fn tc_upcurs(_x: i32) {                                        // c:1728
+#[inline]
+pub fn tc_upcurs(_x: i32) { // c:1728
 }
 
 /// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
 /// `(void) tcmultout(TCLEFT, TCMULTLEFT, (X))`.
-#[inline] pub fn tc_leftcurs(_x: i32) {                                      // c:1729
+#[inline]
+pub fn tc_leftcurs(_x: i32) { // c:1729
 }
 
 // =====================================================================
@@ -2079,47 +2407,40 @@ pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
 /// Holds the name of the user `zle -T tc <fn>` redisplay-transform
 /// function; cleared by `zle -T -r`. The refresh path invokes it
 /// via `getshfunc(tcout_func_name)` (zle_refresh.c:2303).
-pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> =               // c:246
+pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> = // c:246
     std::sync::Mutex::new(None);
 
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.
-pub static CLEAREOL:    std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:827
+pub static CLEAREOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:827
 
 /// Port of `static int clearf` from `Src/Zle/zle_refresh.c:828`.
 /// Set when `alwayslastprompt` was used immediately before the
 /// current refresh — drives a special clear path.
-pub static CLEARF:      std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:828
+pub static CLEARF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:828
 
 /// Port of `static int put_rpmpt` from `Src/Zle/zle_refresh.c:829`.
 /// Whether we should display the right-prompt this refresh.
-pub static PUT_RPMPT:   std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:829
+pub static PUT_RPMPT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:829
 
 /// Port of `static int oput_rpmpt` from `Src/Zle/zle_refresh.c:830`.
 /// Whether the right-prompt was displayed last refresh.
-pub static OPUT_RPMPT:  std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:830
+pub static OPUT_RPMPT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:830
 
 /// Port of `static int oxtabs` from `Src/Zle/zle_refresh.c:831`.
 /// `oxtabs` flag — tabs expand to spaces if set.
-pub static OXTABS:      std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:831
+pub static OXTABS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:831
 
 /// Port of `static int numscrolls` from `Src/Zle/zle_refresh.c:832`.
 /// Count of scroll operations this refresh — used by `nextline` to
 /// decide whether to abort line-loop processing.
-pub static NUMSCROLLS:  std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:832
+pub static NUMSCROLLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:832
 
 /// Port of `static int onumscrolls` from `Src/Zle/zle_refresh.c:832`.
 /// Previous refresh's `numscrolls` value — `nextline` compares to
 /// detect runaway scrolling.
-pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:832
+pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:832
 
 // =====================================================================
 // mod_export refresh-state globals — `Src/Zle/zle_refresh.c:157-188`.
@@ -2130,62 +2451,51 @@ pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 =
 /// Port of `mod_export int nlnct` from `Src/Zle/zle_refresh.c:157`.
 /// Number of lines counted in the prompt+buffer for the current
 /// refresh — drives nbuf allocation (`nlnct * winw` cells).
-pub static NLNCT:        std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:157
+pub static NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:157
 
 /// Port of `static int winw` from `Src/Zle/zle_refresh.c:682`.
 /// Terminal window width in cells; bounded by `zterm_columns`.
-pub static WINW: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(80);                                   // c:682
+pub static WINW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(80); // c:682
 
 /// Port of `static int winh` from `Src/Zle/zle_refresh.c:682`.
 /// Terminal window height in cells; bounded by `zterm_lines`.
-pub static WINH: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(24);                                   // c:682
+pub static WINH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(24); // c:682
 
 /// Port of `static int lpromptw` from `Src/Zle/zle_refresh.c:676`.
 /// Left prompt's on-screen width after expansion / truncation.
-pub static LPROMPTW: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:676
+pub static LPROMPTW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
 
 /// Port of `static int vcs` from `Src/Zle/zle_refresh.c:680`.
 /// Video cursor column — physical column of the cursor on screen.
-pub static VCS: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:680
+pub static VCS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:680
 
 /// Port of `static int vln` from `Src/Zle/zle_refresh.c:680`.
 /// Video cursor line — physical row of the cursor on screen.
-pub static VLN: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:680
+pub static VLN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:680
 
 /// Port of `mod_export int showinglist` from `Src/Zle/zle_refresh.c:165`.
 /// Non-zero when a completion-listing is currently displayed below
 /// the prompt; refreshes need to redraw it on next paint.
-pub static SHOWINGLIST:  std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:165
+pub static SHOWINGLIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:165
 
 /// Port of `mod_export int listshown` from `Src/Zle/zle_refresh.c:171`.
 /// Number of completion-listing lines actually shown last refresh —
 /// used by clear path to know how many lines to wipe.
-pub static LISTSHOWN:    std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:171
+pub static LISTSHOWN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:171
 
 /// Port of `mod_export int lastlistlen` from `Src/Zle/zle_refresh.c:176`.
 /// Length of the previous listing (separate from `listshown` because
 /// the listing might be paginated).
-pub static LASTLISTLEN:  std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:176
+pub static LASTLISTLEN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:176
 
 /// Port of `mod_export int clearflag` from `Src/Zle/zle_refresh.c:183`.
 /// Request a full screen-clear on next refresh (set by `clear-screen`
 /// widget + Ctrl+L).
-pub static CLEARFLAG:    std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:183
+pub static CLEARFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:183
 
 /// Port of `mod_export int clearlist` from `Src/Zle/zle_refresh.c:188`.
 /// Request the completion-listing be wiped on next refresh.
-pub static CLEARLIST:    std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:188
+pub static CLEARLIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:188
 
 /// Port of `struct rparams` from `Src/Zle/zle_refresh.c:815`. Workspace
 /// state threaded through `zrefresh` + `nextline` + `wpfx` — tracks the
@@ -2211,23 +2521,24 @@ pub static CLEARLIST:    std::sync::atomic::AtomicI32 =
 /// video buffer) with `pos`/`end` byte indices for safe access.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
-pub struct rparams {                                                         // c:815
+pub struct rparams {
+    // c:815
     /// Number of lines we are allowed to scroll.
-    pub canscroll: i32,                                                      // c:816
+    pub canscroll: i32, // c:816
     /// Current line we're working on.
-    pub ln: i32,                                                             // c:817
+    pub ln: i32, // c:817
     /// More stuff in status line.
-    pub more_status: i32,                                                    // c:818
+    pub more_status: i32, // c:818
     /// Video cursor column.
-    pub nvcs: i32,                                                           // c:819
+    pub nvcs: i32, // c:819
     /// Video cursor line.
-    pub nvln: i32,                                                           // c:820
+    pub nvln: i32, // c:820
     /// Tmp in statusline stuff.
-    pub tosln: i32,                                                          // c:821
+    pub tosln: i32, // c:821
     /// Cursor index into the video buffer (was `REFRESH_STRING s`).
-    pub pos: usize,                                                          // c:822
+    pub pos: usize, // c:822
     /// End-of-line index (was `REFRESH_STRING sen`).
-    pub end: usize,                                                          // c:823
+    pub end: usize, // c:823
 }
 
 /// Port of `void set_region_highlight(UNUSED(Param pm), char **aval)`
@@ -2244,41 +2555,56 @@ pub struct rparams {                                                         // 
 /// global; the Rust port stores parsed entries in
 /// `REGION_HIGHLIGHTS` via the simplified `RegionHighlight` shape.
 /// WARNING: param names don't match C — Rust=(aval) vs C=(pm, aval)
-pub fn set_region_highlight(aval: Option<&[String]>) {                       // c:488
-    let aval = match aval {                                                  // c:510 !aval
+pub fn set_region_highlight(aval: Option<&[String]>) {
+    // c:488
+    let aval = match aval {
+        // c:510 !aval
         Some(a) => a,
         None => {
             // c:495-508 — truncate to special baseline when aval is NULL.
             REGION_HIGHLIGHTS.lock().unwrap().clear();
-            return;                                                          // c:511
+            return; // c:511
         }
     };
     let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
-    rh.clear();                                                              // c:500 free memos
-    for entry in aval.iter() {                                               // c:513
-        let mut oldstrp: &str = entry.as_str();                              // c:519
-        let mut flags: i32 = 0;                                              // c:525
-        if oldstrp.starts_with('P') {                                        // c:520
-            flags = ZRH_PREDISPLAY;                                          // c:521
-            oldstrp = &oldstrp[1..];                                         // c:522
+    rh.clear(); // c:500 free memos
+    for entry in aval.iter() {
+        // c:513
+        let mut oldstrp: &str = entry.as_str(); // c:519
+        let mut flags: i32 = 0; // c:525
+        if oldstrp.starts_with('P') {
+            // c:520
+            flags = ZRH_PREDISPLAY; // c:521
+            oldstrp = &oldstrp[1..]; // c:522
         }
         let _ = flags;
         oldstrp = oldstrp.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:526
         let (start_val, rest1) = crate::ported::utils::zstrtol(oldstrp, 10); // c:529
-        let start = if oldstrp.len() == rest1.len() { -1i32 } else { start_val as i32 }; // c:530-531
-        let strp = rest1.trim_start_matches(|c: char| c == ' ' || c == '\t');// c:533
-        let (end_val, rest2) = crate::ported::utils::zstrtol(strp, 10);      // c:537
-        let end = if strp.len() == rest2.len() { -1i32 } else { end_val as i32 }; // c:537-538
-        let strp = rest2.trim_start_matches(|c: char| c == ' ' || c == '\t');// c:541
-        // c:545 — match_highlight(strp, ...) into attr fields.
+        let start = if oldstrp.len() == rest1.len() {
+            -1i32
+        } else {
+            start_val as i32
+        }; // c:530-531
+        let strp = rest1.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:533
+        let (end_val, rest2) = crate::ported::utils::zstrtol(strp, 10); // c:537
+        let end = if strp.len() == rest2.len() {
+            -1i32
+        } else {
+            end_val as i32
+        }; // c:537-538
+        let strp = rest2.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:541
+                                                                              // c:545 — match_highlight(strp, ...) into attr fields.
         let attr = crate::ported::zle::zle_refresh::match_highlight(strp);
         // c:551 — memo= field extraction.
-        let memo = if let Some(rest) = strp.strip_prefix("memo=") {          // c:517,551
+        let memo = if let Some(rest) = strp.strip_prefix("memo=") {
+            // c:517,551
             let end_pos = rest
                 .find(|c: char| c == ',' || c == ' ' || c == '\t' || c == '\0')
                 .unwrap_or(rest.len());
-            Some(rest[..end_pos].to_string())                                // c:581
-        } else { None };                                                     // c:583
+            Some(rest[..end_pos].to_string()) // c:581
+        } else {
+            None
+        }; // c:583
         if start >= 0 && end >= 0 {
             rh.push(RegionHighlight {
                 start: start as usize,
@@ -2307,7 +2633,7 @@ pub const ZRH_PREDISPLAY: i32 = 1;
 mod zr_tests {
     use super::*;
     use crate::ported::zle::zle_h::REFRESH_ELEMENT;
-    use crate::ported::zsh_h::{TXT_MULTIWORD_MASK, TXTBOLDFACE};
+    use crate::ported::zsh_h::{TXTBOLDFACE, TXT_MULTIWORD_MASK};
 
     fn re(c: char, a: u64) -> REFRESH_ELEMENT {
         REFRESH_ELEMENT { chr: c, atr: a }
@@ -2334,7 +2660,7 @@ mod zr_tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = [REFRESH_ELEMENT::default(); 2];
         let fill = re('y', 0);
-        ZR_memset(&mut buf, fill, 99);  // len > dst.len()
+        ZR_memset(&mut buf, fill, 99); // len > dst.len()
         assert_eq!(buf[0], fill);
         assert_eq!(buf[1], fill);
     }
@@ -2546,7 +2872,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
-        crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
         crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
@@ -2674,7 +3003,10 @@ mod tests {
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        zle_set_highlight(&mut crate::ported::zle::zle_main::highlight().lock().unwrap(), &["region:fg=red,bold"]);
+        zle_set_highlight(
+            &mut crate::ported::zle::zle_main::highlight().lock().unwrap(),
+            &["region:fg=red,bold"],
+        );
         let attrs = compute_render_attrs();
         for slot in attrs.iter().take(4).skip(1) {
             let a = slot.expect("region painted");
@@ -2696,7 +3028,9 @@ mod tests {
             fg_color: Some(1),
             ..TextAttr::default()
         };
-        crate::ported::zle::zle_main::highlight().lock().unwrap()
+        crate::ported::zle::zle_main::highlight()
+            .lock()
+            .unwrap()
             .add_region(1, 4, custom);
         let attrs = compute_render_attrs();
         assert!(attrs[0].is_none());
