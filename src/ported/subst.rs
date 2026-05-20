@@ -2520,12 +2520,14 @@ pub fn paramsubst(
         let mut sep: Option<String> = None; // c:1766 (sep — joins arrays)
                                             // (o)/(O)/(i)/(n)/(a)/(u) sort + unique flags. Port of
                                             // subst.c:2207-2228 sortit-flag arm.
-        let mut sort_active = false; // c:2207 (o)
-        let mut sort_backwards = false; // c:2210 (O)
-        let mut sort_case_insensitive = false; // c:2213 (i)
-        let mut sort_numeric = false; // c:2216 (n)
-        let mut sort_signed = false; // c:2219 (-/Dash)
-        let mut sort_index_order = false; // c:2225 (a)
+        // c:1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
+        // SORTIT_* are bit flags (zsh_h.rs:3321-3327) ORed together.
+        // The previous Rust port decomposed into 6 separate bools
+        // (sort_active / sort_backwards / sort_case_insensitive /
+        // sort_numeric / sort_signed / sort_index_order) — Rule D
+        // bag-of-globals violation.
+        let mut sortit: i32 = crate::ported::zsh_h::SORTIT_ANYOLDHOW;        // c:1728
+        let mut indord: i32 = 0;                                              // c:1728
         let mut unique = false; // c:2476 (u)
         let mut eval = false; // c:2268 (e)
         // (Q) flag at c:2261-2262 decrements quotemod; folded into the
@@ -2749,29 +2751,27 @@ pub fn paramsubst(
                         }
                         continue; // c:2374 (loop continues from idx)
                     }
-                    'o' => {
-                        sort_active = true;
-                    } // c:2207
-                    'O' => {
-                        sort_backwards = true;
-                        sort_active = true;
-                    } // c:2210
-                    'i' => {
-                        sort_case_insensitive = true;
-                        sort_active = true;
-                    } // c:2213
-                    'n' => {
-                        sort_numeric = true;
-                        sort_active = true;
-                    } // c:2216
-                    '-' => {
-                        sort_signed = true;
-                        sort_active = true;
-                    } // c:2219
-                    'a' => {
-                        sort_index_order = true;
-                        sort_active = true;
-                    } // c:2225
+                    'o' => {                                                  // c:2207
+                        if sortit == 0 {                                      // c:2208 if (!sortit)
+                            sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW;  // c:2209
+                        }                                                     // c:2209
+                    }                                                         // c:2210
+                    'O' => {                                                  // c:2211
+                        sortit |= crate::ported::zsh_h::SORTIT_BACKWARDS;    // c:2212
+                    }                                                         // c:2213
+                    'i' => {                                                  // c:2214
+                        sortit |= crate::ported::zsh_h::SORTIT_IGNORING_CASE; // c:2215
+                    }                                                         // c:2216
+                    'n' => {                                                  // c:2217
+                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY;  // c:2218
+                    }                                                         // c:2219
+                    '-' => {                                                  // c:2220 case '-': case Dash:
+                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY_SIGNED; // c:2222
+                    }                                                         // c:2223
+                    'a' => {                                                  // c:2224
+                        sortit |= crate::ported::zsh_h::SORTIT_SOMEHOW;      // c:2225
+                        indord = 1;                                           // c:2226
+                    }                                                         // c:2227
                     'u' => {
                         unique = true;
                     } // c:2476
@@ -4952,65 +4952,55 @@ pub fn paramsubst(
         // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
         // subst.c:4180-4253 array sortit/unique post-processing.
         // Applies on space-joined value; reassembles after.
-        if sort_active || unique {
-            // c:4180
+        if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW || unique {     // c:4290 if (sortit != SORTIT_ANYOLDHOW)
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
             // assoc-splat) so sort applies to the actual element
             // list, not a whitespace re-split of the joined view.
-            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
-                sp // c:4180 (operator-result)
-            } else if let Some(arr) = arrays_get(&var_name) {
-                arr.clone() // c:4180 (real array)
-            } else if let Some(map) = assoc_get(&var_name) {
-                map.values().cloned().collect() // c:4180 (assoc values)
-            } else {
-                value.split_whitespace().map(String::from).collect() // c:4180 (fallback)
-            };
-            let mut sorted: Vec<String> = parts;
-            if unique {
-                // c:4253
-                let mut seen = std::collections::HashSet::new();
-                sorted.retain(|s| seen.insert(s.clone())); // c:4253
-            }
-            if sort_active {
-                // c:4180
-                // (a) on assoc-derived elements means "preserve
-                // insertion order" — IndexMap already iterates in
-                // that order, so skip the sort entirely. The C
-                // source short-circuits at SORTIT_BACKWARDS_ONLY
-                // (no SORTIT_NUMERICALLY / SORTIT_IGNORING_CASE).
-                if !sort_index_order {
-                    // c:4194
-                    if sort_numeric {
-                        // c:4189
-                        // sort_signed: f64 already handles the
-                        // sign — `(n-)` and `(n)` compare the same
-                        // way for the values we'll see.
-                        let _ = sort_signed; // c:4193
-                        sorted.sort_by(|a, b| {
-                            let na: f64 = a.parse().unwrap_or(0.0); // c:4189
-                            let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() { // c:4290
+                sp                                                            // c:4290 (operator-result)
+            } else if let Some(arr) = arrays_get(&var_name) {                // c:4290
+                arr.clone()                                                   // c:4290 (real array)
+            } else if let Some(map) = assoc_get(&var_name) {                 // c:4290
+                map.values().cloned().collect()                               // c:4290 (assoc values)
+            } else {                                                          // c:4290
+                value.split_whitespace().map(String::from).collect()          // c:4290 (fallback)
+            };                                                                // c:4290
+            let mut sorted: Vec<String> = parts;                              // c:4290
+            if unique {                                                       // c:4253
+                let mut seen = std::collections::HashSet::new();              // c:4253
+                sorted.retain(|s| seen.insert(s.clone()));                    // c:4253
+            }                                                                 // c:4253
+            if sortit != crate::ported::zsh_h::SORTIT_ANYOLDHOW {            // c:4290
+                // (a) flag (indord=1, c:2226) preserves insertion order
+                // — skip sort entirely.
+                if indord == 0 {                                              // c:4292 if (!indord)
+                    if (sortit & crate::ported::zsh_h::SORTIT_NUMERICALLY) != 0 { // c:4189 SORTIT_NUMERICALLY
+                        // SORTIT_NUMERICALLY_SIGNED (c:2222) is a
+                        // bit-OR on top of NUMERICALLY; f64 parse
+                        // already handles signed values uniformly so
+                        // (n) and (n-) produce the same compare here.
+                        sorted.sort_by(|a, b| {                              // c:4189
+                            let na: f64 = a.parse().unwrap_or(0.0);          // c:4189
+                            let nb: f64 = b.parse().unwrap_or(0.0);          // c:4189
                             na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                    } else if sort_case_insensitive {
-                        // c:4187
-                        sorted.sort_by_key(|a| a.to_lowercase());
-                    } else {
-                        // c:4180 (default)
-                        sorted.sort();
-                    }
-                } // c:4194
-                if sort_backwards {
-                    sorted.reverse();
-                } // c:4191
-            }
-            let join_with = sep.as_deref().unwrap_or(" ");
-            value = sorted.join(join_with);
+                        });                                                   // c:4189
+                    } else if (sortit & crate::ported::zsh_h::SORTIT_IGNORING_CASE) != 0 { // c:4187 SORTIT_IGNORING_CASE
+                        sorted.sort_by_key(|a| a.to_lowercase());            // c:4187
+                    } else {                                                  // c:4180 (default)
+                        sorted.sort();                                        // c:4180
+                    }                                                         // c:4187
+                }                                                             // c:4292
+                if (sortit & crate::ported::zsh_h::SORTIT_BACKWARDS) != 0 {  // c:4294 SORTIT_BACKWARDS
+                    sorted.reverse();                                         // c:4191
+                }                                                             // c:4294
+            }                                                                 // c:4290
+            let join_with = sep.as_deref().unwrap_or(" ");                   // c:4313
+            value = sorted.join(join_with);                                   // c:4313
             // Update split_parts so downstream operators (case mods,
             // padding, splat) see the sorted/uniq list.
-            split_parts = Some(sorted); // c:4180
-        }
+            split_parts = Some(sorted);                                       // c:4313
+        }                                                                     // c:4290
 
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/bslashquote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
