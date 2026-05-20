@@ -2201,9 +2201,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
 
-    static TEST_SERIAL: StdMutex<()> = StdMutex::new(());
+    static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Empty Options struct for test invocations of bin_zcurses (whose
     /// canonical sig per Src/Modules/curses.c:1568 takes Options).

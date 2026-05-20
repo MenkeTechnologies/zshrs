@@ -4122,7 +4122,6 @@ pub fn inittyptab() {
     // Drops to ASCII-only under MULTIBYTE_SUPPORT (the non-ASCII path
     // routes through wordchars_wide).
     {
-        use crate::ported::ztype_h::IWORD as IWORD;
         let wc = wordcharsgetfn();
         let src: String = if wc.is_empty() {
             DEFAULT_WORDCHARS.to_string()

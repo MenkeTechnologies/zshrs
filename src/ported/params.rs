@@ -10106,7 +10106,6 @@ mod tests {
     // Use the module-scope HISTCHARS_TEST_LOCK_SHARED (declared
     // outside the test modules) so gsu_tests + tests serialise
     // against the same Mutex rather than two independent ones.
-    use super::HISTCHARS_TEST_LOCK_SHARED as HISTCHARS_TEST_LOCK;
 
     /// `Src/params.c:5095-5097` — `histcharssetfn` stores bangchar /
     /// hatchar / hashchar in the per-char globals. Pin the round-trip
@@ -10116,7 +10115,7 @@ mod tests {
     #[test]
     fn histcharssetfn_syncs_all_three_histchar_globals() {
         let _g = crate::test_util::global_state_lock();
-        let _g = HISTCHARS_TEST_LOCK
+        let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Default state.
@@ -10154,7 +10153,7 @@ mod tests {
     #[test]
     fn histcharsgetfn_round_trips_with_histcharssetfn() {
         let _g = crate::test_util::global_state_lock();
-        let _g = HISTCHARS_TEST_LOCK
+        let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         histcharssetfn(Some("@&%".to_string()));
@@ -10246,7 +10245,7 @@ mod tests {
     #[test]
     fn histcharssetfn_rejects_non_ascii_chars() {
         let _g = crate::test_util::global_state_lock();
-        let _g = HISTCHARS_TEST_LOCK
+        let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Reset to defaults.
