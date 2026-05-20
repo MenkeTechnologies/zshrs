@@ -1125,7 +1125,13 @@ pub fn scanparamvals(                                                        // 
 /// Port of `paramvalarr(HashTable ht, int flags)` from `Src/params.c:689`.
 #[allow(unused_variables)]
 pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
-
+    // c:691-692 — DPUTS((flags & (SCANPM_MATCHKEY|SCANPM_MATCHVAL)) && !scanprog,
+    //                 "BUG: scanning hash without scanprog set");
+    let scanprog_set = scanprog_lock().lock().unwrap().is_some();             // c:691 !scanprog test
+    crate::DPUTS!(                                                            // c:691
+        (flags as u32 & (SCANPM_MATCHKEY | SCANPM_MATCHVAL)) != 0 && !scanprog_set, // c:691
+        "BUG: scanning hash without scanprog set"                            // c:692
+    );
     let flags_u = flags as u32;
     let want_keys = (flags_u & SCANPM_WANTKEYS) != 0;
     let want_vals = (flags_u & SCANPM_WANTVALS) != 0;
@@ -1751,7 +1757,8 @@ pub fn assigngetset(pm: &mut crate::ported::zsh_h::param) {
             }));
         }
         _ => {
-            // DPUTS(1, "BUG: tried to create param node without valid flag")
+            // c:1015 — DPUTS(1, "BUG: tried to create param node without valid flag")
+            crate::DPUTS!(true, "BUG: tried to create param node without valid flag"); // c:1015
         }
     }
 }
@@ -1823,6 +1830,15 @@ pub fn createparam(                                                          // 
     // pm with reset base/width; the shadow arm does the chain
     // installation that endparamscope later unwinds.
     let cur_locallevel = locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    // c:1106-1107 — DPUTS(oldpm && oldpm->level > locallevel,
+    //                    "BUG: old local parameter not deleted");
+    crate::DPUTS!(                                                            // c:1106
+        match &oldpm {                                                        // c:1106
+            Some(op) => op.level > cur_locallevel,                            // c:1106
+            None => false,                                                    // c:1106
+        },
+        "BUG: old local parameter not deleted"                               // c:1107
+    );
     let reuse = match &oldpm {
         Some(op) => op.level == cur_locallevel || (flags as u32 & PM_LOCAL) == 0,
         None => false,
@@ -2924,9 +2940,9 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
         crate::ported::params::convfloat_underscore(floatgetfn(pm), pm.width)
     } else if t == PM_SCALAR || t == PM_NAMEREF {                            // c:2380
         strgetfn(pm)
-    } else {
-        // c:2384 — `DPUTS(1, "BUG: param node without valid type")`.
-        String::new()
+    } else {                                                                 // c:2384
+        crate::DPUTS!(true, "BUG: param node without valid type");           // c:2385
+        String::new()                                                         // c:2386 s = "" (line c:2384)
     };
 
     // c:2390-2538 — VALFLAG_SUBST padding (PM_LEFT / PM_RIGHT_B /
@@ -6630,8 +6646,9 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
 /// observable since we copy.
 /// Port of `zputenv(char *str)` from `Src/params.c:5325`.
 pub fn zputenv(str: &str) -> i32 {                                           // c:5325
-    if str.is_empty() {
-        // c:5328 — DPUTS(!str, ...); treat as no-op.
+    // c:5327 — DPUTS(!str, "Attempt to put null string into environment.")
+    crate::DPUTS!(str.is_empty(), "Attempt to put null string into environment."); // c:5327
+    if str.is_empty() {                                                       // c:5328 (after DPUTS, defensive return)
         return 0;
     }
     let bytes = str.as_bytes();
@@ -6650,10 +6667,11 @@ pub fn zputenv(str: &str) -> i32 {                                           // 
         let value = &str[ptr + 1..];
         env::set_var(name, value);
         0
-    } else {                                                                 // c:5356-5359
-        // C: DPUTS(1, "bad environment string"); setenv(str, ptr, 1).
+    } else {                                                                 // c:5355 else
+        // c:5356 — DPUTS(1, "bad environment string").
         // With no `=`, treat `str` as a bare name with empty value.
-        env::set_var(str, "");
+        crate::DPUTS!(true, "bad environment string");                       // c:5356
+        env::set_var(str, "");                                                // c:5357
         0
     }
 }
