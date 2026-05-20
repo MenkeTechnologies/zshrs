@@ -42,9 +42,9 @@ use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::utils::{zerrnam, zwarnnam};
-use crate::ported::zsh_h::module;
+use crate::ported::zsh_h::{features, module, options};
 use std::io::Read;
-
+use crate::ported::params::{getiparam, setsparam};
 // =====================================================================
 // Port of `struct zc_win` from `Src/Modules/curses.c:63`.
 //
@@ -1084,7 +1084,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
         None => return 1,
     };
     let var = args.get(1).map(|v| v.as_str()).unwrap_or("REPLY");
-    crate::ported::params::setsparam(var, &key_str);
+    setsparam(var, &key_str);
     if want_keypad {
         if let Some(name) = args.get(2) {
             let code_str = if key_code > 0 {
@@ -1092,7 +1092,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
             } else {
                 String::new()
             };
-            crate::ported::params::setsparam(name, &code_str);
+            setsparam(name, &code_str);
         }
         if args.len() >= 4 {
             // C: KEY_MOUSE branch handled the MOUSE event array.
@@ -1100,7 +1100,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
             // deferred to a future port; emit empty array via the
             // env-var bridge.
             if let Some(mvar) = args.get(3) {
-                crate::ported::params::setsparam(mvar, "");
+                setsparam(mvar, "");
             }
         }
     }
@@ -1220,7 +1220,7 @@ pub(crate) fn zccmd_position(nam: &str, args: &[String]) -> i32 {
     ];
     drop(wins);
     // c — `setaparam(args[1], arr);`
-    crate::ported::params::setsparam(&args[1], &arr.join(":"));
+    setsparam(&args[1], &arr.join(":"));
     0
 }
 
@@ -1267,7 +1267,7 @@ pub(crate) fn zccmd_querychar(nam: &str, args: &[String]) -> i32 {
     }
     drop(wins);
     // c — `setaparam(var, clist);`
-    crate::ported::params::setsparam(&var, &clist.join(":"));
+    setsparam(&var, &clist.join(":"));
     0
 }
 
@@ -1355,7 +1355,7 @@ pub(crate) fn zccmd_resize(nam: &str, args: &[String]) -> i32 {
 pub(crate) fn bin_zcurses(
     nam: &str,
     args: &[String],
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     if args.is_empty() {
@@ -1824,7 +1824,7 @@ pub const KEY_F0: i32 = 0o410;
 /// Rust port keeps the OnceLock<Mutex> shape so callers consume
 /// the same `*const module, &Mutex<crate::ported::zsh_h::features>` handle other
 /// modules use.
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // WARNING: NOT IN CURSES.C — Rust-only OnceLock get-or-init for
 // each module static. C dereferences globals directly.
@@ -2041,7 +2041,7 @@ fn keypad_name(code: i32) -> Option<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["b:zcurses".to_string()]
 }
 
@@ -2051,7 +2051,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -2064,7 +2064,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -2087,8 +2087,8 @@ fn terminal_size() -> Option<(usize, usize)> {
     }
     // C falls back to `getiparam("LINES")` / `getiparam("COLUMNS")`
     // when TIOCGWINSZ fails. Read paramtab; convert i64→usize.
-    let lines = crate::ported::params::getiparam("LINES");
-    let cols = crate::ported::params::getiparam("COLUMNS");
+    let lines = getiparam("LINES");
+    let cols = getiparam("COLUMNS");
     if lines > 0 && cols > 0 {
         Some((lines as usize, cols as usize))
     } else {
@@ -2182,9 +2182,9 @@ fn order_lock() -> &'static Mutex<Vec<String>> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None, // c:1639 bintab
             bn_size: 1,    // c:1639 sizeof(bintab)/sizeof(*bintab)
             cd_list: None, // c:1640
@@ -2200,6 +2200,7 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ported::zsh_h::MAX_OPS;
     use super::*;
 
     static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -2209,8 +2210,8 @@ mod tests {
     /// All zccmd_* subcommands parse their own opts inline, so the
     /// dispatcher passes through a no-op ops bag.
     #[allow(non_upper_case_globals)]
-    const _test_ops_: crate::ported::zsh_h::options = crate::ported::zsh_h::options {
-        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+    const _test_ops_: options = options {
+        ind: [0u8; MAX_OPS],
         args: Vec::new(),
         argscount: 0,
         argsalloc: 0,

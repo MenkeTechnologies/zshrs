@@ -22,7 +22,7 @@
 use std::ffi::CString;
 
 use crate::ported::utils::{metafy, unmetafy, zwarnnam};
-use crate::ported::zsh_h::{features, module, options, OPT_ISSET};
+use crate::ported::zsh_h::{features, module, options, OPT_ISSET, MAX_OPS};
 
 // =====================================================================
 // xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)  c:36

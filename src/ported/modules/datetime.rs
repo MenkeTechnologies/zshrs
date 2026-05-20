@@ -16,7 +16,7 @@
 //! base format and adds %N extensions on top.
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{options, OPT_ARG, OPT_ISSET};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -65,7 +65,7 @@ pub fn reverse_strftime(
     };
     if let Some(name) = scalar {
         // c:90 scalar
-        crate::ported::params::setiparam(name, secs); // c:91 setiparam
+        setiparam(name, secs); // c:91 setiparam
     } else {
         // c:93
         println!("{}", secs); // c:94 printf("%ld\n", ...)
@@ -85,7 +85,7 @@ pub fn reverse_strftime(
 pub fn output_strftime(
     nam: &str,
     argv: &[&str], // c:99
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:107 — `if (OPT_ISSET(ops,'s'))`
@@ -203,7 +203,7 @@ pub fn output_strftime(
 
     // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
     if let Some(name) = scalar {
-        crate::ported::params::setsparam(name, &crate::ported::utils::metafy(&formatted));
+        setsparam(name, &crate::ported::utils::metafy(&formatted));
         // c:178
     } else {
         // c:180-183 — fwrite + putchar('\n') unless -n
@@ -229,7 +229,7 @@ pub fn output_strftime(
 pub fn bin_strftime(
     nam: &str,
     argv: &[&str], // c:187
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     // c:191 — `char *tz = getsparam("TZ");`. Read TZ from paramtab
@@ -391,6 +391,7 @@ fn is_ident(s: &str) -> bool {
 }
 
 use std::sync::{Mutex, OnceLock};
+use crate::ported::params::{setiparam, setsparam};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

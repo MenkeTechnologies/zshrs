@@ -1499,7 +1499,7 @@ mod tests {
     use super::*;
     use crate::ported::math::{mnumber, MN_INTEGER};
     use std::fs::File;
-    use std::io::Write as _;
+    use std::io::Write;
     use tempfile::TempDir;
     use crate::zsh_h::{options, MAX_OPS};
 
