@@ -65,7 +65,11 @@ use crate::ported::modules::parameter::*;
 // Bulk-import the most-used cross-module names so the bodies below
 // stay close to the C source visually instead of being drowned in
 // fully-qualified `crate::ported::*::` paths.
+use crate::ported::hashtable::{aliastab_lock, shfunctab_lock};
+use crate::ported::params::{getarrvalue, getsparam, paramtab};
 use crate::ported::pattern::patmatch;
+use crate::ported::utils::errflag;
+use crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP;
 use crate::ported::string::dyncat;
 use crate::ported::utils::{getkeystring, quotestring};
 use crate::ported::utils::{xsymlinks, zerr};
@@ -1591,7 +1595,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
-            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
+            let home = getsparam("HOME").unwrap_or_default();
             return Some(home);
         }
         let nx = chars[1]; // c:741
@@ -1614,14 +1618,14 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
             // c:748
-            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
+            let home = getsparam("HOME").unwrap_or_default();
             let suffix: String = chars[1..].iter().collect();
             return Some(format!("{}{}", home, suffix));
         }
         // `~+...` — current PWD (only if isend(str[2]))
         if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
             // c:752
-            let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+            let pwd = getsparam("PWD").unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", pwd, suffix));
         }
@@ -1630,8 +1634,8 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             // c:755 — `~-` → $OLDPWD with $PWD fallback. Read both
             //          via paramtab; OS env fallback removed (was a
             //          fake: shell-internal $OLDPWD lives in paramtab).
-            let oldpwd = crate::ported::params::getsparam("OLDPWD")
-                .or_else(|| crate::ported::params::getsparam("PWD"))
+            let oldpwd = getsparam("OLDPWD")
+                .or_else(|| getsparam("PWD"))
                 .unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", oldpwd, suffix));
@@ -1657,7 +1661,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                     .parse()
                     .unwrap_or(0);
                 let val = if neg { -val } else { val };
-                let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+                let pwd = getsparam("PWD").unwrap_or_default();
                 // Direct port of subst.c filesub'namptr tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
                 // c:4902 — read from canonical DIRSTACK global (mirrors
@@ -1745,7 +1749,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             cmd_part.clone()
         };
         // C: `pathprog(cmd, &fullname)` walks `path[]`. paramtab read.
-        let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        let path = getsparam("PATH").unwrap_or_default();
         for dir in path.split(':') {
             let full = format!("{}/{}", dir, cmd);
             if std::path::Path::new(&full).exists() {
@@ -3009,7 +3013,7 @@ pub fn paramsubst(
                                 let ch = body_chars[idx]; // c:2449 switch (*s)
                                 if ch == 'c' {
                                     // c:2450
-                                    shsplit |= crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP;
+                                    shsplit |= LEXFLAGS_COMMENTS_KEEP;
                                 // c:2452
                                 } else if ch == 'C' {
                                     // c:2455
@@ -3750,7 +3754,7 @@ pub fn paramsubst(
                     let lo: i64 = lo.trim().parse().unwrap_or(1);
                     let hi: i64 = hi.trim().parse().unwrap_or(s_chars.len() as i64);
                     let chars_arr: Vec<String> = s_chars.iter().map(|c| c.to_string()).collect();
-                    crate::ported::params::getarrvalue(&chars_arr, lo, hi).concat()
+                    getarrvalue(&chars_arr, lo, hi).concat()
                 } else {
                     String::new()
                 }
@@ -3947,7 +3951,7 @@ pub fn paramsubst(
                     match var_name.as_str() {
                         // c:2247
                         "aliases" => {
-                            crate::ported::hashtable::aliastab_lock()
+                            aliastab_lock()
                                 .read()
                                 .ok()
                                 .map(|t| {
@@ -3957,7 +3961,7 @@ pub fn paramsubst(
                                     names.join(" ")
                                 })
                         }
-                        "functions" | "dis_functions" => crate::ported::hashtable::shfunctab_lock()
+                        "functions" | "dis_functions" => shfunctab_lock()
                             .read()
                             .ok()
                             .map(|t| {
@@ -4878,7 +4882,7 @@ pub fn paramsubst(
             // c:2814 — read PM_* flags directly from paramtab and
             // synthesize the type tag. Mirrors C `pm->node.flags &
             // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = crate::ported::params::paramtab()
+            value = paramtab()
                 .read() // c:2814
                 .ok() // c:2814
                 .and_then(|tab| {
@@ -5384,10 +5388,10 @@ pub fn paramsubst(
                     if ch == '\n' {
                         // c:2451
                         in_comment = false; // c:2451
-                        if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
+                        if (shsplit & LEXFLAGS_COMMENTS_KEEP) != 0 {
                             cur.push(ch);
                         } // c:2451
-                    } else if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
+                    } else if (shsplit & LEXFLAGS_COMMENTS_KEEP) != 0 {
                         // c:2451
                         cur.push(ch); // c:2451
                     } // c:2451
@@ -5438,8 +5442,8 @@ pub fn paramsubst(
                     {
                         // c:2451
                         // Start of comment word — keep or skip.
-                        in_comment = !(shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
-                        if (shsplit & crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP) != 0 {
+                        in_comment = !(shsplit & LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
+                        if (shsplit & LEXFLAGS_COMMENTS_KEEP) != 0 {
                             cur.push(ch);
                         } // c:2451
                     } // c:2451
@@ -5474,7 +5478,7 @@ pub fn paramsubst(
         // mods bit 1 → modify()'s tilde-contraction iterating aval.
         if (mods & 1) != 0 {
             // c:4155 if (mods & 1)
-            let home_opt = crate::ported::params::getsparam("HOME"); // c:4155
+            let home_opt = getsparam("HOME"); // c:4155
                                                                      // Pull named-dirs (~name) hash into a [(name, path)]
                                                                      // sorted by path-length-descending so the LONGEST match
                                                                      // wins (zsh canonical: most-specific tilde-contraction).
@@ -5838,7 +5842,7 @@ pub fn paramsubst(
                   // Replace $HOME with `~`; replace each named-dir
                   // path with `~name`. Direct port of substnamedir.
                 let mut out = s.to_string();
-                if let Some(home) = crate::ported::params::getsparam("HOME") {
+                if let Some(home) = getsparam("HOME") {
                     if !home.is_empty() && out.starts_with(&home) {
                         out = format!("~{}", &out[home.len()..]);
                     }
@@ -6011,7 +6015,7 @@ pub fn paramsubst(
                     let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
                     arrays_get(&var_name)
                         .as_ref() // c:3950
-                        .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
+                        .map(|arr| getarrvalue(arr, lo, hi))
                         .unwrap_or_default()
                 } else if let Some(arr) = arrays_get(&var_name) {
                     arr.clone() // c:3950 (@ / *)
@@ -6215,7 +6219,7 @@ pub fn paramsubst(
                     // port of getarrvalue's range arm.
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
-                    crate::ported::params::getarrvalue(&arr, lo, hi).join(" ") // c:1625
+                    getarrvalue(&arr, lo, hi).join(" ") // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
@@ -6291,7 +6295,7 @@ pub fn paramsubst(
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(chars_v.len() as i64); // c:1625
                     let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
-                    crate::ported::params::getarrvalue(&chars_arr, lo, hi).concat()
+                    getarrvalue(&chars_arr, lo, hi).concat()
                 // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
@@ -6393,7 +6397,7 @@ pub fn paramsubst(
                         let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
                         arrays_get(&var_name)
                             .as_ref()
-                            .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
+                            .map(|arr| getarrvalue(arr, lo, hi))
                     } else {
                         None
                     }
@@ -7179,7 +7183,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     // hist.c case 'c' which calls findcmd.
                     if w.starts_with('/') || w.starts_with("./") || w.starts_with("../") {
                         Some(w.to_string()) // c:4585
-                    } else if let Some(path) = crate::ported::params::getsparam("PATH") {
+                    } else if let Some(path) = getsparam("PATH") {
                         let mut found = None;
                         for dir in path.split(':') {
                             let p = std::path::PathBuf::from(dir).join(w);
@@ -7319,7 +7323,7 @@ const OUTANGPROC: char = OutangProc; // c:zsh.h:177
 // directive ("SubstState must be removed", "SubstOptions must be
 // removed", "delete SubstState"). All formerly-bundled fields are
 // canonical globals or executor-backed:
-//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
+//   - `errflag`     → `errflag` `AtomicI32`
 //                     (port of `Src/utils.c`'s `int errflag`).
 //   - `opts.*`      → `crate::ported::options::opt_state_get/set`
 //                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
@@ -7351,7 +7355,7 @@ pub const NULSTRING: &str = "\u{a1}"; // c:36 (Nularg sentinel)
 /// throughout its loops.
 #[inline]
 fn errflag_set() -> bool {
-    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+    errflag.load(Ordering::Relaxed) != 0
 }
 
 /// Sets `errflag |= ERRFLAG_ERROR` on the global `errflag`.
@@ -7359,14 +7363,14 @@ fn errflag_set() -> bool {
 /// where parameter / glob / arith error is reported.
 #[inline]
 fn errflag_set_error() {
-    crate::ported::utils::errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+    errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
 }
 
 // =====================================================================
 // Parameter table read/write helpers — direct paramtab access.
 // C reads `paramtab` directly via `getsparam`/`getaparam`
 // (`Src/params.c:3194`/`:3245`); these mirror that by hitting
-// `crate::ported::params::paramtab()` (the global Mutex<HashMap<
+// `paramtab()` (the global Mutex<HashMap<
 // String, Param>>) and the parallel `paramtab_hashed_storage`.
 //
 // Previous incarnation routed through `fusevm_bridge::try_with_executor`
@@ -7387,7 +7391,7 @@ fn errflag_set_error() {
 /// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
 /// Walks `aliastab` for regular (non-global, non-suffix) aliases.
 fn scanpmraliases() -> String {
-    crate::ported::hashtable::aliastab_lock()
+    aliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7407,7 +7411,7 @@ fn scanpmraliases() -> String {
 
 /// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
 fn scanpmgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock()
+    aliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7488,7 +7492,7 @@ thread_local! {
 /// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
 /// Disabled regular-aliases arm.
 fn scanpmdisraliases() -> String {
-    crate::ported::hashtable::aliastab_lock()
+    aliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7508,7 +7512,7 @@ fn scanpmdisraliases() -> String {
 
 /// `scanpmdisgaliases` — disabled-global-aliases arm.
 fn scanpmdisgaliases() -> String {
-    crate::ported::hashtable::aliastab_lock()
+    aliastab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7567,7 +7571,7 @@ fn scanpmcommands() -> String {
 
 /// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
 fn scanpmfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock()
+    shfunctab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7582,7 +7586,7 @@ fn scanpmfunctions() -> String {
 
 /// `scanpmdisfunctions` — disabled-functions arm.
 fn scanpmdisfunctions() -> String {
-    crate::ported::hashtable::shfunctab_lock()
+    shfunctab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7600,7 +7604,7 @@ fn scanpmdisfunctions() -> String {
 /// function was loaded from). C delegates to `scanfunctions_source`
 /// with `dis=0`; the Rust port inlines the filtered iteration.
 fn scanpmfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock()
+    shfunctab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7617,7 +7621,7 @@ fn scanpmfunction_source() -> String {
 /// `$dis_functions_source` arm (delegates to `scanfunctions_source`
 /// with `dis=DISABLED` in C).
 fn scanpmdisfunction_source() -> String {
-    crate::ported::hashtable::shfunctab_lock()
+    shfunctab_lock()
         .read()
         .ok()
         .map(|t| {
@@ -7665,7 +7669,7 @@ use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_
 
 /// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
 fn scanpmparameters() -> String {
-    crate::ported::params::paramtab()
+    paramtab()
         .read()
         .ok()
         .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
@@ -7712,14 +7716,14 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
 /// Read a scalar variable from `paramtab`. Equivalent to C's
 /// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
 fn vars_get(name: &str) -> Option<String> {
-    let tab = crate::ported::params::paramtab().read().ok()?;
+    let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_str.clone()
 }
 
 /// True if `name` exists in `paramtab` (any type).
 fn vars_contains(name: &str) -> bool {
-    crate::ported::params::paramtab()
+    paramtab()
         .read()
         .map_or(false, |tab| tab.contains_key(name))
 }
@@ -7734,14 +7738,14 @@ fn vars_insert(name: String, value: String) {
 /// Read an array parameter from `paramtab`. Equivalent to C's
 /// `getaparam(name)` (`Src/params.c:3245`).
 fn arrays_get(name: &str) -> Option<Vec<String>> {
-    let tab = crate::ported::params::paramtab().read().ok()?;
+    let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_arr.clone()
 }
 
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
-    crate::ported::params::paramtab()
+    paramtab()
         .read()
         .map_or(false, |tab| {
             tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
@@ -7751,7 +7755,7 @@ fn arrays_contains(name: &str) -> bool {
 /// Insert / replace an array parameter. Writes through the
 /// canonical paramtab as a `PM_ARRAY` entry.
 fn arrays_insert(name: String, value: Vec<String>) {
-    let mut tab = match crate::ported::params::paramtab().write() {
+    let mut tab = match paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -8155,7 +8159,7 @@ mod tests {
         // with other tests that share the global params::paramtab().
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        errflag.store(0, std::sync::atomic::Ordering::Relaxed);
         let (result, _, _) =                                // c:3202
             paramsubst("${__default_unset_var:-fallback}", 0, false, 0, &mut 0); // c:3202
         assert_eq!(result, "fallback"); // c:3202
@@ -8172,7 +8176,7 @@ mod tests {
         // bridges no-op and the slot never appears in `arrays_get`.
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
-        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        errflag.store(0, std::sync::atomic::Ordering::Relaxed);
         let name = format!(
             "__sub_arr_{}_{}",
             module_path!().replace("::", "_"),
@@ -8277,7 +8281,7 @@ mod tests {
         // have set ERRFLAG_ERROR via parser-failure paths and not
         // cleaned up; without this reset the test fails depending
         // on suite ordering.
-        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
         let r = get_intarg("(42)rest");
         assert_eq!(
             r,
@@ -8598,7 +8602,7 @@ fn exec_sethparam(name: &str, parts: Vec<String>) {
     if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
         store.insert(name.to_string(), map);
     }
-    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+    if let Ok(mut tab) = paramtab().write() {
         if let Some(pm) = tab.get_mut(name) {
             pm.node.flags |= PM_HASHED as i32;
         } else {
