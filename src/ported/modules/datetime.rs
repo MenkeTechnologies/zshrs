@@ -480,6 +480,7 @@ fn module_features() -> &'static Mutex<features_t> {
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
 
     #[test]

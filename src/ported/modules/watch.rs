@@ -1207,6 +1207,7 @@ fn module_features() -> &'static Mutex<features_t> {
 
 #[cfg(test)]
 mod tests {
+    use crate::glob::matchpat;
     use super::*;
 
     /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.

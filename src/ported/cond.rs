@@ -731,6 +731,7 @@ pub fn tracemodcond(name: &str, args: &[String], inf: bool) {
 mod tests {
     use super::*;
     use std::fs::File;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {

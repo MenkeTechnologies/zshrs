@@ -28,6 +28,7 @@ use std::sync::atomic::Ordering;
 // Marker`. Imported with the zsh_h.rs disambiguation (Stringg → Stringg,
 // OutangProc → OutangProc) so the lex.rs body keeps the original C-style
 // short names without colliding with `STRING_LEX` (the lextok=34 constant).
+use crate::ported::input::inpush;
 use crate::ported::prompt::{cmdpop, cmdpush};
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
@@ -2593,7 +2594,7 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
                                                                           // c:1715 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
+    inpush(&dup, 0, None);
     // c:1718 `strinbeg(0);`
     crate::ported::hist::strinbeg(0);
     // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
@@ -2658,7 +2659,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     // c:1748 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1750 `inpush(t, 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
+    inpush(&dup, 0, None);
     // c:1751 `strinbeg(0);`
     crate::ported::hist::strinbeg(0);
     // c:1763-1765 — seed lexbuf and run dquote_parse with the
@@ -2722,7 +2723,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     // c:1803 `zcontext_save();`
     crate::ported::context::zcontext_save();
     // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
-    crate::ported::input::inpush(&dup, 0, None);
+    inpush(&dup, 0, None);
     // c:1806 `strinbeg(0);`
     crate::ported::hist::strinbeg(0);
     // c:1807-1809 — seed lexbuf with the input string.
@@ -2862,12 +2863,12 @@ fn checkalias(lextext: &str) -> bool {
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
                     if !crate::ztype_h::iblank(c as u8) {
-                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
                     }
                 }
             }
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
-            crate::ported::input::inpush(
+            inpush(
                 &alias.text,
                 crate::ported::zsh_h::INP_ALIAS,
                 Some(lextext.to_string()),
@@ -2906,13 +2907,13 @@ fn checkalias(lextext: &str) -> bool {
                         // popped FIRST (re-emitted to extend the
                         // current token), then space, then the alias
                         // body. C does it the same way.
-                        crate::ported::input::inpush(
+                        inpush(
                             lextext,
                             crate::ported::zsh_h::INP_ALIAS,
                             Some(suffix.to_string()),
                         );
-                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
-                        crate::ported::input::inpush(
+                        inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        inpush(
                             &alias.text,
                             crate::ported::zsh_h::INP_ALIAS,
                             None,

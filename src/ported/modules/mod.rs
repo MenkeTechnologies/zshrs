@@ -47,6 +47,8 @@ pub mod zutil;
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::{hashnode, param, PM_SCALAR};
+
     /// `Src/Modules/parameter.c::paramtypestr` is consulted by every
     /// `${(t)foo}` query and by scanpmparameters' callback emission.
     /// The encoding is load-bearing: an integer param must report

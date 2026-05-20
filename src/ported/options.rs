@@ -1672,7 +1672,7 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>, f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zsh_h::isset;
+    use crate::zsh_h::{isset, EMACSMODE, INTERACTIVE, VIMODE};
 
     // Tests share global OPTS_LIVE state; serialize via this mutex so
     // parallel cargo-test threads don't stomp each other's option-state

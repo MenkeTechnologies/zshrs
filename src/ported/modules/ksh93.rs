@@ -738,6 +738,7 @@ fn module_features() -> &'static Mutex<features_t> {
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::hashnode;
     use super::*;
 
     /// Verifies `ksh93_wrapper` returns 1 in the !EMULATE_KSH branch
