@@ -57,6 +57,12 @@ use std::sync::atomic::AtomicUsize;
 use crate::ported::modules::parameter::*;
 use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED, PM_UNIQUE, PM_TIED, PM_SPECIAL, PM_NAMEREF};
 use std::ffi::CString;
+// Bulk-import the most-used cross-module names so the bodies below
+// stay close to the C source visually instead of being drowned in
+// fully-qualified `crate::ported::*::` paths.
+use crate::ported::pattern::patmatch;
+use crate::ported::string::dyncat;
+use crate::ported::utils::{getkeystring, quotestring};
 // `subst.rs` does NOT reach into `ShellExecutor` — every shell-state
 // read/write goes through the canonical C-named accessor (paramtab,
 // hashtable, options globals, etc.). Command-substitution `$(...)`
@@ -425,7 +431,7 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     // content slice; consumed count is the slice length plus the
     // wrapping `$'` and `'`.
     let content: String = chars[start..end].iter().collect();
-    let (strsub, _) = crate::ported::utils::getkeystring(&content); // c:211
+    let (strsub, _) = getkeystring(&content); // c:211
 
     // C: `len += 2;` — caller's len now includes the leading `$'`
     // (Rust mirrors via end+1 below).
@@ -2320,7 +2326,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
                 // c:1544
                 // C: `dst = getkeystring(dst, &klen,
                 //          GETKEYS_SEP, NULL); dst = pastebuf(...);`
-                crate::ported::utils::getkeystring(&untoked).0 // c:1545
+                getkeystring(&untoked).0 // c:1545
             } else {
                 untoked // c:1543
             }
@@ -3433,7 +3439,7 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if crate::ported::pattern::patmatch(&pat, hay) {
+                        if patmatch(&pat, hay) {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
                                 break;
@@ -3475,7 +3481,7 @@ pub fn paramsubst(
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if crate::ported::pattern::patmatch(&pat, elem) {
+                        if patmatch(&pat, elem) {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -3619,7 +3625,7 @@ pub fn paramsubst(
                         };
                         for len in lengths {
                             let cand: String = s_chars[start..start + len].iter().collect();
-                            if crate::ported::pattern::patmatch(&pat, &cand) {
+                            if patmatch(&pat, &cand) {
                                 found = Some((start, start + len));
                                 if !want_last {
                                     break 'outer;
@@ -3633,7 +3639,7 @@ pub fn paramsubst(
                         for start in (0..=n).rev() {
                             for len in 1..=(n - start) {
                                 let cand: String = s_chars[start..start + len].iter().collect();
-                                if crate::ported::pattern::patmatch(&pat, &cand) {
+                                if patmatch(&pat, &cand) {
                                     found = Some((start, start + len));
                                     break;
                                 }
@@ -3964,7 +3970,7 @@ pub fn paramsubst(
                         .into_iter() // c:3540
                         .filter(|elem| {
                             // c:3540
-                            let m = crate::ported::pattern::patmatch(&p, elem); // c:3540
+                            let m = patmatch(&p, elem); // c:3540
                             if invert {
                                 m
                             } else {
@@ -3980,7 +3986,7 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
-                    let m = crate::ported::pattern::patmatch(&p, &raw_value); // c:3540
+                    let m = patmatch(&p, &raw_value); // c:3540
                     value = if invert {
                         // c:3540
                         if m {
@@ -4176,7 +4182,7 @@ pub fn paramsubst(
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if crate::ported::pattern::patmatch(&pat, &elem) {
+                            if patmatch(&pat, &elem) {
                                 repl.clone()
                             } else {
                                 elem
@@ -4185,7 +4191,7 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
-                } else if crate::ported::pattern::patmatch(&pat, &raw_value) {
+                } else if patmatch(&pat, &raw_value) {
                     value = repl; // c:3870
                 } else {
                     value = raw_value.clone(); // c:3870
@@ -4271,7 +4277,7 @@ pub fn paramsubst(
                         let mut m: Option<usize> = None;
                         for e in (q + 1..=nn).rev() {
                             let c: String = cv[q..e].iter().collect();
-                            if crate::ported::pattern::patmatch(&pat, &c) {
+                            if patmatch(&pat, &c) {
                                 m = Some(e);
                                 break;
                             }
@@ -4334,7 +4340,7 @@ pub fn paramsubst(
                         for end in (p + 1..=n).rev() {
                             // c:3870
                             let cand: String = chars_v[p..end].iter().collect(); // c:3870
-                            if crate::ported::pattern::patmatch(&pat, &cand) {
+                            if patmatch(&pat, &cand) {
                                 // c:3870
                                 matched = Some(end); // c:3870
                                 break; // c:3870
@@ -4430,7 +4436,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if crate::ported::pattern::patmatch(anchor_pat, &cand) {
+                            if patmatch(anchor_pat, &cand) {
                                 return format!("{}{}", repl, cv[end..].iter().collect::<String>());
                             }
                         }
@@ -4440,7 +4446,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if crate::ported::pattern::patmatch(anchor_pat, &cand) {
+                            if patmatch(anchor_pat, &cand) {
                                 return format!(
                                     "{}{}",
                                     cv[..start].iter().collect::<String>(),
@@ -4455,7 +4461,7 @@ pub fn paramsubst(
                         for start in 0..nn {
                             for end in (start + 1..=nn).rev() {
                                 let cand: String = cv[start..end].iter().collect();
-                                if crate::ported::pattern::patmatch(&pat, &cand) {
+                                if patmatch(&pat, &cand) {
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&repl);
@@ -4511,7 +4517,7 @@ pub fn paramsubst(
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
-                                if crate::ported::pattern::patmatch(&p, &prefix) {
+                                if patmatch(&p, &prefix) {
                                     return cv[k..].iter().collect();
                                 }
                                 if k == 0 {
@@ -4548,7 +4554,7 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
-                        if crate::ported::pattern::patmatch(&p, &prefix) {
+                        if patmatch(&p, &prefix) {
                             return cv[k..].iter().collect();
                         }
                     }
@@ -4579,7 +4585,7 @@ pub fn paramsubst(
                     let mut k = total;
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if crate::ported::pattern::patmatch(&p, &suffix) {
+                        if patmatch(&p, &suffix) {
                             return cv[..total - k].iter().collect();
                         }
                         if k == 0 {
@@ -4613,7 +4619,7 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if crate::ported::pattern::patmatch(&p, &suffix) {
+                        if patmatch(&p, &suffix) {
                             return cv[..total - k].iter().collect();
                         }
                     }
@@ -4838,46 +4844,46 @@ pub fn paramsubst(
                           else { "scalar" };                                   // c:2817 case PM_SCALAR
                     let val = crate::ported::string::dupstring(val);           // c:2825 val = dupstring(val)
                     let val = if pm.level != 0                                  // c:2826
-                        { crate::ported::string::dyncat(&val, "-local") }       // c:2827
+                        { dyncat(&val, "-local") }       // c:2827
                         else { val };                                           // c:2826
                     let val = if f & PM_LEFT != 0                               // c:2828
-                        { crate::ported::string::dyncat(&val, "-left") }        // c:2829
+                        { dyncat(&val, "-left") }        // c:2829
                         else { val };                                           // c:2828
                     let val = if f & PM_RIGHT_B != 0                            // c:2830
-                        { crate::ported::string::dyncat(&val, "-right_blanks") } // c:2831
+                        { dyncat(&val, "-right_blanks") } // c:2831
                         else { val };                                           // c:2830
                     let val = if f & PM_RIGHT_Z != 0                            // c:2832
-                        { crate::ported::string::dyncat(&val, "-right_zeros") } // c:2833
+                        { dyncat(&val, "-right_zeros") } // c:2833
                         else { val };                                           // c:2832
                     let val = if f & PM_LOWER != 0                              // c:2834
-                        { crate::ported::string::dyncat(&val, "-lower") }       // c:2835
+                        { dyncat(&val, "-lower") }       // c:2835
                         else { val };                                           // c:2834
                     let val = if f & PM_UPPER != 0                              // c:2836
-                        { crate::ported::string::dyncat(&val, "-upper") }       // c:2837
+                        { dyncat(&val, "-upper") }       // c:2837
                         else { val };                                           // c:2836
                     let val = if f & PM_READONLY != 0                           // c:2838
-                        { crate::ported::string::dyncat(&val, "-readonly") }    // c:2839
+                        { dyncat(&val, "-readonly") }    // c:2839
                         else { val };                                           // c:2838
                     let val = if f & PM_TAGGED != 0                             // c:2840
-                        { crate::ported::string::dyncat(&val, "-tag") }         // c:2841
+                        { dyncat(&val, "-tag") }         // c:2841
                         else { val };                                           // c:2840
                     let val = if f & PM_TIED != 0                               // c:2842
-                        { crate::ported::string::dyncat(&val, "-tied") }        // c:2843
+                        { dyncat(&val, "-tied") }        // c:2843
                         else { val };                                           // c:2842
                     let val = if f & PM_EXPORTED != 0                           // c:2844
-                        { crate::ported::string::dyncat(&val, "-export") }      // c:2845
+                        { dyncat(&val, "-export") }      // c:2845
                         else { val };                                           // c:2844
                     let val = if f & PM_UNIQUE != 0                             // c:2846
-                        { crate::ported::string::dyncat(&val, "-unique") }      // c:2847
+                        { dyncat(&val, "-unique") }      // c:2847
                         else { val };                                           // c:2846
                     let val = if f & PM_HIDE != 0                               // c:2848
-                        { crate::ported::string::dyncat(&val, "-hide") }        // c:2849
+                        { dyncat(&val, "-hide") }        // c:2849
                         else { val };                                           // c:2848
                     let val = if f & PM_HIDEVAL != 0                            // c:2850
-                        { crate::ported::string::dyncat(&val, "-hideval") }     // c:2851
+                        { dyncat(&val, "-hideval") }     // c:2851
                         else { val };                                           // c:2850
                     let val = if f & PM_SPECIAL != 0                            // c:2852
-                        { crate::ported::string::dyncat(&val, "-special") }     // c:2853
+                        { dyncat(&val, "-special") }     // c:2853
                         else { val };                                           // c:2852
                     val                                                         // c:2854
                 }))
@@ -5433,7 +5439,7 @@ pub fn paramsubst(
                         }
                     }
                     let body: String = chars_v[body_start..j].iter().collect();
-                    let (decoded, _) = crate::ported::utils::getkeystring(&body); // c:2261
+                    let (decoded, _) = getkeystring(&body); // c:2261
                     out.push_str(&decoded);
                     i = j + 1;
                     continue;
@@ -5561,18 +5567,18 @@ pub fn paramsubst(
                         )                                                     // c:2245
                 });                                                           // c:2245
                 if needs {                                                    // c:2245
-                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE) // c:2245
+                    quotestring(s, crate::ported::zsh_h::QT_SINGLE) // c:2245
                 } else {                                                      // c:2245
                     s.to_string()                                             // c:2245
                 }                                                             // c:2245
             } else if quotetype == crate::ported::zsh_h::QT_QUOTEDZPUTS {    // c:2245 (q+)
-                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
+                quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
             } else if quotemod > 0 {                                         // c:4033 if (quotemod > 0)
                 // c:2252 — quotemod++ and quotetype++ cascade for
                 // (q)/(qq)/(qqq)/(qqqq). quotetype starts at QT_NONE=0
                 // and is incremented per q: QT_BACKSLASH(1) /
                 // QT_SINGLE(2) / QT_DOUBLE(3) / QT_DOLLARS(4).
-                crate::ported::utils::quotestring(s, quotetype)              // c:4070
+                quotestring(s, quotetype)              // c:4070
             } else {                                                          // c:4034
                 s.to_string()                                                 // c:4034
             }                                                                 // c:4034
@@ -5605,7 +5611,7 @@ pub fn paramsubst(
             // getkeys as u32) at c:6915 (utils.c). Default call here
             // produces the same byte-string for the unsuffixed (g::)
             // case (bare flag with no sub-letters).
-            let decode_one = |s: &str| -> String { crate::ported::utils::getkeystring(s).0 };
+            let decode_one = |s: &str| -> String { getkeystring(s).0 };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
                 value = new_parts.join(" ");
@@ -5943,7 +5949,7 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if crate::ported::pattern::patmatch(&pat, hay) {
+                        if patmatch(&pat, hay) {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
                                 break;
@@ -5981,7 +5987,7 @@ pub fn paramsubst(
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if crate::ported::pattern::patmatch(&pat, elem) {
+                        if patmatch(&pat, elem) {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -6646,7 +6652,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                     for start in 0..=n {
                         for end in start..=n {
                             let span: String = cv[start..end].iter().collect();
-                            if crate::ported::pattern::patmatch(&eff_pat, &span) {
+                            if patmatch(&eff_pat, &span) {
                                 // Convert char positions to byte positions.
                                 let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
                                 let be: usize =
@@ -6668,7 +6674,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                     let mut found: Option<usize> = None;
                     for end in 0..=n {
                         let span: String = cv[..end].iter().collect();
-                        if crate::ported::pattern::patmatch(&eff_pat, &span) {
+                        if patmatch(&eff_pat, &span) {
                             found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }
@@ -6692,7 +6698,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                     let mut found: Option<usize> = None;
                     for start in 0..=n {
                         let span: String = cv[start..].iter().collect();
-                        if crate::ported::pattern::patmatch(&eff_pat, &span) {
+                        if patmatch(&eff_pat, &span) {
                             found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }
@@ -6884,7 +6890,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                 'e' => Some(rembutext(w)), // c:4585 (:e ext)
                 'l' => Some(casemodify(w, CASMOD_LOWER)), // c:4585 (:l)
                 'u' => Some(casemodify(w, CASMOD_UPPER)), // c:4585 (:u)
-                'q' => Some(crate::ported::utils::quotestring(
+                'q' => Some(quotestring(
                     // c:4585 (:q)
                     w,
                     crate::ported::zsh_h::QT_BACKSLASH,
@@ -7559,14 +7565,14 @@ mod tests {
     fn test_getkeystring() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("hello").0, "hello"); // utils.c:6915
+        assert_eq!(getkeystring("hello").0, "hello"); // utils.c:6915
         assert_eq!(
-            crate::ported::utils::getkeystring("hello\\nworld").0,
+            getkeystring("hello\\nworld").0,
             "hello\nworld"
         ); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\t\\r\\n").0, "\t\r\n"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\x41").0, "A"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\u0041").0, "A"); // utils.c:6915
+        assert_eq!(getkeystring("\\t\\r\\n").0, "\t\r\n"); // utils.c:6915
+        assert_eq!(getkeystring("\\x41").0, "A"); // utils.c:6915
+        assert_eq!(getkeystring("\\u0041").0, "A"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7814,12 +7820,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c — \n \t \r \a \b \f \v \\ \' \"
-        assert_eq!(crate::ported::utils::getkeystring("\\n").0, "\n"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\t").0, "\t"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\r").0, "\r"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\\\").0, "\\"); // utils.c:6915
+        assert_eq!(getkeystring("\\n").0, "\n"); // utils.c:6915
+        assert_eq!(getkeystring("\\t").0, "\t"); // utils.c:6915
+        assert_eq!(getkeystring("\\r").0, "\r"); // utils.c:6915
+        assert_eq!(getkeystring("\\\\").0, "\\"); // utils.c:6915
                                                                         // Trailing literal — no escape consumed.
-        assert_eq!(crate::ported::utils::getkeystring("plain").0, "plain"); // utils.c:6915
+        assert_eq!(getkeystring("plain").0, "plain"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7827,8 +7833,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c handles `\xNN` (1-2 hex digits).
-        assert_eq!(crate::ported::utils::getkeystring("\\x41").0, "A"); // 0x41 = 'A' // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\x7e").0, "~"); // utils.c:6915
+        assert_eq!(getkeystring("\\x41").0, "A"); // 0x41 = 'A' // utils.c:6915
+        assert_eq!(getkeystring("\\x7e").0, "~"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7836,8 +7842,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c `\uNNNN` form for BMP code points.
-        assert_eq!(crate::ported::utils::getkeystring("\\u00e9").0, "é"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\u4e2d").0, "中"); // utils.c:6915
+        assert_eq!(getkeystring("\\u00e9").0, "é"); // utils.c:6915
+        assert_eq!(getkeystring("\\u4e2d").0, "中"); // utils.c:6915
     } // utils.c:6915
 
     // ─── paramsubst — bare ${VAR} ───────────────────────────────────
