@@ -645,6 +645,13 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     queue_signals();
     unsettrap(sig);
 
+    // c:709-710 — DPUTS((flags & ZSIG_FUNC) && l,
+    //                   "BUG: trap function has passed eval list, too")
+    crate::DPUTS!(                                                            // c:709
+        (flags & ZSIG_FUNC) != 0 && l.is_some(),                             // c:709
+        "BUG: trap function has passed eval list, too"                       // c:710
+    );
+
     // c:712 — `if (!(flags & ZSIG_FUNC) && empty_eprog(l))`. C's
     // `empty_eprog` returns true for NULL, NULL prog, OR a prog whose
     // first wordcode is WCB_END (`Src/parse.c:586`). The previous Rust
